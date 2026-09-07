@@ -167,8 +167,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]["captions"]), {"hit", "miss", "fail", "evict", "entries"},
                          "the captions store memo (perf round 4, item C): reads served against read, failed reads, "
                          "entries dropped, and its occupancy")
-        self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "evict", "entries"},
-                         "the states-overlay fold: unchanged, appended rows only, every row, entries dropped, occupancy")
+        self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"},
+                         "the states-overlay fold: unchanged, appended rows only, every row, failed reads, entries dropped, occupancy")
         self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
                          "the SDK registry reader's memo: the captions memo's shape")
         for blk in ("captions", "states_overlay", "thread_reg"):

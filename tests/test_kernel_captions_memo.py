@@ -129,7 +129,7 @@ class _State(unittest.TestCase):
         jd._rebind_state(Path(self.td))
         km._caps_memo.clear(); _reset(km._caps_memo_stats); km._caps_failed.clear()
         km._thread_reg_memo.clear(); _reset(km._thread_reg_stats); km._thread_reg_failed.clear()
-        km._states_overlay_cache.clear(); _reset(km._states_overlay_stats)
+        km._states_overlay_cache.clear(); _reset(km._states_overlay_stats); km._states_overlay_failed.clear()
 
     def tearDown(self):
         jd._rebind_state(self.saved_state)
@@ -307,8 +307,9 @@ class CaptionsMemo(_State):
         self.assertEqual(km._caps_memo_report()["evict"], 1, "nothing to drop counts nothing")
 
     def test_a_full_timeline_build_forgets_lanes_that_left_the_timeline(self):
-        # build_timeline is where the lane set is known, and it is the set every caller reads (the feed's
-        # and the postal join's callers read live sessions, a subset): the forget call rides its full builds
+        # build_timeline is where the lane set is known: the forget call rides its full builds. The feed's
+        # callers read a subset of the lanes; the postal join reads discover's 48 h window, a superset, and
+        # its entries outside the lanes are dropped here and read again only when that transcript changes
         src = inspect.getsource(km.build_timeline)
         self.assertIn("_caps_forget(", src)
         self.assertRegex(src, r"if with_bars and not live_only:\s*\n(\s*#[^\n]*\n)*\s*_caps_forget\(",
@@ -470,6 +471,45 @@ class OverlayFold(_State):
         p.write_text('{"t": 100, "awaiting": true, "why": "x"}\nnot json\n{"t": 200, "state": "idle"\n')
         self.assertEqual(km._states_awaiting_overlay(SID), ref_overlay(SID))
         self.assertEqual(km._states_awaiting_overlay(SID)["awaiting"], True)
+
+    def test_an_unparseable_line_carrying_both_substrings_changes_nothing(self):
+        # the one stated deviation from the old whole-file scan: that scan set working_after on an UNPARSEABLE
+        # line that happened to carry '"state"' and '"working"', without parsing it; the fold sees parsed
+        # records only, so the last parsed awaiting row stands. No states writer produces such a line.
+        p = self.states_path(); p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text('{"t": 100, "awaiting": true, "why": "two jobs"}\n{"t": 200, "state": "working"\n')
+        self.assertEqual(km._states_awaiting_overlay(SID), {"t": 100, "awaiting": True, "why": "two jobs"})
+        self.assertEqual(ref_overlay(SID), {"awaiting": False, "why": None}, "the old scan's answer, superseded by the torn line")
+        self.assertIn("parsed records only", km._states_overlay_step.__doc__)
+
+    def test_a_read_failure_on_a_file_that_exists_is_counted_logged_once_and_not_memoized(self):
+        rows = [{"t": 100, "awaiting": True, "why": "x"}, {"t": 200, "state": "idle"}]
+        self.check(rows, rows[0])
+        self.assertEqual(km._states_overlay_report()["entries"], 1)
+        # the shared reader serves an UNCHANGED file's records on an identity hit without opening it, so a
+        # permission flip alone is not a read attempt: the file grows first, then becomes unreadable
+        with open(self.states_path(), "a") as f:
+            f.write(json.dumps({"t": 300, "state": "working"}) + "\n")
+        os.chmod(self.states_path(), 0)
+        try:
+            if os.access(self.states_path(), os.R_OK):
+                self.skipTest("this user reads through mode 000 (root)")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertIsNone(km._states_awaiting_overlay(SID), "the old scan answered None on OSError")
+                self.assertIsNone(km._states_awaiting_overlay(SID))
+            st = km._states_overlay_report()
+            self.assertEqual((st["fail"], st["entries"]), (2, 0), "counted per call, memoized never")
+            self.assertEqual(err.getvalue().count("unreadable"), 1, "one stderr line per failure episode")
+            self.assertEqual(km._states_awaiting_overlay(SID), ref_overlay(SID))
+        finally:
+            os.chmod(self.states_path(), 0o644)
+        self.assertEqual(km._states_awaiting_overlay(SID), {"awaiting": False, "why": None},
+                         "readable again: folded from record 0 over the three rows")
+        self.assertEqual(km._states_awaiting_overlay(SID), ref_overlay(SID))
+        st = km._states_overlay_report()
+        self.assertEqual((st["entries"], st["refold"]), (1, 2))
+        self.assertNotIn(str(self.states_path()), km._states_overlay_failed, "a good read ends the episode")
 
     def _counting_step(self):
         real = km._states_overlay_step
@@ -637,7 +677,7 @@ class PerfWiring(_State):
     def test_the_snapshot_carries_the_three_memo_blocks(self):
         memos = km._PERF_STATS.snapshot()["memos"]
         self.assertEqual(set(memos["captions"]), {"hit", "miss", "fail", "evict", "entries"})
-        self.assertEqual(set(memos["states_overlay"]), {"hit", "append", "refold", "evict", "entries"})
+        self.assertEqual(set(memos["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"})
         self.assertEqual(set(memos["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"})
         for blk in ("captions", "states_overlay", "thread_reg"):
             for k, v in memos[blk].items():

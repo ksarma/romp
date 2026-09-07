@@ -421,10 +421,14 @@ class _PerfStats:
                                    (perf round 4, item C, 2026-09-07): captions (_captions, the
                                    captioner store keyed on (inode, mtime_ns, size)) -> hit / miss /
                                    fail (reads that failed after a good stat, not memoized) / evict
-                                   and the gauge entries; states_overlay (_states_awaiting_overlay's
-                                   fold through _fold_records) -> hit / append / refold / evict and
+                                   (a lane that left the timeline, the LRU bound, or the pop of an
+                                   entry whose file is absent) and the gauge entries; states_overlay
+                                   (_states_awaiting_overlay's fold through _fold_records) -> hit /
+                                   append / refold / fail (a read that failed on a file that exists,
+                                   not memoized) / evict (sessions that left the alive set) and
                                    entries; thread_reg (_thread_reg, the SDK registry keyed like
-                                   captions) -> hit / miss / fail / evict and entries
+                                   captions) -> hit / miss / fail / evict (the LRU bound or the pop
+                                   of an absent file's entry) and entries
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -23110,18 +23114,23 @@ def _states_awaiting_overlay(sid):
     gate is the shared reader's: (st_mtime, st_size) plus the 64-byte tail compare on growth, a full re-fold
     on a shrink or a same-size new mtime. Every states writer appends (sdk_backend's append_* helpers, the
     kernel's _record_idle and picker check, hooks/tmux-status.sh), so an append is the only change the
-    file sees and the gate is exact for it. A missing or unreadable file folds to the empty state, the None
-    the whole-file scan answered on OSError. Counters ride /perf under memos.states_overlay."""
+    file sees and the gate is exact for it. A missing file folds to the empty state, the None the whole-file
+    scan answered on OSError; a read that fails on a file that exists answers the same None, counts under
+    `fail`, is logged once per episode and is never memoized (_states_overlay_on). The shared reader serves
+    an UNCHANGED file's records from its cache without opening it, so a permission flip shows as a failure
+    only once the file changes (or its reader entry was evicted): `fail` counts reads that were attempted
+    and failed. Counters ride /perf under memos.states_overlay."""
     p = jd.STATE / "states" / ("%s.jsonl" % sid)
     last, working_after = _fold_records(_states_overlay_cache, p, _states_overlay_init, _states_overlay_step,
-                                        on=_states_overlay_bump)
+                                        on=functools.partial(_states_overlay_on, str(p)))
     if last is not None and last.get("awaiting") and working_after:
         return {"awaiting": False, "why": None}            # stale true — superseded by a later work turn
     return last
 
 
 _states_overlay_cache = {}    # str(states path) -> _fold_records entry over (last overlay row or None, working_after)
-_states_overlay_stats = {"hit": 0, "append": 0, "refold": 0, "evict": 0}
+_states_overlay_stats = {"hit": 0, "append": 0, "refold": 0, "fail": 0, "evict": 0}
+_states_overlay_failed = set()   # paths whose last read failed on a file that exists: one stderr line per episode
 _STATES_OVERLAY_LOCK = threading.Lock()   # the counters are bumped from the pusher, the chat's connect pushes on
 #                                           WS threads and GET /sessions at once: `+= 1` drifts low without the GIL
 
@@ -23138,7 +23147,11 @@ def _states_overlay_step(state, o):
     orphanReply, cmdGesture, machineCut, resumeFork, effortApplied) leaves the state alone. Equal to the
     whole-file scan for every row shape any states writer produces: the scan's substring tests matched a
     quoted key, and a key's text inside a JSON string is escaped, so they never fired on a why or a
-    gesture's text."""
+    gesture's text. ONE deviation from that scan, stated here and pinned by a test: the scan set
+    working_after on an UNPARSEABLE line that happened to carry both substrings, without parsing it; the
+    fold sees parsed records only, so such a line changes nothing. No states writer produces one (every
+    row is one json.dumps and a newline), and a torn tail is the shared reader's business, not a substring
+    heuristic's."""
     if "awaiting" in o:
         return (o, False)
     if o.get("state") == "working":
@@ -23149,6 +23162,24 @@ def _states_overlay_step(state, o):
 def _states_overlay_bump(kind, n=1):
     with _STATES_OVERLAY_LOCK:
         _states_overlay_stats[kind] = _states_overlay_stats.get(kind, 0) + n
+
+
+def _states_overlay_on(path_s, kind):
+    """The fold's `on` for one states file: count the path the fold took, and on "fail" (the file exists and
+    could not be stat'ed, opened or read; the fold answered the empty state and memoized nothing) write one
+    stderr line per episode, so a failed read is told apart from a rewrite in /perf and in the log. A later
+    successful fold of the same file ends the episode."""
+    _states_overlay_bump(kind)
+    if kind == "fail":
+        with _STATES_OVERLAY_LOCK:
+            first = path_s not in _states_overlay_failed
+            _states_overlay_failed.add(path_s)
+        if first:
+            sys.stderr.write("states-overlay: %s unreadable (the file exists); answered no overlay and memoized nothing\n"
+                             % os.path.basename(path_s))
+    elif _states_overlay_failed:
+        with _STATES_OVERLAY_LOCK:
+            _states_overlay_failed.discard(path_s)
 
 
 def _states_overlay_forget(alive):
@@ -23169,7 +23200,8 @@ def _states_overlay_forget(alive):
 def _states_overlay_report():
     """The fold's counters plus its occupancy, for /perf (memos.states_overlay): hit (the records were the
     cached ones), append (only the appended rows stepped), refold (every row stepped: a rewrite, a shrink, or
-    the first fold of a file), evict, and the gauge entries."""
+    the first fold of a file), fail (a read that failed on a file that exists; not memoized), evict (entries
+    dropped for sessions that left the alive set), and the gauge entries."""
     with _STATES_OVERLAY_LOCK:
         out = dict(_states_overlay_stats)
     out["entries"] = len(_states_overlay_cache)
@@ -24169,11 +24201,15 @@ def _ask_poll_once():
 # is a sentinel key that matches nothing (read, not memoized); a read that fails after a successful stat is
 # not memoized (the `fail` counter, one stderr line per episode), since a permission or descriptor failure
 # is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
-# build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget),
-# which is the set every caller reads: the feed's held-card path and the postal join read live sessions, a
-# subset. Every caller reads the object and never writes it (a source-text test pins that), so a hit hands
-# out the same _Caps, indexes included. Counters ride /perf under memos.captions; the lock covers the dict
-# ops and the counters, never the read or the parse.
+# build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget).
+# The feed's held-card path reads live sessions, a subset of the lanes; the postal join (_msg_summaries)
+# reads _sessions(now), discover's 48 h window, a superset of the 12 h lane set, so an entry it made for a
+# session outside the lanes is released at the next full build and read again only when that session's
+# transcript changes (the join's own per-session mtime gate). `evict` counts all three drops: a lane that
+# left the timeline, the LRU bound, and the pop of an entry whose file is now absent. Every caller reads the
+# object and never writes it (a source-text test pins that), so a hit hands out the same _Caps, indexes
+# included. Counters ride /perf under memos.captions; the lock covers the dict ops and the counters, never
+# the read or the parse.
 _caps_memo = {}
 _CAPS_MEMO_MAX = 512
 _caps_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
@@ -24230,8 +24266,10 @@ def _caps_memo_report():
 
 def _caps_forget(keep):
     """Drop the memo entries for transcripts outside `keep`: build_timeline's lane set at a full build
-    (live sessions plus the dead lanes inside its 12 h window), the sids every caller reads. Iterates a
-    key snapshot under the lock; a connect-push build on another thread may insert concurrently."""
+    (live sessions plus the dead lanes inside its 12 h window). The feed's callers read a subset of it; the
+    postal join reads discover's 48 h window, a superset, and an entry of its outside the lanes is dropped
+    here and read again only when that transcript changes. Iterates a key snapshot under the lock; a
+    connect-push build on another thread may insert concurrently."""
     with _CAPS_LOCK:
         gone = [k for k in _caps_memo if k not in keep]
         for k in gone:
@@ -35500,9 +35538,11 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
     if with_bars and not live_only:
         # The captions memo releases the lanes that left the timeline here (perf round 4, item C1): a full
         # build's lane set (live sessions plus the dead lanes inside the 12 h window, dismissed dead lanes
-        # dropped) is exactly the set of transcripts every _captions caller reads; the feed's held-card path
-        # and the postal join read live sessions, a subset. A skeleton or live-only build reads a subset of
-        # the lanes and so must not evict on it.
+        # dropped) is the set this build read. The feed's held-card path reads live sessions, a subset; the
+        # postal join (_msg_summaries) reads discover's 48 h window, a superset, so an entry it made for a
+        # session outside the lanes goes here and is read again only when that session's transcript changes
+        # (the join's per-session mtime gate). A skeleton or live-only build reads a subset of the lanes and
+        # so must not evict on it.
         _caps_forget(set(id2name))
     # compaction-sweep gradient (widest→narrowest): the timeline's scan-bar has no client-side colormap, so
     # ship the GLOBAL map sampled at the same scaleX stops the chat surface uses (render.ts applyCompactSweep),

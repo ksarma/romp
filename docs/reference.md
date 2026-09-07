@@ -2057,14 +2057,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
   from memory against read and parsed), `fail` (reads that failed after a
   successful stat and were not memoized; the kernel's stderr names the file
-  once per episode), `evict` (entries dropped for lanes that left the timeline
-  or past the 512-entry bound), and the gauge `entries`. `states_overlay` is the
-  states-log fold behind the awaiting overlay: `hit` (the records were the
-  cached ones), `append` (only the appended rows were folded), `refold` (every
-  row was folded: a rewrite, a shrink, or the file's first fold), `evict`
-  (entries dropped for sessions that left the alive set), and `entries`.
-  `thread_reg` is the SDK registry reader's memo, keyed like `captions`, with
-  the same `hit`, `miss`, `fail`, `evict` and `entries`.
+  once per episode), `evict` (entries dropped: a lane that left the timeline,
+  the 512-entry bound, or the pop of an entry whose file is now absent), and
+  the gauge `entries`. `states_overlay` is the states-log fold behind the
+  awaiting overlay: `hit` (the records were the cached ones), `append` (only
+  the appended rows were folded), `refold` (every row was folded: a rewrite, a
+  shrink, or the file's first fold), `fail` (a read that failed on a file that
+  exists; the fold answered no overlay, memoized nothing, and the kernel's
+  stderr names the file once per episode), `evict` (entries dropped for
+  sessions that left the alive set), and `entries`. `thread_reg` is the SDK
+  registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
+  `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
+  an absent file's entry.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

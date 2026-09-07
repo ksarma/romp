@@ -564,15 +564,20 @@ def _scan_jsonl_bytes(data, base_offset):
     return records, base_offset + end + 1
 
 
-def _read_jsonl_incremental(path):
+def _read_jsonl_incremental(path, on_fail=None):
     """The parsed records of `path` (a list, NOT a generator), served append-incrementally per the cache
-    contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl."""
+    contract above. Falls back to a full read on any surprise; [] on any error, like _read_jsonl. `on_fail`,
+    when given, is called with the exception for a stat, open or read that failed on a file that EXISTS (any
+    OSError but FileNotFoundError): an absent file is a state and answers [] quietly, an unreadable one is a
+    failure the caller may count and log (fold_records passes it through as on("fail"), 2026-09-07)."""
     path = str(path)
     try:
         st = os.stat(path)
-    except OSError:
+    except OSError as e:
         with _JSONL_CACHE_LOCK:
             _JSONL_CACHE.pop(path, None)
+        if on_fail is not None and not isinstance(e, FileNotFoundError):
+            on_fail(e)
         return []
     with _JSONL_CACHE_LOCK:
         hit = _JSONL_CACHE.get(path)
@@ -596,9 +601,11 @@ def _read_jsonl_incremental(path):
             tail_from = max(0, offset - _JSONL_TAIL_GUARD)
             fh.seek(tail_from)
             tail = fh.read(offset - tail_from)
-    except OSError:
+    except OSError as e:
         with _JSONL_CACHE_LOCK:
             _JSONL_CACHE.pop(path, None)
+        if on_fail is not None and not isinstance(e, FileNotFoundError):
+            on_fail(e)
         return []
     with _JSONL_CACHE_LOCK:
         _JSONL_CACHE.pop(path, None)
@@ -621,15 +628,24 @@ def fold_records(cache, path, init, step, on=None):
     under it). Returns the state; [] records (a missing or unreadable file) fold to init().
 
     `on`, when given, is called once per call with which path the fold took: "hit" (the records are the
-    cached ones; nothing stepped), "append" (only the records past the cached prefix stepped) or "refold"
-    (every record stepped: a rewrite, a shrink, or the first fold of this file). A caller's /perf counters
-    ride it (kernel `_states_awaiting_overlay`, 2026-09-07); the fold itself keeps no counters, since one
-    cache dict serves many readers and the kernel's counters are locked per reader.
+    cached ones; nothing stepped), "append" (only the records past the cached prefix stepped), "refold"
+    (every record stepped: a rewrite, a shrink, or the first fold of this file) or "fail" (the file exists
+    and its stat, open or read raised: the answer is init(), the cache entry for the path is dropped and
+    nothing is memoized, so the next call reads again; an ABSENT file is not a failure and folds to init()
+    through the normal path). A caller's /perf counters ride it (kernel `_states_awaiting_overlay`,
+    2026-09-07); the fold itself keeps no counters, since one cache dict serves many readers and the
+    kernel's counters are locked per reader.
 
     Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
     background-task pairing below is shared by both."""
     key = str(path)
-    recs = _read_jsonl_incremental(path)
+    failed = []
+    recs = _read_jsonl_incremental(path, on_fail=failed.append)
+    if failed:
+        cache.pop(key, None)                              # a failed read is never memoized: the next call reads again
+        if on is not None:
+            on("fail")
+        return init()
     ent = _pinned_entry(key, recs)                        # the reader's entry for THIS read, pinned by identity: another
     if ent is _UNPINNED:                                  # thread (the judge pool, a handler) may advance the shared entry
         recs = _read_jsonl_incremental(path)              # past our records before we look at its tail, and a newer tail
