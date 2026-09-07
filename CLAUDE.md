@@ -187,9 +187,14 @@ broad `git add` will sweep up your work). Conventions:
   ours to run (see the fork section above).
 - **Every PR carries exactly one tier label** (maintainers' rule, 2026-09-06). The
   project's `pr-tier` check holds a PR with no tier label, or two, red, so an unlabeled
-  offer never auto-merges there; the fork's CI runs the same workflow, so a fork PR
-  carries one too. The author picks the tier at filing time:
-  - `tests-only` (tier 0): tests, docs, repo plumbing; no behavior change. Merges on green.
+  offer never auto-merges there. The fork's copy of the check
+  (`.github/workflows/pr-tier.yml`) counts the same four labels plus two of its own:
+  `docs`, upstream's coming name for tests-only, passes in its place, and a batch PR
+  (`scripts/batch.py`, `docs/batching.md`) carries `batch` alone and no tier, so adding
+  a tier to a batch PR turns the check red. Every other fork PR carries one tier label.
+  The author picks the tier at filing time:
+  - `tests-only` (tier 0): tests, docs, repo plumbing; no behavior change. Merges on green
+    upstream; on the fork it lands through a batch like every PR.
   - `fix` (tier 1): a bug fix with a test that fails before it.
   - `feature` (tier 2): a self-contained new capability inside romp's existing model;
     put the design points in the body.
