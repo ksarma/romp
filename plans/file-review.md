@@ -810,6 +810,17 @@ four reply types.
   (`kernel.py:34486-34493`); the shell forwards `todoId`, `files.ts` passes it to
   `openFileView(path, sid, {todoId})`, and relative paths resolve on the kernel through
   `_resolve_open_path`. When the pane is not framed by the shell, the detail stays plain text.
+- From a todo that names its file (the todo-file follow-on, 2026-09-07): a user todo record
+  carries an optional `file`, the absolute path the kernel resolved when the todo was filed
+  (`add_user_todo`'s `file` argument; a relative path resolves against the session's cwd; a path
+  that does not resolve is stored as given and the reply warns). The Waiting-on-you pane shows
+  it as a chip on the row and in the Reply modal (the basename, the full path on hover), which
+  posts the same `viewFile` message as a linkified path: path, sid, identity, todoId. The
+  `fileComments` status reply lists the open todos of the session whose `file` is the status'd
+  file (`todos: [{id, text}]`), so the panel's Send confirm offers to answer a todo however the
+  file was opened: one candidate is the checkbox, several are one radio group, and the chosen
+  id goes out as `fileCommentsSend`'s `todoId`. A todo that names its file only in the detail
+  still works through the opened-from link alone.
 - From the viewer: the Comments action, on any file, on a machine whose kernel has node. If the
   action is missing, the gear's row beside "File links open in" names the machine and the reason
   (`no-node`), and the same row warns when the agent-side tooling is not linked and offers to run
@@ -987,6 +998,24 @@ space beside one that stayed, a substitution of whitespace) carries the Raw rows
 pre-wrap` as an inline style (`renderedPointStyles` in `anchor-map.ts`): under the block's normal
 white-space such a label collapsed to a 0px point with no struck mark and nothing to hover, while the
 painter reported the change shown (the review, 2026-09-07).
+
+The todo-file follow-on (2026-09-07): after the end-to-end walk the user asked that the link between a
+user todo and its file be structured, not a path in the detail's free text, and that any Send on the
+file answer the todo, not only a Send from a viewer opened through the todo's link. The record gains
+`file` (kernel), `add_user_todo` gains the argument and the session prompt says to pass it (postal),
+and on the panel side: `Status` gains `todos`, the open todos of the session that name the file,
+which the kernel adds to the `status` reply; `todoChoices` (`file-comments-model.ts`) lists the
+candidates: the todo the file was opened from first, with its text when the status lists it, then the
+status's todos in the kernel's order, each once, minus the todos a send from this page has stamped.
+The confirm renders one candidate as the checkbox (checked, the todo's text cut to one line, the
+whole text on hover) and several as one radio group, Answer: the first selected, the others, none, so
+one send still answers one todo (decision 28); `chosenTodoId` is what `doSend` puts in `todoId`. After
+a send the list follows the next status, which no longer carries the settled todo; the page's memory of
+what it stamped covers the moment before that status, and a send the kernel could not stamp leaves the
+todo offered, as before. In Waiting on you the todo's `file` is a chip on the row and in the Reply modal
+(`fileChip`: openPathLink's span restyled, so the list delegate's and the modal's `openpath` open it
+with the same `viewFile` message: path, sid, identity, todoId); the detail's linkified paths stay. The
+guide's Waiting on you and Files sections say both.
 
 ### Slice 3: region comments on images
 
@@ -1434,6 +1463,15 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   suite's tests.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
+- The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
+  DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
+  payload, the Reply modal's chip, no chip without the field, the detail link beside it);
+  `file-comments-todo-choices.test.ts` drives the confirm (the checkbox from the status's `todos`
+  with no opened-from todo, the radio group with several, the chosen id in the `fileCommentsSend`
+  request, the todo gone after a send when the next status omits it, the stamp latch, the one-line
+  label) and runs `todoChoices`; `tests/test_guide_todo_file_chip.py` holds the guide's Waiting on
+  you and Files sections to the pane and the panel; `tools/file-review-plan.test.mjs` holds the
+  follow-on's note and its Getting into it bullet to the model, the panel and the pane.
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
@@ -1460,10 +1498,12 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
 `docs/guide.md`: "Reviewing a document" (`:29-45`) becomes a section on file comments and tracked
 changes, states that quote chips remain for one-off notes, tells the user to track the folder a
 session will write into, and to keep figures out of tracked folders until Slice 1's refusal is
-in place; "Waiting on you" notes the linked path and the ended-session case; "Files"
+in place; "Waiting on you" notes the linked path and the ended-session case (and, from the
+todo-file follow-on, the file chip); "Files"
 (`:126-138`) gains the panel, the poll, the consent gate the guide omits today, commenting in
 either view and on images and PDFs, the comments log and the `.gitignore` opt-out, and where to
-look when the action is missing. `docs/reference.md`, under install-time switches, notes the
+look when the action is missing (and, from the todo-file follow-on, that a Send answers the todo
+that named the file however the file was opened). `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the

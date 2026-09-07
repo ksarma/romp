@@ -86,6 +86,7 @@ import {
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
+  todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -215,7 +216,9 @@ const STATUS_DEADLINE_MS = 15000;
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
-// (which re-opens with the same todoId), or the Reply modal's other link all find it. Another device or
+// (which re-opens with the same todoId), or the Reply modal's other link all find it; so does a status that
+// still lists the todo (the todo-file follow-on: the kernel lists the open todos naming the file, and stops
+// once the todo is settled — this set covers the moment between the send and that status). Another device or
 // document has no view of this set; the kernel's own settled check (plan: the reply warns, nothing is
 // stamped) stays the backstop there.
 const answeredTodos = new Set<string>();
@@ -735,7 +738,10 @@ class Panel {
   sending = false;
   sendOpts = { todo: true, track: true, accept: true };   // all checked by default (decision 8); `accept` is the Slice 2 checkbox
   sentNote: string | null = null;
-  todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
+  // the todo the send answers when SEVERAL are offered (todoOpts' radio group; the todo-file follow-on, 2026-09-07): the id
+  // picked, "" for none, null while nothing was picked — the first candidate then, and again when the pick left the list (a
+  // todo settled from elsewhere, or answered by the send before). With one candidate the checkbox (sendOpts.todo) decides.
+  todoPick: string | null = null;
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
@@ -813,7 +819,6 @@ class Panel {
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
     live = this;
-    this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
     this.input.type = "text";
     this.input.placeholder = "Your note (Enter saves, Esc cancels)";
     this.input.setAttribute("aria-label", "Comment text");
@@ -917,8 +922,10 @@ class Panel {
     row.addEventListener("change", (ev) => {
       const t = ev.target as HTMLInputElement | null;
       const k = t ? t.dataset.opt : undefined;
-      if (!t || k !== "todo" && k !== "track" && k !== "accept" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
-      this.sendOpts[k] = t.checked;
+      if (!t || !this.owns(t)) return;                 // a control the file's markup carries flips nothing
+      if (k === "todopick") this.todoPick = t.value;   // the radio group: the todo's id, or "" for none (todoOpts)
+      else if (k === "todo" || k === "track" || k === "accept") this.sendOpts[k] = t.checked;
+      else return;
       this.render();                                   // the list's counts and the preview follow the boxes (refocus keeps the box focused)
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
@@ -2483,18 +2490,20 @@ class Panel {
         pending = decided.length;
       }
       const counts = sendCounts(parts, acceptAll, pending);
-      const answerTodo = !!this.ctx.todoId && this.sendOpts.todo && !this.todoAnswered;
+      // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
+      // status lists it as naming this file — as the checkbox or the radio group left it; one id, or none
+      const todoId = this.chosenTodoId(s);
       const msg: Record<string, unknown> = {
         sid: this.ctx.sid, path: this.ctx.path, tracked, comments: parts.comments,
         accepted: counts.accepted, rejected: counts.rejected, watermark: parts.watermark,
       };
-      if (answerTodo) msg.todoId = this.ctx.todoId;
+      if (todoId) msg.todoId = todoId;
       const reply = await this.sendOnce(msg, false);
       this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
       // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
-      if (answerTodo && reply.todoStamped) { this.todoAnswered = true; answeredTodos.add(this.ctx.todoId!); }
+      if (todoId && reply.todoStamped) answeredTodos.add(todoId);
       const who = this.sessionName();
       this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
@@ -2552,7 +2561,8 @@ class Panel {
     const a = document.activeElement as HTMLElement | null;
     if (!a || !this.root || !this.root.contains(a) || !a.dataset) return null;
     const k: FocusKey | null = a.dataset.act ? { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot }
-      : a.dataset.opt ? { act: "opt", key: a.dataset.opt } : null;   // a confirm checkbox, re-found by its option
+      // a confirm checkbox, re-found by its option; a radio of the todo group by its option AND its value (the todo id, "" for none)
+      : a.dataset.opt ? { act: "opt", key: a.dataset.opt, id: a.dataset.opt === "todopick" ? (a as HTMLInputElement).value : undefined } : null;
     if (!k) return null;
     const cards = this.sections.cards;
     if (cards.contains(a) && typeof a.closest === "function") {
@@ -2569,7 +2579,10 @@ class Panel {
    *  too, but no tabindex. */
   private findControl(k: FocusKey): HTMLElement | null {
     if (!this.root) return null;
-    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;
+    if (k.act === "opt") {
+      const all = Array.from(this.root.querySelectorAll('[data-opt="' + k.key + '"]')) as HTMLElement[];
+      return (k.id === undefined ? all[0] : all.find((n) => (n as HTMLInputElement).value === k.id)) || null;
+    }
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
       if (d.act === k.act && d.id === k.id && d.key === k.key && d.slot === k.slot && (n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON")) return n;
@@ -3161,7 +3174,7 @@ class Panel {
       if (counts.accepted || counts.rejected) ul.appendChild(el("li", undefined, counts.accepted + " accepted, " + counts.rejected + " rejected"));
       cf.appendChild(ul);
       const opts = el("div", "fc-opts");
-      if (this.ctx.todoId && !this.todoAnswered) opts.appendChild(this.opt("todo", "answer the todo this file was opened from"));
+      this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
       if (pending) opts.appendChild(this.opt("accept", "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes")));
       if (opts.childNodes.length) cf.appendChild(opts);
@@ -3192,6 +3205,55 @@ class Panel {
     cb.type = "checkbox"; cb.checked = this.sendOpts[key]; cb.dataset.opt = key;
     l.appendChild(cb); l.appendChild(el("span", undefined, label));
     return l;
+  }
+  /** The confirm's answer-a-todo control (the todo-file follow-on, 2026-09-07). The candidates are todoChoices': the todo
+   *  the file was opened from and every open todo of the session that names this file (the status's `todos`), minus those
+   *  a send from this page has answered. ONE candidate: the checkbox, checked by default (decision 8), labelled with the
+   *  todo's own text when the kernel listed it (decision 36's generic wording otherwise, since the viewer never receives the
+   *  opened-from todo's words). SEVERAL: one radio group — Answer: the first selected, the others, then none — so one send
+   *  answers one todo (decision 28). NONE: no control. The label is one line: cut to a line's worth, the whole text on hover
+   *  (an inline clip; the sheets have no rule for this control, the Slice 2 idiom). */
+  private todoOpts(opts: HTMLElement, s: Status): void {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return;
+    // opt()'s row with the label clipped to ONE line (the text is already cut to a line's worth by todoChoiceLabel; the
+    // clip is inline since the sheets have no rule for this control, the Slice 2 idiom) and the whole text on hover
+    const optRow = (input: HTMLInputElement, text: string, title: string | null): HTMLElement => {
+      const l = el("label", "fc-opt");
+      const t = el("span", undefined, text);
+      t.style.minWidth = "0"; t.style.overflow = "hidden"; t.style.textOverflow = "ellipsis"; t.style.whiteSpace = "nowrap";
+      if (title) l.title = title;
+      l.appendChild(input); l.appendChild(t);
+      return l;
+    };
+    if (cands.length === 1) {
+      const c = cands[0];
+      const cb = el("input") as HTMLInputElement;
+      cb.type = "checkbox"; cb.checked = this.sendOpts.todo; cb.dataset.opt = "todo";
+      opts.appendChild(optRow(cb, c.text === null ? "answer " + TODO_OPENED_FROM : "answer the todo: " + todoChoiceLabel(c), c.text));
+      return;
+    }
+    const pick = this.chosenTodoId(s) || "";
+    const g = el("div", "fc-opts fc-todo-pick");
+    g.setAttribute("role", "radiogroup"); g.setAttribute("aria-label", "Answer a todo with this send");
+    g.appendChild(el("span", "fc-note", "Answer:"));
+    for (const c of [...cands.map((x) => ({ id: x.id, label: todoChoiceLabel(x), title: x.text })), { id: "", label: "none", title: null }]) {
+      const r = el("input") as HTMLInputElement;
+      r.type = "radio"; r.name = "fc-todo"; r.value = c.id; r.checked = c.id === pick; r.dataset.opt = "todopick";
+      g.appendChild(optRow(r, c.label, c.title));
+    }
+    opts.appendChild(g);
+  }
+  private todoCandidates(s: Status): TodoChoice[] { return todoChoices(this.ctx.todoId, s, (id) => answeredTodos.has(id)); }
+  /** The todo the next send answers, or null: for one candidate the checkbox's verdict; for several the radio's — the pick
+   *  while it is still offered, none when none was picked, else the first (nothing picked yet, or the pick left the list). */
+  chosenTodoId(s: Status): string | null {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return null;
+    if (cands.length === 1) return this.sendOpts.todo ? cands[0].id : null;
+    if (this.todoPick === "") return null;
+    if (this.todoPick && cands.some((c) => c.id === this.todoPick)) return this.todoPick;
+    return cands[0].id;
   }
   private renderLog(s: Status | null): HTMLElement {
     const box = el("div", "fc-log");
