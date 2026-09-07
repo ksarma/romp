@@ -23,7 +23,7 @@
 // same in the user's words): a token links when it has a slash and its last segment has a letter-led extension of
 // one to eight letters or digits (a dotfile only under an anchored start: `/`, `./`, `../`, `~/`); it is not glued
 // to the character before it (the line's start, whitespace or an opener must precede it: a quote, a bracket, `=`,
-// `,`, `;`, `|`, or Markdown's `*` with a closing `*` after the path), which is what cuts `$HOME/docs/a.md`, `${dir}/out.json`, `$(ROOT)/src/x.c`,
+// `,`, `;`, `|`, or Markdown's `*` when the path is the whole emphasised text), which is what cuts `$HOME/docs/a.md`, `${dir}/out.json`, `$(ROOT)/src/x.c`,
 // `@scope/pkg/index.js`, `C:/Users/x/file.txt` and `git@host:user/repo.git` down to prose; it is not inside a web
 // address on its line; an unanchored token's first segment does not read as a hostname (`www.` or dotted labels
 // ending in two or more letters: `www.example.org/docs/index.html`, `example.com/index.html`); an unanchored token is
@@ -121,8 +121,9 @@ export function urlRanges(text: string): Array<[number, number]> {
 // soft-broken line or any line of a fence but the first was read as glued to the break before it; the 2026-09-07
 // review), plus the zero-width space, which text pasted from a chat tool carries and \s leaves out. An asterisk is
 // Markdown emphasis in the Raw view (`**docs/a.md**`), the view a `:line` link lands in (the review's round 3), and it
-// opens a token only when a closing asterisk follows the token (viewerPathGate, STAR_CLOSE_RE: a glob's `**/docs/a.md`
-// and an operand's `w*h/img.size` have none; the review's round 4). Not `_`: the matcher's path arm takes an underscore
+// opens a token only when a closing asterisk follows the token and the token is not `/`-led (viewerPathGate,
+// STAR_CLOSE_RE: a glob's `**/docs/a.md` and an operand's `w*h/img.size` have no closer, and a glob's tail after its
+// star begins with `/`; the review's rounds 4 and 5). Not `_`: the matcher's path arm takes an underscore
 // into the token, so `_docs/a.md_` is one token the extension test refuses and `_docs/a.md` names a folder called
 // `_docs`; the gate never sees `_` before a token. Not `)`, `]`, `:` or `#`: `$(ROOT)/src/x.c`, `git@host:user/repo.git`
 // and `x#/docs/a.md` are glue.
@@ -150,6 +151,19 @@ const IMPORT_WORDS = ["import", "export", "from", "require"];
 const KEYWORD_MAX = 7;                                   // `require`
 const STATEMENT_HEAD_RE = /^\s*(?:import|export)\b/;    // the line began an import or export statement
 const CLOSING_HEAD_RE = /^\s*\}\s*$/;                    // `} from "…"`: the last line of a multi-line import
+// An import or export line that OPENS a list and ends no statement, read by openedImportAbove as the opener a `from`
+// below it continues: the keyword (with `type`, and a default name and its comma) and then nothing (`import`,
+// `import React,`), a brace list still open (`import {`, `import type {`, `export {`, `import React, {`, `import { a,`),
+// or, under `import` alone, a brace list closed with its `from` still to come (`import { a }`; `export { a }` is a
+// whole statement). A complete statement opens nothing: Python's `import os` and `import numpy as np`, a shell's
+// `export DATA=/data`, `export const z = 2;`, `export function build() {`. Round 4 took any quote-free import or export
+// line as the opener, and the English `from "docs/a.md"` in a comment under one was refused as a package specifier
+// (the 2026-09-07 review, round 5).
+const OPEN_LIST_RE = /^\s*(import|export)(?:\s+type)?(?:\s+[\w$]+\s*,)?\s*(?:\{[^{}"'`;]*(\})?)?\s*$/;
+function opensImportList(line: string): boolean {
+  const m = OPEN_LIST_RE.exec(line);
+  return !!m && (m[2] === undefined || m[1] === "import");
+}
 const isWordCh = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
 const isLineSpace = (c: string): boolean => c === " " || c === "\t";
 function importLookBehind(text: string, at: number, above?: (n: number) => string | null): { start: number; isImport: boolean } {
@@ -175,11 +189,13 @@ function importLookBehind(text: string, at: number, above?: (n: number) => strin
 // of its own). The lines above are read back one at a time to the one that began the statement: an `import` or `export`
 // line that names no specifier yet (no quote on it). The lines are the unit's own first (a fenced block, a rendered
 // paragraph), then, past the unit's first line, the units before it through `above(n)` (a code view's rows: each row is
-// a unit of its own, and the statement's opener sits in the row above). A line between must read as a list member (no
-// quote, no `;`, not blank), and the walk is bounded (a formatter puts one name per line; IMPORT_LINES_MAX is more than any import). Only a
-// `from` whose own line holds no specifier and ends no statement asks, so the walk runs once per such `from` over at most
-// IMPORT_LINES_MAX lines, and the pass stays linear in the text. Round 3 read the `from` line's head alone, and these two
-// hand-formatted shapes linked the specifier (the 2026-09-07 review, round 4).
+// a unit of its own, and the statement's opener sits in the row above; a blank row is an empty unit, path-links.ts
+// textUnits). A line between must read as a list member (no quote, no `;`, not blank), and the walk is bounded (a
+// formatter puts one name per line; IMPORT_LINES_MAX is more than any import). Only a `from` whose own line holds no
+// specifier and ends no statement asks, so the walk runs once per such `from` over at most IMPORT_LINES_MAX lines, and
+// the pass stays linear in the text. Round 3 read the `from` line's head alone, and these two hand-formatted shapes
+// linked the specifier (the 2026-09-07 review, round 4). The opener must itself be unfinished (OPEN_LIST_RE): a whole
+// statement above the `from`, `import os` or `export DATA=/data`, opens nothing, and the `from` is English (round 5).
 const IMPORT_LINES_MAX = 32;
 function openedImportAbove(text: string, lineStart: number, head: string, above?: (n: number) => string | null): boolean {
   if (/["'`;]/.test(head)) return false;
@@ -189,7 +205,7 @@ function openedImportAbove(text: string, lineStart: number, head: string, above?
     if (end > 0) { const start = text.lastIndexOf("\n", end - 2) + 1; line = text.slice(start, end - 1); end = start; }
     else line = above ? above(++up) : null;                          // past the unit's first line: the row above (a code view)
     if (line === null) return false;
-    if (STATEMENT_HEAD_RE.test(line)) return !/["'`]/.test(line);   // the opener: an import that names no specifier yet
+    if (STATEMENT_HEAD_RE.test(line)) return opensImportList(line);   // the opener: an import that names no specifier yet, and ends no statement
     if (!line.trim() || /["'`;]/.test(line)) return false;          // a blank line, a quoted specifier or a statement's end: nothing open above
   }
   return false;
@@ -218,11 +234,13 @@ export function viewerPathGate(tok: string, ctx?: { text: string; at: number; ab
     const before = ctx.at > 0 ? ctx.text[ctx.at - 1] : "";
     if (before && !OPENER_RE.test(before)) return false;               // glued to a substitution, a scope, a drive, a host
     if (before === "*") {
-      // Emphasis wraps its path in stars on both sides (`*docs/a.md*`, `**docs/a.md**`, a `:line` inside them too). A
-      // `/`-led token after a star is a glob's tail (`**/docs/a.md`, `src/*/index.ts`, `packages/*/package.json`), and a
-      // token with no closing star is an operand (`w*h/img.size`, `2*docs/times.md`); the round-3 opener linked both as
-      // paths that were never written, the round-1 class (the 2026-09-07 review, round 4).
-      if (anchored) return false;
+      // Emphasis wraps its path in stars on both sides (`*docs/a.md*`, `**docs/a.md**`, `**./scripts/setup.sh**`, a
+      // `:line` inside them too). A `/`-led token after a star is a glob's tail (`**/docs/a.md`, `src/*/index.ts`,
+      // `packages/*/package.json`), and a token with no closing star is an operand (`w*h/img.size`, `2*docs/times.md`);
+      // the round-3 opener linked both as paths that were never written, the round-1 class (the 2026-09-07 review,
+      // round 4). The glob test is the leading slash, not the anchor: a glob's tail after its star always begins with
+      // `/`, and `*./`, `*../`, `*~/` are emphasis and nothing else (round 4 refused those; round 5).
+      if (tok.startsWith("/")) return false;
       STAR_CLOSE_RE.lastIndex = ctx.at + tok.length;
       if (!STAR_CLOSE_RE.test(ctx.text)) return false;
     }

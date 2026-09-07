@@ -262,12 +262,15 @@ link, a plain click opens the comment or the change and leaves the link alone.
 Inside a file the test for a path is stricter than the one a todo or a chat
 message gets: a path links only when it has a slash and a file extension, starts
 on its own, at the start of a line or after a space, a quote, a bracket or
-Markdown's `*` with a closing `*` after the path (so `$HOME/docs/a.md`,
-`@scope/pkg/index.js`, `C:/Users/x.txt`, a glob's `**/docs/a.md` and
-`w*h/img.size` stay text), is not part of a web address, does not start with a site name
+Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
+`C:/Users/x.txt` stay text), is not part of a web address, does not start with a site name
 (`www.example.org/docs/index.html`), and is not the package an `import`
 statement or a `require()` call names (a relative import such as `./app.css`
-still links, and so does a path after the English word "from" in a note). Web
+still links, and so does a path after the English word "from" in a note, even
+under an `import` line that is a whole statement). After a `*` the path must be
+the whole emphasised text, closed by a `*` of its own: `*docs/a.md*` and
+`**./scripts/setup.sh**` link; a glob's `**/docs/a.md`, an operand's
+`w*h/img.size` and the first path in `**docs/a.md and docs/b.md**` stay text. Web
 addresses and paths found in the text wear a dotted underline that
 turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that

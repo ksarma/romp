@@ -31,6 +31,7 @@ const README = ROOT + "/README.md";
 const CONFIG = ROOT + "/src/data/config.json";
 const RUN = ROOT + "/scripts/run.sh";
 const XTS = ROOT + "/ui/x.ts";
+const BLANK = ROOT + "/src/blank.py";
 const URL_SETUP = "https://example.invalid/docs/setup.html";
 
 const APP_TEXT = [
@@ -53,6 +54,7 @@ const GUIDE_TEXT = [
   "A glob `**/docs/glob.md` or `src/**/x.md` links nothing, nor does an operand 2*docs/times.md or 3*w/h.px.", "",   // a star opens a path only when unanchored and closed by a star (round 4); two lone stars, so hljs's emphasis mode closes on the line (an unclosed one runs to the end of the file and its closing tag makes a phantom row)
   'Copied from "docs/from.md", and the export "out/data.json" is stale.', "",   // the English from and export: prose that names files (round 3)
   "**docs/strong.md** and *docs/em.md*, then \u200bdocs/zwsp.md after a zero-width space.", "",   // Markdown emphasis and a zero-width space before a path: openers in the Raw view (round 3)
+  "**./docs/dot.md** runs first, then *../docs/dotdot.md* is read.", "",   // emphasis around an anchored path: no glob puts ./ or ../ after its star (round 4 refused these; round 5)
   '<svg width="200" height="30"><a href="https://example.invalid/s"><text y="11">svgweb</text></a><a href="x.md"><text x="60" y="11">svgfile</text></a><text y="26">label docs/label.md in the figure</text></svg>', "",   // a bare path only: marked autolinks a URL inside inline HTML itself
   "```bash", "curl https://example.invalid/dl -o data/x.json", "docs/fence2.md", "  ./docs/fence3.md", "```", "",
   ...Array.from({ length: 32 }, (_, i) => "line " + (i + 10) + "\n"),   // one paragraph each (a blank line between), so the rendered body scrolls
@@ -65,11 +67,14 @@ const NOTES_TEXT = Array.from({ length: 12 }, (_, i) => "note " + (i + 1)).join(
 // what a highlighter cuts: bash puts `$HOME` and `${ROOT}` in spans of their own; typescript does the same to a template's `${x}`
 // …and a URL a substitution cuts, with an absolute path as a query value: the URL stays text, and the path inside it is the URL's (round 3)
 // …and the shapes round 4 refused: a glob's tail after a star, an operand after one, a multi-line import's specifier
+// …and a whole statement (a shell's export, a finished export) above a comment's English from, which opens no import (round 5)
 const RUN_TEXT = ["#!/bin/bash", 'cp "$HOME/docs/a.md" ./out/', "cat ${ROOT}/src/x.py", 'echo "see ./docs/b.md"', "curl https://example.invalid/q?x=/docs/a.md/$V",
-  "find . -path '**/docs/a.md'", "cp src/**/index.ts out/", "ls packages/*/package.json", ""].join("\n");
+  "find . -path '**/docs/a.md'", "cp src/**/index.ts out/", "ls packages/*/package.json", "export DATA=/data", '# copied from "docs/c.md"', ""].join("\n");
 const XTS_TEXT = ['import b from "lodash/fp.js";', 'import c from "@scope/pkg/dist/index.js";', 'import d from "./util.ts";', "const s = `tmpl/${x}/file.ts`;", "const u = `https://example.invalid/q?x=/docs/a.md/${v}`;",
-  "const area = w*h/img.size;", "import {", '  e, f } from "pkg/multi.js";', "import { g }", '  from "pkg/cont.js";', ""].join("\n");
-const FILES: Record<string, string> = { [APP]: APP_TEXT, [GUIDE]: GUIDE_TEXT, [NOTES]: NOTES_TEXT, [README]: "# notes-api\n", [CONFIG]: '{"a": 1}\n', [RUN]: RUN_TEXT, [XTS]: XTS_TEXT };
+  "const area = w*h/img.size;", "import {", '  e, f } from "pkg/multi.js";', "import { g }", '  from "pkg/cont.js";', "import {", "", '  h } from "pkg/gap.js";', "export const z = 2;", '// ported from "docs/z.md"', ""].join("\n");
+// a code view's blank row holds no text node; it is a blank line to the import rule all the same, and Python's whole `import os` above a comment's from opens no import (round 5)
+const BLANK_TEXT = ["import json", "", '# see from "docs/c.md"', "import os", "import sys", '# adapted from "docs/a.md"', 'x = "docs/b.md"', "", "y = 1", "import numpy as np", '# data from "data/raw.csv"', ""].join("\n");
+const FILES: Record<string, string> = { [APP]: APP_TEXT, [GUIDE]: GUIDE_TEXT, [NOTES]: NOTES_TEXT, [README]: "# notes-api\n", [CONFIG]: '{"a": 1}\n', [RUN]: RUN_TEXT, [XTS]: XTS_TEXT, [BLANK]: BLANK_TEXT };
 
 // ── the fake comments host: what the kernel answers a status ask with ─────────────────────────────
 // An EMPTY status (nothing kept beside the file) makes the Comments action appear and paints nothing; the MARKED one,
@@ -311,7 +316,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     // the Raw view's rows: the English from and export before a quoted path are prose, Markdown's emphasis marks and a
     // zero-width space are openers (the 2026-09-07 review, round 3), and the rows read as the file's lines
     const rawLinks = (await linkInfo("#romp-fileview .file-uri-link")).map((l) => l.text);
-    for (const t of ["docs/from.md", "out/data.json", "docs/strong.md", "docs/em.md", "docs/zwsp.md"]) assert.ok(rawLinks.includes(t), "Raw links " + t + ": " + JSON.stringify(rawLinks));
+    for (const t of ["docs/from.md", "out/data.json", "docs/strong.md", "docs/em.md", "docs/zwsp.md", "./docs/dot.md", "../docs/dotdot.md"]) assert.ok(rawLinks.includes(t), "Raw links " + t + ": " + JSON.stringify(rawLinks));
     for (const t of ["/docs/glob.md", "docs/glob.md", "/x.md", "docs/times.md", "w/h.px"]) assert.ok(!rawLinks.includes(t), "no link for a glob's tail or an operand after a star (round 4): " + t);
     assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-strong, #romp-fileview code.hljs .hljs-emphasis").length >= 2), "hljs marked the emphasis, so the ** and * stand in the row's text");
     assert.deepEqual(await rowTexts(page), GUIDE_TEXT.split("\n").slice(0, -1), "every row reads as the file's line");
@@ -335,7 +340,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(byText("docs/fence2.md").path, ROOT + "/docs/docs/fence2.md", "the fence's second line");
     assert.equal(byText("./docs/fence3.md").path, ROOT + "/docs/docs/fence3.md", "its third, indented");
     // the rendered prose: a quoted path after the English from or export links (round 3), and so does one after a zero-width space, or inside emphasis
-    for (const [t, tail] of [["docs/from.md", "docs/from.md"], ["out/data.json", "out/data.json"], ["docs/strong.md", "docs/strong.md"], ["docs/em.md", "docs/em.md"], ["docs/zwsp.md", "docs/zwsp.md"]] as const) {
+    for (const [t, tail] of [["docs/from.md", "docs/from.md"], ["out/data.json", "out/data.json"], ["docs/strong.md", "docs/strong.md"], ["docs/em.md", "docs/em.md"], ["docs/zwsp.md", "docs/zwsp.md"], ["./docs/dot.md", "docs/dot.md"], ["../docs/dotdot.md", "dotdot.md"]] as const) {
       assert.equal(byText(t)?.path, ROOT + "/docs/" + tail, "rendered: " + t);
     }
     assert.equal(await page.evaluate(() => document.querySelector("#romp-fileview .fileview-md p br") !== null), true, "marked made the hard break a <br>");
@@ -522,19 +527,26 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
   });
 });
 
-test("in a browser, over the real highlighter: a substitution span cannot turn a path's tail into a link, nor a query value inside the URL it cut, and an import's specifier stays text", async (t) => {
+test("in a browser, over the real highlighter: a substitution span cannot turn a path's tail into a link, nor a query value inside the URL it cut, and an import's specifier stays text; a blank row is a line to the import rule, and a whole statement above a comment's from opens no import", async (t) => {
   await inBrowser(t, "files", async (h) => {
     const { page, open, linkInfo } = h;
     await open(RUN);
     assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-variable").length) >= 3, "bash's grammar put $HOME, ${ROOT} and $V in spans of their own");
-    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./docs/b.md", ROOT + "/scripts/docs/b.md"]], "no /docs/a.md (neither the one after $HOME nor the one inside the cut URL's query), no /src/x.py; no /docs/a.md, /index.ts or /package.json off a glob's star (round 4)");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./docs/b.md", ROOT + "/scripts/docs/b.md"], ["docs/c.md", ROOT + "/scripts/docs/c.md"]], "no /docs/a.md (neither the one after $HOME nor the one inside the cut URL's query), no /src/x.py; no /docs/a.md, /index.ts or /package.json off a glob's star (round 4); the comment's from under a whole `export DATA=/data` names a file (round 5)");
     assert.deepEqual(await linkInfo("#romp-fileview a.fv-url"), [], "the URL $V cuts is left as text, not wrapped in part");
     assert.deepEqual(await rowTexts(page), RUN_TEXT.split("\n").slice(0, -1));
     await open(XTS);
     assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-subst").length) >= 2, "typescript's grammar put ${x} and ${v} in spans of their own");
-    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./util.ts", ROOT + "/ui/util.ts"]], "the relative import links; lodash/fp.js, @scope/pkg/dist/index.js, the template's /file.ts and the cut URL's /docs/a.md do not; nor h/img.size after the operator's star, nor the multi-line imports' pkg/multi.js and pkg/cont.js (round 4)");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./util.ts", ROOT + "/ui/util.ts"], ["pkg/gap.js", ROOT + "/ui/pkg/gap.js"], ["docs/z.md", ROOT + "/ui/docs/z.md"]],
+      "the relative import links; lodash/fp.js, @scope/pkg/dist/index.js, the template's /file.ts and the cut URL's /docs/a.md do not; nor h/img.size after the operator's star, nor the multi-line imports' pkg/multi.js and pkg/cont.js (round 4); a blank row between `import {` and its `} from` ends the import as a blank line in a fence does, and the comment's from under a whole `export const` names a file (round 5)");
     assert.deepEqual(await linkInfo("#romp-fileview a.fv-url"), [], "the template's URL ${v} cuts is left as text");
     assert.deepEqual(await rowTexts(page), XTS_TEXT.split("\n").slice(0, -1));
+    // the primary surface for the round-5 finding: a Python file's blank row is `<span class=fv-cl><span class=fv-ct></span></span>`, no text node
+    await open(BLANK);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .fv-cl")[1].querySelector(".fv-ct")!.childNodes.length), 0, "the blank row holds no text node (the shape that hid it from the walk)");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["docs/c.md", ROOT + "/src/docs/c.md"], ["docs/a.md", ROOT + "/src/docs/a.md"], ["docs/b.md", ROOT + "/src/docs/b.md"], ["data/raw.csv", ROOT + "/src/data/raw.csv"]],
+      "the comment's from under a blank row, under `import os` / `import sys`, and under `import numpy as np` names a file each time (round 4 linked docs/b.md alone; round 5)");
+    assert.deepEqual(await rowTexts(page), BLANK_TEXT.split("\n").slice(0, -1), "every row reads as the file's line, the blank ones included");
   });
 });
 

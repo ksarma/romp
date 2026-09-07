@@ -286,7 +286,11 @@ export const DEAD_TEXT = "a, .file-uri-link, svg";
 /** The text under `root` cut into units: under `unit` (a selector), the consecutive text nodes sharing their
  *  nearest such ancestor, joined; a node under none, or with no selector, is a unit of its own. A `<br>` ends a
  *  unit too: it is a line break, and a token never crosses one (`a<br>docs/a.md` read as `adocs/a.md` before; the
- *  2026-09-07 review). `skip` names the ancestors whose text is dead to marking. */
+ *  2026-09-07 review). A unit element with no text under it is an EMPTY unit, in its place: a code view's blank
+ *  row is `<span class=fv-cl><span class=fv-ct></span></span>`, and a walk over text nodes alone saw no unit there,
+ *  so a gate reading the units above a token (the viewer's import rule, through `above(n)`) never met the blank
+ *  line that ends an import list, and refused the English `from "docs/a.md"` in a comment under any `import` row
+ *  (the 2026-09-07 review, round 5). `skip` names the ancestors whose text is dead to marking. */
 export function textUnits(root: HTMLElement, unit: string | undefined, skip: string): TextUnit[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
   const units: TextUnit[] = [];
@@ -294,7 +298,12 @@ export function textUnits(root: HTMLElement, unit: string | undefined, skip: str
   let broke = false;                                    // a <br> passed since the last text node
   let n: Node | null;
   while ((n = walker.nextNode())) {
-    if (n.nodeType === 1) { if (/^br$/i.test((n as Element).tagName)) broke = true; continue; }
+    if (n.nodeType === 1) {
+      const e = n as Element;
+      if (/^br$/i.test(e.tagName)) broke = true;
+      else if (unit && e.matches(unit) && e.textContent === "") { units.push({ text: "", spans: [] }); cur = null; }   // a blank line; the text after it starts a unit of its own
+      continue;
+    }
     const tn = n as Text;
     const p = tn.parentElement;
     const u = unit && p ? p.closest(unit) : null;
