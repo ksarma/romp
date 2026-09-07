@@ -78,6 +78,34 @@ class PassFrame(unittest.TestCase):
         fresh = jd.parsed_session(SID, [str(self.path)], T0 + 100)
         self.assertIsNot(fresh, first, "no frame → each look re-reads reality (the pre-frame behavior)")
 
+    def test_a_warm_first_touch_pins_the_cached_parse(self):
+        # The cache-HIT path returned without pinning (found in review 2026-09-06): a session whose parse
+        # was already in _PARSE_CACHE froze nothing under the frame, so a turn ending mid-pass was visible
+        # to a later stage and invisible to an earlier one - the same two-worlds shape the frame exists
+        # to prevent, for every warm session (idle sessions are warm nearly always).
+        warm = jd.parsed_session(SID, [str(self.path)], T0 + 100)     # frameless: fills the cache
+        self.assertTrue(jd.begin_pass_frame())
+        first = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertIs(first, warm, "premise: the pass's first touch is a cache hit")
+        self._append(aline(T0 + 60, "All done: shipped and verified.", "a2", "a1", stop="end_turn"))
+        again = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertIs(again, first, "the hit was pinned: a later stage sees the SAME frozen parse")
+        self.assertFalse(again["turns"][-1]["ended"], "the mid-pass append stays out of this pass")
+        jd.end_pass_frame(True)
+        fresh = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertIsNot(fresh, first)
+        self.assertTrue(fresh["turns"][-1]["ended"], "the next pass sees the ended turn, whole")
+
+    def test_a_warm_cache_without_a_frame_still_reads_live(self):
+        # the no-frame path is unchanged: an unchanged file hits the cache, a grown one re-parses at once
+        warm = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertIs(jd.parsed_session(SID, [str(self.path)], T0 + 100), warm,
+                      "an unchanged file is served from the cache")
+        self._append(aline(T0 + 60, "All done: shipped and verified.", "a2", "a1", stop="end_turn"))
+        fresh = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertIsNot(fresh, warm)
+        self.assertTrue(fresh["turns"][-1]["ended"], "no frame: the appended turn shows on the next look")
+
     def test_frame_ownership_nests(self):
         self.assertTrue(jd.begin_pass_frame(), "first opener owns the frame")
         pinned = jd.parsed_session(SID, [str(self.path)], T0 + 100)
