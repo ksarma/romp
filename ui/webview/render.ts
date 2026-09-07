@@ -5947,8 +5947,8 @@ function renderTabs() {
   // the pane shows at a glance (snapView: a header's mark, its way-back act and its words derive from it,
   // and leaveSnapshot changes it with no fold change), and per
   // visible id either a placeholder's meta or the session's name, color, state and its tab class, faded,
-  // context and its tint, viewer flag, host-down mark and note; plus the context-gauge setting, the
-  // one-group-per-row setting (the row breaks and the trail's boundary read it), the theme
+  // context and its tint, viewer flag, user-todo glyph, host-down mark and note; plus the context-gauge setting,
+  // the one-group-per-row setting (the row breaks and the trail's boundary read it), the theme
   // and the colormap (the gauge's tone and fallback read the theme — pickTone, ctxFallbackColor — and the
   // compacting sweep's gradient the colormap, so a settings change repaints through this signature), the +
   // tab's key hint, and the tag lens and unions the filter chips render. Equal string, same DOM: the guards
@@ -5974,7 +5974,7 @@ function renderTabs() {
       if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, down, note]; }   // makePlaceholderTab's reads
       const st = s.status;
       return [s.name, s.color?.bg, s.color?.fg, st.state, tabStateClass(st), !!st.faded,
-              st.ctx, st.ctxColor, st.ctxTone, !!s.sub, down, note];
+              st.ctx, st.ctxColor, st.ctxTone, !!s.sub, !!s.userTodos?.length, down, note];
     }),
   ]);
   const mslotEl = document.getElementById("mtag-slot");
@@ -6058,6 +6058,20 @@ function renderTabs() {
       tab.addEventListener("mouseleave", () => { label.style.color = fadedColor(full); label.classList.add("name-faded"); });
     }
     tab.appendChild(label);
+    // USER-TODO glyph (plans/user-todos.md, slice 2): this session has flagged something it needs
+    // from you — a small NON-NUMERIC mark right of the name (tabs deliberately carry no counts);
+    // the split card by the composer says what. Purely payload-driven off the session's userTodos
+    // field (delta-stable since slice 1, and build_session already blanks it for ended sessions),
+    // so the glyph appears/disappears with the store and needs no client-side gate; the strip's
+    // signature above reads it, so its arrival alone rebuilds the strip. Its OWN
+    // element, never a .tab-dot: pips encode turn state, and the kernel's mobile scrape keys on
+    // the pip classes (tests/test_kernel_mobile.py pins that vocabulary).
+    if (s.userTodos && s.userTodos.length) {
+      const ut = el("span", "tab-usertodo");
+      ut.textContent = "⚑";
+      ut.title = "waiting on you — this session flagged something it needs from you (see the note by its message box)";
+      tab.appendChild(ut);
+    }
     appendTabCtxGauge(tab, s);   // the context gauge, shared with the skeleton tab (2026-09-07)
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.

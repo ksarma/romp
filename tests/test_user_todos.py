@@ -53,6 +53,7 @@ import threading
 import time
 import unittest
 from importlib.machinery import SourceFileLoader
+from unittest import mock
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -2568,3 +2569,109 @@ class NoJudgeWritesTheStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _feed_env(test, sids):
+    """Patch build_feed's session inputs to a synthetic alive set — the map seam needs no parse
+    (ps None keeps every parse-derived path dark, exactly the cold-start shape)."""
+    sessions = [{"sid": s, "name": n, "path": "/nonexistent/%s.jsonl" % s, "anchor": 0, "mtime": 0}
+                for s, n in sids]
+    ps = [
+        mock.patch.object(km, "_alive_sessions", lambda now, tmux: list(sessions)),
+        mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
+    ]
+    for p in ps:
+        p.start()
+        test.addCleanup(p.stop)
+
+
+class FeedSeamUserTodos(_StoreSandbox):
+    """build_feed's return grows a top-level sid-keyed OPEN-COUNT map (plans/user-todos.md, data
+    seams) — the feed-card marker's ride, the same way working[]/bgServices ride the payload. The
+    ended gate is build_session's exact gate; a muted (hideFromFeed) session contributes nothing,
+    like every other feed surface."""
+
+    def test_the_map_carries_open_counts_per_sid(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._add_user_todo(SID, "Need a staging credential for the tests")
+        tid = km._add_user_todo(SID2, "Need your pick of the two route layouts")
+        km._resolve_user_todo(SID2, tid, "withdrawn")
+        _feed_env(self, [(SID, "web"), (SID2, "api")])
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(feed.get("userTodos"), {SID: 2}, "open rows only; a resolved-only sid is absent")
+
+    def test_the_key_always_rides_and_reads_empty_for_a_todo_less_world(self):
+        # a dict, not a missing key: federation merges per host, and the client's guard reads a
+        # missing or non-object map as {} — an honest empty map from a current kernel comes through
+        _feed_env(self, [(SID, "web")])
+        feed = km.build_feed(NOW, {})
+        self.assertIn("userTodos", feed)
+        self.assertEqual(feed["userTodos"], {})
+
+    def test_an_ended_sessions_todos_are_hidden_from_the_map(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        (jd.STATE / "gone").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "gone" / (SID + ".json")).write_text(json.dumps({"t": NOW, "by": "gone"}))
+        _feed_env(self, [(SID, "web")])
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(feed.get("userTodos"), {}, "hidden, not cleared — they return with a revive")
+        self.assertTrue(km._open_user_todos(SID), "the store still holds the open ask")
+
+    def test_a_revived_session_counts_again(self):
+        # the gate is build_session's exact one: a death marker counts only while it is the newest
+        # event, so a revival's fresh states row un-hides the todos without anyone deleting the marker
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        (jd.STATE / "gone").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "gone" / (SID + ".json")).write_text(json.dumps({"t": NOW, "by": "gone"}))
+        (jd.STATE / "states").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "states" / (SID + ".jsonl")).write_text(
+            json.dumps({"t": NOW + 60, "state": "idle"}) + "\n")
+        _feed_env(self, [(SID, "web")])
+        self.assertEqual(km.build_feed(NOW, {}).get("userTodos"), {SID: 1})
+
+    def test_an_sdk_ended_registry_hides_them_too(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps({"alive": False}))
+        _feed_env(self, [(SID, "web")])
+        self.assertEqual(km.build_feed(NOW, {}).get("userTodos"), {})
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps({"alive": True}))
+        self.assertEqual(km.build_feed(NOW, {}).get("userTodos"), {SID: 1},
+                         "dormant (alive, no thread) is not ended")
+
+    def test_a_muted_session_contributes_nothing(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        (jd.STATE / "session-flags.json").write_text(json.dumps({SID: {"hideFromFeed": True}}))
+        km._flags_cache.clear()
+        _feed_env(self, [(SID, "web")])
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(feed.get("userTodos"), {}, "muted from the feed → no marker data either")
+
+    def test_the_map_serializes_stably_across_builds(self):
+        # the feed payload is dedup-compared serialized (_send_client) — same store, same bytes
+        km._add_user_todo(SID2, "api: need the auth decision")
+        km._add_user_todo(SID, "web: need the staging port")
+        _feed_env(self, [(SID, "web"), (SID2, "api")])
+        a = json.dumps(km.build_feed(NOW, {}).get("userTodos"))
+        b = json.dumps(km.build_feed(NOW, {}).get("userTodos"))
+        self.assertEqual(a, b)
+        self.assertEqual(json.loads(a), {SID: 1, SID2: 1})
+        self.assertEqual(list(json.loads(a)), sorted([SID, SID2]), "sid-sorted, whatever the alive order")
+
+    def test_the_map_holds_store_values_only(self):
+        # no ages, no `now`: two builds at different clocks give the same bytes
+        km._add_user_todo(SID, "Need the staging port")
+        _feed_env(self, [(SID, "web")])
+        a = json.dumps(km.build_feed(NOW, {}).get("userTodos"))
+        b = json.dumps(km.build_feed(NOW + 3600, {}).get("userTodos"))
+        self.assertEqual(a, b)
+        self.assertEqual(json.loads(a), {SID: 1})
+
+    def test_the_view_sig_watches_the_store(self):
+        # the marker and every later reader of the map take it from build_feed, so a todo write must
+        # bust the FEED cache the way it already busts the owning session's chat cache — without
+        # this the new row waited on an unrelated rebuild
+        before = km._fleet_view_sig(NOW, {})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        after = km._fleet_view_sig(NOW, {})
+        self.assertNotEqual(before, after)
