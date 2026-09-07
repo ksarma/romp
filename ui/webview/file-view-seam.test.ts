@@ -858,7 +858,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 4, "the SVG Source view, the text views, and the PDF pages path twice (page 1 drawn; every later page) call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins the floor)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 5, "the SVG Source view, the text views, the PDF pages path twice (page 1 drawn; every later page), and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins the floor)");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);/, "mdBlock knows the open file's path and sid");
   const mdFn = VIEW.split("function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {")[1].split("\n}\n")[0];
@@ -877,7 +877,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
 });
 
-// ── editing over pending changes (plans/file-review.md Slice 5; the Slice 5 contract, H3 and H4) ────
+// ── editing over pending changes (plans/file-review.md Slice 5) ────────────────────────────────────
 // The panel registers its half through setTrackedEdit; the viewer mounts the editor with the status's records and the
 // colour map, answers text() from the buffer, counts an in-editor decision as a change worth saving, and sends Save
 // through the panel's `save` verb — fenced on the sidecar the records came from AND the file the editor loaded — with

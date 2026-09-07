@@ -288,7 +288,7 @@ function world(): World {
     editing: false, tracked: null, consent: async () => true,
   } as World;
   rows(code, text);
-  // the viewer's renderBody + fireRendered — in the real viewer no hook fires while editing; a test that paints in edit
+  // the viewer's renderBody + fireRendered — in the real viewer the one hook in edit mode is enterEdit's; a test that paints in edit
   // mode is exercising the panel's own render, which the hook reaches through paintAll's editing branch
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {

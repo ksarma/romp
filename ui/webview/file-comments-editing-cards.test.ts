@@ -285,7 +285,7 @@ function world(): World {
     editing: false, tracked: null,
   } as World;
   rows(code, text);
-  // the viewer's renderBody + fireRendered — in the real viewer no hook fires while editing; a test that paints in edit
+  // the viewer's renderBody + fireRendered — in the real viewer the one hook in edit mode is enterEdit's; a test that paints in edit
   // mode is exercising the panel's own render, which the hook reaches through paintAll's editing branch
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
@@ -346,7 +346,7 @@ test("while the editor is up, a card's Accept or Reject, Accept all and Reject a
   assert.equal(before.classes.includes("fileview-btn-blocked"), false);
   assert.equal(before.title, "Keep the text as it is and drop the change");
   assert.equal(aside.querySelector(".fc-decide-edit"), null, "no caption in read mode");
-  // Edit: begin() is the panel's one event at Edit (the viewer fires no onRendered in edit mode), and the cards take their edit-mode state from it
+  // Edit: begin() runs at the click; the viewer then fires onRendered once in edit mode (enterEdit), and the cards take their edit-mode state from that paint (here begin() renders with editing already set, so it shows at once)
   w.editing = true;
   const begun = w.tracked!.begin()!;
   assert.deepEqual(begun.records, [rec1, rec2], "the records ride into the editor");

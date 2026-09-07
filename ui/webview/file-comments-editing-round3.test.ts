@@ -294,7 +294,7 @@ function world(): World {
     editing: false, buffer: null, tracked: null,
   } as World;
   rows(code, text);
-  // the viewer's renderBody + fireRendered — in the real viewer no hook fires while editing
+  // the viewer's renderBody + fireRendered — in the real viewer the one hook in edit mode is enterEdit's
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
     path: ABS, sid: SID, todoId: null,

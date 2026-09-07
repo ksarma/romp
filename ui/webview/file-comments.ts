@@ -955,15 +955,17 @@ class Panel {
     this.render();
   }
 
-  // ── editing over pending changes (Slice 5; the contract's H3 and H4) ──────────────────────────
+  // ── editing over pending changes (plans/file-review.md, Slice 5) ─────────────────────────────
   /** The viewer's seam object: what rides into the editor at Edit, where Save goes, and the save itself. */
   private trackedEdit(): TrackedEdit {
     return {
       begin: () => {
         const s = this.status;
         const hunks = s ? s.hunks || [] : [];
-        // begin() is the panel's one event at Edit (the viewer's renderBody fires no onRendered in edit mode), so the cards
-        // take their edit-mode state here: decisions answered in place, no Reveal or link into a read view that is gone.
+        // begin() runs at the click, before the viewer flips into edit mode (editing() still answers false here), so this
+        // render leaves the cards in read mode; the viewer fires the seam's onRendered once as the editor takes the body
+        // (enterEdit), and that paint gives the cards their edit-mode state: decisions answered in place, no Reveal or link
+        // into a read view that is gone (paintAll's editing branch renders the cards and paints nothing).
         // A new edit, new latches (the records are the sidecar's own again, or none rode in); the Reject-all confirm is
         // a question the person walked away from by clicking Edit — left set, it came back re-counted when the editor
         // closed, one click from rewriting the file with no gesture behind it; and the cards group over the text the
