@@ -290,6 +290,12 @@ class _Gate(unittest.TestCase):
     def _st(self, tier):
         return dict(jd._TIER_STATS[tier])
 
+    def _rows(self, err):
+        """The judge-errors rows with `err`, in file order; none when no row has been written yet."""
+        if not jd.ERRORS.exists():
+            return []
+        return [r for r in (json.loads(l) for l in open(jd.ERRORS) if l.strip()) if r.get("err") == err]
+
     def _reset(self):
         for d in jd._TIER_STATS.values():
             for k in d:
@@ -1404,9 +1410,6 @@ class StoreCompleteness(_Gate):
             f = store["nodes"][f]["parentId"]
         return store["nodes"][f]
 
-    def _rows(self, err):
-        return [r for r in (json.loads(l) for l in open(jd.ERRORS) if l.strip()) if r.get("err") == err]
-
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_states_file_never_stamps(self):
         # the review's reproduction: the gate stats the states file into the distiller's signature, then the
@@ -2231,6 +2234,152 @@ class CourierGate(_Gate):
         ts = jd.tier_stats()
         self.assertIn("courier", ts)
         self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
+
+
+class IndexReaders(_Gate):
+    """The index tier's readers are strict about files that EXIST (J7, 2026-09-07; the round-3 and round-4
+    reviews' recurring finding). Absent stays a real state (no caption rows, no archive record, a unit-cache
+    miss) and marks nothing; a failure on a file that exists reads as that same empty answer for the call,
+    marks the running stage incomplete and logs one judge-errors row per failure episode, so the gate never
+    stamps a decision made without an input its signature says the stage saw. Before, every one of these
+    readers swallowed the failure as the empty answer and nothing recorded it."""
+
+    def _tasks(self, path, now=NOW):
+        return jd.tasks_for(SID, str(path), [str(path)], now)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_the_caption_readers_read_absent_as_empty_and_an_unreadable_file_marks_and_logs_once(self):
+        self.assertEqual((jd.captioned_ids(SID), jd._live_natoms(SID), jd.session_turn_captions(SID)), (set(), {}, []))
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "absent is a state, not a failure")
+        self.assertEqual(self._rows("captions-unreadable"), [])
+        jd.append_caption(SID, "seg1", "segment", T0 + 30, "Did A")
+        jd.append_caption(SID, "t1", "turn", T0 + 30, "Did A")
+        jd.append_caption(SID, "seg2", "segment", T0 + 200, "Working on B", live=True, natoms=9)
+        with open(jd.CAPDIR / (SID + ".jsonl"), "a") as f:
+            f.write("{ not a row\n")                                    # content, not a read failure
+        self.assertEqual(jd.captioned_ids(SID), {"seg1", "t1"}, "live rows are not done; a bad line is skipped")
+        self.assertEqual(jd._live_natoms(SID), {"seg2": 9})
+        self.assertEqual(jd.session_turn_captions(SID), ["Did A"])
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        rows = jd._caption_rows(SID)
+        self.assertEqual((jd.captioned_ids(SID, rows), jd._live_natoms(SID, rows)), ({"seg1", "t1"}, {"seg2": 9}),
+                         "the captioner's one read per session derives both answers from the same rows")
+        cp = jd.CAPDIR / (SID + ".jsonl")
+        os.chmod(cp, 0)
+        try:
+            for fn, empty in ((jd.captioned_ids, set()), (jd._live_natoms, {}), (jd.session_turn_captions, [])):
+                jd._judge_ctx.stage_incomplete = False
+                self.assertEqual(fn(SID), empty, fn.__name__)
+                self.assertTrue(jd._judge_ctx.stage_incomplete,
+                                "%s: a read that fails on a file that exists marks the stage" % fn.__name__)
+            self.assertEqual(len(self._rows("captions-unreadable")), 1, "one row per failure episode, not per read")
+            self.assertEqual(self._rows("captions-unreadable")[0]["fsid"], SID)
+        finally:
+            os.chmod(cp, 0o644)
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(jd.captioned_ids(SID), {"seg1", "t1"}, "readable again")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        os.chmod(cp, 0)
+        try:
+            jd.session_turn_captions(SID)
+            self.assertEqual(len(self._rows("captions-unreadable")), 2, "a good read ended the episode: the next failure logs again")
+        finally:
+            os.chmod(cp, 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
+    def test_the_archive_reader_reads_absent_as_none_and_a_bad_file_marks_and_logs_once(self):
+        self.assertIsNone(jd.load_archive(SID))
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "absent is a state")
+        jd.write_archive(SID, {"headline": "Ship the search", "abstract": "Built it.", "turns": 2})
+        self.assertEqual(jd.load_archive(SID)["turns"], 2)
+        ap = jd.ARCHDIR / (SID + ".json")
+        os.chmod(ap, 0)
+        try:
+            jd._judge_ctx.stage_incomplete = False
+            self.assertIsNone(jd.load_archive(SID))
+            self.assertTrue(jd._judge_ctx.stage_incomplete, "a read that fails on a file that exists marks the stage")
+            jd.load_archive(SID)
+            self.assertEqual(len(self._rows("session-archive-unreadable")), 1, "one row per failure episode")
+        finally:
+            os.chmod(ap, 0o644)
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(jd.load_archive(SID)["turns"], 2, "readable again")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        ap.write_text("[1, 2]")                                          # decodes, but is not a record
+        self.assertIsNone(jd.load_archive(SID))
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "a document that is not a record is unreadable as one")
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 2)
+        ap.write_text("{ not json")
+        self.assertIsNone(jd.load_archive(SID))
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 2, "the same episode: no second row")
+        self.assertEqual(self._rows("archive-unreadable"), [], "the goals archive's row name is not borrowed")
+
+    def test_the_unit_cache_read_is_strict_and_a_stale_or_absent_cache_is_a_plain_miss(self):
+        path = self._session(SID)
+        tasks = self._tasks(path)
+        self.assertTrue(tasks, "two ended turns: caption tasks")
+        cf = jd.PCACHE / (SID + ".json")
+        self.assertTrue(cf.exists(), "the miss path published the cache")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        cf.write_text("{ not the cache")                                 # exists, does not decode
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), tasks, "the miss path regenerated the same tasks")
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "a cache that exists and does not read marks the stage")
+        self.assertEqual(len(self._rows("units-cache-unreadable")), 1)
+        self.assertEqual(json.loads(cf.read_text())["tasks"], tasks, "and the publish repaired the file")
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), tasks)                       # the hit
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "a good read marks nothing")
+        cf.write_text(json.dumps({"key": [[["stale", 1]], ""], "v": 5, "tasks": []}))
+        self.assertEqual(self._tasks(path), tasks, "a stale key is a plain miss")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        cf.unlink()
+        self.assertEqual(self._tasks(path), tasks, "an absent cache is a plain miss")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        self.assertEqual(len(self._rows("units-cache-unreadable")), 1, "neither miss is a failure")
+
+    def test_a_failed_unit_cache_publish_keeps_the_tasks_marks_the_run_and_logs_once_per_episode(self):
+        path = self._session(SID)
+        jd.PCACHE.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(jd.PCACHE, ignore_errors=True)
+        jd.PCACHE.write_text("")                                         # a file where the cache dir goes: mkdir fails
+        jd._judge_ctx.stage_incomplete = False
+        tasks = self._tasks(path)
+        self.assertTrue(tasks, "the decision stands for this pass")
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "but the next pass cannot read it back: the run is incomplete")
+        self.assertEqual(len(self._rows("units-cache-write-failed")), 1)
+        self.assertEqual(self._rows("units-cache-unreadable"), [], "a cache under a path that is not a directory is absent")
+        self._tasks(path)
+        self.assertEqual(len(self._rows("units-cache-write-failed")), 1, "one row per failure episode, not per pass")
+        jd.PCACHE.unlink()
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), tasks)
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "the publish landed")
+        self.assertTrue((jd.PCACHE / (SID + ".json")).exists())
+        shutil.rmtree(jd.PCACHE)
+        jd.PCACHE.write_text("")
+        self._tasks(path)
+        self.assertEqual(len(self._rows("units-cache-write-failed")), 2, "a good publish ended the episode: the next failure logs again")
+
+    def test_a_fallback_store_stands_the_captioner_down_and_memoizes_nothing(self):
+        # the seams _ready_tasks applies are the store's: a task list built over the empty fallback is not the
+        # session's (a seamed turn's first segment would be captioned as the whole turn), so tasks_for stands
+        # down as every stage does on this view, and publishes no cache, so the next pass reads the store again
+        # rather than serving a list made without it until the transcript moves
+        path = self._session(SID)
+        gp = jd.GOALDIR / (SID + ".json")
+        gp.parent.mkdir(parents=True, exist_ok=True)
+        gp.write_text("{ not the store")
+        jd._judge_ctx.stage_incomplete = False
+        self.assertEqual(self._tasks(path), [], "no task list over a view that is not the session's")
+        self.assertTrue(jd._judge_ctx.stage_incomplete, "load_goals marked the stage")
+        self.assertFalse((jd.PCACHE / (SID + ".json")).exists(), "nothing memoized")
+        self.assertEqual(len(self._rows("store-unreadable")), 1)
+        gp.unlink()                                                      # absent IS the empty store: not a fallback
+        jd._judge_ctx.stage_incomplete = False
+        self.assertTrue(self._tasks(path), "the store reads (as empty): the tasks are built and published")
+        self.assertFalse(jd._judge_ctx.stage_incomplete)
+        self.assertTrue((jd.PCACHE / (SID + ".json")).exists())
 
 
 if __name__ == "__main__":
