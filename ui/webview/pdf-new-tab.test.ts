@@ -101,7 +101,9 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   assert.doesNotMatch(opener, /await|\.then\(/, "the open happens inside the click gesture, never after a fetch");
   // the viewer: the ONE place a clicked file's gesture is read — openFileClick — and the plain open below it
   // never opens a tab (a relayed viewFile, a Reload: no gesture, the viewer)
-  assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  openFileView\(path, sid\);\n\}/);
+  // `open` (the 2026-09-07 fold): a hosting document's own plain-click opener (the file browser's BrowseHost.openFile, the
+  // Files pane's openHere) rides in as the fourth argument, read AFTER the gesture, so the tab decision stays here
+  assert.match(VIEW, /export function openFileClick\(ev: MouseEvent \| KeyboardEvent \| null \| undefined, path: string, sid\?: string \| null,\n\s*open\?: \(path: string, sid: string \| null\) => void\): void \{\n  if \(wantsOwnTab\(ev\) && openPdfTab\(path, sid \?\? null\)\) return;\n  if \(open\) open\(path, sid \?\? null\); else openFileView\(path, sid\);\n\}/);
   // no click site bypasses the gesture reader: the chat and the browser never call openFileView themselves
   assert.equal((RENDER.match(/openFileView\(/g) || []).length, 0, "render.ts opens files through openFileClick only");
   assert.equal((BROWSE.match(/openFileView\(/g) || []).length, 0, "file-browse.ts opens files through openFileClick only");
@@ -116,12 +118,13 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
     "the middle PRESS on a file row is cancelled so autoscroll cannot swallow the auxclick");
   assert.match(BROWSE, /list\.addEventListener\("auxclick", \(ev\) => \{[\s\S]*?if \(ev\.button !== 1\) return;[\s\S]*?const row = fileRowOf\(ev\);[\s\S]*?onAct\(row, ev\);/);
   assert.match(BROWSE, /if \(active\) \{ e\.preventDefault\(\); onAct\(active, e\); \}/, "Enter on a row carries its modifiers: Cmd/Ctrl+Enter on a PDF → its own tab");
-  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid\); return; \}/);
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \|\| undefined\); return; \}/);
   assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void \{[\s\S]*?openFileClick\(ev, path, sid \|\| activeId \|\| null\);/);
   assert.match(RENDER, /function onMiddleClick\(a: HTMLElement, fn: \(e: MouseEvent\) => void\): void \{\n  a\.addEventListener\("mousedown", \(e\) => \{ if \(e\.button === 1\) e\.preventDefault\(\); \}\);\n  a\.addEventListener\("auxclick", \(e\) => \{ if \(e\.button !== 1\) return; e\.stopPropagation\(\); fn\(e\); \}\);/);
   assert.match(RENDER, /x\.addEventListener\("auxclick", \(e\) => e\.stopPropagation\(\)\);/, "a middle-click on the composer attachment's ✕ is inert, never the box's open");
   assert.equal((RENDER.match(/onMiddleClick\(/g) || []).length, 5, "the declaration and the four path pills: tool file, image path, path link, composer attachment");
-  assert.equal((RENDER.match(/openPath\([^)]*, e\)/g) || []).length, 8, "each pill passes its click AND its middle-click");
+  // one nested paren allowed: the path pill resolves its session as (sid ?? activeId), a todo's own session first (user-todo-links.test.ts)
+  assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e\)/g) || []).length, 8, "each pill passes its click AND its middle-click");
 });
 
 test("the kernel serves a PDF inline WITH its name, so the tab is titled and a Save names the file", () => {
@@ -148,7 +151,10 @@ test("an oversize PDF's tab is not a dead end, and the listing marks such a file
   assert.match(KERNEL, /if status not in \(200, 206\):/);
   assert.match(KERNEL, /dq = \{"path": \(q\.get\("path"\) or \[""\]\)\[0\], "download": "1"\}/);
   // the listing's verdict follows /file's caps, so the browser routes an oversize row to the download
-  assert.match(KERNEL, /row\["viewable"\] = \(bool\(_m\) and size <= _PREVIEW_MAX_BYTES\) \\\n\s+or \(not _m and _is_text_path\(e\.name\) and size <= _TEXT_MAX_BYTES\)/);
+  // _MEDIA_MAX_BYTES is this kernel's name for the media cap (file-review Slice 4; upstream's _PREVIEW_MAX_BYTES)
+  assert.match(KERNEL, /row\["viewable"\] = \(bool\(_m\) and size <= _MEDIA_MAX_BYTES\) \\\n\s+or \(not _m and _is_text_path\(e\.name\) and size <= _TEXT_MAX_BYTES\)/);
+  assert.ok(KERNEL.includes("cap = _TEXT_MAX_BYTES if text else _MEDIA_MAX_BYTES"), "the same two caps /file applies");
+  assert.doesNotMatch(KERNEL, /_PREVIEW_MAX_BYTES/, "one name for the cap");
   // the relay names a remote PDF from the REQUESTED path, never the remote's header, on HEAD and GET
   const relay = KERNEL.slice(KERNEL.indexOf("def _remote_file("), KERNEL.indexOf("def _relay_download("));
   assert.equal((relay.match(/_attachment_disposition\(os\.path\.basename\(rp\), kind="inline"\)/g) || []).length, 2, "HEAD and GET");

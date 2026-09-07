@@ -144,7 +144,7 @@ test("render.ts imports the matcher and binds the click itself — the chat's ro
   }
   // one binder: data-rel → the named session first (a todo's note), the active tab otherwise; a URI sends none
   assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
+  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/);   // the gesture rides along (upstream's PDF own-tab reader, 2026-09-07 fold)
   // every span the walk and the spaced pass emit is bound; the hits feed the figure pass as before
   assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks\)\) \{\n\s*bindPathLink\(link\);/);
   assert.match(RENDER, /const link = bindPathLink\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/);
@@ -220,7 +220,7 @@ test("the shell forwards todoId into the Files pane; files.ts hands it to the vi
   assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null\): void \{/);
   assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;/);
   assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; frag\?: string \| null \}\): boolean \{/);   // upstream's frag joined the opts (2026-09-07 fold)
   assert.match(VIEW, /export interface FileViewActionCtx \{\n  path: string; sid: string \| null; todoId\?: string \| null;/);
   assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);   // the seam ctx every action mounts with (Slice 1)
   assert.match(VIEW, /const n = a\.mount\(ctx\);/);

@@ -1051,7 +1051,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
-    if (rendered && pendingFrag) {              // a sibling link's #fragment lands after the FIRST rendered paint, once
+    if (rendered && pendingFrag) {
       const h = pendingFrag; pendingFrag = null;
       requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
     }

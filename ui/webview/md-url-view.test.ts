@@ -284,10 +284,18 @@ test("mdBlock takes the document's location and rewrites relative img/src and a/
 });
 
 test("local file mode: a relative image is the sibling over the kernel's /file route (fileUrl, never hand-built)", () => {
-  assert.match(MD_FN, /img\.setAttribute\("src", fileUrl\(joinDocPath\(doc\.path, src\), doc\.sid\)\);/);
+  // file mode rewrites figures through rewriteFigureSrcs (the 2026-09-07 fold's decision over upstream's inline
+  // fileUrl(joinDocPath(doc.path, src))): it keeps the authored src as data-fv-src for the comments panel's embed
+  // matching and joins the path the way the panel's poll and the kernel read it (relative under the file's directory,
+  // absolute as itself, `..` left to the kernel; file-view-seam.test.ts pins its body). Deliberate divergence: a
+  // `~`-anchored src joins under the directory here, as those two readers do, where upstream took it as itself.
+  assert.match(MD_FN, /rewriteFigureSrcs\(box, doc\.path\.slice\(0, doc\.path\.lastIndexOf\("\/"\) \+ 1\), doc\.sid\);/);
+  const RW = VIEW.split("export function rewriteFigureSrcs(")[1].split("\n}")[0];
+  assert.match(RW, /img\.setAttribute\("src", fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\)\);/, "the kernel URL is fileUrl's");
   // gated to path-shaped refs: a scheme (http:, data:) or a protocol-relative URL is the browser's
-  assert.match(MD_FN, /else if \(src && !\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\) && !src\.startsWith\("\/\/"\)\) \{/);
-  assert.doesNotMatch(MD_FN, /"\/file\?path="|\/remote\//, "the route is fileUrl's to build (federation-aware)");
+  assert.match(RW, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/);
+  // code only: rewriteFigureSrcs's doc comment names the relay route in prose, and the shared MD_FN slice spans it
+  assert.doesNotMatch((MD_FN + RW).replace(/\/\*[\s\S]*?\*\//g, ""), /"\/file\?path="|\/remote\//, "the route is fileUrl's to build (federation-aware)");
   assert.match(VIEW, /import \{ fileUrl \} from "\.\/preview";/);
   // openFileView hands mdBlock its location
   assert.match(OPEN_FN, /mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\)/);
@@ -301,7 +309,8 @@ test("local file mode: a relative link opens the sibling in the viewer via ONE d
   // …the delegate: actions.ts's delegate, installed once per open on the body (stable across the
   // Rendered ⇄ Raw swaps that rebuild its children), preventDefault, then openFileView with this sid
   assert.match(VIEW, /import \{ delegate \} from "\.\/actions";/);
-  assert.match(OPEN_FN, /delegate\(body, \{\s*\n\s*"fv-open": \(a, ev\) => \{\s*\n\s*ev\.preventDefault\(\);\s*\n\s*const target = a\.dataset\.path;\s*\n\s*if \(target\) openFileView\(target, sid, a\.dataset\.frag \|\| null\);/,
+  // the fragment rides openFileView's options bag beside the fork's todoId (the 2026-09-07 fold; user-todo-links.test.ts)
+  assert.match(OPEN_FN, /delegate\(body, \{\s*\n\s*"fv-open": \(a, ev\) => \{\s*\n\s*ev\.preventDefault\(\);\s*\n\s*const target = a\.dataset\.path;\s*\n\s*if \(target\) openFileView\(target, sid, \{ frag: a\.dataset\.frag \|\| null \}\);/,
     "the sibling opens in this viewer, for this sid, landing on its fragment");
   assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 1, "one listener per open, never in a render path");
   assert.ok(OPEN_FN.indexOf("delegate(body") < OPEN_FN.indexOf("const renderBody ="), "installed before any render can run");
@@ -393,15 +402,20 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   const sanitizes = (MD_FN.match(/DOMPurify\.sanitize\([^)]*\)/g) || []);
   assert.equal(sanitizes.length, 1);
   assert.match(sanitizes[0], /ALLOW_DATA_ATTR: false/);
-  const chatMd = (RENDER.split("function md(src: string): string {")[1] || "").split("\nfunction ")[0];
-  assert.match(chatMd, /DOMPurify\.sanitize\(dirty, MD_PURIFY\)/);
+  // the chat's md() takes the sanitized DOM back to link PR references (pr-links.ts; md(src, repo) since 2026-09-06),
+  // so the profile arrives spread; chat-md.test.ts pins userMd() to the byte-identical argument
+  const chatMd = (RENDER.split("function md(src: string, repo: string | null = prRepoFor()): string {")[1] || "").split("\nfunction ")[0];
+  assert.match(chatMd, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.doesNotMatch(chatMd, /ALLOW_DATA_ATTR/, "no per-call override of the shared profile's data-* verdict");
   assert.match(RENDER, /const MD_PURIFY: Config = \{.*ALLOW_DATA_ATTR: false \};/, "the chat's shared sanitizer config forbids data-*");
   // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
   assert.ok(MD_FN.indexOf("DOMPurify.sanitize(") < MD_FN.indexOf('a.dataset.act = "fv-open"'));
 });
 
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, frag\?: string \| null\): void \{/);
-  assert.match(OPEN_FN, /let pendingFrag: string \| null = frag \|\| null;/);
+  // the fragment rides openFileView's options bag beside the fork's todoId, and the open answers with its verdict
+  // (the 2026-09-07 fold; user-todo-links.test.ts pins the todoId half)
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; frag\?: string \| null \}\): boolean \{/);
+  assert.match(OPEN_FN, /let pendingFrag: string \| null = opts\?\.frag \|\| null;/);
   assert.match(OPEN_FN, /if \(rendered && pendingFrag\) \{\s*\n\s*const h = pendingFrag; pendingFrag = null;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, h\); \}\);/);
 });
