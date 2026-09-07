@@ -1002,6 +1002,23 @@ class SendReturnShape(unittest.TestCase):
         self.assertEqual(self.be.calls, [("send", "alpha\n\nbeta")],
                          "tmux-shaped: the fifth slot changes nothing about the merged paste")
 
+    def test_a_queue_filled_during_the_gates_parks_the_answer_behind_it(self):
+        # The race _park_behind_queue exists for (2026-09-05): the advisory queue read at the first
+        # gate saw no queue, then a peer handler parked an op before the locked re-check, so this
+        # send must line up BEHIND that op — never hand over ahead of it. _working_now is the last
+        # gate before the locked step, so a peer's park landing inside it is the race exactly. Fails
+        # if the arm is dropped (the backend gets the send) or if it claims "parked" without parking
+        # (the op is missing from the queue).
+        def peer_parks_then_idle(sid):
+            km._park_op(sid, ("compact",))
+            return False
+        km._working_now = peer_parks_then_idle
+        self.assertEqual(km._send_or_park(self.be, SID, "Re: the port — 8443.", user_todo="ut-9f2c1a34"), "parked")
+        self.assertEqual(self.be.calls, [], "not handed over: the queue that appeared owns the order")
+        self.assertEqual(km._pending_ops[SID],
+                         [("compact",), ("send", "Re: the port — 8443.", None, "ut-9f2c1a34")],
+                         "behind the peer's op, id intact")
+
 
 class DrainStampFailure(unittest.TestCase):
     """A parked answer's 'answered' stamp fires at the DRAIN, after the send reached the backend. If
