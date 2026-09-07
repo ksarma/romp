@@ -607,7 +607,7 @@ def member_rows_added(root, base_sha, head, path=UPSTREAM_MD):
     """The table rows a member ADDS to UPSTREAM.md against its merge base, and whether that is all
     it does to the file. (added_rows, only_rows)."""
     mb = git("merge-base", base_sha, head, cwd=root)
-    diff = _run(["git", "diff", "--unified=0", mb, head, "--", path], cwd=root, check=False).stdout
+    diff = _run(["git", "--literal-pathspecs", "diff", "--unified=0", mb, head, "--", path], cwd=root, check=False).stdout
     rows, other = [], False
     for line in diff.splitlines():
         if line.startswith(("+++", "---", "@@", "diff ", "index ")):
@@ -689,7 +689,8 @@ def resolution_diff(cwd, merge, paths):
     mt, _, _ = merge_tree_of(ps[0], ps[1], cwd)
     if mt is None:
         return None
-    return _run(["git", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths], cwd=cwd, check=False).stdout
+    # --literal-pathspecs: a resolution path with [ * ? in its name is a file name, not a pattern.
+    return _run(["git", "--literal-pathspecs", "diff", "--no-color", mt, merge + "^{tree}", "--", *paths], cwd=cwd, check=False).stdout
 
 
 def resolution_hunks(cwd, merge, paths):
