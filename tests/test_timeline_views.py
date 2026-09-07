@@ -264,6 +264,9 @@ class TimelineViews(unittest.TestCase):
         self.assertIn('"palette": pal.colors(_palette_name()),', src, "and the palette, for tag colors in every host")
         self.assertIn('_tab_order_frame(tab_order, tab_meta, tmux)', src, "tabOrder pushes carry it (the one frame builder, T258)")
         self.assertIn('"views": _views_client(), "live":', src, "…which carries the blob")
+        # every tabOrder frame is built by that ONE helper (2026-09-06: the frame also carries selfHost)
+        self.assertIn('return {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),\n'
+                      '            "views": _views_client(), "live":', src, "tabOrder frames carry it beside the kernel's own name")
         self.assertIn('_frame = _tab_order_frame(_o, _tabs, _tm)', src, "the connect-time tabOrder carries it")
 
     def test_web_boot_exposes_the_set_views_hook(self):
