@@ -2444,8 +2444,14 @@ def _ready_tasks(session, store=None):
 
 # ───────────────────────── parse + units, (mtime,size) cached ─────────────────────────
 def _fileset_key(files):
+    """[[mtime, size], ...] of the distinct files in `files`, in path order. Every path is normalized to
+    its string form (os.fspath) before the sort and the set: callers hand in whatever they hold, a str
+    leaf beside a Path anchor or states file, and sorted() over a mixed str/PosixPath list raises
+    TypeError, which aborted the pass for that session (found by the round-4 test sweeps, 2026-09-07:
+    a str path reaching the frame's key set beside Path entries). One file named two ways is one entry,
+    so the key of a mixed list equals the key of the same files named uniformly."""
     out = []
-    for f in sorted(files):
+    for f in sorted({os.fspath(p) for p in files}):
         st = os.stat(f)
         out.append([st.st_mtime, st.st_size])
     return out
@@ -2524,9 +2530,11 @@ def _judge_candidates(fsid, files):
     Shared by parsed_session and the write-moment chain checks so both walk the same graph."""
     leaf = Path(files[0])
     anchor = leaf.with_name(fsid + ".jsonl")
+    files = [os.fspath(f) for f in files]           # one path type in the candidate list: the anchor below
+    #                                                 is a str, and the key set sorts these (_fileset_key)
     if anchor.name != leaf.name and anchor.exists():
-        return list(files) + [str(anchor)]
-    return list(files)
+        return files + [str(anchor)]
+    return files
 
 
 def _chain_key(path, cands, states):
