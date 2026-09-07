@@ -18487,17 +18487,25 @@ def _audit_restart_request(action, **kw):
         pass
 
 
-def _audit_unrequested_signal(signum, pending=False, now=None):
-    """The audit row for a SIGTERM that no request on record explains: a stray `kill`, a test that
-    fired a real restart, a crash-and-respawn nobody asked for. Before this there was NOTHING on disk
-    for such a cut (2026-09-06: a direct signal to the kernel pid restarted it onto a different
-    python, and the two-hour outage that followed had no first cause anywhere; restart-cuts.jsonl
-    carried an empty reason). Records what a signal.signal handler can know: no siginfo reaches it,
-    so the sender's pid is out of reach; what IS knowable is the signal, this pid, the parent's pid,
-    the manager pid the kernel was spawned with (ROMP_MANAGER_PID, None standalone), whether a
-    manager restart was parked (the drain lease), and that nothing asked for it through the manager.
-    Returns the reason text the cut row carries, so the two ledgers agree. Best-effort, never raises."""
-    reason = "signal, not requested through the manager"
+SIGNAL_REASON_UNREQUESTED = "signal, not requested through the manager"
+SIGNAL_REASON_MANAGER_STOPPED = "signal; the manager was stopped too (a service stop or restart)"
+PARENT_GONE_REASON = "the manager exited; the kernel followed it"
+
+
+def _audit_unrequested_signal(signum, pending=False, now=None, manager_stopped=False):
+    """The audit row for a SIGTERM that no request on record explains. Before this there was NOTHING
+    on disk for such a cut (2026-09-06: a direct signal to the kernel pid restarted it onto a
+    different python, and the two-hour outage that followed had no first cause anywhere;
+    restart-cuts.jsonl carried an empty reason). Records what a signal.signal handler can know: no
+    siginfo reaches it, so the sender's pid is out of reach; what IS knowable is the signal, this pid,
+    the parent's pid, the manager pid the kernel was spawned with (ROMP_MANAGER_PID, None standalone),
+    whether a manager restart was parked (the drain lease), that nothing asked for it through the
+    manager, and (`manager_stopped`, decided by _unrequested_signal_reason) whether the manager was
+    going down at the same moment. The wording claims exactly that much: a stray `kill`, a test that
+    fired a real restart and a supervisor stop that signalled both processes at once all arrive with
+    no row, and only the last leaves a trace the kernel can see. Returns the reason text the cut row
+    carries, so the two ledgers agree. Best-effort, never raises."""
+    reason = SIGNAL_REASON_MANAGER_STOPPED if manager_stopped else SIGNAL_REASON_UNREQUESTED
     try:
         try:
             name = signal.Signals(signum).name
@@ -18507,12 +18515,90 @@ def _audit_unrequested_signal(signum, pending=False, now=None):
         rec = {"t": int(now if now is not None else time.time()), "action": "signal", "signal": name,
                "pid": os.getpid(), "ppid": os.getppid(),
                "managerPid": int(mgr) if mgr.isdigit() else None,
-               "managerRequested": False, "managerRestartPending": bool(pending), "reason": reason}
+               "managerRequested": False, "managerStopped": bool(manager_stopped),
+               "managerRestartPending": bool(pending), "reason": reason}
         with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec) + "\n")
     except Exception:
         pass
     return reason
+
+
+SIGNAL_MANAGER_NOTE_WAIT_S = 0.5   # how long an unexplained SIGTERM waits for the manager's own stop note
+
+
+def _manager_sigterm_row_for_us(now=None, window=90):
+    """Whether the audit tail holds a `manager-sigterm` row aimed at THIS kernel (its `pid` is ours,
+    or it names none) within `window` seconds: the manager's note that it sent a SIGTERM here."""
+    try:
+        tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
+    except Exception:
+        return False
+    t0 = int(now if now is not None else time.time())
+    for line in reversed(tail[-8:]):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if not (isinstance(rec, dict) and rec.get("action") == "manager-sigterm" and isinstance(rec.get("t"), int)):
+            continue
+        if t0 - rec["t"] > window:
+            return False
+        if rec.get("pid") in (None, os.getpid()):
+            return True
+    return False
+
+
+def _unrequested_signal_reason(signum, be=None, wait=None, sleep=time.sleep, now=None):
+    """The reason for a SIGTERM that arrived with no request on record, filed as an audit row
+    (_audit_unrequested_signal) and returned for the cut row. The manager writes its `manager-sigterm`
+    note BEFORE it kills (bin/romp-manager auditSigterm), so a signal here with no note did not come
+    from the manager. What distinguishes a supervisor stop (`systemctl --user stop|restart`, `launchctl
+    bootout`: SIGTERM to the kernel and the manager at once) from a stray kill is the manager going
+    down at the same moment, and that is visible two ways: its pid (ROMP_MANAGER_PID) is already gone,
+    or its own stop note lands moments after our signal did (node dispatches its handler after the
+    kernel's Python one has run; shutdownAll then notes and kills each kernel). So this waits up to
+    `wait` seconds for that note before concluding. A genuinely stray signal pays the wait and reads
+    as unrequested; nothing here asserts who sent it (review 2026-09-06: a `systemctl --user restart`
+    with no sessions to drain was filed as a signal the manager did not send, and the docs read that
+    as "came from somewhere else")."""
+    pending = False
+    try:
+        pending = bool(be.drain_holding()) if be is not None and hasattr(be, "drain_holding") else False
+    except Exception:
+        pass
+    mgr = os.environ.get("ROMP_MANAGER_PID") or ""
+    stopped = bool(mgr.isdigit()) and not _pid_alive(int(mgr))
+    if not stopped and mgr.isdigit():
+        deadline = time.time() + max(0.0, SIGNAL_MANAGER_NOTE_WAIT_S if wait is None else wait)
+        while True:
+            if _manager_sigterm_row_for_us(now=now):
+                stopped = True
+                break
+            if time.time() >= deadline:
+                break
+            sleep(0.05)
+    reason = _audit_unrequested_signal(signum, pending=pending, now=now, manager_stopped=stopped)
+    sys.stderr.write("romp-kernel: this SIGTERM matched no restart request on record%s "
+                     "(restart-audit.jsonl has a 'signal' row for it)\n"
+                     % ("; the manager was stopped too" if stopped else ""))
+    return reason
+
+
+def _audit_parent_gone(manager_pid, now=None):
+    """The audit row for the exit _parent_watch forces when the manager that spawned the kernel is
+    gone (a manager crash, a SIGKILL, a stop that escalated past its timeout). Before this the kernel
+    left by os._exit with nothing in either ledger, so a whole outage could begin with no first cause
+    on disk (review 2026-09-06). Returns the cut row's reason. Best-effort, never raises."""
+    try:
+        rec = {"t": int(now if now is not None else time.time()), "action": "parent-gone",
+               "pid": os.getpid(), "ppid": os.getppid(), "managerPid": manager_pid,
+               "reason": PARENT_GONE_REASON}
+        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+    return "parent-gone: " + PARENT_GONE_REASON
 
 
 RESTART_CUTS_FILE = jd.STATE / "restart-cuts.jsonl"
@@ -18610,13 +18696,24 @@ def _mark_boot(kind):
 
 
 def _recent_restart_reason(window=90, now=None):
-    """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
-    (deploy refresh, self-update, the rail button…). Best-effort: a SIGTERM with no row within the
-    window reads as "", and _graceful_term then files its own row for it. The manager notes every
-    SIGTERM it sends (action manager-sigterm, bin/romp-manager auditSigterm); that note says the
-    manager was the messenger, not who asked, so a requester's row just beneath it within the window
-    wins, and the manager's own note answers only when nothing else does (a `romp on restart`, a
-    service stop)."""
+    """The request on record that explains a SIGTERM arriving now, from the restart-audit tail, or ""
+    when there is none (and _graceful_term then files a row of its own). Joins the cut row to WHO asked:
+    a deploy refresh, the kernel's self-update, the rail button, a `romp down`. The walk is newest-first
+    over the last eight rows, within `window` seconds of now, with these rules:
+      - a row with an action is a request and wins: `action`, plus `: reason` when it carries one;
+      - a `when: quiet` request is pending until the restart it asked for lands, up to the far manager's
+        15-minute backstop, so its window is RESTART_EXPECT_MAX_S and it names a cut well past the
+        immediate window (T238); any other row older than the window ends the walk;
+      - a `manager-sigterm` row (bin/romp-manager auditSigterm, written before every SIGTERM it sends) is
+        a mechanism note, not a request: it says the manager was the messenger. It never outranks a
+        request row beneath it within the window (a `down` followed by the manager's `stop` note reads
+        as the deliberate stop), answers only when no request is on record (a `romp on restart`, a
+        service stop that noted before it killed), and one aimed at another kernel pid is not about us;
+      - a row with no action is skipped, never taken as the answer. The CLI's `romp refresh` writes its
+        caller-attribution row with no action field ({t, ppid, parent, sid, name, tty, tmux}), and taking
+        that row's empty label as the verdict filed every deploy as an unrequested signal (review
+        2026-09-06). Until the writer labels the row, the manager's `restart` note beneath it is what
+        names a refresh; a row that does carry `action: refresh` names it directly."""
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
         if not tail:
@@ -18632,14 +18729,16 @@ def _recent_restart_reason(window=90, now=None):
                 continue
             win = window
             if rec.get("when") == "quiet":
-                # a QUIET-WINDOW request is pending until the restart it asked for lands, up to the far
-                # manager's 15-minute backstop, so it names the cut well past the immediate window (T238)
                 win = max(window, RESTART_EXPECT_MAX_S)
             if t0 - rec["t"] > win:
                 break                                       # older rows are older still
-            label = str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
-            if rec.get("action") == "manager-sigterm":
-                via_manager = via_manager or label
+            action = str(rec.get("action") or "")
+            if not action:
+                continue                                    # no verdict in it; keep looking
+            label = action + (": " + str(rec["reason"]) if rec.get("reason") else "")
+            if action == "manager-sigterm":
+                if rec.get("pid") in (None, os.getpid()):   # a note about THIS kernel (or one naming none)
+                    via_manager = via_manager or label
                 continue
             return label
         return via_manager
@@ -43660,16 +43759,29 @@ def _pid_alive(pid):
         return True
 
 
+_EXIT_ONCE = threading.Lock()   # ONE exit path runs to completion: a second SIGTERM mid-drain (a service
+#                                 stop signals us, then the manager's shutdownAll signals us again) used
+#                                 to nest a second handler inside the first, and the inner one wrote the
+#                                 cut row from a second, partial drain and exited, discarding the first
+#                                 drain's count; the parent watch noticing the manager gone while the
+#                                 handler drains would do the same. Whoever takes this lock finishes.
+
+
 def _parent_watch():
     """Exit if the manager that spawned us (ROMP_MANAGER_PID) dies, so a supervisor crash doesn't
-    orphan the kernel. No-op when launched standalone (no ROMP_MANAGER_PID)."""
+    orphan the kernel. No-op when launched standalone (no ROMP_MANAGER_PID). The exit leaves the same
+    two rows every other exit does (an audit row, action `parent-gone`, and a cut row with the drained
+    turns), so a manager crash is not the one outage with no first cause on disk (review 2026-09-06);
+    if the SIGTERM handler is already on its way out, it owns the exit and this stands down."""
     pid = os.environ.get("ROMP_MANAGER_PID")
     if not (pid and pid.isdigit()):
         return
     pid = int(pid)
     while _pid_alive(pid):
         time.sleep(2)
-    os._exit(0)
+    if not _EXIT_ONCE.acquire(blocking=False):
+        return
+    _drain_and_exit(_audit_parent_gone(pid), what="the manager is gone")
 
 
 def _graceful_term(signum, frame):
@@ -43679,15 +43791,30 @@ def _graceful_term(signum, frame):
     its state settles honestly. Parked ops + SDK queues are already mirrored to disk on every
     mutation, and a cut turn keeps its 'working' state tail — the NEXT kernel's boot reconcile
     resumes exactly those. Bounded (~2s) so `romp refresh` stays snappy. Never construct the
-    backend here — no SDK sessions were running if it doesn't exist."""
+    backend here — no SDK sessions were running if it doesn't exist. A second SIGTERM while the first
+    is draining returns at once (_EXIT_ONCE): the first finishes and exits."""
+    if not _EXIT_ONCE.acquire(blocking=False):
+        return
     _broadcast_restarting()                        # T217: announce the death FIRST — the frame is
     #                                                the shims' eager-reconnect event, and its
     #                                                sub-second budget cannot widen the shutdown
+    # WHO asked, read NOW, at signal time: the audit tail names the requester, or the manager's own
+    # note of a kill it sent (written before the kill, so it is here already if the manager sent
+    # this). A row that lands during the drain below did not send this signal.
+    _drain_and_exit(_recent_restart_reason(), signum=signum, what="SIGTERM")
+
+
+def _drain_and_exit(reason, signum=None, what="SIGTERM"):
+    """Drain the SDK sessions, write the restart-cut row, exit: the tail every kernel exit shares
+    (_graceful_term, _parent_watch). `reason` is the request on record when the exit was decided;
+    empty with a `signum` means the signal reached this pid with no request on record, which is worth a
+    row of its own plus a cut reason that says so (_unrequested_signal_reason; 2026-09-06: an empty
+    reason was all the ledger had for the restart that started a two-hour outage)."""
     res = {}
     err = ""
     be = _sdk_backend or None
     try:
-        sys.stderr.write("romp-kernel: SIGTERM — draining SDK sessions\n")
+        sys.stderr.write("romp-kernel: %s — draining SDK sessions\n" % what)
         if be is not None and hasattr(be, "drain"):
             res = be.drain(2.0)
     except Exception:
@@ -43698,20 +43825,8 @@ def _graceful_term(signum, frame):
         # the restart-cut ledger (T121): one row per restart, ALWAYS — an empty cutTurns row is the
         # clean-drain metric, and a drain that errored writes what it knew plus the error (T143).
         try:
-            # WHO asked: the audit tail names the requester, or the manager's own note of a kill it
-            # sent. Neither present means the signal reached this pid with no request on record, and
-            # that is worth a row of its own plus a cut reason that says so (2026-09-06: an empty
-            # reason was all the ledger had for the restart that started a two-hour outage).
-            reason = _recent_restart_reason()
-            if not reason:
-                pending = False
-                try:
-                    pending = bool(be.drain_holding()) if be is not None and hasattr(be, "drain_holding") else False
-                except Exception:
-                    pass
-                reason = _audit_unrequested_signal(signum, pending=pending)
-                sys.stderr.write("romp-kernel: this SIGTERM matched no restart request on record "
-                                 "(restart-audit.jsonl has a 'signal' row for it)\n")
+            if not reason and signum is not None:
+                reason = _unrequested_signal_reason(signum, be)
             row = _restart_cut_row(res, watches_armed=len(_pr_watches) + len(_watches),
                                    audit_reason=reason)
             if err:
