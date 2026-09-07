@@ -1045,23 +1045,25 @@ tinted and deletions struck inline; typing remaps the changes rather than desync
 accepts, modifier-click rejects; undo restores an accepted change; Save writes file and remapped
 sidecar together, and the Edit refusal disappears.
 
-Acceptance: the cases of track-changents' `obsidian/tests/track-cm.test.mjs` and
-`track-cm.undo.test.mjs`, copied into romp with their `createRequire` loads of
-`../src/track-cm.js`, `track-changents/engine`, `@codemirror/state`, and `@codemirror/commands`
-rewritten to romp's comments chunk and its CodeMirror (the tests use Node's own `require`, which
-a vitest alias cannot redirect), pass as the behavioral oracle; a save refuses when either mtime
-moved and keeps the buffer; `editor-lazy.test.ts` pins that the main bundles stay byte-stable.
+Acceptance (as built): the cases of track-changents' `obsidian/tests/track-cm.test.mjs` and
+`track-cm.undo.test.mjs`, ported case for case from vitest to `node:test` as
+`ui/webview/track-cm-oracle.test.ts` — their `createRequire` loads of `../src/track-cm.js`,
+`track-changents/engine`, `@codemirror/state` and `@codemirror/commands` are imports the test
+bundle resolves to the vendored field, the vendored engine and the one CodeMirror the editor
+chunk bundles — pass as the behavioral oracle; a save refuses when either mtime moved and keeps
+the buffer; `editor-lazy.test.ts` pins that the main bundles stay byte-stable.
 
-Files: `editor-chunk.ts` (a typed `track` mount option curated inside `extensionsFor`,
-`editor-chunk.ts:113-135`, consumed only by `file-view.ts`; the header doctrine comment names
-it), a new lazy comments chunk esbuild entry bundling, from the vendored copy, the engine, the
-78-line CodeMirror state field (`obsidian/src/track-cm.js`, unchanged), the decorations block
-(`obsidian/src/track-snapshot.js:433-839`) together with `obsidian/src/track-logic.js` (215
-lines of display-planning and click and layout helpers the block calls), with the one Obsidian
-read at `:595-596` replaced by a constant and the `mouseover` handler at `:774-781` fixed to take
-the editor view (survey A6), `file-view.ts` `doSave` sending the `save` verb instead of
-`saveFile` when the panel is open. Size: ~500 / ~60 / ~40. Lowest confidence of the six; it is
-the one slice that touches the editor chunk's contract.
+Files (as built): `editor-chunk.ts` carries the track field, the decorations and the click
+handling inside the editor chunk's own bundle, reached through the typed `track` mount option
+curated inside `extensionsFor` and consumed only by `file-view.ts` (decision 14; the header
+doctrine comment names it): the 78-line CodeMirror state field (`obsidian/src/track-cm.js`,
+bundled unchanged) and the engine from the vendored copy, and the decorations block adapted as
+`ui/webview/track-decorations.ts`, derived from the pristine vendored
+`obsidian/src/track-snapshot.js` (the inline-overlay block at the pinned commit, cited in its
+header) with the display-planning and click and layout helpers it calls, the one Obsidian read
+replaced by a constant and the `mouseover` handler taking the editor view (survey A6);
+`file-view.ts` `doSave` sends the `save` verb instead of `saveFile` when the panel routes the save
+(`setTrackedEdit`, below). The one slice that touches the editor chunk's contract.
 
 The Slice 5 build (2026-09-06): the track field, the marks and the click handling live inside
 the editor chunk's own bundle, reached through the typed `track` mount option (decision 14),
