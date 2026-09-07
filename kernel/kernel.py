@@ -28653,8 +28653,13 @@ def _git_net_out(args, cwd, timeout, env):
     """_git_out for the one query that leaves the machine (ls-remote): git runs in its OWN session, and
     the deadline kills the whole process group. subprocess.run's timeout kill reaches its direct child
     alone, and the ssh git had spawned sat in its TCP connect for minutes after the viewer had already
-    been told "could not check" (reproduced 2026-09-05). A fresh session also has no controlling
-    terminal, so an ssh that wants a passphrase fails instead of waiting for one."""
+    been told "could not check" (reproduced 2026-09-05). No prompt of any kind reaches the user: the
+    caller's env closes every route (GIT_TERMINAL_PROMPT=0 for the terminal; GIT_ASKPASS="" for git's
+    askpass, which also overrides core.askPass and git's SSH_ASKPASS fallback; SSH_ASKPASS_REQUIRE=never
+    for ssh's own), so a query that would need a credential fails at once and the viewer reads "could not
+    check". That is the choice made (the #947 review): an editor's askpass helper that would have
+    answered silently for a signed-in user is refused too, and such an origin reads "could not check"
+    rather than a verdict. A configured credential.helper is not disabled and may still answer silently."""
     try:
         p = subprocess.Popen(["git", "-C", cwd] + args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                              stderr=subprocess.DEVNULL, text=True, start_new_session=True, env=env)
@@ -28784,7 +28789,8 @@ def _origin_has_branch(top, ref):
     locally), and any answer in a clone whose refspec leaves the branch untracked (`--single-branch`).
     The verdict is as fresh as this clone's refs, then: a branch deleted on GitHub reads as present
     until `fetch --prune`, one pushed from elsewhere as absent until a fetch. The query gets a short
-    timeout and no terminal prompt: the viewer must never hang on it. The pattern is the full ref and
+    timeout and no prompt of any kind (terminal, git's askpass, ssh's askpass): the viewer must never
+    hang on it. The pattern is the full ref and
     the answer is matched on it exactly, because ls-remote patterns match a ref's TAIL (`main` would
     also match `refs/heads/x/main`)."""
     key = (top, ref)
@@ -28805,8 +28811,14 @@ def _origin_has_branch(top, ref):
     on = None
     try:
         full = "refs/heads/" + ref
+        # GIT_TERMINAL_PROMPT=0 closes the terminal route only. git reads GIT_ASKPASS before core.askPass
+        # and before its SSH_ASKPASS fallback, and tests the variable's PRESENCE, so a set-EMPTY
+        # GIT_ASKPASS overrides all three (unsetting it would not); SSH_ASKPASS_REQUIRE=never closes
+        # ssh's own askpass (OpenSSH 8.4+, ignored by older ssh). Without these a kernel started from a
+        # shell exporting an askpass program showed a GUI prompt on every viewer open of a file under a
+        # credential-wanting private origin, and the deadline then killed it (the #947 review).
         out = _git_net_out(["ls-remote", "--heads", "origin", full], top, timeout=GH_LS_REMOTE_S,
-                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+                           env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", SSH_ASKPASS_REQUIRE="never"))
         if out is not None:
             on = any(line.split("\t")[-1] == full for line in out.splitlines())
     finally:
