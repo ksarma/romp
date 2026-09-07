@@ -55,7 +55,8 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   // 2026-09-06). Each spend window also carries the by-KIND split of its tokens for the hover.
   // …the settle calls the fold's two halves itself (result_token_totals picks the counter and says which
   // kind it is; _fold_turn_tokens keeps the watermarks) so it can say when the per-turn fallback was taken;
-  // _turn_usage, upstream's name for the same fold, wraps the pair (sdk DECISIONS 5, 2026-09-07 fold)
+  // _turn_usage, upstream's name for the same fold, wraps the pair: the 2026-09-07 upstream fold kept the
+  // fork's fold under upstream's name, and the settle calls the halves rather than the wrapper
   assert.ok(BACKEND.includes("totals, cumulative = result_token_totals(msg)"));
   assert.ok(BACKEND.includes("turn_u = self._fold_turn_tokens(totals, cumulative)"));
   assert.ok(BACKEND.includes('totals = model_usage_totals(getattr(msg, "model_usage", None))'));

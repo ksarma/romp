@@ -265,7 +265,7 @@ class UnrequestedSignal(unittest.TestCase):
         self.assertIn("self-update", self._rows(km.RESTART_CUTS_FILE)[0]["reason"])
 
     def test_the_managers_note_alone_is_consumed_like_a_request_row(self):
-        # Design pick (upmerge 2026-09-07): with no request row on record the manager's own sigterm note
+        # Design pick (2026-09-07 upstream fold): with no request row on record the manager's own sigterm note
         # answers, and the cut row CONSUMES it as it would a request row (auditT = the note's t). A note is
         # not a deploy request, so _last_deploy_restart_t reads such a cut as attributed elsewhere with or
         # without the stamp; this pins the stamp so a change on either side is a visible decision.

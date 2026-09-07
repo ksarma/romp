@@ -555,8 +555,9 @@ class OneLockAroundEveryMutation(_Drain):
             self.assertEqual(owned["park"], [True] * 3, "the queue check + park is one locked step")
             self.assertEqual(self.be.calls, [])
             km._pending_ops.clear()                        # no queue: everything hands over
-            # the fork's three-outcome contract (kept in the 2026-09-07 fold, R8): a handover returns the backend
-            # send's own result (True here), a park returns "parked"; never a bare parked-or-not bool
+            # the fork's three-outcome contract, kept over upstream's parked-or-not bool in the 2026-09-07 upstream
+            # fold: a handover returns the backend send's own result (True here), a park returns "parked", a refused
+            # send its falsy result, so a caller can tell the three apart (_send_or_park's docstring)
             self.assertIs(km._send_or_park(self.be, SID, "hello"), True)
             km._set_model_or_park(self.be, SID, "opus")
             self.assertEqual(owned["handover"], [False, False], "the handover to the backend is outside the lock")

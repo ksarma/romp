@@ -329,7 +329,7 @@ class FetchAndFallback(unittest.TestCase):
         """The wired path, exactly what _sdk_locked installs before the boot refresh: jd._WORK_KEY_FN =
         sdk_backend.work_api_key, the one door through which the kernel reaches a key source. Upstream's
         _models_api_credential also consulted keysource.select_source on its own when nothing was wired;
-        the fork refused that rung (upmerge 2026-09-07, the fork's standing rule: the kernel never reads a key
+        the fork refused that rung (2026-09-07 upstream fold; the fork's standing rule: the kernel never reads a key
         source itself, and an unwired ambient ANTHROPIC_API_KEY stays unread, CredentialPolicy below), so
         the two runtime-source tests reach the source the way the running kernel does. The claimer's
         process-lifetime stash is cleared so the claim happens here and restored afterwards."""
@@ -340,7 +340,7 @@ class FetchAndFallback(unittest.TestCase):
 
     def test_runtime_reference_is_resolved_once_per_catalog_refresh_without_persistence(self):
         os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
-        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (upmerge 2026-09-07)
+        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (2026-09-07 upstream fold)
         ref = "op://test-vault/test-item/api-key"
         os.environ["ROMP_API_KEY_REF"] = ref
         with patch.object(jd._keysrc.subprocess, "run",
@@ -356,7 +356,7 @@ class FetchAndFallback(unittest.TestCase):
 
     def test_invalid_reference_prevents_requests_and_does_not_use_legacy_key(self):
         os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
-        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (upmerge 2026-09-07)
+        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (2026-09-07 upstream fold)
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"    # the legacy key the error must not use
         Path(os.environ["ROMP_SERVICE_ENV_FILE"]).write_text("ROMP_API_KEY_REF=\n")
         with patch.object(jd._keysrc.subprocess, "run") as run:
