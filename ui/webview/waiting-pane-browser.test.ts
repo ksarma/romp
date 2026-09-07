@@ -261,10 +261,14 @@ for (const name of ["firefox", "chromium"]) {
       await F.locator("#romp-fileview").waitFor({ timeout: 10000 });
       assert.equal(served.length, 1, "the file opened on the first press");
       assert.match(served[0], /path=docs%2Frollout\.md/);
-      await page.waitForFunction(() => {
+      // the held re-render ran after the release: the arm is gone. Waited for EXPLICITLY before the next read
+      // of the list: the flush is a timer, and Chromium runs it a frame (~16ms) after the release, so a
+      // locator that resolves a row's node before the rebuild and measures it after gets a detached node
+      const disarmed = () => page.waitForFunction(() => {
         const d = (document.getElementById("f-waiting") as HTMLIFrameElement).contentWindow!.document;
         return d.querySelector('.ut-item[data-tid="t1"] .ut-dismiss')!.textContent === "Dismiss";
-      }, null, { timeout: 10000 });   // the held re-render ran after the release: the arm is gone
+      }, null, { timeout: 10000 });
+      await disarmed();
       let s = await state();
       assert.equal(s.filesHas, true, "and focus moved to the Files pane with the file");
       await page.keyboard.press("Escape");
@@ -297,6 +301,7 @@ for (const name of ["firefox", "chromium"]) {
       assert.equal(await row1.locator(".ut-dismiss").textContent(), "Really dismiss?");
       await press(row2.locator(".ut-reply"));
       await W.locator("#ut-reply-prompt").waitFor({ timeout: 10000 });
+      await disarmed();   // the disarm's held rebuild has replaced row 2's Reply: measure the new node, not the old
       await page.keyboard.press("Escape");
       await W.locator("#ut-reply-prompt").waitFor({ state: "detached", timeout: 10000 });
       const rb = await row2.locator(".ut-reply").boundingBox();

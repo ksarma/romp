@@ -1,0 +1,2 @@
+# The CRLF fixture must keep its bytes on every checkout; the test reads them raw.
+handlers-crlf.py -text

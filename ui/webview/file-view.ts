@@ -22,6 +22,7 @@ import { fileUrl } from "./preview";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
+import { fileCommentsAction } from "./file-comments";
 
 // hljs is registered per-bundle. Same language set (and grammar registrations) the chat's fence
 // highlighting uses, dup-guarded, so importing this module alongside render.ts costs nothing.
@@ -137,7 +138,7 @@ export function hostStub(sid: string): FileViewIdentity | null {
   return { name: (host ? host + ":" : "") + bare.slice(0, 8), color: null };
 }
 let saveSeq = 0;
-let editHooks: { reqId: number; saved: (mtimeNs: string) => void; failed: (err: string) => void } | null = null;
+let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
 // handler both close through it without knowing an edit is in progress.
@@ -186,11 +187,58 @@ let viaRelay = false;
 // reply lands. Ordering is registration order, after the built-ins.
 // `todoId`: the user todo the file was opened FROM, when it was (the Waiting-on-you pane's detail link,
 // plans/file-review.md Slice 0) — so an action can tie its work back to the todo; absent for every other open.
-export interface FileViewActionCtx { path: string; sid: string | null; todoId?: string | null; }
+// The rest is THE VIEWER SEAM (plans/file-review.md, "The viewer seam", Slice 1): what the comments
+// panel needs of the open viewer beyond its path and sid, handed over as closures over this open's
+// state rather than as exports — the viewer stays a per-open closure and the panel never reaches into
+// it. Every member is per open; a hook registered through one is dropped with the viewer (onClose).
+export interface FileViewActionCtx {
+  path: string; sid: string | null; todoId?: string | null;
+  /** the `.fileview-body` element: the raw rows (`code.hljs` > `.fv-cl`) or the rendered `.fileview-md` live inside it */
+  body(): HTMLElement;
+  /** which view the body shows now; "media" for an image/PDF body (the SVG Source view counts as raw) */
+  mode(): "raw" | "rendered" | "media";
+  /** the text the current view shows (the SVG Source view's decoded XML included); null until the fetch lands, and for media */
+  text(): string | null;
+  /** the file's mtime at load, nanoseconds AS A STRING (the save fence's own value) */
+  mtimeNs(): string;
+  /** the kernel's media verdict off the Content-Type: an SVG is shown as an image but is TEXT to the kernel's allowlist */
+  media(): "image" | "pdf" | "svg" | null;
+  /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
+  identity(): FileViewIdentity | null;
+  /** runs after every paint of a TEXT body (open, view switch, reload): the panel re-runs its highlight pass */
+  onRendered(cb: () => void): void;
+  /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
+  onSelection(cb: (sel: Selection) => void): void;
+  /** runs when a direct edit's save is acknowledged (fileSaved carries `logged` since Slice 1) */
+  onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;
+  /** runs once when this open ends — close, Escape, or a replace-open — so per-open timers and listeners leave with it */
+  onClose(cb: () => void): void;
+  /** the pane's WS poster (saveFile's channel); replies come back as window `message` events, reqId-guarded by the caller */
+  post(m: Record<string, unknown>): void;
+  /** the file-editing consent, shared with Save (decision 5): see ensureEditingAllowed */
+  ensureEditingAllowed(refusal?: string): Promise<boolean>;
+  /** Edit refuses with this one-line reason while set (pending changes, Slice 1); null lifts it */
+  setEditBlocked(reason: string | null): void;
+  /** mount `el` beside the body as the viewer's aside (two columns, folding below on a narrow column); null removes it */
+  aside(el: HTMLElement | null): void;
+  /** switch a markdown file's view; a no-op for other files and in edit mode */
+  setMode(mode: "raw" | "rendered"): void;
+  /** scroll the Raw view's row holding source offset `n` into view (callers switch to Raw first) */
+  scrollToOffset(n: number): void;
+  /** re-fetch bytes and mtime and repaint, keeping the action row and the aside; a no-op in edit mode */
+  reload(): void;
+}
 export interface FileViewAction { id: string; mount: (ctx: FileViewActionCtx) => HTMLElement | null; }
 const fileViewActions: FileViewAction[] = [];
 export function registerFileViewAction(a: FileViewAction): void {
   if (!fileViewActions.some((x) => x.id === a.id)) fileViewActions.push(a);
+}
+// The open viewer's close hooks (the seam's onClose): drained by BOTH exits — closeFileView and the
+// replace path — like dropOnKey and dropMediaUrl, so a panel's poll timer cannot outlive its viewer.
+let closeHooks: Array<() => void> = [];
+function runCloseHooks(): void {
+  const hooks = closeHooks; closeHooks = [];
+  for (const cb of hooks) { try { cb(); } catch { /* a hook must never keep the viewer from closing */ } }
 }
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
@@ -246,6 +294,54 @@ export const githubLinkAction: FileViewAction = {
   },
 };
 registerFileViewAction(githubLinkAction);
+// The comments panel (plans/file-review.md, Slice 1) is the registry's second entry. It is REGISTERED
+// HERE, not in its own module: file-comments.ts imports only types from this module, so the two never
+// form a runtime cycle (a top-level registerFileViewAction call over there would run before this
+// module's table exists in the bundled order).
+registerFileViewAction(fileCommentsAction);
+
+/** The file-editing consent, shared by Save and every comment verb (plans/file-review.md, the viewer
+ *  seam; decision 5: one consent, the sidecar is a file in the user's project too). Two paths:
+ *  - no `refusal`: the FIRST-consent path. The kernel's live flag is read first — never cached, since
+ *    another machine's gear may have flipped it meanwhile — and only when it is off does the one popup
+ *    ask; a yes broadcasts setFileEditing through the settings mesh (KERNEL_SETTING), so every attached
+ *    kernel's write routes open together. A decline changes nothing and is asked again next time —
+ *    consent latches only on yes. If /version is unreachable the popup still asks: the kernel-side gate
+ *    refuses regardless, so the worst a wrongly-granted yes can do is draw one refused write with its
+ *    plain-words error.
+ *  - `refusal`: the RE-CONSENT path, for a gate refusal from the kernel that OWNS the file (its error
+ *    text contains "file editing is off"). The first path's /version read sees only the LOCAL flag: a
+ *    mesh kernel attached AFTER the one yes never heard the broadcast, so it refuses every write with
+ *    copy pointing at a popup the local flag keeps from ever re-showing. The same consent is re-offered
+ *    here naming the refusing machine; a yes re-broadcasts and the caller retries. Any other refusal
+ *    text resolves false at once: there is nothing to re-offer.
+ *  The `gt` stamp is the consent's own click time: federation queues the setting per host across a
+ *  down socket, and the kernel orders applies by the stamp, so a flush hours later cannot outrank a
+ *  newer gesture. Resolves true when the caller may proceed (or retry). */
+export async function ensureEditingAllowed(sid: string | null | undefined, refusal?: string): Promise<boolean> {
+  // the copy stays true for comments (decision 5): saves AND comments write disk; only a save is
+  // traced to the session at once — comments reach it when sent
+  const COPY = "Allow editing files from the dashboard?\n\n"
+    + "Saves and comments write straight to disk on the file's machine — and this applies on every machine "
+    + "connected here. A session working in that folder is told when you save under it; your comments reach "
+    + "it when you send them.\n\n"
+    + "You can turn this off later in the settings gear.";
+  if (refusal !== undefined) {
+    if (!/file editing is off/.test(refusal)) return false;
+    const host = sid ? hostOf(sid) : "";
+    if (!window.confirm(
+      "Editing is off on " + (host ? "“" + host + "”" : "this machine")
+      + (host ? " — it may have connected after you allowed editing here" : "") + ".\n\n" + COPY)) return false;
+    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+    return true;
+  }
+  let on = false;
+  try { on = !!(await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json()).fileEditing; } catch { /* ask below */ }
+  if (on) return true;
+  if (!window.confirm(COPY)) return false;
+  post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+  return true;
+}
 
 // ── quote a passage into the composer (the user 2026-08-23, the three-verbs consolidation) ────────
 // Selecting text in the viewer seeds the SAME labeled quote chip a VS Code editor highlight does:
@@ -285,6 +381,7 @@ export function closeFileView(): void {
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
+  runCloseHooks();                                     // the panel's poll and listeners leave with the viewer
   wrap.remove();
   document.body.classList.remove("fileview-open");
   if (viaRelay) {
@@ -319,6 +416,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
   dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
+  runCloseHooks();                                     // …and the old viewer's panel hooks
   document.getElementById("romp-fileview")?.remove();
   // backdrop (the whole overlay carries the id every open/closed check targets) + the ~95% card.
   // The backdrop treatment matches the lightbox: dimmed, click outside the card closes, content
@@ -396,7 +494,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let isPdf = false;                          // application/pdf → the lightbox's iframe treatment
   let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
   let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
-  let svgText: string | null = null;          // the decoded SVG bytes, read once on first toggle
+  let svgText: string | null = null;          // the decoded SVG bytes: read on the first toggle, a reload's replace or drop it
   let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE
   let objUrl: string | null = null;           // this open's object URL (registered as mediaUrlLive)
   // The text the CURRENT view shows: the SVG Source view reads the decoded blob, every other text
@@ -449,28 +547,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   editBtn.type = "button"; editBtn.textContent = "Edit"; editBtn.title = "Edit this file in place";
   editBtn.hidden = true;
   // The consent gate (the user 2026-08-22): editing is a kernel-side opt-in the SAVE ROUTE enforces —
-  // this popup is where the one yes happens, and it broadcasts through the settings mesh so every
-  // attached kernel's save route opens together (setFileEditing rides KERNEL_SETTING). The flag is
-  // read fresh per click, never cached: another machine's gear may have flipped it meanwhile. A
-  // decline changes nothing and is asked again next time — consent latches only on yes. If /version
-  // is unreachable the popup still asks: the kernel-side gate refuses regardless, so the worst a
-  // wrongly-granted yes here can do is draw one refused save with its plain-words error.
-  async function editingAllowed(): Promise<boolean> {
-    let on = false;
-    try { on = !!(await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json()).fileEditing; } catch { /* ask below */ }
-    if (on) return true;
-    if (!window.confirm(
-      "Allow editing files from the dashboard?\n\n" +
-      "Saves write straight to disk on the file's machine — and this applies on every machine " +
-      "connected here. A session working in that folder is told when you edit under it.\n\n" +
-      "You can turn this off later in the settings gear.")) return false;
-    // gt = the consent's own click time: federation queues this per host across a down socket, and
-    // the kernel orders applies by the stamp — a flush hours later must not outrank a newer gesture
-    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
-    return true;
-  }
+  // the popup where the one yes happens is ensureEditingAllowed (module level, shared with the comments
+  // panel's verbs since Slice 1 of plans/file-review.md). While changes are PENDING in the file the
+  // button refuses instead, in words, in place: a raw save over pending changes rewrites their offsets
+  // (setEditBlocked, set by the panel from the kernel's hunks; Slice 5 lifts it). The button stays a
+  // real button rather than a disabled one so the reason reaches touch and keyboard users too.
+  let editBlocked: string | null = null;
   editBtn.addEventListener("click", () => {
-    void editingAllowed().then((ok) => {
+    if (editBlocked) { noteBar(editBlocked); return; }
+    void ensureEditingAllowed(sid).then((ok) => {
       if (!ok) return;
       if (isMd && fmt.md === "rendered") { fmt.md = "raw"; saveFmt(fmt); }
       enterEdit();
@@ -485,10 +570,67 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   cancelBtn.hidden = true;
   cancelBtn.addEventListener("click", () => { if (confirmDiscard()) exitEdit(); });
   acts.appendChild(editBtn); acts.appendChild(saveBtn); acts.appendChild(cancelBtn);
+
+  // The body row: `.fileview-main` holds the body and, when the comments panel asks for one, the aside
+  // beside it (two columns; the sheet folds the aside below the body on a narrow column). The body itself
+  // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
+  const main = el("div", "fileview-main");
+  const body = el("div", "fileview-body");
+  // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
+  // over an ssh tunnel to a phone is a real wait.
+  const load = el("div", "fileview-load");
+  load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
+    + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+  body.appendChild(load);
+  main.appendChild(body);
+
+  // ── the viewer seam (FileViewActionCtx) ── closures over THIS open's state. The hook lists are
+  // per open; onClose is how a panel's timer or listener leaves with the viewer (runCloseHooks at
+  // both exits). renderBody/fetchFile/doSave are declared below and only ever invoked later, never
+  // during mount, so the closures may name them here.
+  const renderHooks: Array<() => void> = [];
+  const selHooks: Array<(sel: Selection) => void> = [];
+  const savedHooks: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
+  const fireRendered = () => { for (const cb of renderHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
+  const ctx: FileViewActionCtx = {
+    path, sid: sid || null, todoId: opts?.todoId ?? null,
+    body: () => body,
+    mode: () => (isImage || isPdf) && !(svgSource && svgText !== null) ? "media" : isMd && fmt.md === "rendered" ? "rendered" : "raw",
+    text: () => viewText(),
+    mtimeNs: () => mtimeNs,
+    media: () => (isPdf ? "pdf" : isSvgImage ? "svg" : isImage ? "image" : null),
+    identity: () => (sid ? identityOf(sid) : null),
+    onRendered: (cb) => { renderHooks.push(cb); },
+    onSelection: (cb) => { selHooks.push(cb); },
+    onSaved: (cb) => { savedHooks.push(cb); },
+    onClose: (cb) => { closeHooks.push(cb); },
+    post: (m) => post(m),
+    ensureEditingAllowed: (refusal) => ensureEditingAllowed(sid, refusal),
+    setEditBlocked: (reason) => {
+      editBlocked = reason;
+      editBtn.title = reason || "Edit this file in place";
+      editBtn.classList.toggle("fileview-btn-blocked", !!reason);
+    },
+    aside: (node) => {
+      main.querySelector(".fileview-aside")?.remove();
+      if (node) { node.classList.add("fileview-aside"); main.appendChild(node); }
+    },
+    setMode: (mode) => { if (!isMd || editing) return; fmt.md = mode; saveFmt(fmt); renderBody(); },
+    scrollToOffset: (n) => {
+      const src = viewText();
+      const code = body.querySelector("code.hljs");
+      if (src === null || !code) return;
+      const rows = code.querySelectorAll(".fv-cl");
+      if (!rows.length) return;
+      const line = (src.slice(0, Math.max(0, n)).match(/\n/g) || []).length;   // one .fv-cl per logical line
+      (rows[Math.min(line, rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+    },
+    reload: () => { if (!editing) fetchFile(); },
+  };
   // Registered actions render after the built-ins — the registry walk is the ONE place row
-  // conventions live (see registerFileViewAction above). The GitHub link mounts here.
+  // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
   for (const a of fileViewActions) {
-    const n = a.mount({ path, sid: sid || null, todoId: opts?.todoId ?? null });
+    const n = a.mount(ctx);
     if (n) acts.appendChild(n);
   }
 
@@ -516,17 +658,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   acts.appendChild(copy); acts.appendChild(close);
   bar.appendChild(name); if (sess) bar.appendChild(sess); bar.appendChild(acts);
 
-  const body = el("div", "fileview-body");
-  // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
-  // over an ssh tunnel to a phone is a real wait.
-  const load = el("div", "fileview-load");
-  load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
-    + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
-  body.appendChild(load);
-
-  box.appendChild(bar); box.appendChild(body);
+  box.appendChild(bar); box.appendChild(main);
   wrap.appendChild(box);
   document.body.appendChild(wrap);
+
+  // A one-line notice above the body in the viewer's error dress (the edit-blocked reason, a save
+  // failure, a save whose comments-log entry did not land): one at a time, replacing the last, and
+  // the body content underneath survives.
+  const noteBar = (msg: string): HTMLElement => {
+    document.getElementById("fileview-save-err")?.remove();
+    const bar2 = el("div", "fileview-err");
+    bar2.id = "fileview-save-err";
+    bar2.textContent = msg;
+    body.prepend(bar2);
+    return bar2;
+  };
 
   // A 200 whose bytes will not DECODE — a zero-byte file, a mid-write/truncated image — fires the
   // img's error event and used to leave the browser's mute broken-image glyph: no reason, no way
@@ -578,6 +724,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (objUrl === null) return;            // the romp loader holds the body until the bytes land
       if (svgSource && svgText !== null) {
         body.replaceChildren(codeBlock(svgText, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+        fireRendered();                         // a text body: the panel's highlight pass runs on it too
         return;
       }
       body.replaceChildren(isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path, imgFailed));
@@ -585,6 +732,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     body.replaceChildren(rendered ? mdBlock(text) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
   };
 
   // Selection → labeled quote chip (the user 2026-08-23): mouseup is the gesture's settle point.
@@ -594,20 +742,24 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // chip lands in the session the file was opened FOR even if the active tab changed while the
   // modal was up (the 2026-08-19 routing rule: the gesture's session, never activeId-at-gesture).
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
-  box.addEventListener("mouseup", () => {
+  const onSelect = () => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
-    // No chip target reachable → no seed (the no-sink gating, re-expressed for the chip era): the post
-    // would be dead air and the label's fresh read dead work. The target is this document's composer
-    // (the chat-hosted viewer) or, from a pane without one — the Files pane, the feed — the shell,
-    // which forwards the seed into the chat pane (composerWindow above).
-    const seedTarget = composerWindow();
-    if (!seedTarget) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
     // surface; the SVG SOURCE view is a real text view and quotes like any other (renderBody's
     // media gate, same rule).
     if ((isImage || isPdf) && !(svgSource && svgText !== null)) return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.anchorNode || !box.contains(sel.anchorNode)) return;
+    // The seam's selection hooks run FIRST (plans/file-review.md, Slice 1): the comments panel's
+    // floating Comment button must work in a Files pane with no chat pane anywhere — the composer
+    // gate below is the QUOTE CHIP's gate, not the selection's.
+    for (const cb of selHooks) { try { cb(sel); } catch { /* a hook must never cost the chip */ } }
+    // No chip target reachable → no seed (the no-sink gating, re-expressed for the chip era): the post
+    // would be dead air and the label's fresh read dead work. The target is this document's composer
+    // (the chat-hosted viewer) or, from a pane without one — the Files pane, the feed — the shell,
+    // which forwards the seed into the chat pane (composerWindow above).
+    const seedTarget = composerWindow();
+    if (!seedTarget) return;
     const picked = sel.toString().trim();
     if (!picked) return;
     // The label's line is minted NOW, not at open: agents edit these same trees, so the open-time
@@ -625,7 +777,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         try { seedTarget.postMessage({ type: "editorSelection", text: picked, sid: sid || undefined, src: quoteSrcLabel(path, doc, picked) }, "*"); }
         catch { /* messaging our own window or the same-origin shell cannot really fail */ }
       });
-  });
+  };
+  box.addEventListener("mouseup", onSelect);
+  box.addEventListener("touchend", onSelect);   // the phone's selection settles on the lift, with no mouseup
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
@@ -717,11 +871,41 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     saveBtn.disabled = true; saveBtn.textContent = "Saving…";   // acknowledge before the round-trip
     // restore the file's own line endings — an untouched CRLF file must round-trip byte-identical
     const content = eolCRLF ? buf.replace(/\n/g, "\r\n") : buf;
-    editHooks = {
+    // Loud, in place, and the BUFFER SURVIVES: the error bar sits above the textarea. A conflict
+    // (the disk moved — an agent wrote it) offers Reload, which re-opens fresh — behind the same
+    // discard confirm, so the user's edits are never thrown away silently (never a merge UI).
+    const showSaveError = (err: string) => {
+      const bar2 = noteBar(err);
+      if (/changed on disk/.test(err)) {
+        const re = el("button", "fileview-btn fileview-err-dl") as HTMLButtonElement;
+        re.type = "button"; re.textContent = "Reload file";
+        re.title = "Fetch the file as it is now (asks before discarding your edits)";
+        re.addEventListener("click", () => {
+          if (!confirmDiscard()) return;
+          dirty = false;                      // confirmed once — the replace guard must not ask twice
+          openFileView(path, sid, opts);      // the same provenance (todoId) — a reload is still that open
+        });
+        bar2.appendChild(re);
+      }
+    };
+    const hooks: NonNullable<typeof editHooks> = {
       reqId: ++saveSeq,
-      saved: (mtNs) => {
+      // The kernel's account of a comments-log append that failed, or of a log it could not read back
+      // after appending — filled from the fileSaved reply before `saved` runs (plans/file-review.md, The
+      // comments log: a failed append is reported in the reply, never a failed save). The save landed,
+      // so it is no error state — but the Log the panel shows then lacks (or cannot read back) the entry
+      // this edit owed, and a person reading it later would take the silence for "nothing happened".
+      logWarning: null,
+      saved: (mtNs, logged) => {
         mtimeNs = mtNs;
         text = content;
+        // the seam's onSaved: the panel refreshes its Log (the kernel appended the edit before replying)
+        for (const cb of savedHooks) { try { cb({ mtimeNs: mtNs, logged }); } catch { /* a hook must never cost the save */ } }
+        // The comments-log warning goes up in the note bar, in the kernel's own words (CLAUDE.md:
+        // surface it, never degrade silently) — here, above the editor the in-flight stay below keeps,
+        // and again after exitEdit's repaint on the other path, which takes this bar with the editor.
+        const noteLog = () => { if (hooks.logWarning) noteBar(hooks.logWarning); };
+        noteLog();
         // Keystrokes typed DURING the round-trip survive the ack (the review's in-flight-typing
         // finding): if the live buffer moved past the snapshot we saved, stay in edit mode with the
         // new baseline — never re-render over what the user is still typing.
@@ -731,54 +915,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
           return;
         }
         exitEdit();                             // re-renders the highlighted view from the saved bytes
+        noteLog();
       },
       failed: (err) => {
         saveBtn.disabled = false; saveBtn.textContent = "Save";
-        // A GATE refusal from the kernel that OWNS this file: the consent flag is enforced by that
-        // kernel but the Edit click's /version read sees only the LOCAL one — a mesh kernel attached
-        // AFTER the one yes never heard the broadcast, so it refuses every save with copy pointing at
-        // a popup the local flag keeps from ever re-showing. Re-offer the SAME consent here, where
-        // the disagreeing machine is known by name; a yes re-broadcasts setFileEditing (KERNEL_SETTING
-        // reaches every attached kernel, the late one included) and retries the save — the broadcast
-        // and the save ride the same ordered socket per host, so the flag lands first; on a host whose
-        // socket is down at that moment, federation queues the setting and flushes it on the open
-        // event ahead of any later traffic (federation.ts sendRemote/flushPending), so the flag still
-        // lands before a post-reconnect retry. A no falls through to the plain error bar, buffer intact.
+        // A GATE refusal from the kernel that OWNS this file: re-offer the SAME consent naming the
+        // disagreeing machine (ensureEditingAllowed's re-consent path, shared with the comment verbs);
+        // a yes re-broadcasts setFileEditing and retries the save — the broadcast and the save ride the
+        // same ordered socket per host, so the flag lands first; on a host whose socket is down at that
+        // moment, federation queues the setting and flushes it on the open event ahead of any later
+        // traffic (federation.ts sendRemote/flushPending), so the flag still lands before a
+        // post-reconnect retry. A no falls through to the plain error bar, buffer intact.
         if (/file editing is off/.test(err)) {
-          const host = sid ? hostOf(sid) : "";
-          if (window.confirm(
-            "Editing is off on " + (host ? "“" + host + "”" : "this machine")
-            + (host ? " — it may have connected after you allowed editing here" : "") + ".\n\n"
-            + "Allow editing files from the dashboard?\n\n"
-            + "Saves write straight to disk on the file's machine — and this applies on every machine "
-            + "connected here.\n\n"
-            + "You can turn this off later in the settings gear.")) {
-            post({ type: "setFileEditing", enabled: true, gt: Date.now() });
-            doSave();
-            return;
-          }
+          void ensureEditingAllowed(sid, err).then((ok) => { if (ok) doSave(); else showSaveError(err); });
+          return;
         }
-        // Loud, in place, and the BUFFER SURVIVES: the error bar sits above the textarea. A conflict
-        // (the disk moved — an agent wrote it) offers Reload, which re-opens fresh — behind the same
-        // discard confirm, so the user's edits are never thrown away silently (never a merge UI).
-        document.getElementById("fileview-save-err")?.remove();
-        const bar2 = el("div", "fileview-err");
-        bar2.id = "fileview-save-err";
-        bar2.textContent = err;
-        if (/changed on disk/.test(err)) {
-          const re = el("button", "fileview-btn fileview-err-dl") as HTMLButtonElement;
-          re.type = "button"; re.textContent = "Reload file";
-          re.title = "Fetch the file as it is now (asks before discarding your edits)";
-          re.addEventListener("click", () => {
-            if (!confirmDiscard()) return;
-            dirty = false;                      // confirmed once — the replace guard must not ask twice
-            openFileView(path, sid, opts);      // the same provenance (todoId) — a reload is still that open
-          });
-          bar2.appendChild(re);
-        }
-        body.prepend(bar2);
+        showSaveError(err);
       },
     };
+    editHooks = hooks;
     post({ type: "saveFile", path, sid: sid || undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq });
   };
   renderBody();   // buttons take their initial state now; the loader stays up until the fetch lands
@@ -796,67 +951,84 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   document.addEventListener("keydown", onKey);
   onKeyLive = onKey;
 
-  fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
-    // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
-    // "not a type I serve" from "too big" from "not text after all", and that is exactly what the
-    // person who clicked needs to know (a 413 names the size and the cap). The status rides along so
-    // the catch below can tell "the file is there but I can't show it" from "there is no file".
-    if (!r.ok) return r.text().then((t) => {
-      throw Object.assign(new Error(t || ("HTTP " + r.status)), { status: r.status });
-    });
-    // Edit arms off the KERNEL's verdicts, never a client guess: text/plain AND a faithful UTF-8
-    // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
-    // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
-    // kernel that sends neither simply gets no Edit button).
-    isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
-      && r.headers.get("X-Romp-Text-Utf8") !== "0";
-    mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
-    // Media branches on the SAME kernel verdict (an image 200 wears image/* and no X-Romp-Text-Utf8 —
-    // tests/test_kernel_preview.py pins that contract server-side). The bytes below are the one fetch
-    // either way: media takes them as a blob for an object URL, never a second request.
-    const ct = r.headers.get("Content-Type") || "";
-    isImage = ct.startsWith("image/");
-    isPdf = ct.startsWith("application/pdf");
-    isSvgImage = ct === "image/svg+xml";
-    return isImage || isPdf ? r.blob() : r.text();
-  }).then((t) => {
-    if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
-    if (t instanceof Blob) {
-      // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
-      // and never clobbers the new open's mediaUrlLive registration.
-      if (!wrap.isConnected) return;
-      mediaBlob = t;
-      objUrl = URL.createObjectURL(t);
-      mediaUrlLive = objUrl;                   // registered so close/replace can revoke (dropMediaUrl)
+  // The fetch pipeline, as a function: the open runs it once, and the seam's reload() runs it again
+  // (the comments panel's poll saw the file's mtime move — an agent wrote it) with the action row
+  // and the aside left standing; only the body and the mtime change.
+  const fetchFile = () => {
+    fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
+      // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
+      // "not a type I serve" from "too big" from "not text after all", and that is exactly what the
+      // person who clicked needs to know (a 413 names the size and the cap). The status rides along so
+      // the catch below can tell "the file is there but I can't show it" from "there is no file".
+      if (!r.ok) return r.text().then((t) => {
+        throw Object.assign(new Error(t || ("HTTP " + r.status)), { status: r.status });
+      });
+      // Edit arms off the KERNEL's verdicts, never a client guess: text/plain AND a faithful UTF-8
+      // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
+      // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
+      // kernel that sends neither simply gets no Edit button).
+      isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
+        && r.headers.get("X-Romp-Text-Utf8") !== "0";
+      mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
+      // Media branches on the SAME kernel verdict (an image 200 wears image/* and no X-Romp-Text-Utf8 —
+      // tests/test_kernel_preview.py pins that contract server-side). The bytes below are the one fetch
+      // either way: media takes them as a blob for an object URL, never a second request.
+      const ct = r.headers.get("Content-Type") || "";
+      isImage = ct.startsWith("image/");
+      isPdf = ct.startsWith("application/pdf");
+      isSvgImage = ct === "image/svg+xml";
+      return isImage || isPdf ? r.blob() : r.text();
+    }).then((t) => {
+      if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
+      if (t instanceof Blob) {
+        // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
+        // and never clobbers the new open's mediaUrlLive registration.
+        if (!wrap.isConnected) return;
+        if (objUrl !== null) dropMediaUrl();    // a reload: the previous bytes' URL goes before the new one is minted
+        mediaBlob = t;
+        objUrl = URL.createObjectURL(t);
+        mediaUrlLive = objUrl;                   // registered so close/replace can revoke (dropMediaUrl)
+        if (svgSource && svgText !== null) {
+          // A reload under the Source view: the XML swaps in when the new bytes decode, and the old
+          // text stands until then — nulling it first would flap mode() to "media" and flash the image
+          // for the decode's duration. A decode a newer reload overtook, or one landing after the
+          // viewer closed, paints nothing: the newest bytes are what show, and a drained panel hears
+          // no onRendered.
+          void t.text().then((s) => { if (mediaBlob !== t || !wrap.isConnected) return; svgText = s; renderBody(); });
+          return;
+        }
+        svgText = null;   // any decode on hand was the OLD bytes': the next Source toggle decodes this blob
+        renderBody();
+        return;
+      }
+      text = t;
       renderBody();
-      return;
-    }
-    text = t;
-    renderBody();
-  }).catch((err) => {
-    if (!document.getElementById("romp-fileview")) return;
-    const why = el("div", "fileview-err");
-    const msg = String(err && err.message || err);
-    why.textContent = msg;
-    if (!msg.includes(path)) {
-      // The kernel's 404/413/415 bodies name the RESOLVED path themselves now — the hint exists for
-      // errors that don't (a network failure, an old kernel), not to say the same path twice.
-      const hint = el("div", "fileview-err-hint");
-      hint.textContent = path;
-      why.appendChild(hint);
-    }
-    // A refusal-to-RENDER is not a dead end (ui/CLAUDE.md): when the file exists, the kernel's own
-    // words are followed by the way out — the download the view could not be. A 404 stays offerless,
-    // because offering to download a file that is not there would be a lie.
-    if (offersDownload((err as { status?: number }).status)) {
-      const offer = el("button", "fileview-btn fileview-err-dl") as HTMLButtonElement;
-      offer.type = "button"; offer.textContent = "Download";
-      offer.title = "Save this file to your device";
-      offer.addEventListener("click", () => startDownload(dlUrl, offer));
-      why.appendChild(offer);
-    }
-    body.replaceChildren(why);
-  });
+    }).catch((err) => {
+      if (!document.getElementById("romp-fileview")) return;
+      const why = el("div", "fileview-err");
+      const msg = String(err && err.message || err);
+      why.textContent = msg;
+      if (!msg.includes(path)) {
+        // The kernel's 404/413/415 bodies name the RESOLVED path themselves now — the hint exists for
+        // errors that don't (a network failure, an old kernel), not to say the same path twice.
+        const hint = el("div", "fileview-err-hint");
+        hint.textContent = path;
+        why.appendChild(hint);
+      }
+      // A refusal-to-RENDER is not a dead end (ui/CLAUDE.md): when the file exists, the kernel's own
+      // words are followed by the way out — the download the view could not be. A 404 stays offerless,
+      // because offering to download a file that is not there would be a lie.
+      if (offersDownload((err as { status?: number }).status)) {
+        const offer = el("button", "fileview-btn fileview-err-dl") as HTMLButtonElement;
+        offer.type = "button"; offer.textContent = "Download";
+        offer.title = "Save this file to your device";
+        offer.addEventListener("click", () => startDownload(dlUrl, offer));
+        why.appendChild(offer);
+      }
+      body.replaceChildren(why);
+    });
+  };
+  fetchFile();
   return true;
 }
 
@@ -1034,7 +1206,11 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
       h.apply(String(m.url || ""), String(m.reason || ""));
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
-      h.saved(String(m.mtimeNs || ""));
+      // `logged`: the comments log took the edit (Slice 1; absent on an older kernel = false). `logWarning`:
+      // the kernel's account of an append that failed or a log it could not read back — saveFile's reply
+      // is the ONLY place that text exists, so a reader that dropped it would lose it for good.
+      h.logWarning = typeof m.logWarning === "string" && m.logWarning ? m.logWarning : null;
+      h.saved(String(m.mtimeNs || ""), m.logged === true);
     } else if (m.type === "fileSaveFailed" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.failed(String(m.error || "the save failed"));
