@@ -14489,10 +14489,54 @@ def courier_llm(message_text, menu_text, declared=""):
     return _judge_run(_triage_model(), COURIER_SYS, user, judge="courier", mark=mk).strip()[:300]
 
 
-_postal_from_memo = [(None, {})]   # ((messages.jsonl mtime, size), {mid: (from, from_host, tracked, ...)}) as ONE
-#                                    tuple, rebound whole: stored as two slots, a reader between the stores paired
-#                                    the new key with the old map and missed a mid the new log has (the 2026-09-06
-#                                    free-threading review, race 7). Tests reset it to (None, {}).
+_postal_from_memo = [(None, ({}, []))]   # ((messages.jsonl mtime, size), (mp, xcands)) as ONE tuple, rebound
+#                                          whole: stored as two slots, a reader between the stores paired the new
+#                                          key with the old map and missed a mid the new log has (the 2026-09-06
+#                                          free-threading review, race 7). mp is {mid: _postal_row's tuple}; xcands
+#                                          the cross-host delegate "sent" rows run_courier plants from. Tests reset
+#                                          it to (None, {}): a non-equal key is a miss and the slot is never unpacked.
+
+
+def _postal_ledger():
+    """One memoized parse of the postal ledger for its two judge-side readers: (mp, xcands), where mp is
+    {mid: _postal_row's tuple} for every "sent" row with an id, and xcands the "sent" rows that are
+    cross-host delegates (kind delegate, a toName, a to_id "peer:..."), the candidates run_courier's
+    sender-side plant filters per pass by discovered sender and by the retry horizon (a clock predicate
+    and this pass's fleet, neither frozen here). Keyed on the file's (st_mtime, st_size), published as ONE
+    tuple (key, (mp, xcands)) rebound whole (the pusher thread reads _postal_row concurrently, see
+    _postal_from_memo). run_courier used to parse the whole ledger itself every pass for the candidate
+    rows, beside _postal_row's parse of the same file (J6 of the round-4 perf plan, 2026-09-07); the
+    ledger appends about once every few minutes live, so this refills about once per forty passes.
+    ({}, []) when the ledger is absent or unreadable, the answer both readers gave, and nothing is
+    memoized for it."""
+    try:
+        st = os.stat(MESSAGES)
+        key = (st.st_mtime, st.st_size)
+    except OSError:
+        return {}, []
+    ent = _postal_from_memo[0]
+    if ent[0] == key:
+        return ent[1]
+    mp, xcands = {}, []
+    try:
+        for line in MESSAGES.read_text(errors="replace").splitlines():
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(r, dict) or r.get("ev") != "sent" or not r.get("id"):
+                continue
+            ua = r.get("userAsk")
+            mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
+                           str(r.get("body") or ""),
+                           ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None,
+                           str(r.get("originMid") or ""))
+            if r.get("kind") == "delegate" and r.get("toName") and str(r.get("to_id") or "").startswith("peer:"):
+                xcands.append(r)
+    except OSError:
+        return {}, []
+    _postal_from_memo[0] = (key, (mp, xcands))
+    return mp, xcands
 
 
 def _postal_row(mid):
@@ -14508,33 +14552,11 @@ def _postal_row(mid):
     cross-host delegate reads user-anchored though the local walk rightly refuses foreign hops.
     originMid (2026-08-28, the dead-session round) is the SENDER-side id deliver() stamps on a
     relayed row — the durable join key when the two sides mint different mids for one message.
-    ("", "", False, "", None, "") for None/unknown mids. Memoized on the log file's (mtime, size)."""
+    ("", "", False, "", None, "") for None/unknown mids. Memoized on the log file's (mtime, size) through
+    _postal_ledger, one parse per ledger version shared with the courier's cross-host candidate rows."""
     if not mid:
         return ("", "", False, "", None, "")
-    try:
-        st = os.stat(MESSAGES)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        return ("", "", False, "", None, "")
-    k0, mp = _postal_from_memo[0]
-    if k0 != key:
-        mp = {}
-        try:
-            for line in MESSAGES.read_text(errors="replace").splitlines():
-                try:
-                    r = json.loads(line)
-                except Exception:
-                    continue
-                if r.get("ev") == "sent" and r.get("id"):
-                    ua = r.get("userAsk")
-                    mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
-                                   str(r.get("body") or ""),
-                                   ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None,
-                                   str(r.get("originMid") or ""))
-        except OSError:
-            return ("", "", False, "", None, "")
-        _postal_from_memo[0] = (key, mp)
-    return mp.get(mid, ("", "", False, "", None, ""))
+    return _postal_ledger()[0].get(mid, ("", "", False, "", None, ""))
 
 
 def _frame_head(s):
@@ -15429,20 +15451,12 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     # backfilled; idempotent by msgId, so one plant per message ever.
     placed = 0
     fleet_ids = {f for f, p, a, nm in fleet}
-    try:
-        xrows = []
-        for line in MESSAGES.read_text(errors="replace").splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            if (o.get("ev") == "sent" and o.get("kind") == "delegate" and o.get("id")
-                    and o.get("from_id") in fleet_ids and o.get("toName")
-                    and str(o.get("to_id") or "").startswith("peer:")
-                    and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON):
-                xrows.append(o)
-    except OSError:
-        xrows = []
+    # The candidate rows come from the ledger memo (_postal_ledger: one parse per ledger version, shared
+    # with _postal_row; this arm parsed the whole ledger itself every pass before 2026-09-07). The
+    # discovered-sender and horizon filters run here, per pass: the horizon is a clock predicate and the
+    # fleet is this pass's, so neither is frozen in the memo.
+    xrows = [o for o in _postal_ledger()[1]
+             if o.get("from_id") in fleet_ids and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON]
     for o in xrows:
         sstore = load_goals(o["from_id"])
         if _fallback_store(sstore):

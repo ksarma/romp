@@ -2015,6 +2015,105 @@ class CourierGate(_Gate):
         self._pass(tiers=("courier",))
         self.assertEqual(self._ran(), (1, 1, 1, 0), "healed: the crashed sid runs and stamps")
 
+    def _ledger_reads(self, fn):
+        """Run fn counting the opens of the ledger file (Path.read_text and the event model's incremental
+        reader both open it); returns the count."""
+        n, target = [0], os.path.abspath(str(jd.MESSAGES))
+        reals = {(builtins, "open"): builtins.open, (io, "open"): io.open}
+
+        def wrap(real):
+            def w(p, *a, **k):
+                if isinstance(p, (str, bytes, os.PathLike)) and os.path.abspath(os.fsdecode(p)) == target:
+                    n[0] += 1
+                return real(p, *a, **k)
+            return w
+        for (mod, name), real in reals.items():
+            setattr(mod, name, wrap(real))
+        try:
+            fn()
+        finally:
+            for (mod, name), real in reals.items():
+                setattr(mod, name, real)
+        return n[0]
+
+    def _trackers(self, sid):
+        return [nd for nd in jd.load_goals(sid)["nodes"].values() if isinstance(nd.get("handoff"), dict)]
+
+    def test_the_ledger_is_parsed_once_per_version_for_the_cross_host_plant(self):
+        # the xrows arm reads its candidate rows from the postal memo (_postal_ledger): across two passes with
+        # an unchanged ledger the file is opened once (by the first pass), the plant is idempotent, and the
+        # memo slot is the same object; an appended row refills it once and plants once
+        self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("courier",))
+        self._ledger_row("px-1.mail.TESTHOST-A", SID, "peer:TESTHOST-B", t=NOW - 100, toName="TESTHOST-B:web",
+                         body="DELEGATE: run the exporter on the far box")
+        jd._postal_from_memo[0] = (None, {})                            # what five suites do: a stale, 2-slot reset
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertGreaterEqual(reads, 1, "the first pass parses the ledger once for the memo")
+        self.assertEqual(len(self._trackers(SID)), 1, "the cross-host delegate planted the sender's tracker")
+        ent = jd._postal_from_memo[0]
+        self.assertEqual(len(ent[1][1]), 1, "one candidate row in the memo")
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertEqual(reads, 0, "an unchanged ledger is not opened again")
+        self.assertIs(jd._postal_from_memo[0], ent, "the memo slot is the same object")
+        self.assertEqual(len(self._trackers(SID)), 1, "idempotent by msgId")
+        self._ledger_row("px-2.mail.TESTHOST-A", SID, "peer:TESTHOST-B", t=NOW - 50, toName="TESTHOST-B:web",
+                         body="DELEGATE: and the importer")
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertEqual(reads, 1, "an appended row: one refill")
+        self.assertEqual(len(self._trackers(SID)), 2, "and the new row planted")
+
+    def test_the_fleet_and_horizon_filters_run_per_pass_on_the_memoized_rows(self):
+        # the memo holds the ledger's rows under the ledger's identity; who is discovered and what is inside
+        # the retry horizon are this pass's questions. A candidate whose sender is not discovered at pass 1
+        # and past the horizon at pass 2 plants at neither, and plants at pass 3 when both hold, with the
+        # memo never refilled between them (no clock predicate is frozen in it)
+        self._session(SID)
+        self._ledger_row("px-3.mail.TESTHOST-A", SID2, "peer:TESTHOST-B", t=NOW - jd.COURIER_RETRY_HORIZON + 50,
+                         toName="TESTHOST-B:web", body="DELEGATE: run the exporter on the far box")
+        self._pass(tiers=("courier",))                                  # SID2 not discovered: no plant
+        ent = jd._postal_from_memo[0]
+        self.assertEqual(len(ent[1][1]), 1, "the row is a candidate in the memo")
+        self.assertEqual(self._trackers(SID2), [], "its sender is not in this pass's fleet")
+        self._session(SID2, name="api")                                 # now discovered
+        self._pass(now=NOW + 100, tiers=("courier",))                   # but the row is past the horizon at this now
+        self.assertEqual(self._trackers(SID2), [], "past the horizon at the pass's now: never backfilled")
+        self.assertIs(jd._postal_from_memo[0], ent, "the memo did not refill: the filters ran on its rows")
+        self._pass(now=NOW, tiers=("courier",))                         # within the horizon again, sender discovered
+        self.assertEqual(len(self._trackers(SID2)), 1, "both filters hold: planted")
+        self.assertIs(jd._postal_from_memo[0], ent)
+
+    def test_a_link_repair_that_raises_marks_the_run_and_the_pass_goes_on(self):
+        # the placed branch's own guard: a repair that raises is logged as before ("link-attach: ...") and, so
+        # the repair is retried rather than skipped over, marks the run incomplete; the other session stamps
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        store = jd.load_goals(SID)
+        nid = SID + ":g7"
+        store["nodes"][nid] = {"id": nid, "text": "Wire up the export button", "parentId": None, "t": T0 + 200,
+                               "mt": T0 + 200, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
+        store["status"][nid] = "working"
+        store["placements"][seg_id] = nid
+        jd.save_goals(SID, store)
+        real = jd._seg_peer_kind
+
+        def kind_crashes(seg):
+            if jd._seg_peer(seg):
+                raise RuntimeError("a marker the kind reader cannot parse")
+            return real(seg)
+        jd._seg_peer_kind = kind_crashes
+        try:
+            self._pass(tiers=("courier",))
+        finally:
+            jd._seg_peer_kind = real
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the crashed repair: incomplete; the sender stamped")
+        self.assertIsNone(self._stamp("courier", SID))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("link-attach: RuntimeError"), notes[0])
+
     def test_counters_add_up_over_the_courier(self):
         path = self._peer_session(SID, SID2)
         self._pass(tiers=("courier",))
