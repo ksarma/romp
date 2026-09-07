@@ -18,7 +18,6 @@ _judge_usage_rows returns; a file that breaks any of the three takes today's ful
 the reader says so once on stderr. Reference for every equivalence check below: a private copy of
 the pre-bisect function. Synthetic rows only (placeholder ids); the fsids here are private to this
 module."""
-import bisect
 import contextlib
 import io
 import json
