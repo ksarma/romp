@@ -16242,8 +16242,13 @@ setupSettings();
     // A path link in the todo's line or its detail fold, and in its Reply modal (linkTodoLinePaths,
     // linkTodoDetailPaths): what the click does is the transcript's (openLinkedPath); only the
     // dispatch differs. The transcript's own links keep their per-span binder, which stops the click
-    // before it gets here, so no link is ever opened twice.
-    openpath: (elx) => openLinkedPath(elx),
+    // before it gets here, so no link is ever opened twice. The handler serves THOSE two hosts and no
+    // other, checked at the click: the file viewer (file-view.ts, a modal in this body) marks its links
+    // with the same data-act and opens them from its own body listener, and it lets the click go on to
+    // the document (menu closers, the feed's focus return) rather than stop it; a viewer link that
+    // reaches here, as one does when the viewer's unsaved-comment ask declined the open and the span
+    // stayed in the document, must not open the file a second time (the 2026-09-07 review, round 2).
+    openpath: (elx) => { if (elx.closest(".todo-card, #ut-reply-prompt")) openLinkedPath(elx); },
     uttoggle: (elx) => {
       const tid = elx.dataset.tid; if (!tid) return;
       const open = !utDetailOpen.has(tid);

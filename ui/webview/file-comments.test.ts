@@ -679,7 +679,7 @@ test("the registry entry: exported by file-comments.ts, registered in file-view.
   assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);\n(?:\/\/[^\n]*\n)*registerFileViewAction\(fileCommentsAction\);/, "second entry, after the GitHub link");
   assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /registerFileViewAction/, "registered by the viewer, not at this module's top level");
   const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];
-  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit } from "./file-view";'], "types only");
+  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";'], "types only");
   // contract C4: the anchor-map API, imported by name
   assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine \} from "\.\/anchor-map";/);
   assert.doesNotMatch(SRC, /vendor\/track-changents/, "the engine is reached through anchor-map, never twice");

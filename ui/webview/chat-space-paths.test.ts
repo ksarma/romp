@@ -56,7 +56,8 @@ test("the whole-span pass runs BEFORE the token walk, so the new link is skipped
   const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");
   // (the skip list is a variable since the file viewer runs the walk inside its <pre>; the chat's default still names pre,
   // and a node under it is dead to marking: textUnits reads it, spanHolding refuses a match in it)
-  assert.match(LINKS, /const skip = opts && opts\.inPre \? "a, \.file-uri-link" : "a, \.file-uri-link, pre";[^\n]*\n\s*for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/);
+  assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/);
+  assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";[^\n]*\n\s*for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/);
   assert.match(LINKS, /dead: !!p\?\.closest\(skip\)/);
   assert.match(LINKS, /return !s\.dead && end <= s\.end \? s : null;/);
 });

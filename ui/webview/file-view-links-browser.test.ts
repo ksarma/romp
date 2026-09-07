@@ -46,12 +46,15 @@ const APP_TEXT = [
 const GUIDE_TEXT = [
   "# Guide", "",
   "Read [the app](../src/app.py) and [the web](https://example.invalid/doc).",
-  "Bare ../src/app.py:3 links too, and https://example.invalid/prose is a URL.", "",
-  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400).", "",
-  '<svg width="120" height="14"><a href="https://example.invalid/s"><text y="11">svgweb</text></a><a href="x.md"><text x="60" y="11">svgfile</text></a></svg>', "",
-  "```bash", "curl https://example.invalid/dl -o data/x.json", "```", "",
+  "Bare ../src/app.py:3 links too, and https://example.invalid/prose is a URL.",
+  "docs/first.md starts a soft-broken line of the same paragraph, and a hard break follows  ",   // two trailing spaces: marked's <br>
+  "docs/second.md starts the line after the break.", "",
+  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err).", "",
+  '<svg width="200" height="30"><a href="https://example.invalid/s"><text y="11">svgweb</text></a><a href="x.md"><text x="60" y="11">svgfile</text></a><text y="26">label docs/label.md in the figure</text></svg>', "",   // a bare path only: marked autolinks a URL inside inline HTML itself
+  "```bash", "curl https://example.invalid/dl -o data/x.json", "docs/fence2.md", "  ./docs/fence3.md", "```", "",
   ...Array.from({ length: 32 }, (_, i) => "line " + (i + 10) + "\n"),   // one paragraph each (a blank line between), so the rendered body scrolls
   '<h2 id="top">Top</h2>', "",
+  '<h2 id="fileview-save-err">Collide</h2>', "",   // an author's id spelled like the viewer's own notice bar
 ].join("\n");
 const NOTES_TEXT = Array.from({ length: 12 }, (_, i) => "note " + (i + 1)).join("\n") + "\n";
 // what a highlighter cuts: bash puts `$HOME` and `${ROOT}` in spans of their own; typescript does the same to a template's `${x}`
@@ -100,18 +103,25 @@ function hostScript(kind: "chat" | "feed"): string {
     const end = RENDER.indexOf("}, true);", start) + "}, true);".length;
     assert.ok(start > 0 && end > start, "render.ts's document-level anchor opener");
     ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\n" + RENDER.slice(start, end);
-    // …and the chat's BODY delegate (actions.ts delegate, the real one, on document.body as render.ts installs it), whose
-    // openpath opens the todo card's path links. A path link inside the viewer carries the same data-act, so a click the
-    // viewer let bubble would open the file there a second time; the handler here records the path, and the chat-page
-    // test asserts the record stays empty. render.ts's own handler is pinned by user-todo-title-links.test.ts.
+    // …and the chat's BODY delegate (actions.ts delegate, the real one, on document.body as render.ts installs it) with
+    // render.ts's own openpath handler, lifted from its source: it opens the todo card's and the Reply modal's path links
+    // and, since the viewer's links carry the same data-act and the viewer lets a plain click go on to the document,
+    // checks the host before opening. openLinkedPath is a recorder here; a second recorder notes every span the handler
+    // was handed, so a test can tell "the click never reached the delegate" from "it reached it and was refused".
     const ACTIONS = fs.readFileSync(path.join(UI, "actions.ts"), "utf8");
     const fStart = ACTIONS.indexOf("export function flash(el: HTMLElement): void {");
     const dStart = ACTIONS.indexOf("export function delegate(root: HTMLElement | Document, handlers: Record<string, ActionHandler>): void {");
     const dEnd = ACTIONS.indexOf("\n}\n", dStart) + 3;
     assert.ok(fStart > 0 && dStart > fStart && dEnd > dStart, "actions.ts's flash and delegate");
-    assert.match(RENDER, /\n    openpath: \(elx\) => openLinkedPath\(elx\),\n/, "render.ts's body delegate routes openpath");
+    const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
+    const ln = bodyMap.split("\n").find((l) => /^\s*openpath: /.test(l));
+    assert.ok(ln, "render.ts's body delegate routes openpath (the handler line moved; re-anchor)");
+    const handler = ln!.trim().replace(/^openpath:\s*/, "").replace(/,$/, "");
     ts += "\ntype ActionHandler = (el: HTMLElement, ev: Event) => void;\n" + ACTIONS.slice(fStart, dEnd).replace(/^export /gm, "")
-      + "\n(window as any).__bodyOpens = [];\ndelegate(document.body, { openpath: (elx) => { (window as any).__bodyOpens.push(elx.dataset.path); } });\n";
+      + "\n(window as any).__bodyOpens = []; (window as any).__bodySeen = [];\n"
+      + "const openLinkedPath = (a: HTMLElement) => { (window as any).__bodyOpens.push(a.dataset.path); };\n"
+      + "const openpath: (elx: HTMLElement) => void = " + handler + ";\n"
+      + "delegate(document.body, { openpath: (elx) => { (window as any).__bodySeen.push(elx.dataset.path); openpath(elx); } });\n";
   } else {
     const FEED = fs.readFileSync(path.join(UI, "feed.ts"), "utf8");
     const start = FEED.indexOf("function feedWantsKeys(t: EventTarget | null): boolean {");
@@ -120,6 +130,9 @@ function hostScript(kind: "chat" | "feed"): string {
     assert.ok(start > 0 && at > start && end > at, "feed.ts's window click listener");
     ts = "let kbMode = false;\n" + FEED.slice(start, end);
   }
+  // a listener on the window, after the host's own: a click that reaches it reached every document-level listener too
+  // (the feed's focus return above, the chat's menu closers), which a stop at the viewer's body starved (the 2026-09-07 review)
+  ts += "\n(window as any).__windowClicks = [];\nwindow.addEventListener(\"click\", (e) => { (window as any).__windowClicks.push((e.target as HTMLElement).textContent); });\n";
   return esbuild.transformSync(ts, { loader: "ts", target: "es2020" }).code;
 }
 const PAGE = (host: "files" | "chat" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>
@@ -285,6 +298,16 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.deepEqual([byText("https://example.invalid/prose").target, /fv-url/.test(byText("https://example.invalid/prose").cls)], ["_blank", false], "marked's own autolink, not wrapped twice");
     assert.deepEqual([byText("https://example.invalid/dl").href, /fv-url/.test(byText("https://example.invalid/dl").cls)], ["https://example.invalid/dl", true], "a URL inside the fenced block");
     assert.equal(byText("data/x.json").path, ROOT + "/docs/data/x.json");
+    // a path starting a soft-broken line, one starting the line after a hard break (<br>), the fence's second and third
+    // lines: the break before each is whitespace to the gate, not glue (the 2026-09-07 review, round 2)
+    assert.equal(byText("docs/first.md").path, ROOT + "/docs/docs/first.md", "a path starting a soft-broken line of the paragraph");
+    assert.equal(byText("docs/second.md").path, ROOT + "/docs/docs/second.md", "a path starting the line after a <br>");
+    assert.equal(byText("docs/fence2.md").path, ROOT + "/docs/docs/fence2.md", "the fence's second line");
+    assert.equal(byText("./docs/fence3.md").path, ROOT + "/docs/docs/fence3.md", "its third, indented");
+    assert.equal(await page.evaluate(() => document.querySelector("#romp-fileview .fileview-md p br") !== null), true, "marked made the hard break a <br>");
+    // the SVG label: its path stays text (an element inserted into SVG text does not render), and the label reads whole
+    assert.deepEqual(await page.evaluate(() => { const t = Array.from(document.querySelectorAll("#romp-fileview .fileview-md svg text")).pop()!; return { text: t.textContent, marks: t.querySelectorAll("a, span").length, nodes: t.childNodes.length }; }),
+      { text: "label docs/label.md in the figure", marks: 0, nodes: 1 }, "no link inside the SVG's text");
     const before = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "the app" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "app.py" }).waitFor({ timeout: 10000 });
@@ -351,6 +374,7 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     assert.deepEqual([byText("q").href, byText("q").target, byText("q").rel, byText("q").act], ["?foo=1", "_blank", "noopener noreferrer", null], "a query alone: a tab, as main had it");
     assert.deepEqual([byText("here").href, /fv-frag/.test(byText("here").cls), /fv-dead/.test(byText("here").cls), byText("here").title], ["#section", true, true, noSectionTitle("section")]);
     assert.deepEqual([byText("go").href, /fv-frag/.test(byText("go").cls), /fv-dead/.test(byText("go").cls), byText("go").title], ["#top", true, false, "Go to top"]);
+    assert.deepEqual([byText("collide").href, /fv-frag/.test(byText("collide").cls), /fv-dead/.test(byText("collide").cls), byText("collide").title], ["#fileview-save-err", true, false, "Go to fileview-save-err"], "the author's heading carries that id");
     const svg = await linkInfo("#romp-fileview .fileview-md svg a");
     assert.deepEqual(svg.map((a) => [a.text, a.href, a.target, a.rel, /file-uri-link/.test(a.cls), a.act, a.path, a.title]), [
       ["svgweb", "https://example.invalid/s", "_blank", "noopener", false, null, null, null],
@@ -374,6 +398,22 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     await h.settle();
     const topAfter = await page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.getElementById("top")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
     assert.equal(topAfter, true, "scrolled to the anchor"); assert.equal(page.url(), url0);
+    // a colliding id: the viewer's own chrome wears ids too (its notice bar is #fileview-save-err). A stand-in for the bar
+    // sits above the rendered document, as the bar does, and the section link still scrolls to the AUTHOR's heading, the
+    // rendered document's own element: a lookup over the whole viewer took the bar (the 2026-09-07 review, round 2)
+    await page.evaluate(() => {
+      const d = document.createElement("div"); d.id = "fileview-save-err"; d.className = "fileview-err"; d.textContent = "a notice";
+      const body = document.querySelector("#romp-fileview .fileview-body")!;
+      body.prepend(d);
+      for (const e of [body, body.querySelector(".fileview-md")!]) e.scrollTop = 0;
+    });
+    const inView = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.querySelector("#romp-fileview .fileview-md h2#fileview-save-err")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
+    assert.equal(await inView(), false, "the author's heading is below the fold again");
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "collide" }).click();
+    await h.settle();
+    assert.equal(await inView(), true, "scrolled to the author's heading, not to the viewer's own element of that id");
+    assert.equal(page.url(), url0);
+    await page.evaluate(() => document.querySelector("#romp-fileview .fileview-body > #fileview-save-err")!.remove());
     // the same-directory :line target opens its file, in Raw, at the line
     const n = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "same" }).click();
@@ -509,7 +549,7 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
   });
 });
 
-test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE, never reaching the delegate's openpath", async (t) => {
+test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window", async (t) => {
   await inBrowser(t, "chat", async (h) => {
     const { page, served, open, status, settle, base, openCards } = h;
     await open(APP);
@@ -528,24 +568,30 @@ test("in a browser, under the chat's own document-level opener and its body dele
     await settle(); assert.equal(await openCards(), 0);
     assert.equal(await nextTab(h, () => ins.click({ modifiers: ["Control"] })), URL_SETUP, "a modified click on the mark: the link's tab, once");
     assert.equal(await openCards(), 0, "and no card");
+    const bodyOpens = () => page.evaluate(() => (window as any).__bodyOpens as string[]);
+    const bodySeen = () => page.evaluate(() => (window as any).__bodySeen as string[]);
+    const windowClicks = () => page.evaluate(() => ((window as any).__windowClicks as string[]).length);
+    const w0 = await windowClicks();
     await page.locator("#romp-fileview .file-uri-link", { hasText: "../docs/guide.md:30" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "guide.md" }).waitFor({ timeout: 10000 });
     assert.deepEqual(served[served.length - 1], { path: GUIDE, sid: SID }, "a path link (no href) is the viewer's, not the opener's");
-    const bodyOpens = () => page.evaluate(() => (window as any).__bodyOpens as string[]);
-    assert.deepEqual(await bodyOpens(), [], "the viewer stopped the click: the body delegate's openpath (the todo card's route) never saw it, so the file opened once");
+    assert.deepEqual(await bodyOpens(), [], "the body delegate's openpath (the todo card's route) opened nothing: the file opened once, from the viewer");
+    assert.equal(await windowClicks(), w0 + 1, "the plain click went on to the window: the viewer does not stop it");
     await open(GUIDE);
     await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
     await page.locator("#romp-fileview .fileview-md a", { hasText: "the app" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "app.py" }).waitFor({ timeout: 10000 });
     assert.deepEqual(served[served.length - 1], { path: APP, sid: SID });
     assert.deepEqual(await bodyOpens(), [], "a Markdown anchor marked as a path link: the same, one open");
+    const w1 = await windowClicks(), seen1 = (await bodySeen()).length;
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click({ modifiers: ["Control"] });
     await settle();
-    assert.deepEqual(await bodyOpens(), [], "a modified click on a path link: its own tab or the viewer, and the delegate saw nothing");
+    assert.deepEqual(await bodyOpens(), [], "a modified click on a path link: its own tab or the viewer, and the delegate opened nothing");
+    assert.equal((await bodySeen()).length, seen1); assert.equal(await windowClicks(), w1, "the modified click stops at the viewer's body (the row's delegate must not open a mark's card for it)");
     // The reachable double: an open the viewer's guard DECLINES (an unsaved comment) leaves the viewer, and the span, in
-    // the document, so a click that bubbled on would reach the delegate and open the very file the person just kept
-    // away from (a second ask on the web, the editor in VS Code). A plain open tears the old viewer down synchronously,
-    // which detaches the span before the delegate's contains() check; this is the case the stop is for.
+    // the document, so the click reaches the delegate (a plain open tears the old viewer down synchronously, which detaches
+    // the span before the delegate's contains() check). The delegate's host check is what keeps the very file the person
+    // just kept away from closed (a second ask on the web, the editor in VS Code); the click is not stopped.
     await status("empty"); await open(APP);
     await page.locator("#romp-fileview .fileview-fc:not([hidden]) button").click();
     await page.locator("#romp-fileview .fc-panel").waitFor({ timeout: 10000 });
@@ -561,26 +607,35 @@ test("in a browser, under the chat's own document-level opener and its body dele
     await page.keyboard.type("keep this one");
     const asked: string[] = [];
     page.once("dialog", (d: any) => { asked.push(d.message()); void d.dismiss(); });
-    const n1 = served.length;
+    const n1 = served.length, w2 = await windowClicks();
     await link.click(); await settle();
     assert.equal(asked.length, 1, "the viewer asked"); assert.equal(await base(), "app.py", "declined: the file stays"); assert.equal(served.length, n1, "nothing fetched");
-    assert.deepEqual(await bodyOpens(), [], "declined, with the span still in the document: the delegate saw nothing, so the click stopped at the viewer and the declined file was not opened behind the person's back");
-    // the recorder is live, so the empties above mean something: a span outside the viewer reaches the delegate
+    assert.deepEqual(await bodySeen(), [CONFIG], "declined, with the span still in the document, the click reached the delegate (the viewer did not stop it; the plain opens above detached their spans first)");
+    assert.deepEqual(await bodyOpens(), [], "and the delegate's host check refused it: the declined file was not opened behind the person's back");
+    assert.equal(await windowClicks(), w2 + 1, "and the window's listeners saw the click");
+    // the recorders are live, so the empties above mean something: a span in a todo card opens through the delegate; a span
+    // loose in the body (no todo host) is seen and refused, as the viewer's are
     assert.deepEqual(await page.evaluate(() => {
+      const card = document.createElement("div"); card.className = "todo-card";
       const s = document.createElement("span"); s.dataset.act = "openpath"; s.dataset.path = "/tmp/TESTHOST/elsewhere.md";
-      document.body.appendChild(s); s.click(); s.remove();
-      return ((window as any).__bodyOpens as string[]).splice(0);
-    }), ["/tmp/TESTHOST/elsewhere.md"], "the body delegate is installed and live");
+      card.appendChild(s); document.body.appendChild(card); s.click(); card.remove();
+      const loose = document.createElement("span"); loose.dataset.act = "openpath"; loose.dataset.path = "/tmp/TESTHOST/loose.md";
+      document.body.appendChild(loose); loose.click(); loose.remove();
+      return { opened: ((window as any).__bodyOpens as string[]).splice(0), seen: ((window as any).__bodySeen as string[]).splice(0) };
+    }), { opened: ["/tmp/TESTHOST/elsewhere.md"], seen: [CONFIG, "/tmp/TESTHOST/elsewhere.md", "/tmp/TESTHOST/loose.md"] }, "the body delegate is installed and live, and opens for its own hosts only");
   });
 });
 
-test("in a browser, under the feed's window click listener: a path link opens in place and a URL opens a tab", async (t) => {
+test("in a browser, under the feed's window click listener: a path link opens in place and the listener sees the click (it returns focus to the chat after one), and a URL opens a tab", async (t) => {
   await inBrowser(t, "feed", async (h) => {
     const { page, served, open, base } = h;
     await open(APP);
+    const windowClicks = () => page.evaluate(() => ((window as any).__windowClicks as string[]).length);
+    const w0 = await windowClicks();
     await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "config.json" }).waitFor({ timeout: 10000 });
     assert.deepEqual(served[served.length - 1], { path: CONFIG, sid: SID });
+    assert.equal(await windowClicks(), w0 + 1, "the click reached the window, so the feed's own listener ran too (a stop at the viewer's body starved it; the 2026-09-07 review)");
     await open(APP);
     const n0 = served.length;
     assert.equal(await nextTab(h, () => page.locator("#romp-fileview a.fv-url").click()), URL_SETUP);

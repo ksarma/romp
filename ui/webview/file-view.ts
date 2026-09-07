@@ -166,7 +166,7 @@ let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: stri
 // dropped silently (the 2026-09-07 review: a link click under a comment draft replaced the file and the
 // draft with it, with no ask).
 let closeGuard: (() => boolean) | null = null;
-let closeAsks: Array<() => boolean> = [];
+let closeAsks: Array<() => CloseAsk | null> = [];
 // ONE live Escape handler at a time. Every open registers its own document-level onKey closure, and
 // the previous one must be UNREGISTERED when its viewer goes: the replace path used to leave it
 // behind, where — with a NEW viewer up, so its `!getElementById` guard no longer no-ops — its stale
@@ -281,11 +281,17 @@ export interface FileViewActionCtx {
    *  Edit and Save, never cached — the panel's status is the truth about what is pending and where Save must go */
   setTrackedEdit(t: TrackedEdit | null): void;
   /** register an ask the viewer puts before this open ends by a close or a replace-open (a link followed inside the
-   *  file, a Files-pane row, the shell's relay): false vetoes it and the viewer stays as it was. The editor's own
-   *  unsaved-changes ask runs first; an action with something unsaved of its own (the comments panel's typed note)
-   *  asks here, in the same words, so nothing the person typed is dropped without a word. Per open; dropped with it */
-  guardClose(ask: () => boolean): void;
+   *  file, a Files-pane row, the shell's relay). The callback answers null when the action has nothing unsaved, else
+   *  what to ask (CloseAsk); the VIEWER puts the ask, the way it puts the editor's own unsaved-changes ask, which runs
+   *  first: a confirm dialog on the web, and in the VS Code webview (no dialog) the notice bar with `kept`, the thing
+   *  kept. A declined ask vetoes the close and the viewer stays as it was. So nothing the person typed is dropped
+   *  without a word, in one code path for every host. Per open; dropped with it */
+  guardClose(ask: () => CloseAsk | null): void;
 }
+/** An action's answer to the close guard when it holds something unsaved: `question`, the yes/no put to the person where a
+ *  dialog exists ("Discard the unsaved comment on app.py?"), and `kept`, the notice shown where none does and the thing is
+ *  kept ("The unsaved comment on app.py is kept: ..."). */
+export interface CloseAsk { question: string; kept: string }
 /** One decision taken inside the editor (an accept or a reject of a pending change), as the chunk's decisions report
  *  it. "Decisions" is the plan's word for the save verb's two lists and the chunk's canonical name (editor-chunk.ts,
  *  TrackDecisions); the comments log is the OTHER record of these same decisions, on disk, in the host's hands. */
@@ -1033,16 +1039,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // (a highlight, a change mark) is the card's opening and only that, so a plain one is cancelled here when
   // the link is an anchor (the anchor's own open would follow the card's otherwise) and left to the panel's
   // delegate on the row, as render.ts yields to panelMark (the 2026-09-06 precedent); a modified click on a
-  // mark is the link's and only the link's, so it stops before the row. A path link's click stops at this
-  // body whatever the gesture: the span's data-act="openpath" is the one the chat's body delegate routes
-  // for the todo card's links (render.ts), and a click that bubbled on to it would open the file a second
-  // time, as the transcript's own per-span binder guards against (render.ts bindPathLink). A plain open tears
-  // this viewer down before the click reaches the delegate, which then refuses the detached span; an open the
-  // close guard DECLINES (an unsaved comment) leaves the span in place, and the delegate would open the file the
-  // person just kept away from (file-view-links-browser.test.ts, the chat page). A click that ends a drag which
-  // selected text (the selection is still open at click time; a press on text collapses it first, so a plain
-  // click never sees one) selects and navigates nowhere. Enter on a focused path link is its click
-  // (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
+  // mark is the link's and only the link's, so it stops before the row. A PLAIN click is not stopped: it goes on
+  // to the document's own listeners (the feed's window listener that returns focus to the chat, the chat's menu
+  // closers), which a stop here starved (the 2026-09-07 review). The chat's body delegate routes the same
+  // data-act="openpath" for the todo card's links (render.ts), and would have opened the file a second time from
+  // a click that reached it (a plain open tears this viewer down first, but an open the close guard DECLINES, an
+  // unsaved comment, leaves the span in the document); that delegate now serves only the todo card and its Reply
+  // modal, checked at the click, so a viewer link that reaches it opens nothing there (file-view-links-browser.test.ts,
+  // the chat page). A click that ends a drag which selected text (the selection is still open at click time; a
+  // press on text collapses it first, so a plain click never sees one) selects and navigates nowhere. Enter on a
+  // focused path link is its click (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
   const openUrlTab = (href: string) => {
     if (!href) return;
     if (canPreview()) window.open(href, "_blank", "noopener,noreferrer");   // the web dashboard: the browser's tab
@@ -1057,7 +1063,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (x.classList.contains(FRAG_LINK_CLASS)) {                // a section of this document: this document's scroll, never the page's
       ev.preventDefault();
       const id = x.dataset.frag;
-      const hit = id ? Array.from(box.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id) : undefined;
+      // the rendered document's own ids, as mark time read them (file-view-links.ts): the viewer's chrome carries ids
+      // of its own (the notice bar), and a lookup over the whole box scrolled to one of those on a colliding name
+      const md = body.querySelector(".fileview-md");
+      const hit = id && md ? Array.from(md.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id) : undefined;
       if (hit) hit.scrollIntoView({ block: "start" });
       return;
     }
@@ -1067,10 +1076,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       openUrlTab(x.getAttribute("href") || "");
       return;
     }
-    ev.preventDefault(); ev.stopPropagation();                   // this viewer's click alone: the span's data-act is the chat's body delegate's too (render.ts openpath), which would open the file a second time
+    ev.preventDefault();
     const p = x.dataset.path;
     if (!p) return;
-    if (own && openFileTab(p, sid || null)) return;              // its own tab; a blocked popup falls through to the viewer
+    if (own) {
+      ev.stopPropagation();                                      // the row's delegate never sees the modified click (the mark's card would open too)
+      if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
+    }
     const ln = Number(x.dataset.line);
     openLinkedFile(p, sid || null, ln > 0 ? ln : null);
   };
@@ -1102,9 +1114,22 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
   // mtime floor does the real safety work (agents edit these same trees — see _save_file).
+  // The ask before something typed and unsaved is dropped: the editor's buffer here, an action's draft through the
+  // close guard (the comments panel's typed note, ctx.guardClose). ONE function for both. On the web dashboard it is a
+  // confirm dialog. The VS Code webview shows no dialog: window.confirm returns false there without showing anything,
+  // so the ask read as a dead click (the 2026-09-07 review; the editor's Cancel and every close met the same wall). There
+  // the unsaved thing is kept and the notice bar says what is unsaved and what clears it, which is loud where the
+  // dialog was silent (CLAUDE.md, fail loudly): saving or undoing the edit, sending or clearing the note.
+  const askDiscard = (question: string, kept: string): boolean => {
+    if (canPreview()) return window.confirm(question);
+    noteBar(kept);
+    return false;
+  };
   const confirmDiscard = (): boolean =>
-    !editing || !dirty || window.confirm("Discard unsaved changes to " + path.slice(cut + 1) + "?");
-  closeGuard = () => confirmDiscard() && closeAsks.every((ask) => ask());   // the editor's ask, then the actions' (ctx.guardClose)
+    !editing || !dirty || askDiscard("Discard unsaved changes to " + path.slice(cut + 1) + "?",
+      "The editor stays open: " + path.slice(cut + 1) + " has unsaved changes. Save or undo them, then try again.");
+  // the editor's ask, then the actions' (ctx.guardClose): each names what it would drop, and the ask is put here
+  closeGuard = () => confirmDiscard() && closeAsks.every((ask) => { const q = ask(); return q === null || askDiscard(q.question, q.kept); });
   const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the

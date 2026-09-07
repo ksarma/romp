@@ -69,7 +69,7 @@
 //
 // This module imports only TYPES from file-view.ts and is registered there (registerFileViewAction
 // in file-view.ts), so the two never form a runtime import cycle.
-import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit } from "./file-view";
+import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";
 import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
@@ -1129,13 +1129,15 @@ class Panel {
   }
   /** The viewer's close ask (ctx.guardClose): a composer holding typed words is a note the person has not saved, and a
    *  close or a replace-open (a link followed inside the file, a Files-pane row, the shell's relay) used to drop it with
-   *  the panel, silently (the 2026-09-07 review). The ask the editor puts to unsaved edits, in its words (file-view.ts
-   *  confirmDiscard); a re-place takes a drag, not words, and an empty input has nothing to lose. True lets the close go. */
-  draftAsk(): boolean {
+   *  the panel, silently (the 2026-09-07 review). The panel names what is at stake; the VIEWER puts the ask, the way it
+   *  puts the editor's own (file-view.ts askDiscard: a confirm on the web, the notice bar in the VS Code webview, where
+   *  window.confirm shows nothing and answers false; the round-2 review). A re-place takes a drag, not words, and an
+   *  empty input has nothing to lose: null lets the close go. */
+  draftAsk(): CloseAsk | null {
     const c = this.composer;
-    if (!c || c.kind === "replace" || !this.input.value.trim()) return true;
-    const p = this.ctx.path;
-    return window.confirm("Discard the unsaved comment on " + p.slice(p.lastIndexOf("/") + 1) + "?");
+    if (!c || c.kind === "replace" || !this.input.value.trim()) return null;
+    const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
+    return { question: "Discard the unsaved comment on " + name + "?", kept: "This file stays open: the comment typed on " + name + " is not saved. Save it, or clear the box, then try again." };
   }
   dispose(): void {
     this.stopPoll();

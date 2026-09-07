@@ -133,14 +133,22 @@ function textNodesOf(root: El): Txt[] {
   walk(root);
   return out;
 }
+/** Document-order nodes under `root`, as a browser's tree walker answers: the text nodes, and the elements too when
+ *  SHOW_ELEMENT was asked for (textUnits asks, to see a <br> between two text nodes). */
+function walkNodes(root: El, what: number): Array<El | Txt> {
+  const out: Array<El | Txt> = [];
+  const walk = (n: El) => { for (const c of n.childNodes) { if (c instanceof Txt) { if (what & 4) out.push(c); } else { if (what & 1) out.push(c); walk(c); } } };
+  walk(root);
+  return out;
+}
 const doc = {
   createElement: (tag: string) => new El(tag),
   createTextNode: (s: string) => new Txt(s),
   createDocumentFragment: () => new Frag(),
-  createTreeWalker: (root: El) => { const nodes = textNodesOf(root); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
+  createTreeWalker: (root: El, what = 4) => { const nodes = walkNodes(root, what); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
   activeElement: null as El | null,
 };
-(globalThis as any).NodeFilter = { SHOW_TEXT: 4 };
+(globalThis as any).NodeFilter = { SHOW_ELEMENT: 1, SHOW_TEXT: 4 };
 (globalThis as any).document = doc;
 
 // ── builders: what codeBlock's DOM looks like (one .fv-cl row per line, hljs spans inside) ─────────
@@ -208,6 +216,8 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
     ["git clone git@github.invalid:user/repo.git", "user/repo.git"], ["a%s/x.md", "s/x.md"], ["x#/docs/a.md", "/docs/a.md"],
     ['import b from "lodash/fp.js";', "lodash/fp.js"], ['const x = require("pkg/sub.js");', "pkg/sub.js"], ['export * from "pkg/sub.js";', "pkg/sub.js"],
     ['import "pkg/x.css";', "pkg/x.css"], ["const m = await import('pkg/m.mjs');", "pkg/m.mjs"],
+    ['x = 1\nimport b from "lodash/fp.js";', "lodash/fp.js"], ['a\n  const m = require(  "pkg/m.js");', "pkg/m.js"], ['a\nexport * from\t"pkg/x.js";', "pkg/x.js"],
+    ['$import("pkg/y.js")', "pkg/y.js"],   // a non-word character before the keyword is a word boundary, as \b had it
   ] as const) {
     assert.equal(viewerPathGate(tok, at(text, tok)), false, text);
   }
@@ -217,9 +227,43 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
     ["\tdocs/a.md", "docs/a.md"], ["a|docs/a.md", "docs/a.md"], ["{docs/a.md}", "docs/a.md"],
     ['import s from "./app.css";', "./app.css"], ['import b from "../lib/util.js";', "../lib/util.js"], ['<script src="lib/x.js">', "lib/x.js"],
     ["open(~/notes/a.md)", "~/notes/a.md"], ["readme = 'file:///tmp/TESTHOST/README.md'", "file:///tmp/TESTHOST/README.md"],
+    ["See the plan in\ndocs/plan.md", "docs/plan.md"], ["x = 1\ndocs/a.md", "docs/a.md"], ["a\r\ndocs/a.md", "docs/a.md"], ["then\u00a0docs/a.md", "docs/a.md"],   // a line break or a no-break space before it is whitespace
+    ['reimport("pkg/x.js")', "pkg/x.js"],                        // no word boundary before `import`: not the keyword
+    ['import b from\n"lodash/fp.js";', "lodash/fp.js"],          // the quote starts a new line: the look-behind is the line's, and no formatter writes this
   ] as const) {
     assert.equal(viewerPathGate(tok, at(text, tok)), true, text);
   }
+});
+
+test("the gate's look-behind is the current line's and bounded by what stands right before the token; an 8000-line fence links every line's path, the look-behinds summed reading less than the text once", async () => {
+  const { lookBehindStart, viewerPathGate, resolveViewerPath, LINE_UNITS } = await import("./file-view-links");
+  const { linkifyPathTokens } = await import("./path-links");
+  const lineStart = (text: string, at: number) => text.lastIndexOf("\n", at - 1) + 1;
+  for (const [text, tok] of [
+    ['import b from "lodash/fp.js";', "lodash/fp.js"], ['x = 1\nimport b from "lodash/fp.js";', "lodash/fp.js"], ['a\n  const m = require(  "pkg/m.js");', "pkg/m.js"],
+    ['import b from\n"lodash/fp.js";', "lodash/fp.js"], ['reimport("pkg/x.js")', "pkg/x.js"], ["x = 1\n" + " ".repeat(500) + '"docs/a.md"', "docs/a.md"],
+    ["docs/a.md", "docs/a.md"], ["\ndocs/a.md", "docs/a.md"], ['see "docs/a.md"', "docs/a.md"], ["x".repeat(3000) + '\n"docs/a.md"', "docs/a.md"],
+  ] as const) {
+    const at = text.lastIndexOf(tok);
+    const start = lookBehindStart(text, at);
+    assert.ok(start >= lineStart(text, at) && start <= at, "the window [" + start + ", " + at + ") lies inside the line starting at " + lineStart(text, at) + ": " + JSON.stringify(text.slice(-60)));
+    assert.ok(at - start <= 2 + 500 + 1 + 500 + 7, "bounded by the quote, the spaces, the paren and a keyword's width");
+  }
+  // one unit of 8000 lines (a fenced block, or the Raw view's one <code>), a path on each line in three shapes
+  const lines: string[] = [];
+  for (let i = 0; i < 8000; i++) lines.push(i % 3 === 0 ? "docs/f" + i + ".md" : i % 3 === 1 ? 'x = "docs/g' + i + '.md"' : 'y = require("./docs/h' + i + '.md")');
+  const text = lines.join("\n") + "\n";
+  const pre = el("pre", "", el("code", "language-python hljs", text));
+  let read = 0, tokens = 0;
+  linkifyPathTokens(pre as unknown as HTMLElement, null, undefined, {
+    inPre: true, lineSuffix: true, unit: LINE_UNITS, resolve: (tok) => resolveViewerPath(tok, FILE),
+    accept: (tok, ctx) => { tokens++; read += ctx.at - lookBehindStart(ctx.text, ctx.at); return viewerPathGate(tok, ctx); },
+  });
+  assert.equal(tokens, 8000, "every line's path reached the gate");
+  assert.equal(links(pre).length, 8000, "and linked: a path starting a line, a quoted one, an anchored one in a require");
+  assert.ok(read < text.length, "the look-behinds read " + read + " characters in all, over a text of " + text.length);
+  assert.equal(pre.textContent, text);
+  assert.equal(links(pre)[3].dataset.path, DIR + "docs/f3.md"); assert.equal(links(pre)[5].dataset.path, DIR + "docs/h5.md");
 });
 
 test("normalizePath and resolveViewerPath: `.` and `..` are resolved once, here; relative tokens join the shown file's directory; absolute, ~/ and local file:// pass through; a file with no directory joins nothing", async () => {
@@ -433,6 +477,98 @@ test("in a rendered body the prose's bare paths link under the viewer's gate, a 
   assert.deepEqual(u.map((x) => x.href), ["https://example.invalid/dl"], "the fenced block's URL; marked's own anchor is not wrapped twice");
 });
 
+test("a line break or a no-break space before a token is whitespace: a path starting a soft-broken line links, every line of a fenced block links, a list item's second line links, and the Raw view's one-unit code body links each line's path", async () => {
+  const { linkifyFileText } = await import("./file-view-links");
+  const md = "/tmp/TESTHOST/notes-api/docs/guide.md", MDDIR = "/tmp/TESTHOST/notes-api/docs/";
+  const box = el("div", "fileview-md",
+    el("p", "", "See the plan in\ndocs/plan.md and\r\ndocs/win.md, then\u00a0docs/nb.md."),
+    el("pre", "", el("code", "language-python hljs", "x = 1\ndocs/a.md\n  docs/b.md\n")),
+    el("ul", "", el("li", "", "first\ndocs/li.md")),
+  );
+  const before = box.textContent;
+  linkifyFileText(box as unknown as HTMLElement, md);
+  assert.equal(box.textContent, before);
+  assert.deepEqual(links(box).map((x) => [x.textContent, x.dataset.path]), [
+    ["docs/plan.md", MDDIR + "docs/plan.md"], ["docs/win.md", MDDIR + "docs/win.md"], ["docs/nb.md", MDDIR + "docs/nb.md"],
+    ["docs/a.md", MDDIR + "docs/a.md"], ["docs/b.md", MDDIR + "docs/b.md"], ["docs/li.md", MDDIR + "docs/li.md"],
+  ], "before: only the first line of a block could start with a path; the rest read as glued to the break");
+  // the Raw view's other shape (codeBlock's gutter branch): the whole highlighted body in one <code>, its lines split by \n
+  const c = el("pre", "fileview-pre", el("code", "hljs", "x = 1\n", el("span", "hljs-string", "'docs/e.md'"), "\ndocs/f.md\n", el("span", "hljs-comment", "# see docs/g.md"), "\n"));
+  const raw = c.textContent;
+  linkifyFileText(c as unknown as HTMLElement, FILE);
+  assert.equal(c.textContent, raw);
+  assert.deepEqual(links(c).map((x) => [x.textContent, x.dataset.path]), [["docs/e.md", DIR + "docs/e.md"], ["docs/f.md", DIR + "docs/f.md"], ["docs/g.md", DIR + "docs/g.md"]]);
+});
+
+test("a <br> ends a unit: the path after it is read from its own line, never glued to the text before the break", async () => {
+  const { linkifyFileText } = await import("./file-view-links");
+  const { textUnits } = await import("./path-links");
+  const md = "/tmp/TESTHOST/notes-api/docs/guide.md", MDDIR = "/tmp/TESTHOST/notes-api/docs/";
+  const p1 = el("p", "", "a", el("br"), "docs/a.md");
+  assert.deepEqual(textUnits(p1 as unknown as HTMLElement, "p", "a").map((u) => u.text), ["a", "docs/a.md"], "two units, cut at the break");
+  const box = el("div", "fileview-md",
+    p1,
+    el("p", "", el("span", "", "x: docs/one.md"), el("br"), el("span", "", "docs/two.md"), el("br"), "https://example.invalid/z"),
+  );
+  const before = box.textContent;
+  linkifyFileText(box as unknown as HTMLElement, md);
+  assert.equal(box.textContent, before);
+  assert.deepEqual(links(box).map((x) => [x.textContent, x.dataset.path]), [["docs/a.md", MDDIR + "docs/a.md"], ["docs/one.md", MDDIR + "docs/one.md"], ["docs/two.md", MDDIR + "docs/two.md"]],
+    "before: the first read as `adocs/a.md`, one token across two nodes, which the walk dropped");
+  assert.deepEqual(urls(box).map((x) => x.href), ["https://example.invalid/z"]);
+});
+
+test("spanHolding over many spans finds the one holding a token (a binary search over the unit's spans): a row of a thousand highlighted strings links each path inside its own span", async () => {
+  const { linkifyFileText } = await import("./file-view-links");
+  const { spanHolding, textUnits } = await import("./path-links");
+  const kids: Array<El | string> = [];
+  for (let i = 0; i < 1000; i++) { kids.push(el("span", "hljs-string", '"docs/s' + i + '.md"')); kids.push(", "); }
+  const c = code(row(...kids));
+  linkifyFileText(c as unknown as HTMLElement, FILE);
+  const l = links(c);
+  assert.equal(l.length, 1000);
+  l.forEach((x, i) => { assert.equal(x.textContent, "docs/s" + i + ".md"); assert.equal(x.parentNode!.className, "hljs-string"); assert.equal(x.parentNode!.textContent, '"docs/s' + i + '.md"'); });
+  // the search itself: the span holding the start, whole and open; null across an edge or in a dead span; nothing off the end
+  const u = textUnits(el("p", "", "aa", el("a", "", "bb"), "cc", "dd") as unknown as HTMLElement, "p", "a")[0];
+  assert.equal(u.text, "aabbccdd"); assert.equal(u.spans.length, 4);
+  assert.equal(spanHolding(u, 0, 2), u.spans[0]); assert.equal(spanHolding(u, 4, 6), u.spans[2]); assert.equal(spanHolding(u, 7, 8), u.spans[3]);
+  assert.equal(spanHolding(u, 1, 3), null, "across an edge"); assert.equal(spanHolding(u, 2, 4), null, "inside the link: dead"); assert.equal(spanHolding(u, 8, 9), null); assert.equal(spanHolding(u, -1, 1), null);
+});
+
+test("a Markdown link whose file target resolves to no path (`[up](../)` from a file named without a directory) is a dead link that says why, with no href to follow and no act to click", async () => {
+  const { linkMarkdownAnchors, EMPTY_TARGET_TITLE, DEAD_LINK_TITLE } = await import("./file-view-links");
+  const A = (href: string, ...kids: Array<El | string>) => { const a = el("a", "", ...kids); a.setAttribute("href", href); return a; };
+  const up = A("../", "up"), dot = A("..", "dot"), root = A("/", "root"), here = A("./", "here"), sib = A("../x.md", "sib");
+  const box = el("div", "fileview-md", el("p", "", up, dot, root, here, sib));
+  linkMarkdownAnchors(box as unknown as HTMLElement, "docs/plan.md");
+  for (const a of [up, dot]) {
+    assert.equal(a.getAttribute("href"), null, "the browser must not follow it"); assert.equal(a.dataset.act, undefined); assert.equal(a.dataset.path, undefined, "no silent click on an empty path");
+    assert.ok(a.classes.includes("fv-dead") && !a.classes.includes("file-uri-link"), a.className); assert.equal(a.getAttribute("title"), EMPTY_TARGET_TITLE);
+  }
+  assert.notEqual(EMPTY_TARGET_TITLE, DEAD_LINK_TITLE, "its own reason");
+  assert.equal(root.dataset.path, "/"); assert.equal(here.dataset.path, "docs/"); assert.equal(sib.dataset.path, "x.md", "a sibling folder's file above the shown one resolves fine");
+  const upAbs = A("../", "upAbs");
+  linkMarkdownAnchors(el("div", "fileview-md", el("p", "", upAbs)) as unknown as HTMLElement, "/tmp/TESTHOST/notes-api/docs/guide.md");
+  assert.equal(upAbs.dataset.path, "/tmp/TESTHOST/notes-api/", "from an absolute file the folder above has a name");
+});
+
+test("text inside an inline SVG is read but never marked: a path or a URL in a figure's label stays as written (an HTML element inserted into SVG text does not render), in the viewer's pass and in the chat's walk", async () => {
+  const { linkifyFileText } = await import("./file-view-links");
+  const { linkifyPathTokens } = await import("./path-links");
+  const md = "/tmp/TESTHOST/notes-api/docs/guide.md";
+  const label = el("text", "", "docs/a.md and https://example.invalid/x");
+  const box = el("div", "fileview-md", el("p", "", "see ", el("svg", "", el("g", "", label)), " and docs/b.md https://example.invalid/y"));
+  const before = box.textContent;
+  linkifyFileText(box as unknown as HTMLElement, md);
+  assert.equal(box.textContent, before);
+  assert.deepEqual(links(box).map((x) => x.textContent), ["docs/b.md"]);
+  assert.deepEqual(urls(box).map((x) => x.href), ["https://example.invalid/y"]);
+  assert.equal(label.childNodes.length, 1); assert.ok(label.childNodes[0] instanceof Txt, "the label is still one text node");
+  const chat = el("div", "md", el("p", "", el("svg", "", el("text", "", "docs/c.md")), " docs/d.md"));
+  linkifyPathTokens(chat as unknown as HTMLElement);
+  assert.deepEqual(links(chat).map((x) => [x.textContent, x.dataset.path]), [["docs/d.md", "docs/d.md"]], "the chat's walk skips the SVG too");
+});
+
 // ── the comment painters over a body with links in it (the real anchor-map.ts) ────────────────────
 test("a comment highlight painted over a line with a link, a highlight spanning a link, and a selection anchored inside a link all map and paint against the unchanged text", async () => {
   const { linkifyFileText } = await import("./file-view-links");
@@ -506,7 +642,7 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "the anchors' sorting moved to the module");
 });
 
-test("source: the body's delegate and its gesture: a plain click on a panel mark is the card's alone (an anchor's own open cancelled), a drag-select opens nothing, a path click stops before the row and the chat's body delegate (its openpath would open the file again) and opens through the host's opener, a modified click or a middle-click opens the link's own tab, a section link never moves the document", () => {
+test("source: the body's delegate and its gesture: a plain click on a panel mark is the card's alone (an anchor's own open cancelled), a drag-select opens nothing, a plain path click opens through the host's opener and goes on to the document (a modified one stops before the row), the chat's body delegate serves the todo card alone, a section link scrolls the rendered document and never moves the page", () => {
   const d = VIEW.split('body.addEventListener("click", (ev) => {')[1].split("\n  });\n")[0];
   assert.match(d, /const x = linkOf\(t\);\n\s*if \(!x\) return;/);
   assert.match(d, /if \(panelMark\(t\) && !wantsOwnTab\(ev\)\) \{[^\n]*\n\s*if \(x\.dataset\.act !== "openpath"\) ev\.preventDefault\(\);\n\s*return;/, "the card's click, and the anchor under the mark does not open too");
@@ -515,10 +651,15 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(VIEW, /const linkOf = \(t: Element \| null\): HTMLElement \| null => \{\n\s*const x = t && typeof t\.closest === "function" \? t\.closest\('\[data-act="openpath"\], a\.' \+ URL_LINK_CLASS \+ ", a\." \+ FRAG_LINK_CLASS\) as HTMLElement \| null : null;\n\s*return x && body\.contains\(x\) \? x : null;/);
   const o = VIEW.split("const openLink = (x: HTMLElement, ev: MouseEvent) => {")[1].split("\n  };\n")[0];
   assert.match(o, /const own = wantsOwnTab\(ev\);/);
-  assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n\s*const id = x\.dataset\.frag;\n\s*const hit = id \? Array\.from\(box\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\) : undefined;\n\s*if \(hit\) hit\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "a section link: this document's scroll or nothing, never the page's location");
+  assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n\s*const id = x\.dataset\.frag;\n(?:\s*\/\/[^\n]*\n)*\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*const hit = id && md \? Array\.from\(md\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\) : undefined;\n\s*if \(hit\) hit\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/,
+    "a section link: the rendered document's own ids (the viewer's chrome has ids of its own), this document's scroll or nothing, never the page's location");
+  assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)/, "never the whole box: a colliding author id scrolled the notice bar");
+  assert.match(MOD, /const hit = id \? Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\) : undefined;/, "mark time reads the same root, the .fileview-md box");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
-  assert.match(o, /ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own && openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null\);/, "a path link: the click stops here on every gesture (render.ts's body delegate has an openpath of its own), then its own tab on the gesture, the viewer otherwise or when the popup was blocked");
-  assert.match(RENDER, /\n    openpath: \(elx\) => openLinkedPath\(elx\),\n/, "the reason the viewer stops the click: the chat's body delegate routes the same data-act");
+  assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null\);/,
+    "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");
+  assert.equal((o.match(/stopPropagation/g) || []).length, 2, "two stops in openLink, both on the modified gesture: the URL anchor's and the path link's; a plain click goes on to the document's listeners");
+  assert.match(RENDER, /\n    openpath: \(elx\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx\); \},\n/, "the chat's body delegate serves the todo card and its Reply modal alone: a viewer link that reaches it opens nothing there (the double open after #346)");
   assert.match(VIEW, /const openUrlTab = \(href: string\) => \{\n\s*if \(!href\) return;\n\s*if \(canPreview\(\)\) window\.open\(href, "_blank", "noopener,noreferrer"\);[^\n]*\n\s*else post\(\{ type: "openLink", href \}\);/, "render.ts's two openers, by host");
   assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "the middle press on a path link starts no autoscroll");
   assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && x\.dataset\.act === "openpath"\) openLink\(x, ev\);\n\s*\}\);/, "the middle-click on a path link is its own tab; an anchor's is the browser's");
@@ -540,15 +681,19 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(PREVIEW, /export function openFileTab\(path: string, sid\?: string \| null\): boolean \{\n\s*if \(!canPreview\(\)\) return false;\n\s*const w = window\.open\(fileUrl\(path, sid\), "_blank"\);\n\s*if \(!w\) return false;/);
 });
 
-test("source: a close or a replace-open asks about an unsaved comment the way it asks about unsaved edits: one guard (the editor's ask, then every ask registered through the seam), reset on both exits; the panel registers its draft ask", () => {
-  assert.match(VIEW, /closeGuard = \(\) => confirmDiscard\(\) && closeAsks\.every\(\(ask\) => ask\(\)\);/);
-  assert.match(VIEW, /guardClose\(ask: \(\) => boolean\): void;/, "the seam member");
+test("source: a close or a replace-open asks about an unsaved comment the way it asks about unsaved edits: one guard (the editor's ask, then every ask registered through the seam), one asker for both hosts (a confirm on the web, the notice bar in the VS Code webview), reset on both exits; the panel names what is at stake and asks nothing itself", () => {
+  assert.match(VIEW, /closeGuard = \(\) => confirmDiscard\(\) && closeAsks\.every\(\(ask\) => \{ const q = ask\(\); return q === null \|\| askDiscard\(q\.question, q\.kept\); \}\);/);
+  assert.match(VIEW, /guardClose\(ask: \(\) => CloseAsk \| null\): void;/, "the seam member");
+  assert.match(VIEW, /export interface CloseAsk \{ question: string; kept: string \}/);
   assert.match(VIEW, /guardClose: \(ask\) => \{ closeAsks\.push\(ask\); \},/);
   assert.match(VIEW, /if \(closeGuard && !closeGuard\(\)\) return;[^\n]*\n\s*closeGuard = null;\n\s*closeAsks = \[\];/, "closeFileView");
   assert.match(VIEW, /if \(document\.getElementById\("romp-fileview"\) && closeGuard && !closeGuard\(\)\) return false;\n\s*closeGuard = null;\n\s*closeAsks = \[\];/, "the replace path");
+  assert.match(VIEW, /const askDiscard = \(question: string, kept: string\): boolean => \{\n\s*if \(canPreview\(\)\) return window\.confirm\(question\);\n\s*noteBar\(kept\);\n\s*return false;\n\s*\};/, "one ask for both hosts: the dialog on the web; where none shows, the thing is kept and the notice bar says so");
+  assert.match(VIEW, /!editing \|\| !dirty \|\| askDiscard\("Discard unsaved changes to " \+ path\.slice\(cut \+ 1\) \+ "\?",\n\s*"The editor stays open: " \+ path\.slice\(cut \+ 1\) \+ " has unsaved changes\. Save or undo them, then try again\."\);/, "the editor's ask, whose words the panel's follow");
+  assert.equal((VIEW.match(/window\.confirm\(/g) || []).length, 3, "window.confirm in the viewer: the two editing consents and the one discard ask");
   assert.match(FC, /ctx\.guardClose\(\(\) => this\.draftAsk\(\)\);/);
-  assert.match(FC, /draftAsk\(\): boolean \{\n\s*const c = this\.composer;\n\s*if \(!c \|\| c\.kind === "replace" \|\| !this\.input\.value\.trim\(\)\) return true;\n\s*const p = this\.ctx\.path;\n\s*return window\.confirm\("Discard the unsaved comment on " \+ p\.slice\(p\.lastIndexOf\("\/"\) \+ 1\) \+ "\?"\);/);
-  assert.match(VIEW, /window\.confirm\("Discard unsaved changes to " \+ path\.slice\(cut \+ 1\) \+ "\?"\)/, "the editor's ask, whose words the panel's follow");
+  assert.match(FC, /draftAsk\(\): CloseAsk \| null \{\n\s*const c = this\.composer;\n\s*if \(!c \|\| c\.kind === "replace" \|\| !this\.input\.value\.trim\(\)\) return null;\n\s*const p = this\.ctx\.path, name = p\.slice\(p\.lastIndexOf\("\/"\) \+ 1\);\n\s*return \{ question: "Discard the unsaved comment on " \+ name \+ "\?", kept: "This file stays open: the comment typed on " \+ name \+ " is not saved\. Save it, or clear the box, then try again\." \};/);
+  assert.doesNotMatch(FC, /window\.confirm\(/, "the panel asks nothing itself: window.confirm shows nothing in the VS Code webview");
 });
 
 test("source: a link's line scrolls the code view's row once the text lands, spent once; a line past the end says so in the notice bar and lands on the last row; a markdown file takes its Raw view for that open without saving the preference", () => {
@@ -563,7 +708,16 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
 test("source: the shared walk's options, the line units and the anchor marker live in path-links.ts, defaults unchanged for the chat; the module writes attributes, never markup", () => {
   assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*unit\?: string;\n\}/);
   assert.match(LINKS, /export function linkifyPathTokens\(root: HTMLElement, sid\?: string \| null, pathLinks\?: Record<string, string>, opts\?: PathLinkOptions\): PathLinkHit\[\] \{/);
-  assert.match(LINKS, /const skip = opts && opts\.inPre \? "a, \.file-uri-link" : "a, \.file-uri-link, pre";/, "the chat still skips fenced blocks");
+  assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/, "a link, and an inline SVG (an element put inside SVG text does not render)");
+  assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat still skips fenced blocks");
+  assert.match(LINKS, /const walker = document\.createTreeWalker\(root, NodeFilter\.SHOW_ELEMENT \| NodeFilter\.SHOW_TEXT\);/, "the walk sees elements, to cut a unit at a <br>");
+  assert.match(LINKS, /if \(n\.nodeType === 1\) \{ if \(\/\^br\$\/i\.test\(\(n as Element\)\.tagName\)\) broke = true; continue; \}/);
+  assert.doesNotMatch(LINKS, /text\.slice\(start \+ tok\.length\)/, "the line suffix is read in place, never off a slice of the rest of the unit (quadratic)");
+  assert.match(LINKS, /LINE_SUFFIX_AT_RE\.lastIndex = start \+ tok\.length; suffix = LINE_SUFFIX_AT_RE\.exec\(text\);/);
+  assert.match(LINKS, /const LINE_SUFFIX_AT_RE = new RegExp\(LINE_SUFFIX_RE\.source\.replace\(\/\^\\\^\/, ""\), "y"\);/, "cut from the one source");
+  assert.doesNotMatch(MOD, /ctx\.text\.slice\(0, ctx\.at\)/, "the gate never reads the unit's whole text before the token (quadratic over a fence)");
+  assert.match(MOD, /if \(!anchored && importLookBehind\(ctx\.text, ctx\.at\)\.isImport\) return false;/);
+  assert.match(MOD, /const OPENERS = " \\t\\n\\r\\u00a0\\"'`\(<\[\{=,;\|\\u201c\\u2018\\u00ab";/, "a line break and a no-break space are whitespace to the gate");
   assert.match(LINKS, /for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/, "no unit: every node its own unit, the chat's walk as it was");
   assert.match(LINKS, /const span = spanHolding\(u, start, start \+ tok\.length\);\n\s*if \(!span\) continue;/, "a token across a node's edge is left as it is");
   assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start \}\)\) continue;/);
@@ -572,7 +726,7 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /export function markPathLink\(a: HTMLElement, open: string, relative = false, sid\?: string \| null\): HTMLElement \{\n\s*const cls = a\.getAttribute\("class"\) \|\| "";\n\s*if \(!\(" " \+ cls \+ " "\)\.includes\(" file-uri-link "\)\) a\.setAttribute\("class", \(cls \? cls \+ " " : ""\) \+ "file-uri-link"\);\n\s*a\.setAttribute\("title", "Open " \+ open\);/, "attributes, so an SVG <a> is marked too");
   assert.match(LINKS, /const a = el\("span", "file-uri-link"\);\n\s*a\.textContent = raw;[^\n]*\n\s*return markPathLink\(a, open, relative, sid\);/, "openPathLink mints and marks");
   assert.match(MOD, /linkifyPathTokens\(root, null, undefined, \{\n\s*inPre: true,\n\s*accept: viewerPathGate,\n\s*resolve: \(tok\) => resolveViewerPath\(tok, filePath\),\n\s*lineSuffix: true,\n\s*unit: LINE_UNITS,\n\s*\}\);/, "the viewer runs the chat's walk under its own gate, a line at a time");
-  assert.match(MOD, /for \(const u of textUnits\(root, LINE_UNITS, "a, \.file-uri-link"\)\) \{/, "the URL pass reads the same lines");
+  assert.match(MOD, /for \(const u of textUnits\(root, LINE_UNITS, DEAD_TEXT\)\) \{/, "the URL pass reads the same lines and skips the same text");
   assert.match(MOD, /a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
   assert.doesNotMatch(MOD, /innerHTML|outerHTML|insertAdjacentHTML/, "the module builds elements; it never writes markup");
 });

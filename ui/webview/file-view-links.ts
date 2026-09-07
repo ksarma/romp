@@ -6,12 +6,14 @@
 // rawIndex; a pass that changed one character would unmap every comment). The pass ADDS elements around runs of
 // text and nothing else.
 //
-// The pass reads a LINE at a time, not a text node (path-links.ts textUnits, under LINE_UNITS): the highlight
-// wraps a shell or template substitution in a span of its own, so `"$HOME/docs/a.md"` reaches the DOM as three
-// text nodes, and a walk over the third alone read `/docs/a.md` as an absolute path that was never written (the
-// 2026-09-07 review, the round's one high finding). Over the line's joined text the token is `HOME/docs/a.md`,
-// glued to the `$` before it, and the gate below refuses a token glued to anything but an opener. A token the
-// highlight cut through (its text in two nodes) is left as it is, never re-read as its pieces.
+// The pass reads a LINE at a time, not a text node (path-links.ts textUnits, under LINE_UNITS: a code view's row, or
+// a rendered block whose own line breaks are whitespace to the gate): the highlight wraps a shell or template
+// substitution in a span of its own, so `"$HOME/docs/a.md"` reaches the DOM as three text nodes, and a walk over
+// the third alone read `/docs/a.md` as an absolute path that was never written (the 2026-09-07 review, the round's
+// one high finding). Over the line's joined text the token is `HOME/docs/a.md`, glued to the `$` before it, and the
+// gate below refuses a token glued to anything but an opener. A token the highlight cut through (its text in two
+// nodes) is left as it is, never re-read as its pieces. Text inside an inline SVG is read but never marked
+// (path-links.ts DEAD_TEXT): an HTML element inserted into SVG text does not render.
 //
 // The path grammar is the chat's (path-links.ts: the one matcher, the one span, the one click act), run with the
 // walk's options for a surface that is code rather than prose, plus one gate of its own, viewerPathGate. The chat
@@ -34,7 +36,7 @@
 // What a click does is the viewer's (file-view.ts binds the body's delegate: the path act opens the file through
 // the host's opener, a URL anchor opens itself, a modified click opens either in a tab of its own). This module
 // marks; it binds no action.
-import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
+import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
 export const URL_LINK_CLASS = "fv-url";
@@ -45,6 +47,9 @@ export const FRAG_LINK_CLASS = "fv-frag";
  *  have): dressed as a dead link, with its title saying why (fail loudly, never a silent dead end). */
 export const DEAD_LINK_CLASS = "fv-dead";
 export const DEAD_LINK_TITLE = "Not a link the viewer can follow: its target is neither a web address nor a file on the session's machine";
+/** A relative target that resolves to no path at all (`[up](../)` from a file named without a directory, `[x](..)`): a
+ *  folder above the shown file's own place, which the viewer cannot name and so cannot open. */
+export const EMPTY_TARGET_TITLE = "Not a link the viewer can follow: the target points above the folder this file is named in, so there is no path to open";
 export const noSectionTitle = (id: string): string => "No anchor named \u201c" + id + "\u201d in this document (headings carry none here)";
 
 /** The elements whose text is one unit to the pass: a code view's row, a rendered block (a paragraph, a list item,
@@ -92,14 +97,40 @@ export function urlSegments(text: string): Array<{ text: string; href?: string }
 
 // The gate's pieces (the grammar is written out in the header). What may stand right before a token: nothing (the
 // line's start), whitespace, or an opener; a token glued to anything else is the tail of something the matcher
-// cut through.
-const OPENERS = " \t\"'`(<[{=,;|\u201c\u2018\u00ab";
+// cut through. A line break and a no-break space are whitespace here too: a rendered paragraph, list item or
+// fenced block is one unit of text with its line breaks inside it, and a path that starts a soft-broken line or
+// any line of a fence but the first was read as glued to the break before it (the 2026-09-07 review).
+const OPENERS = " \t\n\r\u00a0\"'`(<[{=,;|\u201c\u2018\u00ab";
 const ANCHORED_RE = /^(?:~\/|\.{1,2}\/|\/)/;
 // a first segment that reads as a hostname
 const WWW_RE = /^www\./i;
 const HOST_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
-// the text before a bare specifier in an import: `import x from "`, `import "`, `export * from "`, `require("`, `import("`
-const IMPORT_BEFORE_RE = /\b(?:import|export|from|require)\s*\(?\s*["'`]$/;
+// The text before a bare specifier in an import: `import x from "`, `import "`, `export * from "`, `require("`,
+// `import("`. Read BACKWARDS from the token: the quote, the line's spaces, one paren, more spaces, then the word
+// before them, at most a keyword's width. A line break stops every step, so the window is the current line's, and
+// its length is bounded by what stands right before the token, never by the unit: a regex over the unit's text
+// before the token sliced the whole unit per token, quadratic over a fenced block, and 8000 lines cost most of a
+// second (the 2026-09-07 review). The one difference from that regex: `from` and its quote on different lines no
+// longer read as an import, which no formatter writes.
+const IMPORT_WORDS = ["import", "export", "from", "require"];
+const KEYWORD_MAX = 7;                                   // `require`
+const isWordCh = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
+const isLineSpace = (c: string): boolean => c === " " || c === "\t";
+function importLookBehind(text: string, at: number): { start: number; isImport: boolean } {
+  let i = at - 1;
+  if (i < 0 || !"\"'`".includes(text[i])) return { start: at, isImport: false };   // no quote before the token: nothing to read
+  i--;
+  while (i >= 0 && isLineSpace(text[i])) i--;
+  if (i >= 0 && text[i] === "(") { i--; while (i >= 0 && isLineSpace(text[i])) i--; }
+  const end = i + 1;
+  let s = end;
+  while (s > 0 && end - s < KEYWORD_MAX && isWordCh(text[s - 1])) s--;
+  const isImport = IMPORT_WORDS.includes(text.slice(s, end)) && (s === 0 || !isWordCh(text[s - 1]));   // a word boundary before it
+  return { start: s, isImport };
+}
+/** Where the gate's look-behind for the token at `at` begins: the earliest index whose character it reads as text
+ *  (one more before it is looked at only as the keyword's word boundary). Never before the line's start. */
+export function lookBehindStart(text: string, at: number): number { return importLookBehind(text, at).start; }
 
 /** The viewer's gate over a token the shared shape gates passed; `ctx` is the line's text and the token's offset in
  *  it (the walk hands both over), without which only the token's own shape is judged. */
@@ -119,7 +150,7 @@ export function viewerPathGate(tok: string, ctx?: { text: string; at: number }):
   if (ctx) {
     const before = ctx.at > 0 ? ctx.text[ctx.at - 1] : "";
     if (before && !OPENERS.includes(before)) return false;             // glued to a substitution, a scope, a drive, a host
-    if (!anchored && IMPORT_BEFORE_RE.test(ctx.text.slice(0, ctx.at))) return false;   // a package specifier
+    if (!anchored && importLookBehind(ctx.text, ctx.at).isImport) return false;   // a package specifier
   }
   return true;
 }
@@ -160,7 +191,7 @@ export function resolveViewerPath(tok: string, filePath: string): string {
 export function linkifyUrls(root: HTMLElement): HTMLAnchorElement[] {
   const made: HTMLAnchorElement[] = [];
   const doc = root.ownerDocument || document;
-  for (const u of textUnits(root, LINE_UNITS, "a, .file-uri-link")) {
+  for (const u of textUnits(root, LINE_UNITS, DEAD_TEXT)) {
     if (!/https?:\/\//i.test(u.text)) continue;
     const marks = new Map<TextSpan, Array<{ start: number; end: number; el: Node }>>();
     let at = 0;
@@ -245,8 +276,9 @@ const withClass = (a: Element, cls: string): void => {
  *  decoded first; a `#L12` or `:12` on the target is the line; a `?query` or other fragment is dropped from the
  *  path. The href comes off a path link: a browser must not follow it, and the chat's document-level opener reads
  *  only anchors with one. An anchor the sanitizer left without an href (a scheme it refuses, a file on another
- *  host) is dressed dead with the reason in its title, unless it is a named target and never was a link. Every
- *  attribute is set as one (an inline SVG's <a> has no target, rel, className or title property to write). */
+ *  host) is dressed dead with the reason in its title, unless it is a named target and never was a link; so is a
+ *  file target that resolves to no path (`[up](../)` from a file named without a directory). Every attribute is set
+ *  as one (an inline SVG's <a> has no target, rel, className or title property to write). */
 export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
   root.querySelectorAll("a").forEach((node) => {
     const a = node as HTMLElement;
@@ -286,8 +318,14 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
       a.setAttribute("rel", "noopener noreferrer");
       return;
     }
-    a.removeAttribute("href");
-    markPathLink(a, resolveViewerPath(pathPart, filePath), true);
+    a.removeAttribute("href");                          // the browser must not follow it, whichever way it is dressed
+    const open = resolveViewerPath(pathPart, filePath);
+    if (!open) {                                        // `[up](../)` from `docs/plan.md`: no path to open, said so, never a silent click
+      withClass(a, DEAD_LINK_CLASS);
+      a.setAttribute("title", EMPTY_TARGET_TITLE);
+      return;
+    }
+    markPathLink(a, open, true);
     if (line) { a.dataset.line = line; a.setAttribute("title", a.getAttribute("title") + ":" + line); }
   });
 }

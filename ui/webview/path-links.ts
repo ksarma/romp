@@ -224,8 +224,9 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 
 // Mark bare file:// URLs AND bare file paths inside `root`'s text — a relative `design/foo.md` too,
 // resolved against a session's cwd by whoever opens it (the user 2026-07-06). Inside INLINE <code> a
-// slash-less filename with a known extension marks too; only FENCED <pre> blocks and text already inside
-// a link are skipped. Text nodes only: an element the caller already made a link stays one.
+// slash-less filename with a known extension marks too; only FENCED <pre> blocks, text already inside
+// a link and text inside an inline SVG (DEAD_TEXT) are skipped. Text nodes only: an element the caller
+// already made a link stays one.
 // `pathLinks` (the user 2026-08-09): the kernel's verdict on every path-shaped token in this text
 // (build_session's _path_links — tier 1 exact stat, tiers 2/3 a unique repo-list match that FIXES a
 // shortened mention to its real file). When the map is present, a token links ONLY if it's in the map,
@@ -257,26 +258,36 @@ export interface PathLinkOptions {
 export const LINE_SUFFIX_RE = /^(?::(\d+)(?::\d+)?|#L(\d+)(?:-L?\d+)?)(?![\w/])/;
 // The same reference at the END of a token (a file:// URI took it into itself): where it starts.
 const URI_LINE_TAIL_RE = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/;
+// The same reference AT a position of the unit's text (sticky, lastIndex set): read in place, so the walk never
+// slices the rest of the text per token, which was quadratic over a body that is one unit (the 2026-09-07 review).
+const LINE_SUFFIX_AT_RE = new RegExp(LINE_SUFFIX_RE.source.replace(/^\^/, ""), "y");
 
 /** One text node's place in its unit's joined text. `dead`: inside a link (or, in the chat, a fenced block): the
  *  scan READS it, so a token glued to it is seen whole, but never marks in it. */
 export interface TextSpan { tn: Text; start: number; end: number; dead: boolean; inCode: boolean }
 export interface TextUnit { text: string; spans: TextSpan[] }
+/** The ancestors whose text no walk marks in, whatever the surface: a link already made, and an inline SVG (an HTML
+ *  span or anchor put inside SVG text does not render, so a mark there would make the token vanish from the figure;
+ *  the 2026-09-07 review). The text is still READ, so a token glued to it is seen whole. */
+export const DEAD_TEXT = "a, .file-uri-link, svg";
 /** The text under `root` cut into units: under `unit` (a selector), the consecutive text nodes sharing their
- *  nearest such ancestor, joined; a node under none, or with no selector, is a unit of its own. `skip` names
- *  the ancestors whose text is dead to marking. */
+ *  nearest such ancestor, joined; a node under none, or with no selector, is a unit of its own. A `<br>` ends a
+ *  unit too: it is a line break, and a token never crosses one (`a<br>docs/a.md` read as `adocs/a.md` before; the
+ *  2026-09-07 review). `skip` names the ancestors whose text is dead to marking. */
 export function textUnits(root: HTMLElement, unit: string | undefined, skip: string): TextUnit[] {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  const nodes: Text[] = [];
-  let n: Node | null;
-  while ((n = walker.nextNode())) nodes.push(n as Text);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
   const units: TextUnit[] = [];
   let cur: Element | null = null;
-  for (const tn of nodes) {
+  let broke = false;                                    // a <br> passed since the last text node
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    if (n.nodeType === 1) { if (/^br$/i.test((n as Element).tagName)) broke = true; continue; }
+    const tn = n as Text;
     const p = tn.parentElement;
     const u = unit && p ? p.closest(unit) : null;
     let last = units[units.length - 1];
-    if (!last || u === null || u !== cur) { last = { text: "", spans: [] }; units.push(last); cur = u; }
+    if (!last || u === null || u !== cur || broke) { last = { text: "", spans: [] }; units.push(last); cur = u; }
+    broke = false;
     const start = last.text.length;
     last.text += tn.data;
     last.spans.push({ tn, start, end: last.text.length, dead: !!p?.closest(skip), inCode: !!p?.closest("code") });
@@ -284,9 +295,18 @@ export function textUnits(root: HTMLElement, unit: string | undefined, skip: str
   return units;
 }
 /** The span holding [start, end) whole and open to marking, else null: a match that crosses a node's edge (a
- *  highlight span cut through it) or lies in a link is left as it is, never re-read as its pieces. */
+ *  highlight span cut through it) or lies in a link is left as it is, never re-read as its pieces. A binary search
+ *  over the spans (they are in text order): a highlighted body is one unit of thousands of spans, and a walk over
+ *  them per token was quadratic (the 2026-09-07 review). */
 export function spanHolding(u: TextUnit, start: number, end: number): TextSpan | null {
-  for (const s of u.spans) if (start >= s.start && start < s.end) return !s.dead && end <= s.end ? s : null;
+  const spans = u.spans;
+  let lo = 0, hi = spans.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1, s = spans[mid];
+    if (start < s.start) hi = mid - 1;
+    else if (start >= s.end) lo = mid + 1;
+    else return !s.dead && end <= s.end ? s : null;
+  }
   return null;
 }
 /** Replace `span`'s text node with its text, the `marks` (each an element standing for [start, end) of the
@@ -305,7 +325,7 @@ export function rewriteSpan(u: TextUnit, span: TextSpan, marks: Array<{ start: n
 
 export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>, opts?: PathLinkOptions): PathLinkHit[] {
   const hits: PathLinkHit[] = [];
-  const skip = opts && opts.inPre ? "a, .file-uri-link" : "a, .file-uri-link, pre";   // already a link, or (the chat) a fenced code block
+  const skip = opts && opts.inPre ? DEAD_TEXT : DEAD_TEXT + ", pre";   // a link, an SVG, or (the chat) a fenced code block
   for (const u of textUnits(root, opts && opts.unit, skip)) {
     if (u.spans.every((s) => s.dead)) continue;
     const text = u.text;
@@ -336,7 +356,8 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
       // a line written after the token rides in the link when the surface reads lines (the viewer scrolls to it);
       // one the highlight cut into another node stays prose
-      let suffix = opts && opts.lineSuffix ? LINE_SUFFIX_RE.exec(text.slice(start + tok.length)) : null;
+      let suffix: RegExpExecArray | null = null;
+      if (opts && opts.lineSuffix) { LINE_SUFFIX_AT_RE.lastIndex = start + tok.length; suffix = LINE_SUFFIX_AT_RE.exec(text); }
       if (suffix && start + tok.length + suffix[0].length > span.end) suffix = null;
       if (suffix) { link.textContent = tok + suffix[0]; link.dataset.line = suffix[1] || suffix[2]; link.setAttribute("title", link.getAttribute("title") + ":" + link.dataset.line); }
       const last = start + tok.length + (suffix ? suffix[0].length : 0);

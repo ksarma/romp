@@ -45,8 +45,9 @@ test("linkify works inside INLINE backticks (agents backtick paths), skips only 
   // (the spaced pass in render.ts and the token walk in path-links.ts share the one skip list)
   assert.match(RENDER, /closest\("a, \.file-uri-link, pre"\)/);
   assert.doesNotMatch(RENDER, /closest\("a, \.file-uri-link, code, pre"\)/);
-  assert.match(LINKS, /"a, \.file-uri-link, pre"/, "the chat's default skip list (a variable since the file viewer walks inside its <pre>)");
-  assert.doesNotMatch(LINKS, /"a, \.file-uri-link, code, pre"/);
+  assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat's default skip list (a variable since the file viewer walks inside its <pre>; DEAD_TEXT is the link and the inline SVG)");
+  assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/);
+  assert.doesNotMatch(LINKS, /"a, \.file-uri-link, code, pre"|code, pre"/);
   assert.match(LINKS, /tok = tok\.slice\(0, tok\.length - trail\[0\]\.length\)/);
 });
 

@@ -233,8 +233,8 @@ browser tab of its own. Where a comment highlight or a change mark covers a
 link, a plain click opens the comment or the change and leaves the link alone.
 Inside a file the test for a path is stricter than the one a todo or a chat
 message gets: a path links only when it has a slash and a file extension, starts
-on its own after a space, a quote or a bracket (so `$HOME/docs/a.md`,
-`@scope/pkg/index.js` and `C:/Users/x.txt` stay text), does not start with a
+on its own, at the start of a line or after a space, a quote or a bracket (so
+`$HOME/docs/a.md`, `@scope/pkg/index.js` and `C:/Users/x.txt` stay text), does not start with a
 site name (`www.example.org/docs/index.html`), and is not the package an
 `import` or `require` names (a relative import such as `./app.css` still
 links). Web addresses and paths found in the text wear a dotted underline that
