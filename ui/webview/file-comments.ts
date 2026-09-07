@@ -396,6 +396,14 @@ function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElemen
   b.dataset.act = act;
   return b;
 }
+/** A comment id inside a selector's quoted attribute value. The ids are sidecar data — a session's tools mint them, a hand
+ *  can write them — and nothing on the read path constrains their grammar, so a `"` or `\` in one made querySelector throw,
+ *  and on the render path (placeComposer) that stopped every section after the cards from refreshing while the reply was
+ *  open. CSS.escape where the platform has it (every browser the panel runs in); for a stand-in without it, the two
+ *  characters a quoted value cannot hold raw. */
+function cssId(s: string): string {
+  return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
+}
 const clock = (t: number | string): string => {
   const d = new Date(t);
   if (isNaN(d.getTime())) return "";
@@ -472,7 +480,9 @@ function shrinkable(b: HTMLElement): void {
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
 type Composer =
   | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
-  | { kind: "reply"; commentId: string; ref: string }
+  // `resolved`: whether the comment was already resolved when the reply began — the slot's row tells a comment resolved
+  // since the reply began from one whose Resolved fold the person closed (replyAway)
+  | { kind: "reply"; commentId: string; ref: string; resolved: boolean }
   | { kind: "change"; changeId: string; ref: string }   // a comment bound to a change (comment {suggestionId, note})
   // a region drawn on a picture (Slice 3): `img` is the picture (re-found after a repaint), `src` and `range` the
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
@@ -1701,15 +1711,34 @@ class Panel {
     const card = this.cards().find((c) => c.id === id);
     if (!card) return;
     this.openCards.add(this.cardKey(id));
-    this.composer = { kind: "reply", commentId: id, ref: card.ref };
+    this.composer = { kind: "reply", commentId: id, ref: card.ref, resolved: card.resolved };
     this.errors.delete("composer");
     this.repaintPresel();
     this.render();
     this.composerBox.scrollIntoView({ block: "nearest" });   // the card's foot, where the box now stands, into view when it is not
     this.input.focus();
   }
+  /** The key of the card the reply being written stands in, latched into the keyed expand state. startReply latches the key
+   *  at click time, but a comment's card can change key under an open reply: its change accepted or rejected (the person's
+   *  Accept on the same card, Send's accept-all, a decision elsewhere) moves it from the change card ("chg:…") to its own
+   *  card (cardKey), which the list then showed open only by derivation from the composer — so the first render after the
+   *  composer closed, or changed kind, folded it with no gesture and no new information (CLAUDE.md), taking the Reply the
+   *  keyboard had just been handed to. Latched at every render, the card stays open by key once the box has left it. */
+  private latchReplyCard(): void {
+    const r = this.replyTo();
+    if (r !== null) this.openCards.add(this.cardKey(r));
+  }
   /** The comment whose reply is being written, when the composer is one. */
   private replyTo(): string | null { return this.composer && this.composer.kind === "reply" ? this.composer.commentId : null; }
+  /** The head of the card holding the reply being written. The fccard handler folds every card but this one (a fold would
+   *  take the box and the words with it), so a press here changes nothing — and a live, expanded button that answers a
+   *  press with nothing leaves the person guessing and tells assistive tech the card will collapse (ui/CLAUDE.md, the
+   *  click rule). The head says so instead: aria-disabled for the reader, a title for the pointer; it stays a Tab stop, so
+   *  the keyboard still reaches the card and the words in it. Save or Cancel frees it. */
+  private holdHead(head: HTMLElement): void {
+    head.setAttribute("aria-disabled", "true");
+    head.title = "The card stays open while its reply is written; Save or Cancel the reply first";
+  }
   /** Whether the card with this expand key holds the reply being written: the comment's own card, or the change card
    *  hosting the comment (cardKey). */
   private hostsReply(key: string): boolean { const r = this.replyTo(); return r !== null && this.cardKey(r) === key; }
@@ -1734,9 +1763,10 @@ class Panel {
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderComposer();                             // …which puts the box back in the panel's slot (placeComposer)
+    if (was && was.kind === "reply") this.render();    // the card's head is free again (holdHead): the cards say so at once, not at the next status
     // a reply's box leaves its card hidden, and a hidden box drops the keyboard to the body: it goes back to the Reply that
     // opened the box instead, so a person on the keyboard keeps their place on the card (Escape, Cancel and a save alike)
-    if (was && was.kind === "reply" && held) (this.root?.querySelector('[data-act="fcreply"][data-id="' + was.commentId + '"]') as HTMLElement | null)?.focus({ preventScroll: true });
+    if (was && was.kind === "reply" && held) (this.root?.querySelector('[data-act="fcreply"][data-id="' + cssId(was.commentId) + '"]') as HTMLElement | null)?.focus({ preventScroll: true });
   }
   /** The mapping refused in Rendered: switch to Raw, and when the selected text occurs in the source,
    *  target that passage — the one in the refused block, not an earlier copy of the same words
@@ -2507,16 +2537,67 @@ class Panel {
     // a control an earlier render rebuilt disabled is wanted back only while the keyboard is still where that render put it
     const want = this.wanted && document.activeElement === this.wanted.at ? this.wanted.key : null;
     this.wanted = null;
-    // the box holding the keyboard: a reply's box stands in its card, and the rebuild below moves it into the card's
-    // successor (placeComposer) — a moved node drops its focus to the body, so the keyboard is put back afterwards
+    // the box holding the keyboard: a reply's box stands in its card, and when the fresh list shows no card for it the
+    // rebuild below moves it to the slot (placeComposer) — a moved node drops its focus to the body, so the keyboard is
+    // put back afterwards, and the words' scroll offset with it (a moved textarea scrolls back to its first line)
     const typing = document.activeElement === this.input;
+    const inCard = cards.contains(this.composerBox), scroll = this.input.scrollTop;
+    this.latchReplyCard();                             // the reply's card stays open by key, whatever key the status gave it
     head.replaceChildren(this.renderHead(s));
-    cards.replaceChildren(this.renderCards(s));
+    this.swapCards(this.renderCards(s));               // around the reply's box, when it stands in a card the fresh list keeps
     this.renderComposer();                             // after the cards: the box stands in a card of the fresh list, or in the slot (placeComposer)
     send.replaceChildren(this.renderSend(s));
     log.replaceChildren(this.renderLog(s));
     if (typing && document.activeElement !== this.input) this.input.focus({ preventScroll: true });
+    if (this.input.scrollTop !== scroll) this.input.scrollTop = scroll;
+    // the box moved under the person's hands — its card left the list and it went to the slot, above the cards and off-screen
+    // when the list is long, or the card came back and it returned — so it is brought into view, the row saying why with
+    // it; a keyboard elsewhere leaves the view where the person put it
+    if (typing && inCard !== cards.contains(this.composerBox)) this.composerBox.scrollIntoView({ block: "nearest" });
     if (keep) this.refocus(keep, want);
+  }
+  /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
+   *  that card too, the nodes between the section and the box — the list, the card, and for a hosted comment its box on
+   *  the change card — stay in the document and take their fresh counterparts' children instead (graft): a textarea that
+   *  leaves the document, even to come straight back, loses its undo history, its scroll offset, an IME composition in
+   *  flight and (until render puts it back) the keyboard; only the value, the caret and the height survive a detach. The
+   *  box leaves a card only when the fresh list shows no card for its comment, and placeComposer moves it to the slot then. */
+  private swapCards(fresh: HTMLElement): void {
+    const cards = this.sections.cards, box = this.composerBox;
+    if (!cards.contains(box) || !this.graft(cards, [fresh], box)) cards.replaceChildren(fresh);
+  }
+  /** Give `live` the children `fresh` would have, with `keep` (a descendant of `live`) never leaving the document. At each
+   *  level the live child on the way to `keep` stands in for its counterpart among the fresh children — the element with
+   *  the same tag and data-id — wearing the counterpart's class and action, and takes the counterpart's children the same
+   *  way; at `keep`'s own parent the fresh children go around `keep`, those from the `.fc-actions` on after it (where
+   *  placeComposer stands the box: before the card's buttons). False, and nothing changed, when a level has no
+   *  counterpart — the card is gone from the fresh list. */
+  private graft(live: HTMLElement, fresh: Node[], keep: HTMLElement): boolean {
+    const chain: HTMLElement[] = [];                   // the live nodes between `live` and `keep`, top down
+    for (let n = keep.parentElement; n && n !== live; n = n.parentElement) chain.unshift(n);
+    const twins: HTMLElement[] = [];                   // their fresh counterparts, level by level
+    let among = fresh;
+    for (const n of chain) {
+      const t = among.find((f): f is HTMLElement => f.nodeType === 1 && (f as HTMLElement).tagName === n.tagName && (f as HTMLElement).dataset.id === n.dataset.id);
+      if (!t) return false;
+      twins.push(t); among = Array.from(t.childNodes);
+    }
+    let parent = live, kids = fresh;
+    for (let i = 0; i <= chain.length; i++) {
+      const kept = i < chain.length ? chain[i] : keep, twin = i < chain.length ? twins[i] : null;
+      // where the kept node stands among the fresh children: its twin's place, or, for the box, before the card's buttons
+      const acts = kids.findIndex((k) => k.nodeType === 1 && (k as HTMLElement).classList.contains("fc-actions"));
+      const at = twin ? kids.indexOf(twin) : acts < 0 ? kids.length : acts;
+      for (const k of Array.from(parent.childNodes)) if (k !== kept) parent.removeChild(k);
+      kids.forEach((k, j) => { if (k !== twin) { if (j < at) parent.insertBefore(k, kept); else parent.appendChild(k); } });
+      if (!twin) break;
+      // the class (open, detached) and the action (a collapsed card is the control) are what a card's own node changes
+      // between renders; its id attributes are what matched it, and the rest is constant per id
+      kept.className = twin.className;
+      if (twin.dataset.act === undefined) delete kept.dataset.act; else kept.dataset.act = twin.dataset.act;
+      parent = kept; kids = Array.from(twin.childNodes);
+    }
+    return true;
   }
   // Every section's children are rebuilt per render, and a removed element loses its focus to the body — so
   // Enter on a card's head opened the card and left the keyboard nowhere: the second Enter did nothing (or
@@ -2699,9 +2780,8 @@ class Panel {
         // the list shows no card for the comment, so the box stands in the slot: the row names the comment and says why,
         // and the words stay in the box — a reply is never dropped because its card left the list
         ref.appendChild(el("span", "fc-note", "Reply on " + c.ref));
-        const card = this.cards().find((x) => x.id === c.commentId);
-        if (!card) ref.appendChild(el("span", "fc-note fc-refused", "The comment is gone from the file's comments."));
-        else ref.appendChild(el("span", "fc-note", card.resolved ? "The comment was resolved meanwhile; the reply still goes to it." : "The comment's card is not in the list just now; the reply still goes to it."));
+        const away = this.replyAway(c);
+        ref.appendChild(el("span", "fc-note" + (away.gone ? " fc-refused" : ""), away.text));
       }
     }
     else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
@@ -2764,15 +2844,16 @@ class Panel {
   /** Where the box stands. A reply's box goes INSIDE the card the list shows for its comment — the comment's own card, or
    *  the comment's box on the change card hosting it (.fc-hosted) — below the turns and above the buttons; every other
    *  kind's box, a closed one, and a reply whose card the list does not show (the comment resolved into the closed fold,
-   *  gone from the sidecar, a status not yet in) stand in the panel's own slot between the head and the cards, the
-   *  reply's row saying why (renderComposer). One box, moved between the two: the words, the caret and the height ride
-   *  with the node. Moved only when it is not already where it belongs — moving a focused node, even onto its own place,
-   *  drops the keyboard to the body; render() puts it back after the one move a rebuilt list makes it take. Returns
-   *  whether the box is in a card. */
+   *  gone from the sidecar, its change card behind the "… N more changes" row, a status not yet in) stand in the panel's
+   *  own slot between the head and the cards, the reply's row saying why (replyAway). One box, moved between the two: the
+   *  words, the caret and the height ride with the node. Moved only when it is not already where it belongs — moving a
+   *  focused node, even onto its own place, drops the keyboard to the body, and a rebuilt list never makes it move: the
+   *  card it stands in is kept around it (swapCards). Returns whether the box is in a card. */
   private placeComposer(): boolean {
     const box = this.composerBox, root = this.root;
     if (!root || !root.contains(this.sections.cards)) return false;   // the sections are the root's children from its first render
-    const id = this.replyTo();
+    const r = this.replyTo();
+    const id = r === null ? null : cssId(r);           // escaped for the selector: a sidecar id may hold a quote (cssId)
     const host = id === null ? null : this.sections.cards.querySelector('.fc-card[data-id="' + id + '"], .fc-hosted[data-id="' + id + '"]') as HTMLElement | null;
     const before = (parent: HTMLElement, next: HTMLElement | null): void => {
       const kids = Array.from(parent.childNodes);
@@ -2787,6 +2868,21 @@ class Panel {
     before(root, this.sections.cards);
     box.classList.remove("fc-composer-in");
     return false;
+  }
+  /** Why the list shows no card for the reply's comment, for the slot's row: the cause, and where a fold hides the card, the
+   *  row that brings it back (ui/CLAUDE.md: a compact view never dead-ends). The comment gone from the sidecar (`gone`: the
+   *  row wears the refusal's colour); resolved since the reply began, or resolved before it and its Resolved fold closed
+   *  since; its change card folded behind the "… N more changes" row, when a change the session made in an earlier
+   *  paragraph pushed the card's group past GROUP_LIMIT; else the one case left, a status not yet in. */
+  private replyAway(c: { commentId: string; resolved: boolean }): { text: string; gone: boolean } {
+    const card = this.cards().find((x) => x.id === c.commentId);
+    if (!card) return { text: "The comment is gone from the file's comments.", gone: true };
+    if (card.resolved) return { gone: false, text: c.resolved ? "The comment's card is under “Resolved” below; the reply still goes to it." : "The comment was resolved meanwhile; the reply still goes to it." };
+    const view = this.changeView();
+    if (view.hidden.some((g) => g.changes.some((ch) => ch.comments.some((cm) => cm.id === c.commentId)))) {
+      return { gone: false, text: "The comment's card is under “" + moreChangesLabel(view.hiddenChanges) + "” below; the reply still goes to it." };
+    }
+    return { gone: false, text: "The comment's card is not in the list; the reply still goes to it." };
   }
   private renderCards(s: Status | null): HTMLElement {
     const list = el("div", "fc-cards");
@@ -2876,6 +2972,7 @@ class Panel {
     const head = el("div", "fc-card-head");
     head.dataset.id = c.id; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (this.replyTo() === c.id) this.holdHead(head);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.kind === "passage" ? "“" + c.ref + "”" : c.ref);
     ref.title = c.kind === "passage" ? c.anchor?.quote || c.ref : c.ref;
@@ -3033,6 +3130,7 @@ class Panel {
     const head = el("div", "fc-card-head");
     head.dataset.id = c.key; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (c.comments.some((cm) => cm.id === this.replyTo())) this.holdHead(head);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.ref);
     ref.title = c.kind === "ins" ? "Added: " + c.newText : c.kind === "del" ? "Removed: " + c.oldText : c.oldText + " → " + c.newText;
