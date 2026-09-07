@@ -83,11 +83,12 @@ class SessionList(unittest.TestCase):
         # lastSid = the session's CURRENT transcript fsid (self-identity join, the user 2026-07-27);
         # with no diverged SDK registry it is the sid itself.
         self.assertEqual(rows["sid-t"], {"id": "sid-t", "name": "alpha", "state": "working", "dir": "/work/a",
-                                         "bg": "#112233", "fg": "#ffffff", "lastSid": "sid-t",
+                                         "bg": "#112233", "fg": "#ffffff", "emoji": "",   # the tab emoji rides every row, empty when unset
+                                         "lastSid": "sid-t",
                                          "compacting": False,          # romp compact --wait polls this
                                          "working": "owns feed.ts", "backend": "tmux"})
         self.assertEqual(rows["sid-s"], {"id": "sid-s", "name": "beta", "state": "waiting", "dir": "/work/b",
-                                         "bg": "blue", "fg": "white", "lastSid": "sid-s",
+                                         "bg": "blue", "fg": "white", "emoji": "", "lastSid": "sid-s",
                                          "compacting": False,
                                          "working": "", "backend": "sdk"})
 

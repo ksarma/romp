@@ -868,6 +868,12 @@ def _publish_working(sid, text):
     r = _kernel_post("/working", {"id": str(sid), "text": text})
     return r is not None and r.get("ok") is not False        # None: unreachable; ok false: the kernel refused
 
+def _publish_emoji(sid, emoji):
+    """Set or clear THIS session's tab emoji through the kernel (POST /emoji, the store `romp emoji` and the
+    tab menu write too) — the kernel validates (exactly one emoji) and answers {ok} or {ok: false, error:
+    <one line>}; None when it could not be reached. The caller relays the verdict verbatim."""
+    return _kernel_post("/emoji", {"target": str(sid), "emoji": emoji}) if sid else None
+
 def _with_remote_presence(agents):
     """The local rows plus every heartbeat-known REMOTE session (within HEARTBEAT_TTL, not already local)."""
     local_ids = {a["id"] for a in agents}
@@ -3626,6 +3632,11 @@ MCP_TOOLS = [
      "description": "Publish what you're working on (files/surface) so peers steer clear; your branch shows automatically. Empty text clears it (romp also auto-clears once your work is done and the session idles).",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "short note, e.g. 'editing scripts/romp-postal + tmux.conf'"}}}},
+    {"name": "set_emoji",
+     "description": "Put one emoji before your session's name where the person you work for sees the list of sessions, so yours is recognizable at a glance — a moon while you run unattended overnight, a checkmark when the work is done, a flag for a role. Exactly one emoji (skin tones, flags and joined sequences count as one); letters, digits or a second emoji are refused with the reason. Empty text clears it. Set it when they ask, or when a change in what you are doing is worth a glance; it stays until changed.",
+     "inputSchema": {"type": "object",
+                     "properties": {"emoji": {"type": "string", "description": "one emoji, or '' to clear"}},
+                     "required": ["emoji"]}},
     {"name": "check_sent",
      "description": "See your recently sent messages and whether each was read/acted on by the recipient yet, or is still pending — instead of asking 'did you get it?'.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -3712,6 +3723,22 @@ def _mcp_call(name, args):
         _publish_working(mid, text)        # backend-agnostic kernel store (POST /working), not the @romp-working var
         return ("Cleared your 'working on' note." if not text.strip()
                 else "Published — others see: working on '%s'." % text), False
+    if name == "set_emoji":
+        if not mid:
+            return "Not inside a romp session.", True
+        if "emoji" not in args or args.get("emoji") is None:
+            # a MISSING argument is never a clear (the set_working lesson): the documented clear is emoji=''
+            return ("set_emoji needs its `emoji` argument — nothing was changed. "
+                    "Pass emoji='' if you mean to clear it."), True
+        emoji = str(args.get("emoji"))
+        res = _publish_emoji(mid, emoji)           # the kernel validates and writes (POST /emoji)
+        if res is None:
+            return "Could not reach the session manager, so the emoji was not changed.", True
+        if not res.get("ok"):
+            return "Refused — %s. Nothing was changed." % (res.get("error") or "not accepted"), True
+        shown = str(res.get("emoji") or "")
+        return ("Cleared — your session's name shows no emoji now." if not shown
+                else "Done — your session's name now shows %s." % shown), False
     if name == "check_sent":
         if not mid:
             return "Not inside a romp session.", True
