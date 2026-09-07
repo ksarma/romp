@@ -303,10 +303,10 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual((a["nodes"], a["_baseRev"]), ({}, 0), "load_goals' answer to a file that does not parse")
         self.assertEqual(type(a), dict)
         self.assertIsNot(a, b, "a fresh store each time (private, mutable)")
-        self.assertEqual((a.get("_unread"), b.get("_unread")), (True, True),
+        self.assertEqual((a.get("_unread"), b.get("_unread")), ("store", "store"),
                          "the file exists and this is not its content: marked on the fill and on the hit, as "
-                         "load_goals marks it")
-        self.assertIs(jd.load_goals(SID).get("_unread"), True)
+                         "load_goals marks it, with the reason save_goals refuses on")
+        self.assertEqual(jd.load_goals(SID).get("_unread"), "store")
         self.assertEqual((self._delta("corrupt"), self._delta("hit")), (1, 1), "the failed parse ran once")
         self.assertEqual(err.getvalue().count("goals-shared:"), 1, "said once per version")
         self.assertEqual(jd.shared_store_stats()["entries"], 1, "remembered under the version's key and bytes")
@@ -325,7 +325,7 @@ class SharedStoreCache(unittest.TestCase):
         b = jd.load_goals_shared(SID)
         self.assertEqual(type(a), dict, "load_goals' own result, private")
         self.assertIsNot(a, b)
-        self.assertIs(a.get("_unread"), True, "load_goals' mark rides along: the view is not what the files say")
+        self.assertEqual(a.get("_unread"), "journal", "load_goals' mark rides along: the view is not what the files say")
         self.assertEqual(self._delta("unreadable_journal"), 2)
         self.assertEqual(jd.shared_store_stats()["entries"], 0, "never memoized while the journal cannot be read")
         rows = [r for r in self._errors() if r["err"] == "history-unreadable"]

@@ -108,6 +108,25 @@ class CourierKindDemoteOnly(unittest.TestCase):
         seg_id = next(k for k in store["placements"] if not k.endswith(("#p", "#d", "#live")))
         return planted, store["placements"][seg_id]
 
+    def test_a_recipient_store_that_does_not_parse_stands_the_pass_down(self):
+        # the recipient's goals file exists and does not parse: the courier used to build its pending list from
+        # the empty fallback (every peer segment looked unplaced), call the model for each and publish the
+        # fallback over the file. It now stands down for that session (_fallback_store): the pass returns,
+        # nothing is placed, no call is made, the file is left as it is, and load_goals' row says why
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        gp = jd.GOALDIR / (RECIP + ".json")
+        gp.write_text("{ not the store")
+        recs = [uline(T0, "what subnet is the new box on?\n<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID, "u1"),
+                aline(T0 + 30, "It's on the flat /24.", "a1", "u1")]
+        (self.proj_dir / (RECIP + ".jsonl")).write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
+        jd._discover_cache["fp"] = None
+        jd.run_courier(now=T0 + 100)                                     # returns: no raise out of the pass
+        self.assertEqual(gp.read_text(), "{ not the store", "the file is left as it is")
+        self.assertEqual(self.calls, [], "no model call over an empty view of the session")
+        rows = [json.loads(l) for l in jd.ERRORS.read_text().splitlines() if l.strip()]
+        self.assertEqual([r["err"] for r in rows], ["store-unreadable"], "one row, from the load")
+
     def test_declared_question_files_fyi_without_a_model_call(self):
         planted, placement = self._deliver("question")
         self.assertEqual(planted, [], "a declared question never plants a recipient card")
