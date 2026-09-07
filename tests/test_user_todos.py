@@ -549,21 +549,89 @@ class WithdrawAccount(_StoreSandbox):
             km._resolve_user_todo = real
         self.assertEqual(held, [True], "the stamp ran inside the look-up's lock")
 
-    def test_the_remote_forward_passes_the_account_through(self):
-        saved = (km._host_for_sid, km._remote_forward)
-        km._host_for_sid = lambda sid: {"host": "TESTHOST", "local_port": 1, "token": "t"}
+    def _seed_row(self, resolved, sid=WSID):
+        """A hand-edited store: one row of the asker's with the given closing stamp, as written."""
+        row = {"id": "ut-11111111", "text": "Need the auth-scheme decision", "createdT": NOW - 60,
+               "resolved": resolved}
+        (jd.STATE / "user-todos.json").write_text(json.dumps({sid: [row]}))
+        km._user_todos_cache.clear()
+        return row
+
+    def test_a_malformed_closing_stamp_is_unknown_and_named_never_open(self):
+        # review round 1 (2026-09-07): `resolved` truthy but not a {kind, t} stamp with one of the
+        # three kinds (no writer makes one: a hand-edited or damaged store) read as state 'open', a
+        # fifth value the contract does not have, which the tool worded as already closed. The row
+        # is not open (a truthy stamp blocks the stamp), so the account is unknown-shaped, names
+        # the stamp it could not read, and says the row is the asker's own; nothing is rewritten.
+        for stamp in (True, "withdrawn", 1781200000, {"t": 1781200000}, {"kind": "", "t": 1781200000},
+                      {"kind": "lost", "t": 1781200000}, {"kind": ["withdrawn"], "t": 1781200000}):
+            with self.subTest(stamp=stamp):
+                row = self._seed_row(stamp)
+                out = self._withdraw("ut-11111111")
+                self.assertFalse(out["ok"])
+                self.assertEqual((out["state"], out["at"], out["owner"]), ("unknown", None, True))
+                self.assertIn("malformed closing stamp on ut-11111111", out["error"])
+                self.assertIn(repr(stamp), out["error"], "names the stamp it could not read")
+                self.assertIn("answered | dismissed | withdrawn", out["error"], "and the shape it expected")
+                self.assertEqual(km._user_todos()[WSID][0], row, "the damage is reported, not papered over")
+                self.assertEqual(self.pushed_soon, [], "nothing changed, nothing to push")
+
+    def test_a_well_formed_stamp_of_each_kind_is_still_its_own_state(self):
+        # the validation above must not narrow the three real states
+        for kind in ("answered", "dismissed", "withdrawn"):
+            with self.subTest(kind=kind):
+                self._seed_row({"kind": kind, "t": 1781200000})
+                out = self._withdraw("ut-11111111")
+                self.assertEqual((out["ok"], out["state"], out["at"], out["owner"]),
+                                 (False, kind, 1781200000, True))
+                self.assertNotIn("malformed", out.get("error", ""))
+
+    def _forward(self, st, res, sid=WSID):
+        """Drive the route's remote branch: the sid maps to TESTHOST and its tunnel answers (st, res),
+        the (status, parsed body) pair _remote_forward_status returns."""
+        saved = (km._host_for_sid, km._remote_forward_status)
+        km._host_for_sid = lambda s: {"host": "TESTHOST", "local_port": 1, "token": "t"}
+        km._remote_forward_status = lambda r, path, body, method="POST": (st, res)
         try:
-            km._remote_forward = lambda r, path, body: {"ok": False, "state": "answered", "at": 1781200000,
-                                                          "owner": True}
-            out = self._withdraw("ut-9f2c1a34")
-            self.assertEqual(out, {"ok": False, "state": "answered", "at": 1781200000, "owner": True})
-            # a remote kernel that predates the account answers ok alone: nothing is invented
-            km._remote_forward = lambda r, path, body: {"ok": False}
-            self.assertEqual(self._withdraw("ut-9f2c1a34"), {"ok": False})
-            km._remote_forward = lambda r, path, body: None          # a dead tunnel: as before
-            self.assertEqual(self._withdraw("ut-9f2c1a34"), {"ok": False})
+            with contextlib.redirect_stderr(io.StringIO()):
+                code, out = _serve_post("/usertodo/withdraw", {"id": sid, "todoId": "ut-9f2c1a34"},
+                                        {"X-Romp-Token": km.TOKEN})
         finally:
-            km._host_for_sid, km._remote_forward = saved
+            km._host_for_sid, km._remote_forward_status = saved
+        return code, json.loads(out.decode() or "{}")
+
+    def test_the_remote_forward_passes_the_account_through(self):
+        acct = {"ok": False, "state": "answered", "at": 1781200000, "owner": True}
+        self.assertEqual(self._forward(200, acct), (200, acct))
+        # a remote kernel that predates the account answers ok alone: nothing is invented
+        self.assertEqual(self._forward(200, {"ok": False}), (200, {"ok": False}))
+        # the remote's error rides along too (its malformed-stamp account names the stamp there)
+        bad = {"ok": False, "state": "unknown", "at": None, "owner": True,
+               "error": "malformed closing stamp on ut-9f2c1a34: resolved=True (a stamp is {kind: answered | dismissed | withdrawn, t})"}
+        self.assertEqual(self._forward(200, bad), (200, bad))
+        self.assertEqual(self.pushed_soon, [], "a forwarded withdraw changes nothing here")
+
+    def test_a_remote_that_gave_no_account_is_a_502_never_already_closed(self):
+        # review round 1 (2026-09-07): a dead tunnel answered 200 {"ok": false}, which the tool
+        # worded as "already answered, dismissed, or withdrawn" while the row still stood on the
+        # remote. A non-2xx makes the tool say the withdraw did not happen (_kernel_post reads a
+        # 502 as None), which is true; the body names the cause for a caller that reads it.
+        # Through the tool this branch is out of reach (a session's tool posts to its own host's
+        # kernel, whose GET /sessions lists local sessions only, so its sid maps to no remote
+        # there); the route is API for any token holder, so it answers honestly regardless.
+        for st, res, words in ((0, None, ("tunnel to TESTHOST", "not answering")),
+                               (404, None, ("kernel on TESTHOST", "predates /usertodo/withdraw")),
+                               (500, None, ("kernel on TESTHOST", "HTTP 500")),
+                               (200, None, ("kernel on TESTHOST", "not JSON"))):
+            with self.subTest(status=st):
+                code, out = self._forward(st, res)
+                self.assertEqual(code, 502)
+                self.assertFalse(out["ok"])
+                self.assertEqual(out["host"], "TESTHOST")
+                self.assertNotIn("state", out, "no account is invented")
+                for w in words:
+                    self.assertIn(w, out["error"])
+        self.assertEqual(self.pushed_soon, [])
 
 
 class ContextBlock(_StoreSandbox):

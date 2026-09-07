@@ -43,7 +43,10 @@ session's transcript, with Reply and Dismiss, and a session that resumes after a
 compaction is handed its open requests back so it can withdraw the ones that no longer apply. A
 session that withdraws a request you already answered or dismissed, or one it already withdrew, is
 told so plainly, with the time, and not handed an error; only an id that is unknown or another
-session's is refused as one. The feature is off by default. The gear's **User todos** checkbox (under *Sessions*) turns it on for
+session's is refused as one. A withdrawal the kernel cannot carry out is refused, never reported
+as closed: a request held on an attached machine the kernel cannot reach, or one running older
+romp, is reported as still standing, and a stored request whose closing record is damaged is
+reported as unreadable, with the record named. The feature is off by default. The gear's **User todos** checkbox (under *Sessions*) turns it on for
 one machine at a time: each kernel keeps its own copy, and the choice does not spread to other
 attached machines. While it is off, sessions on that machine are not offered the tools that flag
 or withdraw a request, nothing is listed, and nothing is handed back on resume. Requests flagged

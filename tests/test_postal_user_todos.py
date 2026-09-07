@@ -141,6 +141,8 @@ class Dispatch(unittest.TestCase):
         self.assertNotIn(" at ", out, "no time to report")
 
     def test_withdraw_with_an_unreachable_kernel_says_it_still_stands(self):
+        # None is also what _kernel_post makes of the route's 502 for a remote session whose
+        # kernel gave no account (a dead tunnel, an older remote): the row still stands there
         self.canned = None
         out, err = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
         self.assertTrue(err)
@@ -214,6 +216,25 @@ class Account(unittest.TestCase):
         out, err = self._withdraw(state="unknown", at=None, owner=False)
         self.assertTrue(err)
         self.assertEqual(out, "No note 'ut-9f2c1a34' of yours. Nothing changed.")
+
+    def test_the_askers_own_row_in_an_unreadable_shape_is_an_error_that_says_so(self):
+        # review round 1 (2026-09-07): the kernel's account for a malformed closing stamp is state
+        # unknown with owner True and an error naming the stamp: neither "not yours" nor closed
+        why = "malformed closing stamp on ut-9f2c1a34: resolved=True (a stamp is {kind: answered | dismissed | withdrawn, t})"
+        out, err = self._withdraw(state="unknown", at=None, owner=True, error=why)
+        self.assertTrue(err)
+        self.assertIn("Couldn't read the record of 'ut-9f2c1a34'", out)
+        self.assertIn(why, out, "relays what the kernel could not read")
+        self.assertNotIn("of yours", out)
+        self.assertIn("Nothing changed", out)
+        self.assertIn("say it directly", out, "the agent's move when the record cannot say")
+        for word in ("romp", "card", "board", "goal", "cleared", "dismissal", "nudge", "<!--"):
+            self.assertNotIn(word, out.lower(), "%r names machinery the agent cannot see" % word)
+        # without any error text from the kernel the sentence still stands on its own
+        self.canned = {"ok": False, "state": "unknown", "at": None, "owner": True}
+        out, err = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+        self.assertTrue(err)
+        self.assertIn("its closing record is unreadable", out)
 
     def test_not_the_askers_row_is_an_error_whatever_its_state_says(self):
         # the kernel reports another session's rows as unknown; a kernel that ever described one

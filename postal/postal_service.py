@@ -3344,6 +3344,13 @@ def _mcp_call(name, args):
         # failure and folded a met need into an error path. An id that is not this session's own,
         # or unknown, stays the error it always was.
         state = str(res.get("state") or "")
+        if state == "unknown" and res.get("owner") is True:
+            # the asker's OWN row, in a shape the kernel could not read (a damaged or hand-edited
+            # record; review round 1, 2026-09-07): neither "not yours" nor closed. The kernel's
+            # error names the part it could not read; the agent's move is to say the need aloud.
+            return ("Couldn't read the record of '%s' (%s). Nothing changed; if the need still "
+                    "stands, say it directly in your next reply."
+                    % (tid, res.get("error") or "its closing record is unreadable")), True
         if res.get("owner") is False or state == "unknown":
             return "No note '%s' of yours. Nothing changed." % tid, True
         when = _when_words(res.get("at"))
