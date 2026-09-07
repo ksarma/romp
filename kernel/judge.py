@@ -3047,15 +3047,30 @@ def goal_io_stats():
 
 
 def load_goals(fsid):
+    """The session's goal store: the file parsed, the override journal replayed onto it, and two
+    TRANSIENT keys that are never serialized (save_goals pops both; _store_content leaves both out of the
+    content hash): `_baseRev`, the revision read, for save_goals' CAS; and `_unread`, set only when the
+    store returned is NOT a faithful view of disk — the store file exists but could not be read or parsed
+    (this function's fallback), or the journal exists but could not be read (_replay_overrides' OSError
+    path). An ABSENT store file is not marked: the fresh empty store IS what disk holds. Readers that cache
+    a load's answer by the files' identity consult the mark before caching: the kernel's awaiting-lift
+    gate (_LIFT_GATE) today; the absent-store memo in a following change."""
     _goal_io_bump("loads")
     try:
         store = _guard_nodes(json.loads((GOALDIR / (fsid + ".json")).read_text()))
-    except Exception:
+    except Exception as e:
         # a FRESH store is born at the current identity version — only stores with history recorded
         # under an OLDER derivation are ever sealed (see _migrate_placements)
         store = {"rompUuid": fsid, "seq": 0, "nodes": {}, "placements": {}, "status": {},
                  "placementsV": PLACEMENTS_V}
         store["_baseRev"] = 0            # no file yet; a writer that CREATES one still trips the CAS
+        if not isinstance(e, FileNotFoundError):
+            # the file EXISTS and could not be read or parsed: this store is a fallback, not the file's
+            # content. Transient, like _baseRev (popped by save_goals, outside the content hash): a
+            # reader that caches "what the file holds" by its identity must not cache this answer
+            # (the kernel's awaiting-lift gate, which skipped a stamped store for good after one
+            # EMFILE, 2026-09-06). An absent file is not marked: empty IS its content.
+            store["_unread"] = True
         return store
     if _replay_overrides(fsid, store):
         # the replay WROTE (a clobbered user resolve/clear re-flagged): the published status/confirming
@@ -3328,6 +3343,7 @@ def _replay_overrides(fsid, store):
     except OSError as e:
         _log_judge_error("romp", fsid, "history-unreadable",
                          note="override journal unreadable: %s — user actions may show undone until it reads" % e)
+        store["_unread"] = True                        # the store is not what its files say (see load_goals)
         return False
     applied = False                                    # any write → load_goals re-runs rollup (one truth)
     arch_nodes = None                                  # the archive is read once, only if a restore entry needs it
@@ -3473,7 +3489,8 @@ def _replay_overrides(fsid, store):
     return applied
 
 
-_NONCONTENT_KEYS = ("rev", "_baseRev")   # the revision counter + the transient CAS base: not store CONTENT
+_NONCONTENT_KEYS = ("rev", "_baseRev", "_unread")   # the revision counter + the transient CAS base and
+#                                                      fallback mark (load_goals): not store CONTENT
 
 
 def _store_content(store):
@@ -3665,6 +3682,7 @@ def save_goals(fsid, store):
     if mine is not None and _matches_disk(fsid, store, mine):
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized
+    store.pop("_unread", None)                       # likewise transient (load_goals' fallback mark)
     rebased = False
     if base is not None:
         disk = 0
