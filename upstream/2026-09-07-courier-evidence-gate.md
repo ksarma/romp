@@ -1,9 +1,9 @@
 ---
 title: Perf J6: the courier's per-session scan joins the evidence gate (pinned parse pair, store trio, episode log; incomplete on pending rows or a backref), the settle is read at the write sites only, and the cross-host plant reads its candidate rows from the postal memo
 status: candidate
-where: fork branch `perf4-courier`: `kernel/judge.py` (`_courier_scan`, `run_courier`, `_postal_ledger`, `_postal_row`, `_attach_courier_link`, `GATED_TIERS`/`PARSE_TIERS`/`_sig_inputs` and the inventory), `kernel/kernel.py` (the tiers docstring), `docs/reference.md`; tests `tests/test_judge_stage_gate.py` (CourierGate, 15 cases, and the courier FsCompleteness check), `tests/test_courier_link.py`, `tests/test_free_threaded_caches.py`
+where: fork PR #355 (`perf4-courier`): `kernel/judge.py` (`_courier_scan`, `run_courier`, `_postal_ledger`, `_postal_row`, `_attach_courier_link`, `GATED_TIERS`/`PARSE_TIERS`/`_sig_inputs` and the inventory), `kernel/kernel.py` (the tiers docstring), `docs/reference.md`; tests `tests/test_judge_stage_gate.py` (CourierGate, 15 cases, and the courier FsCompleteness check), `tests/test_courier_link.py`, `tests/test_free_threaded_caches.py`
 added: 2026-09-07
-pr:
+pr: 355
 tier: fix
 offered:
 closed:
