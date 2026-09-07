@@ -151,6 +151,12 @@ Exactly three events clear a user todo:
    corroborated loss of its holder (`_user_todo_answer_lost`; `_user_todo_loss_boot_pass`
    re-offers marks whose reopen a kernel death cut short), which reopens unless the transcript
    proves the text landed. Every leg keys on a delivery event — never a judgment.
+   On tmux the truthy send is not the delivery: `TmuxBackend.send` starts the paste on a thread
+   whose clear-guard can still refuse it, so an answer's send persists a pending-paste mark
+   before returning, the paste thread's verdict reopens (refused) or clears the mark
+   (delivered), a refusal that outruns the stamp flips the mark and the stamp stands down at
+   its own write moment — matched by the send's nonce, so a stale flag never stands down a
+   later delivered answer — and `_tmux_paste_loss_boot_pass` re-offers marks a dead kernel left.
 2. **The user dismisses** — clears it without a message; nothing is injected. For moot and
    stale items.
 3. **The agent withdraws** — via the tool, when it got what it needed some other way or the
