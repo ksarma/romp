@@ -1,10 +1,10 @@
 ---
 title: One encode per payload per build on the pusher thread (PLAN-2 P5 + P8): the feed and bars dedup signatures are tuples of the per-entry strings the delta paths already make (`_feed_sig`, `_bars_sig`) instead of a sort_keys re-dump of the stripped payload; the whole frame is a `_LazyWire` cell serialized on the first send that needs one (a fresh socket, a re-base, a client without deltas, a delta past the size guard) and kept in the wire tuple, so a rebuild whose clients all hold a base never serializes the frame; `_feed_parts` memoizes the per-card encode on the build's asks list (a ledgers-only refill encodes no card); `_delta_split` parses a collection's kind once; an unkeyable bars build keeps the whole dump and `_dedup_sig`. The wire section of `_push` and `_pusher_cycle_jobs` now catch: a raise there (HEAD had one waiting, a card without an `itemId`) killed the pusher thread for the process's life. `/perf memos.wire` reports the memo's hits, the whole frames made and the fallback
 status: candidate
-where: fork branch `perf2-serialize` (kernel/kernel.py `_LazyWire` / `_wire_text` / `_wire_len` / `_feed_sig` / `_feed_est` / `_bars_sig` / `_bars_est` / `_delta_keyer` / `_feed_parts` / `_send_client` / `_send_slot*` / `_send_feed_now` / the `_push` wire section; tests/test_wire_once_per_build.py, tests/test_feed_delta.py, tests/test_view_deltas.py, tests/test_kernel_pusher_snapshot.py, tests/test_perf_stats.py)
+where: fork PR #270 (branch `perf2-serialize`, merged 2026-09-07 in batch #277): kernel/kernel.py `_LazyWire` / `_wire_text` / `_wire_len` / `_feed_sig` / `_feed_est` / `_bars_sig` / `_bars_est` / `_delta_keyer` / `_feed_parts` / `_send_client` / `_send_slot*` / `_send_feed_now` / the `_push` wire section; tests/test_wire_once_per_build.py, tests/test_feed_delta.py, tests/test_view_deltas.py, tests/test_kernel_pusher_snapshot.py, tests/test_perf_stats.py
 added: 2026-09-06
-pr:
-tier:
+pr: 270
+tier: fix
 offered:
 closed:
 ---
