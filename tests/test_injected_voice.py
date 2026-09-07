@@ -160,6 +160,13 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
+            # the reject trace (plans/file-review.md, Slice 2): the person rejected some of the session's
+            # tracked changes in the viewer, which rewrote the file and its sidecar — told in the person's
+            # voice like the edit trace, for one change and for several
+            "reject trace": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
+            "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
+            # the count-less form: the host wrote the file and died before saying which ids landed
+            "reject trace (count unknown)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", None),
             # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
             # suggests a /compact at a natural boundary; /compact is a CLI feature the session
             # already knows, and the thresholds behind the timing are never mentioned
@@ -184,6 +191,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 "/TESTDIR/notes-api/docs/latency.png",
                 [{"id": "1781100000005-0", "desc": "on this file", "body": "The y axis needs units."}],
                 0, 0, True, False),
+            # …and the DECISIONS-ONLY shape (Slice 2): a send carrying an Accept or Reject and no
+            # comments wears its own prose (the file, the decisions line, that nothing needs a reply,
+            # the same closing ask). A distinct body with its own words, so it is rendered here too —
+            # a hand-copied noun list elsewhere would drift from ROMP_WORDS (the review, 2026-09-06)
+            "file comments message (decisions only)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", [], 3, 1, True, True),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -208,6 +221,20 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                      "%r speaks romp at the session (%r: %s). Write it as the person "
                                      "it works for asking — see CLAUDE.md, 'Messages we inject into a "
                                      "session'." % (name, word, why))
+
+    def test_the_index_renders_both_shapes_of_the_file_comments_message(self):
+        # the send message has TWO shapes with different prose (kernel _file_comments_message): the
+        # comments shape and the decisions-only shape a send with no comments wears. The index must
+        # render both, or one is scanned only by a copied noun list that ROMP_WORDS cannot update —
+        # the gap the 2026-09-06 review found. Pinned on the shapes' own tell-tales, not their names.
+        bodies = self._bodies()
+        decisions = [n for n, b in bodies.items() if "No comments this time" in b]
+        comments = [n for n, b in bodies.items() if "\nComment " in b and "To respond:" in b]
+        self.assertTrue(decisions, "the decisions-only send is rendered and scanned")
+        self.assertTrue(comments, "the comments send is rendered and scanned")
+        for name in decisions:
+            self.assertNotIn("Comment ", bodies[name], "%r is the decisions-only shape: no comment list" % name)
+            self.assertIn("I accepted", bodies[name], "%r carries the decision it exists to report" % name)
 
     def test_the_command_allowance_is_the_span_not_the_word(self):
         # the T212 allowance must never become a whitelist: bare "romp" in prose, or any other
@@ -293,7 +320,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the user-todo context block is the agent's OWN notes handed back after context loss —
             # a memory aid with a withdraw invitation, not a status ask
             # …and the edit trace is an FYI about something the user already DID (a file changed under
-            # the session) — telling, not asking; a status question bolted on would be noise
+            # the session) — telling, not asking; a status question bolted on would be noise; the reject
+            # trace is the same class (the person rejected the session's changes and the file changed)
             # …and the MERGE handoff is a record handed over with direction ("account for it"),
             # never a status ask — bolting a progress question onto it would be noise
             # …and the file-comments message is the person's own comments with instructions on how
@@ -301,10 +329,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
-                        "user-todo context block", "edit trace",
+                        "user-todo context block", "edit trace", "reject trace", "reject trace (one change)",
+                        "reject trace (count unknown)",
                         "comment-thread merge", "compaction suggestion",
                         "file comments message", "file comments message (untracked, several)",
-                        "file comments message (image)"):
+                        "file comments message (image)", "file comments message (decisions only)"):
                 #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()
