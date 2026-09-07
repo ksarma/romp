@@ -19,6 +19,9 @@ Pinned here, kernel side:
   stamp nothing; and the payloads every UI surface reads ship EMPTY — build_session's field +
   split-card event, build_feed's map — because _open_user_todos is the one gated read (the nudge
   stand-down and the escalation floor read it too). The store keeps every row; ON shows them again;
+- the badge: _needs_you_count reads the switch too and, while OFF, is the pre-feature count (every
+  real needs-input card, per card), so an install that never turned the feature on sees no change
+  in the number its icon wears; ON, the widened rule applies (BadgeArithmetic, test_user_todos.py);
 - the sig folds: a flip busts the owning session's chat cache and the feed cache with no store write;
 - the boot notice: N open rows stored while OFF → one stderr line; ON, or zero rows → silence;
 - the store-shape guard: a user-todos.json that is not sid → list (a settings blob, a JSON list,
@@ -514,6 +517,40 @@ class OffOnThePayloads(unittest.TestCase):
         self.assertIn("_todo_standdown = bool(_open_user_todos(sid))", ksrc)
         self.assertIn("_ut_open = _open_user_todos(fsid)", ksrc)
         self.assertIn('frozenset(t["id"] for t in _open_user_todos(str(sid)))', ksrc)
+
+
+class OffOnTheBadge(_Sandbox):
+    """The badge's arithmetic is part of the feature, so the switch covers it: while OFF,
+    _needs_you_count is what it was before user todos existed — every real needs-input card, per
+    card — and an install that never turned the feature on sees no change in the number its icon
+    wears. ON, the widened rule applies (plans/user-todos.md (d): open todos plus hard-stopped
+    sessions once each; BadgeArithmetic in test_user_todos.py pins it in full)."""
+
+    FEED = {"asks": [{"itemId": "S1:g1", "sid": "S1", "column": "needs_input"},
+                     {"itemId": "S1:g2", "sid": "S1", "column": "needs_input"},
+                     {"itemId": "S2:g1", "sid": "S2", "column": "needs_input", "provisional": True},
+                     {"itemId": "S3:g1", "sid": "S3", "column": "working"}],
+            "userTodos": {"S4": 2}}
+
+    def test_off_counts_every_real_needs_input_card_per_card(self):
+        # two blocked goal cards of one session read 2 — the pre-feature count — not 1; the map is
+        # not read (a frame built while off carries an empty one anyway; a stale one adds nothing)
+        self.assertEqual(km._needs_you_count(self.FEED), 2)
+
+    def test_on_the_widened_rule_applies_to_the_same_frame(self):
+        km._set_user_todos(True)
+        # the hard-stopped session counts once as itself, plus the two open todos of S4
+        self.assertEqual(km._needs_you_count(self.FEED), 3)
+
+    def test_off_reads_a_frame_with_the_pre_feature_expression_alone(self):
+        # a floored card (blocked.state userTodos) and a filled map can only reach the counter on a
+        # frame built while ON; read while OFF, the card is one real needs-input card like any other
+        # and nothing else on the frame is counted as its todos
+        feed = {"asks": [{"itemId": "S1:g1", "sid": "S1", "column": "needs_input",
+                          "blocked": {"state": "userTodos", "count": 2}}], "userTodos": {"S1": 2}}
+        self.assertEqual(km._needs_you_count(feed), 1)
+        km._set_user_todos(True)
+        self.assertEqual(km._needs_you_count(feed), 2, "on: the floor is a presentation of the two todos")
 
 
 class BootNotice(_Sandbox):

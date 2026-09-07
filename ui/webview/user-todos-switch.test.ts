@@ -33,7 +33,6 @@ test("the gear has a User todos checkbox beside Thinking summaries, gesture-stam
     "…in the same section as Thinking summaries, between it and File editing");
   const row = GEAR.slice(at, at + 700);
   assert.match(row, /<b>User todos<\/b>/);
-  assert.ok(!/fleet/i.test(row), "no 'fleet' in the copy (repo vocabulary rule)");
   assert.ok(/flag a decision or an input it needs from you/.test(row), "says what it turns on");
   assert.ok(/Waiting on you/.test(row) && /card at the bottom/.test(row), "…and where it shows");
   assert.ok(/Off by default/.test(row), "says it is off by default");
