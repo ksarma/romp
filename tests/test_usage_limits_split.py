@@ -34,6 +34,9 @@ jd = km.jd
 
 SID = "11111111-2222-3333-4444-555555555555"     # no goals are minted here: the shared placeholder is fine
 ACCT = "aaaaaaaaaaaa"
+ZERO = {"usd": 0.0, "tok": 0, "turns": 0, "tokIn": 0, "tokOut": 0, "tokCacheR": 0, "tokCacheW": 0}
+# ^ a spend window with no buckets: the honest zero, with the by-kind split an all-buckets-carry-it
+#   window emits (an empty window trivially does) — _spend_windows' _sum
 LIMIT_FIELDS = ("limited", "fiveHour", "sevenDay", "fable", "t", "acct")
 
 
@@ -281,11 +284,11 @@ class OneLedgerParsePerFullReading(_Base):
         (jd.STATE / "usage.json").write_text(json.dumps({"apiKey": True}))
         u = km._usage()
         self.assertTrue(u.get("apiKey"))
-        self.assertEqual(u["spend"]["day"], {"usd": 0.0, "tok": 0, "turns": 0})
+        self.assertEqual(u["spend"]["day"], ZERO)
         self.assertNotIn("spendSeries", u)
         (jd.STATE / "spend.json").write_text("{not json")
         u = km._usage()
-        self.assertEqual(u["spend"]["day"], {"usd": 0.0, "tok": 0, "turns": 0})
+        self.assertEqual(u["spend"]["day"], ZERO)
         self.assertNotIn("spendSeries", u)
 
     def test_usage_hands_one_document_to_both_readers(self):
@@ -322,7 +325,7 @@ class TheSpendReadersTakeADocument(_Base):
         self.assertEqual(from_file_s["h0"], int(self.frozen // 3600) - (km._SERIES_HOURS - 1))
 
     def test_no_document_keeps_the_readers_own_read_and_fallbacks(self):
-        self.assertEqual(km._spend_windows()["hour"], {"usd": 0.0, "tok": 0, "turns": 0})
+        self.assertEqual(km._spend_windows()["hour"], ZERO)
         self.assertIsNone(km._spend_series(now=self.frozen))
         self._ledger()
         self.reads.clear()                              # the two failed attempts above counted as reads too
@@ -330,7 +333,7 @@ class TheSpendReadersTakeADocument(_Base):
         self.assertEqual(self._spend_reads(), 1, "no document: the reader reads the file itself, once")
 
     def test_an_empty_document_is_the_readers_no_ledger_fallback(self):
-        self.assertEqual(km._spend_windows(doc={})["day"], {"usd": 0.0, "tok": 0, "turns": 0})
+        self.assertEqual(km._spend_windows(doc={})["day"], ZERO)
         self.assertIsNone(km._spend_series(doc={}))
 
 
