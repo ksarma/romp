@@ -535,6 +535,30 @@ def _hhmm_epoch(t):
     try: return datetime.fromtimestamp(int(t)).strftime("%H:%M")
     except Exception: return "?"
 
+
+def _when_words(t, now=None):
+    """An epoch as a phrase a reader can place without a date table: " at 14:05 today",
+    " at 14:05 yesterday", or " on 2026-09-05 at 14:05" (local time, leading space so it drops
+    into a sentence); "" for no time (None, 0, junk). `now` is the reference epoch (tests pin it).
+    Bare "at 14:05" is ambiguous the moment a day boundary passes."""
+    try:
+        t = int(t)
+    except (TypeError, ValueError):
+        return ""
+    if t <= 0:
+        return ""
+    try:
+        d = datetime.fromtimestamp(t)
+        ref = datetime.fromtimestamp(time.time() if now is None else now)
+    except (OverflowError, OSError, ValueError):     # an epoch no calendar holds: say nothing about the time
+        return ""
+    days = (ref.date() - d.date()).days
+    if days == 0:
+        return " at %s today" % d.strftime("%H:%M")
+    if days == 1:
+        return " at %s yesterday" % d.strftime("%H:%M")
+    return " on %s at %s" % (d.strftime("%Y-%m-%d"), d.strftime("%H:%M"))
+
 def format_receipts(recs):
     if not recs:
         return "No messages sent yet."
@@ -3127,10 +3151,34 @@ def _mcp_call(name, args):
         res = _kernel_post("/usertodo/withdraw", {"id": mid, "todoId": tid})
         if not isinstance(res, dict):
             return "Couldn't withdraw '%s' — it still stands. Try again shortly." % tid, True
-        if not res.get("ok"):
-            return ("No open note '%s' of yours — it was already answered, dismissed, or "
-                    "withdrawn. Nothing changed." % tid), True
-        return "Withdrawn — '%s' no longer stands." % tid, False
+        if res.get("ok"):
+            return "Withdrawn — '%s' no longer stands." % tid, False
+        # ok:false: the kernel's ACCOUNT (state / at / owner, 2026-09-07) says which kind of
+        # nothing-to-do this was, and only one is the agent's error. A row the person already
+        # answered or dismissed, or one this session already withdrew, means the need no longer
+        # stands, which is what the caller wanted: a plain answer, said in full (never a silent
+        # success), but NOT flagged as an error. Two sessions read the old one-size error as a
+        # failure and folded a met need into an error path. An id that is not this session's own,
+        # or unknown, stays the error it always was.
+        state = str(res.get("state") or "")
+        if state == "unknown" and res.get("owner") is True:
+            # the asker's OWN row, in a shape the kernel could not read (a damaged or hand-edited
+            # record): neither "not yours" nor closed. The kernel's error names the part it could
+            # not read; the agent's move is to say the need aloud.
+            return ("Couldn't read the record of '%s' (%s). Nothing changed; if the need still "
+                    "stands, say it directly in your next reply."
+                    % (tid, res.get("error") or "its closing record is unreadable")), True
+        if res.get("owner") is False or state == "unknown":
+            return "No note '%s' of yours. Nothing changed." % tid, True
+        when = _when_words(res.get("at"))
+        if state in ("answered", "dismissed"):
+            return ("Already closed: the person you work for %s '%s'%s. Nothing to withdraw."
+                    % (state, tid, when)), False
+        if state == "withdrawn":
+            return "Already withdrawn: '%s' was taken back%s. Nothing changed." % (tid, when), False
+        # a kernel that predates the account answers ok:false alone: the old one-size answer
+        return ("No open note '%s' of yours — it was already answered, dismissed, or "
+                "withdrawn. Nothing changed." % tid), True
     if name == "check_sent":
         if not mid:
             return "Not inside a romp session.", True

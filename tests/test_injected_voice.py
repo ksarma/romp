@@ -366,6 +366,15 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
             canned["res"] = {"ok": False}
             results["withdraw: no open note"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+            # the kernel's account (state / at / owner, 2026-09-07) words the ok:false four ways
+            for state in ("answered", "dismissed", "withdrawn"):
+                canned["res"] = {"ok": False, "state": state, "at": T0, "owner": True}
+                results["withdraw: already " + state] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": False}
+            results["withdraw: not yours"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": True,
+                             "error": "malformed closing stamp on ut-9f2c1a34: resolved=True"}
+            results["withdraw: unreadable record"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
             pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 2}))
             results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
@@ -376,6 +385,11 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         self.assertIn("Noted", results["add: noted"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
+        self.assertIn("Already closed", results["withdraw: already answered"])
+        self.assertIn("Already closed", results["withdraw: already dismissed"])
+        self.assertIn("Already withdrawn", results["withdraw: already withdrawn"])
+        self.assertIn("of yours", results["withdraw: not yours"])
+        self.assertIn("Couldn't read the record", results["withdraw: unreadable record"])
         self.assertIn("turned off on this machine", results["add: switch off"])
         self.assertIn("turned off on this machine", results["withdraw: switch off"])
         for name, text in results.items():
