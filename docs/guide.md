@@ -251,6 +251,14 @@ its columns need, up to the width of the pane, and scrolls inside its own box be
 that; a table inside a quote or a list item stays within the prose width. Pictures
 shrink to fit, so resizing the pane never leaves the page wider than the pane.
 
+**A file's own HTML.** The Rendered view keeps the HTML a markdown file carries under the
+rules GitHub applies to a README. A `<style>` block, a form and its controls, and a
+`<dialog>` are dropped (their text stays as prose); a task-list checkbox stays but cannot be
+ticked; an inline `style` keeps only its `color` and `background-color`, so a coloured span
+keeps its colour and nothing in a file can move, hide or cover the viewer's own controls. An
+element's `id` or `name` is prefixed `user-content-`, as on GitHub; the viewer's own heading
+ids are not, so a link to a heading inside the file still lands on it.
+
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note

@@ -104,6 +104,56 @@ preventDefault. Acceptance: sanitized fixtures hold no `<style>`, `<form>` or `i
 div, `elementFromPoint` at the close button's centre returns the button; clicking the form fixture
 leaves `location.href` unchanged; a task checkbox still renders. Tests: source pins; one browser leg.
 
+**The Slice 1 build** (2026-09-07). Branch `mdviewer-s1`, stacked on this plan's branch. Where the code as
+built departs from the text above, and why:
+
+1. *One shared module.* The chat's `md()` and `userMd()` (render.ts) and the viewer's `mdBlock` (file-view.ts)
+   spelled the same DOMPurify profile in two places. Both now call `sanitizeMd` in `ui/webview/md-sanitize.ts`,
+   the dashboard's only `DOMPurify.sanitize` call, which returns the sanitized body for each caller's own DOM
+   post-pass (PR links in the chat; heading ids and link stamps in the viewer, which adopts the body's children
+   without a re-parse). The source pins moved with it; `md-sanitize.test.ts` holds the one-call rule.
+2. *`SANITIZE_NAMED_PROPS: true` instead of `FORBID_ATTR: id, name`.* GitHub's own rule: an author's `id` and
+   `name` are kept, prefixed `user-content-`, so `<a name="install">` and `<p id="top">` remain link targets under
+   their prefixed names once fork PR #347 (links inside viewed files) compares the prefixed form; clobbering and
+   collisions with the viewer's own ids are prevented either way. The viewer's heading ids (`md-<slug>`) are minted
+   after the sanitize and never gain the prefix (md-url-view.test.ts pins the order). Nothing regresses on main
+   today: `scrollToFragment` matches heading ids only, so an author's id was never a link target here. One cost,
+   GitHub's too: an inline SVG's `fill="url(#g)"` no longer finds its `<linearGradient id="g">`, since the id is
+   prefixed and the reference is not. #347 is folded at merge time; file-view-links.ts is untouched by this build.
+3. *A wider forbidden list.* The text names style, form, button, select, textarea. The build forbids every
+   form-associated element (form, button, select, option, optgroup, textarea, fieldset, legend, label, datalist,
+   output, meter, progress) and `dialog` (a `<dialog open>` paints a modal box over the note). `input` stays
+   allowed for marked's task checkbox, and a post-pass in `sanitizeMd` removes every input that is not a checkbox
+   and forces `disabled` on a checkbox that lacks it, so no control in a note is live. A forbidden element's text
+   stays as prose (DOMPurify's KEEP_CONTENT); a `<style>` block's text goes with it (DEFAULT_FORBID_CONTENTS).
+4. *Decision 6's grammar.* An `uponSanitizeAttribute` hook, installed once behind a module guard, keeps in a
+   `style` attribute only `color` and `background-color` declarations whose value is a literal colour: a bare
+   keyword (a named colour, `transparent`, `currentcolor`; an unknown word is a declaration the browser ignores),
+   `#` plus 3 to 8 hex digits, or rgb()/rgba()/hsl()/hsla() over 3 or 4 plain numbers or percentages (deg, grad,
+   rad or turn on an hsl hue; `none`), separated by commas, spaces or a slash. No other function and no nested
+   parentheses (so no url(, var(, expression(, calc(), no `!important`, no quotes, escapes or comments. The
+   `background` shorthand is not `background-color` and is dropped. The attribute is rewritten to the surviving
+   declarations and removed when none survive. The hook is global to the DOMPurify instance and there is one
+   sanitize call, so it applies on both pages and to inline SVG.
+5. *Containment.* `contain: layout` on `.fileview-md` in both sheets; the parity test now pins `.fileview-md {`.
+   Finding: since fork PR #348 `.fileview-main` carries `container-type: inline-size`, which already makes it the
+   containing block for fixed descendants, so on main at build time a fixed element in a note could no longer
+   reach the close button, but it could still cover the body and the Comments aside; the md rule narrows the
+   containing block to the note itself. The region layer (`.fc-overlay`, absolute inside its own
+   `position: relative` wrap), the Comment float (`.fc-float`, appended to `document.body`) and the `.fc-hl`
+   highlights (inline) are unaffected: all 47 file-comments test files pass, the regions browser leg included.
+   Layout containment treats content overflowing the md box as ink overflow, but the box's height is auto, so
+   the body's vertical scroll is unchanged (the browser leg scrolls a 120-paragraph note to its end) and a table
+   or a `pre` keeps its own `overflow-x: auto`. A probe box in the browser leg has to be nested, not a direct
+   child: `.fileview-md > :where(:not(table))` caps a direct child at the prose measure.
+6. *The submit backstop* is one `submit` listener calling `preventDefault` on `.fileview-body`, in `openFileView`
+   and in `openUrlView`, installed once per open beside the click delegate. The sanitizer never lets a form
+   through, so the browser leg exercises the listener by inserting a real form after render.
+7. *Tests.* `md-sanitize.test.ts` (node: the grammar, the hook, the guard, the profile, the one-call and CSS
+   pins, the guide's paragraph) and `md-sanitize-browser.test.ts` (the fixture above in headless Chromium over
+   the real files bundle). On the base commit the browser leg times out waiting for `.fileview-md`: the fixture's
+   `<style>` block hides the viewer, the audit's defect reproduced.
+
 ### Slice 2: layout follows the pane, reader keeps their place
 
 `container-type: inline-size` moves to `.fileview`; `overflow-anchor: none` on the body; renderBody
