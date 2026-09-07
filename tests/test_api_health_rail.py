@@ -36,7 +36,7 @@ MDOT = "·"
 
 
 def _frame_keys():
-    return {"type", "state", "cls", "reason", "text", "waiting", "retrying", "blocked", "since", "tmux", "sessions"}
+    return {"type", "state", "cls", "reason", "text", "waiting", "retrying", "blocked", "since", "tmux", "sessions", "seq"}
 
 
 class _Fixture(unittest.TestCase):
@@ -290,6 +290,25 @@ class NoFlap(_Fixture):
         self.sess.reverse()                              # a newer mtime moved a session up the roster
         km._api_health_push(self.frame())
         self.assertEqual(len(self.sent), 1)
+
+    def test_seq_moves_on_every_pause_write_and_only_then(self):
+        # review round 2 (2026-09-07): a press on the detail's pause button writes the pause file; the frame
+        # after it must differ from every frame before it even when the cycle's auto-pause put the same state
+        # back, so the shell can clear its acknowledgment on the frame that answers the press
+        self.add(0, retry={"status": 429})
+        km._api_health_push(self.frame())
+        km._api_health_push(self.frame(now=99))
+        self.assertEqual(len(self.sent), 1, "no write: an unchanged world sends nothing")
+        seq0 = self.sent[0][1]["seq"]
+        km._set_retry_paused(False)                        # a Resume landing on an already-unpaused file
+        km._api_health_push(self.frame())
+        self.assertEqual(len(self.sent), 2, "the write is the event, whatever state it left")
+        self.assertEqual(self.sent[1][1]["seq"], seq0 + 1)
+        self.assertEqual((self.sent[1][1]["state"], self.sent[1][1]["text"]), (self.sent[0][1]["state"], self.sent[0][1]["text"]))
+        km._set_retry_paused(True, reason="limit")
+        km._set_retry_paused(False)
+        km._api_health_push(self.frame())
+        self.assertEqual(self.sent[2][1]["seq"], seq0 + 3, "every write counts, including one lifted within the cycle")
 
     def test_the_ready_handler_resends_the_last_frame_to_a_shell_only(self):
         self.add(0, retry={"status": 429})

@@ -7563,17 +7563,31 @@ def _retry_paused_on():
         return False
 
 
-def _set_retry_paused(paused, reason=""):
+# How many times this kernel wrote the pause file since boot: the apiHealth frame's `seq` (review round 2,
+# 2026-09-07). A press on the detail's pause button writes the file, and the frame that follows carries a
+# moved seq even when the cycle's auto-pause re-engaged the same state within the same second, so the
+# shell can tell the frame that answers its press from one that predates it (_LANDING_APIH_JS pendSeq).
+# An event counter, never a clock: two cycles over an unwritten file read the same seq.
+_RETRY_PAUSE_SEQ = [0]
+
+
+def _set_retry_paused(paused, reason="", bills=""):
     # Record WHEN a pause began: the auto-resume floor. Only a successful response AFTER this instant proves
     # the API recovered (an old success from before the outage doesn't). No `t` when un-pausing.
     # `reason` (the user 2026-07-14): "spend" when a monthly spend cap auto-engaged the pause, so the card
     # shows "raise your cap" instead of a reset countdown; "limit" (2026-09-07) when an account-wide usage
     # window did, so the rail can name it without a clock comparison; "" for a manual Stop.
+    # `bills` (review round 2, 2026-09-07): for a spend pause, the billing the capped session was on,
+    # "login" or "key" (_bills_login of its live row). The lift rule reads it (_auto_resume_retry): a cap
+    # is on ONE account, so only a session on that billing can show it serving again.
     d = {"paused": bool(paused)}
     if paused:
         d["t"] = time.time()
         if reason:
             d["reason"] = reason
+        if bills:
+            d["bills"] = bills
+    _RETRY_PAUSE_SEQ[0] += 1
     _atomic_write(jd.STATE / "retry-paused.json", json.dumps(d))
 
 
@@ -7593,6 +7607,27 @@ def _retry_pause_ts():
         return float(json.loads((jd.STATE / "retry-paused.json").read_text()).get("t") or 0)
     except Exception:
         return 0.0
+
+
+def _retry_pause_bills():
+    """Which billing the session that engaged the current SPEND pause was on, "login" or "key", or "" when
+    the file records none (an older kernel's pause, a limit or manual pause). _auto_resume_retry's spend
+    rule reads it; "" there takes any session's fresh output."""
+    try:
+        return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("bills") or "")
+    except Exception:
+        return ""
+
+
+def _account_limited():
+    """The ACCOUNT-WIDE usage windows the report says are at 100% with their reset still ahead: the 5h and
+    7d keys of _usage().limited, never fable (model-scoped). The ONE authority for the limit pause's two
+    edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty and
+    _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says the
+    limit does and lifts at the reset with no session having to serve first. Raises what _usage raises;
+    both callers treat no reading as no change."""
+    lim = (_usage() or {}).get("limited") or {}
+    return [k for k, v in lim.items() if v and k != "fable"]
 
 
 def _retry_resume_at():
@@ -7640,8 +7675,9 @@ def _auto_pause_on_limit():
     """Hitting an ACCOUNT-WIDE usage limit (5h Session or 7d Weekly at 100%) auto-engages the global retry-pause
     (the user 2026-07-01): retrying into a rate-limited account just burns failed requests, so stop the
     auto-retry AND the judges (both gate on this flag) until the window resets. _auto_resume_retry clears it the
-    moment a session serves a request again — which, while the account is genuinely limited, can't happen, so
-    the pause holds exactly as long as the limit does. Idempotent: only writes when it isn't already paused.
+    cycle the same report stops naming a limited window (the reset passed, or a fresh reading came in under
+    100%: _account_limited is the one authority for both edges, review round 2, 2026-09-07), so the pause
+    holds exactly as long as the report says the limit does. Idempotent: only writes when it isn't already paused.
 
     Fable-5 is DELIBERATELY excluded (the user 2026-07-03): its window is MODEL-scoped (the included Fable-5
     weekly allowance), not account-wide, so exhausting it does NOT stop the account from serving the models romp
@@ -7654,11 +7690,9 @@ def _auto_pause_on_limit():
     banner either (the user 2026-07-04: it popped every refresh for the 7-day window and wasn't actionable) —
     only the rail's passive third bar shows it (see _usage().limited); it pauses nothing and warns nothing."""
     try:
-        u = _usage()
+        account = _account_limited()                     # 5h / 7d only — fable is model-scoped
     except Exception:
         return
-    lim = (u or {}).get("limited") or {}
-    account = [k for k, v in lim.items() if v and k != "fable"]     # 5h / 7d only — fable is model-scoped
     if account and not _retry_paused_on():
         _set_retry_paused(True, reason="limit")     # latched at the event: the rail's 'paused · usage limit'
         #                                               (not re-derived from _retry_resume_at's clock compare)
@@ -7688,14 +7722,22 @@ def _auto_pause_on_spend_limit(now, tmux):
     (isApiErrorMessage → _api_error.spendLimit), not the usage report, because the cap is a BILLING limit
     the /usage windows don't carry. Pausing stops BOTH the auto-retry AND the judges (they gate on this
     flag) — correct, since a capped account fails every model call. _auto_resume_retry clears it the moment
-    a session serves a request again (which can't happen until the cap lifts), so it holds exactly as long
-    as the cap does. reason='spend' → the card shows 'raise your cap', not a reset countdown. Idempotent."""
+    a session on the capped billing serves a request again (which can't happen until the cap lifts), so it
+    holds exactly as long as the cap does. reason='spend' → the card shows 'raise your cap', not a reset
+    countdown. Idempotent."""
     if _retry_paused_on():
         return
-    if _spend_capped_session(now, tmux) is not None:
-        _set_retry_paused(True, reason="spend")
-        sys.stderr.write("retry-pause: auto-engaged — monthly spend limit reached → auto-retry + judges "
-                         "paused until the cap is raised (claude.ai/settings/usage)\n")
+    capped = _spend_capped_session(now, tmux)
+    if capped is not None:
+        # which billing the cap is on, from the capped session's live row (review round 2, 2026-09-07): the
+        # lift rule accepts fresh output from that billing only, so a session on the other account cannot
+        # lift a cap it never hit and re-engage it here the next cycle (the pause file flapped every cycle
+        # in a login-plus-key install while one session streamed past the other's cap)
+        live = tmux if isinstance(tmux, dict) else {}
+        bills = "login" if _bills_login(live.get(str(capped.get("sid") or ""))) else "key"
+        _set_retry_paused(True, reason="spend", bills=bills)
+        sys.stderr.write("retry-pause: auto-engaged — monthly spend limit reached (%s billing) → auto-retry + judges "
+                         "paused until the cap is raised (claude.ai/settings/usage)\n" % bills)
         _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
         #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
@@ -7704,7 +7746,9 @@ def _bills_login(tm):
     """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
     own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
     before its init landed) can only be billing the login when this box holds no key at all
-    (_auth_key_present), and is taken as billing a key otherwise. _auto_resume_retry's limit rule reads it."""
+    (_auth_key_present), and is taken as billing a key otherwise. The spend pause reads it at both edges
+    (_auto_pause_on_spend_limit records the capped session's billing; _auto_resume_retry's spend rule
+    compares a candidate's against it)."""
     a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")
     if a:
         return a == "login"
@@ -7719,10 +7763,32 @@ def _auto_resume_retry(now, tmux):
     killed EVERY judge (the tier is gated on `not _retry_paused_on()`), turning the storm's fix into a
     permanent outage the user had to infer.
 
-    Event-based recovery signal: a live session that is NOT currently blocked on an API error AND has written
-    fresh transcript output since the pause began (mtime past the pause floor) is proof the account can serve
-    requests again. For a USAGE-LIMIT pause the signal is narrower (see the loop): a login-billed session's
-    fresh assistant output record. Clearing re-enables both auto-retry and the judges together.
+    Three lift rules, one per reason, each keyed on the event that engaged it (review round 2, 2026-09-07):
+
+    - limit: the usage REPORT, the same reading that engaged it (_account_limited). The pause holds while
+      the report names a 5h/7d window at 100% with its reset ahead, and lifts the cycle it stops: the
+      reset passed, or a fresh reading came in under it. No session's output lifts it while the report
+      still reads limited. Round 1 lifted it on a login-billed session's fresh assistant output instead,
+      and that could never fire after the reset: the login sessions the limit blocked are the ones whose
+      auto-retry this pause gates (_fire_api_retry), key-billed sessions are rightly skipped, so the pause,
+      the judges and the idle-queue drives stayed off until a human prompted or clicked Resume. Output
+      under a still-limited report is not a lift either: with extra usage on, the login account is served
+      at 100%, and a lift on that output was re-engaged the next cycle, the pause file (so the bottom
+      bar's API cell) flipping at the output cadence. A login turn's END refreshes the report (get_usage
+      rides turn ends; _usage_poll_tick every 15 min), which is how a served account reaches this edge.
+      A still-limited account whose reading was stale re-engages through its next error record and the
+      refreshed report, with a new floor.
+    - spend: fresh ASSISTANT output (_api_last_output_t, never the mtime a prompt moves too) from a live
+      session on the SAME billing the capped session was on (_retry_pause_bills, recorded at the engage;
+      the capped session itself qualifies once it serves). A cap is on one account, and in a login-plus-key
+      install a session on the other account streams straight through it: the old mtime rule counted that,
+      _auto_pause_on_spend_limit re-engaged the pause the next cycle while the capped session sat on its
+      record, and the file flipped every cycle. A file with no billing recorded (an older kernel's pause)
+      takes any session's fresh output.
+    - manual: any live session, not blocked on an API error, whose transcript mtime passed the pause floor
+      (the user's own words above, unchanged).
+
+    Clearing re-enables both auto-retry and the judges together.
 
     Delivery (perf batch 2 P1, 2026-09-06; the two auto-pause siblings above do the same): the flip
     WAKES the pusher (_push_soon) instead of building a push inline on this thread. retry-paused.json is
@@ -7738,40 +7804,49 @@ def _auto_resume_retry(now, tmux):
     if not _retry_paused_on():
         return
     floor = _retry_pause_ts()
-    limit = _retry_pause_reason() == "limit"
+    reason = _retry_pause_reason()
+    if reason == "limit":
+        try:
+            if _account_limited():
+                return                                   # the window holds: nothing a session writes outranks the report
+        except Exception:
+            return                                       # no reading: no change (the engage side reads nothing either)
+        _lift_retry_pause(now, "the usage window reset")
+        return
+    bills = _retry_pause_bills() if reason == "spend" else ""
     live = tmux if isinstance(tmux, dict) else {}
     for s in _alive_sessions(now, tmux):
         path = s.get("path")
         if not path or _api_error(path):                 # still blocked on an API error → not proof of recovery
             continue
-        if limit:
-            # A USAGE-LIMIT pause lifts only on a LOGIN-billed session's fresh ASSISTANT output record (review
-            # round 1, 2026-09-07): the limit is on the login account, so a key-billed session's output says
-            # nothing about it, and a prompt (a human's, or romp's own retry) is not the API's answer. The
-            # mtime rule below counted both, _auto_pause_on_limit re-engaged the pause the next cycle while
-            # the window held, and the pause file flipped on every write (the bottom bar's API cell blinked
-            # red/gray at that cadence). The spend and manual pauses keep the mtime rule.
-            if not _bills_login(live.get(str(s.get("sid") or ""))):
-                continue
-            fresh = _api_last_output_t(path) > floor
+        if reason == "spend":
+            if bills and ("login" if _bills_login(live.get(str(s.get("sid") or ""))) else "key") != bills:
+                continue                                 # the other account: says nothing about this cap
+            fresh = _api_last_output_t(path) > floor     # the API's own answer, after the pause
         else:
             try:
                 fresh = os.stat(path).st_mtime > floor   # wrote something new since the pause → a served request
             except OSError:
                 continue
         if fresh:
-            _set_retry_paused(False)
-            sys.stderr.write("retry-pause: auto-cleared — session %s recovered → judges + auto-retry resume\n"
-                             % s.get("sid", "?"))
-            try:                                         # recovery edge → re-arm cards the judges gave up on
-                rearmed = jd.rearm_failed_summaries(now)  # while degraded, so their summaries/briefs retry now
-                if rearmed:
-                    sys.stderr.write("distiller: re-armed %d given-up card(s) after recovery\n" % rearmed)
-                    _mark_views_dirty()                  # store writes the cards show → rebuild past the sig
-            except Exception:
-                sys.stderr.write("rearm-failed-summaries: %s\n" % traceback.format_exc())
-            _push_soon()                                 # globalRetryPaused=false rides the next push (docstring)
+            _lift_retry_pause(now, "session %s recovered" % s.get("sid", "?"))
             return
+
+
+def _lift_retry_pause(now, why):
+    """Clear the global retry-pause on a recovery edge (_auto_resume_retry's three rules land here): the
+    flag flip, the re-arm of the cards the judges gave up on while degraded, and the pusher wake that
+    delivers globalRetryPaused=false (see the caller's docstring for why no dirty mark)."""
+    _set_retry_paused(False)
+    sys.stderr.write("retry-pause: auto-cleared — %s → judges + auto-retry resume\n" % why)
+    try:                                                 # recovery edge → re-arm cards the judges gave up on
+        rearmed = jd.rearm_failed_summaries(now)         # while degraded, so their summaries/briefs retry now
+        if rearmed:
+            sys.stderr.write("distiller: re-armed %d given-up card(s) after recovery\n" % rearmed)
+            _mark_views_dirty()                          # store writes the cards show → rebuild past the sig
+    except Exception:
+        sys.stderr.write("rearm-failed-summaries: %s\n" % traceback.format_exc())
+    _push_soon()                                         # globalRetryPaused=false rides the next push (docstring)
 
 
 # ── Per-session auto-retry suppression (the user 2026-07-06) ───────────────────────────────────────
@@ -21893,7 +21968,7 @@ def _api_error_pass(path, start):
     ASSISTANT output, through romp's own injected RETRY_MSG and through a human prompt alike (neither is
     information about the API; the API's answer is). An assistant record decides both, so decided_latched
     implies decided. out_t is the newest assistant OUTPUT record's timestamp while that record is the
-    newest assistant record, else 0: the usage-limit pause's recovery signal (_auto_resume_retry).
+    newest assistant record, else 0: the spend pause's recovery signal (_auto_resume_retry).
 
     A non-zero `start` lands mid-line, so the first partial line is dropped. model_refusal_* records land a
     few records AFTER the error they annotate and only mutate an err already set, so they need no special
@@ -22082,8 +22157,8 @@ def _api_last_output_t(path):
     """The timestamp of the session's newest ASSISTANT OUTPUT record while that record is the newest
     assistant record (the latch is clear), else 0: a user prompt is not output, a tool result is not output,
     and an error record after it means no fresh answer stands. Kept beside the latch by the same read, so
-    the pusher pays nothing extra for it. The usage-limit pause lifts on this (_auto_resume_retry), never on
-    the transcript's mtime, which a prompt moves too."""
+    the pusher pays nothing extra for it. The spend pause lifts on this (_auto_resume_retry), never on the
+    transcript's mtime, which a prompt moves too."""
     key = _api_stat_key(path)
     hit = _api_last_failed_cache.get(path)
     if hit is not None and key is not None and hit[0] == key:
@@ -37497,7 +37572,8 @@ def _api_health_frame(now, tmux):
     storm turn's start (SdkSession.since moves once per fresh turn, not per attempt) or the pause's t, never
     the clock, so two cycles over the same world return equal dicts and _api_health_push sends nothing.
     Rows sort by (since, sid) so the roster's mtime order cannot reshuffle an unchanged world into a send.
-    Nothing from retryInfo but status and networkDown: attempt / retryAt tick per attempt."""
+    Nothing from retryInfo but status and networkDown: attempt / retryAt tick per attempt. `seq` counts
+    pause-file writes, an event, so a write that put the same state back still yields a new frame."""
     paused = _retry_paused_on()
     reason = ""
     pause_t = 0
@@ -37556,7 +37632,11 @@ def _api_health_frame(now, tmux):
     return {"type": "apiHealth", "state": state, "cls": cls, "reason": reason, "text": text,
             "waiting": n, "retrying": sum(1 for r in rows if r["kind"] == "retrying"),
             "blocked": sum(1 for r in rows if r["kind"] == "blocked"),
-            "since": since, "tmux": n_tmux, "sessions": rows}
+            "since": since, "tmux": n_tmux, "sessions": rows,
+            # the pause file's write count (_RETRY_PAUSE_SEQ): a press on the detail's pause button writes it,
+            # so the frame after the press differs from every frame before it even when the auto-pause put
+            # the same state back within the same second; the shell clears its acknowledgment on that
+            "seq": _RETRY_PAUSE_SEQ[0]}
 
 
 # The last apiHealth frame the shells heard, as its sorted serialization (None = nothing since boot): the

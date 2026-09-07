@@ -4,9 +4,13 @@ auto-retries" to calm the auto-retry + judge storm during an API / usage-limit o
 tier is gated on `not _retry_paused_on()`, so a pause that never clears silently kills EVERY judge for
 hours (the user 2026-06-30, who noted none of the judges were running and called it an API problem that should
 clear the second a successful non-API-error response arrives on any session). _auto_resume_retry
-clears it event-based: the first live session that is NOT blocked on an API error AND wrote fresh output
-since the pause began (mtime past the pause floor) proves the account can serve requests again.
+clears it event-based, one rule per reason (review round 2, 2026-09-07): a MANUAL pause lifts on the first
+live session that is NOT blocked on an API error AND wrote fresh output since the pause began (mtime past
+the pause floor); a LIMIT pause lifts when the usage report stops naming an account-wide window at 100%
+(the same reading that engaged it); a SPEND pause lifts on fresh assistant output from a session on the
+billing the cap is on.
 """
+import inspect
 import json
 import os
 import tempfile
@@ -193,12 +197,18 @@ SID_KEY = "88888888-aaaa-4bbb-8ccc-000000000001"     # a private synthetic famil
 SID_LOGIN = "88888888-aaaa-4bbb-8ccc-000000000002"
 
 
-class LimitPauseLift(unittest.TestCase):
-    """A usage-limit pause used to lift on ANY alive session whose transcript mtime passed the floor with no
-    current _api_error: a key-billed session's streaming output or a human prompt qualified, _auto_pause_on_limit
-    re-engaged the next cycle while the window held, and the pause file (so the bottom bar's API cell) flipped
-    on every write. The lift now needs a LOGIN-billed session's fresh ASSISTANT output record: the account the
-    limit is on, and the API's own answer. The spend and manual pauses keep their mtime rule."""
+def _err_line(t, text, status=400, category="billing_error"):
+    return json.dumps({"type": "assistant", "uuid": "cccccccc-0000-0000-0000-%012d" % int(t), "timestamp": _iso(t),
+                       "isApiErrorMessage": True, "apiErrorStatus": status, "error": category,
+                       "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}) + "\n"
+
+
+SPEND_TEXT = "API Error: 400 You have reached your monthly spend limit for this workspace."   # invented wording
+
+
+class _PauseFixture(unittest.TestCase):
+    """The pusher's pause jobs over real synthetic transcripts: _alive_sessions and the live map are the
+    module's own, _usage is the patched report, every frame goes to self.sent."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -208,7 +218,7 @@ class LimitPauseLift(unittest.TestCase):
         km.jd.STATE = self.dir
         km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
         km.jd.rearm_failed_summaries = lambda now, **k: 0
-        km._usage = lambda: {"limited": {"5h": True}}          # the login account's window is at 100%
+        km._usage = lambda: {"limited": {"fiveHour": True}}    # the login account's window is at 100%
         self.sent = []
         km._send_to_app = lambda app, m: self.sent.append((app, m))
         km.Sessions.backend_for = staticmethod(lambda sid: object())
@@ -218,6 +228,8 @@ class LimitPauseLift(unittest.TestCase):
         km._api_last_failed_cache.clear()
         self._was_set = km._pusher_wake.is_set()
         km._pusher_wake.clear()
+        self.roster = []
+        km._alive_sessions = lambda now, tmux: list(self.roster)
 
     def tearDown(self):
         (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
@@ -232,78 +244,273 @@ class LimitPauseLift(unittest.TestCase):
         self.td.cleanup()
 
     def _session(self, sid, name, auth, *lines):
+        """One alive session with a transcript of `lines`; returns (path, its live-map row)."""
         p = self.dir / (name + ".jsonl")
         p.write_text("".join(lines))
-        km._alive_sessions = lambda now, tmux: [{"sid": sid, "name": name, "path": str(p)}]
-        return str(p), {sid: {"state": "idle", "auth": auth, "authLive": auth, "backend": "sdk"}}
+        self.roster = [s for s in self.roster if s["sid"] != sid] + [{"sid": sid, "name": name, "path": str(p)}]
+        return str(p), {"state": "idle", "auth": auth, "authLive": auth, "backend": "sdk"}
+
+    def _append(self, path, line, t):
+        with open(path, "a") as f:
+            f.write(line)
+        os.utime(path, (t, t))
 
     def _cycle(self, now, live):
-        # the pusher's jobs in their order: the limit engages the pause, the resume check, then the frame
+        # the pusher's jobs in their order: the limit engages, the spend cap engages, the resume check, the frame
         km._auto_pause_on_limit()
+        km._auto_pause_on_spend_limit(now, live)
         km._auto_resume_retry(now, live)
         f = km._api_health_frame(now, live)
         km._api_health_push(f)
         return f["state"]
 
+    def _states(self):
+        return [m["state"] for a, m in self.sent]
+
+
+class LimitPauseLift(_PauseFixture):
+    """A usage-limit pause lifts on the same reading that engaged it: the usage report (_account_limited).
+    Round 0 lifted it on ANY alive session's transcript mtime past the floor (a key-billed session's
+    streaming or a human prompt), and _auto_pause_on_limit re-engaged the next cycle while the window held:
+    the pause file, and the bottom bar's API cell, flipped every cycle. Round 1 narrowed the lift to a
+    login-billed session's fresh assistant output, which could never fire after the reset (the login
+    sessions the limit blocked are the ones the pause gates), so the pause held until a human acted.
+    Round 2: one authority for both edges. No session's output lifts it while the report reads limited."""
+
     def test_a_key_billed_session_s_output_during_a_limit_leaves_the_pause_and_the_frame_stable(self):
-        # the review's probe: a limited window, one key-billed session appending an answer every other cycle
+        # the round-1 probe: a limited window, one key-billed session appending an answer every other cycle
         now = time.time()
-        path, live = self._session(SID_KEY, "web", "key", _out_line(now - 60))
+        path, row = self._session(SID_KEY, "web", "key", _out_line(now - 60))
+        live = {SID_KEY: row}
         states = []
         for i in range(6):
             if i % 2:
-                with open(path, "a") as f:
-                    f.write(_out_line(now + i))
-                os.utime(path, (now + i, now + i))
+                self._append(path, _out_line(now + i), now + i)
             states.append(self._cycle(int(now) + i, live))
         self.assertEqual(states, ["paused"] * 6, "a key-billed session's output says nothing about the login limit")
-        self.assertEqual([m["state"] for a, m in self.sent], ["paused"], "one frame: nothing about the API changed")
+        self.assertEqual(self._states(), ["paused"], "one frame: nothing about the API changed")
         self.assertEqual(km._retry_pause_reason(), "limit")
 
-    def test_a_login_billed_session_s_fresh_assistant_output_lifts_it_once(self):
+    def test_the_window_reset_lifts_it_once_with_no_login_output_while_a_key_session_streams(self):
+        # the round-2 HIGH finding: after the window rolls, nothing but a human could lift the round-1 rule.
+        # A login session blocked on the limit cannot serve (its auto-retry is gated on this very pause), the
+        # key session is rightly skipped; the report clearing by its own clock must be the lift.
         now = time.time()
-        path, live = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
+        api_path, api_row = self._session(SID_LOGIN, "api", "login",
+                                          _out_line(now - 120), _err_line(now - 90, "API Error: 429 rate limited", 429, "rate_limit"))
+        web_path, web_row = self._session(SID_KEY, "web", "key", _out_line(now - 60))
+        live = {SID_LOGIN: api_row, SID_KEY: web_row}
+        states = []
+        for i in range(3):
+            self._append(web_path, _out_line(now + i), now + i)
+            states.append(self._cycle(int(now) + i, live))
+        self.assertEqual(states, ["paused"] * 3)
+        km._usage = lambda: {"limited": None}                  # the reset passed: the report no longer names a window
+        for i in range(3, 8):
+            self._append(web_path, _out_line(now + i), now + i)
+            states.append(self._cycle(int(now) + i, live))
+        self.assertEqual(states, ["paused"] * 3 + ["degraded"] * 5, "lifts the cycle the report clears; stays lifted")
+        self.assertFalse(km._retry_paused_on())
+        self.assertEqual(self._states(), ["paused", "degraded"], "each side of the lift sent once")
+        self.assertEqual(self.sent[-1][1]["waiting"], 1, "the login session still sits on its record: the auto-retry's turn now")
+        self.assertTrue(km._pusher_wake.is_set(), "the clear wakes the pusher; globalRetryPaused rides its push")
+
+    def test_login_output_under_a_still_limited_report_holds_the_pause_and_the_frame(self):
+        # the round-2 LOW finding (extra usage: the login account is served at 100%): round 1 lifted on each
+        # output record and the limit re-engaged the next cycle, the pause file flipping at the output cadence.
+        # One authority: the report. A login turn's end refreshes it, and that is the edge that lifts.
+        now = time.time()
+        path, row = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
+        live = {SID_LOGIN: row}
+        states = []
+        for i in range(8):
+            self._append(path, _out_line(now + i), now + i)
+            states.append(self._cycle(int(now) + i, live))
+        self.assertEqual(states, ["paused"] * 8, "served output under a limited report is not the lift")
+        self.assertEqual(self._states(), ["paused"], "one frame across eight output records")
+        km._usage = lambda: {"limited": {}}                    # the refreshed report reads under 100%
+        self.assertEqual(self._cycle(int(now) + 8, live), "ok")
+        self.assertFalse(km._retry_paused_on())
+        self.assertEqual(self._states(), ["paused", "ok"])
+
+    def test_a_login_billed_session_s_fresh_assistant_output_lifts_it_once(self):
+        # the round-1 shape: the login account serves a request and its usage report catches up (a login
+        # turn's end refreshes it); the lift lands once, on the report
+        now = time.time()
+        path, row = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
+        live = {SID_LOGIN: row}
         self.assertEqual(self._cycle(int(now), live), "paused")
         floor = km._retry_pause_ts()
-        os.utime(path, (floor + 1, floor + 1))                 # a fresh mtime over OLD output: not proof
+        os.utime(path, (floor + 1, floor + 1))                 # a fresh mtime over OLD output
         km._auto_resume_retry(int(now), live)
-        self.assertTrue(km._retry_paused_on(), "output from before the pause proves nothing")
-        with open(path, "a") as f:
-            f.write(_prompt_line(floor + 2))
+        self.assertTrue(km._retry_paused_on(), "the report still reads limited: held")
+        self._append(path, _prompt_line(floor + 2), floor + 2)
         km._auto_resume_retry(int(now), live)
-        self.assertTrue(km._retry_paused_on(), "a prompt is not the API's answer")
-        with open(path, "a") as f:
-            f.write(_out_line(floor + 5))                      # the login account served a request
+        self.assertTrue(km._retry_paused_on(), "a prompt is not the API's answer, and the report still reads limited")
+        self._append(path, _out_line(floor + 5), floor + 5)    # the login account served a request
         km._usage = lambda: {"limited": {}}                    # and its usage report caught up
         self.assertEqual(self._cycle(int(now) + 1, live), "ok")
         self.assertFalse(km._retry_paused_on())
-        self.assertEqual([m["state"] for a, m in self.sent], ["paused", "ok"], "each side of the lift sent once")
+        self.assertEqual(self._states(), ["paused", "ok"], "each side of the lift sent once")
 
-    def test_spend_and_manual_pauses_keep_lifting_on_any_fresh_transcript(self):
+    def test_an_unreadable_report_changes_nothing(self):
+        now = time.time()
+        path, row = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
+        live = {SID_LOGIN: row}
+        self.assertEqual(self._cycle(int(now), live), "paused")
+
+        def boom():
+            raise RuntimeError("no report")
+        km._usage = boom
+        km._pusher_wake.clear()                                # the engage above woke the pusher; the check below must not
+        km._auto_resume_retry(int(now), live)
+        self.assertTrue(km._retry_paused_on(), "no reading: no change, as the engage side would not engage")
+        self.assertFalse(km._pusher_wake.is_set())
+
+    def test_the_engage_and_the_lift_read_the_same_filter(self):
+        km._usage = lambda: {"limited": {"fable": True}}
+        self.assertEqual(km._account_limited(), [], "fable is model-scoped: never an account limit")
+        km._usage = lambda: {"limited": {"fiveHour": False, "sevenDay": True, "fable": True}}
+        self.assertEqual(km._account_limited(), ["sevenDay"])
+        km._usage = lambda: None
+        self.assertEqual(km._account_limited(), [], "no report at all (a pure API-key host) reads as not limited")
+        src = inspect.getsource(km._auto_pause_on_limit) + inspect.getsource(km._auto_resume_retry)
+        self.assertEqual(src.count("_account_limited()"), 2, "both edges call the one filter")
+
+    def test_a_manual_pause_keeps_lifting_on_any_fresh_transcript(self):
         km._usage = lambda: {"limited": {}}
         now = time.time()
-        for reason in ("spend", ""):
-            path, live = self._session(SID_KEY, "web", "key", _out_line(now - 60))
-            km._set_retry_paused(True, reason=reason)
-            floor = km._retry_pause_ts()
-            os.utime(path, (floor + 1, floor + 1))
-            km._auto_resume_retry(int(now), live)
-            self.assertFalse(km._retry_paused_on(), "reason %r: the mtime rule is unchanged" % reason)
+        path, row = self._session(SID_KEY, "web", "key", _out_line(now - 60))
+        km._set_retry_paused(True)
+        floor = km._retry_pause_ts()
+        os.utime(path, (floor + 1, floor + 1))
+        km._auto_resume_retry(int(now), {SID_KEY: row})
+        self.assertFalse(km._retry_paused_on(), "the user's own stop: the mtime rule is unchanged")
 
     def test_a_session_of_unknown_auth_bills_the_login_only_when_this_box_holds_no_key(self):
-        now = time.time()
-        path, _ = self._session(SID_LOGIN, "tests", "", _out_line(now - 60))
-        live = {SID_LOGIN: {"state": "idle"}}                  # a tmux row: no auth fields at all
-        self.assertEqual(self._cycle(int(now), live), "paused")
-        floor = km._retry_pause_ts()
-        with open(path, "a") as f:
-            f.write(_out_line(floor + 5))
         km._auth_key_present = lambda: True
-        km._auto_resume_retry(int(now), live)
-        self.assertTrue(km._retry_paused_on(), "a key on the box: this session may be billing it")
+        self.assertFalse(km._bills_login({"state": "idle"}), "a key on the box: this session may be billing it")
+        self.assertFalse(km._bills_login(None))
         km._auth_key_present = lambda: False
-        km._auto_resume_retry(int(now), live)
-        self.assertFalse(km._retry_paused_on(), "no key anywhere: the login is the only account it can bill")
+        self.assertTrue(km._bills_login({"state": "idle"}), "no key anywhere: the login is the only account it can bill")
+        self.assertTrue(km._bills_login({"auth": "key", "authLive": "login"}), "the CLI's own live report wins")
+        self.assertFalse(km._bills_login({"auth": "key"}))
+
+
+class SpendPauseLift(_PauseFixture):
+    """A spend pause lifts on fresh assistant output from a session on the billing the cap is on (recorded
+    at the engage: _retry_pause_bills), never from the other billing. The mtime rule it replaced counted a
+    session on the OTHER account streaming past the cap; _auto_pause_on_spend_limit re-engaged the next
+    cycle while the capped session sat on its record, and the pause file, so the cell, flipped every cycle
+    (review round 2, 2026-09-07). The capped session itself qualifies once it serves again."""
+
+    def setUp(self):
+        super().setUp()
+        km._usage = lambda: {"limited": None}                  # no usage window is involved
+        self.now = time.time()
+        # the probe's two sessions: 'web' bills the key and sits on the cap; 'api' bills the login and streams
+        self.web, web_row = self._session(SID_KEY, "web", "key", _out_line(self.now - 120), _err_line(self.now - 90, SPEND_TEXT))
+        self.api, api_row = self._session(SID_LOGIN, "api", "login", _out_line(self.now - 60))
+        self.live = {SID_KEY: web_row, SID_LOGIN: api_row}
+
+    def test_the_other_billing_s_output_leaves_the_pause_and_the_frame_stable(self):
+        states = []
+        for i in range(8):
+            self._append(self.api, _out_line(self.now + i), self.now + i)
+            states.append(self._cycle(int(self.now) + i, self.live))
+        self.assertEqual(states, ["paused"] * 8, "a login session's output says nothing about the key's cap")
+        self.assertEqual([(m["state"], m["text"]) for a, m in self.sent],
+                         [("paused", "paused \u00b7 spend cap \u00b7 1 waiting")], "one frame across eight cycles")
+        self.assertEqual((km._retry_pause_reason(), km._retry_pause_bills()), ("spend", "key"))
+
+    def test_the_capped_session_s_own_output_lifts_it_once(self):
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        floor = km._retry_pause_ts()
+        self._append(self.api, _out_line(floor + 1), floor + 1)   # the other billing, still
+        self.assertEqual(self._cycle(int(self.now) + 1, self.live), "paused")
+        self._append(self.web, _prompt_line(floor + 2, "retry"), floor + 2)   # romp's own retry prompt: not the answer
+        self.assertEqual(self._cycle(int(self.now) + 2, self.live), "paused")
+        self._append(self.web, _out_line(floor + 5), floor + 5)   # the cap was raised: the capped session served
+        self.assertEqual(self._cycle(int(self.now) + 3, self.live), "ok")
+        self.assertFalse(km._retry_paused_on())
+        self.assertEqual(self._states(), ["paused", "ok"], "each side of the lift sent once")
+
+    def test_a_second_session_on_the_capped_billing_lifts_it(self):
+        tests, tests_row = self._session("88888888-aaaa-4bbb-8ccc-000000000003", "tests", "key", _out_line(self.now - 60))
+        self.live["88888888-aaaa-4bbb-8ccc-000000000003"] = tests_row
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        floor = km._retry_pause_ts()
+        self._append(tests, _out_line(floor + 3), floor + 3)   # the key account serves again, through another session
+        km._auto_resume_retry(int(self.now) + 1, self.live)
+        self.assertFalse(km._retry_paused_on(), "same billing as the cap: proof the account serves")
+
+    def test_a_cap_on_the_login_holds_against_key_output_and_lifts_on_login_output(self):
+        # roles swapped: the login session sits on the cap, the key session streams
+        web, web_row = self._session(SID_KEY, "web", "key", _out_line(self.now - 60))
+        api, api_row = self._session(SID_LOGIN, "api", "login", _out_line(self.now - 120), _err_line(self.now - 90, SPEND_TEXT))
+        live = {SID_KEY: web_row, SID_LOGIN: api_row}
+        states = []
+        for i in range(4):
+            self._append(web, _out_line(self.now + i), self.now + i)
+            states.append(self._cycle(int(self.now) + i, live))
+        self.assertEqual(states, ["paused"] * 4)
+        self.assertEqual(km._retry_pause_bills(), "login")
+        floor = km._retry_pause_ts()
+        self._append(api, _out_line(floor + 9), floor + 9)
+        self.assertEqual(self._cycle(int(self.now) + 4, live), "ok")
+
+    def test_an_older_kernel_s_pause_file_takes_any_session_s_fresh_output_but_not_a_bare_mtime(self):
+        km._set_retry_paused(True, reason="spend")             # no billing recorded
+        floor = km._retry_pause_ts()
+        os.utime(self.api, (floor + 1, floor + 1))
+        km._auto_resume_retry(int(self.now), self.live)
+        self.assertTrue(km._retry_paused_on(), "a fresh mtime over old output is not the API's answer")
+        self._append(self.api, _out_line(floor + 2), floor + 2)
+        km._auto_resume_retry(int(self.now), self.live)
+        self.assertFalse(km._retry_paused_on(), "with no billing on file, any session's fresh output lifts")
+
+    def test_the_pause_file_records_the_capped_billing_and_a_manual_pause_records_none(self):
+        self._cycle(int(self.now), self.live)
+        d = json.loads((self.dir / "retry-paused.json").read_text())
+        self.assertEqual((d["paused"], d["reason"], d["bills"]), (True, "spend", "key"))
+        self.assertIn("t", d)
+        km._set_retry_paused(True)
+        d = json.loads((self.dir / "retry-paused.json").read_text())
+        self.assertEqual(set(d), {"paused", "t"})
+        self.assertEqual(km._retry_pause_bills(), "")
+
+
+class PauseWriteSeq(_PauseFixture):
+    """The apiHealth frame's `seq` counts pause-file writes (review round 2, 2026-09-07): the detail's pause
+    button writes the file on a press, and the frame that follows must differ from every frame before it
+    even when the cycle's auto-pause put the same state back, so the shell can clear its acknowledgment on
+    the frame that answers the press and read the truth (paused again) instead of holding a disabled,
+    mislabeled button for the rest of the window."""
+
+    def test_a_write_that_puts_the_same_state_back_still_yields_a_new_frame(self):
+        now = time.time()
+        path, row = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
+        live = {SID_LOGIN: row}
+        self.assertEqual(self._cycle(int(now), live), "paused")
+        seq0 = self.sent[-1][1]["seq"]
+        self.assertEqual(self._cycle(int(now) + 1, live), "paused")
+        self.assertEqual(len(self.sent), 1, "no write, no frame: two cycles over the same world are identical")
+        km._set_retry_paused(False)                            # the user pressed Resume during the window
+        self.assertEqual(self._cycle(int(now) + 2, live), "paused", "the limit re-engaged within the cycle")
+        self.assertEqual(len(self.sent), 2, "same state, but the press and the re-engage wrote the file")
+        self.assertEqual(self.sent[-1][1]["seq"], seq0 + 2)
+        self.assertEqual(km._retry_pause_reason(), "limit")
+
+    def test_seq_is_an_event_counter_not_a_clock(self):
+        self.roster = []
+        km._usage = lambda: {"limited": None}
+        f1 = km._api_health_frame(10, {})
+        f2 = km._api_health_frame(99_999, {})
+        self.assertEqual(json.dumps(f1, sort_keys=True), json.dumps(f2, sort_keys=True))
+        km._set_retry_paused(False)                            # a no-op write is still a write
+        f3 = km._api_health_frame(10, {})
+        self.assertEqual(f3["seq"], f1["seq"] + 1)
+        self.assertEqual((f3["state"], f3["text"]), (f1["state"], f1["text"]))
 
 
 if __name__ == "__main__":
