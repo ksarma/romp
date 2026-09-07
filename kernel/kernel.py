@@ -403,7 +403,8 @@ class _PerfStats:
             goals = {}
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
-                             ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats))):
+                             ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
+                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -670,24 +671,98 @@ def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
     return None
 
 
-def _interrupt_marks(turns, sid=""):
+# The _interrupt_marks memo (perf batch 2 P2, 2026-09-06): (sid, family) -> (turns, (cut_t, cut_cause),
+# (stop_t, human_t)). One entry per key, so a sid pins at most two parses (one per family); the tick's
+# sweep (_intr_marks_forget) releases a sid's entries when it leaves the alive set, and the cap is the
+# backstop for callers that run outside the tick. Counters ride /perf under memos.intr_marks.
+_intr_marks_memo = {}
+_INTR_MARKS_MEMO_MAX = 512
+_intr_marks_memo_stats = {"hit": 0, "miss": 0, "evict": 0}
+
+
+def _interrupt_marks(turns, sid="", family=None):
     """(newest genuine user STOP, newest genuine human PROMPT) on this thread, in transcript time —
     the one place the two are tallied, so the predicate below and the interrupt block's EVIDENCE stamp
     read the same events. A MACHINE cut (kernel restart / process death) mints the same stop record but
     is romp's own, so it never counts as a stop (_machine_cut_cause, via the resume notice that follows
     it, or — before that notice reaches disk — the backend's machineCut stamp). The interrupt record
     itself authors 'human', so it's classified FIRST. `sid` is optional only so the pure-atom callers in
-    the tests stay pure: pass it wherever it is known, or a cut still on its way to disk reads as a stop."""
+    the tests stay pure: pass it wherever it is known, or a cut still on its way to disk reads as a stop.
+
+    MEMOIZED per (sid, family) on the IDENTITY of `turns` and the value of the machineCut pair (perf
+    batch 2 P2): the result is a pure function of the user atoms and (cut_t, cut_cause) — no clock, no
+    store, no global — so while the caller hands in the same list object and the stamp has not moved,
+    the answer cannot have changed. A new parse object (a transcript or states append, a rewind cut
+    armed or cleared, a live atom merged) or a moved stamp is exactly the event that can change it,
+    and either misses. A held strong reference cannot have its id recycled, so `is` is exact. The
+    inputs are never mutated in place: event_model.parse_session allocates a fresh turns list per
+    parse and _merge_live_atoms copies rather than extends (a test pins the appended-transcript case);
+    a list mutated in place is not a supported input.
+
+    `family` names the parse the caller reads, "judge" (jd.parsed_session's object: the tick and the
+    nudge tick) or "display" (the kernel _parse cache's object: build_feed and the user-todo floor).
+    The split is not a correctness requirement — identity keying would make one shared entry exact
+    too — it stops the two objects from evicting each other every cycle. Display-family hits are on
+    the _parse_cache object, which build_feed reads through _merge_live_atoms: that returns the cache
+    object itself when no unlanded live atom is pending and a fresh shallow copy otherwise, so a
+    session mid-stream misses each build until its tail lands (new information; the parse that
+    follows hits again). While a judge pass frame is open the tick alternates between the
+    frame-pinned parse and the cache object, one miss per swap. No family, or an empty sid, means no
+    memo (the pure-atom test callers; a sid-less key would be one slot thrashed by every caller)."""
+    cut = _last_machine_cut(sid) if sid else (0.0, "")
+    key = (sid, family) if (sid and family) else None
+    if key is not None:
+        e = _intr_marks_memo.get(key)
+        if e is not None and e[0] is turns and e[1] == cut:
+            _intr_marks_memo_stats["hit"] += 1
+            return e[2]
+        _intr_marks_memo_stats["miss"] += 1
     atoms = [a for turn in turns for a in (turn.get("atoms") or [])]
-    cut_t, cut_cause = _last_machine_cut(sid) if sid else (0.0, "")
-    return _interrupt_marks_atoms(atoms, cut_t, cut_cause)
+    res = _interrupt_marks_atoms(atoms, cut[0], cut[1])
+    if key is not None:
+        if len(_intr_marks_memo) >= _INTR_MARKS_MEMO_MAX and key not in _intr_marks_memo:
+            _intr_marks_memo_stats["evict"] += len(_intr_marks_memo)   # the repo's overflow idiom: clear whole
+            _intr_marks_memo.clear()
+        _intr_marks_memo[key] = (turns, cut, res)
+    return res
+
+
+def _intr_marks_forget(alive):
+    """Drop every memo entry whose sid is not in `alive`. The interrupt tick calls this with the cycle's
+    alive set, so a session leaving it (death, the recorded event) releases the parses its entries pin
+    instead of holding them for the kernel's life. Iterates a key snapshot: a connect-push build on a
+    WS thread may insert concurrently."""
+    for k in list(_intr_marks_memo):
+        if k[0] not in alive and _intr_marks_memo.pop(k, None) is not None:
+            _intr_marks_memo_stats["evict"] += 1
+
+
+def _intr_marks_memo_report():
+    """The memo's counters plus its occupancy, for /perf (plan D4: a memo reports hit/miss/evict)."""
+    out = dict(_intr_marks_memo_stats)
+    out["entries"] = len(_intr_marks_memo)
+    return out
 
 
 def _interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause=""):
     """The pure-atom core of _interrupt_marks — `atoms` plus the backend's machineCut stamp as
     plain arguments, so the classifier is testable without a states/ file (T219's repro rides
-    this surface)."""
-    users = [a for a in atoms if a.get("type") == "user"]
+    this surface).
+
+    A user atom whose `author` key is present and None is dropped before the text scan (2026-09-06,
+    perf batch 2 P2 S1). event_model.author_of returns None for exactly one shape, a record with no
+    text block (every branch on a non-empty text returns an author; the final `_is_real_prompt` gate
+    is the only path to None), so such an atom can be neither an interrupt record (is_interrupt_record
+    needs text) nor a human prompt (author != "human"), and the forward scan in _machine_cut_cause
+    reads past it as wedge either way: dropping it changes no tally. Its reach is narrow on purpose.
+    The file adapter OMITS the key for a None author rather than writing it (measured on a 31-session
+    state copy: all 19,667 text-less user atoms lack the key; none carries None), so on disk-parsed
+    sessions this gate meets nothing, and a key-less atom must NOT be skipped: an SDK live-tail atom
+    (sdk_backend.msg_to_atom sets no author on stream user messages) may carry text, and a merged
+    live interrupt record would otherwise go uncounted until a parse of the disk record replaced it —
+    on a feed-only dashboard, whose cached parse nothing refreshes promptly, an arbitrary lag on the
+    "interrupted" badge. The per-cycle scan itself is what the memo in _interrupt_marks removes."""
+    users = [a for a in atoms if a.get("type") == "user" and a.get("author", "") is not None]
     last_intr = last_human = 0
     for i, a in enumerate(users):
         t = a.get("t", 0)
@@ -700,7 +775,7 @@ def _interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause=""):
     return last_intr, last_human
 
 
-def _interrupt_suppresses_nudge(turns, sid=""):
+def _interrupt_suppresses_nudge(turns, sid="", family=None):
     """True while the session's most recent USER action is a GENUINE user INTERRUPT: the user stopped
     the agent and hasn't spoken since, so they're at the controls — auto-nudge stays suppressed until
     their NEXT message (the user 2026-07-05, refined via ui: re-engage on the user-message EVENT, never
@@ -715,8 +790,9 @@ def _interrupt_suppresses_nudge(turns, sid=""):
     user 2026-07-14: restart-cut SDK sessions sat inertly in Working wearing that false badge, and
     auto-nudge stayed off so a genuine RE-stall was never caught). Such a cut is identified by the romp
     resume notice that FOLLOWS its record (_interrupt_cause) and is EXCLUDED from the user-stop tally —
-    or, in the window before that notice reaches disk, by the backend's machineCut stamp (pass `sid`)."""
-    last_intr, last_human = _interrupt_marks(turns, sid)
+    or, in the window before that notice reaches disk, by the backend's machineCut stamp (pass `sid`).
+    `family` is _interrupt_marks' memo family, passed through by the per-cycle callers."""
+    last_intr, last_human = _interrupt_marks(turns, sid, family)
     return last_intr > last_human
 
 
@@ -2894,7 +2970,49 @@ def _rgb(color):
         return [112, 136, 170]
 
 
+_sessions_scope_stats = {"hit": 0, "miss": 0, "wide_hit": 0, "wide_miss": 0}   # /perf memos.sessions_scope
+
+
+def _sessions_scope_report():
+    """The per-cycle discover memo's counters, for /perf (plan D4). `hit`/`miss` are _sessions reads
+    inside a cycle, `wide_*` the _alive_sessions wide walk's; the memo lives for one cycle, so it has
+    no standing occupancy to report."""
+    return dict(_sessions_scope_stats)
+
+
 def _sessions(now, window=None, forks=True):
+    """The discover() rows the surfaces build from — [{sid, name, anchor, path, mtime}], newest
+    transcript first — for every romp session touched within `window` (discover's 48h default).
+
+    Inside a pusher cycle the rows are memoized on the cycle's scope (_live_scope.sessions, opened by
+    _pusher_cycle, thread-confined like its liveness snapshot; perf batch 2 P3, 2026-09-06): every
+    _alive_sessions call in the tick jobs, every _path_of miss under _compacting_now, _msg_summaries,
+    build_session and the tab/lane lists each ran a discover fingerprint (a stat per names entry, three
+    times, plus one per transcript) and a stat per row — 34-37 sweeps per cycle on a 30-session
+    kernel, 4.3% of the pusher's GIL, all returning the same rows. One sweep per (window, forks) key
+    per cycle now; outside a cycle every read is fresh, exactly as _tmux_sessions and _path_of behave.
+    The key is normalized the way discover normalizes its own (jd.WINDOW for None, bool(forks)).
+
+    Every call hands out a COPY of the row list, hit or miss, so no caller can grow or reorder the
+    cycle's shared list (the headless _alive_sessions fallback returns this list as its own); the row
+    dicts are shared and read-only by every in-cycle consumer — each filters or reorders into a list
+    of its own, and build_session copies before its one write.
+
+    Within one cycle the rows' membership and `mtime` are the cycle's snapshot: a transcript that grows
+    mid-cycle keeps its start-of-cycle mtime here, so _msg_summaries' per-sid cache and
+    _timeline_sessions' dead-lane cutoff lag one cycle at most, healed by the next sweep (never an
+    under-scan: the next cycle's fresh mtime forces the rescan), and a names/ rewrite delivered by a cwd
+    op after the memo fills is seen next cycle, as _live_scope.names already behaves. Direct
+    jd.discover callers (_walk_root_record, _token_analytics) are not served by this; the wide walk in
+    _alive_sessions has its own scope memo (_discover_wide)."""
+    memo = getattr(_live_scope, "sessions", None)
+    key = (jd.WINDOW if window is None else int(window), bool(forks))
+    if memo is not None:
+        hit = memo.get(key)
+        if hit is not None:
+            _sessions_scope_stats["hit"] += 1
+            return list(hit)
+        _sessions_scope_stats["miss"] += 1
     out = []
     for fsid, path, anchor, name in jd.discover(now, window, forks):
         try:
@@ -2903,7 +3021,31 @@ def _sessions(now, window=None, forks=True):
             mtime = 0
         out.append({"sid": fsid, "name": name or fsid[:8], "anchor": anchor, "path": str(path), "mtime": mtime})
     out.sort(key=lambda s: s["mtime"], reverse=True)
+    if memo is not None:
+        memo[key] = out
+        return list(out)
     return out
+
+
+def _discover_wide(now, window):
+    """{fsid: discover row} over `window` — the wide walk _alive_sessions resolves a live session idle
+    longer than the 48h caption window through. Memoized on the pusher cycle's scope beside _sessions
+    (key ("wide", window); perf batch 2 P3): whenever one such session is live, every _alive_sessions
+    call in the cycle — the two builds, the chat tabs and about eight tick jobs — repeated the walk, a
+    fingerprint each. Read-only for every caller (a dict lookup per sid), so no copy. Outside a cycle
+    it reads fresh."""
+    memo = getattr(_live_scope, "sessions", None)
+    key = ("wide", int(window))
+    if memo is not None:
+        hit = memo.get(key)
+        if hit is not None:
+            _sessions_scope_stats["wide_hit"] += 1
+            return hit
+        _sessions_scope_stats["wide_miss"] += 1
+    wide = {f[0]: f for f in jd.discover(now, window=window)}
+    if memo is not None:
+        memo[key] = wide
+    return wide
 
 
 def _path_of(sid, now=None):
@@ -2921,6 +3063,10 @@ def _path_of(sid, now=None):
     if memo is not None:
         memo[sid] = p
     return p
+
+
+_PATH_UNRESOLVED = object()   # "no path was passed" for the helpers that take a caller's row path
+#                               (_compacting_now, _user_todo_idle) — None is a real value (no transcript)
 
 
 def _has_tmux():
@@ -2956,7 +3102,7 @@ def _alive_sessions(now, tmux):
     have = {s["sid"] for s in alive}
     stale_live = [sid for sid in tmux if sid not in have]
     if stale_live:
-        wide = {f[0]: f for f in jd.discover(now, window=jd.DEATH_BACKFILL_WINDOW)}
+        wide = _discover_wide(now, jd.DEATH_BACKFILL_WINDOW)   # one walk per cycle (the scope memo)
         for sid in stale_live:
             ent = wide.get(sid)
             if ent is not None:
@@ -5408,7 +5554,8 @@ def _user_todo_fp(sid):
     return ("on:" if _user_todos_on() else "off:") + json.dumps(rows, sort_keys=True)
 
 
-def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None):
+def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
+                    interrupted=None, tm=None, path=_PATH_UNRESOLVED):
     """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
     has SETTLED idle with nothing else in motion — the exact idle the auto-nudge tick requires —
     so its open user todos ARE its frontier and the focus card may floor to needs-input. Read-side
@@ -5435,21 +5582,35 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
       must not wedge the floor off (the bugsdk2 lesson).
 
     ps None / no turns reads UNKNOWN, never idle — the cache-warm idiom: the floor snaps in after
-    _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache."""
+    _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache.
+
+    `interrupted`: the caller's own reading of _interrupt_suppresses_nudge over this same `ps`, when
+    it has one (build_feed computes it per session for the card's badge, over the same turns and sid,
+    a few lines before this call — 2026-09-06, perf batch 2 P2 S2: the recompute here was a second
+    full user-atom scan per session per build). None = not known, compute it here. The two sites read
+    an EXCEPTION differently — build_feed's badge reads "not interrupted", this gate reads "not idle"
+    — so a caller whose read raised passes None, never False, and the gate re-derives its own answer.
+
+    `tm` / `path`: the caller's liveness row and transcript path for _compacting_now's gate (the same
+    hoist _session_rows makes; perf batch 2 P3): build_feed holds both, and without them the gate
+    resolved the path through _path_of's 48h search — nothing for a live session idle longer than
+    that, so its cached parse went unread there."""
     if ps is None or who_working or sess_awaiting_why or aerr or peer_wait:
         return False
-    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid):
+    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid, tm=tm, path=path):
         return False
     if _pending_ops.get(str(sid)) or _backend_queued(sid) or _backend_rewind_pending(sid):
         return False
     turns = ps.get("turns") or []
     if not turns:
         return False
-    try:
-        if _interrupt_suppresses_nudge(turns, sid):
-            return False
-    except Exception:
-        return False                                 # an unreadable gate reads unknown, never idle
+    if interrupted is None:
+        try:
+            interrupted = _interrupt_suppresses_nudge(turns, sid, family="display")
+        except Exception:
+            return False                             # an unreadable gate reads unknown, never idle
+    if interrupted:
+        return False
     lt = turns[-1]
     ls_val, ls_t = _last_state(sid)
     if ls_val in _PROGRESSING_STATES and ls_t >= lt.get("end", lt.get("t", 0)):
@@ -7437,7 +7598,8 @@ def _auto_pause_on_limit():
         _set_retry_paused(True)
         sys.stderr.write("retry-pause: auto-engaged — usage limit reached (%s) → auto-retry + judges paused until reset\n"
                          % ",".join(account))
-        _push_all()
+        _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
+        #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
 
 def _spend_capped_session(now, tmux):
@@ -7468,7 +7630,8 @@ def _auto_pause_on_spend_limit(now, tmux):
         _set_retry_paused(True, reason="spend")
         sys.stderr.write("retry-pause: auto-engaged — monthly spend limit reached → auto-retry + judges "
                          "paused until the cap is raised (claude.ai/settings/usage)\n")
-        _push_all()
+        _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
+        #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
 
 def _auto_resume_retry(now, tmux):
@@ -7481,7 +7644,19 @@ def _auto_resume_retry(now, tmux):
 
     Event-based recovery signal: a live session that is NOT currently blocked on an API error AND has written
     fresh transcript output since the pause began (mtime past the pause floor) is proof the account can serve
-    requests again. Clearing re-enables both auto-retry and the judges together."""
+    requests again. Clearing re-enables both auto-retry and the judges together.
+
+    Delivery (perf batch 2 P1, 2026-09-06; the two auto-pause siblings above do the same): the flip
+    WAKES the pusher (_push_soon) instead of building a push inline on this thread. retry-paused.json is
+    in no view signature and neither build_feed nor build_timeline reads it — its readers on the wire are
+    the per-push globalRetryPaused frame, sent to every chat client on every push, and build_session's
+    queued-hold reason on the ACTIVE tab, which rebuilds every push — so the next cycle delivers the
+    flip with no view rebuild, one cycle start after the write (sub-second). A dirty mark here would
+    force a full feed and timeline rebuild for a change the views do not display. A BACKGROUND chat
+    tab's queued-hold reason still waits for the next _judge_gen bump (its _chat_build_sig folds no
+    dirty input): pre-existing, unchanged. The re-arm below is the one write the feed DOES show (a
+    given-up card's summary sentinel goes back to None), so that branch marks the views dirty — the
+    store write is the new information, the flag flip is not."""
     if not _retry_paused_on():
         return
     floor = _retry_pause_ts()
@@ -7501,9 +7676,10 @@ def _auto_resume_retry(now, tmux):
                 rearmed = jd.rearm_failed_summaries(now)  # while degraded, so their summaries/briefs retry now
                 if rearmed:
                     sys.stderr.write("distiller: re-armed %d given-up card(s) after recovery\n" % rearmed)
+                    _mark_views_dirty()                  # store writes the cards show → rebuild past the sig
             except Exception:
                 sys.stderr.write("rearm-failed-summaries: %s\n" % traceback.format_exc())
-            _push_all()                                  # globalRetryPaused=false reaches the UI immediately
+            _push_soon()                                 # globalRetryPaused=false rides the next push (docstring)
             return
 
 
@@ -7967,14 +8143,25 @@ def _interrupt_block_tick(now, tmux):
     The once-per-episode marker is VERIFIED against the store each tick, never trusted (the user
     2026-08-08): judges complete/clear the goal it points at off newer turns (or compaction archives
     it), and trusting the bare marker skipped the re-block forever — the live focus goal sat in
-    Working wearing only the badge, auto-nudge suppressed: invisible-blocked."""
-    changed = False
-    for s in _alive_sessions(now, tmux):
+    Working wearing only the badge, auto-nudge suppressed: invisible-blocked.
+
+    No inline push (perf batch 2 P1, 2026-09-06): both writers end in _mark_views_dirty(), which
+    stamps the dirty mark and sets _pusher_wake, so the next cycle's own _push_all rebuilds past the
+    mark. The inline call spared no rebuild (the next cycle's dirty-forced build is the same one); it
+    delivered the flip one cycle tail earlier (the jobs after this tick, about 3% of the pusher's GIL,
+    plus the next cycle's liveness read: sub-second) at a second push's fixed cost, and on the
+    stand-down path below (a marker whose block a judge now owns) it pushed with nothing new to show."""
+    alive = _alive_sessions(now, tmux)
+    for s in alive:
         sid = s["sid"]
         if _session_flag(sid, "hideFromFeed"):           # muted from the feed → no interrupt-block bookkeeping either
             continue
         st = (tmux.get(sid) or {}).get("state", "")
-        if st in _NEEDS_INPUT_STATES or st == "compacting" or _compacting_now(sid):
+        # the row's own path and live meta go in (perf batch 2 P3, 2026-09-06): the default _path_of
+        # searched the 48h set, so a LIVE session idle longer than that — resolved into this row by
+        # _alive_sessions' wide walk — read as having no transcript here, and an optimistic compact
+        # click on it could not be disproved by its compact_boundary for the 180 s cap
+        if st in _NEEDS_INPUT_STATES or st == "compacting" or _compacting_now(sid, tm=tmux.get(sid), path=s["path"]):
             continue                                     # awaiting you / compacting → a different needs-you path owns it
         if _api_error(s["path"]):                        # stopped on an API error → not a user stop
             continue
@@ -7982,8 +8169,9 @@ def _interrupt_block_tick(now, tmux):
             turns = jd.parsed_session(sid, [s["path"]], now)["turns"]
         except Exception:
             continue
-        stop_t, human_t = _interrupt_marks(turns, sid)   # the two EVENTS this tick reasons about — and the
-        #                                                  evidence times both writes are stamped with
+        stop_t, human_t = _interrupt_marks(turns, sid, family="judge")   # the two EVENTS this tick reasons
+        #                                                  about — and the evidence times both writes are
+        #                                                  stamped with (memo family: the judge parse)
         block_it = bool(turns) and not _session_working(turns) and stop_t > human_t
         if block_it:                                     # a GENUINE user stop → block the focus goal on them,
             ib = _intr_blocked(sid)                      # once per interrupt episode (the intrBlocked marker) —
@@ -8001,16 +8189,16 @@ def _interrupt_block_tick(now, tmux):
                                      for a in (turn.get("atoms") or [])])
                 g = _record_interrupt_block(sid, ev)
                 if g:
-                    _set_intr_blocked(sid, g); changed = True
+                    _set_intr_blocked(sid, g)
         else:                                            # working / re-engaged / machine cut → lift OUR block if any
             ib = _intr_blocked(sid)
             if ib:
                 # the re-engagement IS the newest turn's trigger — the same stamp the judges will put on
                 # every verdict about that turn, so their ruling outranks this lift on arrival order
                 _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0)
-                _set_intr_blocked(sid, None); changed = True
-    if changed:                                          # a needs-you flip should reach the feed at once
-        _push_all()
+                _set_intr_blocked(sid, None)
+    _intr_marks_forget({s["sid"] for s in alive})       # a sid that left the alive set releases its memo entries
+    # a flip's writer marked the views dirty and woke the pusher: the next cycle carries it (docstring)
 
 
 def _walk_root_record(sid):
@@ -10002,7 +10190,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
     lt = turns[-1]
     if _session_working(turns):                      # still actively working (event model) → not orphaned
         return "working"
-    if _interrupt_suppresses_nudge(turns, sid):      # the user's LAST action was a GENUINE interrupt → they're
+    if _interrupt_suppresses_nudge(turns, sid, family="judge"):   # the user's LAST action was a GENUINE interrupt → they're
         return "user-interrupt"                                # driving; suppressed until their NEXT message. The stopped
         #                                              focus goal's BLOCKED-on-you flip is owned by the always-on
         #                                              _interrupt_block_tick (a needs-you rule, not a nudge feature).
@@ -23784,7 +23972,8 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("cwd", path, busy_retries) | ("compact",), …] in park order
 
 
-_PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
+# (_PATH_UNRESOLVED, the "no path was passed" sentinel below, is defined beside _path_of: the user-todo
+# floor takes it as a default too, and it is defined earlier in the file.)
 
 
 def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
@@ -28190,10 +28379,15 @@ def build_feed(now, tmux=None):
         # is user-chosen, not a stall — auto-nudge is suppressed (same predicate, _auto_nudge_tick) and
         # the working card wears an "interrupted" badge saying so (the user 2026-07-05). Cache-only,
         # like the working dot: the badge snaps in once _warm_fleet_bg fills the parse.
+        # `_intr_read` is what the user-todo floor below is handed (S2): the badge's own value when the
+        # read succeeded, None when it raised — the floor reads an unreadable gate as "not idle", the
+        # badge reads it as "not interrupted", and only None lets the floor keep its own reading.
         try:
-            sess_interrupted = bool(ps) and not who_working and _interrupt_suppresses_nudge(ps["turns"], fsid)
+            sess_interrupted = bool(ps) and not who_working and \
+                _interrupt_suppresses_nudge(ps["turns"], fsid, family="display")
+            _intr_read = sess_interrupted
         except Exception:
-            sess_interrupted = False
+            sess_interrupted, _intr_read = False, None
         # A user interrupt still IN FLIGHT (dispatched, not yet settled): the card wears a steady
         # "interrupting…" badge from the click until it settles, THEN falls to the past-tense "interrupted"
         # badge — never flickering between "working" and "interrupted" while the SDK live-tail retires mid-
@@ -28524,7 +28718,8 @@ def build_feed(now, tmux=None):
         # present event first.
         todo_top = None
         _todo_idle = bool(_ut_open) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why,
-                                                        perm_state, aerr, wmap.get(fsid))
+                                                        perm_state, aerr, wmap.get(fsid),
+                                                        interrupted=_intr_read, tm=tm, path=s["path"])
         if _todo_idle and api_top is None and perm_top is None and jauth_top is None:
             f = store.get("lastNode")
             while f and nodes.get(f, {}).get("parentId") is not None:
@@ -37192,6 +37387,9 @@ def _pusher_cycle():
     try:
         _live_scope.paths = {}                  # …and the cycle's sid→path memo (_path_of): the parked-op drain
         #                                         otherwise resolves a held sid's path once per gate per cycle
+        _live_scope.sessions = {}               # …and the cycle's discover rows (_sessions, keyed (window,
+        #                                         forks); the wide walk under ("wide", window)): ~35 sweeps
+        #                                         per cycle became one (perf batch 2 P3, 2026-09-06)
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
         #                                       cwd/color helpers otherwise re-read the registry per path
         #                                       token and per postal card (~38% of pusher wall, py-spy
@@ -37202,6 +37400,7 @@ def _pusher_cycle():
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
+        _live_scope.sessions = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 

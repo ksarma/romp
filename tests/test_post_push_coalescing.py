@@ -27,10 +27,12 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = SourceFileLoader("romp_kernel_postpush", os.path.join(BIN, "romp-kernel")).load_module()
 
-# The ONLY functions allowed to build inline: the pusher's own cycle and the tick jobs that run ON
-# the pusher thread (see _pusher_cycle_jobs). Everything request-side pokes instead.
-PUSHER_THREAD_FNS = {"_push_all", "_pusher_cycle_jobs", "_auto_pause_on_limit",
-                     "_auto_pause_on_spend_limit", "_auto_resume_retry", "_interrupt_block_tick"}
+# The ONLY functions allowed to build inline: the pusher's own cycle. Everything request-side pokes
+# instead, and since perf batch 2 P1 (2026-09-06) so do the tick jobs that run ON the pusher thread:
+# their writers mark the views dirty and wake the pusher, whose next cycle carries the change (the
+# interrupt tick's inline push rebuilt nothing the next cycle would not, and the retry-pause flag is
+# read by no view). A tick job that builds inline is the regression this census now catches.
+PUSHER_THREAD_FNS = {"_push_all", "_pusher_cycle_jobs"}
 
 
 class PushCallerCensus(unittest.TestCase):
