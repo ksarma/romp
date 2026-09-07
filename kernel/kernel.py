@@ -18905,7 +18905,7 @@ def _audit_unrequested_signal(signum, pending=False, now=None, manager_stopped=F
     whether a manager restart was parked (the drain lease), that nothing asked for it through the
     manager, and (`manager_stopped`, decided by _unrequested_signal_reason) whether the manager was
     going down at the same moment. The wording claims exactly that much: a stray `kill`, a test that
-    fired a real restart and a supervisor stop that signalled both processes at once all arrive with
+    fired a real restart and a supervisor stop that signaled both processes at once all arrive with
     no row, and only the last leaves a trace the kernel can see. Returns the reason text the cut row
     carries, so the two ledgers agree. Best-effort, never raises."""
     reason = SIGNAL_REASON_MANAGER_STOPPED if manager_stopped else SIGNAL_REASON_UNREQUESTED
@@ -18931,8 +18931,13 @@ SIGNAL_MANAGER_NOTE_WAIT_S = 0.5   # how long an unexplained SIGTERM waits for t
 
 
 def _manager_sigterm_row_for_us(now=None, window=90):
-    """Whether the audit tail holds a `manager-sigterm` row aimed at THIS kernel (its `pid` is ours,
-    or it names none) within `window` seconds: the manager's note that it sent a SIGTERM here."""
+    """Whether the audit tail holds a `manager-sigterm` STOP note aimed at THIS kernel (its `pid` is
+    ours, or it names none) within `window` seconds: the manager's note that it is stopping us, which
+    is what _unrequested_signal_reason takes as the manager going down alongside us. Only `reason:
+    stop` counts. A `restart` note means the manager is alive and about to respawn the kernel, and
+    one landing during the drain of an unrelated signal (a stray kill, then the rail's restart button)
+    used to file that exit as a service stop with `managerStopped: true` while the manager's own log
+    showed a requested restart (review round 2)."""
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
     except Exception:
@@ -18947,7 +18952,7 @@ def _manager_sigterm_row_for_us(now=None, window=90):
             continue
         if t0 - rec["t"] > window:
             return False
-        if rec.get("pid") in (None, os.getpid()):
+        if rec.get("pid") in (None, os.getpid()) and rec.get("reason") == "stop":
             return True
     return False
 
@@ -19127,31 +19132,52 @@ def _going_down():
     return bool(be) and hasattr(be, "quiescing") and be.quiescing()
 
 
-def _recent_restart_reason(window=90, now=None):
+# The kernel's own rows ABOUT an exit (_audit_unrequested_signal, _audit_parent_gone): a verdict a previous
+# incarnation filed on itself, never a request for the next one's exit. _recent_restart_reason skips them.
+EXIT_VERDICT_ACTIONS = ("signal", "parent-gone")
+
+
+def _recent_restart_reason(window=90, now=None, started=None):
     """The request on record that explains a SIGTERM arriving now, from the restart-audit tail, or ""
     when there is none (and _graceful_term then files a row of its own). Joins the cut row to WHO asked:
     a deploy refresh, the kernel's self-update, the rail button, a `romp down`. The walk is newest-first
     over the last eight rows, within `window` seconds of now, with these rules:
+      - a row older than THIS kernel's start (`started`; the default is the process start, _STARTED) ends
+        the walk: a request that predates the process was delivered to a predecessor and cannot be the
+        request for this exit. Without the bound, the self-update that restarted the previous kernel was
+        still inside the window when the operator stopped the one that replaced it, and the cut row named
+        the deploy as the reason the service went down (review round 2). A `when: quiet` request made
+        while a predecessor ran is then named by the manager's note for us, which is still correct;
       - a row with an action is a request and wins: `action`, plus `: reason` when it carries one;
       - a `when: quiet` request is pending until the restart it asked for lands, up to the far manager's
         15-minute backstop, so its window is RESTART_EXPECT_MAX_S and it names a cut well past the
         immediate window (T238); any other row older than the window ends the walk;
+      - the kernel's OWN verdict rows (EXIT_VERDICT_ACTIONS: `signal`, `parent-gone`) are never a request,
+        whatever pid they carry. They have an action, so a SIGTERM reaching the next kernel within the
+        window read a predecessor's verdict as the request, copied it onto its own cut row and wrote no
+        `signal` row of its own (review round 2: two stray kills within 90 seconds left one row);
+      - a `down-failed` row (bin/romp, when a `romp down` did not stop the kernel) supersedes the `down`
+        beneath it: neither is the request for a signal that arrives later;
       - a `manager-sigterm` row (bin/romp-manager auditSigterm, written before every SIGTERM it sends) is
-        a mechanism note, not a request: it says the manager was the messenger. It never outranks a
-        request row beneath it within the window (a `down` followed by the manager's `stop` note reads
-        as the deliberate stop), answers only when no request is on record (a `romp on restart`, a
-        service stop that noted before it killed), and one aimed at another kernel pid is not about us;
-      - a row with no action is skipped, never taken as the answer. The CLI's `romp refresh` writes its
-        caller-attribution row with no action field ({t, ppid, parent, sid, name, tty, tmux}), and taking
-        that row's empty label as the verdict filed every deploy as an unrequested signal (review
-        2026-09-06). Until the writer labels the row, the manager's `restart` note beneath it is what
-        names a refresh; a row that does carry `action: refresh` names it directly."""
+        a mechanism note, not a request: it says the manager was the messenger, and its `trigger` names
+        what set it off (`restart`, `restart-all`, `refresh`, `cli-down`, `stop`), so that is the label it
+        answers with (a note without one falls back to its `reason`). It never outranks a request row
+        beneath it within the window (a `down` followed by the manager's `stop` note reads as the
+        deliberate stop), answers only when no request is on record (a `romp on restart`, a service stop
+        that noted before it killed), and one aimed at another kernel pid is not about us;
+      - a row with no action is skipped, never taken as the answer. The CLI's `romp refresh` on builds
+        before it labeled the row wrote its caller-attribution row with no action field ({t, ppid, parent,
+        sid, name, tty, tmux}), and taking that row's empty label as the verdict filed every deploy as an
+        unrequested signal (review 2026-09-06). On those builds the manager's note beneath it is what names
+        a refresh; a row that does carry `action: refresh` names it directly."""
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
         if not tail:
             return ""
         t0 = int(now if now is not None else time.time())
+        born = int(_STARTED if started is None else started)
         via_manager = ""
+        down_superseded = False
         for line in reversed(tail[-8:]):
             try:
                 rec = json.loads(line)
@@ -19162,17 +19188,22 @@ def _recent_restart_reason(window=90, now=None):
             win = window
             if rec.get("when") == "quiet":
                 win = max(window, RESTART_EXPECT_MAX_S)
-            if t0 - rec["t"] > win:
+            if t0 - rec["t"] > win or rec["t"] < born:
                 break                                       # older rows are older still
             action = str(rec.get("action") or "")
-            if not action:
-                continue                                    # no verdict in it; keep looking
-            label = action + (": " + str(rec["reason"]) if rec.get("reason") else "")
+            if not action or action in EXIT_VERDICT_ACTIONS:
+                continue                                    # no request in it; keep looking
             if action == "manager-sigterm":
                 if rec.get("pid") in (None, os.getpid()):   # a note about THIS kernel (or one naming none)
-                    via_manager = via_manager or label
+                    what = rec.get("trigger") or rec.get("reason")
+                    via_manager = via_manager or (action + (": " + str(what) if what else ""))
                 continue
-            return label
+            if action == "down-failed":
+                down_superseded = True
+                continue
+            if action == "down" and down_superseded:
+                continue                                    # that stop did not land; this signal is not it
+            return action + (": " + str(rec["reason"]) if rec.get("reason") else "")
         return via_manager
     except Exception:
         pass

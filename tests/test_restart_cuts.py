@@ -64,11 +64,12 @@ class CutRow(unittest.TestCase):
         audit = jd.STATE / "restart-audit.jsonl"
         audit.write_text(json.dumps({"t": 1000, "action": "kernel-asks-manager-restart-all",
                                      "reason": "self-update"}) + "\n")
-        self.assertIn("self-update", km._recent_restart_reason(window=90, now=1050))
-        self.assertEqual(km._recent_restart_reason(window=90, now=5000), "",
+        # `started`: the rows are synthetic and predate this test process, whose start is the default bound
+        self.assertIn("self-update", km._recent_restart_reason(window=90, now=1050, started=900))
+        self.assertEqual(km._recent_restart_reason(window=90, now=5000, started=900), "",
                          "a stale audit row is not this restart's cause")
         audit.unlink()
-        self.assertEqual(km._recent_restart_reason(now=1050), "", "no audit → anonymous, honestly")
+        self.assertEqual(km._recent_restart_reason(now=1050, started=900), "", "no audit → anonymous, honestly")
 
     def test_a_cutting_drain_counts_mid_shutdown_and_threadless_sessions(self):
         # T143's two undercounts, executed: a session already flagged `ended` with a live in-flight
@@ -177,15 +178,15 @@ class UnrequestedSignal(unittest.TestCase):
         self.AUDIT.write_text(
             json.dumps({"t": 1000, "action": "kernel-asks-manager-restart-all", "reason": "self-update"}) + "\n"
             + json.dumps({"t": 1001, "action": "manager-sigterm", "kernel": "main", "reason": "restart"}) + "\n")
-        self.assertIn("self-update", km._recent_restart_reason(window=90, now=1050))
+        self.assertIn("self-update", km._recent_restart_reason(window=90, now=1050, started=900))
 
     def test_the_managers_kill_row_alone_is_still_a_request_on_record(self):
         # a `romp on restart` or a service stop: the manager asked, nobody audited before it; the
         # manager's own row is what keeps this from reading as an unrequested signal
         self.AUDIT.write_text(json.dumps({"t": 1000, "action": "manager-sigterm", "kernel": "main",
                                           "reason": "stop"}) + "\n")
-        self.assertEqual(km._recent_restart_reason(window=90, now=1050), "manager-sigterm: stop")
-        self.assertEqual(km._recent_restart_reason(window=90, now=5000), "")
+        self.assertEqual(km._recent_restart_reason(window=90, now=1050, started=900), "manager-sigterm: stop")
+        self.assertEqual(km._recent_restart_reason(window=90, now=5000, started=900), "")
 
     def _fire(self, backend=None):
         """Run the SIGTERM handler in-process: the drain has no backend to stop unless one is given,
@@ -268,7 +269,7 @@ class UnrequestedSignal(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ROMP_MANAGER_PID": str(os.getpid())}):
             self.AUDIT.write_text(json.dumps({"t": 1000, "action": "manager-sigterm", "kernel": "aux",
                                               "pid": os.getpid() + 100000, "reason": "stop"}) + "\n")
-            self.assertEqual(km._recent_restart_reason(window=90, now=1000), "",
+            self.assertEqual(km._recent_restart_reason(window=90, now=1000, started=900), "",
                              "the manager's note about an aux kernel is not a request on record here")
             reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0, now=1000)
         self.assertEqual(reason, km.SIGNAL_REASON_UNREQUESTED)
@@ -297,6 +298,62 @@ class UnrequestedSignal(unittest.TestCase):
         self.assertEqual(self._rows(km.RESTART_CUTS_FILE)[0]["reason"], km.SIGNAL_REASON_MANAGER_STOPPED)
         self.assertEqual([r["action"] for r in self._rows(audit)], ["manager-sigterm", "signal"])
 
+    def test_the_managers_restart_note_landing_after_our_signal_is_not_a_stop(self):
+        # a stray kill starts the drain; a second later the rail's restart button has the manager note a
+        # `restart` for this pid. The manager is alive and about to respawn us: that is not a service stop,
+        # and the row used to say the manager was stopped too (review round 2)
+        audit = self.AUDIT
+        landed = []
+
+        def note_lands(secs):        # once, then the wait runs its course: a restart note does not end it
+            if not landed:
+                landed.append(1)
+                with open(audit, "a") as f:
+                    f.write(json.dumps({"t": 1000, "action": "manager-sigterm", "kernel": "main",
+                                        "pid": os.getpid(), "reason": "restart", "trigger": "restart"}) + "\n")
+            __import__("time").sleep(secs)
+        with mock.patch.dict(os.environ, {"ROMP_MANAGER_PID": str(os.getpid())}):
+            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0.2, sleep=note_lands, now=1000)
+        self.assertEqual(reason, km.SIGNAL_REASON_UNREQUESTED)
+        rows = self._rows(audit)
+        self.assertEqual([r["action"] for r in rows], ["manager-sigterm", "signal"])
+        self.assertIs(rows[1]["managerStopped"], False)
+
+    # ---- a previous kernel's own verdict rows are not this kernel's request ----
+
+    def _previous_kernels_verdict(self, action, reason):
+        """A verdict row a predecessor filed on its own exit, seconds ago (inside the window, after this
+        process started): the old pid, the action, the reason it concluded."""
+        rec = {"t": int(__import__("time").time()), "action": action, "pid": self._dead_pid(),
+               "ppid": 1, "managerPid": None, "reason": reason}
+        if action == "signal":
+            rec.update({"signal": "SIGTERM", "managerRequested": False, "managerStopped": False,
+                        "managerRestartPending": False})
+        self.AUDIT.write_text(json.dumps(rec) + "\n")
+
+    def test_a_previous_kernels_signal_verdict_is_not_this_kernels_request(self):
+        # two stray kills within 90 seconds: the second used to read the first's `signal` row as the
+        # request on record, copy its reason onto the cut row and write no row of its own
+        self._previous_kernels_verdict("signal", km.SIGNAL_REASON_MANAGER_STOPPED)
+        self._fire()
+        rows = self._rows(self.AUDIT)
+        self.assertEqual([r["action"] for r in rows], ["signal", "signal"], "a fresh row for a fresh signal")
+        self.assertEqual(rows[1]["pid"], os.getpid())
+        self.assertEqual(rows[1]["reason"], km.SIGNAL_REASON_UNREQUESTED, "this exit's own verdict")
+        self.assertEqual(self._rows(km.RESTART_CUTS_FILE)[0]["reason"], km.SIGNAL_REASON_UNREQUESTED)
+
+    def test_a_previous_kernels_parent_gone_verdict_is_not_this_kernels_request(self):
+        # the manager was SIGKILLed, the kernel followed it (parent-gone), systemd brought both back; a
+        # `systemctl --user restart` 40 seconds later reached the new kernel, whose cut row then named a
+        # manager exit that did not happen, with no `signal` row for the restart
+        self._previous_kernels_verdict("parent-gone", km.PARENT_GONE_REASON)
+        self._fire()
+        rows = self._rows(self.AUDIT)
+        self.assertEqual([r["action"] for r in rows], ["parent-gone", "signal"])
+        cut = self._rows(km.RESTART_CUTS_FILE)[0]["reason"]
+        self.assertEqual(cut, km.SIGNAL_REASON_UNREQUESTED)
+        self.assertNotIn("the manager exited", cut)
+
 
 class RequestOnRecord(unittest.TestCase):
     """_recent_restart_reason: which row of the audit tail explains a SIGTERM arriving now. A row with an
@@ -319,23 +376,29 @@ class RequestOnRecord(unittest.TestCase):
     def _write(self, *rows):
         self.AUDIT.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
+    def _reason(self, now=1002, started=900, window=90):
+        """The reader as the SIGTERM handler calls it, for a kernel that started at `started` (before
+        every row below unless a test says otherwise; the default bound is this test process's start,
+        which every synthetic row predates)."""
+        return km._recent_restart_reason(window=window, now=now, started=started)
+
     def test_a_refresh_from_main_is_a_request_on_record(self):
         # `romp refresh` on main: the CLI's actionless row, then the manager's restart note, then the
         # SIGTERM. The manager's note is what names it; "" here filed a deploy as a stray kill
         self._write(dict(self.REFRESH_CLI_ROW, t=1000),
                     {"t": 1001, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(), "reason": "restart"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "manager-sigterm: restart")
+        self.assertEqual(self._reason(), "manager-sigterm: restart")
 
     def test_a_refresh_that_labels_its_row_is_named_directly(self):
-        # the shape a labelled writer produces (an `action: refresh` row): the request wins over the note
+        # the shape a labeled writer produces (an `action: refresh` row): the request wins over the note
         self._write(dict(self.REFRESH_CLI_ROW, t=1000, action="refresh"),
                     {"t": 1001, "action": "manager-sigterm", "kernel": "main", "reason": "restart"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "refresh")
+        self.assertEqual(self._reason(), "refresh")
 
     def test_a_restart_all_the_kernel_asked_for(self):
         self._write({"t": 1000, "action": "kernel-asks-manager-restart-all", "reason": "self-update", "pid": 7},
                     {"t": 1001, "action": "manager-sigterm", "kernel": "main", "reason": "restart"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002),
+        self.assertEqual(self._reason(),
                          "kernel-asks-manager-restart-all: self-update")
 
     def test_a_deliberate_stop_outranks_the_managers_stop_note(self):
@@ -343,27 +406,108 @@ class RequestOnRecord(unittest.TestCase):
         # deliberate, and the note beneath it must not rewrite it as the manager's doing
         self._write({"t": 1000, "action": "down", "reason": "--now"},
                     {"t": 1001, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(), "reason": "stop"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "down: --now")
+        self.assertEqual(self._reason(), "down: --now")
 
     def test_the_managers_note_alone_answers_when_nothing_else_does(self):
         self._write({"t": 1000, "action": "manager-sigterm", "kernel": "main", "reason": "stop"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "manager-sigterm: stop")
+        self.assertEqual(self._reason(), "manager-sigterm: stop")
 
     def test_an_actionless_row_alone_is_not_an_answer(self):
         # a fresh actionless row with nothing else: no verdict in it, so nothing is on record
         self._write(dict(self.REFRESH_CLI_ROW, t=1000))
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "")
+        self.assertEqual(self._reason(), "")
 
     def test_a_genuinely_unrequested_signal_has_nothing_on_record(self):
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "", "no file at all")
+        self.assertEqual(self._reason(), "", "no file at all")
         self._write({"t": 100, "action": "kernel-asks-manager-restart-all", "reason": "self-update"},
                     {"t": 101, "action": "manager-sigterm", "kernel": "main", "reason": "restart"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "", "rows from an old restart")
+        self.assertEqual(self._reason(), "", "rows from an old restart")
 
     def test_a_note_aimed_at_another_kernel_pid_is_skipped(self):
         self._write({"t": 1000, "action": "manager-sigterm", "kernel": "aux", "pid": os.getpid() + 100000,
                      "reason": "restart"})
-        self.assertEqual(km._recent_restart_reason(window=90, now=1002), "")
+        self.assertEqual(self._reason(), "")
+
+    def test_the_managers_note_answers_with_its_trigger(self):
+        # the manager's `reason` is only restart|stop; `trigger` is what set the SIGTERM off, and it is
+        # what tells a `romp refresh`, the stale-manager self-bounce, a hand stop and a `romp down` apart
+        for trigger, reason in (("restart-all", "restart"), ("refresh", "stop"), ("cli-down", "stop"),
+                                ("stop", "stop"), ("restart", "restart")):
+            with self.subTest(trigger=trigger):
+                self._write(dict(self.REFRESH_CLI_ROW, t=1000),
+                            {"t": 1001, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
+                             "reason": reason, "trigger": trigger})
+                self.assertEqual(self._reason(), "manager-sigterm: " + trigger)
+
+    def test_a_note_without_a_trigger_falls_back_to_its_reason(self):
+        self._write({"t": 1001, "action": "manager-sigterm", "kernel": "main", "reason": "stop"})
+        self.assertEqual(self._reason(), "manager-sigterm: stop")
+
+    def test_a_request_older_than_this_kernel_is_a_predecessors(self):
+        # t=1000 the previous kernel's self-update; the manager notes `restart` for it and kills it; this
+        # kernel starts at t=1003. At t=1040 a service stop: the manager notes `stop` for THIS pid. The
+        # self-update is still inside the window and used to be returned as the reason the service stopped
+        self._write({"t": 1000, "action": "kernel-asks-manager-restart-all", "reason": "self-update", "pid": 7},
+                    {"t": 1001, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid() + 100000,
+                     "reason": "restart", "trigger": "restart-all"},
+                    {"t": 1040, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
+                     "reason": "stop", "trigger": "stop"})
+        self.assertEqual(self._reason(now=1041, started=1003), "manager-sigterm: stop")
+        self.assertEqual(self._reason(now=1041, started=900), "kernel-asks-manager-restart-all: self-update",
+                         "the same rows for a kernel that WAS running at t=1000: the request is its own")
+
+    def test_a_request_older_than_this_kernel_with_no_note_is_nothing_on_record(self):
+        # a stray kill of the kernel that a refresh just started: the refresh row is a predecessor's
+        self._write(dict(self.REFRESH_CLI_ROW, t=1000, action="refresh"),
+                    {"t": 1001, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid() + 100000,
+                     "reason": "restart", "trigger": "restart-all"})
+        self.assertEqual(self._reason(now=1030, started=1003), "")
+
+    def test_a_request_in_the_same_second_as_the_start_is_kept(self):
+        # the bound is whole seconds, as the rows are: a request filed in the start's own second stands
+        self._write(dict(self.REFRESH_CLI_ROW, t=1003, action="refresh"))
+        self.assertEqual(self._reason(now=1005, started=1003.4), "refresh")
+
+    def test_a_quiet_request_older_than_this_kernel_yields_to_the_note(self):
+        # a `when: quiet` request parked while a predecessor ran, delivered to this kernel at the quiet
+        # window: the manager's note for us names it (restart-all), the stale row does not
+        self._write({"t": 1000, "action": "kernel-asks-manager-restart-all", "reason": "self-update",
+                     "when": "quiet"},
+                    {"t": 1500, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
+                     "reason": "restart", "trigger": "restart-all"})
+        self.assertEqual(self._reason(now=1501, started=1003), "manager-sigterm: restart-all")
+
+    def test_a_previous_kernels_verdict_rows_are_never_the_request(self):
+        # the kernel's own `signal` and `parent-gone` rows have an action and the OLD pid; with the bound
+        # they are also older than this kernel, but the rule holds on its own (a verdict is not a request)
+        for action, reason in (("signal", km.SIGNAL_REASON_UNREQUESTED), ("parent-gone", km.PARENT_GONE_REASON)):
+            with self.subTest(action=action):
+                self._write({"t": 1000, "action": action, "pid": os.getpid() + 100000, "reason": reason})
+                self.assertEqual(self._reason(), "", "a lone old verdict row is nothing on record")
+                self._write({"t": 1000, "action": action, "pid": os.getpid() + 100000, "reason": reason},
+                            {"t": 1001, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
+                             "reason": "stop", "trigger": "stop"})
+                self.assertEqual(self._reason(), "manager-sigterm: stop", "the note answers, not the verdict")
+
+    def test_a_down_failed_supersedes_the_down_beneath_it(self):
+        # `romp down` filed its row, the stop did not land, `down-failed` was filed after it, and the
+        # kernel kept running; a hand stop later is the manager's, not that down
+        self._write({"t": 1000, "action": "down", "reason": "--now"},
+                    {"t": 1005, "action": "down-failed", "reason": "the login service did not stop"},
+                    {"t": 1040, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
+                     "reason": "stop", "trigger": "stop"})
+        self.assertEqual(self._reason(now=1041), "manager-sigterm: stop")
+        self._write({"t": 1000, "action": "down", "reason": "--now"},
+                    {"t": 1005, "action": "down-failed", "reason": "the login service did not stop"})
+        self.assertEqual(self._reason(now=1041), "", "and with no note, nothing is on record")
+
+    def test_a_down_that_landed_is_still_the_stop(self):
+        # `romp down` as #258 writes it: the marker, the `down` row, the service stop, the manager's
+        # `cli-down` note for us; the down row is the request, the note the messenger
+        self._write({"t": 1000, "action": "down"},
+                    {"t": 1002, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
+                     "reason": "stop", "trigger": "cli-down"})
+        self.assertEqual(self._reason(now=1003), "down")
 
 
 class ParentGone(unittest.TestCase):
