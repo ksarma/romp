@@ -8,9 +8,13 @@ clears it event-based, one rule per reason (review round 2, 2026-09-07): a MANUA
 live session that is NOT blocked on an API error AND wrote fresh output since the pause began (mtime past
 the pause floor); a LIMIT pause lifts when the usage report stops naming an account-wide window at 100%
 (the same reading that engaged it); a SPEND pause lifts on fresh assistant output from a session on the
-billing the cap is on.
+billing the cap is on. The lift leaves the capped session's own record standing (only a human prompt clears
+a spend record), so the un-pause records its instant and the spend engage stands down on records older than
+it (review round 3, 2026-09-07); a new record engages again.
 """
+import contextlib
 import inspect
+import io
 import json
 import os
 import tempfile
@@ -152,6 +156,23 @@ class RetryPauseAutoResume(unittest.TestCase):
         self.assertEqual(km._views_dirty[0], floor)
 
 
+    # --- review round 3 (2026-09-07): a spend record older than the last spend lift is already ruled on ---
+    def test_the_capped_session_lookup_skips_records_older_than_the_lift_and_keeps_the_rest(self):
+        sess = [{"sid": "s%d" % i, "path": str(self.dir / ("s%d.jsonl" % i))} for i in range(4)]
+        errs = {sess[0]["path"]: {"spendLimit": True, "t": 1000},        # a second before the lift: stale
+                sess[1]["path"]: {"spendLimit": False, "t": 1005},       # not a cap
+                sess[2]["path"]: {"spendLimit": True, "t": 0},           # no readable time: not proof of staleness
+                sess[3]["path"]: {"spendLimit": True, "t": 1001}}        # the lift's own second: new
+        km._alive_sessions = lambda now, tmux: sess
+        km._api_error = lambda p: errs.get(p)
+        self.assertEqual(km._spend_capped_session(0, {})["sid"], "s0", "no lift on record: the first capped session")
+        self.assertEqual(km._spend_capped_session(0, {}, after=1001.7)["sid"], "s2", "whole seconds: 1000 < 1001 is stale, 0 is unknown")
+        del errs[sess[2]["path"]]
+        self.assertEqual(km._spend_capped_session(0, {}, after=1001.7)["sid"], "s3", "a record in the lift's second counts")
+        del errs[sess[3]["path"]]
+        self.assertIsNone(km._spend_capped_session(0, {}, after=1001.7), "every remaining record predates the lift")
+        self.assertEqual(km._retry_pause_lifted_at(), 0.0, "no file: nothing on record")
+
     # --- the bottom bar's API health cell (2026-09-07) reads the pause and its lift off this same file ---
     def test_the_api_health_frame_reads_paused_limit_then_ok_after_the_clear(self):
         km._set_retry_paused(True, reason="limit")
@@ -206,6 +227,22 @@ def _err_line(t, text, status=400, category="billing_error"):
 SPEND_TEXT = "API Error: 400 You have reached your monthly spend limit for this workspace."   # invented wording
 
 
+class _KernelClock:
+    """The kernel module's `time`, with time() reading no earlier than a floor the test sets: the pause floor
+    and liftedAt are wall-clock writes while the transcripts here carry synthetic times ahead of the clock, so
+    a test that plays a second round (a new record, a second lift) moves the kernel's clock along with its
+    timeline. Everything else delegates to the real module. At 0 (the default) the clock is the real one."""
+
+    def __init__(self):
+        self.floor = 0.0
+
+    def time(self):
+        return max(time.time(), self.floor)
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
 class _PauseFixture(unittest.TestCase):
     """The pusher's pause jobs over real synthetic transcripts: _alive_sessions and the live map are the
     module's own, _usage is the patched report, every frame goes to self.sent."""
@@ -214,7 +251,9 @@ class _PauseFixture(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.dir = Path(self.td.name)
         self._orig = (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
-                      km._send_to_app, km.Sessions.__dict__["backend_for"], km._auth_key_present)
+                      km._send_to_app, km.Sessions.__dict__["backend_for"], km._auth_key_present, km.time)
+        self.clock = _KernelClock()
+        km.time = self.clock
         km.jd.STATE = self.dir
         km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
         km.jd.rearm_failed_summaries = lambda now, **k: 0
@@ -233,7 +272,7 @@ class _PauseFixture(unittest.TestCase):
 
     def tearDown(self):
         (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
-         km._send_to_app, km.Sessions.backend_for, km._auth_key_present) = self._orig
+         km._send_to_app, km.Sessions.backend_for, km._auth_key_present, km.time) = self._orig
         km._APIH_LAST[0] = None
         km._api_err_cache.clear()
         km._api_last_failed_cache.clear()
@@ -478,6 +517,143 @@ class SpendPauseLift(_PauseFixture):
         d = json.loads((self.dir / "retry-paused.json").read_text())
         self.assertEqual(set(d), {"paused", "t"})
         self.assertEqual(km._retry_pause_bills(), "")
+
+
+class SpendPauseStandDown(SpendPauseLift):
+    """The lift leaves the capped session's own record standing: a spend cap is on-you, so romp sends it no
+    retry and only a human prompt to that session clears _api_error. Round 2's rule then re-engaged on that
+    record the cycle after every lift, so the pause alternated at the streaming session's output cadence and
+    settled ON once it idled, gating the judges and the idle-queue drives until someone prompted the capped
+    session (review round 3, 2026-09-07). The un-pause of a spend pause now records liftedAt and the floor it
+    superseded, the memory rides every later write, and the engage skips records older than it."""
+
+    SID_TESTS = "88888888-aaaa-4bbb-8ccc-000000000003"
+
+    def _tests_session(self):
+        tests, row = self._session(self.SID_TESTS, "tests", "key", _out_line(self.now - 60))
+        self.live[self.SID_TESTS] = row
+        return tests
+
+    def _file(self):
+        return json.loads((self.dir / "retry-paused.json").read_text())
+
+    def test_the_harness_scenario_one_lift_no_re_engage_and_the_pause_off_once_the_streamer_idles(self):
+        # the round-3 HIGH finding's harness: 'web' (key) sits on its cap record, 'tests' (key) streams one
+        # answer per cycle for six cycles after the lift, then idles for three. Before the fix the states
+        # alternated paused/degraded at the output cadence (four engages, three lifts) and were paused at the end.
+        tests = self._tests_session()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            states = [self._cycle(int(self.now), self.live)]
+            floor = km._retry_pause_ts()
+            for i in range(1, 7):
+                self._append(tests, _out_line(floor + i), floor + i)
+                states.append(self._cycle(int(self.now) + i, self.live))
+            for i in range(7, 10):
+                states.append(self._cycle(int(self.now) + i, self.live))
+        self.assertEqual(states, ["paused"] + ["degraded"] * 9, "one lift, and the stale record engages nothing")
+        self.assertFalse(km._retry_paused_on(), "OFF after the streamer idles")
+        self.assertEqual(self._states(), ["paused", "degraded"], "two frames: the engage and the lift")
+        self.assertEqual((err.getvalue().count("auto-engaged"), err.getvalue().count("auto-cleared")), (1, 1))
+        self.assertTrue(km._api_error(self.web), "the capped session's record still stands: only a human prompt clears it")
+        self.assertEqual(self.sent[-1][1]["waiting"], 1, "and the cell still counts it")
+
+    def test_a_new_spend_record_after_the_lift_engages_once(self):
+        tests = self._tests_session()
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        floor = km._retry_pause_ts()
+        self._append(tests, _out_line(floor + 1), floor + 1)
+        self.assertEqual(self._cycle(int(self.now) + 1, self.live), "degraded")
+        self.assertEqual(self._cycle(int(self.now) + 2, self.live), "degraded")
+        # the user prompts 'web' and it fails on the cap again: a record written after the lift is new information
+        self._append(self.web, _prompt_line(floor + 3, "try once more"), floor + 3)
+        self.assertEqual(self._cycle(int(self.now) + 3, self.live), "degraded", "a prompt is not a new record")
+        self._append(self.web, _err_line(floor + 5, SPEND_TEXT), floor + 5)
+        self.clock.floor = floor + 5.5                         # the kernel's clock has reached the new record
+        states = [self._cycle(int(self.now) + 4 + i, self.live) for i in range(3)]
+        self.assertEqual(states, ["paused"] * 3, "engages once on the new record and holds")
+        self.assertEqual(self._states(), ["paused", "degraded", "paused"])
+        self.assertEqual((km._retry_pause_reason(), km._retry_pause_bills()), ("spend", "key"))
+        self.assertGreater(km._retry_pause_ts(), floor, "a new floor")
+        # a second round: the key account serves again, the new record is the stale one now
+        self._append(tests, _out_line(floor + 7), floor + 7)
+        self.clock.floor = floor + 7.5
+        states = [self._cycle(int(self.now) + 7 + i, self.live) for i in range(3)]
+        self.assertEqual(states, ["degraded"] * 3, "one lift again, and no re-engage on the second record either")
+        self.assertEqual(self._states(), ["paused", "degraded", "paused", "degraded"])
+
+    def test_the_memory_survives_a_limit_pause_that_engages_and_lifts_in_between(self):
+        # a single-slot memory dropped at the next write would let the limit lift hand the stale record back
+        tests = self._tests_session()
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        floor = km._retry_pause_ts()
+        self._append(tests, _out_line(floor + 1), floor + 1)
+        self.assertEqual(self._cycle(int(self.now) + 1, self.live), "degraded")            # the spend lift
+        lifted = self._file()["liftedAt"]
+        km._usage = lambda: {"limited": {"fiveHour": True}}
+        self.assertEqual(self._cycle(int(self.now) + 2, self.live), "paused")              # the login window
+        self.assertEqual((km._retry_pause_reason(), self._file()["liftedAt"]), ("limit", lifted))
+        km._usage = lambda: {"limited": None}
+        states = [self._cycle(int(self.now) + 3 + i, self.live) for i in range(3)]
+        self.assertEqual(states, ["degraded"] * 3, "the limit lifts; the stale spend record engages nothing")
+        self.assertEqual(self._states(), ["paused", "degraded", "paused", "degraded"])
+        self.assertEqual(self._file()["liftedAt"], lifted)
+
+    def test_a_limit_lift_rules_on_no_spend_record(self):
+        # the login window is at 100% first; 'web' hits its cap during that pause; the report clears. The limit
+        # lift's evidence is the report, which says nothing about the cap, so the cap engages its own pause.
+        km._usage = lambda: {"limited": {"fiveHour": True}}
+        web, web_row = self._session(SID_KEY, "web", "key", _out_line(self.now - 120))    # not capped yet
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        self.assertEqual(km._retry_pause_reason(), "limit")
+        floor = km._retry_pause_ts()
+        self._append(web, _err_line(floor + 1, SPEND_TEXT), floor + 1)
+        self.assertEqual(self._cycle(int(self.now) + 1, self.live), "paused")
+        km._usage = lambda: {"limited": None}
+        self.assertEqual(self._cycle(int(self.now) + 2, self.live), "degraded", "the limit lifts")
+        self.assertEqual(self._file(), {"paused": False}, "a limit lift records no spend ruling")
+        self.assertEqual(self._cycle(int(self.now) + 3, self.live), "paused", "the cap, never ruled on, pauses")
+        self.assertEqual((km._retry_pause_reason(), km._retry_pause_bills()), ("spend", "key"))
+
+    def test_the_user_s_resume_over_a_spend_pause_stands_until_a_new_record(self):
+        # the same stale record undid the detail's Resume the next cycle (the setGlobalRetryPaused route writes
+        # the same un-pause): a user gesture is new information too
+        self.assertEqual(self._cycle(int(self.now), self.live), "paused")
+        floor = km._retry_pause_ts()
+        km._set_retry_paused(False)
+        states = [self._cycle(int(self.now) + 1 + i, self.live) for i in range(3)]
+        self.assertEqual(states, ["degraded"] * 3)
+        self.assertEqual(self._file()["supersedes"], floor)
+
+    def test_the_pause_file_remembers_the_spend_lift_across_later_writes(self):
+        tests = self._tests_session()
+        self._cycle(int(self.now), self.live)
+        floor = km._retry_pause_ts()
+        self._append(tests, _out_line(floor + 1), floor + 1)
+        self._cycle(int(self.now) + 1, self.live)
+        d = self._file()
+        self.assertEqual(set(d), {"paused", "liftedAt", "supersedes"})
+        self.assertEqual((d["paused"], d["supersedes"]), (False, floor), "supersedes: the floor of the pause it cleared")
+        lifted = d["liftedAt"]
+        self.assertGreaterEqual(lifted, floor)
+        self.assertEqual(km._retry_pause_lifted_at(), lifted)
+        self.assertEqual((km._retry_pause_ts(), km._retry_pause_reason(), km._retry_pause_bills()), (0.0, "", ""))
+        km._set_retry_paused(False)                            # a Resume over an unpaused file keeps what it finds
+        self.assertEqual((self._file()["liftedAt"], self._file()["supersedes"]), (lifted, floor))
+        km._set_retry_paused(True, reason="limit")             # a later pause carries it
+        d = self._file()
+        self.assertEqual(set(d), {"paused", "t", "reason", "liftedAt", "supersedes"})
+        self.assertEqual(d["liftedAt"], lifted)
+        km._set_retry_paused(False)                            # and so does its lift
+        self.assertEqual(self._file()["liftedAt"], lifted)
+        km._set_retry_paused(True)                             # a manual pause carries it, and its un-pause too
+        km._set_retry_paused(False)
+        self.assertEqual(self._file()["liftedAt"], lifted)
+        (self.dir / "retry-paused.json").unlink()              # no memory on file: nothing is invented
+        km._set_retry_paused(True)
+        km._set_retry_paused(False)
+        self.assertEqual(self._file(), {"paused": False})
+        self.assertEqual(km._retry_pause_lifted_at(), 0.0)
 
 
 class PauseWriteSeq(_PauseFixture):

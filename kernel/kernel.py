@@ -7580,6 +7580,23 @@ def _set_retry_paused(paused, reason="", bills=""):
     # `bills` (review round 2, 2026-09-07): for a spend pause, the billing the capped session was on,
     # "login" or "key" (_bills_login of its live row). The lift rule reads it (_auto_resume_retry): a cap
     # is on ONE account, so only a session on that billing can show it serving again.
+    # `liftedAt` / `supersedes` (review round 3, 2026-09-07): un-pausing a SPEND pause, by the lift rule or
+    # by the user's Resume, records the instant and the floor (`t`) of the pause it cleared. That is the
+    # spend engage's stand-down rule (_spend_capped_session): a spendLimit record older than liftedAt was
+    # already outranked by the evidence that lifted the pause, and romp never clears such a record on its
+    # own (a spend cap is on-you: _fire_api_retry sends no retry; only a human prompt to the capped session
+    # clears _api_error), so re-engaging on it put the pause back the cycle after every lift, alternating
+    # at the streaming session's output cadence and settling ON once it idled. The memory rides every later
+    # write, paused or not, until a newer spend ruling replaces it: a limit pause that engages and lifts in
+    # between must not forget it. A limit or manual pause's un-pause records nothing (its evidence, the
+    # usage report or a transcript mtime, says nothing about a spend record), and an un-pause over an
+    # already-unpaused file keeps what it finds (the write moves seq only).
+    try:
+        prev = json.loads((jd.STATE / "retry-paused.json").read_text())
+        if not isinstance(prev, dict):
+            prev = {}
+    except Exception:
+        prev = {}
     d = {"paused": bool(paused)}
     if paused:
         d["t"] = time.time()
@@ -7587,6 +7604,12 @@ def _set_retry_paused(paused, reason="", bills=""):
             d["reason"] = reason
         if bills:
             d["bills"] = bills
+    elif prev.get("paused") and prev.get("reason") == "spend":
+        d["liftedAt"] = time.time()
+        d["supersedes"] = float(prev.get("t") or 0)
+    if "liftedAt" not in d and prev.get("liftedAt"):
+        d["liftedAt"] = prev["liftedAt"]
+        d["supersedes"] = prev.get("supersedes", 0)
     _RETRY_PAUSE_SEQ[0] += 1
     _atomic_write(jd.STATE / "retry-paused.json", json.dumps(d))
 
@@ -7617,6 +7640,16 @@ def _retry_pause_bills():
         return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("bills") or "")
     except Exception:
         return ""
+
+
+def _retry_pause_lifted_at():
+    """The instant the last SPEND pause was un-paused (the lift rule or the user's Resume), or 0 when none is
+    on record. The spend engage's stand-down floor: a spendLimit record older than this was already outranked
+    (_spend_capped_session). Survives later pauses and lifts of other reasons (_set_retry_paused carries it)."""
+    try:
+        return float(json.loads((jd.STATE / "retry-paused.json").read_text()).get("liftedAt") or 0)
+    except Exception:
+        return 0.0
 
 
 def _account_limited():
@@ -7688,7 +7721,12 @@ def _auto_pause_on_limit():
     'distilling', no background/summary). A Fable-only session that hits the wall is surfaced per-session
     (api-error → blocked), which is where a model-scoped limit belongs. fable=100% no longer lights the top
     banner either (the user 2026-07-04: it popped every refresh for the 7-day window and wasn't actionable) —
-    only the rail's passive third bar shows it (see _usage().limited); it pauses nothing and warns nothing."""
+    only the rail's passive third bar shows it (see _usage().limited); it pauses nothing and warns nothing.
+
+    No stand-down is needed on this edge (review round 3, 2026-09-07): both edges read the report, so a
+    re-engage after a lift needs a reading that names a window again, never a record the lift already
+    outranked. The spend twin acts on a transcript record that outlives its lift, and stands down on it
+    (_spend_capped_session's `after`)."""
     try:
         account = _account_limited()                     # 5h / 7d only — fable is model-scoped
     except Exception:
@@ -7702,14 +7740,25 @@ def _auto_pause_on_limit():
         #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
 
-def _spend_capped_session(now, tmux):
-    """The first alive session sitting blocked on a MONTHLY SPEND CAP error, or None. Account-wide by
-    nature (the cap is on the account, so every session hits it), so one is enough to pause everything."""
+def _spend_capped_session(now, tmux, after=0):
+    """The first alive session sitting blocked on a MONTHLY SPEND CAP error whose record is not older than
+    `after`, or None. Account-wide by nature (the cap is on the account, so every session hits it), so one is
+    enough to pause everything. `after` is the last spend lift's instant (_retry_pause_lifted_at, review
+    round 3, 2026-09-07): a record written before it was already outranked by the output that lifted the
+    pause (or by the user's Resume), and a writer whose evidence predates the ruling stands down. A record
+    written after it is new information and engages again. Whole seconds on both sides: the record's `t` is
+    the CLI's timestamp in seconds, and a lift lands at least a second after the record (its output must
+    post-date the pause floor, which the record pre-dates), so no stale record ties. A record with no
+    readable time (t 0) is not proof of staleness and counts."""
+    floor = int(after or 0)
     for s in _alive_sessions(now, tmux):
         p = s.get("path")
         if p:
             e = _api_error(p)
             if e and e.get("spendLimit"):
+                t = int(e.get("t") or 0)
+                if floor and 0 < t < floor:
+                    continue                             # already ruled on: the lift's evidence is newer
                 return s
     return None
 
@@ -7724,10 +7773,19 @@ def _auto_pause_on_spend_limit(now, tmux):
     flag) — correct, since a capped account fails every model call. _auto_resume_retry clears it the moment
     a session on the capped billing serves a request again (which can't happen until the cap lifts), so it
     holds exactly as long as the cap does. reason='spend' → the card shows 'raise your cap', not a reset
-    countdown. Idempotent."""
+    countdown. Idempotent.
+
+    Stand-down (review round 3, 2026-09-07): the capped session's record outlives the lift. A spend cap is
+    on-you, so romp sends it no retry and only a human prompt to that session clears _api_error; the lift
+    reads another session's output on the same billing and leaves the record standing. Engaging on it again
+    the next cycle put the pause back after every lift (alternating at the streaming session's output
+    cadence, then stuck ON once it idled, gating the judges and the idle-queue drives until someone prompted
+    the capped session). So the engage reads the last spend lift's instant off the pause file
+    (_retry_pause_lifted_at) and skips records older than it; a NEW spendLimit record, written after the
+    lift, engages with a new floor."""
     if _retry_paused_on():
         return
-    capped = _spend_capped_session(now, tmux)
+    capped = _spend_capped_session(now, tmux, after=_retry_pause_lifted_at())
     if capped is not None:
         # which billing the cap is on, from the capped session's live row (review round 2, 2026-09-07): the
         # lift rule accepts fresh output from that billing only, so a session on the other account cannot
@@ -7784,7 +7842,9 @@ def _auto_resume_retry(now, tmux):
       install a session on the other account streams straight through it: the old mtime rule counted that,
       _auto_pause_on_spend_limit re-engaged the pause the next cycle while the capped session sat on its
       record, and the file flipped every cycle. A file with no billing recorded (an older kernel's pause)
-      takes any session's fresh output.
+      takes any session's fresh output. The lift leaves the capped session's record standing (nothing but a
+      human prompt clears a spend record), so the un-pause records its instant (liftedAt) and the engage
+      stands down on records older than it (review round 3): one lift, no re-engage, until a NEW record.
     - manual: any live session, not blocked on an API error, whose transcript mtime passed the pause floor
       (the user's own words above, unchanged).
 
