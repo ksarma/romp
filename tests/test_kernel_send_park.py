@@ -994,9 +994,9 @@ class SendReturnShape(unittest.TestCase):
                          "a drained answer's queue entry carries the id exactly like an immediate send's")
 
     def test_a_non_forwarding_backend_merges_a_run_carrying_an_id_as_before(self):
-        km._deliver_send_batch(self.be, SID, [("send", "alpha", None, "ut-9f2c1a34"), ("send", "beta", None)])
+        km._deliver_send_batch(self.be, SID, [("send", "alpha", None, None, "ut-9f2c1a34"), ("send", "beta", None)])
         self.assertEqual(self.be.calls, [("send", "alpha\n\nbeta")],
-                         "tmux-shaped: the fourth slot changes nothing about the merged paste")
+                         "tmux-shaped: the fifth slot changes nothing about the merged paste")
 
 
 if __name__ == "__main__":

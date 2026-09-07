@@ -6226,6 +6226,10 @@ class SdkSession:
             with self._lock:
                 dropped = self._q_pop(0)[0] if self._pending else None
             self._persist_queue()
+            if dropped is not None and getattr(dropped, "todo", ""):
+                # defensively (arm refuses queued strangers, so the head SHOULD be the edit): a
+                # dropped user-todo ANSWER's ask must visibly return, same as any other loss
+                self.backend._todo_lost(self.sid, dropped.todo, str(dropped))
         self._rewind_wait = False
         try:
             self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
@@ -8516,7 +8520,7 @@ class SdkBackend:
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
                  push_session=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
-                 log=None, reconcile: bool = False, boot_at=None, code_version=None):
+                 log=None, reconcile: bool = False, boot_at=None, code_version=None, todo_lost=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
         self.code_version = str(code_version or "")   # the kernel's git sha, stamped on every lease this kernel
@@ -8533,6 +8537,10 @@ class SdkBackend:
         self._push_session_cb = push_session   # targeted ONE-session push (kernel _push_session_now) for
         #   per-session chip events (the connect handshake): a wake alone leaves the flip riding the next
         #   full push cycle, which runs seconds on a busy fleet (the user 2026-08-10)
+        self._todo_lost_cb = todo_lost     # todo_lost(sid, tid, text): a queued user-todo ANSWER lost its
+        #   holder (drop-marked echo / rewind-dropped head) — the kernel reopens the ask (see _todo_lost).
+        #   A CONSTRUCTOR arg, not a post-construction assignment: _reseed_echoes below fires drop marks
+        #   during __init__, and a boot-lost answer must not miss the seam by wiring order.
         self.mcp_config = mcp_config
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
@@ -11337,8 +11345,28 @@ class SdkBackend:
                 self._touch_live(sid)                  # a flag write outside the lock: still a change to the tail
             self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                       "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
+            if a.get("_todo"):
+                # a user-todo ANSWER lost its holder: hand the id it carries to the kernel so the
+                # ask can visibly return — the drop alone is detected here but cannot be tied back
+                # to the ask without the id. The kernel checks the transcript first: a
+                # landed-but-unpruned echo at kernel death is COMMON and means delivered, not lost.
+                self._todo_lost(sid, a["_todo"], a["_echo_text"])
         self._persist_echoes(sid)
         self._wake_push()
+
+    def _todo_lost(self, sid: str, tid: str, text: str) -> None:
+        """Hand a possibly-undelivered user-todo ANSWER to the kernel's todo_lost seam — fired at
+        the exact loss events: an echo drop-marked at boot/spawn/reconnect (_mark_dropped_echoes)
+        or a rewind-dropped queue head (_rewind_failed). The kernel side reopens the ask unless the
+        transcript proves the text landed. Guarded and swallowing: the visible drop marking must
+        survive a raising kernel side, and a backend built without the seam (tests, older kernels)
+        simply keeps today's behavior."""
+        if not self._todo_lost_cb:
+            return
+        try:
+            self._todo_lost_cb(sid, tid, text)
+        except Exception as e:
+            self._log("user-todo loss seam (%s, %s) failed: %s" % (sid[:8], tid, e), problem=True)
 
     def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None):
         """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
