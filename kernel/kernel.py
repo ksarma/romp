@@ -31424,6 +31424,19 @@ setTimeout(hide,5000);})();
 # posts {romp:'wsState',app,state}; the timeline/feed/etc. are pushed from the kernel, so a drop silently
 # freezes them), the usage-limit + judge-degraded signatures (see _LANDING_USAGE_JS), and any
 # {romp:'notify',kind,text} a pane posts. window.__rompNotify(kind,text) is the one write path.
+#
+# THE pane presentation order (the user 2026-08-30: mobile must list the panes in the desktop
+# order — "mobile is a re-layout of the desktop, never a re-ordering"). This list is the desktop
+# rail strip's left-to-right order, which is the user's own choice (2026-07-05) and the desktop's
+# actual visible LIST of the named panes (the column layout cannot express it: Sessions/timeline
+# is a band, not a column). The desktop rail buttons (_rail_buttons_html), the mobile #mtabs buttons
+# (_mtab_buttons_html), the WS drop row (_note_ws_drop) and the bell's pane-label map (PN, in the
+# script below) all render from this one constant — reorder or rename here and every surface moves
+# together; a second hardcoded list is the bug this replaces (the bell's PN was the last one, the
+# #957 review). Defined above _LANDING_ERRS_JS because that string is built from it at import.
+# Keys stay internal (timeline/fleet); labels are the user-facing names.
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"))
+
 _LANDING_ERRS_JS = """
 (function(){var icon=document.getElementById('rail-errs'),micon=document.getElementById('merr'),
 back=document.getElementById('rerr-back'),list=document.getElementById('rerr-list'),
@@ -31531,7 +31544,7 @@ if(m&&m.romp==='notify'&&m.text)window.__rompNotify(m.kind||'error',m.text,
 var st={};
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}return false;}
-var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+var PN=""" + json.dumps(dict(_PANE_ORDER)) + """;   // key → rail label, from _PANE_ORDER (one list with the rail, the tabs and the drop row); timeline key stays internal — the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
@@ -33209,16 +33222,6 @@ _REFRESH_SVG = (
     # the arrowhead must READ at 18px (the user 2026-07-27: the first cut's ~3px triangle was invisible) —
     # a 4.4-wide, 3.4-deep triangle straddling the arc's end point, pointing along its clockwise tangent
     "<path d='M9.5 5.4 L11.7 1.6 L13.5 5.2 Z' fill='currentColor'/></svg>")
-
-
-# THE pane presentation order (the user 2026-08-30: mobile must list the panes in the desktop
-# order — "mobile is a re-layout of the desktop, never a re-ordering"). This list is the desktop
-# rail strip's left-to-right order, which is the user's own choice (2026-07-05) and the desktop's
-# actual visible LIST of the named panes (the column layout cannot express it: Sessions/timeline
-# is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
-# from this one constant — reorder here and both surfaces move together; a second hardcoded list
-# is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
-_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"))
 
 
 def _rail_buttons_html():
