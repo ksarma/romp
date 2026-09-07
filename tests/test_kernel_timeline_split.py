@@ -338,7 +338,7 @@ class SkeletonFromCache(unittest.TestCase):
         self.assertEqual(base, sig(1000, {"S": {**row, "snapT": 123456.0}}), "the snapshot's clock stays out")
         self.assertNotEqual(base, sig(1000, {"S": {**row, "interrupting": True}}),
                             "`interrupting` is keyed: the SDK row exposes it and upstream's sig keys it (kept in the "
-                            "2026-09-07 fold, flags.md kernel; tests/test_stage0_log_readers.py pins the same)")
+                            "2026-09-07 fold for that reason; tests/test_stage0_log_readers.py pins the same)")
 
     def test_the_view_sig_stats_the_files_the_lanes_read(self):
         sig = self.saved[3]

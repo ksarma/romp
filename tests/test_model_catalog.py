@@ -329,7 +329,7 @@ class FetchAndFallback(unittest.TestCase):
         """The wired path, exactly what _sdk_locked installs before the boot refresh: jd._WORK_KEY_FN =
         sdk_backend.work_api_key, the one door through which the kernel reaches a key source. Upstream's
         _models_api_credential also consulted keysource.select_source on its own when nothing was wired;
-        the fork refused that rung (upmerge 2026-09-07, kernel-code flag: the kernel never reads a key
+        the fork refused that rung (upmerge 2026-09-07, the fork's standing rule: the kernel never reads a key
         source itself, and an unwired ambient ANTHROPIC_API_KEY stays unread, CredentialPolicy below), so
         the two runtime-source tests reach the source the way the running kernel does. The claimer's
         process-lifetime stash is cleared so the claim happens here and restored afterwards."""

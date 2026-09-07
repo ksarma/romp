@@ -386,7 +386,7 @@ class BarsDeltas(unittest.TestCase):
         with redirect_stderr(err):
             self.assertEqual(st.push(p3), [])
         self.assertFalse(st.c["alive"], "a failed send marks the client dead")
-        # the line is upstream's _note_ws_drop shape (kernel-code.md H31, the feed-deltas offer as reviewed upstream)
+        # the line is upstream's _note_ws_drop shape (the feed-deltas offer as reviewed upstream, adopted in the 2026-09-07 fold)
         self.assertIn("ws: dropping timeline client", err.getvalue()); self.assertIn("slot=timelinebars", err.getvalue())
         self.assertIn("synthetic socket failure", err.getvalue())
         self.assertEqual(st.c["dstate"]["bars"]["rev"], rev, "a frame that did not go does not advance what the client holds")

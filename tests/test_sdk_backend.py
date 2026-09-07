@@ -3195,7 +3195,7 @@ class SpendRecord(unittest.TestCase):
 
     # ── upstream's spend-ledger fold (their #956, 2026-09-06/07), on the fork's helpers: upstream's
     # `_spend_session` returned (session, run, day); the fork's `_spend_session` / `_feed` / `_day` are
-    # the same three pieces, so these tests ride them (R6 on the upmerge of 2026-09-07) ──────────────
+    # the same three pieces, so these tests ride them (the fold of 2026-09-07 kept the fork's helpers) ────
     @staticmethod
     def _model_map(total_in, model="claude-x", out=0):
         return {model: {"inputTokens": total_in, "outputTokens": out, "cacheReadInputTokens": 0,

@@ -3591,7 +3591,8 @@ def load_goals(fsid):
     function's fallback), or the journal exists but could not be read (_replay_overrides' OSError path). An
     ABSENT store file is not marked: the fresh empty store IS what disk holds. Readers that cache a load's
     answer by the files' identity consult the mark before caching: the kernel's awaiting-lift gate
-    (_LIFT_GATE), the absent-store predicate memo (_absent_store_flags), and load_goals_shared's fill,
+    (_lift_seen, keyed by _sid_inputs_fp), the absent-store predicate memo (_absent_store_flags), and
+    load_goals_shared's fill,
     which never publishes a marked store as the files' content."""
     _goal_io_bump("loads")
     try:

@@ -624,7 +624,8 @@ class LiftStandsDown(unittest.TestCase):
 class LiftGate(unittest.TestCase):
     """The inputs gate in front of the lift's store load (perf plan 2, P6a; upmerge 2026-09-07: upstream's
     _sid_inputs_fp / _lift_seen fingerprint adopted over the fork's _LIFT_GATE identity key, with the
-    fork's intents layered on, kernel-code DECISIONS 1). The ruling reads the store, the override journal,
+    fork's intents layered on: upstream's gate also skips a stamped session whose inputs are unchanged, a
+    skip the fork's never made). The ruling reads the store, the override journal,
     the goals-archive (a `restore` row re-inserts a node only when neither holds it), the transcript, the
     postal log and the SDK reg, plus two live facts (the registry's task ids and subagent count, and
     whether each running dispatch's deadline has passed), so a session whose fingerprint is unchanged
@@ -808,7 +809,7 @@ class LiftGate(unittest.TestCase):
         self.assertGreaterEqual(self._tick(), 1, "the inode alone moved the identity: reloaded")
         self.assertIsNone(self._stamp())
 
-    # ---- a stamped store is gated on the same terms (upmerge 2026-09-07, kernel-code DECISIONS 1: the
+    # ---- a stamped store is gated on the same terms (upmerge 2026-09-07, upstream's gate adopted: the
     #      fork's _LIFT_GATE re-loaded a stamped store every tick; upstream's fingerprint gate skips it
     #      until an input moves, and the return that ends the wait is itself a transcript write) ----
     def test_a_stamped_store_with_unchanged_inputs_is_skipped_too(self):

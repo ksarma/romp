@@ -461,14 +461,14 @@ class PusherRecords(unittest.TestCase):
     send paths classify full / delta / deduped for whole-frame, delta-capable and chat-tail clients."""
 
     # _refresh_parked_parses is not a cycle job since the 2026-09-07 upstream fold: the per-sid refresh runs
-    # in the locked drain, not in _pusher_cycle_jobs (flags.md, kernel: adopted upstream's removal).
+    # in the locked drain, not in _pusher_cycle_jobs (upstream's removal adopted: the refresh belongs under the drain's lock).
     JOBS = ("_apply_pending_ops", "_lift_spent_awaiting", "_death_sweep_tick",
             "_end_on_idle_sweep", "_deferral_sweep_tick", "_auto_nudge_tick", "_interrupt_block_tick",
             "_auto_pause_on_limit", "_usage_poll_tick", "_auto_pause_on_spend_limit", "_auto_resume_retry",
             "_auto_resume_session_retry", "_auto_retry_tick", "_idle_queue_drive_tick",
             "_clear_done_working_notes", "_push_all", "_tab_list_tmux",
             "_api_health_frame", "_api_health_push",   # the bottom bar's API cell (2026-09-07)
-            "_turn_notify_tick")                       # upstream's turn-end notification pass (fold 2026-09-07, kernel-code.md)
+            "_turn_notify_tick")                       # upstream's turn-end notification pass (fold 2026-09-07)
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
