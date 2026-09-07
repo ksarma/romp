@@ -805,6 +805,11 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results = {}
             canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
             results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            # the file the need is about (2026-09-07): the kernel's warning for an unresolved path
+            # rides the reply behind the tool's own lead-in, which is what is scanned here
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34", "warning": "that path did not resolve"}
+            results["add: noted, path unresolved"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})[0]
             results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
@@ -828,6 +833,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])
+        self.assertIn("About the file: that path did not resolve", results["add: noted, path unresolved"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
         self.assertIn("Already closed", results["withdraw: already answered"])

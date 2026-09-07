@@ -64,6 +64,12 @@ is made of ASCII letters, digits and `_ . ~ / -` only, so any other character en
 `(`, `@`, `=`, `%`, `:`, an accented letter); a `file://` URI runs to the next whitespace, angle bracket,
 quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
 link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a path. A relative path is read against the working directory of the session that flagged it.
+A request can also name the file it is about, through the tool's `file` argument. The kernel resolves
+that path against the session's working directory and stores it as an absolute path; the request shows it
+as a link, and a comment you send from that file's Comments panel offers to answer the request however you
+opened the file, not only from that link. A path that does not resolve on the session's machine is kept as
+given, the request is still filed, and the session is told the link may not open. A session that resumes
+after a restart or a compaction sees the path after each such request's text in the list it is handed back.
 
 These are for scripting and for agents rather than daily use:
 
@@ -296,6 +302,8 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `set_emoji(emoji)` | Put one emoji before your own session's name on its tab; `''` clears it. Refused, with the reason, for anything but exactly one emoji |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
+| `add_user_todo(text, detail?, file?)` | The session flags something it needs from you and keeps working; offered only while the **User todos** switch is on. `text` is the one-line request, `detail` optional longer context, `file` the absolute path of the file the request is about (User todos, above) |
+| `withdraw_user_todo(id)` | Take back a request by the id `add_user_todo` returned |
 
 ### Claude Code 2.1.224 or newer
 

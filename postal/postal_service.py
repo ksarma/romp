@@ -3171,10 +3171,11 @@ MCP_TOOLS = [
     # its parent session — the right behavior (the need belongs to the session the user talks to),
     # it just means "who filed this" is always the session, never an individual subagent.
     {"name": "add_user_todo",
-     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
+     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI)"},
-                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"}},
+                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"},
+                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; it becomes the link in the request and lets the person's comments on that file answer this todo"}},
                      "required": ["text"]}},
     {"name": "withdraw_user_todo",
      "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a stale request.",
@@ -3311,16 +3312,28 @@ def _mcp_call(name, args):
         text = str(args.get("text") or "").strip()
         if not text:
             return "Need 'text' — one short line: what you need from them and why.", True
-        res = _kernel_post("/usertodo", {"id": mid, "text": text,
-                                         "detail": str(args.get("detail") or "").strip()})
+        body = {"id": mid, "text": text, "detail": str(args.get("detail") or "").strip()}
+        # `file` (the todo-file follow-on, 2026-09-07): the file the need is about, sent only when
+        # given. The KERNEL resolves it (a relative path against the session's cwd) and stores
+        # the absolute path; it never refuses a todo for its file, and says in `warning` when
+        # the path did not resolve — surfaced below, never swallowed, so the agent can fix the
+        # path while the need already stands.
+        file_ = str(args.get("file") or "").strip()
+        if file_:
+            body["file"] = file_
+        res = _kernel_post("/usertodo", body)
         tid = res.get("todoId") if isinstance(res, dict) else None
         if not tid:
             # LOUD, never a silent drop: an unsaved need the agent believes is filed is exactly
             # the vanishing this tool exists to stop.
             return ("Couldn't save that — the person you work for will NOT see it. Say what you "
                     "need directly in your next reply instead, or try again shortly."), True
-        return ("Noted (id %s) — the person you work for will see it. Withdraw it "
-                "(withdraw_user_todo) the moment the need is met or moot." % tid), False
+        out = ("Noted (id %s) — the person you work for will see it. Withdraw it "
+               "(withdraw_user_todo) the moment the need is met or moot." % tid)
+        warning = str(res.get("warning") or "").strip()
+        if warning:
+            out += " About the file: " + warning
+        return out, False
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain
         # answer — never a silent success (plans/user-todos.md).

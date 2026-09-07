@@ -19,7 +19,11 @@ Pinned here:
 - the per-install SWITCH (the user 2026-09-03, OFF by default): while the kernel's
   user-todos-enabled.json does not say yes, tools/list omits both tools and a call anyway is
   refused plainly, before any post — read from the file per call, because the bus is its own
-  long-lived process and a gear flip must land without a restart (Switch).
+  long-lived process and a gear flip must land without a restart (Switch);
+- the optional `file` (the todo-file follow-on, 2026-09-07): the file the need is about rides
+  the post as `file` when given and is absent otherwise; the kernel resolves and stores it, and
+  its `warning` for a path that did not resolve reaches the agent in the reply, never swallowed
+  (File). The argument's own description keeps the veil, and so does the warning's lead-in.
 
 The veil on the DESCRIPTIONS (no romp machinery named) is scanned by test_injected_voice.py.
 SYNTHETIC fixtures only.
@@ -61,6 +65,22 @@ class ToolSurface(unittest.TestCase):
         t = self._tool("add_user_todo")
         self.assertEqual(t["inputSchema"]["required"], ["text"])
         self.assertIn("detail", t["inputSchema"]["properties"])
+
+    def test_add_offers_an_optional_file_and_the_description_names_it(self):
+        # the todo-file follow-on (2026-09-07): the file the need is about, structured — the
+        # request shows it and the person's comments on that file can answer the todo
+        t = self._tool("add_user_todo")
+        self.assertIn("file", t["inputSchema"]["properties"])
+        self.assertNotIn("file", t["inputSchema"]["required"], "optional: most needs are not about a file")
+        desc = t["inputSchema"]["properties"]["file"]["description"]
+        self.assertIn("absolute path", desc)
+        self.assertIn("comments on that file", desc, "says what the argument buys: comments answer the todo")
+        self.assertIn("`file`", t["description"], "the tool's own description points at the argument")
+        for text in (desc, t["inputSchema"]["properties"]["text"]["description"],
+                     t["inputSchema"]["properties"]["detail"]["description"]):
+            for word in ("romp", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check",
+                         "viewer", "panel", "dashboard", "pane"):
+                self.assertNotIn(word, text.lower(), "%r names machinery the agent cannot see" % word)
 
     def test_withdraw_requires_the_id(self):
         t = self._tool("withdraw_user_todo")
@@ -158,6 +178,84 @@ class Dispatch(unittest.TestCase):
         out, err = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
         self.assertTrue(err)
         self.assertEqual(self.posts, [])
+
+
+class File(unittest.TestCase):
+    """The optional `file` (the todo-file follow-on, 2026-09-07): the absolute path of the file the
+    need is about. The tool passes it to POST /usertodo as `file` and otherwise posts the shape it
+    always did; the KERNEL resolves it (a relative path against the session's cwd) and stores the
+    absolute path, never refusing a todo for its file, and answers `warning` when the path did not
+    resolve. The tool relays that warning in its reply — the todo stands, so no error flag, but
+    the agent hears that the link may not open. PRIVATE synthetic sid (the fixture rule)."""
+
+    SID = "5e5e5e5e-1111-4222-8333-944444444444"
+    MINTED = {"ok": True, "todoId": "ut-0a1b2c3d"}
+    WARNING = "the path /TESTDIR/notes-api/docs/report.md does not resolve on this machine, so the link may not open"
+
+    def setUp(self):
+        self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
+        self.posts = []
+        self.canned = dict(self.MINTED)
+        pm._kernel_post = lambda path, body, timeout=4.0: (self.posts.append((path, body)) or self.canned)
+        pm._self_identity = lambda: (self.SID, "api")
+        pm._heartbeat = lambda *a, **k: None
+        _switch(True)
+
+    def tearDown(self):
+        pm._kernel_post, pm._self_identity, pm._heartbeat = self._saved
+        _switch(None)
+
+    def test_the_file_rides_the_post_as_given(self):
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
+                                                  "detail": "The figures section is new.",
+                                                  "file": "/TESTDIR/notes-api/docs/report.md"})
+        self.assertFalse(err)
+        self.assertEqual(self.posts, [("/usertodo", {"id": self.SID, "text": "Need a look at the report",
+                                                     "detail": "The figures section is new.",
+                                                     "file": "/TESTDIR/notes-api/docs/report.md"})])
+        self.assertIn("ut-0a1b2c3d", out)
+
+    def test_a_relative_path_is_passed_through_for_the_kernel_to_resolve(self):
+        # the kernel owns resolution (_resolve_open_path against the session's cwd): the tool
+        # never guesses at a cwd the bus does not have
+        pm._mcp_call("add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})
+        self.assertEqual(self.posts[-1][1]["file"], "docs/report.md")
+
+    def test_no_file_means_no_file_key_the_shape_the_route_always_took(self):
+        pm._mcp_call("add_user_todo", {"text": "Need the staging port"})
+        self.assertNotIn("file", self.posts[-1][1])
+        pm._mcp_call("add_user_todo", {"text": "Need the staging port", "file": "   "})
+        self.assertNotIn("file", self.posts[-1][1], "a blank file is no file")
+        pm._mcp_call("add_user_todo", {"text": "Need the staging port", "file": None})
+        self.assertNotIn("file", self.posts[-1][1])
+
+    def test_the_kernels_warning_reaches_the_agent_and_the_todo_still_stands(self):
+        self.canned = dict(self.MINTED, warning=self.WARNING)
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
+                                                  "file": "/TESTDIR/notes-api/docs/report.md"})
+        self.assertFalse(err, "the todo was filed: a warning is not a failure")
+        self.assertIn("Noted (id ut-0a1b2c3d)", out, "the filing is confirmed first")
+        self.assertIn("withdraw_user_todo", out, "the withdraw contract still rides along")
+        self.assertIn("About the file: " + self.WARNING, out, "the kernel's words, relayed whole")
+        self.assertTrue(out.index("Noted") < out.index("About the file"), "the confirmation leads")
+
+    def test_no_warning_means_no_file_sentence(self):
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
+                                                  "file": "/TESTDIR/notes-api/docs/report.md"})
+        self.assertFalse(err)
+        self.assertNotIn("About the file", out)
+        self.canned = dict(self.MINTED, warning="")
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
+                                                "file": "/TESTDIR/notes-api/docs/report.md"})
+        self.assertNotIn("About the file", out, "an empty warning is no warning")
+
+    def test_the_warning_reply_keeps_the_veil(self):
+        # the lead-in is the tool's own words (the kernel's warning is scanned where it is
+        # rendered); the same vocabulary rule the descriptions ride
+        self.canned = dict(self.MINTED, warning="that path did not resolve on this machine")
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})
+        for word in ("romp", "card", "board", "goal", "nudge", "cleared", "dismissal", "status check"):
+            self.assertNotIn(word, out.lower(), "%r names machinery the agent cannot see" % word)
 
 
 class Account(unittest.TestCase):
