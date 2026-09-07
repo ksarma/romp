@@ -729,13 +729,15 @@ class PerCycleStoreReadersAreCached(_StateSandbox):
             km._task_store_known = saved
 
     def test_f_the_awaiting_lift_skips_a_session_whose_inputs_did_not_move(self):
+        # the read the gate fronts is the shared probe (jd.load_goals_shared) since the two-phase lift (perf
+        # round 4, P16): the writer's load_goals runs only when a lift is due, and nothing here is stamped
         sid = self.SID
         jd.GOALDIR.mkdir(parents=True, exist_ok=True)
         gpath = jd.GOALDIR / (sid + ".json")
         gpath.write_text(json.dumps({"rompUuid": sid, "seq": 0, "nodes": {}, "placements": {}, "status": {}}))
         loads = []
-        real = jd.load_goals
-        jd.load_goals = lambda fsid: (loads.append(fsid), real(fsid))[1]
+        real = jd.load_goals_shared
+        jd.load_goals_shared = lambda fsid: (loads.append(fsid), real(fsid))[1]
         saved_alive = km._alive_sessions
         km._alive_sessions = lambda now, tmux: [{"sid": sid, "path": str(gpath)}]
         tmux = {sid: {"state": "waiting", "bgTasks": []}}
@@ -747,7 +749,7 @@ class PerCycleStoreReadersAreCached(_StateSandbox):
             km._lift_spent_awaiting(NOW, tmux)
             km._lift_spent_awaiting(NOW + 1, tmux)
             km._lift_spent_awaiting(NOW + 2, tmux)
-            self.assertEqual(loads, [sid], "one load while nothing recorded moved")
+            self.assertEqual(loads, [sid], "one read while nothing recorded moved")
             tmp = gpath.with_suffix(".tmp")                  # published the way save_goals publishes: tmp + replace
             tmp.write_text(json.dumps({"rompUuid": sid, "seq": 1, "nodes": {}, "placements": {}, "status": {}, "note": "longer"}))
             os.replace(tmp, gpath)
@@ -769,7 +771,7 @@ class PerCycleStoreReadersAreCached(_StateSandbox):
             km._lift_spent_awaiting(NOW + 100 + 122, tmux)
             self.assertEqual(len(loads), 6, "…once")
             boom = [True]
-            jd.load_goals = lambda fsid: (loads.append(fsid), (_ for _ in ()).throw(RuntimeError("torn read")) if boom[0] else real(fsid))[1]
+            jd.load_goals_shared = lambda fsid: (loads.append(fsid), (_ for _ in ()).throw(RuntimeError("torn read")) if boom[0] else real(fsid))[1]
             scan.append({"id": "toolu_2", "status": "running", "t": NOW + 300})
             km._lift_spent_awaiting(NOW + 300, tmux)      # the ruling raises → not a ruling
             self.assertEqual(len(loads), 7)
@@ -777,7 +779,7 @@ class PerCycleStoreReadersAreCached(_StateSandbox):
             km._lift_spent_awaiting(NOW + 301, tmux)      # …so the next cycle retries on the same inputs
             self.assertEqual(len(loads), 8, "a raised ruling is retried, not skipped")
         finally:
-            jd.load_goals = real; km._alive_sessions = saved_alive; km._bg_scan_all_cached = saved_scan; km._lift_seen.pop(sid, None)
+            jd.load_goals_shared = real; km._alive_sessions = saved_alive; km._bg_scan_all_cached = saved_scan; km._lift_seen.pop(sid, None)
             try: os.unlink(gpath)
             except OSError: pass
 
