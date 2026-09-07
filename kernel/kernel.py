@@ -229,7 +229,11 @@ class _PerfStats:
                                    unreadable_stores: a gauge, not a counter: the goals files in a
                                    read-failure episode (the file exists and did not read or parse on
                                    its last read; load_goals answers a fallback, the stages stand down
-                                   and save_goals refuses to publish over it until it reads)
+                                   and save_goals refuses to publish over it until it reads);
+                                   lineage_reads: judge.resume_lineage calls, each a read and parse of
+                                   a session's whole states file (the episode-boundary check's guard
+                                   for an unrecorded head; a recorded head returns on the episode
+                                   log's stat before it, so at steady state this stays near zero)
       judge                       passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -28165,7 +28169,8 @@ def _episode_boundary_tick(now):
     in the producer thread BEFORE the judge tiers and the pre-pass goals snapshot, so the same pass's
     planner/closer/nudge already see the settled store. Cheap when nothing changed: _sessions() is the
     cached discover, the episode log read is an mtime memo, and a transcript's head record is cached
-    per path (immutable once written)."""
+    per path (immutable once written); the states-file lineage read runs only for a head the log does
+    not hold yet (see the guard order in _episode_boundary_check)."""
     for s in _sessions(now):
         try:
             _episode_boundary_check(s["sid"], s["path"], now)
@@ -28178,6 +28183,17 @@ def _episode_boundary_check(sid, path, now):
     if not head or not head["root"]:
         return                       # no head yet, or a resume-style leaf (chains into a prior file):
     #                                  either way the recorded episode is still the current one
+    # The two guards below are pure predicates on the same early return, so their order is free to
+    # choose, and it is chosen for cost (2026-09-07, the judge-pass performance round): the episode
+    # log read is an mtime memo, one stat per session on a hit; the lineage read parses every row of
+    # the session's states file. A recorded head, which is every session on every pass but the one
+    # where its head changed, returns on the stat and never reads the states file; the lineage is
+    # consulted only for an unrecorded head, still before the append that would record it.
+    if any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid)):
+        return                       # this head is already recorded — the current episode, or a
+    #                                  HISTORICAL one re-sighted through a stale path (a peer writer
+    #                                  mid-transition). A re-sighting is never a new boundary, and
+    #                                  skipping its append keeps the race below from growing the log.
     if any(l.get("to") == Path(path).stem for l in jd.resume_lineage(sid)):
         return                       # a RECORDED resume fork: the CLI resumed a machine-cut turn onto a
     #                                  fresh-headed file, byte-identical to a /clear on disk. The
@@ -28185,11 +28201,6 @@ def _episode_boundary_check(sid, path, now):
     #                                  same states/ rows), so this head is no boundary — treating it as
     #                                  one settled the session's open cards mid-turn and the cut turn's
     #                                  work never carded (the lost PR-watch finding, the user 2026-08-14).
-    if any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid)):
-        return                       # this head is already recorded — the current episode, or a
-    #                                  HISTORICAL one re-sighted through a stale path (a peer writer
-    #                                  mid-transition). A re-sighting is never a new boundary, and
-    #                                  skipping its append keeps the race below from growing the log.
     jd.append_episode(sid, head["uuid"], Path(path).stem, head["t"] or int(now))
     # Seed-vs-boundary is decided by RE-READING the log AFTER the append, never from the pre-append
     # read. Two kernel instances overlapped for about a second on 2026-07-27 (a restart-churn

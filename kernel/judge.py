@@ -3472,7 +3472,8 @@ def _guard_nodes(store):
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
 _GOAL_IO = {"loads": 0, "loads_shared": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
             "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0, "absent_hits": 0, "absent_misses": 0,
-            "noop_hash_ms": 0.0}    # ms spent in save_goals' own-content hash for the no-op check (see save_goals)
+            "noop_hash_ms": 0.0,    # ms spent in save_goals' own-content hash for the no-op check (see save_goals)
+            "lineage_reads": 0}     # resume_lineage calls: whole states-file reads (see goal_io_stats)
 _GOAL_IO_LOCK = threading.Lock()
 
 
@@ -3496,7 +3497,11 @@ def goal_io_stats():
     entries filled from a publish's own temp file (`disk_seeds`). The absent-store predicate memo's
     (_absent_store_flags, the two triage sweeps over stores no discovered session owns): answered from
     the memo (`absent_hits`), or loaded and evaluated because the store's files changed or were new
-    (`absent_misses`). The counters stay private to this module; readers get a copy."""
+    (`absent_misses`). One counter is not goal-store I/O but rides here as the judge's other per-pass
+    file read: `lineage_reads`, resume_lineage calls, each a read and parse of a session's whole states
+    file; the kernel's episode-boundary check consults it only for a head the episode log does not
+    hold yet, so at steady state it stays near zero (2026-09-07). The counters stay private to this
+    module; readers get a copy."""
     with _GOAL_IO_LOCK:
         out = dict(_GOAL_IO)
     out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the episodes standing now, not a count
@@ -6970,7 +6975,11 @@ def resume_lineage(sid):
     that a resume of a machine-cut turn FORKED the transcript (fresh head) rather than continuing the
     chain. The episode-boundary check reads this to keep such a fork from being processed as a /clear
     (which settled the session's open cards mid-turn, 2026-08-14); the parser consumes the same rows
-    through parse_session's states plumbing (em.resume_fork_links / FileAdapter._stitch_resume_forks)."""
+    through parse_session's states plumbing (em.resume_fork_links / FileAdapter._stitch_resume_forks).
+    Unmemoized: every call reads and parses the whole file, counted under goal_io_stats' `lineage_reads`
+    so `/perf` shows how often the boundary check reaches it (the check reads the memoized episode log
+    first and consults this only for an unrecorded head, 2026-09-07)."""
+    _goal_io_bump("lineage_reads")
     out = []
     try:
         lines = (STATESDIR / (sid + ".jsonl")).read_text().splitlines()
