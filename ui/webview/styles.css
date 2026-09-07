@@ -3806,6 +3806,28 @@ body.filebrowse-open { overflow: hidden; }
 .fc-log-row { display: flex; gap: 8px; align-items: baseline; }
 .fc-log-row > :not(.fc-time) { font-size: 0.86em; }
 .fc-log-row .fc-time { margin-left: 0; }
+/* the margin layout (the user 2026-09-07, after walking the loop: a card should sit level with the passage it is about
+   and move with the text). Beside the body the aside wears `fc-margin` (file-comments.ts placeCards): the head and the
+   composer stay put at the top, Accept all · Reject all (moved out of the list), Send and the Log at the bottom, and the
+   cards section between them is the one scroller — its scroll locked to the body's, its own bar hidden since the body's
+   is the control for both — with every card absolutely positioned at the top the pass computed (card-layout.ts). The
+   overflow moves from the aside to that track; the panel's padding moves onto the fixed parts. A card pushed down from
+   its mark by the card above draws a dashed leader up the gutter to its mark's height (--fc-push, set per card). The
+   paragraph titles are hidden: a card's place beside its paragraph says it. Off (the narrow fold, edit mode) nothing
+   here applies and the list above is the layout. */
+.fc-panel.fc-margin { overflow: hidden; padding: 0; gap: 0; }
+.fc-margin > .fc-sec-head { flex: 0 0 auto; padding: 10px 12px 0; }
+.fc-margin > .fc-composer { flex: 0 0 auto; padding: 10px 12px 0; }
+.fc-margin > .fc-sec-cards { flex: 1 1 auto; min-height: 0; position: relative; overflow: auto; scrollbar-width: none; }
+.fc-margin > .fc-sec-cards::-webkit-scrollbar { display: none; }
+.fc-margin > .fc-sec-send, .fc-margin > .fc-sec-log { flex: 0 0 auto; padding: 0 12px; }
+.fc-margin > .fc-sec-log { padding-bottom: 10px; }
+.fc-margin .fc-sec-send > .fc-foot { padding-top: 8px; border-top: 1px solid var(--card-border); }
+.fc-margin .fc-cards { display: block; position: relative; }
+.fc-margin .fc-cards > * { position: absolute; left: 12px; right: 12px; box-sizing: border-box; }
+.fc-margin .fc-cards > .fc-group { display: none; }
+.fc-margin .fc-card[data-pushed]::before { content: ""; position: absolute; left: -7px; top: calc(-1 * var(--fc-push, 0px)); height: var(--fc-push, 0px);
+  border-left: 1px dashed var(--text-faint); }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
    wears a dashed ring; the composer's pending target wears the accent. Adapted from the Obsidian host's stylesheet
