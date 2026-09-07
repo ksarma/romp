@@ -3698,7 +3698,10 @@ body.filebrowse-open { overflow: hidden; }
    the frame above shows): the host pads like the image box, the pages stack with a gap, each page a white sheet
    with the modal's shadow — a page to put a region rectangle on; the chunk's inline position: relative on each
    page wrapper is what the overlay anchors to. The fallback column holds the notice over the frame, the frame
-   taking what is left, so the notice never pushes the frame past the body. */
+   taking what is left, so the notice never pushes the frame past the body. The column's height: 100% is the
+   frame's height: .fileview-body is the plain overflow block above (the .fileview-editor note), so the frame's own
+   100% resolves against the column, and a column without one is auto-height — the frame sat at the UA's 150px
+   default (styles-pdffall-height.test.ts resolves the chain and measures it in chromium). */
 .fileview-pdfhost { padding: 14px; box-sizing: border-box; }
 .fileview-pdf { display: flex; flex-direction: column; gap: 14px; }
 .fileview-pdf-page { background: #fff; box-shadow: var(--shadow-modal); }

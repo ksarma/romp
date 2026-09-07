@@ -11,21 +11,36 @@
 // THE CAPS ARE LOUD, AND THERE ARE TWO: render() refuses bytes over `maxBytes` (25 MB by default) with an
 // Error naming the size and the cap, before pdf.js sees a byte; and it refuses a page COUNT over `maxPages`
 // (5,000 by default) with an Error naming the count and the cap, once pdf.js has opened the document and
-// before a single page shell exists. The caller shows the frame instead and says why; nothing here
-// degrades quietly. The second cap exists because bytes do not bound pages: pdf.js reads the count from the
-// page tree's /Count and checks only that the LAST page resolves (a nested Pages node is skipped by its own
-// /Count on the way), so a PDF of a few hundred bytes can declare millions of pages, open, and draw page 1 —
-// while the shells below are built synchronously, two elements and one observed target per page, so an
-// unchecked count would hold the pane's thread for a minute or exhaust its memory before the first paint. A
-// real document rarely approaches the cap (even a text-only PDF at the byte cap runs to thousands of pages,
-// not millions), and 5,000 shells build in well under a second; over it, the person gets the browser's
-// frame and the refusal's message.
+// before a single page shell exists. The caller shows the frame instead and says why; no refusal here is
+// quiet, and neither is a loss inside a page that does draw (the notice band, below). The second cap exists
+// because bytes do not bound pages: pdf.js reads the count from the page tree's /Count and checks only that
+// the LAST page resolves (a nested Pages node is skipped by its own /Count on the way), so a PDF of a few
+// hundred bytes can declare millions of pages, open, and draw page 1 — while the shells below are built
+// synchronously, two elements and one observed target per page, so an unchecked count would hold the pane's
+// thread for a minute or exhaust its memory before the first paint. A real document rarely approaches the
+// cap (even a text-only PDF at the byte cap runs to thousands of pages, not millions), and 5,000 shells build
+// in well under a second; over it, the person gets the browser's frame and the refusal's message.
 //
-// THE WORKER: pdf.js parses in a Worker it creates from `GlobalWorkerOptions.workerSrc`. That URL is
-// derived at load from this chunk's OWN <script src> — same directory, same ?v= token — so a rebuilt
-// kernel serves a matching worker, and the kernel's /dist route (which types by suffix) serves it as
-// JavaScript because esbuild emits it as pdf-worker.js, not .mjs. No script tag to derive from means
-// render() throws, again by name.
+// THE WORKER: pdf.js parses in a module Worker, and THIS CHUNK starts it (ownWorker below), one per render(),
+// from the URL derived at load from the chunk's OWN <script src> — same directory, same ?v= token — so a
+// rebuilt kernel serves a matching worker, and the kernel's /dist route (which types by suffix) serves it as
+// JavaScript because esbuild emits it as pdf-worker.js, not .mjs. The URL lives in `GlobalWorkerOptions.workerSrc`,
+// pdf.js's slot for it; no script tag to derive it from means render() throws, again by name. pdf.js is handed
+// the started Worker as a port (`GlobalWorkerOptions.workerPort`, set for the one getDocument call and cleared
+// after it) rather than left to spawn one from the URL, because of what pdf.js does when a Worker it spawned
+// fails to load — the script 404s, comes back as a login page's HTML, or arrives truncated mid-rewrite: it sets
+// a static "worker disabled" flag that nothing clears and routes every LATER document through a main-thread
+// stand-in, whose import of this IIFE-built worker yields no handler, so the stand-in fails too, with pdf.js's
+// internal words about a "fake worker". One bad fetch on the first PDF opened in a tab broke every PDF opened
+// after it, until the page was reloaded, and the notice named none of that (the review, 2026-09-06). A Worker
+// handed in by port never reaches that flag, and its load failure is watched here: an `error` event from it
+// before the document opens rejects render() by name — the worker, the file, the browser's reason when its event
+// carries one — and terminates it, so the next render() starts a fresh one and nothing latches. pdf.js does not
+// terminate a Worker it did not spawn, so the chunk does, once pdf.js's destroy of the loading task settles (or at
+// once when the Worker is what failed, since that destroy waits on a reply the dead Worker never sends): a refused
+// open, a cap, a failed first page and dispose() still leave no Worker behind (pdf-chunk-refused-open.test.ts).
+// Where there is no Worker constructor — Node, a stand-in — pdf.js keeps its own path, under Node its
+// main-thread parser (pdf-chunk-worker.test.ts covers all of this).
 //
 // THE BOUNDARY: a PDF is untrusted input — sessions download PDFs into the trees the viewer shows, and the person
 // opens them — and this module parses it on the dashboard's authenticated origin (pdf.js in that same-origin
@@ -92,8 +107,17 @@
 //   draw (a damaged page object) is loud in place: its wrapper keeps the page's extent and shows the
 //   failure (div.fileview-err naming the page and pdf.js's message), its canvas is removed — a page that
 //   will never have a bitmap must not take a region comment, and the panel keys its overlays on the canvas —
-//   onPageError fires once with the message, and the page is not retried. dispose() cancels the draws in
-//   flight, releases the document, and removes the root.
+//   onPageError fires once with the message, and the page is not retried. A page pdf.js DOES draw but with an
+//   image it could not decode (the decoders it lacks here, below; a damaged image) is loud in place too: a notice
+//   band over the top of the sheet (div.fileview-err.fileview-pdf-page-warn, absolutely positioned so the wrapper's
+//   box — the overlay's, and what a region's fractions are stored against — stays the page's; pointer-events none
+//   so the overlay takes the pointer through it; the sheet's own ground behind it) names the page and how many
+//   images are blank, once for the page's life. The canvas stays: the rest of the page is drawn and may take a
+//   region comment. The count is read from the page's object store after the draw, pdf.js's own record of every
+//   image the page paints, where a decode it gave up on is resolved as null (droppedImages; pdf.js reports the loss
+//   only on the worker's console, where no one is looking). An image shared by several pages that pdf.js moves to
+//   its document-wide cache is counted on the page that first painted it, not on the pages it is reused on.
+//   dispose() cancels the draws in flight, releases the document, and removes the root.
 //
 // LOADING IT — for file-view.ts to copy (the editor chunk's loader with the names changed; keep the
 // structural type inline, since `import type` from here would still be an import for the lazy-discipline
@@ -114,9 +138,15 @@
 //     document.head.appendChild(sc);
 //   }));
 //
-// NOT SHIPPED YET (follow-ups, each a dist asset of its own): pdf.js's standard-font files (a PDF that
-// does not embed Helvetica or Times falls back to a system font, with a console warning), its CMaps (some
-// CJK text), and the OpenJPEG wasm (JPEG 2000 images render blank). Pages still render without them.
+// NOT SHIPPED YET (follow-ups, each a dist asset of its own, and each a same-origin fetch pdf.js would then make,
+// which the plan's Security posture — "pdf.js issues no request of its own" — has to restate first): pdf.js's wasm
+// decoders, wasm/openjpeg.wasm for JPEG 2000 and wasm/jbig2.wasm for JBIG2 AND CCITT fax (the three encodings
+// scanned PDFs are made of, so a scan's pages are the ones this costs: every such image is dropped and its page
+// paints white where it was); its standard-font files, which matter for Symbol and ZapfDingbats only (the browser's
+// system fonts stand in for the other twelve by pdf.js's own default, as in its viewer); and its CMaps (some CJK
+// text in fonts a file does not embed). Pages still draw without them, and the notice band above is what keeps a
+// scanned page from being a silent white sheet meanwhile. pdf-chunk-dropped-images.test.ts holds this paragraph to
+// the installed build: the three encodings that decode only through wasm, and the null pdf.js leaves in the store.
 //
 // TESTING IT: `render` is `makeRender(pdfjsLib)` over the modern build imported below, which is what the
 // browsers run. That build needs a newer engine than the Node the tests run on, and pdf.js supports only
@@ -183,6 +213,100 @@ export function workerUrlFor(chunkSrc: string): string | null {
   return /\/pdf-chunk\.js/.test(chunkSrc) ? chunkSrc.replace(/\/pdf-chunk\.js/, "/pdf-worker.js") : null;
 }
 
+/** The refusal for a Worker that did not load: names the worker and its file, so the kernel's /dist route or a
+ *  stale build is where to look, and carries the browser's reason when its error event has one (pure). */
+export function workerFailedMessage(detail?: string | null): string {
+  const base = "the PDF renderer's worker failed to load (pdf-worker.js)";
+  return detail ? `${base}: ${detail}` : base;
+}
+
+/** The URL a Worker is started from, by pdf.js's own rule for its workerSrc: a same-origin script directly; a
+ *  cross-origin one (the VS Code webview, a vscode-webview:// page whose bundles are vscode-resource:// URLs) through
+ *  a same-origin blob module that imports it, since a Worker's script must be same-origin with its page. `pageHref`
+ *  is the hosting page's location; null (Node) means the URL is used as is. `blob` says whether `url` is an object
+ *  URL of this module's making, to revoke when the Worker goes (pure but for the object URL). */
+export function workerScriptUrl(workerSrc: string, pageHref: string | null): { url: string; blob: boolean } {
+  if (pageHref) {
+    const base = new URL(pageHref);
+    const target = new URL(workerSrc, base);
+    if (base.origin === "null" || base.origin !== target.origin) {
+      const wrapper = new Blob([`await import(${JSON.stringify(target.href)});`], { type: "text/javascript" });
+      return { url: URL.createObjectURL(wrapper), blob: true };
+    }
+  }
+  return { url: workerSrc, blob: false };
+}
+
+/** A Worker this module started for one render() (the header, THE WORKER): the port pdf.js is handed, a promise
+ *  that rejects by name when the Worker fires `error` before the document opens, and its release. */
+export interface OwnedWorker {
+  port: Worker;
+  failed: Promise<never>;
+  release(): void;
+}
+
+/** Start the Worker a render() parses in, from pdf.js's worker URL. `WorkerCtor` and `pageHref` default to the
+ *  page's own; null where there is no Worker constructor (Node, a stand-in), so pdf.js keeps its own path there. */
+export function ownWorker(
+  workerSrc: string,
+  WorkerCtor: (new (url: string, opts: { type: "module" }) => Worker) | null = typeof Worker === "function" ? Worker : null,
+  pageHref: string | null = typeof location === "undefined" ? null : location.href,
+): OwnedWorker | null {
+  if (!WorkerCtor) return null;
+  const { url, blob } = workerScriptUrl(workerSrc, pageHref);
+  const port = new WorkerCtor(url, { type: "module" });
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    port.terminate();
+    if (blob) URL.revokeObjectURL(url);
+  };
+  const failed = new Promise<never>((_res, rej) => {
+    // a script that 404s, arrives as something other than JavaScript, is cut short, or throws as its module body runs:
+    // the Worker's one signal for any of them. Once, and only before the document opens (the race in render()): pdf.js
+    // itself stops listening after its handshake, and a document that has opened reports its own failures per page.
+    port.addEventListener("error", (e) => rej(new Error(workerFailedMessage((e as ErrorEvent).message || null))), { once: true });
+  });
+  failed.catch(() => {});   // raced in render(); a rejection nobody is racing any more must not surface as unhandled
+  return { port, failed, release };
+}
+
+/** What render() holds of pdf.js's loading task: its promise, and a destroy. */
+type Loading = Pick<ReturnType<PdfLib["getDocument"]>, "promise" | "destroy">;
+
+/** The loading task with the chunk's Worker released when the document is: after pdf.js's own destroy settles (it
+ *  terminates only a Worker it spawned itself), or at once if the Worker is what failed (that destroy waits on a reply
+ *  the dead Worker never sends). pdf.js's own destroy promise is what the caller gets, unchanged. */
+function adopt(loading: Loading, owned: OwnedWorker): Loading {
+  return {
+    promise: loading.promise,
+    destroy() {
+      const done = loading.destroy();
+      Promise.race([done, owned.failed]).then(owned.release, owned.release);
+      return done;
+    },
+  };
+}
+
+/** The images pdf.js could not decode on a drawn page, from the page's object store: pdf.js's own record, the one its
+ *  canvas renderer reads each painted image from, holding every image the page paints once the draw is done (the
+ *  renderer waits on each) — its decoded data, or null, which is how pdf.js's evaluator records a decode it gave up on
+ *  (it warns on the worker's console, where no one is looking, and paints nothing there). A page with no store, a
+ *  stand-in's, counts as none (pure). */
+export function droppedImages(page: { objs?: Iterable<unknown[]> }): number {
+  let n = 0;
+  if (page.objs) for (const [, data] of page.objs) if (data === null) n++;
+  return n;
+}
+
+/** The notice band's text: the page, how many images are blank, what this view cannot draw, and where the whole page
+ *  can be seen (pure). */
+export function droppedImagesMessage(index: number, count: number): string {
+  const what = count === 1 ? "1 image could not be decoded and is left blank" : `${count} images could not be decoded and are left blank`;
+  return `Page ${index}: ${what}. This view has no JPEG 2000, JBIG2, or fax (CCITT) decoder yet; the browser's own PDF viewer shows the whole page.`;
+}
+
 /** The device-pixel scale to draw a page at: the display's ratio, reduced so width × height in device
  *  pixels stays under `maxPixels` (pure). */
 export function backingScale(cssWidth: number, cssHeight: number, dpr: number, maxPixels = MAX_CANVAS_PIXELS): number {
@@ -237,6 +361,7 @@ interface Page {
   queued: boolean;
   failed: boolean;               // pdf.js could not read or draw it: the notice is in the wrapper, no retry
   cue: HTMLElement | null;       // the romp loader over the sheet while a draw is pending with no bitmap (cue / uncue)
+  warned: boolean;               // drawn with images pdf.js could not decode: the band is on the sheet, once
 }
 
 /** render() over a given pdf.js — the modern build for the shipped chunk (`render` below), the legacy build
@@ -249,13 +374,25 @@ export function makeRender(pdfjsLib: PdfLib) {
     if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
       throw new Error("the PDF renderer could not locate its worker: no pdf-chunk.js script tag to derive pdf-worker.js from");
     }
+    // the Worker is this module's own, handed to pdf.js as the port for this one getDocument call (the header, THE
+    // WORKER: a Worker pdf.js spawned and lost disabled its Worker path for the tab's life; one it is handed never
+    // does). null where there is no Worker constructor: pdf.js then keeps its own path, under Node its main-thread one.
+    const owned = ownWorker(pdfjsLib.GlobalWorkerOptions.workerSrc);
+    if (owned) pdfjsLib.GlobalWorkerOptions.workerPort = owned.port;
+    let loading: Loading;
     // a copy: pdf.js transfers the buffer it is given to the worker, which would detach the caller's
-    const task = pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) });
+    try { loading = pdfjsLib.getDocument({ data: new Uint8Array(bytes.slice(0)) }); }
+    catch (e) { owned?.release(); throw e; }
+    finally { if (owned) pdfjsLib.GlobalWorkerOptions.workerPort = null; }   // per render: the next starts its own
+    // the task as the rest of render() holds it: destroying it releases the Worker too (adopt), in every path below
+    const task: Loading = owned ? adopt(loading, owned) : loading;
     let doc: PDFDocumentProxy;
-    // a refused open (corrupt bytes, a password) releases the Worker getDocument started for it: pdf.js's failure
-    // path only rejects, and the caller has no handle to release it with, so without this every attempt on such a
-    // file (each opening of the Comments panel renders again) left one more Worker running
-    try { doc = await task.promise; } catch (e) { void task.destroy(); throw e; }
+    // a refused open (corrupt bytes, a password) releases the Worker started for it: pdf.js's failure path only
+    // rejects, and the caller has no handle to release it with, so without this every attempt on such a file (each
+    // opening of the Comments panel renders again) left one more Worker running. A Worker that never loaded is a
+    // refusal of its own, by name and at once: pdf.js's promise would otherwise hang until the caller's backstop.
+    try { doc = await (owned ? Promise.race([task.promise, owned.failed]) : task.promise); }
+    catch (e) { void task.destroy(); throw e; }
     // the count is the page tree's /Count, which pdf.js does not verify (the header): over the cap it is refused
     // HERE, before a shell exists or the container is touched, and the document and its worker are released.
     // Below zero (an integer pdf.js accepts) it is no pages, so the caller's page-less path runs, not a blank root.
@@ -294,7 +431,7 @@ export function makeRender(pdfjsLib: PdfLib) {
                                               // or default-sized band. No bitmap is 0×0, never the element default.
       wrap.appendChild(canvas);
       root.appendChild(wrap);
-      const p: Page = { index: i, wrap, canvas, proxy: null, task: null, drawnAt: 0, visible: false, queued: false, failed: false, cue: null };
+      const p: Page = { index: i, wrap, canvas, proxy: null, task: null, drawnAt: 0, visible: false, queued: false, failed: false, cue: null, warned: false };
       pages.push(p);
       byEl.set(wrap, p);
     }
@@ -363,6 +500,23 @@ export function makeRender(pdfjsLib: PdfLib) {
       p.wrap.appendChild(note);
       opts.onPageError?.({ index: p.index, message });
     };
+    // a page drawn with images pdf.js gave up on (the header: the decoders it lacks here; pdf.js says so only on the
+    // worker's console) is loud IN the sheet like a failed page, but keeps its canvas: the rest of the page is drawn
+    // and may take a region comment. A band over the top of the sheet in the error dress, absolutely positioned so the
+    // wrapper's box (the overlay's, and the one a region's fractions are stored against) stays the page's; pointer-events
+    // none so the panel's overlay takes the pointer through it; the sheet's own ground behind it, so it reads over a
+    // bitmap. Once per page: the store is the page's for the document's life, and a redraw finds the same images in it.
+    const warnDropped = (p: Page, count: number) => {
+      p.warned = true;
+      const message = droppedImagesMessage(p.index, count);
+      console.warn("pdf-chunk: " + message);
+      const note = document.createElement("div");
+      note.className = "fileview-err fileview-pdf-page-warn";
+      note.style.position = "absolute"; note.style.top = "0"; note.style.left = "0"; note.style.right = "0";
+      note.style.pointerEvents = "none"; note.style.background = "inherit";
+      note.textContent = message;
+      p.wrap.appendChild(note);
+    };
     async function paint(p: Page): Promise<void> {
       const proxy = p.proxy || (p.proxy = await doc.getPage(p.index));
       // evicted while getPage was in flight (there was no task for drop to cancel then): no bitmap for a page off
@@ -405,6 +559,7 @@ export function makeRender(pdfjsLib: PdfLib) {
         if (p.task === task) p.task = null;
         stage.width = 0; stage.height = 0;       // the staging store is released now, not when the collector gets to it
       }
+      if (!p.warned) { const dropped = droppedImages(proxy); if (dropped) warnDropped(p, dropped); }   // read after the draw: every image has settled
       p.drawnAt = cssW;
       uncue(p);                                  // the bitmap is in: the loader is removed before onPage fires
       opts.onPage?.({ index: p.index, canvas: p.canvas, width: vp.width, height: vp.height });

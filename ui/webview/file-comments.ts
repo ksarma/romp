@@ -18,10 +18,11 @@
 //     the file, also fences on the file's mtime and then reloads the view, since the bytes changed under it.
 //   • A region on an image (Slice 3) or on a PDF page (Slice 4) is a comment too: the overlays file-comments-regions.ts
 //     puts over the media body's picture, over every figure in rendered markdown, and over each page the PDF chunk
-//     draws (one per page, the region's `page` from the canvas's data-page) take a drag and paint each region comment as a
-//     rectangle placed by percentages, dashed once the image's bytes changed under it (the host's hash against
-//     the stored one). The card shows the region cut from the picture and offers Re-place, which retargets the
-//     comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file.
+//     draws (one per page, the region's `page` from the canvas's data-page; a far page with nothing to paint takes its
+//     overlay as it nears the reader, pageWatch, since making one lays out the whole page column) take a drag and paint
+//     each region comment as a rectangle placed by percentages, dashed once the image's bytes changed under it (the
+//     host's hash against the stored one). The card shows the region cut from the picture and offers Re-place, which
+//     retargets the comment to the next region drawn. Desktop only; a coarse pointer reads and comments on the whole file.
 //     A PDF's pages are read from the chunk's shells (pdfPages): a page with no shell is one the regenerated document
 //     no longer has (pageGone: stale, Re-place on any page); a shell with no canvas is a page pdf.js could not draw
 //     (pageUnrendered: the card says so and reaches the page's own notice, and claims nothing about the file). A
@@ -327,6 +328,19 @@ export function pageOf(el: Element | null | undefined): number | null {
   const n = raw === undefined || raw === null ? NaN : Number(raw);
   return Number.isInteger(n) && n >= 1 ? n : null;
 }
+/** The scroller a PDF page's shell lives in — the nearest ancestor that scrolls vertically (the viewer's body, overflow
+ *  auto), stopping under the document's body and root — or null for the viewport when none does. The page watch's root
+ *  (watchPages): pdf-chunk.ts's scrollRootFor, for the same reason and with the same stopping rule, but the chunk's exports
+ *  stay out of the main bundles (its contract is the window global), so the walk is repeated here. */
+function scrollerOf(el: Element | null): Element | null {
+  const win = typeof window !== "undefined" ? window : null;
+  if (!win || typeof win.getComputedStyle !== "function") return null;
+  for (let p = el ? el.parentElement : null; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    const s = win.getComputedStyle(p);
+    if (/^(auto|scroll|overlay)$/.test(s.overflowY || s.overflow || "")) return p;
+  }
+  return null;
+}
 type Err = { text: string; reload: boolean; warn?: boolean };
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
@@ -401,6 +415,9 @@ class Panel {
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
+  regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
+  pageWatch: IntersectionObserver | null = null;              // the panel's watch on PDF page shells with no overlay yet (watchPages → onPageNear)
+  pageWatched = new Map<HTMLElement, HTMLCanvasElement>();    // the shells it watches, and their canvases
   cropWait = new WeakSet<HTMLImageElement>();                 // pictures whose load will re-render the cards for their thumbnails
   // a PDF region's crop, kept from the last time its page was drawn (cutCrop: on every draw's repaint for every region on
   // the page, the card open or not, and on an open card's render): the chunk keeps only the bitmaps near the reader (a far
@@ -734,6 +751,7 @@ class Panel {
     this.stopPoll();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
+    this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
     this.crops.clear();
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
@@ -1256,7 +1274,8 @@ class Panel {
     if (!c) return { label: author || "unknown" };
     return c.color ? { label: c.name, style: { "--fc-author": c.color.bg, "--fc-author-fg": c.color.fg } } : { label: c.name };
   }
-  /** The overlays: one layer per picture in view (built once per picture, dropped when the picture leaves), each
+  /** The overlays: one layer per picture in view (built once per picture — a far PDF page's with nothing to paint once
+   *  its shell nears the reader, watchPages — and dropped when the picture leaves), each
    *  repainted with the rectangles of the open region comments on it — placed by percentages, dashed when the
    *  image's bytes changed under them and marked unknown when that cannot be told (regionState), the author's chip
    *  and colour — plus the composer's pending region and the re-place cue. Each region on a page with its bitmap in
@@ -1273,8 +1292,9 @@ class Panel {
   private paintRegions(): void {
     const keep = this.focusedRegion();                 // before any layer is dropped or repainted: the focused node is about to go
     const imgs = this.regionImages();
-    for (const [img, layer] of this.regionLayers) if (!imgs.includes(img)) { layer.dispose(); this.regionLayers.delete(img); }
-    if (!imgs.length) return;
+    const cur = new Set<Pictured>(imgs);                  // a set: the pass runs per page draw, over thousands of pages
+    for (const [img, layer] of this.regionLayers) if (!cur.has(img)) { layer.dispose(); this.regionLayers.delete(img); }
+    if (!imgs.length) { this.regionMarks = new Map(); this.watchPages([], cur); return; }
     const s = this.status;
     const c = this.composer;
     if (c && c.kind === "region" && !imgs.includes(c.img)) {
@@ -1299,23 +1319,88 @@ class Panel {
       const loc = this.located.get(card.id);
       this.located.set(card.id, loc ? { ...loc, painted: true } : { state: "located", painted: true });
     }
+    this.regionMarks = per;
     const active = this.open && !isCoarsePointer();
+    const replacing = c && c.kind === "replace" ? this.replaceTarget(c.commentId) : null;   // once: the lookup walks the pictures, and so does this loop
+    // A PDF's pages: a layer is made NOW for a page with a bitmap (near the reader: the chunk draws only the pages within a
+    // scroller height of it), for a page with a rectangle to place (a region comment, the composer's pending region, the
+    // re-place cue), and for every page when nothing can say which pages are near (no IntersectionObserver: the chunk
+    // draws every page then, too). The rest — the empty overlays of far pages, which only a drag would use — are made as
+    // their shells near the reader (watchPages, onPageNear). Making a layer appends the overlay to the page's shell and
+    // measures it, a forced layout of the whole page column each time, so one per page in one pass is quadratic in the
+    // count: 3 s with the pane unresponsive at 2,000 pages and ~20 s at the chunk's 5,000 cap, on the panel's first pass over a long
+    // document (the review, 2026-09-06). The chunk's page cap bounds its own shells, not the panel's layers.
+    const lazy = typeof IntersectionObserver !== "undefined";
+    const later: HTMLCanvasElement[] = [];
     for (const img of imgs) {
       let layer = this.regionLayers.get(img);
       if (!layer) {
-        // a page's canvas already sits in the chunk's positioned wrapper (div.fileview-pdf-page): the layer anchors there
-        layer = new RegionLayer(img, {
-          onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
-          onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
-        }, isCanvas(img) ? img.parentElement : null);
-        this.regionLayers.set(img, layer);
+        if (lazy && isCanvas(img) && !(img.width > 0 && img.height > 0) && !per.has(img) && !(c && c.kind === "region" && c.img === img) && replacing !== img) { later.push(img); continue; }
+        layer = this.layerFor(img);
       }
-      layer.setActive(active);
-      const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
-      const replacing = !!c && c.kind === "replace" && this.replaceTarget(c.commentId) === img;
-      for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
+      this.paintLayer(img, layer, active, replacing);
     }
+    this.watchPages(later, cur);
     if (keep) this.refocusRegion(keep);
+  }
+  /** The overlay for a picture, made once and kept (regionLayers): a page's canvas already sits in the chunk's positioned
+   *  wrapper (div.fileview-pdf-page), so the layer anchors there; an <img> is wrapped in a span of the layer's own. */
+  private layerFor(img: Pictured): RegionLayer {
+    const layer = new RegionLayer(img, {
+      onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
+      onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
+    }, isCanvas(img) ? img.parentElement : null);
+    this.regionLayers.set(img, layer);
+    return layer;
+  }
+  /** Arm one layer as the pass arms them all, and paint it: the rectangles the last pass filed for its picture
+   *  (regionMarks), the composer's pending region when it was drawn there, and the re-place cue when the picture is the
+   *  comment's own (`replacing`). The rectangles are the panel's own controls (owns). */
+  private paintLayer(img: Pictured, layer: RegionLayer, active: boolean, target: Pictured | null): void {
+    layer.setActive(active);
+    const c = this.composer; const per = this.regionMarks;
+    const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
+    const replacing = target === img;
+    for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
+  }
+  /** Watch the shells of the pages that took no overlay this pass (pageWatch), so each takes one as it nears the reader
+   *  (onPageNear) — one scroller height ahead, the chunk's own margin for the draws, so the overlay is under a page before
+   *  its bitmap lands, and under the loader the chunk puts over a pending page (which lets the pointer through to it).
+   *  Shells whose canvases left the view (a reload's new canvases, the frame back) or took an overlay meanwhile leave the
+   *  watch. The root is the scroller the pages live in (scrollerOf), not the viewport: a rootMargin expands only the
+   *  root's box, and the body's clip would make a viewport-rooted margin inert (pdf-chunk.ts found the same for the draws). */
+  private watchPages(later: HTMLCanvasElement[], cur: Set<Pictured>): void {
+    for (const [shell, canvas] of this.pageWatched) {
+      if (cur.has(canvas) && !this.regionLayers.has(canvas)) continue;
+      this.pageWatch?.unobserve(shell); this.pageWatched.delete(shell);
+    }
+    if (!later.length) return;
+    if (!this.pageWatch) this.pageWatch = new IntersectionObserver((es) => this.onPageNear(es), { root: scrollerOf(later[0].parentElement), rootMargin: "100% 0px" });
+    for (const canvas of later) {
+      const shell = canvas.parentElement;
+      if (!shell || this.pageWatched.has(shell)) continue;
+      this.pageWatched.set(shell, canvas);
+      this.pageWatch.observe(shell);
+    }
+  }
+  /** A watched shell neared the reader: its page's overlay is made and painted now, armed as the others are, and the
+   *  shell leaves the watch. A shell whose canvas is no longer in the viewer's body (the pages went while the entry was in
+   *  flight) makes none. The first overlay in view re-renders the aside: the empty state names the drag and the cards
+   *  offer Re-place only while some overlay takes one (drawsRegions), which until now none did. */
+  private onPageNear(entries: IntersectionObserverEntry[]): void {
+    const c = this.composer;
+    const replacing = c && c.kind === "replace" ? this.replaceTarget(c.commentId) : null;
+    const active = this.open && !isCoarsePointer();
+    const none = this.regionLayers.size === 0;
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const shell = e.target as HTMLElement;
+      const canvas = this.pageWatched.get(shell);
+      this.pageWatch?.unobserve(shell); this.pageWatched.delete(shell);
+      if (!canvas || this.regionLayers.has(canvas) || !this.ctx.body().contains(canvas)) continue;
+      this.paintLayer(canvas, this.layerFor(canvas), active, replacing);
+    }
+    if (none && this.regionLayers.size) this.render();
   }
   /** The region rectangle holding keyboard focus, by the comment it opens — a mark of the panel's own (owns) that sits
    *  among the file's pictures, outside the aside, so render()'s focusKey never sees it. Null for anything else. */

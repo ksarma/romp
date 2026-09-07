@@ -538,12 +538,24 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let asideOpen = false;
   let pdfHandle: { pages: number; dispose(): void } | null = null;
   let pdfSeq = 0;
+  // The attempt IN FLIGHT — render() called and not yet settled — as the AbortController whose signal rides into
+  // render() (`opts.signal`). render() returns no handle until it resolves, and pdf.js puts no deadline on opening a
+  // document or drawing a page, so an open or a first-page draw that never settles (the case the backstop below exists
+  // for) yields nothing to dispose: the backstop showed the frame and retired the attempt while the Worker pdf.js had
+  // started for these bytes ran on at full CPU for the tab's life, one more per attempt on that file (the round-4
+  // review). The chunk's side of the contract (pdf-chunk.ts): while render() is unsettled, an abort destroys the
+  // loading task, terminates its Worker, leaves nothing in the container and rejects render() with the signal's reason.
+  // The abort is part of dropPdf, so every retire of an unsettled attempt — the backstop, the panel closing under the
+  // loader, a reload or a reopen over it, both of the viewer's exits — reaches the Worker. Cleared at the mount: from
+  // there the handle's dispose() is the release, and the signal is spent.
+  let pdfAttempt: AbortController | null = null;
   // showPdfPages's backstop timer (PDF_RENDER_BACKSTOP_MS), one per attempt: disarmed wherever the attempt ends — the
   // pages mounting, a refusal (fallback), or the attempt retired (dropPdf: the panel closing, a reload, both of the
   // viewer's exits) — so it fires only for an attempt that never settled.
   let pdfBackstop: ReturnType<typeof setTimeout> | undefined;
   const disarmBackstop = () => { clearTimeout(pdfBackstop); pdfBackstop = undefined; };
-  const dropPdf = () => { pdfSeq++; disarmBackstop(); if (pdfHandle) { pdfHandle.dispose(); pdfHandle = null; } };
+  const abortPdfAttempt = () => { if (pdfAttempt) { pdfAttempt.abort(); pdfAttempt = null; } };
+  const dropPdf = () => { pdfSeq++; disarmBackstop(); abortPdfAttempt(); if (pdfHandle) { pdfHandle.dispose(); pdfHandle = null; } };
   // The reader's page, 1-based: the last page the PAGES showed, read off the shells each time they leave the body (the
   // panel closing, a reload) — so the frame the close builds opens on it (#page=N) and the pages a reopen draws scroll
   // to it, instead of both starting the document over at page 1. The browser's frame reports nothing back, so a
@@ -991,7 +1003,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     const col = kept ? kept.parentElement : null;
     const fallback = (why: string) => {
       if (my !== pdfSeq || !wrap.isConnected) return;   // the body moved on: whatever shows now is not this render's
-      disarmBackstop();                        // the attempt is over, whichever way it failed
+      disarmBackstop();                        // the attempt is over, whichever way it failed…
+      abortPdfAttempt();                       // …and so is its signal: spent on a rejection, the Worker's end on a hang (the backstop)
       const note = el("div", "fileview-err");
       note.textContent = why + " — showing the browser's PDF viewer instead; comments on the whole file still work.";
       if (col) {                               // the kept frame: the attempt's loader and host go, the notice goes above it
@@ -1022,7 +1035,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // pending for good, and with no frame kept (the panel opened before the bytes landed; the pages were up and the file
     // reloaded) the loader would be the whole body, nothing saying why, nothing on screen pointing at a way out. So the
     // deadline gives up in the fallback's own shape: the frame, told why; the attempt retired (dropPdf), so a resolution
-    // landing later is disposed and mounts nothing, as after a closed panel; and the chunk's latch cleared, so the next
+    // landing later is disposed and mounts nothing, as after a closed panel; its signal aborted (fallback, dropPdf), so
+    // the chunk destroys the loading task and terminates the Worker a hung open or draw held — the one thing here that
+    // reaches it, since a render that never settles never yields a handle; and the chunk's latch cleared, so the next
     // open fetches a stalled chunk afresh (a loaded one is found again through its window global, with no fetch).
     pdfBackstop = setTimeout(() => {
       pdfBackstop = undefined;
@@ -1031,10 +1046,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       fallback("the page renderer did not finish within " + PDF_RENDER_BACKSTOP_MS / 1000 + " seconds");
       dropPdf();
     }, PDF_RENDER_BACKSTOP_MS);
+    // this attempt's cancel (pdfAttempt above): aborted by dropPdf wherever the attempt is retired unsettled, so the chunk
+    // destroys the loading task and its Worker — the one way to reach an open or a first-page draw that never settles
+    const attempt = new AbortController();
+    pdfAttempt = attempt;
     Promise.all([pdfChunkLoad(), blob.arrayBuffer()]).then(([pdf, bytes]) => {
       if (my !== pdfSeq || !wrap.isConnected) return;
       return pdf.render(bytes, host, {
         maxBytes: PDF_MAX_BYTES,
+        signal: attempt.signal,
         // every draw after the first resolve (a page scrolling in, a redraw at a new width) is a repaint the panel hears
         onPage: () => { if (my === pdfSeq && pdfHandle) fireRendered(); },
         // …and so is a later page pdf.js refuses (the chunk removes its canvas and shows the failure in its shell): the
@@ -1045,6 +1065,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       }).then((h) => {
         if (my !== pdfSeq || !wrap.isConnected) { h.dispose(); return; }   // a stale resolution mounts nothing
         disarmBackstop();                      // settled in time
+        pdfAttempt = null;                     // …so the handle owns the release from here; the signal is spent
         // pdf.js opens a page-less document (an empty page tree) and resolves with nothing drawn: an empty root would be
         // the blank pane this function exists to prevent, so the frame, told why, and the document released
         if (h.pages === 0) { h.dispose(); fallback("this PDF has no pages"); return; }

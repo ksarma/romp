@@ -198,9 +198,17 @@ async function buildAll(configs) {
 // dependency this node_modules lacks, and `npm install` is what fixes it. A relative import or a syntax
 // error gets its text and no npm install line. `untouched` names the output dir the failed build left
 // unchanged, when that is what failed.
+//
+// Every line goes out through `fit`: cut to 300 characters from the END, so the head (what failed, what is
+// unchanged) is what the kernel shows and the tail of the last clause is what goes. The parts above are
+// sized so a plausible line fits whole (specifiers cut at 60, the text at 120, two named and the rest
+// counted), so the cut is reached only by a long text over a long location path — the location is never
+// shortened, since a cut path names no file — and by a non-esbuild error's message, which is whatever
+// Node wrote. Without it, the kernel's `[-300:]` drops the head instead (src/esbuild-failure-cap.test.ts).
 function failureSummary(e, untouched) {
+  const fit = (s) => s.length > 300 ? s.slice(0, 297) + "..." : s;
   const errors = e && Array.isArray(e.errors) ? e.errors : null;
-  if (!errors) return "esbuild.js: build failed: " + (e && e.message ? e.message : String(e));
+  if (!errors) return fit("esbuild.js: build failed: " + (e && e.message ? e.message : String(e)));
   const n = errors.length;
   let line = "esbuild.js: build failed with " + n + (n === 1 ? " error" : " errors") +
              (untouched ? "; " + untouched + " is unchanged" : "") + ".";
@@ -224,7 +232,7 @@ function failureSummary(e, untouched) {
     const text = (x.text || "").length > 120 ? (x.text || "").slice(0, 117) + "..." : (x.text || "");
     line += " " + text + where;
   }
-  return line.length > 300 ? line.slice(0, 297) + "..." : line;
+  return fit(line);
 }
 
 async function main() {

@@ -14,10 +14,15 @@
 // theme-parity.test.ts checks token-on-token pairs, so a raw #fff ground escapes it; this test resolves the cue's
 // actual cascade along the chunk's real DOM chain and computes the ratios against the literal sheet — the wordmark
 // (0.86em reading text) to 4.5:1, the dots (non-text chrome) to 3:1 — and pins the pane's own loader untouched.
-// SHEETS names the sheets that carry the rule. The feed page loads feed.css alone and mounts the same viewer (feed.ts
-// calls initFileView; file-view.ts points the feed bundle at the same pdf-chunk.js), so feed.css needs the same
-// tokens and rules and joins SHEETS with its mirror — the sibling test learned that a rule checked in one sheet only
-// left the other sheet's page unfixed while every test stayed green (feed-pdf-page-err.test.ts).
+// SHEETS names the sheets that carry the rule, and every measurement below runs once per sheet. The feed page loads
+// feed.css alone and mounts the same viewer (feed.ts calls initFileView; file-view.ts points the feed bundle at the
+// same pdf-chunk.js), so feed.css needs the same tokens and rules and is the second entry — the sibling test learned
+// that a rule checked in one sheet only left the other sheet's page unfixed while every test stayed green
+// (feed-pdf-page-err.test.ts), and this test then repeated the lesson: its header named feed.css while SHEETS
+// listed styles.css alone, so the cue's fix landed in styles.css only and the feed page kept the white-on-white cue
+// with 3468 tests green (the review, 2026-09-06). The last test pins the two rules and the two tokens byte-equal
+// across the sheets besides, the way the err test pins its rule: fileview-parity.test.ts's head list names the
+// sheet's LAYOUT rules and not its dress, so the mirror is held here.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -25,7 +30,11 @@ import * as path from "node:path";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const CHUNK = read("pdf-chunk.ts");
-const SHEETS: Array<[string, string]> = [["styles.css", read("styles.css")]];
+const CHAT = read("styles.css");
+const FEED = read("feed.css");
+const FEED_TS = read("feed.ts");
+// both documents' sheets: a rule or token missing from either leaves that page's cue unfixed
+const SHEETS: Array<[string, string]> = [["styles.css", CHAT], ["feed.css", FEED]];
 const WORD_FLOOR = 4.5;   // the wordmark is 0.86em reading text
 const DOT_FLOOR = 3;      // the dots are 4px chrome, not text (WCAG's non-text floor)
 
@@ -196,6 +205,22 @@ const PANE_WORD = PANE_LOAD + " > span";
 const PANE_DOT = PANE_LOAD + " > i.fileview-dot";
 const CHAIN_CLASSES = ["fileview", "fileview-main", "fileview-body", "fileview-pdf", SHEET_CLASS, "fileview-load", "fileview-pdf-page-load", "fileview-dot"];
 const SHEET: RGB = [255, 255, 255];
+const SHEET_LOAD_RULE = "." + SHEET_CLASS + " .fileview-load {";
+const SHEET_DOT_RULE = "." + SHEET_CLASS + " .fileview-dot {";
+const ON_WHITE_TOKENS = ["--dim-on-white", "--accent-on-white"];
+function ruleOf(css: string, head: string): string {
+  const at = css.indexOf(head);
+  assert.ok(at >= 0, head + " present");
+  return css.slice(at, css.indexOf("}", at) + 1);
+}
+
+test("the premise: SHEETS names both documents' sheets, because the feed page mounts the viewer too and loads feed.css alone", () => {
+  // feed.ts hosts the same file-view module the chat page does (initFileView), and the feed page loads feed.css
+  // alone (ui/CLAUDE.md, the .romp-acted precedent) — a rule that lives in styles.css only never reaches it
+  assert.match(FEED_TS, /\binitFileView\(/, "feed.ts mounts the file viewer");
+  assert.deepEqual(SHEETS.map(([name]) => name), ["styles.css", "feed.css"], "the chat sheet and the feed sheet, both measured");
+  for (const [name, css] of SHEETS) assert.ok(css.includes("." + SHEET_CLASS + " {"), name + " dresses the PDF page sheet (the layout rules landed)");
+});
 
 test("pdf-chunk.ts puts the cue, on the loader's classes, INSIDE the white page wrapper — a bare span for the wordmark, i.fileview-dot for the dots", () => {
   assert.match(CHUNK, /const root = document\.createElement\("div"\);\n\s*root\.className = "fileview-pdf";/);
@@ -278,3 +303,20 @@ for (const [name, css] of SHEETS) {
     assert.equal(d!.value, "var(--accent)");
   });
 }
+
+test("the cue-on-a-sheet rules and the on-white tokens are byte-equal in both sheets (the mirror fileview-parity's head list does not name)", () => {
+  // one cue across the two documents: the chat page's sheet is the reference, feed.css mirrors it — a value that
+  // drifts in one sheet would pass the per-sheet ratio floors above and still show two different cues
+  for (const head of [SHEET_LOAD_RULE, SHEET_DOT_RULE]) assert.equal(ruleOf(FEED, head), ruleOf(CHAT, head), head + " mirrors exactly");
+  for (const tok of ON_WHITE_TOKENS) {
+    assert.equal(tokensOf(FEED, ":root {").get(tok), tokensOf(CHAT, ":root {").get(tok), "feed.css mirrors styles.css's :root " + tok);
+    assert.equal(tokensOf(FEED, "body.theme-light {").get(tok), tokensOf(CHAT, "body.theme-light {").get(tok), "feed.css mirrors styles.css's light " + tok);
+  }
+  // and they sit where the chat sheet keeps them: after the page's layout rules, so a reader of either sheet finds
+  // the sheet's dress next to the sheet
+  for (const [name, css] of SHEETS) {
+    for (const head of [SHEET_LOAD_RULE, SHEET_DOT_RULE]) {
+      assert.ok(css.indexOf(head) > css.indexOf(".fileview-pdffall .fileview-frame {"), name + ": " + head + " follows the page layout rules");
+    }
+  }
+});
