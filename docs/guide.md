@@ -184,8 +184,10 @@ credential, a pick between two designs. Each row names its session and shows
 how long the todo has waited. Reply sends your answer straight into that
 session, waking it if it has gone quiet; Dismiss clears the todo without a
 reply. A file path in a todo's text or its detail is a link: click it and the
-file opens in the Files pane, which comes forward if it was closed. A relative
-path links only when it ends in a file extension. The pane is off by default,
+file opens in the Files pane, which comes forward if it was closed. Absolute
+paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
+relative path links only when its last segment has a file extension
+(`notes/plan.md`, not `notes/plan`). The pane is off by default,
 like the outline; turn it on from the bottom bar. Sessions flag todos only where
 the gear's **User todos** switch is on, and the switch is per machine: while it
 is off on this one, the pane says so and still lists the

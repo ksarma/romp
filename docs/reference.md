@@ -58,9 +58,11 @@ collects every open request across all sessions and attached machines into one l
 Reply and Dismiss; because the switch is per machine, the pane says when it is off on this one and
 still lists the other machines' requests. A file path in the one-line text or in the detail is a link
 that opens the file, on the session's card and in the pane alike. Paths that link: absolute, `~/`, `./`
-and `../` paths, relative paths whose last segment has a file extension, and `file://` URIs; a link ends
-at a space or a non-ASCII character. A relative path is read against the working directory of the
-session that flagged it.
+and `../` paths, relative paths whose last segment has a file extension, and `file://` URIs. A bare path
+is made of ASCII letters, digits and `_ . ~ / -` only, so any other character ends it (a space, `+`, `#`,
+`(`, `@`, `=`, `%`, `:`, an accented letter); a `file://` URI runs to the next whitespace, angle bracket,
+quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
+link. A relative path is read against the working directory of the session that flagged it.
 
 These are for scripting and for agents rather than daily use:
 

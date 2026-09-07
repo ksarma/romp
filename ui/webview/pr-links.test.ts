@@ -348,7 +348,7 @@ test("the boundary is judged over the rendered text: the #12 the path pass leave
   assert.deepEqual(prRefSegments("#12 and #13", REPO, "d").filter((s) => s.href).map((s) => s.text), ["#13"], "the scan resumes after the refused match");
 });
 
-test("an element's text ends the run too: #12 glued to <code>x</code> is no reference, #12 after a space is; an element with no text carries the run", () => {
+test("an element's text ends the run too: #12 glued to <code>x</code> is no reference, #12 after a space is; an inline element with no text carries the run", () => {
   const glued = el("p", "use ", el("code", "x"), "#12");
   assert.equal(linkifyPrRefs(glued as unknown as Node, REPO), 0);
   assert.equal(glued.html(), "<p>use <code>x</code>#12</p>");
@@ -358,7 +358,7 @@ test("an element's text ends the run too: #12 glued to <code>x</code> is no refe
   const split = el("p", "see ", cls(el("span", "docs/a.md"), "file-uri-link"), "#12 and #13");
   assert.equal(linkifyPrRefs(split as unknown as Node, REPO), 1);
   assert.deepEqual(anchors(split).map((a) => a.textContent), ["#13"]);
-  // an empty element between (an <img>, an empty span) does not reset the run: the text before it decides
+  // an empty INLINE element between (an <img>, an empty span) does not reset the run: the text before it decides
   const img = el("p", "see ", cls(el("span", "docs/a.md"), "file-uri-link"), el("img"), "#12");
   assert.equal(linkifyPrRefs(img as unknown as Node, REPO), 0);
   const imgSpaced = el("p", "see docs ", el("img"), "#12");
@@ -369,6 +369,80 @@ test("an element's text ends the run too: #12 glued to <code>x</code> is no refe
   assert.deepEqual(anchors(wrapped).map((a) => a.textContent), ["#8", "#10"]);
   const glued2 = el("p", "docs/a.md", el("em", "#12"));
   assert.equal(linkifyPrRefs(glued2 as unknown as Node, REPO), 0, "a fragment inside a wrapper is glued to the text before the wrapper");
+});
+
+// ── marked's HTML read into the stand-in, so the chat's own markdown shapes run through the walk ─────
+const VOID_TAGS = new Set(["BR", "HR", "IMG", "INPUT", "WBR"]);
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", "#39": "'" };
+const unescapeHtml = (s: string): string => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, k: string) => ENTITIES[k]);
+/** tags and text only, the class attribute kept; enough for what marked emits */
+function fromHtml(html: string): E {
+  const root = new E("DIV");
+  let cur = root;
+  const re = /<\/([A-Za-z][\w-]*)\s*>|<([A-Za-z][\w-]*)([^>]*)>|([^<]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[1]) { cur = cur.parentNode || root; continue; }
+    if (m[2]) {
+      const e = cur.appendChild(new E(m[2].toUpperCase()));
+      const c = /class="([^"]*)"/.exec(m[3] || "");
+      if (c) e.className = c[1];
+      if (!VOID_TAGS.has(e.tagName) && !/\/\s*$/.test(m[3] || "")) cur = e;
+      continue;
+    }
+    cur.appendChild(new T(unescapeHtml(m[4])));
+  }
+  return root;
+}
+const shape = (e: E): string[] => e.childNodes.map((c) => (c instanceof T ? JSON.stringify(c.textContent) : c.tagName));
+const linked = (root: E): string[] => anchors(root).map((a) => a.textContent);
+
+test("a line or block edge is a boundary with no whitespace node: marked's hard-break <br>, abutting paragraphs, list items, table cells; an inline element with no text is not", async () => {
+  const { marked } = await import("marked");
+  const { linkifyPathTokens } = await import("./path-links");
+  marked.setOptions({ gfm: true, breaks: false });   // the chat's options (render.ts md()); the sanitizer needs a browser DOM and keeps every tag used here
+  const md = (src: string): E => fromHtml(marked.parse(src) as string);
+  // a GFM hard break (two trailing spaces, or a backslash): <br> with NO text node between it and the `#`
+  let root = md("done  \n#12 next");
+  assert.deepEqual(shape(root.childNodes[0] as E), ['"done"', "BR", '"#12 next"'], "marked's shape: no whitespace after the <br>");
+  assert.equal(linkifyPrRefs(root as unknown as Node, REPO), 1);
+  assert.deepEqual(linked(root), ["#12"]);
+  root = md("done\\\n#12 next");
+  assert.equal(linkifyPrRefs(root as unknown as Node, REPO), 1, "the backslash form");
+  root = md("done  \nPR #12 next");
+  assert.deepEqual((linkifyPrRefs(root as unknown as Node, REPO), linked(root)), ["PR #12"]);
+  root = md("done  \nexample-org/other#4 next");
+  assert.deepEqual((linkifyPrRefs(root as unknown as Node, REPO), linked(root)), ["example-org/other#4"]);
+  root = md("see docs/a.md  \n#12 merged");
+  linkifyPathTokens(root as unknown as HTMLElement, null);
+  assert.deepEqual((linkifyPrRefs(root as unknown as Node, REPO), linked(root)), ["#12"], "a path on the line before, then the hard break: both passes for real");
+  root = md("Read docs/a.md#12 before merging");
+  linkifyPathTokens(root as unknown as HTMLElement, null);
+  assert.equal(linkifyPrRefs(root as unknown as Node, REPO), 0, "the fragment case through marked still refuses");
+  // marked separates blocks with a "\n" text node; a DOM whose blocks abut has the same boundary
+  const abutting: E[] = [
+    el("div", el("p", "done"), el("p", "#12")),
+    el("ul", el("li", "fixed"), el("li", "#12")),
+    el("li", "#12"),
+    el("tr", el("td", "fix"), el("td", "#12")),
+    el("div", el("h2", "Status"), el("p", "#12")),
+    el("div", el("p", "note"), el("blockquote", "#12")),
+    el("div", el("pre", "x"), "#12"),
+    el("div", "done", el("hr"), "#12"),
+    el("div", el("p", "done"), "#12"),
+    el("p", el("span", "docs"), el("br"), "#12"),
+  ];
+  for (const r of abutting) assert.deepEqual((linkifyPrRefs(r as unknown as Node, REPO), linked(r)), ["#12"], r.html());
+  // the glue protections stay: a path span, an empty inline element, a walked inline wrapper
+  for (const r of [
+    el("p", "see ", cls(el("span", "docs/a.md"), "file-uri-link"), "#12"),
+    el("p", "docs", el("span"), "#12"),
+    el("p", "docs", el("img"), "#12"),
+    el("p", "docs", el("em", ""), "#12"),
+    el("p", "see docs/a.md", el("em", "#12")),
+  ]) assert.equal(linkifyPrRefs(r as unknown as Node, REPO), 0, r.html());
+  // a text node right after an <hr> or <br> is at a boundary; a whole-text `#` with a block before it too
+  assert.equal(linkifyPrRefs(el("div", el("p", "x"), el("div", "#7")) as unknown as Node, REPO), 1);
 });
 
 test("references inside emphasis and list items link (only anchors and code-like elements are opaque)", () => {

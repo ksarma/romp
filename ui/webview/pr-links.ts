@@ -53,7 +53,13 @@
 // walk carries the last character of the text before it (a skipped element's included) into the node, so
 // `#12` right after `docs/a.md`, or after `<code>x</code>`, stays the fragment it is, while `#12` after
 // a space, or at the start of the root, links as before (the 2026-09-07 review: the split case linked
-// `#12` in a todo titled `Read docs/a.md#12 before merging` to an unrelated PR).
+// `#12` in a todo titled `Read docs/a.md#12 before merging` to an unrelated PR). The carry crosses
+// INLINE elements only (an <img>, an empty <span>, an unknown element renders no boundary, so the text
+// before it decides) and resets at a line or block edge (BLOCK_TAGS: <br>, <p>, <li>, a heading, a
+// table cell, ...): a reference that begins a line or a block follows a boundary whether or not a
+// whitespace node separates them. marked renders a GFM hard break (two trailing spaces, then `#12` on
+// the next line) as `<p>done<br>#12</p>` with no text between the <br> and the `#`, and the first fix of
+// the carry read that as glued (the 2026-09-07 round-2 review).
 // A session with no GitHub repository (`githubRepo` null: no repo, no origin, or an origin elsewhere)
 // links NOTHING, the cross-repo form included — the honest rendering is the plain text, never a
 // guessed host.
@@ -154,9 +160,23 @@ export function prRefSegments(text: string, repo: string | null | undefined, bef
 const CODE_LIKE = "a, code, pre, kbd, samp, var, tt";
 const SKIP_TAGS = new Set(["A", "CODE", "PRE", "KBD", "SAMP", "VAR", "TT", "SCRIPT", "STYLE", "TEXTAREA", "INPUT", "BUTTON", "SELECT", "OPTION", "SVG"]);
 const SKIP_CLASSES = ["file-uri-link", "url-code-link"];
+// Elements whose edges are line or block boundaries in the rendered text: the run of text the walk
+// carries ends at one and starts fresh after it (the header). Everything not listed is inline, and an
+// inline element with no text passes the run through unchanged, the safe default, since a missed
+// boundary costs a link and an invented one makes a wrong link. The list is the block-level and
+// line-breaking tags the chat's sanitizer lets through (marked emits the first two rows; the rest arrive
+// as raw HTML in a message).
+const BLOCK_TAGS = new Set([
+  "BR", "HR", "P", "PRE", "BLOCKQUOTE", "UL", "OL", "LI", "H1", "H2", "H3", "H4", "H5", "H6",
+  "TABLE", "CAPTION", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
+  "DIV", "DL", "DT", "DD", "SECTION", "ARTICLE", "HEADER", "FOOTER", "NAV", "ASIDE", "MAIN",
+  "FIGURE", "FIGCAPTION", "DETAILS", "SUMMARY", "FORM", "FIELDSET", "ADDRESS",
+]);
+
+const tagOf = (e: Element): string => String(e.tagName || "").toUpperCase();
 
 function skipElement(e: Element): boolean {
-  if (SKIP_TAGS.has(String(e.tagName || "").toUpperCase())) return true;
+  if (SKIP_TAGS.has(tagOf(e))) return true;
   const cl = e.classList;
   return !!cl && SKIP_CLASSES.some((k) => cl.contains(k));
 }
@@ -168,8 +188,9 @@ function skipElement(e: Element): boolean {
  *  case — costs one native textContent read and no walk. Walks childNodes and edits through
  *  insertBefore/removeChild only, so a test's plain-object DOM stand-in runs it as the browser does.
  *  The walk carries the last character of the text before each node (a skipped element's text
- *  counts, an element with no text does not), so a node's start is a boundary only when the rendered
- *  text has one there (the header: `docs/a.md` + `#12` split across two nodes is still one path). */
+ *  counts, an inline element with no text does not, and a line or block edge, BLOCK_TAGS, resets
+ *  the run), so a node's start is a boundary only when the rendered text has one there (the header:
+ *  `docs/a.md` + `#12` split across two nodes is still one path; `done<br>#12` is two lines). */
 export function linkifyPrRefs(root: Node | null | undefined, repo: string | null | undefined): number {
   const r = validPrRepo(repo);
   if (!r || !root) return 0;
@@ -177,7 +198,8 @@ export function linkifyPrRefs(root: Node | null | undefined, repo: string | null
   const rootEl = root as Element;
   if (root.nodeType === 1 && typeof rootEl.closest === "function" && rootEl.closest(CODE_LIKE)) return 0;
   let made = 0;
-  /** links the text under `node`, given the character before it; returns the character before whatever follows */
+  /** links the text under `node`, given the character before it; returns the character before whatever
+   *  follows: "" after a line or block edge, the way the root starts */
   const visit = (node: Node, before: string): string => {
     const kids = Array.from(node.childNodes || []);   // snapshot: text children are replaced as we go
     for (const c of kids) {
@@ -187,12 +209,16 @@ export function linkifyPrRefs(root: Node | null | undefined, repo: string | null
         if (text) before = text.slice(-1);
         continue;
       }
-      if (c.nodeType !== 1 || skipElement(c as Element)) {
-        const text = c.textContent || "";
-        if (text) before = text.slice(-1);
+      if (c.nodeType !== 1) continue;                  // a comment or the like renders nothing: the run is unbroken
+      const e = c as Element;
+      const edge = BLOCK_TAGS.has(tagOf(e));
+      if (skipElement(e)) {
+        const text = e.textContent || "";
+        before = edge ? "" : text ? text.slice(-1) : before;
         continue;
       }
-      before = visit(c, before);
+      if (edge) { visit(e, ""); before = ""; }         // its text starts a line or block; so does whatever follows it
+      else before = visit(e, before);
     }
     return before;
   };
