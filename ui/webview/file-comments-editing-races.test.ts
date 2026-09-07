@@ -5,8 +5,10 @@
 // send comes after the editor opened (refused again at the send, so nothing goes out), and a click whose request was
 // already out when Edit began (its reply lands under the editor). And the decisions no gate can reach: another browser's
 // card, a session's CLI. In every reached case the head says so from the status that shows it — before Save, which can
-// only refuse — once per edit, and yields to the file's own row when the bytes moved too (a reject). Driven as a panel
-// over the behavior suite's DOM stand-in. Synthetic fixtures only: the notes-api world, placeholder ids.
+// only refuse — once per edit, and yields to the file's own row when the bytes moved too (a reject). The consolidation
+// pass adds the request-out ordering's other half: a decision this panel sent HOLDS Edit until it settles (holdEdit), so
+// that case cannot start from the Edit button. Driven as a panel over the behavior suite's DOM stand-in. Synthetic
+// fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -246,6 +248,7 @@ type World = {
   disk: string; diskMtime: string; viewMtime: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>;
   editing: boolean; tracked: TrackedEdit | null;    // the viewer's edit mode, and the panel's half of editing over pending changes
+  blocked: Array<string | null>;                    // every setEditBlocked the panel made: the reason the Edit button refuses with, or null
   consent: () => Promise<boolean>;                  // the file-editing consent, deferrable: a decision waits on it while Edit goes ahead
   setText(src: string): void; close(): void;
 };
@@ -282,7 +285,7 @@ function world(): World {
     posted: [] as any[], main, body, code,
     hooks: { rendered: [] as Array<() => void>, close: [] as Array<() => void> },
     disk: text, diskMtime: "1757145600000000001", viewMtime: "1757145600000000001", reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>,
-    editing: false, tracked: null, consent: async () => true,
+    editing: false, tracked: null, blocked: [] as Array<string | null>, consent: async () => true,
   } as World;
   rows(code, text);
   // the viewer's renderBody + fireRendered — in the real viewer the one hook in edit mode is enterEdit's; a test that paints in edit
@@ -294,7 +297,7 @@ function world(): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: () => w.consent(), setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: () => w.consent(), setEditBlocked: (r) => { w.blocked.push(r); }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired; a no-op in edit mode, as the viewer's is
@@ -544,6 +547,71 @@ test("the save's store-moved re-read can show the file moved too: the head says 
   assert.equal(headRows(aside).length, 0);
 });
 
+// ── a decision out holds Edit until it settles ──────────────────────────────────────────────────────
+
+test("a decision whose request is out holds Edit until it settles: the viewer hears the reason at the send and null when the last one lands, once each however many are out and across a moved fence's retry; a status alone never touches it", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });   // before the panel's poll is armed, so its interval is the mocked one (a real one would outlive the test)
+  const w = world(); t.after(() => w.close());
+  const fc = await import("./file-comments");
+  const { aside, button } = await openPanel(w, pending());
+  assert.deepEqual(w.blocked, [], "no status reply blocks Edit (Slice 5: the changes ride into the editor as marks)");
+  assert.match(fc.DECISION_IN_FLIGHT, /^A change in this file is being accepted or rejected right now\. Edit opens as soon as that lands\.$/);
+  assert.doesNotMatch(fc.DECISION_IN_FLIGHT, /card|board|goal|nudge|panel|sidecar|store|fence/i, "the person's terms");
+  // the consent's read is out: held from the click, before anything went to the kernel
+  let allow!: (ok: boolean) => void;
+  w.consent = () => new Promise<boolean>((r) => { allow = r; });
+  act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush();
+  assert.equal(countOf(w, "fileComments", "accept"), 0, "nothing sent yet");
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT], "held at the click: the Edit button refuses with these words meanwhile");
+  allow(true); w.consent = async () => true; await flush(); await flush();
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.ok(acc, "the request is out");
+  // a second decision goes out beside it (another card): one hold, no second call
+  act(card(aside, "chg:h2")!, "fcreject", "h2")!.click(); await flush(); await flush();
+  const rej = lastOf(w, "fileComments", "reject");
+  assert.ok(rej, "the second request is out");
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT], "one transition for two decisions out");
+  // the first reply lands: one still out, still held
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: acc.reqId, ...pending({ verb: "accept", storeMtimeNs: CLOCK5 }, [h2], [rec2]) } }));
+  await flush(); await flush();
+  assert.equal(button.textContent, "Comments · 1 · 1 change", "the status landed");
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT], "the reject is still out");
+  // the second is refused on a moved fence: the re-read and the retry are the same decision, still out
+  refuse(w, rej, "store-moved", CHANGED); await flush();
+  answer(w, pending({ storeMtimeNs: CLOCK5 }, [h2], [rec2])); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "reject"), 2, "the one retry");
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT], "held across the re-read and the retry");
+  const retry = lastOf(w, "fileComments", "reject");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: retry.reqId, ...status({ verb: "reject", fileMtimeNs: "1757145600000000033", storeMtimeNs: "1757145600000000006" }) } }));
+  await flush(); await flush();
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT, null], "lifted when the last decision settles");
+  // a status alone (the poll's) touches it in neither direction
+  const asks = countOf(w, "fileComments", "status");
+  w.mtimes[STORE_PATH] = "1757145600000000007";
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "status"), asks + 1, "the poll re-read");
+  answer(w, status({ storeMtimeNs: "1757145600000000007" })); await flush();
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT, null], "a status reply blocks nothing and lifts nothing");
+});
+
+test("the hold lifts on a refusal too, and a decision refused at the gate (the editor is up) never holds: nothing was sent", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const fc = await import("./file-comments");
+  const { aside, DECIDE } = await openPanel(w, pending());
+  act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush(); await flush();
+  const acc = lastOf(w, "fileComments", "accept");
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT]);
+  refuse(w, acc, "no-change", "change h1 is no longer pending in ~/notes-api/docs/report.md"); await flush(); await flush();
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT, null], "a refusal settles the decision: Edit is free");
+  assert.ok(card(aside, "chg:h1")!.querySelector(".fc-err"), "the refusal shows under the card");
+  // the editor is up: the gate refuses in place, and the viewer hears nothing (there is no request to wait for)
+  w.editing = true; w.tracked!.begin();
+  act(card(aside, "chg:h2")!, "fcreject", "h2")!.click(); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "reject"), 0);
+  assert.equal(card(aside, "chg:h2")!.querySelector(".fc-err")!.childNodes[0].textContent, DECIDE);
+  assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT, null], "no hold for a decision that never went out");
+});
+
 // ── source ──────────────────────────────────────────────────────────────────────────────────────────
 
 test("source: the gate runs again at the send, the row is raised where every status lands and yields to the file's, the edit's end retires it, and the save's re-read notes a moved file", () => {
@@ -565,4 +633,10 @@ test("source: the gate runs again at the send, the row is raised where every sta
   assert.match(begin, /this\.changesMovedUnderEdit = false;/, "a new edit starts a new latch");
   const save = SRC.split("async saveThroughComments(")[1].split("\n  }\n")[0];
   assert.match(save, /await this\.refresh\(\);\n\s*this\.noteMovedUnderEdit\(\);/, "the save's re-read says when the file moved too");
+  // Edit is held for a decision's whole round trip: from mutate's hold to its finally, one transition each way
+  const mut = SRC.split("async mutate(")[1].split("\n  }\n")[0];
+  assert.match(mut, /const decides = DECIDES\.has\(verb\);\n\s*if \(decides\) this\.holdEdit\(1\);\n\s*try \{/, "held before the consent's read and the send");
+  assert.match(mut, /\} finally \{ if \(decides\) this\.holdEdit\(-1\);/, "lifted when the decision settles, reply or refusal");
+  const hold = SRC.split("private holdEdit(delta: 1 | -1): void {")[1].split("\n  }\n")[0];
+  assert.match(hold, /if \(\(was === 0\) !== \(this\.decisionsOut === 0\)\) this\.ctx\.setEditBlocked\(this\.decisionsOut \? DECISION_IN_FLIGHT : null\);/, "one call per transition");
 });

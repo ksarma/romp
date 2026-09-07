@@ -101,6 +101,13 @@ export const DECIDE_IN_EDITOR_TOUCH = "While you edit, a tap on a change decides
   + "To accept or reject them, Save or Cancel first: Accept and Reject work again once the editor is closed. "
   + "With a mouse, a click on a change accepts it and Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) rejects it; Save then writes the decisions with your text.";
 const DECIDE_TEXTS = new Set([DECIDE_IN_EDITOR, DECIDE_IN_EDITOR_TOUCH]);
+/** Why Edit is refused while a decision this panel sent is still out (mutate holds it at the send and lifts it when the
+ *  reply or the refusal lands: holdEdit). The other side of DECIDES: a decision drops a record from the sidecar (a reject
+ *  rewrites the file too), and an editor opened while the request is out takes the records as they stood at the click and
+ *  is fenced on that sidecar, so its every Save could only refuse `store-moved` — the typed text in a buffer nothing can
+ *  land, told only once the reply shows it (CHANGES_MOVED_UNDER_EDIT). Keyed on the request's life, never on a clock; the
+ *  viewer refuses in words, in place (its editBlocked idiom), so the reason reaches touch and keyboard users. */
+export const DECISION_IN_FLIGHT = "A change in this file is being accepted or rejected right now. Edit opens as soon as that lands.";
 /** The decide-in-editor words for this device, read at each use rather than once: the primary pointer can change (a tablet
  *  docks to a keyboard and trackpad), and a row set under one is retired by text under the other (DECIDE_TEXTS). */
 function decideInEditor(): string { return isCoarsePointer() ? DECIDE_IN_EDITOR_TOUCH : DECIDE_IN_EDITOR; }
@@ -480,6 +487,8 @@ class Panel {
   // its status itself, so onSaved skips the re-read it does for saveFile.
   editSeed: EditSeed | null = null;
   lastSaveNs: string | null = null;
+  // decisions this panel sent whose reply has not landed (holdEdit): while any is out, the viewer refuses Edit
+  decisionsOut = 0;
   // the file's bytes moved under an edit (noteMovedUnderEdit) and the view has not re-read them yet: the first paint after
   // the edit ends re-reads (paintAll). A latch of its own, not the head row's presence: the row's ✕ dismisses the words,
   // and the re-read must still happen, or Cancel would leave the pre-rewrite bytes showing for good (the poll's baseline
@@ -912,11 +921,24 @@ class Panel {
     // relabels itself meanwhile (renderComposer), the slot's loader shows for every other control
     if (this.busy.has(slot)) return null;
     this.busy.add(slot); this.busyVerb.set(slot, verb); this.errors.delete(slot); this.render();
+    // a decision holds Edit from here until it settles — the consent's read, the status re-ask, the send, a moved fence's
+    // re-read and retry included (DECISION_IN_FLIGHT: why); the gate above and mutateOnce's are the same trap's other side
+    const decides = DECIDES.has(verb);
+    if (decides) this.holdEdit(1);
     try {
       if (!(await this.requireStatus(slot))) return null;
       if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); return null; }
       return await this.mutateOnce(verb, args, slot, false);
-    } finally { this.busy.delete(slot); this.busyVerb.delete(slot); this.render(); }
+    } finally { if (decides) this.holdEdit(-1); this.busy.delete(slot); this.busyVerb.delete(slot); this.render(); }
+  }
+  /** Edit is refused while a decision this panel sent is out (DECISION_IN_FLIGHT): the viewer hears the reason when the
+   *  first goes out and null when the last settles — one transition each way, however many are out at once (two cards
+   *  clicked in a row, the Send's accept-all beside a card's). A status reply never touches it (Slice 5: pending changes
+   *  ride into the editor; file-comments-changes.test.ts pins that applyStatus stays out of it). */
+  private holdEdit(delta: 1 | -1): void {
+    const was = this.decisionsOut;
+    this.decisionsOut = Math.max(0, was + delta);
+    if ((was === 0) !== (this.decisionsOut === 0)) this.ctx.setEditBlocked(this.decisionsOut ? DECISION_IN_FLIGHT : null);
   }
   private async mutateOnce(verb: string, args: Record<string, unknown>, slot: string, retried: boolean): Promise<Status | null> {
     // the gate again, at the send: the editor can open during mutate's awaits (the consent's read, a status re-ask, a

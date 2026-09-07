@@ -442,8 +442,10 @@ test("the Edit refusal while changes are pending (Slice 2 wording: accept or rej
   assert.equal(editBlockedReason([hunk, { ...hunk, id: "h2" }, { ...hunk, id: "h3" }]), "3 changes are pending in this file, so Edit is off here: a direct edit would move them. Accept or reject the 3 changes first; the session's own track-edit still works.");
   assert.doesNotMatch(editBlockedReason([hunk])!, /next update|next slice/, "the Slice 1 wording is gone");
   // Slice 5: the panel no longer blocks Edit from a status; the wording rides in trackedEdit.begin() as the refusal the
-  // viewer raises when its editor bundle cannot carry the pending changes (an older bundle, a failed load)
-  assert.doesNotMatch(SRC, /this\.ctx\.setEditBlocked\(/, "no status reply blocks Edit any more");
+  // viewer raises when its editor bundle cannot carry the pending changes (an older bundle, a failed load). Edit is held
+  // only while a decision this panel sent is out (holdEdit, DECISION_IN_FLIGHT), never from applyStatus.
+  assert.doesNotMatch(SRC.split("applyStatus(s: Reply): boolean {")[1].split("\n  }\n")[0], /setEditBlocked/, "no status reply blocks Edit any more");
+  assert.equal((SRC.match(/this\.ctx\.setEditBlocked\(/g) || []).length, 1, "the one call is holdEdit's");
   assert.match(SRC, /refusal: editBlockedReason\(hunks\) \|\| "",/, "the Slice 2 wording is what the editor's refusal says");
   assert.equal(lineStartOffset("ab\ncd\nef", 0), 0);
   assert.equal(lineStartOffset("ab\ncd\nef", 1), 3);

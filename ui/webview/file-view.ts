@@ -684,10 +684,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   editBtn.hidden = true;
   // The consent gate (the user 2026-08-22): editing is a kernel-side opt-in the SAVE ROUTE enforces —
   // the popup where the one yes happens is ensureEditingAllowed (module level, shared with the comments
-  // panel's verbs since Slice 1 of plans/file-review.md). While changes are PENDING in the file the
-  // button refuses instead, in words, in place: a raw save over pending changes rewrites their offsets
-  // (setEditBlocked, set by the panel from the kernel's hunks; Slice 5 lifts it). The button stays a
-  // real button rather than a disabled one so the reason reaches touch and keyboard users too.
+  // panel's verbs since Slice 1 of plans/file-review.md). While a decision the panel sent is still OUT the
+  // button refuses instead, in words, in place (setEditBlocked, held by the panel from the send to the
+  // reply: an editor opened meanwhile would carry records that decision is dropping, and no Save from it
+  // could land). Slices 2 to 4 held it for every pending change; Slice 5's editor carries those as marks.
+  // The button stays a real button rather than a disabled one so the reason reaches touch and keyboard users too.
   let editBlocked: string | null = null;
   // Pending changes enter the editor as marks (Slice 5) — unless the loaded bundle already proved it cannot carry them
   // (chunkTracks false), or the file's CRLF endings would: the editor normalizes them to LF (norm), which moves every

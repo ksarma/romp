@@ -190,7 +190,12 @@ test("the Edit refusal (Slice 2 wording): one line naming the count, saying to a
   assert.equal(editBlockedReason([]), null);
   assert.doesNotMatch(editBlockedReason([h1])!, /\n/, "one line");
   assert.doesNotMatch(editBlockedReason([h1])!, /next update|next slice|card|board|goal|nudge/i);
-  assert.doesNotMatch(SRC, /this\.ctx\.setEditBlocked\(/, "Slice 5: a status no longer blocks Edit; the wording is the refusal trackedEdit.begin() hands the viewer");
+  // Slice 5: no status reply blocks Edit; the wording is the refusal trackedEdit.begin() hands the viewer. The one call left
+  // is holdEdit's, for a decision this panel sent and not yet answered (file-comments-editing-races.test.ts drives it).
+  const apply = SRC.split("applyStatus(s: Reply): boolean {")[1].split("\n  }\n")[0];
+  assert.doesNotMatch(apply, /setEditBlocked/, "a status reply blocks nothing");
+  assert.equal((SRC.match(/this\.ctx\.setEditBlocked\(/g) || []).length, 1, "the panel's one call: holdEdit's");
+  assert.match(SRC, /private holdEdit\(delta: 1 \| -1\): void \{[^]*?this\.ctx\.setEditBlocked\(this\.decisionsOut \? DECISION_IN_FLIGHT : null\);/);
   assert.match(SRC, /refusal: editBlockedReason\(hunks\) \|\| "",/);
 });
 
