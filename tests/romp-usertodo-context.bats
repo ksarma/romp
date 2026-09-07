@@ -190,10 +190,11 @@ run_hook() {   # run_hook <source> — feed a SessionStart payload with that sou
 
 @test "a todo that names a file shows the path after its text, exactly as the kernel rendered it" {
     # the todo-file follow-on (2026-09-07): the kernel's block lists each todo's `file` after its
-    # text when set; the hook hands the block on whole, so the path reaches the session intact
-    # and in place — never re-rendered, dropped, or mangled by the JSON round-trip
+    # text when set (kernel _user_todo_context_block: "<text> (<id>, opened <date>) — file: <path>",
+    # the line this fixture copies); the hook hands the block on whole, so the path reaches the
+    # session intact and in place — never re-rendered, dropped, or mangled by the JSON round-trip
     export ROMP_SID="$SID"
-    export CURL_RESPONSE='{"ok": true, "block": "Notes you still have open with the person you work for:\n- Need a look at the report (ut-11111111, opened 2026-09-07) \u2014 /TESTDIR/notes-api/docs/report.md\n- Need the auth-scheme decision (ut-22222222, opened 2026-09-06)\n\nIf one is met or moot now, withdraw it (withdraw_user_todo); otherwise leave it standing."}'
+    export CURL_RESPONSE='{"ok": true, "block": "Notes you still have open with the person you work for:\n- Need a look at the report (ut-11111111, opened 2026-09-07) \u2014 file: /TESTDIR/notes-api/docs/report.md\n- Need the auth-scheme decision (ut-22222222, opened 2026-09-06)\n\nIf one is met or moot now, withdraw it (withdraw_user_todo); otherwise leave it standing."}'
     run_hook resume
     [ "$status" -eq 0 ]
     python3 - "$output" <<'PY'
