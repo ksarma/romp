@@ -233,7 +233,11 @@ class _PerfStats:
                                    lineage_reads: judge.resume_lineage calls, each a read and parse of
                                    a session's whole states file (the episode-boundary check's guard
                                    for an unrecorded head; a recorded head returns on the episode
-                                   log's stat before it, so at steady state this stays near zero)
+                                   log's stat before it, so at steady state this stays near zero; a
+                                   steady non-zero rate is heads changing, a live session whose
+                                   current leaf is a recorded resume fork (never appended to the log,
+                                   so it reads its lineage every pass; benign, one read per such
+                                   session per pass), or a regressed guard order)
       judge                       passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from

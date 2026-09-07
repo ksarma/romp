@@ -6985,8 +6985,9 @@ def resume_lineage(sid):
     (which settled the session's open cards mid-turn, 2026-08-14); the parser consumes the same rows
     through parse_session's states plumbing (em.resume_fork_links / FileAdapter._stitch_resume_forks).
     Unmemoized: every call reads and parses the whole file, counted under goal_io_stats' `lineage_reads`
-    so `/perf` shows how often the boundary check reaches it (the check reads the memoized episode log
-    first and consults this only for an unrecorded head, 2026-09-07)."""
+    (`goals.lineage_reads` in the /perf snapshot and `romp perf --json`; `romp perf` prints it as a rate on
+    the goals line) so the reads the boundary check still makes are visible: the check reads the memoized
+    episode log first and consults this only for a head the log does not hold (2026-09-07)."""
     _goal_io_bump("lineage_reads")
     out = []
     try:

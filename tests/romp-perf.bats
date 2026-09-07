@@ -47,7 +47,7 @@ setup() {
  "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}, "delta": {"chat": {"count": 100, "bytes": 50000}}, "deduped": {"feed": {"count": 90, "bytes": 9000000}}},
  "goals": {"loads": 1000, "loads_shared": 500, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
            "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10, "absent_hits": 100, "absent_misses": 10, "noop_hash_ms": 100.0,
-           "unreadable_stores": 0},
+           "unreadable_stores": 0, "lineage_reads": 40},
  "judge": {"passes": 30, "ms_sum": 30000.0, "ms_last": 1000.0, "ms_mean": 1000.0, "cpu_ms_sum": 2000.0, "cpu_ms_workers": 1500.0,
            "wakes": 100, "wakes_event": 28, "wakes_backstop": 2,
            "chain_memo": {"hit": 400, "miss": 40, "populate": 40, "bypass": 0},
@@ -71,7 +71,7 @@ JSON
  "sends": {"full": {"chat": {"count": 12, "bytes": 2048576}}, "delta": {"chat": {"count": 120, "bytes": 60000}}, "deduped": {"feed": {"count": 108, "bytes": 10800000}}},
  "goals": {"loads": 1100, "loads_shared": 550, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
            "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15, "absent_hits": 190, "absent_misses": 15, "noop_hash_ms": 150.0,
-           "unreadable_stores": 1},
+           "unreadable_stores": 1, "lineage_reads": 70},
  "judge": {"passes": 32, "ms_sum": 32400.0, "ms_last": 1200.0, "ms_mean": 1012.5, "cpu_ms_sum": 2050.0, "cpu_ms_workers": 1540.0,
            "wakes": 106, "wakes_event": 30, "wakes_backstop": 2,
            "chain_memo": {"hit": 490, "miss": 43, "populate": 43, "bypass": 0},
@@ -154,7 +154,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"deduped 176 KB/s (feed 18 frames 176 KB/s)"* ]]
     [[ "$output" == *"10.0 loads/s   5.0 shared loads/s   2.0 saves/s   0.5 writes/s   scan 1.0 parses/s (90% memo hits)"* ]]   # 90 hits, 10 parses
     [[ "$output" == *"save memo 95% hits (19 hits, 1 misses, 5 seeds)"* ]]                                 # 19 hits, 1 miss, 5 seeds
-    [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)   no-op hash 5.0 ms/s   1 unreadable store"* ]]   # the absent-store predicate memo's window deltas; 50 ms of no-op hashing over 10 s; the gauge is the newer snapshot's level, printed only when non-zero
+    [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)   no-op hash 5.0 ms/s   3.0 lineage reads/s   1 unreadable store"* ]]   # the absent-store predicate memo's window deltas; 50 ms of no-op hashing over 10 s; 30 whole states-file reads by the episode-boundary check over 10 s; the gauge is the newer snapshot's level, printed only when non-zero
     [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   cpu/pass 25 ms   chain memo 90 hits / 3 misses   wakes 6 (event 2, backstop 0, 4 sets absorbed)"* ]]   # the WINDOW mean: 2400 ms over 2 passes; 50 ms of judge CPU over them; the chain memo's window deltas; the producer's sets against the waits they ended
     [[ "$output" != *"1012"* ]]                          # not the lifetime ms_mean
     [[ "$output" == *"tiers     plan 2 ran / 60 skipped (97% skipped)   close 3 ran / 59 skipped (95% skipped, 1 incomplete)   distill 1 ran / 30 skipped (97% skipped)   stamps 62"* ]]   # the gate's window deltas per tier, store tiers included; zero-count extras and idle tiers stay off the line

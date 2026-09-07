@@ -240,7 +240,9 @@ class EpisodeBoundaryTest(unittest.TestCase):
         # The RECORDED fork shape (a fresh-rooted file the states log names as a resume fork): the head
         # is never appended, so every check of it is the unrecorded-head path and reads the lineage
         # once. The one shape that keeps reading after the guard reorder; the state audited on
-        # 2026-09-07 held no such row (a memo for it waits on one appearing, see FOLLOWUPS).
+        # 2026-09-07 held no such row. Deferred until a live session has a recorded resume-fork leaf: an
+        # identity-keyed memo for resume_lineage on states/<sid>.jsonl (the lineage_reads rate on
+        # `romp perf` shows when one appears).
         self._store()
         anchor = self.proj / (SID + ".jsonl")
         _write_jsonl(anchor, [_rec("root1")])

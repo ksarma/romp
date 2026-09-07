@@ -1745,8 +1745,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
   session's whole states file: the episode-boundary check consults it only for
   a head the memoized episode log does not hold yet, so at steady state the
-  counter stays near zero (a rising rate means heads are changing, or the
-  guard order in `_episode_boundary_check` regressed).
+  counter stays near zero. A steady non-zero rate has three causes: heads are
+  changing (`/clear` boundaries and first observations); a live session's
+  current leaf is a recorded resume fork, which is never appended to the
+  episode log and so reads its lineage every pass (benign; one read per such
+  session per pass); or the guard order in `_episode_boundary_check` regressed.
+  `romp perf` prints the rate on the `goals` line.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the
