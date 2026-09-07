@@ -1,9 +1,9 @@
 ---
 title: Judge: save_goals refuses to publish a store that loaded as a fallback for a goals file that exists and did not read
 status: candidate
-where: fork branch `unread-store-save` (stacked on PR #317): `kernel/judge.py` (`UnreadStoreError`, `save_goals`, `_disk_rev`, `_mark_unread`, `_fallback_store`, `load_goals`, `load_goals_shared`, the six stages' and the courier's stand-down, `run_propagate`); tests `tests/test_unread_store_save.py`, `tests/test_judge_stage_gate.py`, `tests/test_judge_store_cas.py`, `tests/test_courier_kind_demote_only.py`
+where: fork PR #322 (`unread-store-save`, stacked on #317): `kernel/judge.py` (`UnreadStoreError`, `save_goals`, `_disk_rev`, `_mark_unread`, `_fallback_store`, `load_goals`, `load_goals_shared`, the six stages' and the courier's stand-down, `run_propagate`); tests `tests/test_unread_store_save.py`, `tests/test_judge_stage_gate.py`, `tests/test_judge_store_cas.py`, `tests/test_courier_kind_demote_only.py`
 added: 2026-09-07
-pr:
+pr: 322
 tier: fix
 offered:
 closed:
