@@ -487,7 +487,11 @@ class _PerfStats:
                                    tail was merged: derived, not held) / complain_skip (the parse
                                    or a stage complained) / unshared_skip (a non-frozen store with
                                    content) / evict, the gauge entries, and segs_hit / segs_miss
-                                   (segments served against derived: the cost-weighted hit rate)
+                                   (segments served against derived: the cost-weighted hit rate);
+                                   chat_merge_sets (the live-merge's transcript-side sets, one entry
+                                   per sid on the parsed session's identity, see _merge_tx_sets)
+                                   -> hit / miss (merges served from the memo vs derived) and the
+                                   gauge entries (sids held)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -687,7 +691,8 @@ class _PerfStats:
                              ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
                              ("thread_reg", _thread_reg_report),
-                             ("feed_segs", _feed_segs_report), ("lanes", _lanes_memo_report)):
+                             ("feed_segs", _feed_segs_report), ("lanes", _lanes_memo_report),
+                             ("chat_merge_sets", _merge_sets_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -28962,6 +28967,52 @@ def _sendvis_diag(sid):
     return out
 
 
+_merge_sets_memo = {}                            # sid → (parsed session object, its sets) — see _merge_tx_sets
+_merge_sets_stats = {"hit": 0, "miss": 0}        # /perf memos.chat_merge_sets
+
+
+def _merge_sets_report():
+    """/perf memos.chat_merge_sets: the counters plus the entries held (one per sid merged since start,
+    less the pusher's eviction of sids neither shown as a tab nor alive)."""
+    return dict(_merge_sets_stats, entries=len(_merge_sets_memo))
+
+
+def _merge_tx_sets(session, sid):
+    """The transcript-side sets _merge_live_atoms derives from the parsed session, memoized per sid on the
+    session OBJECT's identity: (tx_uuids, tx_text_uuids, tx_texts, tx_text_t, human_floor). Inputs: the
+    atoms under session["turns"], and nothing else. The callers pass the parse cache's object
+    (build_session's `parsed`, build_feed's _parse_cached row, build_timeline's _parse result), which
+    _parse hands back unchanged while the transcript's (mtime, size, cut, states) key holds and replaces
+    on any change, so identity stands for content; a live-merged copy is this function's consumer and is
+    never passed in. The entry holds the session object, so an id cannot be recycled onto a new parse,
+    and one entry per sid serves the chat, feed and timeline builds of one cycle, which merge the same
+    object. The three sets are frozen: the callers and the backends' prune_live only read them, and an
+    in-place write would corrupt every later hit, so a write raises instead; tx_text_t stays a dict
+    because sdk_backend.prune_live dispatches on isinstance(dict). Round-4 plan P3 (d), 2026-09-07."""
+    ent = _merge_sets_memo.get(sid)
+    if ent is not None and ent[0] is session:
+        _merge_sets_stats["hit"] += 1
+        return ent[1]
+    _merge_sets_stats["miss"] += 1
+    turns = session["turns"]
+    tx_uuids = frozenset(a.get("uuid") for turn in turns for a in turn["atoms"] if a.get("uuid"))
+    tx_text_uuids = frozenset(a.get("uuid") for turn in turns for a in turn["atoms"]
+                              if a.get("uuid") and _atom_prose_chars(a) > 0)
+    # text → the NEWEST record time carrying it: prune_live retires an echo by text only through a record
+    # written at or after the echo's send (T237b A); the plain set keeps the display dedup in the caller
+    tx_texts, tx_text_t = set(), {}
+    for turn in turns:
+        for a in turn["atoms"]:
+            for t in _atom_user_texts(a):
+                tx_texts.add(t)
+                tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
+    sets = (tx_uuids, tx_text_uuids, frozenset(tx_texts), tx_text_t, _human_turn_floor(session))
+    if len(_merge_sets_memo) > 512:
+        _merge_sets_memo.clear()                     # bounded by the sessions alive; a wholesale clear costs one miss each
+    _merge_sets_memo[sid] = (session, sets)
+    return sets
+
+
 def _merge_live_atoms(session, sid, shown_texts=()):
     """Merge in-memory LIVE-TAIL atoms into the parsed session, AHEAD of the transcript on disk, so messages
     appear instantly (the stream / a composer send leads the disk write). NON-MUTATING — `session` is the
@@ -28981,7 +29032,10 @@ def _merge_live_atoms(session, sid, shown_texts=()):
     live = be.live_atoms(sid)
     if not live:
         return session
-    tx_uuids = {a.get("uuid") for turn in session["turns"] for a in turn["atoms"] if a.get("uuid")}
+    # The transcript-side sets come from the per-sid memo (_merge_tx_sets): a function of the parsed
+    # session alone, which the parse cache hands back as the same object until the transcript changes,
+    # and which every build of a cycle (chat, feed, timeline) used to derive again from every atom.
+    tx_uuids, tx_text_uuids, tx_texts, tx_text_t, human_floor = _merge_tx_sets(session, sid)
     # A TEXTLESS disk twin must not land a texty live atom (the user 2026-07-28): on some model+tool
     # combinations (observed: fable-5 replying before an AskUserQuestion) the CLI persists the reply
     # text that streamed before the tool call as an EMPTY thinking record under the SAME uuid. The
@@ -28990,21 +29044,12 @@ def _merge_live_atoms(session, sid, shown_texts=()):
     # those uuids: the live text stays visible until settle, where the orphan-reply salvage makes it
     # durable (event_model._orphan_replies interleaves it back; its dedup is text-aware for the same
     # reason). Self-neutralizing: a twin that DOES carry the text lands the atom exactly as before.
-    tx_text_uuids = {a.get("uuid") for turn in session["turns"] for a in turn["atoms"]
-                     if a.get("uuid") and _atom_prose_chars(a) > 0}
     live_text_uuids = {a.get("uuid") for a in live
                        if not a.get("_echo_text") and not a.get("command")
                        and _atom_prose_chars(a) > 0}
-    tx_uuids -= (live_text_uuids - tx_text_uuids)
-    tx_texts = {t for turn in session["turns"] for a in turn["atoms"] for t in _atom_user_texts(a)}
-    # text → the NEWEST record time carrying it: prune_live retires an echo by text only through a record
-    # written at or after the echo's send (T237b A) — the plain set above keeps the display dedup below
-    tx_text_t = {}
-    for turn in session["turns"]:
-        for a in turn["atoms"]:
-            for t in _atom_user_texts(a):
-                tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
-    human_floor = _human_turn_floor(session)
+    withheld = live_text_uuids - tx_text_uuids
+    if withheld:
+        tx_uuids = tx_uuids - withheld           # a NEW set: the memoized one is shared with every later build
     be.prune_live(sid, tx_uuids, tx_text_t, human_floor)
     hide = tx_texts | {sb.echo_text_key(t) for t in shown_texts if t}    # transcript dups + already-shown queued msgs
     # `live` was snapshotted before the prune, so each of prune_live's three exits has its paint-side twin
@@ -40703,6 +40748,9 @@ def _push(targets, connect=False, tmux=None):
                     for sid in list(_chat_fold):             # including ones _built_chat never held (thread sids,
                         if sid not in shown_sids:            # loadOlder / connect-push builds)
                             _chat_fold.pop(sid, None)
+                for sid in list(_merge_sets_memo):           # …and the live-merge sets of a sid neither shown nor
+                    if sid not in shown_sids and sid not in tmux:   # alive (the feed and timeline merge every
+                        _merge_sets_memo.pop(sid, None)      # alive session, tab or not)
             _retry_parked_creates()   # lag-parked comment creates ride every pusher cycle (T106)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
             # comments/ store exists — an ~free stat for everyone else). Each frame rides its OWN

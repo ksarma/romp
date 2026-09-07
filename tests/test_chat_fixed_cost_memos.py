@@ -202,6 +202,145 @@ class TwoTabAttribution(unittest.TestCase):
         self.assertIn('_miss = () if is_active else _chat_sig_miss(hit[0] if hit is not None else None, sig)', src)
         self.assertNotIn('_PERF_STATS.build("chat"', src, "no unattributed chat record left in the loop")
 
+    def test_the_sweep_drops_the_merge_sets_of_a_sid_neither_shown_nor_alive(self):
+        stray = "66666666-7777-8888-9999-aaaaaaaaaaa9"
+        km._merge_sets_memo[stray] = ({"turns": []}, ())
+        km._merge_sets_memo[SID_B] = ({"turns": []}, ())
+        try:
+            km._push([self.chat, self.tl])
+            self.assertNotIn(stray, km._merge_sets_memo, "a sid that is neither a tab nor alive is evicted")
+            self.assertIn(SID_B, km._merge_sets_memo, "a shown tab's entry stays")
+        finally:
+            km._merge_sets_memo.pop(stray, None)
+            km._merge_sets_memo.pop(SID_B, None)
+
+
+# ── (d) the live-merge's transcript-side sets ────────────────────────────────────────────────────
+class MergeSets(unittest.TestCase):
+    """_merge_tx_sets: the sets _merge_live_atoms derives from the parsed session, memoized per sid on the
+    session object's identity; the same object hits, a fresh parse misses, and the memoized sets are never
+    written by a merge or by the backend's prune."""
+
+    T = 1781100000
+
+    def setUp(self):
+        self._saved = (km.Sessions.__dict__["backend_for"], dict(km._merge_sets_memo), dict(km._merge_sets_stats))
+        km._merge_sets_memo.clear()
+        self.calls, self.live = [], []
+        test = self
+
+        class Fake:
+            def live_atoms(self, sid):
+                return list(test.live)
+
+            def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
+                test.calls.append((tx_uuids, tx_user_texts, human_floor))
+        km.Sessions.backend_for = staticmethod(lambda sid: Fake())
+
+    def tearDown(self):
+        km.Sessions.backend_for = self._saved[0]
+        km._merge_sets_memo.clear(); km._merge_sets_memo.update(self._saved[1])
+        km._merge_sets_stats.clear(); km._merge_sets_stats.update(self._saved[2])
+
+    @staticmethod
+    def _user(text, uid, t, author="human"):
+        return {"type": "user", "uuid": uid, "t": t, "author": author,
+                "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+
+    @staticmethod
+    def _assistant(uid, t, text=None):
+        content = ([{"type": "text", "text": text}] if text is not None
+                   else [{"type": "thinking", "thinking": "", "signature": "sig"}])   # a textless twin
+        return {"type": "assistant", "uuid": uid, "t": t, "message": {"role": "assistant", "content": content}}
+
+    def _session(self):
+        T = self.T
+        return {"turns": [
+            {"id": "t1", "trigger": "u1", "t": T, "end": T + 10, "ended": True,
+             "atoms": [self._user("tighten the notes-api search", "u1", T), self._assistant("a1", T + 10, "Done.")]},
+            {"id": "t2", "trigger": "u2", "t": T + 20, "end": T + 30, "ended": True,
+             "atoms": [self._user("ok", "u2", T + 20), self._user("ok", "u2b", T + 25),
+                       self._assistant("a2", T + 30)]}]}
+
+    def _unmemoized(self, session):
+        """The derivation as _merge_live_atoms wrote it before the memo, over the same helpers."""
+        tx_uuids = {a.get("uuid") for turn in session["turns"] for a in turn["atoms"] if a.get("uuid")}
+        tx_text_uuids = {a.get("uuid") for turn in session["turns"] for a in turn["atoms"]
+                         if a.get("uuid") and km._atom_prose_chars(a) > 0}
+        tx_texts = {t for turn in session["turns"] for a in turn["atoms"] for t in km._atom_user_texts(a)}
+        tx_text_t = {}
+        for turn in session["turns"]:
+            for a in turn["atoms"]:
+                for t in km._atom_user_texts(a):
+                    tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
+        return (tx_uuids, tx_text_uuids, tx_texts, tx_text_t, km._human_turn_floor(session))
+
+    def test_the_same_object_hits_a_fresh_parse_misses_and_sids_do_not_share(self):
+        sess = self._session()
+        s1 = km._merge_tx_sets(sess, SID_A)
+        self.assertEqual((km._merge_sets_stats["hit"], km._merge_sets_stats["miss"]), (0, 1))
+        self.assertIs(km._merge_tx_sets(sess, SID_A), s1, "the same parsed object: served, not derived")
+        self.assertEqual((km._merge_sets_stats["hit"], km._merge_sets_stats["miss"]), (1, 1))
+        again = self._session()                                     # equal content, a new parse object
+        s2 = km._merge_tx_sets(again, SID_A)
+        self.assertIsNot(s2, s1)
+        self.assertEqual(s2, s1, "a re-parse of the same transcript derives the same sets")
+        self.assertEqual(km._merge_sets_stats["miss"], 2)
+        km._merge_tx_sets(again, SID_B)                             # another sid, the same object: its own entry
+        self.assertEqual(km._merge_sets_stats["miss"], 3)
+        self.assertEqual(km._merge_sets_report(), {"hit": 1, "miss": 3, "entries": 2})
+
+    def test_the_sets_equal_the_unmemoized_derivation_and_the_three_sets_are_frozen(self):
+        sess = self._session()
+        got = km._merge_tx_sets(sess, SID_A)
+        exp = self._unmemoized(sess)
+        self.assertEqual(tuple(got), exp)
+        self.assertEqual(got[0], {"u1", "a1", "u2", "u2b", "a2"})
+        self.assertNotIn("a2", got[1], "the textless twin is not a text uuid")
+        self.assertEqual(got[3]["ok"], self.T + 25, "a repeated text keeps its newest record time")
+        self.assertEqual(got[4], self.T + 25)
+        for i in range(3):
+            self.assertIsInstance(got[i], frozenset, "set %d is frozen: a write raises instead of corrupting later hits" % i)
+        self.assertIsInstance(got[3], dict, "tx_text_t stays a dict: sdk_backend.prune_live dispatches on isinstance(dict)")
+
+    def test_a_merge_hands_prune_live_the_memoized_sets_and_a_withheld_uuid_makes_a_new_set(self):
+        sess = self._session()
+        sets = km._merge_tx_sets(sess, SID_A)
+        # a live reply streaming under the textless twin's uuid: withheld from the prune, so the text stays
+        self.live = [{"type": "assistant", "uuid": "a2", "t": self.T + 30,
+                      "message": {"role": "assistant", "content": [{"type": "text", "text": "the explanation"}]}}]
+        merged = km._merge_live_atoms(sess, SID_A)
+        tx_uuids, tx_text_t, floor = self.calls[-1]
+        self.assertEqual(tx_uuids, sets[0] - {"a2"})
+        self.assertIsNot(tx_uuids, sets[0])
+        self.assertIn("a2", sets[0], "the memoized set is unchanged by the withholding")
+        self.assertIs(tx_text_t, sets[3])
+        self.assertEqual(floor, sets[4])
+        self.assertIn("the explanation", json.dumps(merged["turns"][-1]["atoms"]), "the live text is shown")
+        self.assertIs(km._merge_tx_sets(sess, SID_A), sets, "and the entry still serves")
+        # a live atom whose disk twin carries text: nothing withheld, the memoized set itself is handed over
+        self.live = [{"type": "assistant", "uuid": "a1", "t": self.T + 10,
+                      "message": {"role": "assistant", "content": [{"type": "text", "text": "Done."}]}}]
+        km._merge_live_atoms(sess, SID_A)
+        self.assertIs(self.calls[-1][0], sets[0])
+        self.assertEqual(sets, km._merge_tx_sets(sess, SID_A), "prune_live wrote into nothing")
+        self.assertEqual(km._merge_sets_stats["miss"], 1)
+
+    def test_no_live_atoms_skips_the_sets(self):
+        sess = self._session()
+        self.assertIs(km._merge_live_atoms(sess, SID_A), sess)
+        self.assertEqual(km._merge_sets_stats, {"hit": 0, "miss": 0})
+
+    def test_the_three_builders_merge_the_parse_caches_object(self):
+        # identity stands for content only if every caller passes the object _parse caches
+        self.assertIn("_merge_live_atoms(parsed, sid, shown_texts=queued)", inspect.getsource(km.build_session))
+        self.assertIn('ps = _parse_cached(s["path"])', inspect.getsource(km.build_feed))
+        self.assertIn("_merge_live_atoms(ps, fsid)", inspect.getsource(km.build_feed))
+        tl = inspect.getsource(km.build_timeline)
+        self.assertIn('session = _parse(s["path"], sid, now)', tl)
+        self.assertIn("session = _merge_live_atoms(session, sid)", tl)
+        self.assertIn("_merge_tx_sets(session, sid)", inspect.getsource(km._merge_live_atoms))
+
 
 if __name__ == "__main__":
     unittest.main()

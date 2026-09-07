@@ -2150,6 +2150,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   build's lane set or past the 256-entry bound), the gauge `entries`, and
   `segs_hit` and `segs_miss`, the segments served against derived, which
   weight the hit rate by cost.
+  `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
+  a parsed transcript (the uuids and user texts the transcript already holds,
+  and the newest human turn's time), one entry per session keyed on the
+  parsed session object's identity, shared by the chat, feed and timeline
+  builds of one cycle: `hit` and `miss` (merges served from the memo against
+  derived) and the gauge `entries` (sessions held; the pusher drops a session
+  that is neither shown as a tab nor alive).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
