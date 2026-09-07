@@ -135,7 +135,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
                           "captions", "states_overlay", "thread_reg", "bg_tops",
-                          "feed_segs"},
+                          "feed_segs", "lanes"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
                          "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
@@ -182,7 +182,13 @@ class Collector(unittest.TestCase):
                          "the states-overlay fold: unchanged, appended rows only, every row, failed reads, entries dropped, occupancy")
         self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
                          "the SDK registry reader's memo: the captions memo's shape")
-        for blk in ("captions", "states_overlay", "thread_reg"):
+        self.assertEqual(set(snap["memos"]["lanes"]),
+                         {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
+                          "segs_hit", "segs_miss"},
+                         "the per-lane segment memo (perf round 4, item A): one outcome per lane per full build "
+                         "(served, derived and held, live tail, complained, unshared store), entries dropped, its "
+                         "occupancy, and the segments served against derived")
+        for blk in ("captions", "states_overlay", "thread_reg", "lanes"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
         self.assertEqual(set(snap["memos"]["feed_segs"]),

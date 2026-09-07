@@ -465,7 +465,15 @@ class _PerfStats:
                                    is a sentinel: a rewind hold, a failed punch, the shared cache
                                    off, no store file) / bypass_unscoped (a build outside a pusher
                                    cycle's names scope) / evict (entries dropped for sessions that
-                                   left the alive set), and the gauge entries
+                                   left the alive set), and the gauge entries; lanes (the
+                                   per-lane segment memo in build_timeline, item A: the bars,
+                                   seg_ends, last_t, compactions and judging marks of a lane, keyed
+                                   on the parse, store and captions objects and the other inputs
+                                   _lanes_memo's comment names) -> hit / miss / live_tail (a live
+                                   tail was merged: derived, not held) / complain_skip (the parse
+                                   or a stage complained) / unshared_skip (a non-frozen store with
+                                   content) / evict, the gauge entries, and segs_hit / segs_miss
+                                   (segments served against derived: the cost-weighted hit rate)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -635,7 +643,7 @@ class _PerfStats:
                              ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
                              ("thread_reg", _thread_reg_report),
-                             ("feed_segs", _feed_segs_report)):
+                             ("feed_segs", _feed_segs_report), ("lanes", _lanes_memo_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -34496,12 +34504,32 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
     trailing AFTER it — reading as if the judge ran before the work (the user 2026-06-19). `seg_ends`
     maps each segment's start t → its work-END t; a completion mark resolves through it to land just
     after the bar, where the work actually finished. CREATION marks (mint/sub) + captions stay at the
-    start — a goal IS born when asked. Absent seg_ends (e.g. unit tests) → the old mt placement."""
+    start — a goal IS born when asked. Absent seg_ends (e.g. unit tests) → the old mt placement.
+
+    Two halves since perf round 4 (item A): _derive_judging_marks derives every mark with no clock in
+    hand, so build_timeline's per-lane memo can hold the result, and _judging_assemble applies the
+    horizon t0 and the caption cap. Together they emit exactly what this function emitted in one pass."""
+    cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends)
+    _judging_assemble(cap_marks, other_marks, t0, out)
+
+
+def _derive_judging_marks(sid, caps, goals, seg_ends=None):
+    """This session's judging marks UNFILTERED by the timeline horizon: (cap_marks, other_marks).
+    cap_marks are the captioner's marks in caption-time order, one per caption row carrying a t
+    (a row without one is dropped here, as _derive_judging dropped it). other_marks are
+    [(filter_t, mark)] pairs for every other judge in the order _derive_judging emitted them (nodes in
+    store order, the archiver last), each paired with the time _derive_judging filtered it against the
+    horizon: the mark's own t for a mint, plant, group or index mark, the diary event's ev_t for a
+    done, block or close, distilledMt or briefedMt for the distiller's two marks. That time differs
+    from the mark's plotted t whenever seg_ends moved a completion to its segment's work end, which is
+    why the pair is kept rather than re-derived from the mark. A synth diary row is dropped here (its
+    skip never depended on the horizon). Reads caps, goals["nodes"] and STATE/archive/<sid>.json, and
+    no clock; the horizon and JUDGE_CAP_LIMIT belong to _judging_assemble."""
     endt = (lambda tt: seg_ends.get(tt, tt)) if seg_ends else (lambda tt: tt)   # completion → its segment's work-END
-    caps_in = sorted((c for c in caps.values() if c.get("t") and c["t"] >= t0), key=lambda c: c["t"])
-    for c in caps_in[-JUDGE_CAP_LIMIT:]:
-        out.append({"judge": "captioner", "sid": sid, "t": c["t"],
-                    "kind": c.get("grain", "segment"), "text": c.get("caption", "")})
+    caps_in = sorted((c for c in caps.values() if c.get("t")), key=lambda c: c["t"])
+    cap_marks = [{"judge": "captioner", "sid": sid, "t": c["t"],
+                  "kind": c.get("grain", "segment"), "text": c.get("caption", "")} for c in caps_in]
+    out = []
     for n in goals.get("nodes", {}).values():
         t = n.get("t")
         if not t:
@@ -34509,57 +34537,68 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
         text = n.get("text", "")
         mt = n.get("mt") or t
         go = n.get("groupOp")
-        if isinstance(go, dict) and (go.get("t") or 0) >= t0:
+        if isinstance(go, dict):
             # the grouper's surviving housekeeping (T103): merge/split/retitle append no diary
             # events by design, so the lane keys on the apply-time structure stamp — additive
             # beside the node's own mint/plant mark (a merged survivor is both)
-            out.append({"judge": "grouper", "sid": sid, "t": go["t"],
-                        "kind": go.get("kind") or "group", "text": text})
+            out.append((go.get("t") or 0, {"judge": "grouper", "sid": sid, "t": go.get("t"),
+                                           "kind": go.get("kind") or "group", "text": text}))
         if n.get("origin"):                                   # courier planted it from a peer's handoff
-            if t >= t0:
-                out.append({"judge": "courier", "sid": sid, "t": t, "kind": "plant", "text": text})
+            out.append((t, {"judge": "courier", "sid": sid, "t": t, "kind": "plant", "text": text}))
         elif n.get("umbrella"):                               # ARCHIVED-history rendering only (T101
             # retired every umbrella mint; live containers dissolve each rollup) — an archived
             # pre-T101 container still shows the grouper mark it earned
-            if mt >= t0:
-                out.append({"judge": "grouper", "sid": sid, "t": mt, "kind": "group", "text": text})
-        elif t >= t0:                                         # planner placed it (top = mint, else a step)
-            out.append({"judge": "planner", "sid": sid, "t": t,
-                        "kind": ("mint" if not n.get("parentId") else "sub"), "text": text})
+            out.append((mt, {"judge": "grouper", "sid": sid, "t": mt, "kind": "group", "text": text}))
+        else:                                                 # planner placed it (top = mint, else a step)
+            out.append((t, {"judge": "planner", "sid": sid, "t": t,
+                            "kind": ("mint" if not n.get("parentId") else "sub"), "text": text}))
         # done/block attribution reads the DIARY now (P3.4 2026-07-07): the event's src field IS the
         # provenance (negComplete/negBlock flags retired), each verdict gets its own mark at its own
         # evidence time, and reconstructed (synth) history never fakes a judging mark.
         for _e in (n.get("log") or []):
-            if _e.get("synth") or (_e.get("ev_t") or 0) < t0:
+            if _e.get("synth"):
                 continue
             if _e.get("src") in ("planner", "closer") and _e.get("kind") in ("done", "block"):
-                out.append({"judge": _e["src"] if _e["src"] == "planner" else "closer", "sid": sid,
-                            "t": endt(_e["ev_t"]),
-                            "kind": ("done" if _e["src"] == "planner" else "close") if _e["kind"] == "done" else "block",
-                            "text": _e.get("why") or text})
+                out.append((_e.get("ev_t") or 0,
+                            {"judge": _e["src"] if _e["src"] == "planner" else "closer", "sid": sid,
+                             "t": endt(_e.get("ev_t")),
+                             "kind": ("done" if _e["src"] == "planner" else "close") if _e["kind"] == "done" else "block",
+                             "text": _e.get("why") or text}))
         # distiller — key takeaway on a completed top goal. distilledMt == the goal's completion mt (the
         # completing segment's START); endt() lands the mark at that segment's work-END, just after the bar.
         # (The distiller LLM runs a pass later; the mark shows the work it summarizes, aligned to that work's
         # finish, not the judge's wall-clock run. A first sweep over the backlog still back-dates to old
         # completions, expected — the user 2026-06-17.)
-        if n.get("distilledMt") and n["distilledMt"] >= t0:
-            out.append({"judge": "distiller", "sid": sid, "t": endt(n["distilledMt"]), "kind": "distill",
-                        "text": n.get("summary") or text})
+        if n.get("distilledMt"):
+            out.append((n["distilledMt"], {"judge": "distiller", "sid": sid, "t": endt(n["distilledMt"]),
+                                           "kind": "distill", "text": n.get("summary") or text}))
         # block-distiller — the DECISION BRIEF on a BLOCKED top (briefedMt), the done-distiller's twin run
         # in the same pass. Same distiller row, a distinct kind ("brief"). Without this the brief popped up
         # on the card but left NO mark on the timeline, so the distiller row read as dead whenever the
         # recent work was blocks rather than completions (the user 2026-06-18). Lands at the block segment's
         # work-END via endt(), like the other completion marks.
-        if n.get("briefedMt") and n["briefedMt"] >= t0:
-            out.append({"judge": "distiller", "sid": sid, "t": endt(n["briefedMt"]), "kind": "brief",
-                        "text": n.get("blockSummary") or text})
+        if n.get("briefedMt"):
+            out.append((n["briefedMt"], {"judge": "distiller", "sid": sid, "t": endt(n["briefedMt"]),
+                                         "kind": "brief", "text": n.get("blockSummary") or text}))
     try:                                                      # archiver — the headline/abstract refresh
         arch = json.loads((jd.STATE / "archive" / (sid + ".json")).read_text(errors="replace"))
-        if arch.get("t") and arch["t"] >= t0:
-            out.append({"judge": "archiver", "sid": sid, "t": arch["t"], "kind": "index",
-                        "text": arch.get("headline", "")})
+        if arch.get("t"):
+            out.append((arch["t"], {"judge": "archiver", "sid": sid, "t": arch["t"], "kind": "index",
+                                    "text": arch.get("headline", "")}))
     except (OSError, ValueError):
         pass
+    return cap_marks, out
+
+
+def _judging_assemble(cap_marks, other_marks, t0, out):
+    """Append the marks _derive_judging_marks derived, filtered on the horizon t0 exactly as
+    _derive_judging filtered them: the captioner's marks at or after t0 and, of those, the newest
+    JUDGE_CAP_LIMIT (the marks are in t order, so the tail is the newest); then every other mark whose
+    filter time is at or after t0, in derivation order. Runs per build (the horizon moves with the
+    clock; JUDGE_CAP_LIMIT is read here, not at derivation), on a memo hit as on a miss."""
+    kept = [m for m in cap_marks if m["t"] >= t0]
+    out.extend(kept[-JUDGE_CAP_LIMIT:])
+    out.extend(m for ft, m in other_marks if ft >= t0)
 
 
 _session_tok_cache = {}   # transcript path -> ((mtime, size), [(t, in, out, cache_w, cache_r, model), ...]): one
@@ -35609,6 +35648,202 @@ def _bars_complain(who, stage, e):
                      % (str(who)[:8], stage, head))
 
 
+# ── the per-lane segment memo (perf round 4, item A) ──
+# build_timeline's per-lane SEGMENT part (the turn loop that makes the bars, seg_ends, last_t and the
+# compaction markers, plus this lane's judging marks) is a pure function of a handful of inputs, and on
+# a steady timeline most lanes' inputs are the very objects of the previous build: _parse serves the
+# same session object while the transcript is unchanged, load_goals_shared the same FrozenStore while
+# the store, its journal and its archive are unchanged, _captions the same _Caps while the captions
+# file is unchanged. The memo holds one entry per lane and serves it while every input is the same
+# object or value. Everything else on the lane (the chip, the awaiting overlay, the intervals, the
+# flags, comments, episodes, the branch endpoint) is derived per build as before: PLAN-2's P11 memoized
+# the whole lane and was refuted on those inputs. The inputs, each in the key:
+#   session   the object after _parse and _merge_live_atoms, by IDENTITY, held in the entry so the
+#             identity cannot be recycled. The loop reads its turns (t, end, ended, trigger, atoms).
+#             A live tail (the merge returned a new object) is derived and not held, since it is a new
+#             object every build (live_tail).
+#   goals     the store the loop reads seams from (_segs_seam) and nodes from (_derive_judging_marks):
+#             a FrozenStore by identity; a non-frozen store with neither seams nor nodes as ("empty",),
+#             since the two fields read are empty whatever its identity; any other non-frozen store is
+#             not memoized (unshared_skip: a private, mutable store could change under the entry).
+#   caps      the _Caps object _captions served, by identity. Its stat precedes its read, so a row
+#             appended between the two lands under the OLD identity and the next build's new object
+#             misses; a stat of the captions file taken here would follow the read and admit a stale
+#             entry, so none is taken. An empty caps as ("empty",), as for the store.
+#   live      an open bar needs a live lane (turn_open).
+#   bft       the branch clip, the fork time while the parent's lane is in the build and None otherwise
+#             (build_timeline's branch_of); it drops the copied pre-branch segments and boundaries.
+#   downtime  tuple(_downtime): _awake_spans excises the host's suspensions and _suspended_after closes
+#             a turn stranded before one. The tuple, not the length: the suite rebinds and slices it.
+#   archive   jd._file_key of STATE/archive/<sid>.json (the archiver mark's file), taken BEFORE the
+#             derivation reads it; a sentinel (the stat failed) matches nothing and nothing is stored
+#             under it.
+#   sid       the entry's key; the bars and marks carry it.
+# NOT inputs: the clock. The horizon (now - TL_HORIZON) and JUDGE_CAP_LIMIT are applied per build by
+# _judging_assemble, and nothing else in the segment part reads a time. _seg_key, em.segments,
+# jd.apply_seams, em.split_segment and POSTAL_RE are pure functions of their arguments.
+# A lane whose parse failed, or whose seams or marks stage complained (the derivation's own try/excepts),
+# is derived and not held (complain_skip). The held bars are shared by identity into every later build's
+# turns[sid], the bars wire cache and the delta parts, none of which writes to them (_bind_message_execs
+# mutates the messages only; _timeline_skeleton copies the frame), and the held marks into `semantic`,
+# which _run_judging only reads. Entries are dropped for lanes outside a full build's lane set
+# (_lanes_forget, beside _caps_forget) and past _LANES_MEMO_MAX, the least recently served first; an
+# entry whose parse object is no longer the cache's is dropped when seen, since it cannot hit again
+# and it holds that parse. One lock around get, put, evict and the counters; the derivation runs
+# unlocked, so two threads deriving one lane both store an exact entry and the last wins.
+_lanes_memo = {}          # sid -> (session, goals_obj, caps_obj, key, value); value = _lane_segments' tuple
+_LANES_MEMO_MAX = 256
+_lanes_stats = {"hit": 0, "miss": 0, "live_tail": 0, "complain_skip": 0, "unshared_skip": 0, "evict": 0,
+                "segs_hit": 0, "segs_miss": 0}
+_LANES_LOCK = threading.Lock()
+
+
+def _lanes_memo_report():
+    """The memo's counters plus its occupancy, for /perf (memos.lanes)."""
+    with _LANES_LOCK:
+        out = dict(_lanes_stats)
+        out["entries"] = len(_lanes_memo)
+    return out
+
+
+def _lanes_forget(keep):
+    """Drop the entries for lanes outside `keep`, a full build's lane set (the sids build_timeline
+    drew). Iterates a key snapshot under the lock; a connect-push build on another thread may insert
+    concurrently."""
+    with _LANES_LOCK:
+        gone = [k for k in _lanes_memo if k not in keep]
+        for k in gone:
+            _lanes_memo.pop(k, None)
+        if gone:
+            _lanes_stats["evict"] += len(gone)
+
+
+def _lane_segments(sid, session, goals, caps, live, bft):
+    """The SEGMENT part of one timeline lane: the turn loop build_timeline ran inline until perf round 4
+    (item A), moved here so the per-lane memo (_lane_memo; the comment above it names every input) can
+    hold its result: (bars, seg_ends, last_t, compactions, cap_marks, other_marks, nsegs, complained).
+    bars are the lane's work bars in turn order; seg_ends maps a segment's start t to its work-END t;
+    last_t is the lane's last awake activity (its `since` when tmux has none); compactions are the
+    compact_boundary markers; cap_marks and other_marks are this lane's judging marks, unfiltered
+    (_derive_judging_marks); nsegs counts the segments visited (the cost a memo hit saves); complained
+    is True when the seams or the marks stage failed and _bars_complain said so, and such a lane is not
+    memoized. No clock is read here."""
+    st_turns = session["turns"]
+    bars, last_t, seg_ends, nsegs, complained = [], None, {}, 0, False   # seg_ends: seg-start t → work-END t (for completion marks)
+    for ti, turn in enumerate(st_turns):
+        turn_open = (live and ti == len(st_turns) - 1 and not turn["ended"]
+                     and not any(x["type"] == "idle" for x in turn["atoms"])
+                     and not _suspended_after(turn["end"]))   # dead lane (live False) or pre-sleep freeze → not an open bar
+        try:
+            segs = _segs_seam(turn, goals)
+        except Exception as e:
+            # a malformed goals row must cost the SEAMS, not the lane's bars (2026-08-18: any
+            # exception here used to abort the whole bars frame after the skeleton had shipped)
+            _bars_complain(sid, "seams", e)
+            complained = True
+            try:
+                segs = em.segments(turn)
+            except Exception:
+                segs = []
+        for si, seg in enumerate(segs):
+            if bft and (seg.get("end") or seg["t"]) <= bft:
+                continue                                       # copied pre-branch history — the parent's lane owns it
+            nsegs += 1
+            # A bar must not span a host sleep. EXCISE every suspension inside the segment → one bar per
+            # awake stretch, so work done AFTER the lid reopened isn't erased (the user 2026-06-22). The
+            # asleep gaps between pieces read as idle (and collapse under 'collapse gaps'). The segment's
+            # atom times go in too: an awake stretch with NO activity in it is a dark-wake sliver, not
+            # work, and drawing it redrew this segment's summary all night long (the user 2026-07-23).
+            spans = _awake_spans(seg["t"], seg["end"], [a.get("t") for a in seg["atoms"]])
+            last_t = max(last_t or 0, spans[-1][1])            # the true work END (last awake activity) — drives the lane `since`
+            seg_ends[seg["t"]] = spans[-1][1]                  # a completion mark lands at its segment's END (after the work)
+            cap = _seg_work_caption(caps, seg["id"])       # WORK caption (the bar) — drift-safe
+            msg_cap = _seg_caption(caps, seg["id"])    # MESSAGE caption (the dot) — gist of the ask, ready early; drift-safe
+            work_uuid, reply_uuid = _seg_anchors(seg["atoms"])
+            trig = next((x for x in seg["atoms"] if x.get("uuid") == seg.get("trigger")), None)
+            author = (trig or {}).get("author")
+            src = "queued" if isinstance(author, dict) else "typed"
+            for sj, (bstart, bend) in enumerate(spans):
+                bars.append({
+                    # promptId = the prompt atom (the DOT), workId = the first work atom (the BAR) — so a
+                    # chat message-hover lights only the dot and a work-hover only the bar (dotLit/barLit
+                    # in the view). Restores the old romp-events split lost in the kernel rewrite.
+                    "id": seg["id"], "promptId": seg.get("trigger"), "workId": work_uuid,
+                    "start": bstart, "end": bend,
+                    "open": turn_open and si == len(segs) - 1 and sj == len(spans) - 1 and bend == seg["end"],
+                    "cont": sj > 0,                   # a post-sleep continuation piece: NO new prompt dot (the one prompt was at the first piece)
+                    "prompt": _seg_prompt(seg), "summary": cap, "msgCaption": msg_cap,
+                    "src": src, "mids": _seg_mids(seg), "pending": False,
+                    "tid": sid, "uuid": seg.get("trigger"),
+                    "nudgeAuto": bool((trig or {}).get("rompAuto")),   # an AUTO-nudge specifically → the tip captions it 'romp · nudge'
+                    # ANY romp-authored prompt (auto-nudge, Nudge button, auto-retry — author 'romp' via
+                    # ROMP_INJECT_RE) wears the romp logo on its dot (the user 2026-07-16: an auto-retry
+                    # "rendered as a user prompt instead of a ROMP logo thing"). This mirrors the chat, where
+                    # the 2026-07-05 rule already superseded 2026-06-23's auto-only logo: at the data level a
+                    # retry and a nudge are both just romp-injected, and either way it wasn't the human typing.
+                    "romp": bool(author == "romp"),
+                    "workUuid": work_uuid, "replyUuid": reply_uuid})
+    try:
+        cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends)
+    except Exception as e:
+        _bars_complain(sid, "judging-marks", e)   # this lane loses its marks, the frame ships
+        complained = True
+        cap_marks, other_marks = [], []
+    compactions = [{"t": a["t"]} for turn in st_turns for a in turn["atoms"]
+                   if a.get("type") == "system" and a.get("subtype") == "compact_boundary" and a.get("t")
+                   and not (bft and a["t"] <= bft)]           # copied boundaries stay on the parent's lane
+    return bars, seg_ends, last_t, compactions, cap_marks, other_marks, nsegs, complained
+
+
+def _lane_memo(sid, parsed, session, goals, caps, live, bft, parse_ok=True):
+    """_lane_segments through the per-lane memo (the comment above _lanes_memo names every input): the
+    six pieces build_timeline reads, bars, seg_ends, last_t, compactions, cap_marks and other_marks,
+    served from the lane's entry when its inputs are the previous build's and derived otherwise.
+    `parsed` is the _parse object and `session` the one after _merge_live_atoms, the same object
+    unless a live tail was merged; `parse_ok` is False when the parse failed and `session` is the
+    empty stand-in."""
+    if isinstance(goals, jd.FrozenStore):
+        gobj, gtag = goals, "shared"
+    elif not goals.get("seams") and not goals.get("nodes"):
+        gobj, gtag = None, "empty"
+    else:
+        gobj, gtag = None, None
+    cobj, ctag = (caps, "obj") if caps else (None, "empty")
+    arch_key = jd._file_key(str(jd.STATE / "archive" / (sid + ".json")))   # BEFORE the derivation reads it
+    key = (live, bft, tuple(_downtime), gtag, ctag, arch_key)
+    if not parse_ok:
+        skip = "complain_skip"
+    elif session is not parsed:
+        skip = "live_tail"
+    elif gtag is None:
+        skip = "unshared_skip"
+    else:
+        skip = None
+    with _LANES_LOCK:
+        ent = _lanes_memo.get(sid)
+        if ent is not None:
+            if skip is None and ent[0] is session and ent[1] is gobj and ent[2] is cobj and ent[3] == key:
+                _lanes_memo.pop(sid, None)                    # a served entry is a USED entry (LRU reinsert)
+                _lanes_memo[sid] = ent
+                _lanes_stats["hit"] += 1
+                _lanes_stats["segs_hit"] += ent[4][6]
+                return ent[4][:6]
+            if ent[0] is not parsed:
+                _lanes_memo.pop(sid, None)                    # its parse object left the cache: it cannot hit again
+    value = _lane_segments(sid, session, goals, caps, live, bft)
+    outcome = skip or ("complain_skip" if value[7] else "miss")
+    with _LANES_LOCK:
+        _lanes_stats[outcome] += 1
+        _lanes_stats["segs_miss"] += value[6]
+        if outcome == "miss" and (arch_key is None or isinstance(arch_key, tuple)):
+            _lanes_memo.pop(sid, None)
+            while len(_lanes_memo) >= _LANES_MEMO_MAX:
+                _lanes_memo.pop(next(iter(_lanes_memo)))      # the least recently served goes first, never the whole memo
+                _lanes_stats["evict"] += 1
+            _lanes_memo[sid] = (session, gobj, cobj, key, value)
+    return value[:6]
+
+
 _JUDGING_ROW_CAP = 20000     # judging marks per bars frame — far above any legible band density,
                              # far below the 147k-mark storm frame that starved bars (2026-08-18)
 _JUDGING_TRIMMED = {}        # transition latch for the trim log line (order-of-magnitude keyed)
@@ -35789,12 +36024,15 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         # below): its segment loop runs over no turns and it derives no judging marks, so a live lane's
         # load — the largest per-lane cost of the skeleton build — was never read (2026-09-06).
         goals = jd.load_goals_shared(sid) if with_bars else None   # read-only: seams + judging marks
+        parse_ok = True
         if with_bars:
             try:
                 session = _parse(s["path"], sid, now)
             except Exception as e:
                 _bars_complain(sid, "parse", e)           # a lane with zero bars must SAY why
                 session = {"turns": []}
+                parse_ok = False
+            parsed = session                              # the parse object, the lane memo's key (below)
             if live:
                 # Merge the LIVE TAIL like the chat does (the user 2026-07-02): a /model change streams the
                 # CLI's confirmation as a live command atom, but the CLI persists no transcript record until
@@ -35858,76 +36096,24 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             blocked = "blocked" in goals.get("status", {}).values() and not _session_flag(sid, "hideFromFeed")
             state = "needsInput" if blocked else "idle"   # muted → no awaiting/background-task badge on the lane
             aw_open = open_now                          # unused (awaitingBg is None for a dead lane) — kept defined
-        bars, last_t, seg_ends = [], None, {}            # seg_ends: seg-start t → work-END t (for completion marks)
-        for ti, turn in enumerate(st_turns):
-            turn_open = (live and ti == len(st_turns) - 1 and not turn["ended"]
-                         and not any(x["type"] == "idle" for x in turn["atoms"])
-                         and not _suspended_after(turn["end"]))   # dead lane (live False) or pre-sleep freeze → not an open bar
+        if not with_bars:
+            # SKELETON: no bars, no marks, no memo (the cold live-first connect only). The lane's `since`
+            # falls back to the transcript's last write (last activity), with no parse.
+            compactions = []
             try:
-                segs = _segs_seam(turn, goals)
-            except Exception as e:
-                # a malformed goals row must cost the SEAMS, not the lane's bars (2026-08-18: any
-                # exception here used to abort the whole bars frame after the skeleton had shipped)
-                _bars_complain(sid, "seams", e)
-                try:
-                    segs = em.segments(turn)
-                except Exception:
-                    segs = []
-            _bft = (branch_of.get(sid) or {}).get("t")
-            for si, seg in enumerate(segs):
-                if _bft and (seg.get("end") or seg["t"]) <= _bft:
-                    continue                                       # copied pre-branch history — the parent's lane owns it
-                # A bar must not span a host sleep. EXCISE every suspension inside the segment → one bar per
-                # awake stretch, so work done AFTER the lid reopened isn't erased (the user 2026-06-22). The
-                # asleep gaps between pieces read as idle (and collapse under 'collapse gaps'). The segment's
-                # atom times go in too: an awake stretch with NO activity in it is a dark-wake sliver, not
-                # work, and drawing it redrew this segment's summary all night long (the user 2026-07-23).
-                spans = _awake_spans(seg["t"], seg["end"], [a.get("t") for a in seg["atoms"]])
-                last_t = max(last_t or 0, spans[-1][1])            # the true work END (last awake activity) — drives the lane `since`
-                seg_ends[seg["t"]] = spans[-1][1]                  # a completion mark lands at its segment's END (after the work)
-                if not with_bars:
-                    continue                                       # SKELETON: lane `since` needs last_t, but not the bar dicts/captions
-                cap = _seg_work_caption(caps, seg["id"])       # WORK caption (the bar) — drift-safe
-                msg_cap = _seg_caption(caps, seg["id"])    # MESSAGE caption (the dot) — gist of the ask, ready early; drift-safe
-                work_uuid, reply_uuid = _seg_anchors(seg["atoms"])
-                trig = next((x for x in seg["atoms"] if x.get("uuid") == seg.get("trigger")), None)
-                author = (trig or {}).get("author")
-                src = "queued" if isinstance(author, dict) else "typed"
-                for sj, (bstart, bend) in enumerate(spans):
-                    bars.append({
-                        # promptId = the prompt atom (the DOT), workId = the first work atom (the BAR) — so a
-                        # chat message-hover lights only the dot and a work-hover only the bar (dotLit/barLit
-                        # in the view). Restores the old romp-events split lost in the kernel rewrite.
-                        "id": seg["id"], "promptId": seg.get("trigger"), "workId": work_uuid,
-                        "start": bstart, "end": bend,
-                        "open": turn_open and si == len(segs) - 1 and sj == len(spans) - 1 and bend == seg["end"],
-                        "cont": sj > 0,                   # a post-sleep continuation piece: NO new prompt dot (the one prompt was at the first piece)
-                        "prompt": _seg_prompt(seg), "summary": cap, "msgCaption": msg_cap,
-                        "src": src, "mids": _seg_mids(seg), "pending": False,
-                        "tid": sid, "uuid": seg.get("trigger"),
-                        "nudgeAuto": bool((trig or {}).get("rompAuto")),   # an AUTO-nudge specifically → the tip captions it 'romp · nudge'
-                        # ANY romp-authored prompt (auto-nudge, Nudge button, auto-retry — author 'romp' via
-                        # ROMP_INJECT_RE) wears the romp logo on its dot (the user 2026-07-16: an auto-retry
-                        # "rendered as a user prompt instead of a ROMP logo thing"). This mirrors the chat, where
-                        # the 2026-07-05 rule already superseded 2026-06-23's auto-only logo: at the data level a
-                        # retry and a nudge are both just romp-injected, and either way it wasn't the human typing.
-                        "romp": bool(author == "romp"),
-                        "workUuid": work_uuid, "replyUuid": reply_uuid})
-        if not with_bars and last_t is None:
-            try:
-                last_t = os.stat(s["path"]).st_mtime     # lane `since` ≈ the transcript's last write (last activity), no parse
+                last_t = os.stat(s["path"]).st_mtime
             except OSError:
-                pass
-        if with_bars:
+                last_t = None
+        else:
+            # The SEGMENT part of the lane — the turn loop that makes the bars, seg_ends, last_t and the
+            # compaction markers, plus this lane's judging marks — comes through the per-lane memo (perf
+            # round 4, item A): a lane whose inputs are the previous build's objects costs a lookup, and
+            # _lanes_memo's comment names every input in the key. The badge row below is per build.
+            _bft = (branch_of.get(sid) or {}).get("t")
+            bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo(
+                sid, parsed, session, goals, caps, live, _bft, parse_ok)
             turns[sid] = bars
-            try:
-                _derive_judging(sid, caps, goals, now - TL_HORIZON, semantic, seg_ends)
-            except Exception as e:
-                _bars_complain(sid, "judging-marks", e)   # this lane loses its marks, the frame ships
-        _bft = (branch_of.get(sid) or {}).get("t")
-        compactions = [{"t": a["t"]} for turn in st_turns for a in turn["atoms"]
-                       if a.get("type") == "system" and a.get("subtype") == "compact_boundary" and a.get("t")
-                       and not (_bft and a["t"] <= _bft)]           # copied boundaries stay on the parent's lane
+            _judging_assemble(cap_marks, other_marks, now - TL_HORIZON, semantic)   # the horizon is the build's
         # Idle fade: the SAME rule the chat tab uses (ready + idle > 1h — see the `faded` beside the chat
         # chip), keyed on the DERIVED chip `state` computed above, not the raw tmux state. The old form read
         # tmux's vocabulary and counted "waiting" as active — but "waiting" IS the post-turn idle state, so
@@ -36029,6 +36215,7 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         # (the join's per-session mtime gate). A skeleton or live-only build reads a subset of the lanes and
         # so must not evict on it.
         _caps_forget(set(id2name))
+        _lanes_forget(set(id2name))
     # compaction-sweep gradient (widest→narrowest): the timeline's scan-bar has no client-side colormap, so
     # ship the GLOBAL map sampled at the same scaleX stops the chat surface uses (render.ts applyCompactSweep),
     # letting the bar slide through the map's hues as it compresses — mirroring the context battery fill.

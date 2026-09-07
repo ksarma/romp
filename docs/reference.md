@@ -2113,7 +2113,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   identity does not stand for its content: a rewind hold, a failed gesture
   replay, the shared cache switched off, no store file), `bypass_unscoped` (a
   build outside a pusher cycle: read but never filled), `evict` (entries dropped
-  for sessions that left the alive set), and the gauge `entries`.
+  for sessions that left the alive set), and the gauge `entries`. `lanes` is the
+  per-lane segment memo in the timeline build: a lane's bars, segment ends,
+  last activity, compaction markers and judging marks, held while the lane's
+  parsed transcript, goal store and captions are the same objects as the
+  previous build's and its other inputs (live, the branch clip, the host's
+  suspensions, the archive file) are unchanged. One outcome per lane per full
+  build: `hit` (served), `miss` (derived and held), `live_tail` (a live tail
+  was merged, so the lane was derived and not held), `complain_skip` (the
+  parse or a stage failed) and `unshared_skip` (a private store with content);
+  `evict` (entries dropped for lanes that left the timeline or past the
+  256-entry bound), the gauge `entries`, and `segs_hit` and `segs_miss`, the
+  segments served against derived, which weight the hit rate by cost.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
