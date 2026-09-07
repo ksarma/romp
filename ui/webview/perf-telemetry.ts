@@ -526,7 +526,9 @@ function browserDeps(post: PerfPost | null): PerfDeps | null {
     heapBytes: () => { const m = perf.memory; return m && typeof m.usedJSHeapSize === "number" ? m.usedJSHeapSize : null; },
     domCount: () => (doc && typeof doc.getElementsByTagName === "function") ? doc.getElementsByTagName("*").length : null,
     visible: () => !doc || doc.visibilityState !== "hidden",
-    hiddenPane: () => { try { return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch (e) { return false; } },
+    // federation publishes the shell's own on-screen word (window.__rompPaneHidden, its hidden-pane hold):
+    // the zero-viewport probe alone under-reports a pane hidden AFTER its first show, whose iframe keeps its size
+    hiddenPane: () => { try { const f = w.__rompPaneHidden; if (typeof f === "function") return !!f(); return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch (e) { return false; } },
     ua: uaClass(String(nav.userAgent || ""), Number(nav.maxTouchPoints) || 0),
     pageUrl,
     windowEvents: typeof w.addEventListener === "function" ? w : null,

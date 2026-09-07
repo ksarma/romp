@@ -33,7 +33,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from types import SimpleNamespace
 
 SID = "aaaaaaaa-1111-4222-8333-444444444444"
@@ -51,8 +51,8 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 # renders of them is scrubbed with the suite's credential-shaped token list first (the same list
 # tests/conftest.py's report hook applies, loaded by path so this file also works outside pytest),
 # and capped: the last CHILD_OUTPUT_CAP characters of each stream.
-_cp = SourceFileLoader("romp_tests_credential_patterns_live", os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                                                                        "credential_patterns.py")).load_module()
+_cp = load_source("romp_tests_credential_patterns_live", os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                                                        "credential_patterns.py"))
 CHILD_OUTPUT_CAP = 1500
 
 

@@ -16,7 +16,7 @@ import re
 import tempfile
 import threading
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
@@ -24,7 +24,7 @@ BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 
 SID = "77777777-8888-4999-aaaa-bbbbbbbbbbbb"       # private to this module (synthetic)
 NOW = 1781100000
@@ -208,10 +208,13 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual(errs, [])
         self.assertEqual(len(out), n)
         self.assertEqual(len({id(o) for o in out}), 1, "one object for every reader")
-        st = jd.shared_store_stats()
-        self.assertEqual(st["miss"] + st["hit"] + st["dup"] - (self.stats0["miss"] + self.stats0["hit"]
-                                                                 + self.stats0["dup"]), n)
+        # Every load is a hit or a miss on an unchanged file; a miss that also lost the publish race counts a
+        # dup besides (the forced case below: two misses, one dup), so dup is bounded by the misses after the
+        # first, not added to them. Under the GIL the eight fills rarely overlap (one miss, seven hits); on the
+        # free-threaded build several do, and the old sum miss + hit + dup read 10 for eight loads.
+        self.assertEqual(self._delta("hit") + self._delta("miss"), n)
         self.assertGreaterEqual(self._delta("miss"), 1)
+        self.assertLessEqual(self._delta("dup"), self._delta("miss") - 1, "only a fill that found an earlier publish is a dup")
 
     def test_a_fill_that_loses_the_race_returns_the_published_object(self):
         # The dup path, forced: inside the first fill's freeze a second loader runs the whole fill and

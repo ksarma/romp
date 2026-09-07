@@ -955,7 +955,7 @@ class FileAdapter:
                         if len(_TS_REPAIRED_SEEN) >= 4096:
                             _TS_REPAIRED_SEEN.clear()
                         _TS_REPAIRED_SEEN.add(u)
-                        _ASM_STATS["ts-repair"] = _ASM_STATS.get("ts-repair", 0) + 1
+                        _asm_count("ts-repair")
                     if fsid not in _TS_REPAIR_NOTED:
                         if len(_TS_REPAIR_NOTED) >= 64:
                             _TS_REPAIR_NOTED.clear()   # re-arm — capped silence must not become
@@ -1560,7 +1560,7 @@ class FileAdapter:
                 # these would show up, since a silent clamp would hide a CLI write-order change. (The
                 # 2026-09-06 review: two goldens had pinned a landedT 30-40 s before the send, from a
                 # synthetic shape with no tool_result before the attachment.)
-                _ASM_STATS["landedT-clamp"] = _ASM_STATS.get("landedT-clamp", 0) + 1
+                _asm_count("landedT-clamp")
                 landed_t = t
             atom["landedT"] = landed_t   # when the CLI TOOK it (metadata, like `absorbed`; see _landing_t)
         if ROMP_AUTO_RE.search(full):   # an AUTO-nudge → flag it, mirroring the native user-record path
@@ -2420,6 +2420,20 @@ _ASM_LOCK = threading.Lock()       # guards the cache dict + the per-key lock re
 _ASM_KEYLOCKS = {}                 # key -> Lock; never pruned (a Lock is tiny, and swapping a
 #                                    key's lock mid-flight would let two folds interleave)
 _ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # observability + tests
+_ASM_STATS_LOCK = threading.Lock()   # `+= 1` is a read-modify-write: parses run on the pusher, the judge tiers'
+#                                      pools and connect pushes at once, and the counts drift low without the
+#                                      GIL (tests assert exact deltas; the 2026-09-06 free-threading review).
+#                                      Held for the increment only. It may be taken while a key lock is held
+#                                      (_assemble counts full parses, folds and serves inside _asm_key_lock)
+#                                      and never acquires another lock itself, so no ordering cycle exists.
+
+
+def _asm_count(key, n=1):
+    """Add `n` to one assembly counter and return its new value."""
+    with _ASM_STATS_LOCK:
+        v = _ASM_STATS.get(key, 0) + n
+        _ASM_STATS[key] = v
+        return v
 _ASM_WARNED = [False]
 _TS_REPAIR_NOTED = set()     # file stems already warned about a garbled stamp — once per file;
 #                              the cap CLEARS and re-arms (an occasional repeat note beats silence)
@@ -2430,8 +2444,7 @@ _TS_REPAIRED_SEEN = set()    # record uuids already counted in ts-repair — dis
 def _asm_demote(reason):
     """Count WHY a fold demoted to a full parse (g:<reason> in _ASM_STATS) and return None —
     the hit-rate diagnosis this cache lives or dies by, in prod and in the corpus replay."""
-    k = "g:" + reason
-    _ASM_STATS[k] = _ASM_STATS.get(k, 0) + 1
+    _asm_count("g:" + reason)
     return None
 
 
@@ -2470,7 +2483,7 @@ def _asm_full(key, leaf_path, candidate_files, links, rompuuid, postal_index, sd
         while len(_ASM_CACHE) >= _ASM_CACHE_MAX:
             _ASM_CACHE.pop(next(iter(_ASM_CACHE)))   # oldest-used first; hot entries survive floods
         _ASM_CACHE[key] = entry
-    _ASM_STATS["full"] += 1
+    _asm_count("full")
     return _asm_serve(entry)
 
 
@@ -2637,7 +2650,7 @@ def _asm_fold(entry, delta, leaf_recs, leaf_key, leaf_stem, rompuuid, postal_ind
     entry["n_qatts"] = len(ad.qatts)
     entry["recs"][leaf_key] = leaf_recs           # commit LAST: a bail above re-slices the same
     ad._src[leaf_key] = leaf_recs                 #  delta next visit and the uuid gate demotes it
-    _ASM_STATS["fold"] += 1
+    _asm_count("fold")
     return _asm_serve(entry)
 
 
@@ -2656,7 +2669,7 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
     if leaf_override:
         # A pending cut changes the walk anchor and is transient: always a plain full parse,
         # never cached — a cut parse's truncated emit state must not seed later folds.
-        _ASM_STATS["bypass"] += 1
+        _asm_count("bypass")
         _mode("bypass")
         ad = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
         ad.sdk_human = sdk_human
@@ -2678,7 +2691,7 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
                     delta, leaf_recs = got
                     _asm_heal(entry, rompuuid, postal_index)
                     if not delta:
-                        _ASM_STATS["serve"] += 1
+                        _asm_count("serve")
                         _mode("serve")
                         return _asm_serve(entry)
                     served = _asm_fold(entry, delta, leaf_recs, str(leaf_path),
@@ -2692,9 +2705,9 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
             return _asm_full(key, leaf_path, candidate_files, links, rompuuid,
                              postal_index, sdk_human)
     except Exception as e:
-        _ASM_STATS["fallback"] += 1
+        nfb = _asm_count("fallback")
         _mode("fallback")
-        if not _ASM_WARNED[0] or _ASM_STATS["fallback"] in (10, 100, 1000, 10000):
+        if not _ASM_WARNED[0] or nfb in (10, 100, 1000, 10000):
             _ASM_WARNED[0] = True    # once, then at count milestones — a PERSISTENT fold bug
             #                          must not hide behind a single line in an old log
             print("romp-event-model: assembly fold failed (%r) — serving plain full parses "

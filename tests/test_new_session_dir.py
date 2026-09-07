@@ -20,7 +20,7 @@ import threading
 import types
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -31,7 +31,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_newdir", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_newdir", os.path.join(BIN, "romp-kernel"))
 
 
 class _Dirs(unittest.TestCase):
@@ -491,22 +491,30 @@ class NativeDialogWire(_Wire):
                 self.assertIn(said, r["text"])
 
     def test_a_kernel_that_can_show_one_says_nothing_and_opens_it(self):
+        # The dialog runs off the message loop, and that thread reads `_pick_file`/`_pick_folder` when
+        # it CALLS them — so the wait for each pick has to happen inside the patch, on an event the pick
+        # itself sets. The earlier proof joined every daemon this test had started, after the `with`
+        # block: under free threading (CI's 3.14t cell) the main thread lifted the patch before the
+        # dialog thread ran, the thread called the real, headless picker (None at once), the join
+        # returned promptly, and the test saw one pick instead of two. The census itself did not miss
+        # the thread (`enumerate()` covers `_limbo` too); the lifted patch was the defect.
         opened = []
-        before = set(threading.enumerate())            # join only the threads THIS test starts (T230b):
-        #                                                joining every daemon in the process made this
-        #                                                test's runtime scale with the suite's leaked
-        #                                                threads (~122 s measured, 2 s per leak)
+        ran = {"file": threading.Event(), "folder": threading.Event()}
+
+        def _picked(kind):
+            opened.append(kind)
+            ran[kind].set()
+            return ""                                     # "cancelled": nothing to reply with
         with mock.patch.object(km, "_native_dialogs", lambda: True), \
-             mock.patch.object(km, "_pick_folder", lambda: opened.append("folder") or ""), \
-             mock.patch.object(km, "_pick_file", lambda: opened.append("file") or ""):
-            for msg in ({"type": "browseDir"}, {"type": "pickFile"}):
+             mock.patch.object(km, "_pick_folder", lambda: _picked("folder")), \
+             mock.patch.object(km, "_pick_file", lambda: _picked("file")):
+            for msg, kind in (({"type": "browseDir"}, "folder"), ({"type": "pickFile"}, "file")):
                 self.sent.clear()
                 self.send(msg)
                 self.assertEqual([m for m in self.sent if m.get("type") == "warn"], [],
                                  "an available dialog must not be talked about, only shown")
-        for t in threading.enumerate():                      # the dialog runs off the message loop
-            if t not in before and t is not threading.current_thread() and t.daemon:
-                t.join(timeout=2)
+                self.assertTrue(ran[kind].wait(timeout=10),
+                                "the %s dialog thread never ran the pick" % kind)
         self.assertEqual(sorted(opened), ["file", "folder"])
 
     def test_the_gear_learns_the_same_thing_from_its_own_route(self):

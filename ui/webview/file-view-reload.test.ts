@@ -1,13 +1,16 @@
-// Reload on a MEDIA body, at the real openFileView (plans/file-review.md, "The viewer seam"; Slice 1's
-// whole-file comments on standalone images). The comments panel calls ctx.reload() whenever the file's
-// mtime moves — a session regenerating a figure under an open panel — and the blob branch of the fetch
-// pipeline then has two jobs the text branch does not: revoke the previous bytes' object URL before minting
-// the new one (a leak per reload otherwise), and give the SVG Source view the NEW XML (the old decode is a
-// lie about the file). The seam suite's only reload is a text file, so either line could go missing and
-// every suite stayed green (review round 3, a mutation probe). Here the viewer runs over the seam suite's
-// DOM stand-in (file-view-seam.test.ts, copied: node --test runs each file in its own process, and this
-// one stubs URL.revokeObjectURL and hands the viewer Blobs whose decode it can hold) and each job is checked
-// by what the viewer DOES. Synthetic fixtures only: the notes-api world, placeholder ids.
+// Reload at the real openFileView (plans/file-review.md, "The viewer seam"; Slice 1's whole-file comments
+// on standalone images, Slice 2's re-fetch after a decision). The comments panel calls ctx.reload() whenever
+// the file's mtime moves — a session regenerating a figure under an open panel — and the blob branch of
+// the fetch pipeline then has two jobs the text branch does not: revoke the previous bytes' object URL
+// before minting the new one (a leak per reload otherwise), and give the SVG Source view the NEW XML (the
+// old decode is a lie about the file). The seam suite's only reload is a text file, so either line could
+// go missing and every suite stayed green (review round 3, a mutation probe). And two reloads in flight
+// must resolve to the NEWER bytes whatever order the kernel answers in: the Slice 2 review found the panel's
+// moved-fence retry issuing two fetches with nothing ordering them, and an older response landing last
+// would put its bytes in the body under the newer response's mtime. Here the viewer runs over the seam
+// suite's DOM stand-in (file-view-seam.test.ts, copied: node --test runs each file in its own process, and
+// this one stubs URL.revokeObjectURL and hands the viewer Blobs and texts whose decode it can hold) and
+// each job is checked by what the viewer DOES. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import type { FileViewActionCtx } from "./file-view";
@@ -203,9 +206,10 @@ win.__rompEditor = {
 };
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them ──────────────────────────
-// A served file may bring its own Blob: the deferrable-decode tests hand the viewer bytes whose text()
-// resolves when the test says so, which is how a decode gets overtaken by a newer reload or a close.
-type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob };
+// A served file may bring its own Blob, or its own text(): the deferrable tests hand the viewer bytes
+// whose decode (or whose body read) resolves when the test says so, which is how a response gets
+// overtaken by a newer reload or a close.
+type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string; blob?: () => Blob; text?: () => Promise<string> };
 const disk: Record<string, Served> = {};
 const fetches: string[] = [];
 (globalThis as any).fetch = async (url: string, init?: { method?: string }) => {
@@ -219,10 +223,16 @@ const fetches: string[] = [];
   if (!f) return { ok: false, status: 404, headers, text: async () => "no such file: " + p };
   return {
     ok: true, status: 200, headers,
-    text: async () => String(f.bytes),
+    text: () => (f.text ? f.text() : Promise.resolve(String(f.bytes))),
     blob: async () => (f.blob ? f.blob() : new Blob([f.bytes as unknown as BlobPart], { type: f.type })),
   };
 };
+/** A body read that waits for the test: resolves with the text on `release()`, rejects on `fail()`. */
+function heldText(text: string): { text: () => Promise<string>; release: () => void; fail: (why: string) => void } {
+  let release!: () => void, fail!: (why: string) => void;
+  const held = new Promise<string>((ok, no) => { release = () => ok(text); fail = (why) => no(new Error(why)); });
+  return { text: () => held, release, fail };
+}
 /** A Blob whose decode waits for the test: text() resolves with the bytes only once `release()` is called. */
 class HeldBlob extends Blob {
   private readonly held: Promise<string>;
@@ -239,6 +249,10 @@ const SID = "11111111-2222-3333-4444-555555555555";
 const ROOT = "/repo/notes-api";
 const PLOT = ROOT + "/docs/plot.png";
 const FIG = ROOT + "/docs/figure.svg";
+const APP = ROOT + "/src/app.py";
+const PY = "def main():\n    return 40  # p95 latency, percent\n";
+const PY2 = PY.replace("40", "41");
+const PY3 = PY.replace("40", "42");
 const PNG1 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x01]);
 const PNG2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x02, 0x02]);
 const svg = (label: string) => '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">\n  <text x="1" y="8">' + label + "</text>\n</svg>\n";
@@ -272,6 +286,7 @@ async function open(p: string, t: TestContext): Promise<Open> {
   const fv = await mod();
   disk[PLOT] = { bytes: PNG1, type: "image/png", mtimeNs: MT };
   disk[FIG] = { bytes: SVG1, type: "image/svg+xml", mtimeNs: MT };
+  disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; paints = 0; seam = null;
   assert.equal(fv.openFileView(p, SID), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
@@ -297,19 +312,28 @@ const img = (body: El) => body.querySelector("img.fileview-img");
 test("reload on an image: the previous object URL is revoked once, the <img> gets the new bytes' URL, and close revokes only that one", async (t) => {
   const revoked = watchRevokes(t);
   const { fv, ctx, body } = await open(PLOT, t);
-  const first = img(body)!.src;
+  const firstImg = img(body)!;
+  const first = firstImg.src;
   assert.ok(first.startsWith("blob:"), "the open minted an object URL");
   assert.equal(ctx.mode(), "media"); assert.equal(ctx.mtimeNs(), MT);
+  assert.equal(ctx.mediaElement(), firstImg as unknown as HTMLElement, "the seam's media element is the picture in the body");
   disk[PLOT] = { bytes: PNG2, type: "image/png", mtimeNs: MT2 };   // a session regenerated the figure
   ctx.reload();
   await settle();
   assert.deepEqual(revoked, [first], "the old bytes' URL went, exactly once, before the new one was minted");
-  const second = img(body)!.src;
+  const secondImg = img(body)!;
+  const second = secondImg.src;
   assert.ok(second.startsWith("blob:") && second !== first, "one <img>, at a NEW object URL");
   assert.equal(body.querySelectorAll("img").length, 1, "the reload replaced the image, it did not stack one");
   assert.equal(ctx.mtimeNs(), MT2, "the mtime followed the kernel's header");
   assert.equal(ctx.mode(), "media"); assert.equal(ctx.media(), "image"); assert.equal(ctx.text(), null);
-  assert.equal(paints, 0, "a media repaint is not a text paint");
+  assert.equal(ctx.mediaElement(), secondImg as unknown as HTMLElement, "mediaElement() follows the reload — read from the body, never a kept handle");
+  // the media paint (Slice 3): onRendered waits for the picture to load, and only the picture that is showing counts
+  assert.equal(paints, 0, "neither picture has loaded: no onRendered yet");
+  firstImg.dispatchEvent(new Ev("load"));
+  assert.equal(paints, 0, "a load landing on the REPLACED picture fires nothing — an overlay sized against it would frame nothing anyone sees");
+  secondImg.dispatchEvent(new Ev("load"));
+  assert.equal(paints, 1, "the showing picture's load is the media paint");
   fv.closeFileView();
   assert.deepEqual(revoked, [first, second], "close revokes the CURRENT URL — the registration moved with the reload");
 });
@@ -346,7 +370,7 @@ test("reload with the Source view toggled OFF: the stale decode is dropped, so t
   ctx.reload();
   await settle();
   assert.equal(ctx.mode(), "media"); assert.equal(ctx.mtimeNs(), MT3);
-  assert.equal(paints, 1, "a media repaint: no text paint yet");
+  assert.equal(paints, 1, "the reloaded picture has not loaded: the Source paint is still the only one");
   src.click();
   await settle();
   assert.equal(ctx.mode(), "raw");
@@ -383,4 +407,43 @@ test("a Source-view decode overtaken by a newer reload, or landing after close, 
   late.release();
   await settle();
   assert.equal(paints, 2, "a decode landing after the close fires no onRendered — the panel's hooks were drained with the viewer");
+});
+
+test("two text reloads in flight: the newer wins whatever order they answer in — an older response landing last repaints nothing and lends the view no mtime; an older FAILURE landing last raises no error row", async (t) => {
+  const { ctx, body } = await open(APP, t);
+  assert.equal(ctx.mode(), "raw"); assert.equal(ctx.text(), PY); assert.equal(ctx.mtimeNs(), MT);
+  assert.equal(paints, 1, "the open's paint");
+  // reload 1 answers its headers at once (the viewer reads the mtime there) but its body waits
+  const slow = heldText(PY2);
+  disk[APP] = { bytes: PY2, type: "text/plain; charset=utf-8", mtimeNs: MT2, text: slow.text };
+  ctx.reload();
+  await settle();
+  // reload 2, issued while 1 is out, lands whole
+  disk[APP] = { bytes: PY3, type: "text/plain; charset=utf-8", mtimeNs: MT3 };
+  ctx.reload();
+  await settle();
+  assert.equal(ctx.text(), PY3, "the newer bytes show");
+  assert.equal(ctx.mtimeNs(), MT3, "under their own mtime");
+  assert.equal(paints, 2, "one repaint for the newer reload");
+  slow.release();                                          // the older body finally arrives…
+  await settle();
+  assert.equal(ctx.text(), PY3, "…and changes nothing: the view never shows older bytes than it did");
+  assert.equal(ctx.mtimeNs(), MT3, "…nor takes the older response's mtime (the panel trusts mtimeNs() to name the text it paints over)");
+  assert.equal(paints, 2, "no repaint for an overtaken response");
+  assert.ok(body.querySelector("code.hljs"), "the body is the text view");
+  assert.equal(body.querySelector(".fileview-err"), null);
+  // an older response that FAILS after a newer one landed is nobody's error: the body keeps the newer text
+  const failing = heldText("");
+  disk[APP] = { bytes: "", type: "text/plain; charset=utf-8", mtimeNs: MT4, text: failing.text };
+  ctx.reload();
+  await settle();
+  const v5 = PY.replace("40", "45");
+  disk[APP] = { bytes: v5, type: "text/plain; charset=utf-8", mtimeNs: "1757145600000000010" };
+  ctx.reload();
+  await settle();
+  assert.equal(ctx.text(), v5); assert.equal(paints, 3);
+  failing.fail("network gone");
+  await settle();
+  assert.equal(body.querySelector(".fileview-err"), null, "an overtaken failure replaces nothing");
+  assert.equal(ctx.text(), v5); assert.equal(ctx.mtimeNs(), "1757145600000000010"); assert.equal(paints, 3);
 });

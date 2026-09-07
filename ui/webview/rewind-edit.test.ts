@@ -46,10 +46,12 @@ test("the composer edit chip cancels via its x and via Escape", () => {
 });
 
 test("the pending-rewind overlay is wired into every ingest path and repaints mid-window", () => {
-  const calls = RENDER.match(/reconcileRewind\(s\);/g) || [];
+  const calls = RENDER.match(/reconcileRewind\(s(, from)?\);/g) || [];   // chatTail passes its from: the signature's bound (chat-exact-tail.test.ts)
   assert.ok(calls.length >= 4, "reconcileRewind wired into upsert + update + chatTail + the edit send, got " + calls.length);
-  // the overlay touches MID-window turns — the append fast path won't repaint them without stale
-  assert.match(RENDER, /if \(v\) v\.stale = true;\s*\/\/ the overlay touches MID-window turns/);
+  // the overlay touches MID-window turns — the append fast path won't repaint them without stale; since
+  // 2026-09-06 stale is set when the overlay or the editable set CHANGED (the tail path re-renders exactly
+  // what the kernel named, so this signal is what repaints a prefix bubble — chat-exact-tail.test.ts)
+  assert.match(RENDER, /if \(v && rewindSig\(s, bound\) !== before\) v\.stale = true;\s*\/\/ the overlay or the editable set changed: MID-window turns repaint/);
   // chatTail reuses prefix event objects across pushes → stale rewound flags are stripped first
   assert.match(RENDER, /for \(const e of s\.events\) if \(\(e as any\)\.rewound\) delete \(e as any\)\.rewound;/);
   // abandoned turns dim via a class on the rendered turn

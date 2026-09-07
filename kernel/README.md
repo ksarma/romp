@@ -50,6 +50,6 @@ mode" and "Installing without keys on disk"):
 A key value never lands in the kernel's own environment and never reaches a
 log — the sha256 head (`fingerprint()`) is the only renderable form.
 
-Everything here is loaded by file path (`SourceFileLoader`), not installed as a
-package — the repo runs straight from a git clone. Python tests live in
+Everything here is loaded by file path (`loadsource.load_source`, the
+`spec_from_loader` + `exec_module` idiom), not installed as a package — the repo runs straight from a git clone. Python tests live in
 `tests/test_*.py`.

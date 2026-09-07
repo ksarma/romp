@@ -282,7 +282,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };   // the viewer's renderBody + fireRendered
   w.ctx = {
     path: over.path ?? ABS, sid: over.sid === undefined ? SID : over.sid, todoId: over.todoId ?? null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => "1757145600000000001", media: () => null,
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
@@ -734,7 +734,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /this\.float\.addEventListener\("touchend", \(e\) => \{ e\.preventDefault\(\); act\(\); \}\);/);
   assert.match(SRC, /for \(const ev of \["mousedown", "touchstart"\]\) document\.addEventListener\(ev, this\.hideFloatOnDown, true\);/);
   assert.match(SRC, /if \(!body\.contains\(sel\.anchorNode\) \|\| !body\.contains\(sel\.focusNode\)\) return;/);
-  assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fclogrow"\]\);/);
+  assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"\]\);/, "a change mark is a keyboard control too (Slice 2)");
   assert.match(SRC, /if \(answerTodo && reply\.todoStamped\) \{ this\.todoAnswered = true; answeredTodos\.add\(this\.ctx\.todoId!\); \}/);
   assert.match(SRC, /todoStamped: !str\(m\.warning\)/, "the kernel's `warning` on a sent reply is exclusively the nothing-stamped text");
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
