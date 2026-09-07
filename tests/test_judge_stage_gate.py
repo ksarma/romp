@@ -2064,7 +2064,7 @@ class CourierGate(_Gate):
         self.assertEqual(reads, 1, "an appended row: one refill")
         self.assertEqual(len(self._trackers(SID)), 2, "and the new row planted")
 
-    def test_the_fleet_and_horizon_filters_run_per_pass_on_the_memoized_rows(self):
+    def test_the_sender_and_horizon_filters_run_per_pass_on_the_memoized_rows(self):
         # the memo holds the ledger's rows under the ledger's identity; who is discovered and what is inside
         # the retry horizon are this pass's questions. A candidate whose sender is not discovered at pass 1
         # and past the horizon at pass 2 plants at neither, and plants at pass 3 when both hold, with the
@@ -2075,7 +2075,7 @@ class CourierGate(_Gate):
         self._pass(tiers=("courier",))                                  # SID2 not discovered: no plant
         ent = jd._postal_from_memo[0]
         self.assertEqual(len(ent[1][1]), 1, "the row is a candidate in the memo")
-        self.assertEqual(self._trackers(SID2), [], "its sender is not in this pass's fleet")
+        self.assertEqual(self._trackers(SID2), [], "its sender is not among this pass's discovered sessions")
         self._session(SID2, name="api")                                 # now discovered
         self._pass(now=NOW + 100, tiers=("courier",))                   # but the row is past the horizon at this now
         self.assertEqual(self._trackers(SID2), [], "past the horizon at the pass's now: never backfilled")

@@ -14502,7 +14502,7 @@ def _postal_ledger():
     {mid: _postal_row's tuple} for every "sent" row with an id, and xcands the "sent" rows that are
     cross-host delegates (kind delegate, a toName, a to_id "peer:..."), the candidates run_courier's
     sender-side plant filters per pass by discovered sender and by the retry horizon (a clock predicate
-    and this pass's fleet, neither frozen here). Keyed on the file's (st_mtime, st_size), published as ONE
+    and this pass's discovered senders, neither frozen here). Keyed on the file's (st_mtime, st_size), published as ONE
     tuple (key, (mp, xcands)) rebound whole (the pusher thread reads _postal_row concurrently, see
     _postal_from_memo). run_courier used to parse the whole ledger itself every pass for the candidate
     rows, beside _postal_row's parse of the same file (J6 of the round-4 perf plan, 2026-09-07); the
@@ -15454,7 +15454,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     # The candidate rows come from the ledger memo (_postal_ledger: one parse per ledger version, shared
     # with _postal_row; this arm parsed the whole ledger itself every pass before 2026-09-07). The
     # discovered-sender and horizon filters run here, per pass: the horizon is a clock predicate and the
-    # fleet is this pass's, so neither is frozen in the memo.
+    # discovered senders are this pass's, so neither is frozen in the memo.
     xrows = [o for o in _postal_ledger()[1]
              if o.get("from_id") in fleet_ids and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON]
     for o in xrows:
