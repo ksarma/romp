@@ -8012,12 +8012,14 @@ def _retry_pause_lifted_at():
 
 def _account_limited():
     """The ACCOUNT-WIDE usage windows the report says are at 100% with their reset still ahead: the 5h and
-    7d keys of _usage().limited, never fable (model-scoped). The ONE authority for the limit pause's two
-    edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty and
-    _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says the
-    limit does and lifts at the reset with no session having to serve first. Raises what _usage raises;
-    both callers treat no reading as no change."""
-    lim = (_usage() or {}).get("limited") or {}
+    7d keys of _usage_limits()["limited"], never fable (model-scoped). The ONE authority for the limit
+    pause's two edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty
+    and _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says
+    the limit does and lifts at the reset with no session having to serve first. Reads the limits half
+    only: `limited` derives from usage.json and the clock, and the spend ledger _usage() parses for the
+    rail is not an input (perf round 4 P18, 2026-09-07). Raises what _usage_limits raises; both callers
+    treat no reading as no change."""
+    lim = (_usage_limits() or {}).get("limited") or {}
     return [k for k, v in lim.items() if v and k != "fable"]
 
 
@@ -8030,7 +8032,7 @@ def _retry_resume_at():
     if not _retry_paused_on():
         return None
     try:
-        u = _usage() or {}
+        u = _usage_limits() or {}              # the limits half: resetsAt is not a ledger figure
     except Exception:
         return None
     outs = []
@@ -26402,7 +26404,8 @@ def _limit_hold(sid):
     file come from the drain's scope (_live_scope.usage / _live_scope.spend_pause — the same thread-confined
     idiom as the cycle's liveness snapshot and path memo), read ONCE per drain instead of once per held
     session: an account limit parks every session's input for hours, and the per-session re-read was most
-    of the drain's 46 ms on a seventeen-session board (measured 2026-09-05). Elsewhere it reads fresh.
+    of the drain's 46 ms on a seventeen-session board (measured 2026-09-05). Elsewhere it reads fresh. Both
+    readings are the limits half (_usage_limits): the spend ledger is not an input of this gate (P18).
 
     The gap this closes (the user 2026-07-24): hitting a usage limit turned every following gesture into
     its own failure. /compact came back refused ("this would take you over your limit"), the message typed
@@ -26413,8 +26416,8 @@ def _limit_hold(sid):
     /model and /effort are exactly as un-servable as a message, and they hold their place in the sequence.
 
     RELEASE is read from the event, never a timer romp invents:
-      - a rate window carries the API's own resetsAt, and _usage().limited goes false the moment that
-        stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
+      - a rate window carries the API's own resetsAt, and _usage_limits()["limited"] goes false the moment
+        that stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
       (its 0.5 s backstop) of the reset;
       - a spend cap has no readable reset (it lifts when the user raises it), so the hold rides the
         retry-pause _auto_pause_on_spend_limit engaged and lifts when that lifts: the user resumes it, or
@@ -26440,8 +26443,8 @@ def _limit_hold(sid):
     usage = getattr(_live_scope, "usage", _UNSET)
     if usage is _UNSET:
         try:
-            usage = _usage()
-        except Exception:
+            usage = _usage_limits()                   # the limits half: this gate runs per parked session
+        except Exception:                             # per cycle and reads no ledger figure (P18)
             usage = _UNREADABLE
     if usage is _UNREADABLE:
         return None                                   # unreadable usage → never invent a hold (the drain's
@@ -27400,7 +27403,7 @@ def _apply_pending_ops(now=None):
         # a verdict the WS thread's fresh _ops_gate would not share; review find 2026-09-05). Inside the
         # try, so a raise from either read still clears the scope below.
         try:
-            _live_scope.usage = _usage()
+            _live_scope.usage = _usage_limits()       # the limits half: the hold reads no ledger figure (P18)
         except Exception:
             _live_scope.usage = _UNREADABLE
         _live_scope.spend_pause = _retry_paused_on() and _retry_pause_reason() == "spend"
@@ -32528,20 +32531,43 @@ def _acct_read():
     _ACCT_CACHE["mtime"], _ACCT_CACHE["val"], _ACCT_CACHE["label"] = m, val, label
 
 
-def _usage():
-    """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None. File-based, like the
-    obsidian timeline's readUsage. `fable` is the included-Fable-5 weekly allowance Claude Code added to
-    /usage (the user 2026-07-02) — the CLI's window type is `seven_day_overage_included`, labeled
-    'Fable 5 limit'; the SDK backend writes it to usage.json as `fable` (the statusline payload does NOT
-    carry it — five_hour/seven_day only — so events are its one in-band source)."""
+def _usage_doc():
+    """usage.json parsed, or {} when it is absent or unreadable. A pure API-key host NEVER writes usage.json
+    (both snapshot writers skip keyed sessions), so bailing on the missing file starved the no-login spend
+    arm of _usage() of exactly the machine it was written for — the devbox answered /usage with {} and its
+    spend vanished from the summed spend across hosts (the user 2026-08-13). An empty snapshot falls through
+    instead; every read of it tolerates absence."""
     try:
-        o = json.loads((jd.STATE / "usage.json").read_text())
+        return json.loads((jd.STATE / "usage.json").read_text())
     except Exception:
-        # A pure API-key host NEVER writes usage.json (both snapshot writers skip keyed sessions), so
-        # bailing here starved the no-login spend arm below of exactly the machine it was written for —
-        # the devbox answered /usage with {} and its spend vanished from the fleet sum (the user
-        # 2026-08-13). An empty snapshot falls through instead; every read below tolerates absence.
-        o = {}
+        return {}
+
+
+def _usage_limits(doc=None):
+    """The rate-limit half of _usage(): the 5h, weekly and Fable 5 windows usage.json holds for the CURRENT
+    login, with `limited` derived — and nothing from the spend ledger. Always a dict, {fiveHour, sevenDay,
+    fable, t, acct, acctLabel, limited}: the three windows are None when the file names none (absent,
+    windowless, or stamped by a login that is gone), and `limited` is None when no window is at its cap.
+
+    This is the reading the pause and the hold take — _account_limited (both edges of the limit pause),
+    _retry_resume_at (the API-error card's countdown) and _limit_hold (the queue's account gate). They read
+    `limited` and the windows' resetsAt, which derive from the file's segments, the acct stamp and the clock;
+    spend.json is not an input of any of them, yet every call went through _usage(), which parsed the ledger
+    twice (200 KB, about 6 ms per call, once per pusher cycle for the pause alone) to attach spend figures
+    those callers never read — and on a host in the spend arm, for a `limited` key that arm does not even
+    produce (perf round 4 P18, 2026-09-07). `doc` is the parsed usage.json (_usage_doc); None reads it here.
+    No memo: every call reads the file as it is now, and the clock it reads is the module's. One decision
+    changed with the split, on purpose: a ledger the spend readers cannot use (valid JSON that is not an
+    object) used to raise inside _usage() and read as "no reading" to the three callers, so a capped window
+    never engaged the pause and an engaged pause never lifted; the limits half decides from usage.json alone,
+    so such a ledger no longer disables the pause and the hold (romp never writes that shape, and the file
+    heals on the next recorded turn; the rail's _usage() still fails on it as before).
+
+    `fable` is the included-Fable-5 weekly allowance Claude Code added to /usage (the user 2026-07-02) — the
+    CLI's window type is `seven_day_overage_included`, labeled 'Fable 5 limit'; the SDK backend writes it to
+    usage.json as `fable` (the statusline payload does NOT carry it — five_hour/seven_day only — so events are
+    its one in-band source)."""
+    o = _usage_doc() if doc is None else doc
 
     def seg(s):
         if isinstance(s, dict) and isinstance(s.get("pct"), (int, float)):
@@ -32566,7 +32592,49 @@ def _usage():
         stamped = o.get("acct") or ""
         if stamped and stamped != _claude_account():
             five = seven = fable = None
-    if not five and not seven and not fable:
+    # LIMIT REACHED (the user 2026-07-01): a window at 100% whose reset is still in the future = the account is
+    # rate-limited on it now. Drives the top banner + the auto retry-pause. A window past its resetsAt has rolled
+    # (its pct is stale until the next reading) → not limited.
+    def _lim(s):
+        return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
+    limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
+    t = o.get("t")
+    return {"fiveHour": five, "sevenDay": seven, "fable": fable,
+            "t": t if isinstance(t, (int, float)) else None,
+            # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
+            # SAME account share one set of numbers and must not be drawn twice; two machines on
+            # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
+            # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
+            "acct": _claude_account(),
+            # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
+            # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
+            # this is display only, "" when no login.
+            "acctLabel": _claude_account_label(),
+            "limited": limited if any(limited.values()) else None}
+
+
+def _spend_doc():
+    """spend.json parsed, or {} when it is absent or unreadable: the ONE parse a _usage() call makes of the
+    ledger, handed to _spend_windows and _spend_series as `doc` (each read the file itself before, so one
+    call parsed 200 KB twice; perf round 4 P18, 2026-09-07). {} is what both readers fall to when their own
+    read fails — zero-filled windows, no series — so an unreadable ledger reads the same through either
+    path. A file that parses to something other than an object reaches the readers as it is, and they fail
+    on it as they did."""
+    try:
+        return json.loads((jd.STATE / "spend.json").read_text())
+    except Exception:
+        return {}
+
+
+def _usage():
+    """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None: _usage_limits() with the
+    spend figures the rail draws beside or instead of the bars attached. File-based, like the obsidian
+    timeline's readUsage. This is the reading for what is DRAWN (_usage_for_client per timeline build,
+    GET /usage, the per-host rows); the pause and the hold read _usage_limits() directly and parse no ledger.
+    The ledger is parsed once per call here (_spend_doc) and handed to both spend readers."""
+    o = _usage_doc()
+    out = _usage_limits(o)
+    if not out["fiveHour"] and not out["sevenDay"] and not out["fable"]:
         # No windows. A machine with NO Claude login shows SPEND where the bars sat (the user
         # 2026-08-04): today's accumulated per-result cost from spend.json. The deciding evidence is
         # the CREDENTIAL STORE (the login's own lifecycle), not a per-session auth report: one session
@@ -32576,8 +32644,8 @@ def _usage():
         # requires spend.json to EXIST: a keyless machine with no recorded spend has nothing to show —
         # and the guard is what keeps unstamped fixtures/CI (temp STATE, no credential file, no spend)
         # reading None instead of coupling to the runner's real login (the deliberate decoupling the
-        # acct-stamp comment above records). A window-less file on a LOGGED-IN machine stays None —
-        # nothing known, draw nothing (never a confident zero).
+        # acct-stamp comment in _usage_limits records). A window-less file on a LOGGED-IN machine stays
+        # None — nothing known, draw nothing (never a confident zero).
         if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):
             # The spend WINDOWS mirror the subscription bars (5h / 7d / month) so the two auth modes
             # read identically; _spend_windows always returns all three, zero-filled on a fresh kernel
@@ -32585,15 +32653,14 @@ def _usage():
             # keyed split: on a no-login machine every turn bills the key, and legacy files predate
             # the split. The rail's label is the constant 'API' — no fragment of the key travels
             # (the user 2026-08-08; hosts are told apart by name in the hover, not by key).
-            out = {"apiKey": True, "spend": _spend_windows(),
-                   "t": o.get("t") if isinstance(o.get("t"), (int, float)) else None,
-                   "acct": _claude_account()}
+            doc = _spend_doc()                # the ledger, parsed once for the windows and the series
+            out = {"apiKey": True, "spend": _spend_windows(doc=doc), "t": out["t"], "acct": out["acct"]}
             # (The telemetryUnavailable flag + its "rate-limit telemetry unavailable under API-key
             # auth" hover line are GONE — the user 2026-08-24: they know which machines are
             # key-only and want the spend without a notice about rate limits that don't apply.
             # Absence of windows on a keyed host is the designed state and now simply looks like
             # what it is: no windows.)
-            ss = _spend_series()          # TOTAL, like the windows above: everything here bills the key
+            ss = _spend_series(doc=doc)       # TOTAL, like the windows above: everything here bills the key
             if ss:
                 out["spendSeries"] = ss   # the hover's money-rate graph (the user 2026-08-13)
             sa = _spend_recorded_at()
@@ -32602,25 +32669,6 @@ def _usage():
                                           # stale "updated 9h ago" sat over the spend and read as its age)
             return out
         return None
-    # LIMIT REACHED (the user 2026-07-01): a window at 100% whose reset is still in the future = the account is
-    # rate-limited on it now. Drives the top banner + the auto retry-pause. A window past its resetsAt has rolled
-    # (its pct is stale until the next reading) → not limited.
-    def _lim(s):
-        return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
-    limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
-    t = o.get("t")
-    out = {"fiveHour": five, "sevenDay": seven, "fable": fable,
-           "t": t if isinstance(t, (int, float)) else None,
-           # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
-           # SAME account share one set of numbers and must not be drawn twice; two machines on
-           # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
-           # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
-           "acct": _claude_account(),
-           # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
-           # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
-           # this is display only, "" when no login.
-           "acctLabel": _claude_account_label(),
-           "limited": limited if any(limited.values()) else None}
     # API-KEY spend BESIDE the bars — the KEYED split only (turns whose session billed the key; a login
     # turn's computed cost is dollars nobody pays), attached only when key turns actually exist, so a
     # host that never uses its key shows nothing extra. This supersedes the same-day rule that bars
@@ -32628,17 +32676,18 @@ def _usage():
     # share one auth; per-session auth (same day, evening) makes one host BOTH, and the key's real
     # dollars belong on the rail next to the login's real %.
     if _auth_key_present():
-        ksp = _spend_windows(keyed_only=True)
+        doc = _spend_doc()                    # once, for the keyed windows and the keyed series
+        ksp = _spend_windows(keyed_only=True, doc=doc)
         if any((ksp.get(k) or {}).get("turns") for k in ("day", "week", "month")):
             out["spend"] = ksp
-            ss = _spend_series(keyed_only=True)   # the keyed split, like the windows it graphs
+            ss = _spend_series(keyed_only=True, doc=doc)   # the keyed split, like the windows it graphs
             if ss:
                 out["spendSeries"] = ss
             sa = _spend_recorded_at()
             if sa:
                 out["spendAt"] = sa               # same own-freshness stamp as the key-only arm
     # (the winSeries per-window utilization series is gone — the user 2026-08-14, who wanted the one
-    # fleet $/h graph and nothing per window. usage-history.json keeps recording — sdk_backend
+    # $/h graph summed across hosts and nothing per window. usage-history.json keeps recording — sdk_backend
     # _record_usage_history — so a future graph starts with history instead of a blank.)
     return out
 
@@ -32713,7 +32762,7 @@ def _ledger_key_unplaced(key, err, effect):
                  "bucket is removed." % (jd.STATE / "spend.json", err, effect))
 
 
-def _spend_series(keyed_only=False, now=None):
+def _spend_series(keyed_only=False, now=None, doc=None):
     """The hover graph's money-rate series (the user 2026-08-13): $/hour over the last 192 hours, a
     DENSE array plus a base hour (h0, epoch-hours), so cross-host summing is an index-wise add after
     aligning on h0 — correct without dedup, because each host records only its own turns even on a
@@ -32722,11 +32771,15 @@ def _spend_series(keyed_only=False, now=None):
     reason. `now` anchors h0 — injectable so a caller with a frozen evidence clock (tests) can't
     straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run). A
     key the rule cannot place is left out and reported once (_ledger_key_unplaced): this runs in every
-    usage build, and a raise here took the whole timeline down with it."""
-    try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
-    except Exception:
-        return None
+    usage build, and a raise here took the whole timeline down with it. `doc` is the parsed ledger when
+    the caller already holds it (_usage parses it once for this and _spend_windows); None reads the file
+    here, as every standalone caller does."""
+    if doc is None:
+        try:
+            doc = json.loads((jd.STATE / "spend.json").read_text())
+        except Exception:
+            return None
+    d = doc
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
     if not hours:
         return None
@@ -32797,7 +32850,7 @@ def _spend_pre_fix(key):
     return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
 
 
-def _spend_windows(keyed_only=False, now=None):
+def _spend_windows(keyed_only=False, now=None, doc=None):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
     buckets, month-to-date from its day buckets — each {usd, tok, turns}, plus `budget` where
@@ -32810,11 +32863,14 @@ def _spend_windows(keyed_only=False, now=None):
     user 2026-08-08). The no-login machine keeps the total (everything there IS the key, and legacy
     files predate the split). `now` is the clock the windows end at — the wall clock by default; the
     analytics build passes its own so the modal's keyed guard reads the rail's windows at the modal's
-    instant."""
-    try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
-    except Exception:
-        d = {}
+    instant. `doc` is the parsed ledger when the caller already holds it (_usage parses it once for this
+    and _spend_series); None reads the file here, as the analytics build and every other caller do."""
+    if doc is None:
+        try:
+            doc = json.loads((jd.STATE / "spend.json").read_text())
+        except Exception:
+            doc = {}
+    d = doc
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
 

@@ -50,7 +50,7 @@ class DrainHoists(unittest.TestCase):
         self.be = _FakeBackend()
         self._saved = {n: getattr(km, n) for n in
                        ("_compacting_now", "_working_now", "_push_all", "_optimistic_echo", "_mark_views_dirty",
-                        "_mark_compacting", "_mark_model_pending", "_path_of", "_usage", "_retry_paused_on",
+                        "_mark_compacting", "_mark_model_pending", "_path_of", "_usage_limits", "_retry_paused_on",
                         "_retry_pause_reason", "_refresh_parked_parse", "_deliver_send_batch")}
         self._saved_backend = km.Sessions.backend_for
         km._compacting_now = lambda sid: False
@@ -67,7 +67,7 @@ class DrainHoists(unittest.TestCase):
         def usage():
             self.usage_calls.append(1)
             return {"limited": {"fiveHour": True}, "fiveHour": {"resetsAt": 4102444800}} if self.capped else {"limited": None}
-        km._usage = usage
+        km._usage_limits = usage
         self.pause_calls = []
         km._retry_paused_on = lambda: (self.pause_calls.append(1), False)[1]
         km._retry_pause_reason = lambda: ""
@@ -101,7 +101,7 @@ class DrainHoists(unittest.TestCase):
         for capped in (False, True):
             self.capped = capped
             fresh = km._limit_hold(SIDS[0])
-            km._live_scope.usage = km._usage(); km._live_scope.spend_pause = False
+            km._live_scope.usage = km._usage_limits(); km._live_scope.spend_pause = False
             try:
                 hoisted = km._limit_hold(SIDS[0])
             finally:
@@ -116,7 +116,7 @@ class DrainHoists(unittest.TestCase):
         # the hoisted reading must say the same, not read as an EMPTY usage that falls through to the spend arm
         # (review find 2026-09-05 — the WS thread's fresh _ops_gate and the drain would otherwise disagree)
         def boom(): raise ValueError("usage.json is not an object")
-        km._usage = boom
+        km._usage_limits = boom
         km._retry_paused_on = lambda: True; km._retry_pause_reason = lambda: "spend"
         self.assertIsNone(km._limit_hold(SIDS[0]), "fresh: unreadable usage is no hold, whatever the pause says")
         km._live_scope.usage = km._UNREADABLE; km._live_scope.spend_pause = True
@@ -149,7 +149,7 @@ class DrainHoists(unittest.TestCase):
         self.assertNotIn("_refresh_parked_parses", src)
         self.assertFalse(hasattr(km, "_refresh_parked_parses"), "the whole-set pre-pass is gone, not parked")
         drain = inspect.getsource(km._apply_pending_ops)
-        self.assertIn("_live_scope.usage = _usage()", drain)
+        self.assertIn("_live_scope.usage = _usage_limits()", drain, "the limits half: the hold reads no ledger figure")
         self.assertIn("_live_scope.usage = _UNSET", drain, "the scope is cleared even when the loop raises")
         held = drain.index("_limit_hold(sid)")
         refresh = drain.index("_refresh_parked_parse(sid, now)", held)
