@@ -11,6 +11,14 @@ load tmux-private
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
+    # A state root of the suite's own. The manager notes every SIGTERM it sends in
+    # STATE_ROOT/restart-audit.jsonl (auditSigterm), and every test here stops a real manager in
+    # teardown: with no root set, those rows landed in the LIVE ledger as requests on record for kills
+    # nobody made (seven rows, 2026-09-06). ROMP_STATE_DIR outranks the XDG floor and a session of a
+    # profiled kernel inherits it, so it is dropped, not shadowed. tests/bats-state-isolation.bats
+    # checks that both lines stay.
+    unset ROMP_STATE_DIR
+    export XDG_STATE_HOME="$TEST_DIR/state"; mkdir -p "$XDG_STATE_HOME"
     # bin/romp-manager starts its tmux server in a transient systemd scope under ROMP_SUPERVISED (which a
     # romp session's tool shell inherits from the live service) — a test must never start a real scope
     # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
