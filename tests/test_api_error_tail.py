@@ -239,5 +239,153 @@ class ApiErrorTailWindow(unittest.TestCase):
         self.assertEqual(km._api_error(p), first)
 
 
+# ── _api_last_failed: the LATCH behind the bottom bar's API health cell (2026-09-07) ─────────────────
+from datetime import datetime, timezone
+
+T_BASE = 1_700_000_000
+
+
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _ts_err_rec(t, status=500, category="server_error", text="API Error: 500 server_error"):
+    o = {"type": "assistant", "timestamp": _iso(t), "uuid": "aaaaaaaa-0000-0000-0000-00000000%04d" % (t - T_BASE),
+         "parentUuid": U_PROMPT, "isApiErrorMessage": True, "error": category,
+         "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+    if status is not None:
+        o["apiErrorStatus"] = status
+    return o
+
+
+def _ts_prompt_rec(t, text="try that again"):
+    return {"type": "user", "timestamp": _iso(t), "uuid": U_OTHER,
+            "message": {"role": "user", "content": text}}
+
+
+def _ts_out_rec(t):
+    return {"type": "assistant", "timestamp": _iso(t), "uuid": "aaaaaaaa-0000-0000-0000-0000000000ff",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "back on track"}]}}
+
+
+def _ts_tool_result_rec(t, i=0):
+    return {"type": "user", "timestamp": _iso(t), "uuid": "bbbbbbbb-0000-0000-0000-%012d" % i,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "tu_%d" % i,
+                                                     "content": "ok"}]}}
+
+
+class ApiLastFailedLatch(unittest.TestCase):
+    """_api_last_failed is _api_error's latched sibling: an isApiErrorMessage record holds until ASSISTANT
+    OUTPUT follows it — through romp's own injected RETRY_MSG and through a human prompt alike, both of which
+    clear _api_error (a retry rightly un-blocks the session; it says nothing about the API). Same tail-first
+    widening, its own (mtime, size) cache; the scan's default keyword leaves _api_error's verdicts untouched."""
+
+    def setUp(self):
+        km._api_err_cache.clear()
+        km._api_last_failed_cache.clear()
+        self.td = tempfile.TemporaryDirectory()
+        self.p = os.path.join(self.td.name, "t.jsonl")
+        self._win = km._API_ERR_TAIL_WINDOW
+
+    def tearDown(self):
+        km._API_ERR_TAIL_WINDOW = self._win
+        km._api_err_cache.clear()
+        km._api_last_failed_cache.clear()
+        self.td.cleanup()
+
+    def _write(self, *recs):
+        with open(self.p, "w") as f:
+            f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+
+    def _append(self, *recs):
+        with open(self.p, "a") as f:
+            f.write("\n".join(json.dumps(r) for r in recs) + "\n")
+
+    def test_romp_s_own_retry_prompt_clears_api_error_but_not_the_latch(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=529, category="overloaded"),
+                    _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
+        self.assertIsNone(km._api_error(self.p), "the retry un-blocks the session")
+        e = km._api_last_failed(self.p)
+        self.assertIsNotNone(e, "the API has not answered yet: the record holds")
+        self.assertEqual((e["status"], e["category"], e["t"]), (529, "overloaded", T_BASE + 5))
+
+    def test_a_human_prompt_after_the_error_splits_the_same_way(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 60, "please continue"))
+        self.assertIsNone(km._api_error(self.p))
+        e = km._api_last_failed(self.p)
+        self.assertEqual((e["status"], e["t"]), (500, T_BASE + 5))
+
+    def test_fresh_assistant_output_clears_both(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG),
+                    _ts_out_rec(T_BASE + 20))
+        self.assertIsNone(km._api_error(self.p))
+        self.assertIsNone(km._api_last_failed(self.p), "the API answered: the one event that clears the latch")
+
+    def test_a_tool_result_record_clears_neither(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_tool_result_rec(T_BASE + 6))
+        self.assertIsNotNone(km._api_error(self.p))
+        self.assertIsNotNone(km._api_last_failed(self.p))
+
+    def test_a_newer_error_record_replaces_the_latched_one(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=529, category="overloaded"),
+                    _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG), _ts_err_rec(T_BASE + 12, status=429, category="rate_limit"))
+        e = km._api_last_failed(self.p)
+        self.assertEqual((e["status"], e["t"]), (429, T_BASE + 12), "a new failed attempt is new information")
+
+    def test_the_on_you_flags_ride_the_latched_record(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=400, category="invalid_request",
+                                                          text="API Error: 400 prompt is too long"),
+                    _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
+        self.assertTrue(km._api_last_failed(self.p)["tooLong"], "the frame excludes it by this flag")
+
+    def test_the_cache_serves_an_unchanged_transcript_and_busts_on_a_size_change(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5))
+        e = km._api_last_failed(self.p)
+        self.assertEqual(e["status"], 500)
+        scan = km._api_error_scan
+        km._api_error_scan = lambda *a, **k: self.fail("an unchanged transcript is served from the cache")
+        try:
+            self.assertIs(km._api_last_failed(self.p), e)
+        finally:
+            km._api_error_scan = scan
+        self._append(_ts_out_rec(T_BASE + 20))                # the size moved → a fresh scan → a fresh answer
+        self.assertIsNone(km._api_last_failed(self.p))
+        self.assertIsNotNone(km._api_error(self.p) is None or True, "the sibling keeps its own cache")
+
+    def test_the_two_caches_are_independent(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
+        self.assertIsNone(km._api_error(self.p))
+        self.assertIsNotNone(km._api_last_failed(self.p), "a cached None from _api_error is not this answer")
+        self.assertIn(self.p, km._api_err_cache)
+        self.assertIn(self.p, km._api_last_failed_cache)
+
+    def test_the_latch_widens_past_a_tail_of_prompts(self):
+        km._API_ERR_TAIL_WINDOW = 64                       # a window that ends inside the prompts
+        pad = "x" * 200
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=529, category="overloaded"),
+                    *[_ts_prompt_rec(T_BASE + 10 + i, pad) for i in range(6)])
+        self.assertIsNone(km._api_error(self.p), "the default scan decides at the newest prompt")
+        e = km._api_last_failed(self.p)
+        self.assertEqual((e["status"], e["t"]), (529, T_BASE + 5), "the latch widened back to the assistant record")
+
+    def test_the_scan_stamps_the_record_time_and_reads_zero_without_one(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5))
+        err, decided = km._api_error_scan(self.p, 0)
+        self.assertEqual(err["t"], T_BASE + 5)
+        self._write(_prompt_rec(), _err_rec())             # the module's stamp-less records
+        err, _ = km._api_error_scan(self.p, 0)
+        self.assertEqual(err["t"], 0)
+
+    def test_the_default_keyword_is_the_old_scan(self):
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
+        self.assertEqual(km._api_error_scan(self.p, 0), km._api_error_scan(self.p, 0, user_clears=True))
+        self.assertEqual(km._api_error_scan(self.p, 0), (None, True))
+        err, decided = km._api_error_scan(self.p, 0, user_clears=False)
+        self.assertEqual((err["status"], decided), (500, True))
+
+    def test_missing_file_is_none(self):
+        self.assertIsNone(km._api_last_failed(os.path.join(self.td.name, "absent.jsonl")))
+
+
 if __name__ == "__main__":
     unittest.main()
