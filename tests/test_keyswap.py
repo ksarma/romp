@@ -21,15 +21,26 @@ What these tests pin, in the order the feature is used:
   CycleReconnects — the apply half for already-running sessions.
   NothingLeaksTheKey — no key value in any log line, any printed line, or any wire payload; the
     only rendered form anywhere is the sha256 head.
+  KeyswapCliCommandMode: `romp keyswap` under the COMMAND kind (kernel/envsource.py): the report runs
+    the command in this shell and compares fingerprints with the kernel's run, `<name>` writes the
+    one-token selector after checking it against ROMP_CREDENTIAL_NAMES and confirms the fingerprint
+    moved (undone when nothing moved), --refresh makes the kernel re-run now, and a cycle re-runs first
+    and reconnects only the sessions whose launch fingerprint differs; a MISMATCH names the cause when
+    the kernel and this shell resolve different kinds, sources or fingerprints. The command-mode values
+    are "romp-test-fixture-" + a uuid, assembled at run time; no value reaches stdout or stderr.
 
 Synthetic keys only (`sk-ant-TEST-…`), synthetic sids, temp paths. No real key material, and the
 module points the env-file path at its own temp dir so it can never read the machine's real one.
 """
+import io
 import json
 import os
+import shutil
 import stat
+import sys
 import tempfile
 import unittest
+import uuid
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -52,6 +63,13 @@ cli = SourceFileLoader("romp_keyswap_cli", os.path.join(BIN, "romp-keyswap")).lo
 # call under a different name would quietly give a second copy of it (with its own _CACHE).
 ks = sb._keysrc
 assert ks is cli.ks, "the CLI and the kernel must read the key through one module"
+es = sb._envsrc
+assert es is cli.es, "the CLI and the kernel must run the credential command through one module"
+
+
+def fixture_value(tag=""):
+    """A synthetic credential value, assembled at run time so no fixture literal is credential-shaped."""
+    return "romp-test-fixture-%s%s" % (tag + "-" if tag else "", uuid.uuid4().hex)
 
 OLD_KEY = "sk-ant-TEST-0000"
 NEW_KEY = "sk-ant-TEST-1111"
@@ -1023,6 +1041,752 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 1)
         self.assertIn("source changed during the request", said)
         self.assertEqual(self.posted[-1][2]["expectedSourceFp"], source.fingerprint())
+
+    def test_refresh_re_reads_and_notes_it_on_the_kernel_line(self):
+        # --refresh under a key line or a reference is a plain re-read (nothing cached to re-run); the kernel
+        # line says what it was before when it moved, "unchanged" when it did not
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        live = ks.fingerprint(OLD_KEY)
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": live, "sourceFp": live, "keySource": "file", "rows": [],
+            "refreshed": ({"from": "deadbeefcafe", "to": live, "err": ""} if b.get("refresh") else None)}
+        rc, said = self.run_cli("--refresh")
+        self.assertEqual(rc, 0, said)
+        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": [], "refresh": True}])
+        self.assertIn("kernel      reads sha256:%s (re-read now: was sha256:deadbeefcafe)" % live, said)
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": live, "sourceFp": live, "keySource": "file", "rows": [],
+                                     "refreshed": {"from": live, "to": live, "err": ""}}
+        rc, said = self.run_cli("--refresh")
+        self.assertEqual(rc, 0, said)
+        self.assertIn("kernel      reads sha256:%s (re-read now: unchanged)" % live, said)
+        # under the reference a status read fingerprints nothing (it never runs op), so the note says only
+        # that the kernel re-read its configuration
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": "", "sourceFp": source.fingerprint(), "keySource": "op",
+                                     "rows": [], "refreshed": {"from": "", "to": "", "err": ""}}
+        rc, said = self.run_cli("--refresh")
+        self.assertEqual(rc, 0, said)
+        self.assertIn("kernel      source %s (re-read now)" % source.fingerprint(), said)
+        self.assertIn("1Password reference matches", said)
+
+    def test_a_cycling_row_carries_the_fingerprint_its_cli_launched_on(self):
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        live = ks.fingerprint(NEW_KEY)
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": live, "sourceFp": live, "keySource": "file",
+            "rows": ([{"session": "web", "status": "cycling", "from": ks.fingerprint(OLD_KEY)},
+                      {"session": "api", "status": "current", "from": live},
+                      {"session": "tests", "status": "cycling", "from": ""}] if b.get("all") else [])}
+        rc, said = self.run_cli("lowprio", "--cycle-all")
+        self.assertEqual(rc, 0, said)
+        self.assertIn("  web            reconnecting now — history kept (from sha256:%s)" % ks.fingerprint(OLD_KEY), said)
+        self.assertIn("  api            already on this key — nothing to do", said)
+        self.assertNotIn("nothing to do (from", said, "the tail rides cycling rows only")
+        self.assertIn("  tests          reconnecting now — history kept\n", said + "\n")   # no stamp, no tail
+        self.assertNotIn(OLD_KEY, said)
+        self.assertNotIn(NEW_KEY, said)
+
+    def test_a_kernel_on_another_kind_is_a_mode_mismatch_and_stops_a_cycle(self):
+        # the kernel selects its source live from ITS service.env and environment; this shell's file says a key
+        # line, the kernel answers a credential command: the words name both, the causes and no fingerprint compare
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": "abc123abc123", "sourceFp": "0123456789ab", "keySource": "command",
+            "keyKind": "key", "rows": [{"session": "web", "status": "cycling"}]}
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      key source: a credential command (ROMP_CREDENTIAL_COMMAND); reads sha256:abc123abc123", said)
+        self.assertIn("MISMATCH    the kernel's key source is a credential command (ROMP_CREDENTIAL_COMMAND);\n"
+                      "            this shell's is an API key line (ANTHROPIC_API_KEY).", said)
+        self.assertIn("reads another service.env:", said)
+        self.assertIn("the kernel's environment carries ROMP_CREDENTIAL_COMMAND (a foreground manager started from a shell", said)
+        self.assertNotIn("this shell's environment carries", said, "this shell's source is the file's; no environment bullet for it")
+        self.assertNotIn("the kernel is not reading this file's key source", said, "the mode words, not the fingerprint words")
+        self.posted.clear()
+        rc, said = self.run_cli("--cycle", "web")
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH", said)
+        self.assertIn("cycle       NOT DONE", said)
+        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}], "the read only; nothing was cycled")
+        # a reference in the file against a kernel on a key line: the same words, the reference named by its word
+        source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(source, self.path)
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": "abc123abc123", "sourceFp": "abc123abc123", "keySource": "file", "rows": []}
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("this shell's is a 1Password reference (ROMP_API_KEY_REF)", said)
+        # an answer without keySource (an older kernel) takes the source compare as before
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": "", "sourceFp": source.fingerprint(), "rows": []}
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 0, said)
+        self.assertNotIn("MISMATCH", said)
+
+    def test_a_command_profile_is_compared_by_its_source_fingerprint(self):
+        # selecting a service.env.<name> that carries a ROMP_CREDENTIAL_COMMAND line (the reference's profile
+        # mechanism) is then checked against the kernel like a reference: by source identity, never by key
+        value = fixture_value("profile")
+        script = os.path.join(self.d, "cred.sh")
+        with open(script, "w") as fh:
+            fh.write("#!/bin/sh\necho 'ANTHROPIC_API_KEY=%s'\n" % value)
+        os.chmod(script, 0o700)
+        cmd = script + ' "$1"'
+        self.sibling("helper", "ROMP_CREDENTIAL_COMMAND=%s\n" % cmd)
+        new = ks.KeySource("command", cmd)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": "abc123abc123", "sourceFp": new.fingerprint(), "keySource": "command", "keyKind": "key",
+            "rows": [{"session": "web", "status": "cycling", "from": "deadbeefcafe"}] if b.get("all") else []}
+        rc, said = self.run_cli("helper", "--cycle-all")
+        self.assertEqual(rc, 0, said)
+        self.assertEqual(ks.read_source(self.path), new)
+        self.assertIn("credential command %s" % new.fingerprint(), said)
+        self.assertIn("the credential command matches", said)
+        self.assertIn("no key was copied to disk", said)
+        self.assertEqual([b for _u, _p, b in self.posted],
+                         [{"sessions": []}, {"all": True, "expectedSourceFp": new.fingerprint()}])
+        self.assertIn("(from sha256:deadbeefcafe)", said)
+        self.assertNotIn(cmd, said)
+        # the file now selects the command, so <name> would be a selector for it (the command arm); the bare
+        # report is the compare, and a kernel on another command text is a source MISMATCH
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": "abc123abc123", "sourceFp": "0123456789ab", "keySource": "command", "rows": []}
+        os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(self.d, "selector")
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 1, said)
+        self.assertIn("MISMATCH    the kernel runs another command", said)
+        self.assertIn("key source  command sha256:%s   (ROMP_CREDENTIAL_COMMAND in %s)" % (new.fingerprint(), self.path), said)
+        self.assertNotIn(cmd, said)
+        self.assertNotIn(value, said)
+
+    def test_a_second_positional_is_counted_never_echoed(self):
+        import io
+        import sys
+        buf, was = io.StringIO(), sys.stderr
+        sys.stderr = buf
+        try:
+            rc, _said = self.run_cli("lowprio", NEW_KEY)
+        finally:
+            sys.stderr = was
+        self.assertEqual(rc, 2)
+        self.assertIn("one source at a time (2 positional arguments given)", buf.getvalue())
+        self.assertNotIn(NEW_KEY, buf.getvalue(), "a key typed where a name was expected never reaches stderr")
+        self.assertEqual(ks.read_key(self.path), OLD_KEY)
+
+
+class KeyswapCliCommandMode(unittest.TestCase):
+    """`romp keyswap` under the COMMAND kind (a ROMP_CREDENTIAL_COMMAND line in service.env, or the variable in
+    this shell's environment): the report, the named switch, the refresh and the cycle, against a fake command
+    whose set depends on `$1` and a fake kernel that records what it was asked. The kernel is stubbed: these
+    tests must never dial a real one, and KeySource.resolve is patched to fail, since the CLI never resolves.
+
+    The fake command prints a different ANTHROPIC_API_KEY per selector name (hp, lp) plus a role variable; the
+    values are assembled at run time. The fake kernel answers the way the route does (keySource, sourceFp,
+    keyFp, keyKind, setFp, selector, launched, refreshed, rows) from whatever `self.kernel_view` holds, so a
+    test moves the kernel's view to make the two sides agree or disagree."""
+
+    SAVED = es.CONFIG_VARS + ("CLAUDE_CONFIG_DIR", "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV",
+                              "ROMP_API_KEY_REF", "ANTHROPIC_API_KEY")
+
+    def setUp(self):
+        from unittest import mock
+        self.lab = tempfile.mkdtemp()
+        self._before = {v: os.environ.get(v) for v in self.SAVED}
+        for v in ("ROMP_API_KEY_REF", "ANTHROPIC_API_KEY"):
+            os.environ.pop(v, None)
+        # absent by default: the command rides this shell's environment (the door a foreground manager has);
+        # the file-door tests write the line into this path instead
+        self.path = os.path.join(self.lab, "service.env")
+        os.environ["ROMP_SERVICE_ENV_FILE"] = self.path
+        os.environ["ROMP_SERVICE_ENV"] = self.path
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.lab, "claude")     # no settings.json: no helper
+        self.selector = os.path.join(self.lab, "selector")
+        os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = self.selector
+        os.environ["ROMP_CREDENTIAL_NAMES"] = "hp,lp"
+        self.keys = {"hp": fixture_value("hp"), "lp": fixture_value("lp")}
+        self.role = fixture_value("role")
+        self.cmd = os.path.join(self.lab, "cmd.sh")
+        self.command_by_selector()
+        self.command_text = self.cmd + ' "$1"'
+        os.environ["ROMP_CREDENTIAL_COMMAND"] = self.command_text
+        self.select("hp")
+        es._reset()
+        ks._CACHE = ((), "")
+        resolver = mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("CLI resolved a secret"))
+        resolver.start()
+        self.addCleanup(resolver.stop)
+        self.posted = []
+        self._saved = (cli._kernel, cli._post)
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((p, b)) or self.kernel_answer(b)
+        # the kernel's view: by default it agrees with this shell (its own run of the same command)
+        self.kernel_view = {"keySource": "command", "sourceFp": self.source_fp(), "keyFp": self.fp("hp"),
+                            "keyKind": "key", "setFp": self.set_fp("hp"), "selector": "hp", "keyErr": "",
+                            "launched": {self.fp("hp"): 3}, "rows": []}
+
+    def tearDown(self):
+        cli._kernel, cli._post = self._saved
+        for v, was in self._before.items():
+            if was is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = was
+        es._reset()
+        ks._CACHE = ((), "")
+        shutil.rmtree(self.lab, ignore_errors=True)
+
+    # -- the lab --
+    def command_by_selector(self, extra=""):
+        body = "#!/bin/sh\n%s\ncase \"$1\" in\n" % extra
+        for name, value in self.keys.items():
+            body += "  %s) echo 'ANTHROPIC_API_KEY=%s' ;;\n" % (name, value)
+        body += "esac\necho 'ROLE_TOKEN=%s'\n" % self.role
+        with open(self.cmd, "w") as fh:
+            fh.write(body)
+        os.chmod(self.cmd, 0o700)
+
+    def command(self, body):
+        with open(self.cmd, "w") as fh:
+            fh.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(self.cmd, 0o700)
+
+    def line_in_file(self, extra_lines=()):
+        """Move the command from this shell's environment into service.env (the file door)."""
+        with open(self.path, "w") as fh:
+            fh.write("".join(l + "\n" for l in extra_lines) + "ROMP_CREDENTIAL_COMMAND=%s\n" % self.command_text)
+        os.chmod(self.path, 0o600)
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
+        es._reset()
+        ks._CACHE = ((), "")
+
+    def select(self, token):
+        with open(self.selector, "w") as fh:
+            fh.write(token + "\n")
+
+    def selected(self):
+        try:
+            return open(self.selector).read().strip()
+        except OSError:
+            return None
+
+    def fp(self, name):
+        return es.fingerprint(self.keys[name])
+
+    def set_fp(self, name):
+        return es.set_fingerprint({"ANTHROPIC_API_KEY": self.keys[name], "ROLE_TOKEN": self.role})
+
+    def source_fp(self, text=None):
+        return ks.KeySource("command", self.command_text if text is None else text).fingerprint()
+
+    def kernel_answer(self, body):
+        ans = {"ok": True}
+        ans.update(self.kernel_view)
+        ans["refreshed"] = ({"from": self.kernel_view.get("refreshFrom", ans["keyFp"]), "to": ans["keyFp"], "err": ""}
+                            if body.get("refresh") else None)
+        return ans
+
+    def run_cli(self, *argv):
+        said, buf, was = [], io.StringIO(), sys.stderr
+        sys.stderr = buf
+        try:
+            rc = cli.main(list(argv), out=said.append)
+        finally:
+            sys.stderr = was
+        return rc, "\n".join(said), buf.getvalue()
+
+    def assertClean(self, *texts):
+        blob = "\n".join(texts)
+        for v in list(self.keys.values()) + [self.role]:
+            self.assertNotIn(v, blob)
+        self.assertNotIn("fixture", blob)
+        self.assertNotIn(self.command_text, blob, "the command text is rendered by fingerprint only")
+
+    # -- the bare report --
+    def test_the_bare_report_names_the_source_selector_candidates_and_fingerprints(self):
+        rc, out, err = self.run_cli()
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(err, "")
+        self.assertIn("key source  command sha256:%s   (ROMP_CREDENTIAL_COMMAND in this shell's environment" % self.source_fp(), out)
+        self.assertIn("selector    hp             " + self.selector, out)
+        self.assertIn("candidates  hp <- selected, lp", out)
+        self.assertIn("set         sha256:%s (2 names: ANTHROPIC_API_KEY, ROLE_TOKEN)" % self.set_fp("hp"), out)
+        self.assertIn("live key    sha256:%s   (this shell's run of the command: its ANTHROPIC_API_KEY line)" % self.fp("hp"), out)
+        self.assertIn("kernel      reads sha256:%s (its own run); 3 live session(s) on it" % self.fp("hp"), out)
+        self.assertNotIn("MISMATCH", out)
+        self.assertIn("rotate:     romp keyswap <name>  writes the selector (one of: hp, lp)", out)
+        self.assertEqual(self.posted, [("/keycycle", {"sessions": []})], "a read that names no session, no refresh")
+        self.assertEqual(self.selected(), "hp", "a report writes nothing")
+        self.assertEqual(ks.read_source(self.path).kind, "none", "nothing was written to the env file")
+        self.assertClean(out, err)
+
+    def test_a_command_line_in_service_env_selects_the_arm_through_the_file_door(self):
+        # the same line in the file (the door every manager has, supervised included): the arm is the same,
+        # the header names the file, and a key line beside it is ignored (command > reference > key)
+        self.line_in_file(["ROMP_PERF=1", "ANTHROPIC_API_KEY=%s" % OLD_KEY])
+        rc, out, err = self.run_cli()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("key source  command sha256:%s   (ROMP_CREDENTIAL_COMMAND in %s)" % (self.source_fp(), self.path), out)
+        self.assertIn("live key    sha256:%s" % self.fp("hp"), out)
+        self.assertNotIn("sha256:" + ks.fingerprint(OLD_KEY), out, "the key line is not the source and is not shown")
+        self.assertNotIn(OLD_KEY, out + err)
+        self.assertNotIn("MISMATCH", out)
+        self.assertEqual(open(self.path).read().count("ROMP_CREDENTIAL_COMMAND="), 1, "the report rewrites nothing")
+        self.assertClean(out, err)
+
+    def test_the_report_counts_the_live_sessions_still_on_another_fingerprint(self):
+        self.kernel_view["launched"] = {self.fp("hp"): 2, self.fp("lp"): 1, "": 1}
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 0)
+        self.assertIn("2 live session(s) on it", out)
+        self.assertIn("            1 live session(s) still on sha256:" + self.fp("lp"), out)
+        self.assertIn("            1 live session(s) launched with no credential the kernel fingerprinted", out)
+
+    def test_mismatch_when_the_kernel_selects_another_kind_names_the_live_selection_causes(self):
+        # the kernel selects its source live from ITS service.env and environment; this shell's command rides
+        # its environment alone, which a supervised manager never reads
+        self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {"": 3}})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      key source: an API key line (ANTHROPIC_API_KEY)", out)
+        self.assertIn("MISMATCH    the kernel's key source is an API key line (ANTHROPIC_API_KEY);\n"
+                      "            this shell's is a credential command (ROMP_CREDENTIAL_COMMAND).", out)
+        self.assertIn("selects its source live", out)
+        self.assertIn("reads another service.env:", out)
+        self.assertIn("this shell reads %s." % self.path, " ".join(out.split()), "the other-file cause names this shell's path")
+        self.assertIn("this shell's environment carries ROMP_CREDENTIAL_COMMAND and the kernel does not read it", out)
+        self.assertIn("a supervised manager (the login service) reads service.env only", out)
+        self.assertIn("Put the line in service.env", out)
+        self.assertIn("run this again", out)
+        for gone in ("pinned", "keeps the mode it started in", "daemon-reload", "kickstart", "launchctl"):
+            self.assertNotIn(gone, out, "the pinned-mode paragraphs and the restart block are gone with the pin")
+        self.assertEqual(self.posted, [("/keycycle", {"sessions": []})])
+        # the reference is named by its word; and the environment bullet is not offered when this shell's
+        # command comes from the file, which every manager reads
+        self.kernel_view.update({"keySource": "op"})
+        self.line_in_file()
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      key source: a 1Password reference (ROMP_API_KEY_REF)", out)
+        self.assertIn("the kernel's environment carries ROMP_API_KEY_REF (a foreground manager started from a shell", out)
+        self.assertNotIn("this shell's environment carries", out)
+        self.assertIn("reads another service.env:", out)
+        # an older kernel answers without keySource: named as such, with the restart that brings it here
+        del self.kernel_view["keySource"]
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("the kernel predates the credential command: `romp refresh` restarts it on this code", out)
+
+    def test_mismatch_when_the_kernel_runs_another_command_text(self):
+        # the kernel's sourceFp is the hash of the command text it selected: another text is another source,
+        # and the credential compare is not attempted (nothing to compare)
+        self.kernel_view.update({"sourceFp": self.source_fp("other-cmd \"$1\""), "keyFp": self.fp("lp"),
+                                 "setFp": self.set_fp("lp"), "launched": {self.fp("lp"): 1}})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH    the kernel runs another command: its source is sha256:%s, this shell's sha256:%s."
+                      % (self.source_fp("other-cmd \"$1\""), self.source_fp()), out)
+        self.assertIn("reads another service.env:", out)
+        self.assertIn("this shell's environment carries a ROMP_CREDENTIAL_COMMAND that is not the line the kernel", out)
+        self.assertNotIn("disagree on the credential fingerprint", out)
+        self.assertNotIn("other-cmd", out, "the kernel's command text is not known here and no text is printed")
+        self.line_in_file()
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("the kernel's environment carries another ROMP_CREDENTIAL_COMMAND (a foreground manager", out)
+        self.assertNotIn("this shell's environment carries", out)
+
+    def test_mismatch_when_the_kernels_fingerprint_differs_names_the_two_environments(self):
+        self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "launched": {self.fp("lp"): 1}})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH    the kernel's run of the command and this shell's disagree on the credential "
+                      "fingerprint and the set's fingerprint.", out)
+        self.assertIn("ROMP_CREDENTIAL_NAMES, ROMP_CREDENTIAL_SELECTOR_FILE or ROMP_CREDENTIAL_TIMEOUT_S", out)
+        self.assertIn("a manager's environment holds the copy loaded at its start", out)
+        self.assertIn("different selector files", out)
+        self.assertIn("CLAUDE_CONFIG_DIR", out)
+        self.assertIn("the command's output depends on its environment", out)
+        # the kernel's last run used another selector: the hint is the refresh, not the environment
+        self.kernel_view["selector"] = "lp"
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("The kernel's last run used selector lp, this shell's hp: `romp keyswap --refresh`", out)
+        self.assertNotIn("CLAUDE_CONFIG_DIR", out)
+
+    def test_no_kernel_is_not_a_failure_of_the_report(self):
+        cli._kernel = lambda: None
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 0)
+        self.assertIn("kernel      not running; it runs the command itself when it is", out)
+        self.assertEqual(self.posted, [])
+
+    def test_a_helper_billed_set_fingerprints_the_helper(self):
+        # no ANTHROPIC_API_KEY in the set: the apiKeyHelper bills, and THIS shell's run of it is the live key
+        self.command("echo 'ROLE_TOKEN=%s'" % self.role)
+        helper_value = fixture_value("helper")
+        d = os.environ["CLAUDE_CONFIG_DIR"]
+        os.makedirs(d, exist_ok=True)
+        h = os.path.join(self.lab, "helper.sh")
+        with open(h, "w") as fh:
+            fh.write("#!/bin/sh\necho '%s'\n" % helper_value)
+        os.chmod(h, 0o700)
+        with open(os.path.join(d, "settings.json"), "w") as fh:
+            json.dump({"apiKeyHelper": h}, fh)
+        hfp = es.fingerprint(helper_value)
+        self.kernel_view.update({"keyFp": hfp, "keyKind": "helper", "setFp": es.set_fingerprint({"ROLE_TOKEN": self.role}),
+                                 "launched": {hfp: 2}})
+        rc, out, err = self.run_cli()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("live key    sha256:%s   (this shell's run of the apiKeyHelper; the set carries no ANTHROPIC_API_KEY)" % hfp, out)
+        self.assertNotIn("MISMATCH", out)
+        self.assertNotIn(helper_value, out + err)
+
+    def test_no_key_and_no_helper_reads_as_the_login_billing_not_a_failure(self):
+        self.command("echo 'ROLE_TOKEN=%s'" % self.role)
+        set_fp = es.set_fingerprint({"ROLE_TOKEN": self.role})
+        self.kernel_view.update({"keyFp": "", "keyKind": "login", "setFp": set_fp, "launched": {"": 2}, "keyErr": ""})
+        rc, out, err = self.run_cli()
+        self.assertIn("live key    (none): the set carries no ANTHROPIC_API_KEY and no apiKeyHelper in", out)
+        self.assertIn("sessions bill the machine login, and a", out)
+        self.assertIn("cycle covers the role variables in the set", out)
+        self.assertIn("kernel      reads no key (its own run): sessions bill the machine login; a cycle covers the role", out)
+        self.assertIn("variables (set sha256:%s); 2 live session(s) launched with no key" % set_fp, out)
+        self.assertNotIn("UNAVAILABLE", out)
+        self.assertNotIn("MISMATCH", out)
+        self.assertNotIn("launched with no credential the kernel fingerprinted", out, "the login rows are the expected rows")
+        self.assertEqual(rc, 0, "a login-billed installation is a state, not a failure")
+        self.assertClean(out, err)
+        # ...and the cycle proceeds on that footing, guarded by the source fingerprint like every cycle
+        self.kernel_view["rows"] = [{"session": "web", "status": "cycling", "from": ""}]
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.posted[-1], ("/keycycle", {"all": True, "expectedSourceFp": self.source_fp()}))
+
+    def test_a_local_command_failure_is_loud_and_cycles_nothing(self):
+        self.command("echo 'noise: %s' >&2\nexit 3" % self.keys["hp"])
+        rc, out, err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("live key    UNAVAILABLE: the credential command exited 3 after", out)
+        self.assertIn("stderr", out)                        # a byte count, never the bytes
+        self.assertClean(out, err)
+        self.posted.clear()
+        rc, out, err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("cycle       NOT DONE: this shell could not fingerprint the credential", out)
+        self.assertEqual(self.posted, [], "nothing was asked of the kernel, nothing cycled")
+        self.assertClean(out, err)
+
+    # -- the named switch --
+    def test_a_declared_name_writes_the_selector_re_runs_and_asks_the_kernel_to_refresh(self):
+        self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "selector": "lp",
+                                 "launched": {self.fp("hp"): 3}, "refreshFrom": self.fp("hp")})
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(err, "")
+        self.assertEqual(self.selected(), "lp")
+        self.assertIn("selector    hp -> lp", out)
+        self.assertIn("live key    sha256:%s   (was sha256:%s)" % (self.fp("lp"), self.fp("hp")), out)
+        self.assertIn("set         sha256:%s   (was sha256:%s)" % (self.set_fp("lp"), self.set_fp("hp")), out)
+        self.assertEqual(self.posted, [("/keycycle", {"sessions": [], "refresh": True})],
+                         "the kernel is asked to re-run its command now, nothing is cycled")
+        self.assertIn("kernel      reads sha256:%s (its own run, re-run now: was sha256:%s); 0 live session(s) on it"
+                      % (self.fp("lp"), self.fp("hp")), out)
+        self.assertIn("            3 live session(s) still on sha256:" + self.fp("hp"), out)
+        self.assertNotIn("MISMATCH", out)
+        self.assertEqual(ks.read_source(self.path).kind, "none", "a switch writes the selector, never the env file")
+        self.assertClean(out, err)
+
+    def test_an_undeclared_name_is_refused_before_anything_runs_and_never_echoed(self):
+        for name in ("nosuch", "sk-ant-TEST-9999", "hp2"):
+            rc, out, err = self.run_cli(name)
+            self.assertEqual(rc, 2, name)
+            self.assertEqual(out, "")
+            self.assertIn("not declared in ROMP_CREDENTIAL_NAMES (declared: hp, lp)", err)
+            self.assertIn("nothing switched", err)
+            self.assertNotIn(name, err, "an undeclared name is never echoed")
+        self.assertEqual(es._runs, 0, "the command never ran")
+        self.assertEqual(self.posted, [])
+        self.assertEqual(self.selected(), "hp")
+
+    def test_a_name_that_is_not_a_token_is_refused_by_shape_and_never_echoed(self):
+        # a path is not a selector either: under a credential command <name> is a name for the command, and
+        # the sibling-profile selection of the other kinds does not run here
+        for arg, n in (("bad name!", 9), ("/nonexistent/service.env.lowprio", 32), ("../x", 4)):
+            rc, out, err = self.run_cli(arg)
+            self.assertEqual(rc, 2, arg)
+            self.assertEqual(out, "")
+            self.assertIn("a selector is one name", err)
+            self.assertIn("(%d characters given)" % n, err)
+            self.assertIn("<name> is a selector for the command, not a profile", err)
+            self.assertNotIn(arg, err)
+        self.assertEqual(es._runs, 0)
+        self.assertEqual(self.selected(), "hp")
+        self.assertEqual(ks.read_source(self.path).kind, "none")
+
+    def test_with_no_names_declared_the_switch_is_refused_and_the_selector_shown_by_length(self):
+        os.environ.pop("ROMP_CREDENTIAL_NAMES")
+        for name in ("lp", "sk-ant-TEST-9999"):
+            rc, out, err = self.run_cli(name)
+            self.assertEqual(rc, 2, name)
+            self.assertEqual(out, "")
+            self.assertIn("declare ROMP_CREDENTIAL_NAMES first", err)
+            self.assertIn("nothing switched", err)
+            self.assertNotIn(name, err, "the argument is never echoed")
+        self.assertEqual(self.selected(), "hp", "nothing written")
+        self.assertEqual(es._runs, 0)
+        self.kernel_view.update({"selector": "(undeclared, 2 chars)"})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 0, out)
+        self.assertIn("candidates  none declared (ROMP_CREDENTIAL_NAMES is unset; `romp keyswap <name>` needs it", out)
+        self.assertIn("selector    (undeclared, 2 chars) ", out)
+        self.assertNotIn("selector    hp", out, "an undeclared token is rendered by length only")
+        self.assertNotIn("MISMATCH", out, "both sides render the undeclared selector the same way")
+
+    def test_a_switch_from_an_undeclared_selector_never_echoes_the_old_token(self):
+        # the file held a token outside ROMP_CREDENTIAL_NAMES (a refused state: the kernel runs nothing
+        # on it); switching to a declared name is a real move, and the old token is shown by length only
+        pasted = fixture_value("pasted")
+        self.select(pasted)
+        self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "selector": "lp",
+                                 "launched": {}, "refreshFrom": ""})
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(self.selected(), "lp")
+        self.assertIn("selector    (undeclared, %d chars) -> lp" % len(pasted), out)
+        self.assertIn("live key    sha256:%s   (was (none))" % self.fp("lp"), out)
+        self.assertNotIn(pasted, out + err)
+        self.assertClean(out, err)
+        # ...and undone, when the command then fails for the new name, the old token goes back unnamed
+        self.select(pasted)
+        es._reset()
+        self.command("echo '%s' >&2; exit 4" % self.keys["lp"])
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertIn("selector    (undeclared, %d chars) -> lp, put back to (undeclared, %d chars)" % (len(pasted), len(pasted)), out)
+        self.assertEqual(self.selected(), pasted, "put back as it was")
+        self.assertNotIn(pasted, out + err)
+        self.assertClean(out, err)
+
+    def test_the_kernel_ask_waits_in_step_with_the_credential_deadline(self):
+        # the kernel may run its command (and the apiKeyHelper) before answering: the wait is
+        # 10 s plus twice ROMP_CREDENTIAL_TIMEOUT_S, never a flat 30 s cutting a slow store off
+        import unittest.mock as mock
+        real_post = self._saved[1]                          # setUp stubs cli._post; this is the real one
+        seen = []
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(timeout)
+            raise OSError("refused")
+        with mock.patch.object(cli.urllib.request, "urlopen", fake_urlopen):
+            real_post("http://127.0.0.1:1", "/keycycle", {})
+            os.environ["ROMP_CREDENTIAL_TIMEOUT_S"] = "45"
+            real_post("http://127.0.0.1:1", "/keycycle", {})
+        self.assertEqual(seen, [10 + 2 * es.DEFAULT_TIMEOUT_S, 10 + 2 * 45])
+
+    def test_a_switch_that_moves_nothing_is_undone_and_exits_1(self):
+        # the command ignores $1: both names print one set, so the switch would change what no launch sees
+        self.command("echo 'ANTHROPIC_API_KEY=%s'\necho 'ROLE_TOKEN=%s'" % (self.keys["hp"], self.role))
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.selected(), "hp", "the selector is put back")
+        self.assertIn("selector    hp -> lp, put back to hp", out)
+        self.assertIn("live key    sha256:%s   (unchanged)" % self.fp("hp"), out)
+        self.assertIn("nothing switched: the command printed the same set for lp as for hp", out)
+        self.assertIn('`my-cmd "$1"`', out, "the $1 contract, since a bare command never sees the selector")
+        self.assertEqual(self.posted, [], "the kernel is not asked to re-run for a switch that moved nothing")
+        self.assertClean(out, err)
+
+    def test_a_switch_whose_command_fails_for_the_new_name_is_undone(self):
+        self.command("case \"$1\" in hp) echo 'ANTHROPIC_API_KEY=%s' ;; *) echo '%s' >&2; exit 4 ;; esac"
+                     % (self.keys["hp"], self.keys["lp"]))
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.selected(), "hp")
+        self.assertIn("selector    hp -> lp, put back to hp", out)
+        self.assertIn("live key    UNAVAILABLE: the credential command exited 4 after", out)
+        self.assertIn("nothing switched: the command failed for lp, so the selector is as it was.", out)
+        self.assertEqual(self.posted, [])
+        self.assertClean(out, err)
+
+    def test_a_failed_undo_is_said_never_claimed(self):
+        # the switch moved nothing and the selector could not be written back: the line says the
+        # file now holds the new name, rather than "put back"
+        self.command("echo 'ANTHROPIC_API_KEY=%s'\necho 'ROLE_TOKEN=%s'" % (self.keys["hp"], self.role))   # ignores $1
+        real_write = es.write_selector
+        calls = []
+
+        def failing_second_write(token, path=None, environ=None):
+            calls.append(token)
+            if len(calls) == 2:
+                raise OSError(13, "Permission denied")
+            return real_write(token, path, environ)
+        es.write_selector = failing_second_write
+        try:
+            rc, out, err = self.run_cli("lp")
+        finally:
+            es.write_selector = real_write
+        self.assertEqual(rc, 1)
+        self.assertEqual(calls, ["lp", "hp"], "the switch, then the attempted undo")
+        self.assertIn("selector    hp -> lp, NOT put back (errno 13 writing the selector file), so it still holds lp", out)
+        self.assertNotIn("put back to", out)
+        self.assertEqual(self.selected(), "lp", "what the line says is what the file holds")
+        self.assertClean(out, err)
+
+    def test_an_unreadable_old_selector_is_not_claimed_put_back(self):
+        # the file held something that is not a name before the switch: it cannot be restored, and
+        # the line says so, never "put back to" something that was never read
+        junk = fixture_value("junk") + " with spaces"
+        self.select(junk)
+        self.command("case \"$1\" in hp) echo 'ANTHROPIC_API_KEY=%s' ;; *) exit 4 ;; esac" % self.keys["hp"])
+        rc, out, err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertIn("selector    (none) -> lp, NOT put back: the old selector could not be read before the switch", out)
+        self.assertIn("so the file now holds lp", out)
+        self.assertNotIn("put back to", out)
+        self.assertNotIn("so the selector is as it was", out)
+        self.assertEqual(self.selected(), "lp")
+        self.assertNotIn(junk, out + err)
+        self.assertClean(out, err)
+
+    def test_a_switch_from_no_selector_puts_an_empty_file_back_when_it_moves_nothing(self):
+        os.unlink(self.selector)
+        self.command("echo 'ANTHROPIC_API_KEY=%s'" % self.keys["hp"])            # ignores $1
+        rc, out, _err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertIn("selector    (none) -> lp, put back to (none)", out)
+        self.assertEqual(es.read_selector(self.selector), ("", ""), "no selector, as before")
+
+    def test_the_name_already_selected_is_nothing_to_switch(self):
+        rc, out, _err = self.run_cli("hp")
+        self.assertEqual(rc, 0)
+        self.assertIn("selector    hp (already selected)", out)
+        self.assertIn("romp keyswap --refresh", out)
+        self.assertIn("romp keyswap --cycle-all", out)
+        self.assertEqual(es._runs, 0, "nothing to compare, so nothing runs")
+        self.assertEqual(self.posted, [])
+
+    def test_a_switch_with_no_kernel_says_the_next_read_runs_the_new_selector(self):
+        cli._kernel = lambda: None
+        rc, out, _err = self.run_cli("lp")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.selected(), "lp")
+        self.assertIn("kernel      not running; its first read runs the command with the new selector", out)
+
+    def test_a_switch_the_kernel_did_not_follow_is_a_mismatch(self):
+        # the kernel re-ran but still reads the OLD credential: it resolves another selector file
+        rc, out, _err = self.run_cli("lp")
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.selected(), "lp", "the local switch stands; the kernel side is what is wrong")
+        self.assertIn("MISMATCH", out)
+        self.assertIn("The kernel's last run used selector hp, this shell's lp", out)
+
+    def test_a_switch_and_a_cycle_on_one_line_switch_then_cycle(self):
+        self.kernel_view.update({"keyFp": self.fp("lp"), "setFp": self.set_fp("lp"), "selector": "lp",
+                                 "rows": [{"session": "web", "status": "cycling", "from": self.fp("hp")}]})
+        rc, out, _err = self.run_cli("lp", "--cycle-all")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([b for _p, b in self.posted],
+                         [{"sessions": [], "refresh": True}, {"sessions": [], "refresh": True},
+                          {"all": True, "expectedSourceFp": self.source_fp()}])
+        self.assertIn("selector    hp -> lp", out)
+        self.assertIn("  web            reconnecting now — history kept (from sha256:%s)" % self.fp("hp"), out)
+
+    # -- refresh and cycle --
+    def test_refresh_asks_the_kernel_to_re_run_and_prints_before_and_after(self):
+        self.kernel_view["refreshFrom"] = self.fp("lp")
+        rc, out, _err = self.run_cli("--refresh")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.posted, [("/keycycle", {"sessions": [], "refresh": True})])
+        self.assertIn("kernel      reads sha256:%s (its own run, re-run now: was sha256:%s); 3 live session(s) on it"
+                      % (self.fp("hp"), self.fp("lp")), out)
+        self.kernel_view.pop("refreshFrom")
+        rc, out, _err = self.run_cli("--refresh")
+        self.assertIn("(its own run, re-run now: unchanged)", out)
+
+    def test_the_cycle_refreshes_first_then_reports_rows_with_their_launch_fingerprint(self):
+        self.kernel_view["rows"] = [{"session": "web", "status": "cycling", "from": self.fp("lp")},
+                                    {"session": "api", "status": "current", "from": self.fp("hp")},
+                                    {"session": "tests", "status": "working", "from": self.fp("lp")}]
+        rc, out, err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual([b for _p, b in self.posted],
+                         [{"sessions": [], "refresh": True}, {"all": True, "expectedSourceFp": self.source_fp()}],
+                         "the refresh-and-read, then the cycle, and never a session named by the CLI itself")
+        self.assertIn("  web            reconnecting now — history kept (from sha256:%s)" % self.fp("lp"), out)
+        self.assertIn("  api            already on this key — nothing to do", out)
+        self.assertIn("  tests          skipped: a turn, subagents or background tasks are in flight", out)
+        self.assertIn("            re-run --cycle for the skipped sessions once those are quiet", out)
+        self.assertClean(out, err)
+
+    def test_cycle_names_exactly_the_given_sessions(self):
+        rc, _out, _err = self.run_cli("--cycle", "web,api")
+        self.assertEqual(rc, 0)
+        self.assertEqual(self.posted[-1], ("/keycycle", {"sessions": ["web", "api"], "expectedSourceFp": self.source_fp()}))
+
+    def test_the_cycle_stops_on_a_mismatch_before_any_reconnect(self):
+        self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {}})
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH", out)
+        self.assertIn("cycle       NOT DONE", out)
+        self.assertEqual([b for _p, b in self.posted], [{"sessions": [], "refresh": True}], "the read only")
+        self.posted.clear()
+        self.kernel_view.update({"keySource": "command", "keyFp": self.fp("lp"), "setFp": self.set_fp("lp")})
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH", out)
+        self.assertEqual(len(self.posted), 1)
+
+    def test_a_source_change_during_the_cycle_is_not_reported_as_success(self):
+        # the kernel re-selected another source between the read and the cycle (a swap landing mid-request):
+        # the answer's sourceFp differs from the one this shell compared against, and the rows are not trusted
+        def respond(url, path, body):
+            self.posted.append((path, body))
+            ans = self.kernel_answer(body)
+            if "expectedSourceFp" in body:
+                ans["sourceFp"] = self.source_fp("swapped-cmd")
+                ans["rows"] = [{"session": "web", "status": "cycling", "from": self.fp("hp")}]
+            return ans
+        cli._post = respond
+        rc, out, _err = self.run_cli("--cycle", "web")
+        self.assertEqual(rc, 1)
+        self.assertIn("source changed during the request", out)
+        self.assertNotIn("reconnecting now", out)
+        self.assertEqual(self.posted[-1][1]["expectedSourceFp"], self.source_fp())
+
+    def test_a_kernel_run_that_failed_is_said_and_stops_the_cycle(self):
+        self.kernel_view.update({"keyErr": "exited 3 after 0.2s, stderr 40 bytes"})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("the latest run failed (exited 3 after 0.2s, stderr 40 bytes), so it stands on the previous set", out)
+        self.kernel_view.update({"keyFp": "", "launched": {}})
+        rc, out, _err = self.run_cli("--cycle-all")
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      UNAVAILABLE: exited 3 after 0.2s, stderr 40 bytes", out)
+        self.assertIn("cycle       NOT DONE", out)
+
+    def test_no_value_reaches_stdout_or_stderr_whatever_the_arguments(self):
+        loud = "\n".join("echo '%s' >&2" % v for v in list(self.keys.values()) + [self.role])
+        self.command_by_selector(extra=loud)                 # every value also on stderr
+        for argv in ([], ["lp"], ["hp"], ["nosuch"], ["--refresh"], ["--cycle-all"], ["--cycle", "web"],
+                     ["lp", "--cycle-all"], ["--wat"], ["a", "b"], [self.keys["hp"]], [self.command_text]):
+            self.select("hp")
+            es._reset()
+            rc, out, err = self.run_cli(*argv)
+            self.assertClean(out, err)
+            self.assertNotIn("sk-ant", out + err)
+        self.command("echo 'noise' >&2\nexit 3")
+        for argv in ([], ["lp"], ["--cycle-all"]):
+            es._reset()
+            rc, out, err = self.run_cli(*argv)
+            self.assertClean(out, err)
+
+    def test_the_cli_decides_the_arm_without_the_kernels_selector(self):
+        # keysource.select_source remembers a runtime selection on disk (service.env.source) and in memory;
+        # those writes are the kernel's, so the CLI reads the file and this shell's environment instead
+        src = open(os.path.join(ROOT, "cli", "keyswap.py")).read()
+        self.assertNotIn("select_source(", src)
+        self.assertNotIn(ks.marker_path(self.path)[len(self.path):].lstrip("."), os.listdir(self.lab),
+                         "no marker was written by a report")
 
 
 class KeycycleRoute(unittest.TestCase):

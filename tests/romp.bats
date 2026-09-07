@@ -570,6 +570,31 @@ _stale_server_globals() {
     grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
 }
 
+@test "new -t: a credential command line beside the reference is the command kind and scrubs nothing" {
+    # kernel/keysource.py selects command > reference > key. Under the command kind romp runs no op of its
+    # own and claims nothing (the command may need OP_* itself; keysource.op_consumer answers False), so the
+    # tmux server keeps its globals, the reference line beside the command notwithstanding.
+    _stale_server_globals
+    unset ROMP_API_KEY_REF
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "ROMP_API_KEY_REF=op://test-vault/test-item/credential" 'ROMP_CREDENTIAL_COMMAND=my-credentials "$1"' \
+        > "$ROMP_SERVICE_ENV_FILE"
+    run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    ! grep -q 'set-environment -gu' "$MOCK_LOG"
+    ! grep -q 'show-environment' "$MOCK_LOG"
+}
+
+@test "new -t: a credential command in the client env beside a reference there scrubs nothing either" {
+    _stale_server_globals
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    rm -f "$ROMP_SERVICE_ENV_FILE"
+    ROMP_API_KEY_REF="op://test-vault/test-item/credential" ROMP_CREDENTIAL_COMMAND='my-credentials "$1"' \
+        run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    ! grep -q 'set-environment -gu' "$MOCK_LOG"
+}
+
 @test "new -t: no reference anywhere leaves the tmux server's environment alone (static-key and helper boxes)" {
     _stale_server_globals
     unset ROMP_API_KEY_REF
@@ -1712,8 +1737,11 @@ _keyswap_files() {
     grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
 }
 
-@test "keyswap: help names it (the presence-checked command list)" {
+@test "keyswap: help names it and every kind it serves (the presence-checked command list)" {
     run run_romp -h
     [ "$status" -eq 0 ]
     [[ "$output" == *"romp keyswap"* ]]
+    [[ "$output" == *"--refresh"* ]]
+    [[ "$output" == *"credential command"* ]]
+    [[ "$output" == *"1Password reference"* ]]
 }
