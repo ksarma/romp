@@ -312,14 +312,14 @@ class RunJudgingBisect(_Base):
         for t0 in (T0, T0 + 0.5):
             with self.subTest(t0=t0):
                 km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
-                rows = [
+                rows = [                                            # in t order, as the writer appends
                     _row(int(t0) - 2, recv=int(t0) - 2 + 0.9998),   # the writer's measured max recv - t
                     _row(int(t0) - 1, recv=int(t0) - 1 + 0.9998),   # t = int(recv), recv just under t0
                     _row(int(t0) - 1, recv=float(int(t0))),         # t = int(recv), recv == int(t0)
-                    _row(int(t0), recv=int(t0) + 0.7),              # t = int(recv), t0 in (t, recv]
                     _row(int(t0) - 1, sent=None, recv=None),        # a point row at t0 - 1
-                    _row(int(t0), sent=None, recv=None),            # a point row at t0
                     _row(int(t0) - 1, sent=float(int(t0)) - 0.2, recv=None),   # sent only, under t0
+                    _row(int(t0), recv=int(t0) + 0.7),              # t = int(recv), t0 in (t, recv]
+                    _row(int(t0), sent=None, recv=None),            # a point row at t0
                     _row(int(t0), sent=float(int(t0)), recv=None),             # sent only, at t0
                 ]
                 self._write(rows)
@@ -344,12 +344,19 @@ class RunJudgingBisect(_Base):
 
     def test_a_non_monotone_file_takes_the_full_scan_and_matches(self):
         rows, marks = self._mixed_world()
-        rows.insert(6, _row(T0 - 5, judge="planner"))                # a late-landing row: t goes backwards
+        rows.insert(6, _row(T0 + 8, judge="planner"))                # a late-landing row: t goes backwards
         rows.append(_row(T0 + 9, sid=SID_B))                         # and again at the tail
         self._write(rows)
         got = self._check(T0, marks, expect_monotone=False)
-        self.assertIn(("planner", T0 - 5 + 0.5 - 3.25), {(m["judge"], m["sent"]) for m in got},
+        self.assertIn(("planner", T0 + 8 + 0.5 - 3.25), {(m["judge"], m["sent"]) for m in got},
                       "a late row inside the horizon is kept: the fallback is today's scan")
+        # the file a bisect would get wrong: an in-horizon row at the head, older rows after it.
+        # bisect_left on t at t0 - 1 over [T0+5, T0-100, T0-50, T0+6] lands at index 3 and would lose
+        # the first row; the flag is clear for this list, so the walk starts at the head
+        km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
+        self._write([_row(T0 + 5), _row(T0 - 100), _row(T0 - 50), _row(T0 + 6)])
+        got = self._check(T0, [], expect_monotone=False)
+        self.assertEqual([m["t1"] for m in got], [T0 + 5.5, T0 + 6.5], "both in-horizon rows, in file order")
 
     def test_a_file_that_grows_between_two_calls(self):
         rows, marks = self._mixed_world()

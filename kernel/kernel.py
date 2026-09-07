@@ -31842,7 +31842,7 @@ def _session_tokens(path, t0):
 # window (30 days, plus a day of slack) are pruned so memory stays bounded. A shrunken file (rotation,
 # a fresh install) resets cleanly.
 _JUDGE_USAGE_RETAIN = 31 * 86400
-_JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": []}
+_JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": [], "monotone": True}
 _JUDGE_USAGE_LOCK = threading.Lock()   # the seek-read-append-advance below is ONE transaction: the pusher's build
 #                                        and an HTTP analytics call each read from the shared offset and appended,
 #                                        double-counting every row of the chunk (the 2026-09-06 free-threading
@@ -31850,14 +31850,43 @@ _JUDGE_USAGE_LOCK = threading.Lock()   # the seek-read-append-advance below is O
 #                                        under it takes another lock.
 
 
+class _JudgeUsageSnapshot(list):
+    """The rows _judge_usage_rows hands out, plus `monotone`: the order fact the reader established for
+    exactly these rows (see _judge_usage_row_in_order). The two ride one object because they are read
+    under one lock; a consumer that bisects on t decides from the same state its rows were cut from,
+    never from the cache's current flag, which a later append may have cleared or a reset re-armed."""
+    __slots__ = ("monotone",)
+
+
 def _judge_usage_rows():
     """Every parsed judge-usage row from the last ~31 days, incrementally maintained. Fully defensive —
     a missing or garbled log never breaks a build; a mid-append partial line is left for the next read.
     Keyed on the PATH too (a test repointing jd.STATE must never inherit another dir's offset — the
     overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite). Returns a
-    snapshot list: the cached one keeps growing and pruning under later reads."""
+    snapshot list (a _JudgeUsageSnapshot carrying the rows' `monotone` flag): the cached one keeps
+    growing and pruning under later reads."""
     with _JUDGE_USAGE_LOCK:
-        return list(_judge_usage_rows_locked())
+        snap = _JudgeUsageSnapshot(_judge_usage_rows_locked())
+        snap.monotone = _JUDGE_USAGE_CACHE["monotone"]
+        return snap
+
+
+def _judge_usage_row_in_order(o, last_t):
+    """The three facts _run_judging's horizon bisect needs of every row, checked ONCE, when the reader
+    appends it (round-4 item B): `t` is a number; it is not below the previous row's `t`; and the row's
+    run end — recv, else sent, else t, the same choice _run_judging makes — is at most t + 1. Under the
+    three, every row with t < t0 - 1 ended before t0, so a bisect_left on t at t0 - 1 skips only rows
+    the horizon filter drops. The writer stamps t = int(time.time()) after recv, so real rows satisfy
+    the third by construction (measured max recv - t 0.9998 over 43k rows); the reader verifies it
+    rather than trusting it. `last_t` is the previous row's t, or None at the head of the list."""
+    t = o.get("t")
+    if not isinstance(t, (int, float)):
+        return False
+    if last_t is not None and t < last_t:
+        return False
+    sent, recv = o.get("sent"), o.get("recv")
+    end = recv if isinstance(recv, (int, float)) else (sent if isinstance(sent, (int, float)) else t)
+    return end <= t + 1
 
 
 def _judge_usage_rows_locked():
@@ -31867,14 +31896,14 @@ def _judge_usage_rows_locked():
         st = os.stat(p)
         size = st.st_size
     except OSError:
-        c["path"], c["size"], c["rows"] = str(p), -1, []
+        c["path"], c["size"], c["rows"], c["monotone"] = str(p), -1, [], True
         return c["rows"]
     if str(p) != c["path"]:
-        c["path"], c["size"], c["rows"] = str(p), -1, []
+        c["path"], c["size"], c["rows"], c["monotone"] = str(p), -1, [], True
     if size == c["size"] and st.st_mtime == c["mtime"]:
         return c["rows"]
     if size <= c["size"] or c["size"] < 0:
-        c["size"], c["rows"] = 0, []                    # rotated/truncated/rewritten, or the first read
+        c["size"], c["rows"], c["monotone"] = 0, [], True   # rotated/truncated/rewritten, or the first read
     try:
         with open(p, "rb") as fh:
             fh.seek(c["size"])
@@ -31884,6 +31913,13 @@ def _judge_usage_rows_locked():
     cut = chunk.rfind(b"\n")
     if cut < 0:
         return c["rows"]                                # nothing complete beyond the offset yet
+    # the order fact rides the append: while it holds, every row so far has a numeric t, so the tail's
+    # t is the comparison point; once a row breaks it, it stays cleared for this list (a reset above
+    # re-arms it for the next). An empty list holds it. Kept as a flag rather than sorting a late row
+    # into place because an insort would change the order the band draws rows in; the flag keeps the
+    # consumer's output identical to the full scan in every case.
+    monotone = c["monotone"]
+    last_t = c["rows"][-1]["t"] if (monotone and c["rows"]) else None
     for ln in chunk[:cut].split(b"\n"):
         if not ln.strip():
             continue
@@ -31893,6 +31929,10 @@ def _judge_usage_rows_locked():
             continue
         if isinstance(o, dict):
             c["rows"].append(o)
+            if monotone:
+                monotone = _judge_usage_row_in_order(o, last_t)
+                last_t = o.get("t")
+    c["monotone"] = monotone
     c["size"] += cut + 1
     c["mtime"] = st.st_mtime
     # retention keyed to the DATA's own newest row, never the wall clock (a replayed/synthetic log's
@@ -32680,12 +32720,31 @@ def _run_judging(t0, alive_sids, semantic):
     sits at the old completion, off the live edge), and a COORDINATING courier classification (which plants
     no node, so it had no mark at all). Each call borrows its gloss text/kind best-effort from the nearest
     `semantic` artifact mark of the same (sid, judge) — the usage log records timing + tokens but not the
-    unit. Rows missing sent/recv (pre-recording) fall back to a point at the logged time t."""
-    by = {}
+    unit. Rows missing sent/recv (pre-recording) fall back to a point at the logged time t.
+
+    Two bisects instead of two scans (round-4 item B, 2026-09-07; the function was 15% of a timeline
+    build, 56% of it the gloss comprehension and 25% the walk over every retained row). Both lists
+    are sorted by t, so both answers are prefix boundaries: the gloss is the last same-(sid, judge)
+    mark with t <= end + 1, found by bisect_right on the marks' times (ties included, as the <=
+    comparison included them); and the first retained row that can pass the horizon filter is the
+    first with t >= t0 - 1, found by bisect_left on the rows' t — sound only under the order facts
+    the reader verified for this snapshot (_judge_usage_row_in_order), so a snapshot whose flag is
+    clear walks every row as before. Output identical to the scans, in the same order."""
+    by, times = {}, {}
     for mk in semantic:
         by.setdefault((mk["sid"], mk["judge"]), []).append(mk)
-    for v in by.values():
+    for k, v in by.items():
         v.sort(key=lambda m: m["t"])
+        times[k] = [m["t"] for m in v]
+
+    def gloss(sid, judge, t):
+        """The most recent same-judge artifact mark with m["t"] <= t, or None."""
+        marks = by.get((sid, judge))
+        if not marks:
+            return None
+        i = bisect.bisect_right(times[(sid, judge)], t)
+        return marks[i - 1] if i else None
+
     out = []
     # The SHARED incremental reader, not a per-build full read: this used to read_text + json.loads
     # the whole of judge-usage.jsonl on EVERY bars build (measured 2026-08-18 during the captioner
@@ -32694,8 +32753,12 @@ def _run_judging(t0, alive_sids, semantic):
     # working sessions painted lanes with no bars. _judge_usage_rows already existed for exactly
     # this (the 2026-08-13 analytics freeze); the band just never adopted it.
     rows = _judge_usage_rows()
+    # Start the walk at the horizon when the snapshot's order fact holds: every row before the first
+    # with t >= t0 - 1 ended at or before t + 1 < t0, exactly the rows the filter below drops. A bare
+    # list (a test double for the reader) carries no fact and walks from the head.
+    i0 = bisect.bisect_left(rows, t0 - 1, key=lambda o: o["t"]) if getattr(rows, "monotone", False) else 0
     done = set()                                      # (sid, judge, sent) of completed runs — to dedup live ones
-    for o in rows:
+    for o in rows[i0:]:
         sid, judge = o.get("fsid"), o.get("judge")
         judge = _JUDGE_FAMILY.get(judge, judge)
         if sid not in alive_sids:
@@ -32708,8 +32771,7 @@ def _run_judging(t0, alive_sids, semantic):
         if isinstance(sent, (int, float)):
             done.add((sid, judge, sent))
         # gloss = the most recent same-judge artifact mark that finished by this call's run time
-        cands = [m for m in by.get((sid, judge), []) if m["t"] <= end + 1]
-        src = cands[-1] if cands else None
+        src = gloss(sid, judge, end + 1)
         out.append({"judge": judge, "sid": sid, "t": start, "t1": end,
                     "kind": (src or {}).get("kind", "run"), "text": (src or {}).get("text", ""),
                     "ms": int(o.get("ms") or 0), "in": int(o.get("in") or 0), "out": int(o.get("out") or 0),
@@ -32726,8 +32788,7 @@ def _run_judging(t0, alive_sids, semantic):
             continue
         if sent < t0 or (sid, judge, sent) in done:
             continue
-        cands = [m for m in by.get((sid, judge), []) if m["t"] <= now + 1]
-        src = cands[-1] if cands else None
+        src = gloss(sid, judge, now + 1)
         out.append({"judge": judge, "sid": sid, "t": sent, "t1": now,
                     "kind": (src or {}).get("kind", "run"), "text": (src or {}).get("text", ""),
                     "ms": 0, "in": 0, "out": 0, "sent": sent, "recv": None, "open": True})
