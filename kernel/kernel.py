@@ -7664,6 +7664,17 @@ def _auto_pause_on_spend_limit(now, tmux):
         #                                                  (see _auto_resume_retry: no view reads it, so no dirty mark)
 
 
+def _bills_login(tm):
+    """Whether a live-map row's session bills the machine LOGIN (the account a usage limit is on): the CLI's
+    own authLive report first, the registry's auth next; a row with neither (a tmux session, an SDK session
+    before its init landed) can only be billing the login when this box holds no key at all
+    (_auth_key_present), and is taken as billing a key otherwise. _auto_resume_retry's limit rule reads it."""
+    a = str((tm or {}).get("authLive") or (tm or {}).get("auth") or "")
+    if a:
+        return a == "login"
+    return not _auth_key_present()
+
+
 def _auto_resume_retry(now, tmux):
     """The global retry-pause is an API-HEALTH flag, not a permanent switch. The user flips it to stop the
     auto-retry (and, with it, the judge) storm during an API / usage-limit outage — but it must AUTO-CLEAR
@@ -7674,7 +7685,8 @@ def _auto_resume_retry(now, tmux):
 
     Event-based recovery signal: a live session that is NOT currently blocked on an API error AND has written
     fresh transcript output since the pause began (mtime past the pause floor) is proof the account can serve
-    requests again. Clearing re-enables both auto-retry and the judges together.
+    requests again. For a USAGE-LIMIT pause the signal is narrower (see the loop): a login-billed session's
+    fresh assistant output record. Clearing re-enables both auto-retry and the judges together.
 
     Delivery (perf batch 2 P1, 2026-09-06; the two auto-pause siblings above do the same): the flip
     WAKES the pusher (_push_soon) instead of building a push inline on this thread. retry-paused.json is
@@ -7690,14 +7702,27 @@ def _auto_resume_retry(now, tmux):
     if not _retry_paused_on():
         return
     floor = _retry_pause_ts()
+    limit = _retry_pause_reason() == "limit"
+    live = tmux if isinstance(tmux, dict) else {}
     for s in _alive_sessions(now, tmux):
         path = s.get("path")
         if not path or _api_error(path):                 # still blocked on an API error → not proof of recovery
             continue
-        try:
-            fresh = os.stat(path).st_mtime > floor       # wrote something new since the pause → a served request
-        except OSError:
-            continue
+        if limit:
+            # A USAGE-LIMIT pause lifts only on a LOGIN-billed session's fresh ASSISTANT output record (review
+            # round 1, 2026-09-07): the limit is on the login account, so a key-billed session's output says
+            # nothing about it, and a prompt (a human's, or romp's own retry) is not the API's answer. The
+            # mtime rule below counted both, _auto_pause_on_limit re-engaged the pause the next cycle while
+            # the window held, and the pause file flipped on every write (the bottom bar's API cell blinked
+            # red/gray at that cadence). The spend and manual pauses keep the mtime rule.
+            if not _bills_login(live.get(str(s.get("sid") or ""))):
+                continue
+            fresh = _api_last_output_t(path) > floor
+        else:
+            try:
+                fresh = os.stat(path).st_mtime > floor   # wrote something new since the pause → a served request
+            except OSError:
+                continue
         if fresh:
             _set_retry_paused(False)
             sys.stderr.write("retry-pause: auto-cleared — session %s recovered → judges + auto-retry resume\n"

@@ -12,6 +12,7 @@ import os
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from romp_load import load_source
 from pathlib import Path
 
@@ -151,22 +152,158 @@ class RetryPauseAutoResume(unittest.TestCase):
     def test_the_api_health_frame_reads_paused_limit_then_ok_after_the_clear(self):
         km._set_retry_paused(True, reason="limit")
         floor = km._retry_pause_ts()
-        path = self._transcript("healthy.jsonl", floor + 5)
+        path = str(self.dir / "healthy.jsonl")
+        with open(path, "w") as f:
+            f.write(_out_line(floor + 5))                      # a login-billed session's answer after the pause
+        live = {"s1": {"state": "idle", "auth": "login", "backend": "sdk"}}
         km._alive_sessions = lambda now, tmux: [{"sid": "s1", "name": "web", "path": path}]
         km._api_error = lambda p: None
-        saved = (km._api_last_failed, km.Sessions.__dict__["backend_for"])
-        km._api_last_failed = lambda p: None                  # no latched record either
+        saved = km.Sessions.__dict__["backend_for"]
         km.Sessions.backend_for = staticmethod(lambda sid: object())
+        km._api_last_failed_cache.clear()
         try:
-            f = km._api_health_frame(int(time.time()), {})
+            f = km._api_health_frame(int(time.time()), live)
             self.assertEqual((f["state"], f["reason"], f["text"]), ("paused", "limit", "paused \u00b7 usage limit"))
             self.assertEqual(f["since"], int(floor), "the pause's own t, not the clock")
-            km._auto_resume_retry(int(time.time()), {})
+            km._auto_resume_retry(int(time.time()), live)
             self.assertFalse(km._retry_paused_on())
-            f = km._api_health_frame(int(time.time()), {})
+            f = km._api_health_frame(int(time.time()), live)
             self.assertEqual((f["state"], f["reason"], f["text"], f["since"]), ("ok", "", "ok", 0))
         finally:
-            km._api_last_failed, km.Sessions.backend_for = saved
+            km.Sessions.backend_for = saved
+            km._api_last_failed_cache.clear()
+
+
+# ── a usage-limit pause lifts on a LOGIN-billed session's fresh ASSISTANT output only (review round 1, 2026-09-07) ──
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _out_line(t):
+    return json.dumps({"type": "assistant", "uuid": "aaaaaaaa-0000-0000-0000-%012d" % int(t), "timestamp": _iso(t),
+                       "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]}}) + "\n"
+
+
+def _prompt_line(t, text="please continue"):
+    return json.dumps({"type": "user", "uuid": "bbbbbbbb-0000-0000-0000-%012d" % int(t), "timestamp": _iso(t),
+                       "message": {"role": "user", "content": [{"type": "text", "text": text}]}}) + "\n"
+
+
+SID_KEY = "88888888-aaaa-4bbb-8ccc-000000000001"     # a private synthetic family for this module
+SID_LOGIN = "88888888-aaaa-4bbb-8ccc-000000000002"
+
+
+class LimitPauseLift(unittest.TestCase):
+    """A usage-limit pause used to lift on ANY alive session whose transcript mtime passed the floor with no
+    current _api_error: a key-billed session's streaming output or a human prompt qualified, _auto_pause_on_limit
+    re-engaged the next cycle while the window held, and the pause file (so the bottom bar's API cell) flipped
+    on every write. The lift now needs a LOGIN-billed session's fresh ASSISTANT output record: the account the
+    limit is on, and the API's own answer. The spend and manual pauses keep their mtime rule."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.dir = Path(self.td.name)
+        self._orig = (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
+                      km._send_to_app, km.Sessions.__dict__["backend_for"], km._auth_key_present)
+        km.jd.STATE = self.dir
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        km.jd.rearm_failed_summaries = lambda now, **k: 0
+        km._usage = lambda: {"limited": {"5h": True}}          # the login account's window is at 100%
+        self.sent = []
+        km._send_to_app = lambda app, m: self.sent.append((app, m))
+        km.Sessions.backend_for = staticmethod(lambda sid: object())
+        km._auth_key_present = lambda: True                    # a key exists on this box
+        km._APIH_LAST[0] = None
+        km._api_err_cache.clear()
+        km._api_last_failed_cache.clear()
+        self._was_set = km._pusher_wake.is_set()
+        km._pusher_wake.clear()
+
+    def tearDown(self):
+        (km.jd.STATE, km._alive_sessions, km._push_all, km.jd.rearm_failed_summaries, km._usage,
+         km._send_to_app, km.Sessions.backend_for, km._auth_key_present) = self._orig
+        km._APIH_LAST[0] = None
+        km._api_err_cache.clear()
+        km._api_last_failed_cache.clear()
+        if self._was_set:
+            km._pusher_wake.set()
+        else:
+            km._pusher_wake.clear()
+        self.td.cleanup()
+
+    def _session(self, sid, name, auth, *lines):
+        p = self.dir / (name + ".jsonl")
+        p.write_text("".join(lines))
+        km._alive_sessions = lambda now, tmux: [{"sid": sid, "name": name, "path": str(p)}]
+        return str(p), {sid: {"state": "idle", "auth": auth, "authLive": auth, "backend": "sdk"}}
+
+    def _cycle(self, now, live):
+        # the pusher's jobs in their order: the limit engages the pause, the resume check, then the frame
+        km._auto_pause_on_limit()
+        km._auto_resume_retry(now, live)
+        f = km._api_health_frame(now, live)
+        km._api_health_push(f)
+        return f["state"]
+
+    def test_a_key_billed_session_s_output_during_a_limit_leaves_the_pause_and_the_frame_stable(self):
+        # the review's probe: a limited window, one key-billed session appending an answer every other cycle
+        now = time.time()
+        path, live = self._session(SID_KEY, "web", "key", _out_line(now - 60))
+        states = []
+        for i in range(6):
+            if i % 2:
+                with open(path, "a") as f:
+                    f.write(_out_line(now + i))
+                os.utime(path, (now + i, now + i))
+            states.append(self._cycle(int(now) + i, live))
+        self.assertEqual(states, ["paused"] * 6, "a key-billed session's output says nothing about the login limit")
+        self.assertEqual([m["state"] for a, m in self.sent], ["paused"], "one frame: nothing about the API changed")
+        self.assertEqual(km._retry_pause_reason(), "limit")
+
+    def test_a_login_billed_session_s_fresh_assistant_output_lifts_it_once(self):
+        now = time.time()
+        path, live = self._session(SID_LOGIN, "api", "login", _out_line(now - 60))
+        self.assertEqual(self._cycle(int(now), live), "paused")
+        floor = km._retry_pause_ts()
+        os.utime(path, (floor + 1, floor + 1))                 # a fresh mtime over OLD output: not proof
+        km._auto_resume_retry(int(now), live)
+        self.assertTrue(km._retry_paused_on(), "output from before the pause proves nothing")
+        with open(path, "a") as f:
+            f.write(_prompt_line(floor + 2))
+        km._auto_resume_retry(int(now), live)
+        self.assertTrue(km._retry_paused_on(), "a prompt is not the API's answer")
+        with open(path, "a") as f:
+            f.write(_out_line(floor + 5))                      # the login account served a request
+        km._usage = lambda: {"limited": {}}                    # and its usage report caught up
+        self.assertEqual(self._cycle(int(now) + 1, live), "ok")
+        self.assertFalse(km._retry_paused_on())
+        self.assertEqual([m["state"] for a, m in self.sent], ["paused", "ok"], "each side of the lift sent once")
+
+    def test_spend_and_manual_pauses_keep_lifting_on_any_fresh_transcript(self):
+        km._usage = lambda: {"limited": {}}
+        now = time.time()
+        for reason in ("spend", ""):
+            path, live = self._session(SID_KEY, "web", "key", _out_line(now - 60))
+            km._set_retry_paused(True, reason=reason)
+            floor = km._retry_pause_ts()
+            os.utime(path, (floor + 1, floor + 1))
+            km._auto_resume_retry(int(now), live)
+            self.assertFalse(km._retry_paused_on(), "reason %r: the mtime rule is unchanged" % reason)
+
+    def test_a_session_of_unknown_auth_bills_the_login_only_when_this_box_holds_no_key(self):
+        now = time.time()
+        path, _ = self._session(SID_LOGIN, "tests", "", _out_line(now - 60))
+        live = {SID_LOGIN: {"state": "idle"}}                  # a tmux row: no auth fields at all
+        self.assertEqual(self._cycle(int(now), live), "paused")
+        floor = km._retry_pause_ts()
+        with open(path, "a") as f:
+            f.write(_out_line(floor + 5))
+        km._auth_key_present = lambda: True
+        km._auto_resume_retry(int(now), live)
+        self.assertTrue(km._retry_paused_on(), "a key on the box: this session may be billing it")
+        km._auth_key_present = lambda: False
+        km._auto_resume_retry(int(now), live)
+        self.assertFalse(km._retry_paused_on(), "no key anywhere: the login is the only account it can bill")
 
 
 if __name__ == "__main__":
