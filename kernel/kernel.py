@@ -5461,6 +5461,10 @@ def _add_user_todo(sid, text, detail=""):
 # session, and small enough that the per-build fp fold stays trivial. OPEN rows are NEVER capped
 # — the ADR's authority tier: an open ask leaves the store by answer/dismiss/withdraw alone.
 _USER_TODO_RESOLVED_KEEP = 64
+# The three clearing events, the only values a row's closing stamp (`resolved.kind`) may hold
+# (_resolve_user_todo writes one; the log fold above accepts the same three). The withdraw account
+# validates against this list: a kind it does not know is a malformed stamp, never a state.
+_USER_TODO_STAMP_KINDS = ("answered", "dismissed", "withdrawn")
 
 
 def _resolve_user_todo(sid, tid, kind, reply=None):
@@ -5502,6 +5506,51 @@ def _resolve_user_todo(sid, tid, kind, reply=None):
         _write_user_todos(cur)
         _log_user_todo_event(sid, tid, str(kind), hit.get("text"), hit.get("detail", ""), reply=reply)
     return True
+
+
+def _withdraw_user_todo(sid, tid):
+    """The agent's own clearing event, with an honest ACCOUNT of what it found (the withdraw
+    contract, plans/user-todos.md; the user 2026-09-07, after two sessions read a plain "already
+    answered" as a failure and folded it into an error path). Returns the route's answer body:
+    `ok` is True iff THIS call stamped the row; `state` is the row's state as the store now holds
+    it: withdrawn (this call's stamp, or an earlier one), answered, dismissed, or unknown (no such
+    id among this session's rows; an id that belongs to another session is reported as unknown
+    too, never described: the route accounts for the asker's own rows only); `at` is the epoch of
+    the stamp that closed the row, None when it is open or unknown; `owner` says whether the id is
+    among the asking session's rows. A row whose `resolved` is truthy but not a {kind, t} stamp
+    with one of the three kinds (no writer of the store makes one: a hand-edited or damaged row)
+    is unknown-shaped too, with `error` naming the stamp and `owner` True, so the tool can tell
+    "your row, unreadable" from "not your row"; it is never called `open` (review round 1,
+    2026-09-07: `open` was a fifth value the contract does not have, worded by the tool as already
+    closed), because the row was not stamped and is not open. One critical section: the look-up
+    and the stamp hold the store lock together (re-entrant, so _resolve_user_todo nests), or a
+    racing answer could land between "found open" and the stamp and the account would describe a
+    row that no longer exists in that state."""
+    sid = str(sid)
+
+    def _row():
+        return next((t for t in _user_todos().get(sid) or []
+                     if isinstance(t, dict) and t.get("id") == tid), None)
+
+    with _user_todos_lock:
+        hit = _row()
+        if hit is None:
+            return {"ok": False, "state": "unknown", "at": None, "owner": False}
+        ok = False
+        if not hit.get("resolved"):
+            ok = _resolve_user_todo(sid, tid, "withdrawn")
+            hit = _row() or hit                          # re-read: the stamp's own time is on the row now
+        stamp = hit.get("resolved")
+        if not isinstance(stamp, dict) or stamp.get("kind") not in _USER_TODO_STAMP_KINDS:
+            # a closing stamp no writer of this store makes: the row was NOT stamped (a truthy
+            # `resolved` blocks the stamp above), so it is not open, and a kind this code does not
+            # know is none of the three states. Loud and specific, nothing rewritten.
+            return {"ok": bool(ok), "state": "unknown", "at": None, "owner": True,
+                    "error": "malformed closing stamp on %s: resolved=%r (a stamp is {kind: %s, t})"
+                             % (tid, stamp, " | ".join(_USER_TODO_STAMP_KINDS))}
+        at = stamp.get("t")
+        return {"ok": bool(ok), "state": str(stamp["kind"]),
+                "at": int(at) if isinstance(at, (int, float)) else None, "owner": True}
 
 
 def _reopen_user_todo(sid, tid):
@@ -44073,6 +44122,11 @@ class Handler(BaseHTTPRequestHandler):
                 # The agent takes back its own todo, by id — the ONE agent-side clearing event. An
                 # unknown or already-cleared id answers ok:false and the tool surface says so LOUDLY:
                 # a silent success would teach agents their withdrawals worked when nothing changed.
+                # The answer also carries the ACCOUNT (_withdraw_user_todo, 2026-09-07): `state`
+                # (withdrawn | answered | dismissed | unknown), `at` (epoch of the closing stamp, or
+                # null) and `owner` (is the id among the asker's rows), so the tool can say WHICH
+                # kind of nothing-to-do this was: a row the person already answered or dismissed is
+                # the need met, not the agent's error. `ok` keeps its meaning (this call stamped it).
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -44086,17 +44140,50 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    res = _remote_forward(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
-                    return self._send(200, json.dumps({"ok": bool(res and res.get("ok"))}), "application/json")
-                if not _resolve_user_todo(sid, tid, "withdrawn"):
-                    return self._send(200, json.dumps({"ok": False,
-                                                       "error": "no open todo with that id"}), "application/json")
+                    st, res = _remote_forward_status(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
+                    if not isinstance(res, dict):
+                        # The remote gave no account, so this kernel has none to give: the row, if
+                        # there is one, still stands over there. A 200 {"ok": false} here read at the
+                        # tool as "already answered, dismissed, or withdrawn" (review round 1,
+                        # 2026-09-07); a 502 makes the tool say the withdraw did not happen, which is
+                        # true. The status names the cause: 0 is a dead tunnel (the redial is already
+                        # demanded), 404 a remote kernel that predates this route (version skew, as
+                        # the /emoji forward tells it), any other non-200 or a 200 with a body that is
+                        # not JSON is an answer this kernel cannot read. Through the postal tool this
+                        # branch is out of reach (a session's tool posts to its own host's kernel, and
+                        # GET /sessions lists that host's sessions only, so _host_for_sid is None
+                        # there); the route is API for any token holder all the same.
+                        host = r.get("host") or "that host"
+                        if st == 0:
+                            why = "the tunnel to %s is not answering (re-dialing)" % host
+                        elif st == 404:
+                            why = "the kernel on %s predates /usertodo/withdraw: update romp there and restart it" % host
+                        elif st != 200:
+                            why = "the kernel on %s answered HTTP %d" % (host, st)
+                        else:
+                            why = "the kernel on %s answered a body that is not JSON" % host
+                        sys.stderr.write("user-todos: withdraw of %s for %s not forwarded: %s\n" % (tid, sid[:8], why))
+                        return self._send(502, json.dumps({"ok": False, "error": why, "host": host}),
+                                          "application/json")
+                    out = {"ok": bool(res.get("ok"))}
+                    # the remote's account rides through when it gives one (its error too: the
+                    # malformed-stamp case names the stamp there); a remote kernel that predates the
+                    # account answers ok alone, and the tool words that the old way
+                    for k in ("state", "at", "owner", "error"):
+                        if k in res:
+                            out[k] = res[k]
+                    return self._send(200, json.dumps(out), "application/json")
+                acct = _withdraw_user_todo(sid, tid)
+                if not acct["ok"]:
+                    # the account's own error (a malformed stamp) outranks the one-size line
+                    return self._send(200, json.dumps(dict({"error": "no open todo with that id"}, **acct)),
+                                      "application/json")
                 _push_soon()                                        # ack-fast: the row leaves the split card
                 #                                                     on the pusher's woken cycle, and the
                 #                                                     postal caller's 2s POST never waits
                 #                                                     behind a synchronous build of every
                 #                                                     session's payload
-                return self._send(200, json.dumps({"ok": True}), "application/json")
+                return self._send(200, json.dumps(acct), "application/json")
             if u.path == "/usertodo/context":
                 # The re-surfacing read (plans/user-todos.md slice 3): the SessionStart hook
                 # (hooks/romp-usertodo-context.sh) fetches the session's open todos as a rendered

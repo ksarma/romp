@@ -85,8 +85,11 @@ romp-side restricting subagent inheritance. Two new tools:
 - **`add_user_todo`** — required `text` (one short line: what's needed and why), optional
   `detail` (longer context for when the short line can't carry it). Returns a stable id
   (`ut-` + 8 hex, minted kernel-side).
-- **`withdraw_user_todo`** — takes the id; stamps the todo withdrawn. Withdrawing an unknown
-  or already-cleared id returns a loud, plain answer, never a silent success.
+- **`withdraw_user_todo`** — takes the id; stamps the todo withdrawn. Withdrawing an id that
+  is not open returns a loud, plain answer that says what happened, never a silent success, and
+  an error only when the id is not yours or unknown: a todo the person already answered or
+  dismissed, or one the session already withdrew, is the need met, not a failure (2026-09-07;
+  the route's `state` / `at` / `owner` fields carry the account the tool words).
 
 The descriptions follow the veil (sessions don't know romp exists): they speak of "the person
 you work for" and name no romp machinery. Working drafts, to be jld-polished at build:
