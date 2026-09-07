@@ -319,8 +319,8 @@ copy, and the choice does not spread to other attached machines. While it is
 off, sessions on that machine are not offered the tools that flag or withdraw a
 request, nothing is listed, nothing is handed back on resume, and the app-icon
 count is the one from before the feature. Requests flagged earlier stay stored
-and reappear when you turn it back on; the kernel's log says how many are
-waiting.
+and reappear when you turn it back on; at startup, the kernel's log says how
+many are waiting.
 
 ### Install-time switches
 

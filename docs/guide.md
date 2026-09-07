@@ -160,6 +160,8 @@ shows the card it always did.
 
 ![The first request opened: its details, with file paths as links](assets/guide/user-todos-detail-open.png){ width="100%" }
 
+![The Reply dialog quotes the request and its details above the box for your answer](assets/guide/user-todos-reply-modal.png){ width="100%" }
+
 ![Reply quotes the request; the answer lands in the chat as a message from you, and the row leaves the card](assets/guide/user-todos-reply.gif){ width="100%" }
 
 **The tab.** A session with open requests carries a ⚑ after its name in the tab
@@ -175,21 +177,23 @@ not waiting on you for the rest. When the session goes idle with a request
 still open and nothing else in progress (no turn running, no background work
 awaited, no reply owed to it by another session on the same machine), the
 request is all that is left of its work, and the card for its current work
-moves to <span class="romp-chip romp-chip-blocked">Blocked</span> with the line
-"this session has run out of work it can do alone". A session with no card at
-that point gets a placeholder card in Blocked, titled with its oldest request.
-The card returns to Working when you answer or dismiss the request, or when the
-session starts new work.
+moves to <span class="romp-chip romp-chip-blocked">Blocked</span> with a red
+"⚑ waiting on you" badge. Hover the badge and it says that the session has run
+out of work it can do alone and is waiting on what it asked you for. A session
+with no card at that point gets a placeholder card in Blocked, titled with its
+oldest request. The card returns to Working when you answer or dismiss the
+request, or when the session starts new work.
 
 ![The api session idle on two requests: its task cards keep the marker, and the card for its current work sits in Blocked](assets/guide/user-todos-feed.png){ width="100%" }
 
 **The badge and the bell.** If you run the dashboard as an installed app on your
 phone, the count on its icon is the number of things only you can move: open
 requests, plus sessions stopped on you for another reason, such as a permission
-prompt. A session moved to Blocked by its own request is counted once. Romp
-announces the move to Blocked the way it announces any other block, once per
-request: a card that returns to Working and comes back for the same request
-does not announce again, and the placeholder card is silent.
+prompt. For a session moved to Blocked by its own requests, the requests are
+counted and the card itself adds nothing. Romp announces the move to Blocked the
+way it announces any other block, once per request: a card that returns to
+Working and comes back for the same request does not announce again, and the
+placeholder card is silent.
 
 **Sessions that are hidden, ended, or asleep.** Hiding a session from the feed
 (right-click its tab, **Hide from feed**) hides its markers, its move to
@@ -207,8 +211,8 @@ attached machine keeps its own setting. While it is off, sessions on that
 machine are not offered the tools that file or withdraw a request, nothing is
 listed, nothing is handed back to a session on resume, and the count on the app
 icon is what it was before the feature existed. Requests filed earlier stay
-stored and reappear when you turn it back on; the kernel's log says how many are
-waiting.
+stored and reappear when you turn it back on; at startup, the kernel's log says
+how many are waiting.
 
 ![The gear's User todos checkbox](assets/guide/user-todos-gear.png){ width="518" }
 
