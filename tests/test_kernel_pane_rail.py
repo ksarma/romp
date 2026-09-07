@@ -264,6 +264,15 @@ class ApiHealthCell(unittest.TestCase):
         for rule in re.findall(r"[^{}]*\.ah-dot[^{}]*\{[^}]*\}", self.html):
             self.assertNotIn("var(--accent)", rule, "status colors keep their own meaning")
 
+    def test_the_light_theme_keeps_the_ok_dot_visible(self):
+        # the dark label gray at .55 blended into the light rail; the light label color keeps the glyph
+        self.assertTrue("body.theme-light .ah-dot{background:#5D574E}" in self.html, "no light override for .ah-dot")
+
+    def test_an_emptied_usage_cell_collapses_its_gap(self):
+        # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it still paid the
+        # scroll group's gap on both sides (28px to the API cell instead of 16px)
+        self.assertTrue("#rail-usage:empty{display:none}" in self.html, "the emptied cell must leave the flex flow")
+
     def test_the_detail_shares_the_usage_tip_s_skin_and_backdrop(self):
         self.assertIn("#ah-tip,#ru-tip{position:fixed", self.html)
         self.assertIn("#ah-tip.ru-modal,#ru-tip.ru-modal{", self.html)

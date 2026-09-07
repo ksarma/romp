@@ -41506,6 +41506,10 @@ def _landing():
             # a glance (used ahead of elapsed = burning too fast) — then the used-% readout. All inline on one row;
             # the windows sit side-by-side. Full detail (elapsed %, reset countdown, age) stays in the hover panel.
             "#rail-usage{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:16px}"
+            # renderRows empties the cell on a login-only machine (no bars, no spend); as a zero-width flex
+            # item it still paid .rail-scroll's gap on both sides, so the API cell beside it sat 28px from
+            # the pane buttons instead of 16px (review round 1, 2026-09-07). Empty means gone.
+            "#rail-usage:empty{display:none}"
             ".ru-w{display:flex;flex-direction:row;align-items:center;gap:7px;cursor:default}"
             ".ru-name{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#9aa4ad;letter-spacing:.02em;white-space:nowrap}"
             ".ru-bars{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}"   # used bar stacked over elapsed bar
@@ -41851,6 +41855,9 @@ def _landing():
             "body.theme-light .ru-name{color:#5D574E}"
             "body.theme-light .ru-pct{color:#1F1E1D}"
             "body.theme-light .ah-text{color:#1F1E1D}"
+            # the ok dot: the dark label gray at .55 blended into the light rail (about 1.4:1, review round 1,
+            # 2026-09-07); the light label color at the same opacity keeps the glyph where the eye expects it
+            "body.theme-light .ah-dot{background:#5D574E}"
             "body.theme-light #rail-api[data-state=ok] .ah-text{color:#5D574E}"
             "body.theme-light .ah-word{color:#1F1E1D}"
             "body.theme-light .ah-btn{background:#F1EAE2;border-color:rgba(0,0,0,0.12);color:#1F1E1D}"

@@ -209,6 +209,63 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["firstFrameDisplay"], "flex", "the first frame reveals the cell")
         self.assertEqual(self.R["firstFrameText"], "overloaded · 1 waiting")
 
+    def test_the_driver_hit_no_script_error(self):
+        self.assertEqual(self.R["err"], {})
+
+    def test_the_light_theme_gives_the_ok_dot_the_label_color(self):
+        # .ah-dot's dark label gray at .55 blended into the light rail (about 1.4:1), so the ok glyph vanished
+        self.assertEqual(self.R["lightDot"], "rgb(93, 87, 78)", "errors: %r" % self.R.get("err"))
+        self.assertEqual(self.R["lightDotOpacity"], "0.55")
+
+    def test_an_emptied_usage_cell_takes_no_gap(self):
+        # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it still paid the
+        # scroll group's gap on both sides, so the API cell sat 28px from the pane buttons instead of 16px
+        self.assertEqual(self.R["usageEmptyDisplay"], "none")
+
+    def test_the_cell_is_a_keyboard_reachable_button_that_names_its_state(self):
+        self.assertEqual((self.R["role"], self.R["tabindex"]), ("button", "0"))
+        self.assertEqual(self.R["ariaLabel"], "API overloaded · 1 waiting")
+        self.assertTrue(self.R["kbOpened"], "Enter opens the pinned detail: %r" % self.R.get("err"))
+        self.assertTrue(self.R["kbFocusInTip"], "focus moves into the detail")
+        self.assertEqual(self.R["tipRole"], "dialog")
+        self.assertTrue(self.R["kbClosed"], "Escape closes it")
+        self.assertTrue(self.R["kbFocusBack"], "and focus returns to the cell")
+
+    def test_the_hover_tip_is_inert_and_re_anchors_when_a_frame_grows_it(self):
+        self.assertTrue(self.R["hoverShown"])
+        self.assertEqual((self.R["hoverButtons"], self.R["hoverActs"]), (0, 0), "no controls under pointer-events:none")
+        ra = self.R["reanchor"]
+        self.assertGreater(ra["after"]["h"], ra["before"]["h"], "three rows are taller than one: %r" % ra)
+        self.assertLessEqual(ra["after"]["bottom"], ra["railTop"] + 1, "the grown tip still hangs above the rail: %r" % ra)
+        self.assertTrue(self.R["hoverHidden"])
+
+    def test_an_open_usage_modal_is_closed_before_the_detail_opens(self):
+        self.assertTrue(self.R["usageClosedFirst"], "errors: %r" % self.R.get("err"))
+
+    def test_a_press_held_across_a_frame_still_lands_and_the_release_flushes_the_frame(self):
+        self.assertTrue(self.R["pinnedHasButton"])
+        self.assertTrue(self.R["heldKeepsNode"], "the pressed button must survive the frame: %r" % self.R.get("err"))
+        self.assertTrue(self.R["heldKeepsText"], "the re-render is deferred while the pointer is down")
+        self.assertEqual(self.R["clickSent"], ["setGlobalRetryPaused:true"], "the click landed on the pressed button")
+        self.assertTrue(self.R["flushedOnClick"], "the deferred frame is painted once the press is over")
+
+    def test_the_acknowledgment_holds_until_a_frame_confirms_the_flip(self):
+        acked = {"disabled": True, "label": "Resume all auto-retries", "acted": True}
+        self.assertEqual(self.R["ack"], acked)
+        self.assertEqual(self.R["ackHeld"], acked, "a frame that has not flipped yet must not repaint an enabled Stop")
+        self.assertEqual(self.R["confirmed"], {"disabled": False, "label": "Resume all auto-retries", "acted": False})
+
+    def test_a_failed_send_restores_the_label_drops_the_acted_styling_and_says_why(self):
+        f = self.R["failed"]
+        self.assertEqual((f["disabled"], f["label"], f["acted"]), (False, "Resume all auto-retries", False), repr(f))
+        self.assertIn("Not sent", f["hint"])
+
+    def test_a_session_row_opens_that_session_the_way_the_feed_s_links_do(self):
+        self.assertTrue(self.R["rowHasAct"])
+        self.assertEqual(self.R["rowSent"], [{"type": "openSession", "id": SID + "1"}])
+        self.assertEqual(self.R["rowToggled"], 0, "no pane toggle, nothing persisted")
+        self.assertTrue(self.R["rowClosed"])
+
 
 if __name__ == "__main__":
     unittest.main()
