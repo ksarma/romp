@@ -595,10 +595,14 @@ class Completeness(_Gate):
         def boom(*a, **k):
             raise RuntimeError("closer down")
         jd._close_turn = boom
+        self._reset()
         self._pass()
         self.assertEqual(self._stamp("close"), before, "no stamp from a raised run")
         rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
         self.assertTrue(any(r.get("err") == "pass-crash" for r in rows), "the crash is logged, as before")
+        s = self._st("close")
+        self.assertEqual((s["ran"], s["incomplete"]), (1, 1), "a raised run counts as incomplete")
+        self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"], "the identity romp perf reads holds through a crash")
 
     def test_a_vanished_candidate_runs_the_stage_and_stamps_nothing(self):
         path = self._session(SID)

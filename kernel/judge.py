@@ -1147,11 +1147,22 @@ def _gated(tier, fn, fsid, path, now, sig, settle=True, parse=True):
     no completeness bit, and (parse tiers) the frame served its parse under the very pair the signature
     holds (a cut that moved between the pin and the parse means the judged world is not the stamped
     one: no stamp). `settle`: the tier rolls up, so the stamp carries the clock input
-    (_settle_not_before). No frame, no stamp: the served pair is what makes the stamp exact, and a
-    runner outside a pass frame (a test calling run_plan alone) keeps the pre-gate behaviour."""
+    (_settle_not_before). A stage that raises is counted `incomplete` (the run did not complete and
+    keyed nothing new) and the exception goes on to the runner's pass-crash row, so ran == stamped +
+    bypassed + incomplete holds through a crash.
+
+    No frame, no stamp: the served pair the frame records is what makes a stamp exact. A runner
+    outside a pass frame (romp-judge's --plan, a test calling run_plan alone) therefore never writes a
+    stamp: every session runs and counts as bypassed, and the signature's stats are still paid. It DOES
+    honour a stamp a framed pass left: _gate_check reads the live signature either way, so an unframed
+    run after a framed one skips the sessions nothing has changed for, exactly as a framed run would."""
     _judge_ctx.stage_incomplete = False
     _tier_bump(tier, "ran")
-    out = fn(fsid, path, now)
+    try:
+        out = fn(fsid, path, now)
+    except Exception:
+        _tier_bump(tier, "incomplete")                # the run did not complete; the runner logs the crash
+        raise
     try:
         if sig is None:
             _tier_bump(tier, "bypassed")
