@@ -1209,7 +1209,7 @@ class InHarnessWaitLift(unittest.TestCase):
         self.spawn = STAMP - 50                       # default: the CLI predates the stamp — no respawn story
         self.gid, self.other = self.PSID + ":g1", self.PSID + ":g2"
         # the planner placed every launch on the SIBLING top: this goal owns no dispatch
-        km._bg_placed_tops = lambda sid, path, tids: {t: self.other for t in tids}
+        km._bg_placed_tops = lambda sid, path, tids, store=None: {t: self.other for t in tids}   # the lift hands its store
         self._saved_watches = list(km._pr_watches)
         km._SESSION_STAMP_CACHE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
 
