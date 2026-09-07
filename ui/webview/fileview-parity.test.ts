@@ -3,7 +3,7 @@
 // (the .romp-acted / filebrowse precedent). The copies had already drifted once (feed.css lacked the
 // a.fileview-btn anchor rules, so the GitHub link rendered hrefless-underlined there, 2026-08-26).
 // This pins the shared chrome byte-equal so it cannot drift again. Rules that are deliberately
-// pane-specific (the md body, wrap mode, load cue) are not pinned.
+// pane-specific (the md body, wrap mode, the pane's own load cue `.fileview-load {`) are not pinned.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -24,6 +24,9 @@ const RULES = [
   ".fileview-imgbox {", ".fileview-img {", ".fileview-frame {",
   // the PDF pages (Slice 4): the chunk's host, root, page and canvas, and the frame fallback's column
   ".fileview-pdfhost {", ".fileview-pdf {", ".fileview-pdf-page {", ".fileview-pdf-canvas {", ".fileview-pdffall {", ".fileview-pdffall .fileview-frame {",
+  // …and the dress on the white page sheet (the failure notice, the per-page wait cue): each sheet's cascade and ratios are
+  // measured by styles-pdf-page-err / feed-pdf-page-err and styles-pdf-page-load / feed-pdf-page-load; the bytes are held here too
+  ".fileview-pdf-page .fileview-err {", ".fileview-pdf-page .fileview-load {", ".fileview-pdf-page .fileview-dot {",
   // the comments panel's aside and its chrome (plans/file-review.md Slice 1): the whole block is also
   // pinned byte-equal end to end by file-comments.test.ts; these heads keep it in the same list
   ".fileview-main {", ".fileview-aside {", ".fileview-fc {", ".fileview-fc[hidden] {", ".fc-panel {", ".fc-card {",

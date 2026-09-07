@@ -451,7 +451,7 @@ test("an image body is media: mode() media, media() image, text() null, no Edit;
 
 // ── Slice 3: the media paint, the media element, the rendered figures (plans/file-review.md, Images and PDFs) ──
 
-test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, and a load on the replaced img fires nothing", async (t) => {
+test("onRendered for an image fires on the img's load, once; mediaElement() is that img until the decode-failure pane replaces it, which is a paint of its own; a load on the replaced img fires nothing", async (t) => {
   const { ctx, body } = await open(PLOT, t);
   const img = body.querySelector("img.fileview-img")!;
   assert.equal(ctx.mediaElement(), img as unknown as HTMLElement, "the picture in the body");
@@ -467,14 +467,18 @@ test("onRendered for an image fires on the img's load, once; mediaElement() is t
   assert.ok(body.querySelector(".fileview-err"), "the failure pane is up");
   assert.equal(ctx.mode(), "media", "still a media body to the seam…");
   assert.equal(ctx.mediaElement(), null, "…but no media element: nothing to overlay");
+  assert.equal(paints, 2, "the pane swap is a paint: the panel hears the picture is gone and takes its layer down (a reload whose bytes would not decode left the old picture's overlay standing before)");
+  img.dispatchEvent(new Ev("load"));
+  assert.equal(paints, 2, "a load on the replaced picture still fires nothing");
 });
 
 test("a load that lands after the viewer moved on fires nothing: the decode failed first, or a reload replaced the picture", async (t) => {
   const { ctx, body } = await open(PLOT, t);
   const img = body.querySelector("img.fileview-img")!;
   img.dispatchEvent(new Ev("error"));                      // the pane took the body before the picture ever showed
+  assert.equal(paints, 1, "the failure pane is the paint (imgFailed fires the hooks itself)");
   img.dispatchEvent(new Ev("load"));
-  assert.equal(paints, 0, "a load on the replaced picture is not a paint");
+  assert.equal(paints, 1, "a load on the replaced picture is not a paint");
   disk[PLOT] = { bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x02]), type: "image/png", mtimeNs: "1757145600000000007" };
   ctx.reload();
   await settle();
@@ -482,9 +486,9 @@ test("a load that lands after the viewer moved on fires nothing: the decode fail
   assert.notEqual(img2, img, "the reload built a new picture");
   assert.equal(ctx.mediaElement(), img2 as unknown as HTMLElement);
   img.dispatchEvent(new Ev("load"));
-  assert.equal(paints, 0, "the old picture's late load: nothing");
+  assert.equal(paints, 1, "the old picture's late load: nothing");
   img2.dispatchEvent(new Ev("load"));
-  assert.equal(paints, 1, "the showing picture's load: the paint");
+  assert.equal(paints, 2, "the showing picture's load: the paint");
 });
 
 test("an img the browser already holds (complete) paints at once, without waiting for a load event", async (t) => {
@@ -511,21 +515,32 @@ test("a PDF body: mediaElement() is the frame, onRendered fires at once (the fra
 
 // ── Slice 4: the PDF's pages while the Comments panel is open (plans/file-review.md Slice 4; contract F3) ──
 
-test("a PDF with the panel open: the loader, then the chunk's pages — mediaElement() the pages root, pdfPages() the shells, onRendered after page 1 and per page; the panel closing brings the frame back and disposes", async (t) => {
+test("a PDF with the panel open: the loader over the kept frame, then the chunk's pages in its place — mediaElement() the pages root, pdfPages() the shells, onRendered after page 1 and per page; the panel closing brings the frame back and disposes", async (t) => {
   const { ctx, body } = await open(DECK, t);
   assert.equal(paints, 1, "the frame showed first: the panel is closed at open");
   assert.equal(pdf.renders, 0, "the chunk is not asked for a PDF nobody is commenting on");
+  const shown = body.querySelector("iframe.fileview-frame")!;
   const aside = new El("div");
   ctx.aside(aside as unknown as HTMLElement);                                      // the panel opens: the seam's aside() IS the event
   assert.ok(body.querySelector(".fileview-load"), "the romp loader first (the loading-state rule)");
   const host = body.querySelector(".fileview-pdfhost")!;
   assert.ok(host && host.isConnected, "the chunk's host is in the body before render(): the pages fit its width");
-  assert.equal(body.querySelector("iframe.fileview-frame"), null, "the frame is gone");
+  // The frame is NOT dropped for the loader: it stays through the attempt, in place, so the document is not
+  // reloaded under the reader (a rebuilt or moved iframe reloads at page 1 — the review, 2026-09-06). The loader
+  // heads the frame's own column, the host follows the column in the body, and nothing repaints for it.
+  assert.equal(body.querySelector("iframe.fileview-frame"), shown, "the frame the open painted is still the frame, under the loader");
+  const col = shown.parentElement!;
+  assert.ok(col.classList.contains("fileview-pdffall") && col.parentNode === body, "…in its column, still the body's first child");
+  assert.equal(col.childNodes[0], body.querySelector(".fileview-load"), "…the loader at the head of that column");
+  assert.ok(host.parentNode === body && body.childNodes[0] === col && body.childNodes[1] === host, "…and the host after the column, never inside it: the frame does not move");
+  assert.equal(paints, 1, "no paint for the loader: what shows is the frame that already painted");
   await settle();
   assert.equal(pdf.renders, 1);
   assert.equal(pdf.bytes, "%PDF-1.4\n".length, "the bytes the viewer already fetched — no second request");
   assert.equal(pdf.opts!.maxBytes, 25 * 1024 * 1024, "the cap rides into render() too, so the two cannot disagree");
   assert.equal(body.querySelector(".fileview-load"), null, "page 1 drawn: the loader gives way");
+  assert.equal(body.querySelector("iframe.fileview-frame"), null, "…and only now is the frame gone: the pages are the body");
+  assert.equal(body.querySelector(".fileview-pdffall"), null, "…its column with it");
   const root = body.querySelector(".fileview-pdf")!;
   assert.ok(root, "the chunk's root in the host");
   assert.equal(ctx.mediaElement(), root as unknown as HTMLElement, "the pages root is the media element while rendered");
@@ -638,7 +653,7 @@ test("mediaElement() is null for a text body even when the rendered markdown car
   assert.deepEqual(ctx.renderedImages(), [], "a repaint rebuilt the body: the hand-laid figures went with the old one, and innerHTML parses nothing here");
 });
 
-test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs go to the kernel's /file for <dir>/<src> with the authored value kept in data-fv-src; absolute paths, http(s), data:, blob: and empty srcs stay; a remote sid relays", async () => {
+test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs go to the kernel's /file for <dir>/<src> and absolute paths to /file for themselves, the authored value kept in data-fv-src; protocol-relative, http(s), data:, blob: and empty srcs stay; a remote sid relays", async () => {
   const fv = await mod();
   const DIR = ROOT + "/docs/";
   const q = (p: string) => "/file?path=" + encodeURIComponent(p) + "&sid=" + SID;
@@ -656,7 +671,7 @@ test("rewriteFigureSrcs, executed over a sanitized DOM stand-in: relative srcs g
     [mk("./plot.png"), q(DIR + "./plot.png"), "./plot.png"],
     [mk("six%20seven.png"), q(DIR + "six seven.png"), "six%20seven.png"],              // marked's percent-encoding decoded back to the path
     [mk("bad%E0%A4%A.png"), q(DIR + "bad%E0%A4%A.png"), "bad%E0%A4%A.png"],            // a malformed escape: taken as written
-    [mk(ROOT + "/docs/plot.png"), ROOT + "/docs/plot.png", null],                        // absolute path: untouched
+    [mk(ROOT + "/docs/plot.png"), q(ROOT + "/docs/plot.png"), ROOT + "/docs/plot.png"],  // absolute path: /file for the path itself, as the poll and the host read it (file-view-figures-absolute.test.ts)
     [mk("//cdn.example.test/x.png"), "//cdn.example.test/x.png", null],                 // protocol-relative: an absolute URL
     [mk("https://example.test/x.png"), "https://example.test/x.png", null],
     [mk("http://example.test/x.png"), "http://example.test/x.png", null],
@@ -858,7 +873,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 5, "the SVG Source view, the text views, the PDF pages path twice (page 1 drawn; every later page), and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins the floor)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 7, "the SVG Source view, the text views, the decode-failure pane, the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn), and enterEdit's edit-mode render (the one paint the panel's cards take their edit-mode state from) call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins the floor)");
+  const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
+  assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);/, "mdBlock knows the open file's path and sid");
   const mdFn = VIEW.split("function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {")[1].split("\n}\n")[0];
@@ -870,9 +887,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];
   assert.match(rw, /root\.querySelectorAll\("img\[src\]"\)\.forEach/, "a DOM walk over the sanitized tree");
   assert.match(rw, /const src = img\.getAttribute\("src"\) \|\| "";/);
-  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/, "untouched: empty, absolute path, any scheme");
+  assert.match(rw, /if \(!src \|\| src\.startsWith\("\/\/"\) \|\| \/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(src\)\) \{ img\.removeAttribute\("data-fv-src"\); return; \}/, "untouched: empty, protocol-relative URL, any scheme — an absolute PATH is rewritten");
   assert.match(rw, /try \{ rel = decodeURI\(src\); \} catch \{/, "marked's percent-encoding undone; malformed taken as written");
-  assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL for <dir>/<src>");
+  assert.match(rw, /img\.setAttribute\("data-fv-src", src\);\n\s*img\.setAttribute\("src", fileUrl\(rel\.startsWith\("\/"\) \? rel : dir \+ rel, sid\)\);/, "the authored value kept, then the kernel URL: the path itself when absolute, else <dir>/<src>");
   assert.doesNotMatch(rw, /innerHTML|outerHTML|\.replace\(|DOMParser/, "never a string rewrite of marked's HTML");
   assert.doesNotMatch(rw, /normalize|\.\.\//, "no client-side path normalization: the kernel resolves and gates `..`");
 });

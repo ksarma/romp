@@ -90,10 +90,23 @@ body.scheme-solarized-dark {
   --err: #c0392b;   /* unified with the awaiting/blocked red (the user 2026-06-24): one "needs you" red. API-error (--st-blocked-bg #e5484d) stays distinct. */
   --warn: #d7a23a;  /* the heads-up amber — "attention, not an error". Was referenced with fallbacks but never
                        defined (a phantom token) until 2026-08-26; mirrored in feed.css (own :root). */
+  --warn-on-white: #9A6A00;  /* the same heads-up, for text on a surface that is WHITE in every theme (the viewer's
+                                PDF page sheet, .fileview-pdf-page): --warn is tuned for the pane's ground and reads
+                                at 2.3:1 on white; this is the light theme's own amber, 4.7:1 there. Identical in
+                                both theme blocks — white is white. (styles-pdf-page-err.test.ts) */
+  --dim-on-white: #5D574E;   /* the dim tier for the same white sheet (the per-page loader's wordmark, pdf-chunk.ts
+                                cue()): --dim is tuned for the pane's ground — 2.8:1 on white here, 2.0:1 under the
+                                high-contrast scheme, which lifts --dim for the DARK ground and so dims it further on
+                                white — and the chat schemes above re-tier --dim, never this. The light theme's own
+                                dim, 7.2:1 on white; identical in both theme blocks. (styles-pdf-page-load.test.ts) */
   /* THE romp accent — light blue (the user 2026-06-24). Use var(--accent) for accent/highlight chrome
      (selected toggles, in-progress loading dots, the Fleet pill, focus) — NOT for STATUS colors, which keep
      their own meaning (--st-working-bg yellow = working, --st-blocked-bg red, etc.). --accent-fg reads on it. */
   --accent: #9cd2ff; --accent-fg: #0c1a2e;
+  --accent-on-white: #C2410C;  /* the accent for chrome on the same white sheet (the per-page loader's dots): --accent
+                                  is tuned for the pane's ground and sits at 1.6:1 on white. The light theme's own
+                                  accent, 5.2:1 on white; identical in both theme blocks — the sheet wears the light
+                                  theme's tiers whatever the pane wears. (styles-pdf-page-load.test.ts) */
   /* THE faint accent wash — the one alpha behind every selected/hovered accent chrome (0.10 and 0.14
      variants drifted in before 2026-08-26). Mirrored in feed.css (own :root). */
   --accent-wash: rgba(156, 210, 255, 0.12);
@@ -219,6 +232,9 @@ body.theme-light {
   --cmt-hl: #FFDF70;
   --fast: #D45500;
   --warn: #9A6A00;
+  --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
+  --dim-on-white: #5D574E;    /* the white sheet's dim is the same in both themes — the light theme's own --dim */
+  --accent-on-white: #C2410C; /* the white sheet's accent is the same in both themes — the light theme's own --accent */
   --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
@@ -3537,6 +3553,12 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg); }
 .fileview-md img { max-width: 100%; }
+/* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
+   heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
+   0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README
+   banner pattern, <h1><img></h1>; ui/CLAUDE.md, font sizes: nested em compounds). --fs is the body's own size, so the
+   chip lands where the aside's does; --sans is the body's face, where the prose face is mono in the light theme. */
+.fileview-md .fc-overlay { font-size: var(--fs); font-family: var(--sans); }
 
 /* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts) ── the viewer's ASIDE: the body row
    holds the body and the panel side by side, and folds the panel below the body when the column is narrower
@@ -3673,12 +3695,17 @@ body.filebrowse-open { overflow: hidden; }
    chip is generated from data-label: no text node goes under the picture, or the rendered-markdown mapper would misalign
    the paragraph holding the figure. A stale region (the image's bytes changed under it) is dashed, an unknown one dotted;
    the author's session colour rides --fc-author as on the change marks, the comment ring's warn colour when no session
-   matches. A coarse pointer gets no drawing: the overlay takes no events there; the rectangles still open their cards. */
+   matches. A coarse pointer gets no drawing: the overlay takes no events there; the rectangles still open their cards, and
+   the viewer still pans under a finger: `touch-action: none` is for the ARMED layer, where a drag draws — a disarmed
+   layer gives it back. Touch-action composes by INTERSECTION from the touched element up to the scroll container, so a
+   rectangle (pointer-events: auto) could not opt back in on its own: with `none` left on the layer, a swipe that started
+   on a rectangle covering most of a picture left the phone's viewer unscrolled. */
 .fc-imgwrap { position: relative; display: inline-block; max-width: 100%; }
 .fc-imgwrap > img { display: block; }
 .fc-overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
 .fc-overlay-off { pointer-events: none; cursor: default; }
 .fc-overlay-off .fc-region { pointer-events: auto; }
+.fc-overlay-off { touch-action: auto; }
 .fc-overlay.fc-replacing { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .fc-region { position: absolute; box-sizing: border-box; border: 2px solid var(--fc-author, var(--warn)); border-radius: 4px;
   background: color-mix(in srgb, var(--fc-author, var(--warn)) 12%, transparent); cursor: pointer; }
@@ -3709,13 +3736,31 @@ body.filebrowse-open { overflow: hidden; }
    the frame above shows): the host pads like the image box, the pages stack with a gap, each page a white sheet
    with the modal's shadow — a page to put a region rectangle on; the chunk's inline position: relative on each
    page wrapper is what the overlay anchors to. The fallback column holds the notice over the frame, the frame
-   taking what is left, so the notice never pushes the frame past the body. */
+   taking what is left, so the notice never pushes the frame past the body. The column's height: 100% is the
+   frame's height: .fileview-body is the plain overflow block above (the .fileview-editor note), so the frame's own
+   100% resolves against the column, and a column without one is auto-height — the frame sat at the UA's 150px
+   default (styles-pdffall-height.test.ts resolves the chain and measures it in chromium). */
 .fileview-pdfhost { padding: 14px; box-sizing: border-box; }
 .fileview-pdf { display: flex; flex-direction: column; gap: 14px; }
 .fileview-pdf-page { background: #fff; box-shadow: var(--shadow-modal); }
 .fileview-pdf-canvas { display: block; width: 100%; height: auto; }
 .fileview-pdffall { display: flex; flex-direction: column; height: 100%; }
 .fileview-pdffall .fileview-frame { flex: 1 1 auto; min-height: 0; }
+/* a page pdf.js could not draw carries its failure IN the sheet (pdf-chunk.ts fail(): the .fileview-err dress, plus
+   .fileview-pdf-page-err as a hook). The dress's --warn amber is tuned for the pane's ground and sat at 2.3:1 on the
+   white sheet in the dark theme, below the 4.5:1 the sheets hold reading text to. On the sheet the dress
+   wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio). */
+.fileview-pdf-page .fileview-err { color: var(--warn-on-white); }
+/* the per-page loader over a sheet whose draw is pending (pdf-chunk.ts cue(): the viewer's own loader markup,
+   div.fileview-load.fileview-pdf-page-load, inside the page wrapper) is the one viewer loader that sits on white,
+   and .fileview-load's --dim and .fileview-dot's --accent are both tuned for the pane's ground: the wordmark sat at
+   2.8:1 on the sheet in the dark theme (2.0:1 under the high-contrast scheme, whose lifted --dim is dimmer still on
+   white) and the accent dots at 1.6:1 — a cue put up so an undrawn page would not look blank, itself near-invisible.
+   On the sheet each wears its on-white twin — the light theme's own dim and accent, the tiers made for a light
+   ground — in every theme and scheme: 7.2:1 for the wordmark, 5.2:1 for the dots. The pane's loader outside a sheet
+   is untouched. (styles-pdf-page-load.test.ts) */
+.fileview-pdf-page .fileview-load { color: var(--dim-on-white); }
+.fileview-pdf-page .fileview-dot { background: var(--accent-on-white); }
 
 /* a MACHINE-sent message's notch (romp injections, ⚙-tagged sends — the same senderKind verdict the
    bubble wears): light gray, visibly quieter than the user's blue, so the scroll map separates "you

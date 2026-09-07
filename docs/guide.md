@@ -165,24 +165,29 @@ show it.
 
 **Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
 drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
-author's chip, the card shows that part of the image, and when the image's bytes change the
-comment is shown as stale until you resolve it or place it again. A figure embedded in a
-markdown file, such as `![](plot.png)`, is loaded from the file's own folder, so a relative
-path shows in the Rendered view; a web address or a `data:` image is left as written. A
-comment on an embedded figure is stored on its embed line, with the rectangle: the session's
-tools and the other editors place it on that line, and this viewer paints the rectangle on
-the picture. Drawing a rectangle needs a mouse or a trackpad; on a phone, comment on the
-file as a whole instead.
+author's chip, and the card shows that part of the image. When the image's bytes change the
+comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
+again where it belongs now; the comment keeps its words and its replies, and only the
+rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
+from the file's own folder, so a relative path shows in the Rendered view; a web address or a
+`data:` image is left as written. A comment on an embedded figure is stored on its embed line,
+with the rectangle: the session's tools and the other editors place it on that line, and this
+viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
+on a phone, comment on the file as a whole instead.
 
 **PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
 draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
 the same way as on an image; the comment names its page, and its card shows that part of the
-page. A rectangle drawn on one page can be placed again on another. Pages are drawn only up to
-25 MB of PDF; above that, or when the page renderer cannot be loaded or the file cannot be
-opened, the browser's viewer stays with a line above it saying why, and a comment on the whole
-file still works. The renderer ships without pdf.js's standard fonts, CMaps, and JPEG 2000
-decoder, so a PDF that does not embed its fonts may show some text in a system font, and a
-JPEG 2000 image may render blank; the pages still draw.
+page once the page has been drawn. Pages are drawn as you scroll near them, so until then the
+card shows a line naming the page, and clicking it scrolls the page in. A rectangle drawn on
+one page can be placed again on another. Pages are drawn only up to 25 MB of PDF; above that,
+or when the page renderer cannot be loaded or the file cannot be opened, the browser's viewer
+stays with a line above it saying why, and a comment on the whole file still works. The
+renderer ships without pdf.js's standard fonts and CMaps, and without its JPEG 2000, JBIG2, and
+fax (CCITT) image decoders, so a PDF that does not embed its fonts may show some text in a
+system font, and an image in one of those encodings is left blank, with a line at the top of
+the page saying how many; the rest of the page still draws, and the browser's own viewer shows
+the whole page.
 
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,

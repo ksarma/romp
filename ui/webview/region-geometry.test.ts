@@ -14,21 +14,24 @@ import { describeComment, regionState, regionTarget, type StoreComment, type Sta
 const RECT: Box = { left: 100, top: 200, width: 300, height: 200 };
 const NATURAL = { width: 600, height: 400 };
 
-test("drawnBox: the element's rect when the aspects agree or the natural size is unknown; the centered letterbox otherwise", () => {
-  assert.deepEqual(drawnBox(RECT, NATURAL), RECT, "same aspect: the picture fills its element");
-  assert.deepEqual(drawnBox(RECT, null), RECT, "no natural size (still loading, an SVG without one): the element stands in");
-  assert.deepEqual(drawnBox(RECT, { width: 0, height: 0 }), RECT);
+// the media body's rule (.fileview-img has object-fit: contain), passed as the layer measures it — region-geometry-fit.test.ts covers the others
+const CONTAIN = "contain";
+
+test("drawnBox under contain: the element's rect when the aspects agree or the natural size is unknown; the centered letterbox otherwise", () => {
+  assert.deepEqual(drawnBox(RECT, NATURAL, CONTAIN), RECT, "same aspect: the picture fills its element");
+  assert.deepEqual(drawnBox(RECT, null, CONTAIN), RECT, "no natural size (still loading, an SVG without one): the element stands in");
+  assert.deepEqual(drawnBox(RECT, { width: 0, height: 0 }, CONTAIN), RECT);
   // a square picture in the 3:2 element: object-fit contain draws it 200×200, centered, 50px in from each side
-  assert.deepEqual(drawnBox(RECT, { width: 100, height: 100 }), { left: 150, top: 200, width: 200, height: 200 });
+  assert.deepEqual(drawnBox(RECT, { width: 100, height: 100 }, CONTAIN), { left: 150, top: 200, width: 200, height: 200 });
   // a wide strip in the same element: 300 wide, 75 tall, 62.5px down from the top
-  assert.deepEqual(drawnBox(RECT, { width: 400, height: 100 }), { left: 100, top: 262.5, width: 300, height: 75 });
-  assert.deepEqual(drawnBox({ left: 0, top: 0, width: 0, height: 0 }, NATURAL), { left: 0, top: 0, width: 0, height: 0 }, "an empty element draws nothing");
+  assert.deepEqual(drawnBox(RECT, { width: 400, height: 100 }, CONTAIN), { left: 100, top: 262.5, width: 300, height: 75 });
+  assert.deepEqual(drawnBox({ left: 0, top: 0, width: 0, height: 0 }, NATURAL, CONTAIN), { left: 0, top: 0, width: 0, height: 0 }, "an empty element draws nothing");
 });
 
 test("overlayOffsets: null when the drawn image fills the wrapper (the sheet's inset: 0 holds), pixel offsets when it does not", () => {
   assert.equal(overlayOffsets(RECT, RECT), null);
   assert.equal(overlayOffsets(RECT, { ...RECT, left: 100.3, width: 299.6 }), null, "sub-pixel differences are the browser's rounding, not a letterbox");
-  assert.deepEqual(overlayOffsets(RECT, drawnBox(RECT, { width: 100, height: 100 })), { left: 50, top: 0, width: 200, height: 200 });
+  assert.deepEqual(overlayOffsets(RECT, drawnBox(RECT, { width: 100, height: 100 }, CONTAIN)), { left: 50, top: 0, width: 200, height: 200 });
 });
 
 test("regionFromPoints: fractions of the drawn box, either corner first, clamped into the box, four decimals", () => {

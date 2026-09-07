@@ -176,7 +176,7 @@ test("exactly one copy of @codemirror/state (and commands, view) ends up in the 
   assert.ok(!inputs.some((k) => k.includes("track-snapshot")), "the vendored source of the derived module is a citation, never bundled");
   // and both builds carry the alias: the test bundle's executed track tests need one copy for the same reason
   assert.equal((ESBUILD.match(/alias: oneCodeMirror,/g) || []).length, 2, "the webview build and the test build");
-  assert.match(ESBUILD, /module\.exports = \{ extension, webview, testBuild, oneCodeMirror \};/);
+  assert.match(ESBUILD, /module\.exports = \{ buildAll, failureSummary, extension, webview, testBuild, oneCodeMirror \};/);
   assert.match(ESBUILD, /if \(require\.main === module\) \{/);
 });
 

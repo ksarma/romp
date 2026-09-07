@@ -2,7 +2,7 @@
 // file-view.ts needs before the pdf.js chunk exists on the page, kept out of file-view.ts so a test can run
 // them with no DOM stand-in (pdf-lazy.test.ts pins them equal to the chunk's own DEFAULT_MAX_BYTES and
 // capMessage). Nothing here touches the document, and nothing here imports the chunk: the main bundles stay
-// byte-stable, and a 40 MB PDF is refused before a megabyte of renderer is fetched to say no.
+// byte-stable, and a 40 MB PDF is refused before a megabyte of renderer is fetched.
 
 /** The largest PDF whose pages the viewer renders itself: the chunk's own default (pdf-chunk.ts
  *  DEFAULT_MAX_BYTES). Over it, the browser's frame shows with the reason. */
