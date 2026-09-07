@@ -95,6 +95,12 @@
 //     with its src; a passage that cannot tell refuses (`no-figure`, or the anchor's own code),
 //     since that is the disk's state and not a caller bug. A stored src must still be named by the
 //     request, as before: the panel holds it, and a re-place keeps the figure;
+//   * a passage comment's anchor is widened until it locates uniquely (uniqueAnchor: 24 characters
+//     of context, then 24 more at a time, up to ANCHOR_CTX_CAP), and the comment carries the second
+//     romp-only field, `anchorAt`, the offset the anchor located at, refreshed on every sidecar write
+//     this script makes (refreshAnchorAts, in stageSidecar) and read as the hint whenever a stored
+//     comment's anchor is located (hintOf). A tie the client's hint can settle is placed; only a tie
+//     with no hint refuses `anchor-ambiguous` (the anchors follow-on, 2026-09-07);
 //   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
 //     comments log and config.json are named from the file's path and never shown to the person,
 //     and a checked-out repository can commit anything under those names (the plan leaves committing
@@ -223,6 +229,17 @@ export const LOG_TAIL = 200;
 // Every human action and log entry is authored `you`, with no authorId (decision 6).
 export const AUTHOR = 'you';
 export const LOG_SUFFIX = '.comments-log.jsonl';
+// A passage comment's anchor: the engine's makeAnchor at the located position, with the SMALLEST
+// context (ANCHOR_CTX characters either side — the engine's default and what track-comment writes —
+// then ANCHOR_CTX_STEP more at a time, up to ANCHOR_CTX_CAP or the file's bounds) at which the anchor
+// locates uniquely in the whole text. A passage that recurs with the same 24 characters around each
+// copy is told from the others by more of its surroundings, in the three fields every host reads, so
+// the other hosts place it the same way. Past the cap (identical regions wider than the cap on both
+// sides of every copy) the anchor is saved at the cap and the stored position, `anchorAt`, tells the
+// copies apart (the anchors follow-on, 2026-09-07; plans/file-review.md, The contract).
+export const ANCHOR_CTX = 24;
+export const ANCHOR_CTX_STEP = 24;
+export const ANCHOR_CTX_CAP = 480;
 // The files the viewer shows as an image or a PDF: the kernel's _PREVIEW_MIME extensions (the media
 // half of GET /file), mirrored here because a region comment can exist only on a file the viewer
 // renders as media. `status` on such a file answers the hash of its bytes (fileHash); on any other
@@ -1183,7 +1200,7 @@ function passageFigure(ctx, text, c, embeds) {
   } catch (e) {
     return { src: null, code: 'anchor-not-found', reason: `the anchor of comment ${id} in ${ctx.shown} cannot be read (${e.message}), so which figure it is on cannot be told` };
   }
-  const loc = locateExact(text, anchor, undefined);
+  const loc = locateExact(text, anchor, hintOf(c));
   if (loc.error) return { src: null, code: loc.error, reason: `the passage of comment ${id} could not be placed in ${ctx.shown} (${loc.error}), so which figure it is on cannot be told` };
   const dests = [...new Set(embeds.filter((e) => e.start < loc.to && e.end > loc.from).map((e) => e.dest))];
   if (dests.length === 1) return { src: dests[0] };
@@ -1450,22 +1467,75 @@ function requireCommentId(args) {
   return id;
 }
 
-// Locate the browser's anchor in the file as it is now. The engine picks the best-scoring hit
-// and breaks ties by the hint; a stored comment carries no hint, so a passage that occurs twice
-// with the same 24 characters on both sides cannot be re-placed by any later reader and is
-// refused `anchor-ambiguous` rather than saved on a guess. Locating with the hint pinned to the
-// start and to the end of the text asks the engine for the earliest and the latest tied hit;
-// when they differ, a tie exists. The located text must equal the quote: the engine's fallback
-// to the surviving context is a relocation, not a match, and refuses `anchor-not-found`.
+// Locate an anchor in the file as it is now. The engine picks the best-scoring hit and breaks
+// ties by the hint, nearest wins. Locating with the hint pinned to the start and to the end of the
+// text asks the engine for the earliest and the latest tied hit; when they agree the anchor has one
+// best hit and that is the passage, whatever the hint. When they differ a tie exists, and the hint
+// decides: the browser's is the selection's start offset, a stored comment's is its `anchorAt`; with
+// no hint at all nothing can pick a copy, and the caller refuses `anchor-ambiguous` rather than
+// saving on a guess. Before the anchors follow-on (2026-09-07) every tie was refused, since a stored
+// comment carried no position and a later reader could not tell the copies apart; the widened anchor
+// (uniqueAnchor) and the stored position are what make a tie placeable now. The located text must
+// equal the quote: the engine's fallback to the surviving context is a relocation, not a match, and
+// refuses `anchor-not-found`.
 export function locateExact(text, anchor, hint) {
   const quote = anchor.quote;
   const first = engine.locateAnchor(text, anchor, 0);
   if (!first || text.slice(first.from, first.to) !== quote) return { error: 'anchor-not-found' };
   const last = engine.locateAnchor(text, anchor, text.length);
-  if (!last || last.from !== first.from) return { error: 'anchor-ambiguous' };
-  const loc = engine.locateAnchor(text, anchor, typeof hint === 'number' ? hint : undefined);
-  if (!loc || loc.from !== first.from) return { error: 'anchor-ambiguous' };
+  if (last && last.from === first.from) return { from: first.from, to: first.to };
+  if (typeof hint !== 'number' || !Number.isFinite(hint)) return { error: 'anchor-ambiguous' };
+  const loc = engine.locateAnchor(text, anchor, hint);
   return { from: loc.from, to: loc.to };
+}
+
+// Whether `anchor` has exactly one best-scoring hit in `text`, at `at`: the engine's earliest and
+// latest tied hits (hint 0 and hint text.length) are the same position, and it is `at`. The engine's
+// own scoring, asked twice, never a second scorer.
+function locatesUniquelyAt(text, anchor, at) {
+  const first = engine.locateAnchor(text, anchor, 0);
+  if (!first || first.from !== at || text.slice(first.from, first.to) !== anchor.quote) return false;
+  const last = engine.locateAnchor(text, anchor, text.length);
+  return !!last && last.from === at;
+}
+
+// The anchor stored for the passage at from..to: makeAnchor at that position with the smallest
+// context, from ANCHOR_CTX in steps of ANCHOR_CTX_STEP, at which it locates uniquely (locatesUniquelyAt);
+// a passage unique at 24 keeps the 24 characters track-comment would write. The widening stops at
+// ANCHOR_CTX_CAP, or sooner when both sides already reach the file's bounds (wider is the same anchor);
+// an anchor still tied there is returned at the cap with `unique: false`, for the caller to keep with
+// its stored position.
+export function uniqueAnchor(text, from, to) {
+  let anchor = null;
+  for (let ctx = ANCHOR_CTX; ctx <= ANCHOR_CTX_CAP; ctx += ANCHOR_CTX_STEP) {
+    anchor = engine.makeAnchor(text, from, to, ctx);
+    if (locatesUniquelyAt(text, anchor, from)) return { anchor, unique: true };
+    if (from - ctx <= 0 && to + ctx >= text.length) break;
+  }
+  return { anchor, unique: false };
+}
+
+// A stored comment's hint for locateExact: its `anchorAt`, when it has one.
+function hintOf(c) {
+  return c && typeof c.anchorAt === 'number' && Number.isFinite(c.anchorAt) ? c.anchorAt : undefined;
+}
+
+// `anchorAt`, the romp-only stored position beside a passage comment's anchor (plans/file-review.md,
+// The contract): the from-offset the anchor located at, set when the comment is made and refreshed on
+// EVERY sidecar write this script performs (stageSidecar is the one door), against the text the
+// sidecar is saved for — an edit above the passage moves it, and the next write catches up. Refreshed
+// only for a comment whose anchor locates uniquely in that text: a tied anchor (identical regions past
+// the cap) keeps the position it has, since nothing in the text says which copy moved where, and a
+// gone passage keeps its last known one. The anchor's own fields are never touched here, and a
+// comment without an anchor (a whole-file, change or standalone region comment) never gains the
+// field. The other hosts and the CLIs write the whole object back, so the field survives them.
+function refreshAnchorAts(store, text) {
+  if (typeof text !== 'string') return;
+  for (const c of (store && store.comments) || []) {
+    if (!c || !c.anchor || typeof c.anchor !== 'object' || typeof c.anchor.quote !== 'string' || !c.anchor.quote) continue;
+    const loc = locateExact(text, c.anchor, undefined);
+    if (!loc.error) c.anchorAt = loc.from;
+  }
 }
 
 function validateAnchor(anchor) {
@@ -1479,8 +1549,10 @@ function validateAnchor(anchor) {
 }
 
 // The comment object in addComment's exact shape (cli/track-comment.mjs): id `${now}-${idx}`,
-// author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false. A
-// whole-file comment has no anchor and the id `${now}-0`. `target` (a region on an image or a
+// author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false — plus,
+// on a passage comment, the romp-only `anchorAt` after the anchor (the located from-offset; the
+// anchor itself is widened until unique, uniqueAnchor). A whole-file comment has no anchor and the
+// id `${now}-0`. `target` (a region on an image or a
 // PDF page) is not attached here: doComment validates it and stamps the hash (stampTarget) once
 // the anchor, if any, is placed. A CHANGE comment (`args.suggestionId`, the
 // Reply on a change's card) has no anchor and no target, carries `suggestionId`, and takes its id
@@ -1512,7 +1584,8 @@ export function buildComment(text, args, now, suggestions) {
       id: `${now}-${loc.from}`,
       author: AUTHOR,
       ts: now,
-      anchor: engine.makeAnchor(text, loc.from, loc.to),
+      anchor: uniqueAnchor(text, loc.from, loc.to).anchor,
+      anchorAt: loc.from,
       body: note,
       replies: [],
       resolved: false,
@@ -1788,7 +1861,7 @@ function doComment(ctx) {
       throw new Refusal('anchor-not-found', `the selected passage is no longer in ${ctx.shown} — reload and select it again`);
     }
     if (built.error === 'anchor-ambiguous') {
-      throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
+      throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, and the selection's position was not sent to tell the copies apart — reload and select it again`);
     }
     if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
     if (target) {
@@ -1842,7 +1915,7 @@ function doRetarget(ctx) {
       if (stored != null) {
         if (validated.src !== stored) throw new BadRequest(`retarget keeps the figure: comment ${String(id)} is on ${tilde(stored)}, and target.src names ${tilde(validated.src)}`);
       } else {
-        const loc = locateExact(text, validateAnchor(c.anchor), undefined);
+        const loc = locateExact(text, validateAnchor(c.anchor), hintOf(c));
         if (loc.error) throw new Refusal(loc.error, `the passage of comment ${String(id)} could not be placed in ${ctx.shown} (${loc.error}), so which figure it embeds cannot be told — reload and retry`);
         checkEmbedNamesSrc(ctx, text, loc.from, loc.to, validated.src);
       }
@@ -1953,6 +2026,7 @@ function afterDecision(ctx, paths, store, text) {
 // replaces the link's target with the sidecar's bytes. The staged name carries a random token
 // nobody can plant a link under, and both names saveStore will use are confirmed empty first.
 function stageSidecar(root, storePath, store, text) {
+  refreshAnchorAts(store, text);
   const tmp = `${storePath}.romp-fc-${tempToken()}.tmp`;
   for (const p of [tmp, `${tmp}.tmp`]) {
     if (lstatOrNull(p)) throw new Error(`${p} already exists; the sidecar is never written over an existing entry`);

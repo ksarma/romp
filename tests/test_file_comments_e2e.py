@@ -100,6 +100,18 @@ def make_anchor(text, start, end):
     return json.loads(r.stdout)
 
 
+def locate_anchor(text, anchor, hint=None):
+    """Where the engine places a stored anchor in `text`, with `hint` breaking ties — the call the
+    webview's anchor-map makes to paint a comment, passing the comment's anchorAt as the hint."""
+    src = ("const fs = (await import('fs')).default; const m = await import(process.argv[1]); const e = m.default || m;"
+           " const [t, a, h] = JSON.parse(fs.readFileSync(0, 'utf8'));"
+           " console.log(JSON.stringify(e.locateAnchor(t, a, h == null ? undefined : h)));")
+    r = _node(["--input-type=module", "-e", src, "--", Path(os.path.join(VENDOR, "engine.js")).as_uri()],
+              stdin=json.dumps([text, anchor, hint]))
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
 def tiny_png(r, g, b):
     """A valid 2x2 opaque RGBA PNG of one color, built from bytes here (the node tests' tiny-png.mjs has the
     same shape), so no picture is ever committed; two colors are two different files, which is all "the
@@ -334,6 +346,49 @@ def test_a_passage_comment_in_a_project_lands_in_the_root_sidecar(world):
     assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "store-moved")
     assert "appeared on disk" in bad["error"] and "reload" in bad["error"]
     assert len(json.loads(Path(r["storePath"]).read_text())["comments"]) == 2
+
+
+TWICE = "# Findings\n\nShip it.\nShip it.\n\nWe recommend shipping the cache in v1.2.\n"
+
+
+def test_a_comment_on_the_second_of_two_identical_lines_keeps_its_place_and_its_position_follows_an_edit_above(world):
+    """The anchors follow-on (2026-09-07): a passage comment carries `anchorAt`, the offset its anchor
+    located at, beside the anchor. The vendored track-edit writes the sidecar back with the position as it
+    was, a read never rewrites the sidecar, and the next write the host makes refreshes it; the webview
+    paints with that position as the engine's tie-break, so the highlight stays on the line that was
+    chosen."""
+    world.fp.write_text(TWICE)
+    first = TWICE.index("Ship it.")
+    second = TWICE.index("Ship it.", first + 1)
+    anchor = make_anchor(TWICE, second, second + len("Ship it."))
+    r = world.comment(world.fp, "Not yet.", anchor=anchor, hint=second)
+    c = r["store"]["comments"][0]
+    assert c["anchorAt"] == second
+    assert c["id"] == "%d-%d" % (c["ts"], second)
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt"}
+    assert json.loads(Path(r["storePath"]).read_text())["comments"][0]["anchorAt"] == second
+    assert locate_anchor(TWICE, c["anchor"], c["anchorAt"])["from"] == second
+    # the session inserts two lines above with the vendored CLI: the file moves, and the CLI writes the sidecar
+    # back with the position as it was
+    inserted = "Added one.\nAdded two.\n"
+    world.track_edit("# Findings\n", "# Findings\n" + inserted)
+    moved = world.fp.read_text()
+    assert moved.index("Ship it.", moved.index("Ship it.") + 1) == second + len(inserted)
+    s = world.ok("status", world.fp)
+    assert s["store"]["comments"][0]["anchorAt"] == second, "a read never rewrites the sidecar: the position is the CLI's"
+    assert len(s["hunks"]) == 1, "the insertion is a pending change"
+    # the next write the host makes refreshes the position and leaves the anchor's fields as they were
+    r2 = world.ok("resolve", world.fp, {"commentId": c["id"], "on": True}, world.fence_of(s))
+    c2 = r2["store"]["comments"][0]
+    assert c2["anchorAt"] == second + len(inserted)
+    assert c2["anchor"] == c["anchor"]
+    assert moved[c2["anchorAt"]:c2["anchorAt"] + len("Ship it.")] == "Ship it."
+    s2 = world.ok("status", world.fp)
+    assert s2["store"]["comments"][0]["anchorAt"] == second + len(inserted), "status shows the moved position"
+    # what the webview paints: the engine with the stored position as the hint lands on the second line
+    loc = locate_anchor(moved, c2["anchor"], c2["anchorAt"])
+    assert loc == {"from": second + len(inserted), "to": second + len(inserted) + len("Ship it.")}
+    assert loc["from"] != moved.index("Ship it."), "the second line, not the first"
 
 
 def test_track_reply_answers_into_the_comment_and_status_derives_unsent(world):
@@ -907,7 +962,8 @@ def test_a_region_on_an_embedded_figure_carries_the_embed_anchor_and_src_and_a_s
     r = world.ok("comment", md, {"note": "Label the axes.", "anchor": anchor, "hintOffset": start,
                                  "target": {"kind": "image", "region": dict(REGION), "src": "fig.png"}}, NO_STORE)
     c = r["store"]["comments"][0]
-    assert set(c) == set(KEEP) | {"anchor", "target"}
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "target"}, "an anchored comment carries its stored position too"
+    assert c["anchorAt"] == start
     assert c["anchor"] == anchor, "placed like a passage comment, so every host shows it on the embed line"
     assert list(c["target"]) == ["kind", "region", "hash", "src"]
     assert (c["target"]["src"], c["target"]["region"]) == ("fig.png", STORED)
