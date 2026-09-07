@@ -469,6 +469,40 @@ class QuiesceLease(unittest.TestCase):
         self._audit(d, now - 3590, "down-failed", cmd="romp down")
         self.assertEqual(self._reconcile(d, self._backend(d), sid), [self.sb.BOOT_RESUME_NUDGE])
 
+    def test_a_manager_sigterm_note_after_the_down_row_still_hears_the_stop(self):
+        # the manager appends its own row, action manager-sigterm, right before it kills a kernel (fork
+        # PR #272): under `romp down` that row lands AFTER the CLI's `down` row, and a reader that took
+        # the newest row alone read it as no deliberate stop and lost the stop wording. The row is a
+        # mechanism note (the manager was the messenger), never an intent, so the walk back skips it.
+        # The exact order: down, then manager-sigterm with trigger cli-down, then the cut.
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000008"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 4 * 3600 - 240)
+        self._audit(d, now - 4 * 3600, "down", cmd="romp down")
+        self._audit(d, now - 4 * 3600 + 2, "manager-sigterm", kernel="main", pid=424242, reason="stop", trigger="cli-down")
+        self.assertEqual(sb.newest_down_stop(Path(d)), now - 4 * 3600)
+        q = self._reconcile(d, self._backend(d), sid)
+        self.assertEqual(len(q), 1)
+        self.assertIn("The stop was on purpose: romp down at ", q[0])
+        self.assertIn("(4 h later)", q[0])
+        self.assertTrue(sb.is_resume_nudge(q[0]))
+
+    def test_a_failed_down_under_a_manager_sigterm_note_is_still_no_deliberate_stop(self):
+        # the skip lands on the newest INTENT, whatever it is: down, then down-failed (the stop did not
+        # land), then a manager-sigterm from a later hand stop (trigger stop) reads as no deliberate
+        # stop, exactly as down-failed newest does; the skip never reaches past the failure to the down
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-000000000009"
+        now = int(time.time())
+        self._cut_session(d, sid, working_t=now - 7200)
+        self._audit(d, now - 3600, "down", cmd="romp down")
+        self._audit(d, now - 3590, "down-failed", cmd="romp down")
+        self._audit(d, now - 1800, "manager-sigterm", kernel="main", pid=424242, reason="stop", trigger="stop")
+        self.assertIsNone(self.sb.newest_down_stop(Path(d)))
+        self.assertEqual(self._reconcile(d, self._backend(d), sid), [self.sb.BOOT_RESUME_NUDGE])
+
     def test_a_down_then_an_up_then_a_later_cut_keeps_the_plain_notice(self):
         # `romp down` cut this turn; `romp up` resumed it (that boot wrote the machineCut boundary
         # and the resumed turn marked working); a crash cut THAT turn. The newest row is still the
@@ -530,7 +564,7 @@ class QuiesceLease(unittest.TestCase):
                         and sb.is_resume_nudge(sb.CRASH_RESUME_NUDGE))
         self.assertFalse(sb.is_resume_nudge("a user's own message") or sb.is_resume_nudge(None))
 
-    def test_newest_down_stop_reads_the_last_row_only(self):
+    def test_newest_down_stop_reads_the_newest_intent_only(self):
         sb = self.sb
         d = tempfile.mkdtemp()
         self.assertIsNone(sb.newest_down_stop(Path(d)), "no file")
@@ -541,6 +575,27 @@ class QuiesceLease(unittest.TestCase):
         with open(os.path.join(d, "restart-audit.jsonl"), "a") as f:
             f.write("not json\n")
         self.assertIsNone(sb.newest_down_stop(Path(d)), "a corrupt tail is nothing, never a raise")
+
+    def test_newest_down_stop_skips_manager_sigterm_notes_and_stops_at_the_newest_intent(self):
+        # the manager's rows (fork PR #272) in the orders the ledger sees them: one note per kernel it
+        # kills, after whichever intent row asked; every trigger the manager writes is a note
+        sb = self.sb
+        d = tempfile.mkdtemp()
+        self._audit(d, 1000, "down", cmd="romp down")
+        self._audit(d, 1001, "manager-sigterm", kernel="main", pid=424242, reason="stop", trigger="cli-down")
+        self.assertEqual(sb.newest_down_stop(Path(d)), 1000, "the manager's note of its SIGTERM is not an intent")
+        self._audit(d, 1001, "manager-sigterm", kernel="aux", pid=424243, reason="stop", trigger="cli-down")
+        self.assertEqual(sb.newest_down_stop(Path(d)), 1000, "one note per kernel: every one skipped")
+        self._audit(d, 1003, "down-failed", cmd="romp down")
+        self.assertIsNone(sb.newest_down_stop(Path(d)), "down-failed newest: no deliberate stop")
+        self._audit(d, 1004, "manager-sigterm", kernel="main", pid=424244, reason="stop", trigger="stop")
+        self.assertIsNone(sb.newest_down_stop(Path(d)), "the skip lands on the failure, never past it")
+        self._audit(d, 1005, "refresh")
+        self._audit(d, 1006, "manager-sigterm", kernel="main", pid=424245, reason="restart", trigger="restart-all")
+        self.assertIsNone(sb.newest_down_stop(Path(d)), "a refresh under its note hides the down, as before")
+        d2 = tempfile.mkdtemp()
+        self._audit(d2, 1, "manager-sigterm", kernel="main", pid=424246, reason="restart", trigger="restart")
+        self.assertIsNone(sb.newest_down_stop(Path(d2)), "a note with no intent beneath it is nothing")
 
     def test_the_thread_popover_and_the_wake_reorder_match_every_nudge(self):
         # two readers compared the queue head / the transcript text to BOOT_RESUME_NUDGE by

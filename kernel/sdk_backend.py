@@ -2660,17 +2660,23 @@ def is_resume_nudge(text) -> bool:
 
 def newest_down_stop(state_dir: Path) -> int | None:
     """The time of the `romp down` that stopped the previous kernel, when the newest restart-audit
-    row is one (`romp down` files {t, action: 'down'} there before the supervisor stop; the marker it
-    also leaves is cleared by the deliberate start, so at boot the row is what remains). None when
-    the newest row is anything else: a refresh, a p2p update, or no row at all (a crash respawn).
-    The caller still checks the row is newer than the cut turn's own state stamp, so a `down` from
-    days ago cannot be blamed for a later crash's cut."""
+    INTENT row is one (`romp down` files {t, action: 'down'} there before the supervisor stop; the
+    marker it also leaves is cleared by the deliberate start, so at boot the row is what remains).
+    None when the newest intent is anything else: a refresh, a p2p update, a `down-failed`, or no
+    row at all (a crash respawn). Rows with action `manager-sigterm` are skipped on the way back:
+    the manager appends one right before it kills a kernel (fork PR #272; `trigger` names what set
+    it off), so under `romp down` it lands AFTER the CLI's `down` row. It says the manager was the
+    messenger, never who asked, and a reader that stopped at it read every `romp down` as no
+    deliberate stop. The caller still checks the row is newer than the cut turn's own state stamp,
+    so a `down` from days ago cannot be blamed for a later crash's cut."""
     try:
         for line in _lines_from_end(Path(state_dir) / "restart-audit.jsonl"):
             line = line.strip()
             if not line:
                 continue
             rec = json.loads(line)
+            if isinstance(rec, dict) and rec.get("action") == "manager-sigterm":
+                continue                                          # a mechanism note, not an intent
             if isinstance(rec, dict) and rec.get("action") == "down" and isinstance(rec.get("t"), int):
                 return rec["t"]
             return None
@@ -8181,7 +8187,8 @@ class SdkBackend:
                     # newest mark: a mark written in the stop window between the row and the SIGTERM
                     # is still this turn, while a row older than the turn belongs to an earlier stop
                     # (this boot is a crash respawn or a refresh), and a row followed by any other
-                    # row, `down-failed` included, is no stop at all (newest_down_stop)
+                    # intent row, `down-failed` included, is no stop at all; the manager's own
+                    # `manager-sigterm` notes are skipped on the way back (newest_down_stop)
                     start_t = cut_turn_start(self.state_dir, sid) if cut else None
                     stop_t = down_t if (down_t is not None and start_t is not None and down_t >= start_t) else None
                     nudge = down_resume_nudge(stop_t, boot_t) if stop_t is not None else BOOT_RESUME_NUDGE
