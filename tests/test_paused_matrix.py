@@ -76,7 +76,7 @@ class _Base(unittest.TestCase):
         jd._PEER_ASK_CACHE[:] = [None, ({}, {})]
         km._POSTAL_WAIT_CACHE[:] = [None, None]
         km._SESSION_STAMP_CACHE.clear()
-        km._LIFT_GATE.clear()
+        km._lift_seen.clear()      # the awaiting-lift gate is upstream's _lift_seen (2026-09-07 upstream fold)
         km._autonudge_cache.clear()
         km._bgall_cache.clear()
         km._bgtasks_cache.clear()

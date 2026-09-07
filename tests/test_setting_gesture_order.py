@@ -647,6 +647,22 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
         self.assertEqual(frames[0]["setting"], "judge-model")
         self.assertEqual(frames[0]["storedGt"], T_NEW)
         self.assertEqual(frames[0]["kept"], "fable", "the kept value rides along (cheap: one store read)")
+        self.assertEqual(frames[0]["gt"], T_OLD, "the refused gesture's own stamp rides the frame — the "
+                         "dashboard folds N kernels' refusals of one flush by it")
+
+    def test_the_frame_echoes_the_refused_gesture_without_its_stamp(self):
+        # the toast's Apply anyway re-issues exactly this echo with a FRESH stamp (PR #879 follow-up):
+        # the refused message rides back minus its gt, so a re-issue can never reuse the stale one
+        self.dispatch_rec({"type": "setJudgeModel", "model": "fable", "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "opus", "gt": T_OLD})
+        frames = [m for m in sent if m.get("type") == "settingStale"]
+        self.assertEqual(frames[0]["gesture"], {"type": "setJudgeModel", "model": "opus"})
+        self.assertNotIn("gt", frames[0]["gesture"], "the stale stamp is dropped on purpose")
+        # a boolean toggle echoes the same way
+        self.dispatch_rec({"type": "setAutoNudge", "enabled": False, "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setAutoNudge", "enabled": True, "gt": T_OLD})
+        frames = [m for m in sent if m.get("type") == "settingStale"]
+        self.assertEqual(frames[0]["gesture"], {"type": "setAutoNudge", "enabled": True})
 
     def test_every_gt_gated_setting_answers(self):
         cases = [({"type": "setAutoNudge", "enabled": False}, {"type": "setAutoNudge", "enabled": True},
@@ -683,13 +699,141 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
             self.assertEqual(len(frames), 1, store)
             self.assertEqual(frames[0]["setting"], store)
             self.assertEqual(frames[0]["storedGt"], T_NEW)
+            self.assertEqual(frames[0]["gt"], T_OLD, store)
             self.assertEqual(frames[0]["kept"], kept, store)
+            self.assertEqual(frames[0]["gesture"], older, "the refused message echoes back minus its gt (%s)" % store)
 
     def test_no_frame_for_invalid_or_unstamped(self):
         sent = self.dispatch_rec({"type": "setJudgeModel", "model": "gpt-99", "gt": T_NEW})
         self.assertEqual(sent, [], "a refused VALUE is not a stale gesture — no frame")
         sent = self.dispatch_rec({"type": "setJudgeModel", "model": "haiku"})
         self.assertEqual(sent, [], "the unstamped compat path applies — no frame")
+
+
+class VersionReportsEveryStoredStamp(_Base):
+    """/version carries `settingsGt`: every gt-gated store's last-applied stamp, keyed by the store
+    name the settingStale frame uses (PR #879 follow-up). The gear reads /version on every open and
+    stamps its next gesture at max(Date.now(), gt + 1) — the maintainer's proposed shape — instead of
+    trusting the device's wall clock. Integers only: the route is auth-exempt."""
+
+    def test_a_fresh_install_reports_every_store_at_zero(self):
+        gts = km._version_info()["settingsGt"]
+        self.assertEqual(set(gts), set(km._GT_STORES), "one key per gt-gated store, no more, no less")
+        self.assertEqual(len(km._GT_STORES), 15, "five toggles/modes + nine judge-tier stores + the fork's user-todos switch")
+        self.assertEqual(set(gts.values()), {0}, "nothing applied yet reads 0 — nothing to outrank")
+        self.assertEqual(json.loads(json.dumps(gts)), gts, "plain JSON — ints, no paths, nothing to redact")
+
+    def test_each_setter_s_stamp_is_reported_under_its_store_and_nothing_else_moves(self):
+        self.assertEqual(km._set_judge_model("fable", gt=T_NEW), T_NEW)
+        self.assertEqual(km._set_auto_nudge(False, gt=T_OLD), T_OLD)
+        self.assertEqual(km._set_compact_suggest(True, gt=T_NEW + 5), T_NEW + 5)
+        self.assertEqual(km._set_file_editing(True, gt=T_NEW + 6), T_NEW + 6)
+        self.assertEqual(km._set_update_mode("auto", gt=T_NEW + 7), T_NEW + 7)
+        self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW + 8), T_NEW + 8)
+        self.assertEqual(km._set_comment_fast("on", gt=T_NEW + 9), T_NEW + 9)
+        self.assertEqual(km._set_user_todos(True, gt=T_NEW + 10), T_NEW + 10)
+        gts = km._version_info()["settingsGt"]
+        want = {"judge-model": T_NEW, "auto-nudge": T_OLD, "compact-suggest": T_NEW + 5,
+                "file-editing": T_NEW + 6, "update-mode": T_NEW + 7, "thinking-summaries": T_NEW + 8,
+                "comment-fast": T_NEW + 9, "user-todos": T_NEW + 10}
+        for store, gt in want.items():
+            self.assertEqual(gts[store], gt, store)
+        for store in set(km._GT_STORES) - set(want):
+            self.assertEqual(gts[store], 0, "%s was never set and stays 0" % store)
+        # the two checkboxes that share auto-nudge.json keep separate clocks in the report too
+        self.assertNotEqual(gts["auto-nudge"], gts["compact-suggest"])
+
+    def test_an_unstamped_apply_reports_its_arrival_time(self):
+        before = int(time.time() * 1000)
+        km._set_index_effort("high")
+        got = km._version_info()["settingsGt"]["index-effort"]
+        self.assertGreaterEqual(got, before, "the compat path's arrival stamp is what the store holds")
+
+    def test_the_frames_setting_names_are_exactly_the_report_s_keys(self):
+        # the completeness cross-check: every store a settingStale frame can name is reported, so the
+        # gear's clock (which learns from BOTH) has one vocabulary
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        newer = [{"type": "setAutoNudge", "enabled": False}, {"type": "setCompactSuggest", "enabled": True},
+                 {"type": "setFileEditing", "enabled": True}, {"type": "setUpdateMode", "mode": "auto"},
+                 {"type": "setThinkingSummaries", "enabled": True}, {"type": "setJudgeModel", "model": "fable"},
+                 {"type": "setIndexModel", "model": "fable"}, {"type": "setJudgeEffort", "effort": "high"},
+                 {"type": "setIndexEffort", "effort": "high"}, {"type": "setDistillModel", "model": "haiku"},
+                 {"type": "setDistillEffort", "effort": "high"}, {"type": "setCommentModel", "model": "haiku"},
+                 {"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentFast", "fast": "on"},
+                 {"type": "setUserTodos", "enabled": True}]
+        older = [{"type": "setAutoNudge", "enabled": True}, {"type": "setCompactSuggest", "enabled": False},
+                 {"type": "setFileEditing", "enabled": False}, {"type": "setUpdateMode", "mode": "off"},
+                 {"type": "setThinkingSummaries", "enabled": False}, {"type": "setJudgeModel", "model": "opus"},
+                 {"type": "setIndexModel", "model": "opus"}, {"type": "setJudgeEffort", "effort": "low"},
+                 {"type": "setIndexEffort", "effort": "low"}, {"type": "setDistillModel", "model": "triage"},
+                 {"type": "setDistillEffort", "effort": "low"}, {"type": "setCommentModel", "model": "session"},
+                 {"type": "setCommentEffort", "effort": "session"}, {"type": "setCommentFast", "fast": "session"},
+                 {"type": "setUserTodos", "enabled": False}]
+        with contextlib.redirect_stderr(io.StringIO()):
+            for n, o in zip(newer, older):
+                km.Handler._dispatch_ws(types.SimpleNamespace(), dict(n, gt=T_NEW), client)
+                km.Handler._dispatch_ws(types.SimpleNamespace(), dict(o, gt=T_OLD), client)
+        named = {m["setting"] for m in sent if m.get("type") == "settingStale"}
+        self.assertEqual(named, set(km._version_info()["settingsGt"]), "frames and the report share one vocabulary")
+        self.assertEqual(len(named), 15)
+
+    def test_the_forks_user_todos_switch_is_taught_like_every_other_store(self):
+        # the fork's per-install switch is gt-gated (_set_user_todos) and the gear stamps it, so a dashboard
+        # that never learned its stamp from /version had its first toggle stood down after a device with a
+        # fast clock toggled it, the one store outside the mechanism (fold follow-up, 2026-09-07)
+        self.assertIn("user-todos", km._GT_STORES)
+        self.assertEqual(km._version_info()["settingsGt"]["user-todos"], 0, "never set: nothing to outrank")
+        self.assertEqual(km._set_user_todos(True, gt=T_NEW), T_NEW)
+        self.assertEqual(km._version_info()["settingsGt"]["user-todos"], T_NEW, "the switch file's own stamp")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(km._set_user_todos(False, gt=T_OLD), "an older gesture stands down, as for every store")
+        self.assertEqual(km._set_user_todos(False, gt=T_NEW + 1), T_NEW + 1, "a gesture stamped above the taught value applies")
+        self.assertEqual(km._version_info()["settingsGt"]["user-todos"], T_NEW + 1)
+
+
+class ASkewedClockCannotLockTheStore(_Base):
+    """The maintainer's scenario on #879: a device whose clock runs ahead stamps a store into the
+    future, and every correctly-clocked device is refused until the skew elapses — no gesture from
+    them can win. With the frame echoing the refused gesture and reporting the stamp it lost to, the
+    dashboard re-issues the same pick stamped max(now, storedGt + 1): applied, propagated with that
+    stamp, no frame. The re-issue is a new user gesture — new information, not a clock heuristic."""
+
+    def dispatch_rec(self, msg):
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        with contextlib.redirect_stderr(io.StringIO()):
+            km.Handler._dispatch_ws(types.SimpleNamespace(), msg, client)
+        return sent
+
+    def test_the_echoed_gesture_re_issued_above_the_stored_stamp_wins(self):
+        self.dispatch_rec({"type": "setJudgeModel", "model": "fable", "gt": T_NEW})   # the fast clock's pick
+        self.propagated.clear()
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "opus", "gt": T_OLD})   # the honest clock's, refused
+        frame = [m for m in sent if m.get("type") == "settingStale"][0]
+        self.assertEqual(frame["storedGt"], T_NEW)
+        self.assertEqual(km.jd._state_str("judge-model", ""), "fable", "refused: the store still holds the future stamp's pick")
+        self.assertEqual(self.propagated, [], "a refusal fans nothing out")
+        # what the toast's Apply anyway sends: the echo plus max(Date.now(), storedGt + 1) — the
+        # device's clock says T_OLD, so the learned stamp wins
+        retry = dict(frame["gesture"], gt=max(T_OLD, frame["storedGt"] + 1))
+        sent = self.dispatch_rec(retry)
+        self.assertEqual([m for m in sent if m.get("type") == "settingStale"], [], "the re-issue is not refused")
+        self.assertEqual(km.jd._state_str("judge-model", ""), "opus", "the correctly-clocked device's pick applied")
+        self.assertEqual(km._judge_state_gt("judge-model"), T_NEW + 1, "the store holds the re-issue's stamp")
+        self.assertEqual(self.propagated[-1], {"judgeModel": "opus", "gt": T_NEW + 1},
+                         "…and the fan-out carries it, so every receiver orders the same way")
+        self.assertEqual(km._version_info()["settingsGt"]["judge-model"], T_NEW + 1)
+
+    def test_a_toggle_climbs_the_same_way(self):
+        self.dispatch_rec({"type": "setFileEditing", "enabled": False, "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setFileEditing", "enabled": True, "gt": T_OLD})
+        frame = [m for m in sent if m.get("type") == "settingStale"][0]
+        self.assertFalse(km._file_editing_on())
+        sent = self.dispatch_rec(dict(frame["gesture"], gt=max(T_OLD, frame["storedGt"] + 1)))
+        self.assertEqual(sent, [])
+        self.assertTrue(km._file_editing_on(), "the re-issued consent applied")
+        self.assertEqual(km._setting_stored_gt("file-editing"), T_NEW + 1)
 
 
 class WiringPins(unittest.TestCase):
@@ -716,10 +860,13 @@ class WiringPins(unittest.TestCase):
         self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
 
     def test_every_stood_down_branch_tells_the_delivering_socket(self):
-        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 15,
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client, msg)"), 15,
                                 "all fifteen gt-gated branches (six toggles + nine judge tiers; the "
                                 "user-todos switch is this fork's) answer the delivering socket on a "
-                                "stand-down")
+                                "stand-down, handing over the refused message so the frame can echo it")
+        self.assertNotIn("_tell_stale_gesture(client)\n", self.src,
+                         "no branch still calls the echo-less form — the toast's Apply anyway "
+                         "re-issues what the frame echoes")
 
     def test_the_docstring_names_all_three_none_causes(self):
         doc = km._set_judge_state.__doc__ or ""
@@ -743,6 +890,175 @@ class WiringPins(unittest.TestCase):
         self.assertNotIn(".write_text(", src, "no raw write_text — a torn write must not tear the store")
         self.assertLess(src.index('fname + ".gt"'), src.index("_atomic_write(jd.STATE / fname,"),
                         "the sidecar publishes FIRST — a crash between the two errs toward stand-down")
+
+
+class AutoNudgeTurnOnActsNow(_Base):
+    """Turning Auto Nudge on acts in the same handler call instead of waiting for the pusher's
+    next pass — and ONLY a real apply does: a stale stamp and the gesture's own echo carry no
+    new information, so neither fires a tick (T208's setCompactSuggest arm has the same shape).
+    #846 inserted that arm between the auto-nudge setter and its act-now tick, which moved the
+    tick onto the new arm without changing the tick line — a source pin alone would not have
+    noticed, so the handler is driven here."""
+
+    def setUp(self):
+        super().setUp()
+        self.ticks = []
+        km._auto_nudge_tick = lambda *a, **k: self.ticks.append((a, k))   # restored by _Base.tearDown
+
+    def test_a_real_turn_on_ticks_once_without_the_dead_wait_sweep(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
+        self.assertEqual(len(self.ticks), 1, "a real apply acts now")
+        (now, tmux), kw = self.ticks[0]
+        self.assertIsInstance(now, int)
+        self.assertEqual(kw, {"run_dead_wait": False}, "the WS tick never runs the one-observer sweep")
+        self.assertEqual(tmux, {}, "the tick takes the listing the handler fetched (_tmux_sessions)")
+
+    def test_a_stale_stamp_and_an_echo_fire_no_tick(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})
+        self.dispatch({"type": "setAutoNudge", "enabled": False, "gt": T_OLD})   # stale: stands down
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})    # echo: the same pick again
+        self.assertEqual(len(self.ticks), 1, "only the applied gesture ticked")
+
+    def test_an_unstamped_toggle_applies_and_ticks(self):
+        self.dispatch({"type": "setAutoNudge", "enabled": True})                 # older dashboard, no gt
+        self.assertEqual(len(self.ticks), 1)
+
+    def test_a_real_turn_off_applies_and_fires_no_tick(self):
+        # turning OFF is a real apply too, with nothing to act on: the tick is a no-op when off, so
+        # firing it would only fork the session listing on the WS thread for nothing
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_OLD})
+        self.dispatch({"type": "setAutoNudge", "enabled": False, "gt": T_NEW})
+        self.assertFalse(km._auto_nudge_on(), "the turn-off applied")
+        self.assertEqual(len(self.ticks), 1, "only the turn-on ticked")
+
+
+class WsActNowTickIsWrapped(_Base):
+    """The act-now tick runs on the WS handler thread, and the reader loop (Handler._ws) re-raises
+    OSError as a socket failure whose outer handler tears the connection down silently — so an
+    OSError out of the pass head (the session-listing fork, a store read) closed the dashboard's
+    socket with no log line: since #846 for setCompactSuggest, for setAutoNudge once #943 restored
+    its tick. Both arms now tick through one wrap (_ws_act_now_tick) that logs the traceback the way
+    the pusher's own wrap does. The tick never writes to the delivering socket (its only push is
+    _push_soon(), a wake flag), which is what makes catching everything there safe: nothing caught
+    is that socket's own failure. Driven through the real dispatch, the incident's shape."""
+
+    ARMS = ({"type": "setAutoNudge", "enabled": True, "gt": T_NEW},
+            {"type": "setCompactSuggest", "enabled": True, "gt": T_NEW})
+
+    def _dispatch_with_failing_tick(self, exc):
+        def boom(*a, **k):
+            raise exc
+        km._auto_nudge_tick = boom                                # restored by _Base.tearDown
+        out = []
+        for msg in self.ARMS:
+            client = {"send": lambda s: None, "alive": True}
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                try:
+                    km.Handler._dispatch_ws(types.SimpleNamespace(), msg, client)
+                except OSError:
+                    self.fail("an OSError escaped _dispatch_ws (%s) — the reader loop re-raises it as a "
+                              "socket failure and silently tears the WebSocket down" % msg["type"])
+            self.assertTrue(client["alive"], "%s: the delivering client survives the failed tick" % msg["type"])
+            out.append(err.getvalue())
+        return out
+
+    def test_a_failing_act_now_tick_is_logged_not_a_socket_failure(self):
+        errs = self._dispatch_with_failing_tick(OSError(28, "No space left on device"))
+        for msg, err in zip(self.ARMS, errs):
+            self.assertIn("auto-nudge", err, "%s: the failure is loud and names the tick" % msg["type"])
+            self.assertIn("OSError", err, "%s: the traceback is logged, as the pusher's wrap logs it" % msg["type"])
+            self.assertIn("No space left on device", err)
+        km._autonudge_cache.clear()
+        self.assertTrue(km._auto_nudge_on(), "the flag write preceded the tick and stands")
+        self.assertTrue(km._compact_suggest_on(), "…for both arms")
+
+    def test_any_failure_of_the_tick_is_caught_the_same_way(self):
+        # the pusher's wrap catches Exception; so does this one — a TypeError in the pass head is no
+        # more a socket failure than an OSError is
+        errs = self._dispatch_with_failing_tick(RuntimeError("a bad store record"))
+        for err in errs:
+            self.assertIn("auto-nudge", err)
+            self.assertIn("RuntimeError: a bad store record", err)
+
+
+SF_SID = "11111111-2222-4333-8444-555555555555"   # the single-flight tests' one fake alive session
+
+
+class AutoNudgeTickIsSingleFlight(_Base):
+    """_auto_nudge_tick has two concurrent entry points — the pusher's periodic pass (0.5 s
+    backstop) and the setAutoNudge arm's act-now pass on the WS handler thread — and the nudge
+    send has no claim-before-send (_compact_suggest_tick's latch covers only its own seam), so
+    two passes that overlap each derive the same due goal and inject the same nudge twice into
+    one session. The tick is single-flight (_AUTO_NUDGE_TICK_LOCK): a pass that finds another in
+    flight stands down whole, and loses nothing — the flag write precedes the turn-on's tick, so
+    a pass found in flight already reads the turned-on world, and the pusher re-runs on its own
+    cadence. Driven with the REAL tick; the per-session walk (which owns the send) is a recorder
+    that holds the first pass mid-send until the overlapping entry has been and gone, so the
+    interleave is deterministic, not a sleep."""
+
+    def setUp(self):
+        super().setUp()
+        km._auto_nudge_tick = self._saved["_auto_nudge_tick"]      # the real tick is the subject here
+        self._also = {n: getattr(km, n) for n in
+                      ("_alive_sessions", "_wait_for_graph", "_auto_nudge_session", "_compact_suggest_tick",
+                       "_debt_backstop_tick", "_dead_wait_sweep", "_awaiting_wake_outcomes", "_push_soon")}
+        self.sends = []                                            # the `now` of every pass that reached the send
+        self.entered, self.release = _real_threading.Event(), _real_threading.Event()
+        km._alive_sessions = lambda now, tmux: [{"sid": SF_SID, "path": "/nonexistent.jsonl"}]
+        km._wait_for_graph = lambda now, alive_ids: {}
+        km._auto_nudge_session = self._walk
+        km._compact_suggest_tick = lambda sid, tm, now: False
+        km._debt_backstop_tick = lambda now: None
+        km._dead_wait_sweep = lambda alive_ids, nudged, now: None
+        km._awaiting_wake_outcomes = lambda now, alive_ids: False
+        km._push_soon = lambda: None
+
+    def tearDown(self):
+        self.release.set()                                         # never leave a held pass behind
+        for n, v in self._also.items():
+            setattr(km, n, v)
+        super().tearDown()
+
+    def _walk(self, s, now, tmux, nudged, waitfor, alive_ids=None, wake_only=False):   # #936 adds the kwarg (toggle off → wake-only walk)
+        """The per-session walk standing in for the SEND: the first pass to reach it holds here,
+        mid-send, until the test releases it; every later pass records and returns at once."""
+        self.sends.append(now)
+        if len(self.sends) == 1:
+            self.entered.set()
+            self.release.wait(5)
+        return True
+
+    def _pass_in_flight(self, now, **kw):
+        t = _real_threading.Thread(target=km._auto_nudge_tick, args=(now, {}), kwargs=kw, daemon=True)
+        t.start()
+        self.assertTrue(self.entered.wait(5), "the first pass reached its send")
+        return t
+
+    def test_the_ws_arm_meeting_the_pusher_mid_pass_sends_nothing_more(self):
+        t = self._pass_in_flight(1000)                                          # the pusher's shape
+        self.dispatch({"type": "setAutoNudge", "enabled": True, "gt": T_NEW})   # a real apply: its act-now tick
+        self.release.set()
+        t.join(5)
+        self.assertEqual(self.sends, [1000], "one nudge, from the pass already in flight")
+
+    def test_the_pusher_meeting_the_ws_pass_mid_pass_stands_down_and_runs_next_cycle(self):
+        t = self._pass_in_flight(1000, run_dead_wait=False)                     # the WS arm's shape
+        km._auto_nudge_tick(1001, {})                                           # the pusher's pass: stands down
+        self.release.set()
+        t.join(5)
+        self.assertEqual(self.sends, [1000], "the overlapping pass sent nothing")
+        km._auto_nudge_tick(1002, {})                                           # its next cycle
+        self.assertEqual(self.sends, [1000, 1002], "a stood-down pass is retried next cycle, never lost")
+
+    def test_a_pass_that_raises_releases_the_guard(self):
+        self.release.set()                                                      # nothing holds in this test
+        km._alive_sessions = lambda now, tmux: 1 / 0
+        with self.assertRaises(ZeroDivisionError):                              # propagates as before (the
+            km._auto_nudge_tick(1000, {})                                       # pusher loop catches it)
+        km._alive_sessions = lambda now, tmux: [{"sid": SF_SID, "path": "/nonexistent.jsonl"}]
+        km._auto_nudge_tick(1001, {})
+        self.assertEqual(self.sends, [1001], "the guard is released on every exit, a raise included")
 
 
 class ThinkingSummariesSetting(_Base):

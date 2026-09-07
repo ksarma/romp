@@ -44,8 +44,8 @@ def echo_text_key(text) -> str:
 
 
 class SessionBackend(ABC):
-    # True when busy() may be overruled by the cached transcript parse, so the pusher must keep that parse
-    # current for the sids it holds parked ops for (_refresh_parked_parses); a backend whose busy() is the
+    # True when busy() may be overruled by the cached transcript parse, so the parked-op drain must keep that
+    # parse current for a sid before it reads busy() (_refresh_parked_parse); a backend whose busy() is the
     # whole truth (SDK, Codex) leaves it False and its parked sids are never re-parsed on its account.
     corroborates_with_transcript = False
 
@@ -126,20 +126,64 @@ class SessionBackend(ABC):
         + its inputs() generator). The kernel then hands composer sends straight to send() the instant they
         arrive (the user 2026-07-17, who wanted them in as soon as possible), instead of parking them itself.
         False (default) means the backend has no such queue, so the kernel holds sends while a turn runs and
-        merges them into one message at turn end (tmux). Slash-command drive ops (/compact, /model, /effort)
-        still park in the kernel FIFO on BOTH backends to preserve press-order — this flag governs plain text
-        sends only."""
+        merges them into one message at turn end (tmux). Slash-command drive ops (/compact, /effort, …) still
+        park in the kernel FIFO on BOTH backends to preserve press-order — this flag governs plain text sends
+        only; a model pick has its own capability, model_switches_live."""
+        return False
+
+    def model_switches_live(self) -> bool:
+        """True if a model pick may be applied to a RUNNING session mid-turn — then the kernel fires it into
+        an open turn instead of parking it in the FIFO until the turn ends (PR #923). False (default) means
+        the pick waits for the turn: tmux TYPES /model into the pane; Codex's set_model lands at the next
+        turn_start while its sends steer the live turn, so a send typed after a mid-turn pick would reach
+        the OLD model first; and the SDK, whose set_model does ride the CLI's control channel, still says
+        False because the CLI mis-parents a mid-turn switch's transcript breadcrumbs and orphans the rest of
+        the turn (see SdkBackend.model_switches_live for the evidence and the flip conditions). Deliberately
+        distinct from forwards_sends: forwarding a plain send says nothing about how a model change applies."""
         return False
 
     @abstractmethod
-    def set_model(self, sid: str, value: str) -> bool: ...
+    def set_model(self, sid: str, value: str) -> bool:
+        """Switch the session's model. `value` is a family alias (opus — the CLI resolves it to the newest),
+        an explicit version id (a pin), or 'default'. Every surface lands here — the statusline picker, the
+        timeline lane menu, a '/model X' typed into the composer or sent by `romp send` (kernel
+        _route_meta_command) — so the registry and the remembered defaults never drift from what the CLI
+        runs. The SDK persists the value and applies it LIVE over the SDK's set_model control request, no
+        reconnect; a refusal reverts every layer (SdkBackend.set_model). tmux types the CLI's own '/model X'
+        into the pane and presses Enter once more to accept the confirmation the CLI asks for
+        (TmuxBackend.set_model, `_tmux_send(model_cmd=True)`): the dashboard cannot press it in the pane,
+        and the next send's clear-guard would refuse to paste over the open dialog.
+        False when the backend can tell the change did not land, so the kernel can be loud instead of
+        pretending. The SDK and Codex refuse an unknown sid (no registry row, no session); Codex refuses a
+        model outside its engine; the SDK's own writes are optimistic (True at once, every layer reverted
+        when the CLI refuses the value live — SdkSession._do_set_model). The tmux side cannot tell: the
+        command is pasted into the pane from a daemon thread whose delivery failures land on stderr
+        (`_tmux_send`), and a bad value is answered by the CLI in the pane, so TmuxBackend.set_model
+        returns True unconditionally and the caller vouches for the value first — _route_meta_command
+        checks it against the kernel's catalog (_vouched_model) and the pickers offer only catalog rows;
+        POST /new passes its model through verbatim by design, so a typo there reaches the pane and the
+        CLI answers it there."""
 
     @abstractmethod
     def set_mode(self, sid: str, mode: str) -> bool:
         """Set the permission mode (auto/default/acceptEdits/plan/…)."""
 
     @abstractmethod
-    def set_effort(self, sid: str, value: str) -> bool: ...
+    def set_effort(self, sid: str, value: str) -> bool:
+        """Set the reasoning effort (one of the kernel's effort choices, 'low' through 'ultracode'). The two
+        backends land it differently from each other and from set_model: effort is a connect-time CLI flag
+        (--effort) with no SDK control request, so the SDK persists the value and RECONNECTS to apply it —
+        at once if the session is idle, at the end of the turn if it's busy — with `effortPending` driving
+        the badge's switching-dots and the chat's "Reloading session…" notice (SdkBackend.set_effort). tmux
+        types '/effort X' into the pane, which the TUI applies in place: no reconnect, no confirmation, so
+        no second Enter (TmuxBackend.set_effort). False when the backend can tell the change did not land,
+        so the kernel can be loud instead of pretending: the SDK and Codex refuse an unknown sid (no
+        registry row, no session); the SDK also refuses a value outside EFFORT_LEVELS, Codex a level its
+        engine lacks. tmux cannot tell (it types the command; the TUI answers a bad value in the pane), so
+        TmuxBackend.set_effort returns True unconditionally and the
+        caller vouches for the value first — _route_meta_command checks _EFFORT_VALUES and the picker
+        offers only those; POST /new passes its effort through verbatim by design, so a typo there reaches
+        the pane and the CLI answers it there."""
 
     @abstractmethod
     def set_fast(self, sid: str, value: str) -> bool:

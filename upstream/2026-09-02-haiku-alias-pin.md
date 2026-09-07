@@ -13,3 +13,5 @@ Two small follow-ups the maintainer named while merging the judge thinking lever
 Status detail (migrated from the table): **offered** — their PR #948 (2026-09-06), label `fix`
 
 MERGED 2026-09-06T19:50Z as their PR #948 (merge `1bc4d823`; head `e6edcab8`), as offered. The once-per-process line for an envelope without `modelUsage` is its own entry (`note-served-model-no-modelusage`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #948 is in the folded range).
