@@ -1391,6 +1391,11 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `anchor-map-rendered-points.test.ts` pins a table nested in a list item as a hole with the
   table's own extent, the block that begins at an offset holding the point where one block ends
   as the next begins, and the `white-space: pre-wrap` a label of spaces or tabs alone carries;
+  `anchor-map-block-edges.test.ts` pins the blank line a token's raw swallows (under an ATX or a
+  setext heading, an hr, a blockquote) as unpainted like the one under a paragraph, the end of a
+  file whose last block is a heading, a deletion at the first character of a nested code fence or
+  table sitting after the item text before the hole, and the change-marks section's statement
+  that Rendered leaves only an unplaceable change to its card;
   `anchor-map-boundary-points.test.ts` pins the boundary rule over marked's output in Raw and
   Rendered under both paint orders: a deletion right after or right before an insertion sits
   outside the insertion's mark, at a row's end too, while a deletion inside the insertion still
@@ -1415,7 +1420,11 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   and opens no tab, by click and by Enter and under the chat pane's capture-phase link handler,
   the toggle withheld while the editor holds the body, and the generic "not shown" title on a
   deletion inside a code fence; `file-comments-reveal-title.test.ts`: Reveal's title with the
-  marks off, in both views, with and without a line number.
+  marks off, in both views, with and without a line number; `file-comments-reveal-landing.test.ts`:
+  the cue a Reveal paints on the Raw row it centred when the view shows no mark of ours there (the
+  marks off; a batch the Raw painter refused), one row at a time and none beside a mark, its
+  lifetime by event (a paint pass, the next Reveal, the panel closing), and a file the viewer
+  shows only Raw.
   `tests/test_file_review_plan_rendered_deletions.py` holds this plan's Rendered-deletion
   passages (the surface paragraph, the Slice 2 line, the Risks bullet, the not-in-v1 list) to the
   painter's source; `tests/test_file_review_plan_inline_display.py` holds the follow-on note's

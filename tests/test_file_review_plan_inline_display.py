@@ -137,10 +137,12 @@ class TheTestsSectionNamesTheFollowOnsTests(unittest.TestCase):
         for rel in ("ui/webview/anchor-map.test.ts",
                     "ui/webview/anchor-map-rendered-points.test.ts",
                     "ui/webview/anchor-map-whitespace-point-browser.test.ts",
+                    "ui/webview/anchor-map-block-edges.test.ts",
                     "ui/webview/file-comments-changes-review.test.ts",
                     "ui/webview/file-comments-inline-toggle.test.ts",
                     "ui/webview/file-comments-inline-review.test.ts",
                     "ui/webview/file-comments-reveal-title.test.ts",
+                    "ui/webview/file-comments-reveal-landing.test.ts",
                     "ui/webview/file-comments-rendered-point-browser.test.ts",
                     "tests/test_file_review_plan_rendered_deletions.py",
                     "tests/test_file_review_plan_inline_display.py"):
