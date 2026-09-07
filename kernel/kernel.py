@@ -7571,7 +7571,7 @@ def _retry_paused_on():
 _RETRY_PAUSE_SEQ = [0]
 
 
-def _set_retry_paused(paused, reason="", bills=""):
+def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
     # Record WHEN a pause began: the auto-resume floor. Only a successful response AFTER this instant proves
     # the API recovered (an old success from before the outage doesn't). No `t` when un-pausing.
     # `reason` (the user 2026-07-14): "spend" when a monthly spend cap auto-engaged the pause, so the card
@@ -7581,16 +7581,25 @@ def _set_retry_paused(paused, reason="", bills=""):
     # "login" or "key" (_bills_login of its live row). The lift rule reads it (_auto_resume_retry): a cap
     # is on ONE account, so only a session on that billing can show it serving again.
     # `liftedAt` / `supersedes` (review round 3, 2026-09-07): un-pausing a SPEND pause, by the lift rule or
-    # by the user's Resume, records the instant and the floor (`t`) of the pause it cleared. That is the
-    # spend engage's stand-down rule (_spend_capped_session): a spendLimit record older than liftedAt was
-    # already outranked by the evidence that lifted the pause, and romp never clears such a record on its
-    # own (a spend cap is on-you: _fire_api_retry sends no retry; only a human prompt to the capped session
-    # clears _api_error), so re-engaging on it put the pause back the cycle after every lift, alternating
-    # at the streaming session's output cadence and settling ON once it idled. The memory rides every later
-    # write, paused or not, until a newer spend ruling replaces it: a limit pause that engages and lifts in
-    # between must not forget it. A limit or manual pause's un-pause records nothing (its evidence, the
-    # usage report or a transcript mtime, says nothing about a spend record), and an un-pause over an
-    # already-unpaused file keeps what it finds (the write moves seq only).
+    # by the user's Resume, records the time of the EVIDENCE that lifted it and the floor (`t`) of the pause
+    # it cleared. That is the spend engage's stand-down rule (_spend_capped_session): a spendLimit record
+    # older than liftedAt was already outranked by the evidence that lifted the pause, and romp never clears
+    # such a record on its own (a spend cap is on-you: _fire_api_retry sends no retry; only a human prompt to
+    # the capped session clears _api_error), so re-engaging on it put the pause back the cycle after every
+    # lift, alternating at the streaming session's output cadence and settling ON once it idled. The memory
+    # rides every later write, paused or not, until a newer spend ruling replaces it: a limit pause that
+    # engages and lifts in between must not forget it. A limit or manual pause's un-pause records nothing
+    # (its evidence, the usage report or a transcript mtime, says nothing about a spend record), and an
+    # un-pause over an already-unpaused file keeps what it finds (the write moves seq only).
+    # `lifted_at` (review round 4, 2026-09-07) is the evidence's own time: for the lift rule, the `t` of the
+    # assistant output record that lifted the pause (_api_last_output_t), NOT the lift cycle's clock. The
+    # cycle runs up to a pusher period after the output, and a record from a SECOND capped session written
+    # in that gap (after the output, before the cycle) is new information the lift never saw; stamped with
+    # the cycle's time, the floor would have skipped it until that session's next attempt. The user's Resume
+    # passes none and records its own instant: the gesture is the evidence, and a record stamped in the same
+    # second reads as older (the CLI stamps whole seconds) and waits for that session's next attempt, since
+    # re-engaging over the gesture would be the worse error. `supersedes` is informational (the Log and a
+    # hand read of the file): nothing reads it.
     try:
         prev = json.loads((jd.STATE / "retry-paused.json").read_text())
         if not isinstance(prev, dict):
@@ -7605,7 +7614,7 @@ def _set_retry_paused(paused, reason="", bills=""):
         if bills:
             d["bills"] = bills
     elif prev.get("paused") and prev.get("reason") == "spend":
-        d["liftedAt"] = time.time()
+        d["liftedAt"] = float(lifted_at) if lifted_at else time.time()
         d["supersedes"] = float(prev.get("t") or 0)
     if "liftedAt" not in d and prev.get("liftedAt"):
         d["liftedAt"] = prev["liftedAt"]
@@ -7643,9 +7652,15 @@ def _retry_pause_bills():
 
 
 def _retry_pause_lifted_at():
-    """The instant the last SPEND pause was un-paused (the lift rule or the user's Resume), or 0 when none is
-    on record. The spend engage's stand-down floor: a spendLimit record older than this was already outranked
-    (_spend_capped_session). Survives later pauses and lifts of other reasons (_set_retry_paused carries it)."""
+    """The time of the evidence that last un-paused a SPEND pause (the output record that lifted it, or the
+    user's Resume), or 0 when none is on record. The spend engage's stand-down floor: a spendLimit record
+    older than this was already outranked (_spend_capped_session). Survives later pauses and lifts of other
+    reasons (_set_retry_paused carries it). Assumes a monotone wall clock, as the pause floor `t` does (review
+    round 4, 2026-09-07): after a backward clock step a record stamped in the corrected clock reads as older
+    than the lift until the clock passes it, and the lift rule's own `out_t > t` is suppressed the same way.
+    Clamping this to now would not help: every record's stamp is at or before now, so a record is older than
+    min(liftedAt, now) exactly when it is older than liftedAt. Only the record's identity, not its stamp,
+    could order it against the lift across a step."""
     try:
         return float(json.loads((jd.STATE / "retry-paused.json").read_text()).get("liftedAt") or 0)
     except Exception:
@@ -7746,17 +7761,20 @@ def _spend_capped_session(now, tmux, after=0):
     enough to pause everything. `after` is the last spend lift's instant (_retry_pause_lifted_at, review
     round 3, 2026-09-07): a record written before it was already outranked by the output that lifted the
     pause (or by the user's Resume), and a writer whose evidence predates the ruling stands down. A record
-    written after it is new information and engages again. Whole seconds on both sides: the record's `t` is
-    the CLI's timestamp in seconds, and a lift lands at least a second after the record (its output must
-    post-date the pause floor, which the record pre-dates), so no stale record ties. A record with no
-    readable time (t 0) is not proof of staleness and counts."""
-    floor = int(after or 0)
+    at or after it is new information and engages again. Compared as they are, no truncation (review round
+    4): `after` is the lifting output's own `t` for the lift rule (whole seconds, the CLI's stamp, like the
+    record's), so a record in the same second as that output reads as new, and the record that engaged the
+    pause never ties (it predates the pause floor, which the output postdates). Round 3 truncated both sides
+    to whole seconds against a liftedAt stamped with the lift CYCLE's clock, and a second capped session's
+    record from the second before that cycle read as stale though it postdated the lift's evidence. A record
+    with no readable time (t 0) is not proof of staleness and counts."""
+    floor = float(after or 0)
     for s in _alive_sessions(now, tmux):
         p = s.get("path")
         if p:
             e = _api_error(p)
             if e and e.get("spendLimit"):
-                t = int(e.get("t") or 0)
+                t = float(e.get("t") or 0)
                 if floor and 0 < t < floor:
                     continue                             # already ruled on: the lift's evidence is newer
                 return s
@@ -7843,8 +7861,10 @@ def _auto_resume_retry(now, tmux):
       _auto_pause_on_spend_limit re-engaged the pause the next cycle while the capped session sat on its
       record, and the file flipped every cycle. A file with no billing recorded (an older kernel's pause)
       takes any session's fresh output. The lift leaves the capped session's record standing (nothing but a
-      human prompt clears a spend record), so the un-pause records its instant (liftedAt) and the engage
-      stands down on records older than it (review round 3): one lift, no re-engage, until a NEW record.
+      human prompt clears a spend record), so the un-pause records the lifting output's own time as
+      liftedAt (review round 4: the evidence, not the cycle's clock, so a record written between the two
+      counts as new) and the engage stands down on records older than it (review round 3): one lift, no
+      re-engage, until a NEW record.
     - manual: any live session, not blocked on an API error, whose transcript mtime passed the pause floor
       (the user's own words above, unchanged).
 
@@ -7879,25 +7899,29 @@ def _auto_resume_retry(now, tmux):
         path = s.get("path")
         if not path or _api_error(path):                 # still blocked on an API error → not proof of recovery
             continue
+        evidence = None
         if reason == "spend":
             if bills and ("login" if _bills_login(live.get(str(s.get("sid") or ""))) else "key") != bills:
                 continue                                 # the other account: says nothing about this cap
-            fresh = _api_last_output_t(path) > floor     # the API's own answer, after the pause
+            out_t = _api_last_output_t(path)
+            fresh = out_t > floor                        # the API's own answer, after the pause
+            evidence = out_t                             # ... and the stand-down floor the un-pause records
         else:
             try:
                 fresh = os.stat(path).st_mtime > floor   # wrote something new since the pause → a served request
             except OSError:
                 continue
         if fresh:
-            _lift_retry_pause(now, "session %s recovered" % s.get("sid", "?"))
+            _lift_retry_pause(now, "session %s recovered" % s.get("sid", "?"), lifted_at=evidence)
             return
 
 
-def _lift_retry_pause(now, why):
+def _lift_retry_pause(now, why, lifted_at=None):
     """Clear the global retry-pause on a recovery edge (_auto_resume_retry's three rules land here): the
     flag flip, the re-arm of the cards the judges gave up on while degraded, and the pusher wake that
-    delivers globalRetryPaused=false (see the caller's docstring for why no dirty mark)."""
-    _set_retry_paused(False)
+    delivers globalRetryPaused=false (see the caller's docstring for why no dirty mark). `lifted_at` is the
+    spend rule's evidence time, recorded as the file's liftedAt (_set_retry_paused); the other rules pass none."""
+    _set_retry_paused(False, lifted_at=lifted_at)
     sys.stderr.write("retry-pause: auto-cleared — %s → judges + auto-retry resume\n" % why)
     try:                                                 # recovery edge → re-arm cards the judges gave up on
         rearmed = jd.rearm_failed_summaries(now)         # while degraded, so their summaries/briefs retry now

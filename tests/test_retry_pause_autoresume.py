@@ -159,18 +159,20 @@ class RetryPauseAutoResume(unittest.TestCase):
     # --- review round 3 (2026-09-07): a spend record older than the last spend lift is already ruled on ---
     def test_the_capped_session_lookup_skips_records_older_than_the_lift_and_keeps_the_rest(self):
         sess = [{"sid": "s%d" % i, "path": str(self.dir / ("s%d.jsonl" % i))} for i in range(4)]
-        errs = {sess[0]["path"]: {"spendLimit": True, "t": 1000},        # a second before the lift: stale
+        errs = {sess[0]["path"]: {"spendLimit": True, "t": 1000},        # a second before the lift's evidence: stale
                 sess[1]["path"]: {"spendLimit": False, "t": 1005},       # not a cap
                 sess[2]["path"]: {"spendLimit": True, "t": 0},           # no readable time: not proof of staleness
-                sess[3]["path"]: {"spendLimit": True, "t": 1001}}        # the lift's own second: new
+                sess[3]["path"]: {"spendLimit": True, "t": 1001}}        # the evidence's own second: new
         km._alive_sessions = lambda now, tmux: sess
         km._api_error = lambda p: errs.get(p)
         self.assertEqual(km._spend_capped_session(0, {})["sid"], "s0", "no lift on record: the first capped session")
-        self.assertEqual(km._spend_capped_session(0, {}, after=1001.7)["sid"], "s2", "whole seconds: 1000 < 1001 is stale, 0 is unknown")
+        # `after` is the lifting output's own stamp, whole seconds like the record's (review round 4)
+        self.assertEqual(km._spend_capped_session(0, {}, after=1001)["sid"], "s2", "1000 < 1001 is stale, 0 is unknown")
         del errs[sess[2]["path"]]
-        self.assertEqual(km._spend_capped_session(0, {}, after=1001.7)["sid"], "s3", "a record in the lift's second counts")
+        self.assertEqual(km._spend_capped_session(0, {}, after=1001)["sid"], "s3", "a record in the evidence's second counts")
+        self.assertIsNone(km._spend_capped_session(0, {}, after=1001.7), "no truncation: 1001 is older than a Resume at 1001.7")
         del errs[sess[3]["path"]]
-        self.assertIsNone(km._spend_capped_session(0, {}, after=1001.7), "every remaining record predates the lift")
+        self.assertIsNone(km._spend_capped_session(0, {}, after=1001), "every remaining record predates the lift")
         self.assertEqual(km._retry_pause_lifted_at(), 0.0, "no file: nothing on record")
 
     # --- the bottom bar's API health cell (2026-09-07) reads the pause and its lift off this same file ---
@@ -229,9 +231,10 @@ SPEND_TEXT = "API Error: 400 You have reached your monthly spend limit for this 
 
 class _KernelClock:
     """The kernel module's `time`, with time() reading no earlier than a floor the test sets: the pause floor
-    and liftedAt are wall-clock writes while the transcripts here carry synthetic times ahead of the clock, so
-    a test that plays a second round (a new record, a second lift) moves the kernel's clock along with its
-    timeline. Everything else delegates to the real module. At 0 (the default) the clock is the real one."""
+    (and a Resume's liftedAt) are wall-clock writes while the transcripts here carry synthetic times ahead of
+    the clock, so a test that plays a second round (a new record, a second lift) moves the kernel's clock along
+    with its timeline. A floor at a round second makes every read exact. Everything else delegates to the real
+    module. At 0 (the default) the clock is the real one."""
 
     def __init__(self):
         self.floor = 0.0
@@ -528,6 +531,7 @@ class SpendPauseStandDown(SpendPauseLift):
     superseded, the memory rides every later write, and the engage skips records older than it."""
 
     SID_TESTS = "88888888-aaaa-4bbb-8ccc-000000000003"
+    SID_DOCS = "88888888-aaaa-4bbb-8ccc-000000000004"
 
     def _tests_session(self):
         tests, row = self._session(self.SID_TESTS, "tests", "key", _out_line(self.now - 60))
@@ -582,6 +586,30 @@ class SpendPauseStandDown(SpendPauseLift):
         self.assertEqual(states, ["degraded"] * 3, "one lift again, and no re-engage on the second record either")
         self.assertEqual(self._states(), ["paused", "degraded", "paused", "degraded"])
 
+    def test_a_second_session_s_record_from_the_second_before_the_lift_cycle_engages(self):
+        # review round 4 (2026-09-07): liftedAt is the lifting OUTPUT's own time, not the lift cycle's clock.
+        # The probe's timeline: 'web' (key) sits on its cap; 'tests' (key) serves at T+0.1 (the evidence);
+        # 'docs' (key) hits the cap at T+0.6; the pusher's lift cycle runs at T+1.2. The CLI stamps both
+        # records T, and a liftedAt of T+1.2 read in whole seconds (T+1) skipped docs' record, written after
+        # the evidence, until that session's next attempt.
+        tests = self._tests_session()
+        docs, docs_row = self._session(self.SID_DOCS, "docs", "key", _out_line(self.now - 60))
+        self.live[self.SID_DOCS] = docs_row
+        T = int(self.now) + 100                                # a round second ahead of the real clock: exact reads
+        self.clock.floor = T - 10
+        self.assertEqual(self._cycle(T - 10, self.live), "paused")
+        self.assertEqual(km._retry_pause_ts(), T - 10)
+        self._append(tests, _out_line(T + 0.1), T + 0.1)       # the key account serves again, stamped T
+        self._append(docs, _err_line(T + 0.6, SPEND_TEXT), T + 0.6)   # a second session hits the cap, stamped T
+        self.clock.floor = T + 1.2                             # the lift cycle runs in the next second
+        self.assertEqual(self._cycle(T + 1, self.live), "degraded", "the lift: the engage ran first, over a paused file")
+        self.assertEqual(self._file()["liftedAt"], T, "the evidence's own time, not the cycle's")
+        self.assertEqual(self.sent[-1][1]["waiting"], 2, "both records stand")
+        self.assertEqual(self._cycle(T + 1, self.live), "paused", "docs' record is not older than the evidence: new information")
+        self.assertEqual((km._retry_pause_reason(), km._retry_pause_bills(), km._retry_pause_ts()), ("spend", "key", T + 1.2))
+        self.assertEqual(self._cycle(T + 2, self.live), "paused", "and holds: tests' output predates the new floor")
+        self.assertEqual(self._states(), ["paused", "degraded", "paused"])
+
     def test_the_memory_survives_a_limit_pause_that_engages_and_lifts_in_between(self):
         # a single-slot memory dropped at the next write would let the limit lift hand the stale record back
         tests = self._tests_session()
@@ -635,7 +663,7 @@ class SpendPauseStandDown(SpendPauseLift):
         self.assertEqual(set(d), {"paused", "liftedAt", "supersedes"})
         self.assertEqual((d["paused"], d["supersedes"]), (False, floor), "supersedes: the floor of the pause it cleared")
         lifted = d["liftedAt"]
-        self.assertGreaterEqual(lifted, floor)
+        self.assertEqual(lifted, int(floor + 1), "the lifting output's own time (review round 4)")
         self.assertEqual(km._retry_pause_lifted_at(), lifted)
         self.assertEqual((km._retry_pause_ts(), km._retry_pause_reason(), km._retry_pause_bills()), (0.0, "", ""))
         km._set_retry_paused(False)                            # a Resume over an unpaused file keeps what it finds

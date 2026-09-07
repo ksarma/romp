@@ -1630,10 +1630,16 @@ the kernel owns directly:
   `bills`, the billing the capped session was on (`login` or `key`); only
   fresh assistant output from a session on that billing lifts it. Un-pausing
   a spend pause, by that lift or by the Resume button, records `liftedAt`
-  and `supersedes` (the floor of the pause it cleared); both ride every later
-  write until a newer spend un-pause replaces them, and a spend-limit record
-  older than `liftedAt` engages nothing, since the lift already ruled on it.
-  A limit or manual un-pause records neither.
+  (the time of the output record that lifted it, or of the Resume click) and
+  `supersedes` (the floor of the pause it cleared; informational, nothing
+  reads it); both ride every later write until a newer spend un-pause
+  replaces them, and a spend-limit record older than `liftedAt` engages
+  nothing, since the lift already ruled on it. A limit or manual un-pause
+  records neither. When a limit pause lifts while a spend-limit record is
+  standing, the file reads unpaused for one cycle before the spend pause
+  engages: each writer rules on one signal per cycle, and the spend engage
+  runs before the lift in the pusher's order, so it sees a paused file and
+  rules on the record the next cycle.
 
 The kernel pushes the cell's frame to shell clients only when it changed, and
 again to a shell that sends `ready`:
