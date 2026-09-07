@@ -2036,8 +2036,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   decode), `evict` (entries dropped for files gone from the directory), `punch`
   (entries copied so a user gesture could be applied to them), `live` and
   `snap` (the feed's store reads served live through the shared cache against
-  from the pass snapshot), and the gauges `entries` and `bytes` (memoized files
-  and their summed size). `lift_gate` is
+  those served from the pass snapshot), and the gauges `entries` and `bytes`
+  (memoized files and their summed size). `lift_gate` is
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
   probe on the shared read-only view), `shared` (probes the shared cache

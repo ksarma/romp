@@ -40555,7 +40555,8 @@ def _push(targets, connect=False, tmux=None):
     # per-entry), about 0.6 s of a 1.6 s rebuild cycle on the 2026-09-06 profile. Every whole frame is the
     # tinted legacy body, a cap client's first frame included (the pane tints from `t` and ignores it); a
     # ?delta=1 feed client WITHOUT the cap (a pre-09-05 Outline tab) takes the view-delta slot path, whose
-    # _delta_parts("feed") encodes every card again with its tint — zero such clients today, left until seen.
+    # _delta_parts("feed") encodes every card again, tint-free since 2026-09-07 (the builders no longer
+    # stamp it; _feed_body does, for whole frames) — zero such clients today, left until seen.
     # The section runs after the build try above: a raise here used to escape _push, ride _push_all (no
     # except) into _pusher's while-True and kill the pusher thread for the life of the process — every
     # dashboard frozen until a restart. A fill that raises stands its slot down for THIS cycle (its clients
