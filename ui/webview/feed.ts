@@ -4928,11 +4928,17 @@ window.addEventListener("keydown", (e) => {
 // OPENED a modal keeps focus, and clicking ✕/backdrop to CLOSE one returns focus
 // to chat. Same-origin combined page only — a no-op on the standalone /feed page
 // or inside VS Code, where there's no sibling chat-frame to reach.
+// A key typed into a text field belongs to the field — the session search box, the comment box under the file
+// viewer (which mounts in THIS document, file-view.ts). The focus policy keeps focus there, and the card cursor
+// below never reads such a key.
+function typingIn(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+}
 function feedWantsKeys(t: EventTarget | null): boolean {
   if (kbMode) return true;   // keyboard-nav is active → keep focus in the feed so the arrows land here
   if (document.getElementById("feed-modal")) return true;
-  const el = t as HTMLElement | null;
-  return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
+  return typingIn(t);
 }
 function returnFocusToChat(): void {
   try {
@@ -5009,6 +5015,11 @@ window.addEventListener("keydown", (e) => {
   if (!kbMode) return;
   if (e.altKey || e.ctrlKey || e.metaKey) return;      // Alt+Arrow is the shell's pane move; leave other combos alone
   if (document.getElementById("feed-modal")) return;   // the modal owns keys while it's open
+  // focus in a text field: the field owns the key, the same yield the Tab scope makes. The cursor stays armed
+  // through a click (the file viewer opens over the board with it still set), so without this a plain Enter
+  // in the comment box — a newline there since the multi-line box — was cancelled here and descended into the
+  // first card, and the next one clicked a control behind the viewer (review 2026-09-07)
+  if (typingIn(document.activeElement)) return;
   const k = e.key, fwd = (k === "ArrowDown" || k === "ArrowRight"), back = (k === "ArrowUp" || k === "ArrowLeft");
   if (kbMode === "cards") {
     if (fwd || back) {

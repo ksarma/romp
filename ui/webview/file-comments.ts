@@ -508,20 +508,49 @@ export function composerKeyAction(e: { key: string; metaKey?: boolean; ctrlKey?:
 }
 /** The chord the hint under the box names, in the platform's words. */
 export function saveChord(mac: boolean): string { return (mac ? "Cmd" : "Ctrl") + "+Enter"; }
-export function composerHint(mac: boolean): string { return saveChord(mac) + " saves; Enter adds a line"; }
+/** The hint on a coarse pointer (a phone, a tablet): a soft keyboard has no modifier to hold, so a chord would name a
+ *  key the device lacks, and the person who pressed Return for the old one-line box's save got a newline and no word on
+ *  what saves now. The hint names the button beside it instead — the chat composer's rule for its own placeholder
+ *  (render.ts composerRestingPlaceholder drops the key chart on a coarse pointer), and decideInEditor's for a tap. */
+export const COMPOSER_HINT_TOUCH = "Enter adds a line; tap Save when done";
+/** The hint under the box, in the device's words: the platform's chord with a keyboard, COMPOSER_HINT_TOUCH on a coarse
+ *  pointer. `touch` defaults to the device's answer (isCoarsePointer), read at each call — the hint is built per render,
+ *  and the primary pointer can change (a tablet docks to a keyboard and trackpad), as decideInEditor reads it too; a
+ *  test passes it. */
+export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): string {
+  return touch ? COMPOSER_HINT_TOUCH : saveChord(mac) + " saves; Enter adds a line";
+}
 /** Size the box to its content: height auto, then the scroll height plus the border (box-sizing: border-box). The
  *  sheet's max-height caps the result at NOTE_MAX_ROWS rows — past that the box scrolls — and its min-height floors it
  *  at NOTE_ROWS. Returns the height set, or null when the box has no layout to measure (hidden, or a document with no
- *  renderer), in which case the inline height it had is put back. */
+ *  renderer), in which case the inline height it had is put back.
+ *
+ *  The measurement leaves the page's scroll where it found it. `height: auto` collapses a grown box to its rows for the
+ *  read, and the layout that read forces is up to nine rows shorter: a scrolled ancestor near its bottom — the panel's
+ *  aside, which is short on the phone and in a short pane — is clamped in it, and putting the height back does not put
+ *  the scroll back (with cards below the box the browser's anchoring over-corrects the other way instead). Every keystroke
+ *  in a grown box jumped the panel toward its top, the Save row and the cards the person had scrolled to leaving the
+ *  viewport. So the scrolled ancestors' positions are read first and written back last, on both paths. */
 export function autosizeNote(ta: HTMLTextAreaElement): string | null {
   const prev = ta.style.height;
+  const held = scrolledAncestors(ta);
   ta.style.height = "auto";
   const sh = ta.scrollHeight;
-  if (!(sh > 0)) { ta.style.height = prev; return null; }
+  if (!(sh > 0)) { ta.style.height = prev; restoreScroll(held); return null; }
   const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
   const h = sh + border + "px";
   ta.style.height = h;
+  restoreScroll(held);
   return h;
+}
+/** The ancestors scrolled down from their top, with how far: the only ones a shorter layout can clamp. */
+function scrolledAncestors(el: Element): Array<[Element, number]> {
+  const out: Array<[Element, number]> = [];
+  for (let p = el.parentElement; p; p = p.parentElement) if (p.scrollTop > 0) out.push([p, p.scrollTop]);
+  return out;
+}
+function restoreScroll(held: Array<[Element, number]>): void {
+  for (const [p, top] of held) if (p.scrollTop !== top) p.scrollTop = top;
 }
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
@@ -825,7 +854,11 @@ class Panel {
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
     this.input.addEventListener("keydown", (e) => {
-      // a plain Enter is the browser's own newline in the box; the chord saves (composerKeyAction); Escape cancels
+      // a plain Enter is the browser's own newline in the box; the chord saves (composerKeyAction); Escape cancels.
+      // An Escape under a composing IME is the IME's (composerKeyAction: null, and its default cancels the composition),
+      // but it is still not the viewer's: the document-level Escape (file-view.ts onKey) reads no isComposing and closes
+      // the whole viewer — the panel and the typed comment with it — or peels edit mode. So EVERY Escape stops at the box.
+      if (e.key === "Escape") e.stopPropagation();
       const act = composerKeyAction(e);
       if (act === "save") { e.preventDefault(); void this.saveComposer(); }
       else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
@@ -2655,10 +2688,16 @@ class Panel {
     return head;
   }
   /** The box follows its content (autosizeNote) on every input — unless the person dragged the handle, when their
-   *  height stands until the composer closes; a box with no layout to measure keeps the height it had. */
+   *  height stands until the composer closes; a box with no layout to measure keeps the height it had. An inline
+   *  height that is not the one autosize last set was dragged there (the sheet's resize: vertical writes it, and
+   *  fires no input). Before the first keystroke autosize has set none — the box opens with no inline height, and
+   *  closeComposer clears the height with sizedTo — so an inline height while sizedTo is null is a drag too: the
+   *  first guard is that case, which the second cannot see (the 2026-09-07 review: a box dragged taller before a
+   *  word was typed snapped back to its content on the first keystroke). */
   private autosize(): void {
     const ta = this.input;
-    if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;
+    if (this.sizedTo === null && ta.style.height) return;                    // dragged before the first keystroke
+    if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;   // dragged since
     const h = autosizeNote(ta);
     if (h !== null) this.sizedTo = h;
   }

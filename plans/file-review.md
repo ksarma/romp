@@ -761,7 +761,7 @@ Acceptance criteria:
   wraps exactly the text nodes of that slice. A CR-only line and a selection ending past the last
   row are included.
 - Raw: a quote that occurs twice anchors to the selected occurrence, including when two lines
-  are inserted above the passage between the selection and Enter.
+  are inserted above the passage between the selection and the save.
 - Rendered: for a fixture covering both heading styles, tight and loose lists, nested and task
   lists, blockquotes, emphasis, strong, strikethrough, inline code, every link form, images,
   escapes, hard breaks, and a reference definition, every selection inside aligned blocks yields
@@ -961,7 +961,9 @@ pre-wrap`, both sheets), and the send message carries the body verbatim: the ker
 webview's are pinned to the same two-line text on both sides (`tests/test_file_comments.py`
 TheMessage, `ui/webview/file-comments.test.ts`). Tests: `ui/webview/file-comments-composer.test.ts`
 (driven) and `file-comments-composer-browser.test.ts` (the real cap and the real keys, Chromium and
-Firefox).
+Firefox); `tools/file-review-plan-save-gesture.test.mjs` holds this plan to the one gesture: the plain
+key adds a line wherever the plan names it, and the four sentences that once anchored a moment to that
+key say the save.
 
 ### Slice 3: region comments on images
 
@@ -994,13 +996,13 @@ image or pdf, the region inside the unit square at four decimals, `page` on a pd
 exactly when the comment has an anchor, `figureHash` a sha256 hex and only with a target. Then the
 anchor is placed, and the anchored passage must embed the `src` the target names
 (`figure-mismatch`, a refusal rather than a caller bug: a reference definition can change on disk
-between the drag and Enter). Only then is the figure resolved and hashed: `unreadable` when the src
+between the drag and the save). Only then is the figure resolved and hashed: `unreadable` when the src
 is a URL, resolves outside the project root, or is not a regular file; a caller bug when its
 extension is not the kind the target claims, or one the viewer never shows as media; `too-large`
 past the 50 MB the viewer shows, refused before a byte is read (before this cap a multi-GB src
 pinned the host until the kernel's deadline); and last, when the request's fence carries
 `figureHash`, `figure-changed` unless the bytes hashed are the ones it names (the Slice 3 review,
-2026-09-06: before this fence a figure regenerated between the drag and Enter was stamped with the
+2026-09-06: before this fence a figure regenerated between the drag and the save was stamped with the
 new bytes' hash, which every reply then equalled, so the panel read a rectangle drawn on the old
 picture as current on the new one, the one write the hash exists to catch). The host checks that
 fence whenever a request carries it, and the kernel passes the fence object through whole. The
@@ -1344,7 +1346,7 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   pinned with a sparse file, and a null hash with its reason on a reply; the decoded src; the
   src-less contract shape told from its passage, and its re-place; the figure fence:
   `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
-  Enter, nothing written and no landmark created, a malformed `figureHash` refused before any disk
+  the save, nothing written and no landmark created, a malformed `figureHash` refused before any disk
   read, `too-large` before `figure-changed`. `tools/file-review-plan.test.mjs` pins what this plan
   states for the target's shape, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other

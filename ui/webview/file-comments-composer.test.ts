@@ -1,7 +1,8 @@
 // The Comments panel's composer as a multi-line box (plans/file-review.md, "The composer follow-on (2026-09-07)"):
 // after walking the loop the user found the one-line box too small. Every composer the panel offers — a passage, the
 // whole file, a region, a reply on a card, a comment bound to a change — is one textarea: three rows to start, grown
-// to its content up to twelve rows (then it scrolls), draggable taller. Enter adds a line; Cmd+Enter or Ctrl+Enter, or
+// to its content up to twelve rows (then it scrolls), draggable taller. Enter, plain or with Shift, adds a line (the
+// textarea's own newline; never a save, whatever a chat tool taught the person's hands); Cmd+Enter or Ctrl+Enter, or
 // the Save button, saves; Escape cancels as before. The draft (text, caret, chosen height) survives the poll's
 // re-render and a refusal, saving trims the blank ends and keeps the breaks inside, a blank comment saves nothing, and
 // a card renders a multi-line body with its breaks. Driven through the same DOM stand-in the panel tests use (there is
@@ -320,9 +321,17 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
 
 // ── the key policy, pure ───────────────────────────────────────────────────────────────────────────
 
-test("composerKeyAction: Enter is the browser's newline, Enter with Cmd or Ctrl saves, Escape cancels, a composing IME keeps its keys", async () => {
+test("composerKeyAction: Enter, plain or with Shift, is the browser's newline; Enter with Cmd or Ctrl saves; Escape cancels; a composing IME keeps its keys", async () => {
   const { composerKeyAction, saveChord, composerHint, NOTE_ROWS, NOTE_MAX_ROWS } = await import("./file-comments");
   assert.equal(composerKeyAction({ key: "Enter" }), null, "a plain Enter is not ours: the textarea inserts the newline");
+  // The browser's KeyboardEvent carries shiftKey; the function's parameter type names only the modifiers it reads, so
+  // the key arrives as the event would (a typed value, not a literal) — and the point is that shiftKey is NOT read: the
+  // chat composer sends on Enter and breaks a line on Shift+Enter, and a hand trained there must not save a half-written
+  // comment here (the docstring's "a plain or Shift+Enter is the browser's own newline").
+  const shiftEnter: Pick<KeyboardEvent, "key" | "shiftKey"> = { key: "Enter", shiftKey: true };
+  assert.equal(composerKeyAction(shiftEnter), null, "Shift+Enter is the textarea's newline too, never a save");
+  const shiftEscape: Pick<KeyboardEvent, "key" | "shiftKey"> = { key: "Escape", shiftKey: true };
+  assert.equal(composerKeyAction(shiftEscape), "cancel", "Shift changes nothing about Escape");
   assert.equal(composerKeyAction({ key: "Enter", metaKey: true }), "save", "Cmd+Enter");
   assert.equal(composerKeyAction({ key: "Enter", ctrlKey: true }), "save", "Ctrl+Enter");
   assert.equal(composerKeyAction({ key: "Enter", ctrlKey: true, metaKey: true }), "save");
@@ -381,7 +390,7 @@ test("every composer is one textarea of three rows with the reference row above 
   h.dispose();
 });
 
-test("Enter adds a line and saves nothing; Ctrl+Enter or Cmd+Enter saves the text with its line breaks, the blank ends trimmed", async () => {
+test("Enter, plain or with Shift, adds a line and saves nothing; Ctrl+Enter or Cmd+Enter saves the text with its line breaks, the blank ends trimmed", async () => {
   const h = await harness();
   await h.open();
   h.click('[data-act="fcfile"]');
@@ -392,6 +401,12 @@ test("Enter adds a line and saves nothing; Ctrl+Enter or Cmd+Enter saves the tex
   assert.equal(plain.defaultPrevented, false, "the browser's default — a newline in the box — is left to it");
   assert.equal(h.posted.length, before, "nothing was written");
   assert.equal(h.q(".fc-composer")!.hidden, false, "the composer stays open");
+  // Shift+Enter, the chat composer's soft break, is the same newline here: the listener leaves it alone and nothing is saved
+  const soft = h.key({ key: "Enter", shiftKey: true });
+  assert.equal(soft.defaultPrevented, false, "Shift+Enter is left to the textarea as well");
+  assert.equal(h.posted.length, before, "…and writes nothing");
+  assert.equal(h.q(".fc-composer")!.hidden, false);
+  assert.equal(box.value, "First line.", "the draft is untouched (the stand-in inserts no newline; the browser leg sees the real one)");
   box.value = "First line.\nSecond line.  \n\n";
   const ev = h.chord();
   assert.equal(ev.defaultPrevented, true, "the chord is ours: no newline goes in with the save");
