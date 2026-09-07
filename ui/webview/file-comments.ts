@@ -487,6 +487,10 @@ class Panel {
   // its status itself, so onSaved skips the re-read it does for saveFile.
   editSeed: EditSeed | null = null;
   lastSaveNs: string | null = null;
+  // Which editor: begin() counts one per Edit, and saveThroughComments captures the count at the send, so a reply that finds
+  // a LATER editor up (Cancel confirmed during Saving, then Edit again before the ack) leaves that editor's seed and text
+  // alone — they are its own, from the status as it stood — and says the file moved under it instead.
+  editGen = 0;
   // decisions this panel sent whose reply has not landed (holdEdit): while any is out, the viewer refuses Edit
   decisionsOut = 0;
   // the file's bytes moved under an edit (noteMovedUnderEdit) and the view has not re-read them yet: the first paint after
@@ -982,6 +986,7 @@ class Panel {
   private trackedEdit(): TrackedEdit {
     return {
       begin: () => {
+        this.editGen++;                                // a new editor: a save reply from an earlier one leaves this one's seed alone (saveThroughComments)
         const s = this.status;
         const hunks = s ? s.hunks || [] : [];
         // begin() runs at the click, before the viewer flips into edit mode (editing() still answers false here), so this
@@ -1033,6 +1038,7 @@ class Panel {
    *  (the comments log did not take the edit) rides the resolved value for the viewer's note bar and is said in the head. */
   async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean; logWarning?: string }> {
     const seed = this.editSeed;
+    const gen = this.editGen;                          // the editor this save came from (begin() counts them): see `mine` below
     // The editor carries no records and the sidecar holds pending changes the file's clock does not account for: the status
     // landed after Edit (noteChangesUnreadUnderEdit's row). The list the editor would write back is empty, and the host
     // takes it as the sidecar's new contents — every change dropped, none decided, a plain-edit trace. Refused before
@@ -1049,14 +1055,28 @@ class Panel {
       try {
         const r = await this.request("save", args, fence);
         this.markOverlapped();                         // the status asks still out may have read the disk before this write
-        // the reply's sidecar is the one the editor's records now came from (the host wrote them back and read them again):
-        // the next Save, should the editor stay up, is fenced on it, and noteChangesMovedUnderEdit compares against it —
-        // nothing pending, no seed, as at begin(); the first paint after the edit ends clears it either way (paintAll)
-        this.editSeed = seedOf(r);
-        this.changesMovedUnderEdit = false;            // a new seed, a new latch (a latched row would have refused this save)
-        this.changesUnreadUnderEdit = false;
-        this.editText = content;                       // the reply's offsets index the text this save wrote (indexedText)
-        this.retargetComposer();                       // a passage composer follows its passage into that text, as after a reload
+        // Whose save this is. The editor that sent it may be gone (Cancel confirmed during Saving) and a LATER one up over the
+        // bytes and records from before it (Edit again, before this ack): that editor's begin() seeded editSeed and editText
+        // from the status as it stood, and re-seeding them from this reply fenced its next Save on a sidecar it never saw,
+        // grouped the cards over text it does not show, and left the records this save decided riding in it as pending with
+        // nothing said — the seed then matched the reply (the review's late-ack finding, panel half). So the re-seed is for
+        // the editor that saved; for a later one the reply is applied as the status alone. The person hears of it from the
+        // viewer, which resolves this same promise: its bar says the earlier save landed under the reopened editor, with
+        // Reload, and its exit re-reads the saved bytes (SAVE_LANDED_UNDER_NEW_EDITOR) — so the panel raises no row of its
+        // own here, and does not latch a second exit re-read (the moved-file latch would: one message, one read). No editor
+        // at all (the edit ended, no new Edit) counts as the same editor: the first paint after the edit clears the fields
+        // (paintAll).
+        const mine = gen === this.editGen;
+        if (mine) {
+          // the reply's sidecar is the one the editor's records now came from (the host wrote them back and read them again):
+          // the next Save, should the editor stay up, is fenced on it, and noteChangesMovedUnderEdit compares against it —
+          // nothing pending, no seed, as at begin(); the first paint after the edit ends clears it either way (paintAll)
+          this.editSeed = seedOf(r);
+          this.changesMovedUnderEdit = false;          // a new seed, a new latch (a latched row would have refused this save)
+          this.changesUnreadUnderEdit = false;
+          this.editText = content;                     // the reply's offsets index the text this save wrote (indexedText)
+          this.retargetComposer();                     // a passage composer follows its passage into that text, as after a reload
+        }
         this.lastSaveNs = r.fileMtimeNs;
         // the save landed, but the Log this panel shows lacks the entry the edit owed (or the host could not read the sidecar
         // back): said in the head, in the host's words, where the Log lives — silence there would read as "nothing happened"
@@ -1073,7 +1093,7 @@ class Panel {
           const s = this.status;
           if (s && sameRecords(seed ? seed.records : [], pendingRecords(s.store))) {
             fence = { ...fenceOf(s), fileMtimeNs: this.ctx.mtimeNs() };
-            if (seed) this.editSeed = { ...seed, storeMtimeNs: fence.storeMtimeNs, configMtimeNs: fence.configMtimeNs };
+            if (seed && gen === this.editGen) this.editSeed = { ...seed, storeMtimeNs: fence.storeMtimeNs, configMtimeNs: fence.configMtimeNs };   // the saving editor's seed follows; a later editor's is its own
             continue;
           }
         }

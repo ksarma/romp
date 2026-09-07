@@ -6,8 +6,9 @@
 // already out when Edit began (its reply lands under the editor). And the decisions no gate can reach: another browser's
 // card, a session's CLI. In every reached case the head says so from the status that shows it — before Save, which can
 // only refuse — once per edit, and yields to the file's own row when the bytes moved too (a reject). The consolidation
-// pass adds the request-out ordering's other half: a decision this panel sent HOLDS Edit until it settles (holdEdit), so
-// that case cannot start from the Edit button. Driven as a panel over the behavior suite's DOM stand-in. Synthetic
+// pass adds the two orderings' remaining halves: a decision this panel sent HOLDS Edit until it settles (holdEdit, so the
+// request-out-at-Edit case cannot start from the Edit button), and a save acked after Cancel and a new Edit leaves that
+// editor's records and text its own (editGen). Driven as a panel over the behavior suite's DOM stand-in. Synthetic
 // fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -612,6 +613,67 @@ test("the hold lifts on a refusal too, and a decision refused at the gate (the e
   assert.deepEqual(w.blocked, [fc.DECISION_IN_FLIGHT, null], "no hold for a decision that never went out");
 });
 
+// ── a save acked under a later editor ───────────────────────────────────────────────────────────────
+
+test("a save acked after Cancel and a new Edit: the reply is the status, the new editor keeps its own records and text (its Save is fenced on the sidecar it saw and refuses on the file), and the panel raises no row of its own: the viewer's bar says it", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside, button } = await openPanel(w, pending());
+  w.editing = true;
+  assert.deepEqual(w.tracked!.begin()!.records, [rec1, rec2]);
+  const out = settle(w.tracked!.save("the typed text", [rec2], { accepted: [{ id: "h1", oldText: "reduced", newText: "cut" }], rejected: [] }));
+  await flush();
+  const save = lastOf(w, "fileComments", "save");
+  assert.equal(save.fence.storeMtimeNs, "1757145600000000002");
+  // Cancel, confirmed, while the host writes: the read view is painted from the bytes the viewer holds (from before the save)
+  w.editing = false; w.setText(w.disk);
+  assert.equal(headRows(aside).length, 0);
+  // Edit again, before the ack: the records ride in as the status still shows them
+  w.editing = true;
+  assert.deepEqual(w.tracked!.begin()!.records, [rec1, rec2], "the status has not heard of the save");
+  // the ack: h1 accepted and the file rewritten. The viewer's late-ack branch hears it (out.ok), says so over the editor
+  // (SAVE_LANDED_UNDER_NEW_EDITOR, with Reload) and re-reads at the exit itself (file-view-edit-events.test.ts pins one
+  // re-read); the panel applies it as the status and leaves the NEW editor's seed and text alone
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: save.reqId, ...pending({ verb: "save", fileMtimeNs: "1757145600000000009", storeMtimeNs: "1757145600000000010" }, [h2], [rec2]), logged: true } }));
+  await flush(); await flush();
+  assert.deepEqual(out.ok, { mtimeNs: "1757145600000000009", logged: true }, "the save landed");
+  assert.equal(button.textContent, "Comments · 1 · 1 change", "the reply is the status");
+  assert.equal(headRows(aside).length, 0, "no row of the panel's: the viewer's bar says it, so one message and (at the exit) one read");
+  assert.equal(w.reloads, 0, "never over the buffer");
+  // the new editor's Save is fenced on the sidecar ITS records came from and the file it loaded — not the reply's clocks,
+  // which would have passed the store fence and written the records this save decided back as pending
+  const out2 = settle(w.tracked!.save("more typing", [rec1, rec2], { accepted: [], rejected: [] }));
+  await flush();
+  const save2 = lastOf(w, "fileComments", "save");
+  assert.notEqual(save2.reqId, save.reqId);
+  assert.deepEqual(save2.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003", fileMtimeNs: "1757145600000000001" }, "the new editor's own seed and the file it loaded");
+  refuse(w, save2, "file-moved", FILE_CHANGED); await flush(); await flush();
+  assert.deepEqual(out2.err, { code: "file-moved", error: FILE_CHANGED });
+  assert.equal(countOf(w, "fileComments", "save"), 2, "a moved file is never retried");
+  assert.equal(headRows(aside).length, 0, "the refusal shows in the viewer's Save bar (its promise rejected), not in the head");
+  // Cancel: the real viewer re-reads the saved bytes at the exit itself (refetchAfterEdit); the panel latched no second read
+  w.editing = false; w.setText(DOC);
+  assert.equal(w.reloads, 0, "the panel's moved-file latch was not armed: no second read of the same bytes");
+  assert.equal(headRows(aside).length, 0);
+});
+
+test("the contrast: the same ack with the editor that saved still up re-seeds it on the reply's sidecar, so its next Save is fenced there and no row is raised", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w, pending());
+  w.editing = true;
+  w.tracked!.begin();
+  const out = settle(w.tracked!.save("the typed text", [rec2], { accepted: [{ id: "h1", oldText: "reduced", newText: "cut" }], rejected: [] }));
+  await flush();
+  const save = lastOf(w, "fileComments", "save");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: save.reqId, ...pending({ verb: "save", fileMtimeNs: "1757145600000000009", storeMtimeNs: "1757145600000000010" }, [h2], [rec2]), logged: true } }));
+  await flush(); await flush();
+  assert.deepEqual(out.ok, { mtimeNs: "1757145600000000009", logged: true });
+  w.viewMtime = "1757145600000000009";                 // the viewer's ack took the saved mtime (hooks.saved)
+  assert.equal(headRows(aside).length, 0, "nothing moved under this editor: its own save");
+  settle(w.tracked!.save("more typing", [rec2], { accepted: [], rejected: [] }));
+  await flush();
+  assert.deepEqual(lastOf(w, "fileComments", "save").fence, { storeMtimeNs: "1757145600000000010", configMtimeNs: "1757145600000000003", fileMtimeNs: "1757145600000000009" }, "fenced on the sidecar this editor's save wrote");
+});
+
 // ── source ──────────────────────────────────────────────────────────────────────────────────────────
 
 test("source: the gate runs again at the send, the row is raised where every status lands and yields to the file's, the edit's end retires it, and the save's re-read notes a moved file", () => {
@@ -633,6 +695,12 @@ test("source: the gate runs again at the send, the row is raised where every sta
   assert.match(begin, /this\.changesMovedUnderEdit = false;/, "a new edit starts a new latch");
   const save = SRC.split("async saveThroughComments(")[1].split("\n  }\n")[0];
   assert.match(save, /await this\.refresh\(\);\n\s*this\.noteMovedUnderEdit\(\);/, "the save's re-read says when the file moved too");
+  // the reply re-seeds the editor that saved, and only that one; a later editor gets the file's row
+  assert.match(save, /const gen = this\.editGen;/, "the editor this save came from, captured at the send");
+  assert.match(save, /const mine = gen === this\.editGen;\n\s*if \(mine\) \{\n[^]*?this\.editSeed = seedOf\(r\);[^]*?this\.editText = content;[^]*?\n\s*\}/, "the seed and the text are re-set for the saving editor alone");
+  assert.doesNotMatch(save.split("const mine = gen === this.editGen;")[1].split("return {")[0], /this\.noteMovedUnderEdit\(\)|this\.noteChangesMovedUnderEdit\(\)/, "a later editor gets no row from the reply: the viewer's bar says it, and one exit re-read is the viewer's (the catch's re-read note is the moved-fence path)");
+  assert.match(save, /if \(seed && gen === this\.editGen\) this\.editSeed = \{ \.\.\.seed,/, "the retry's re-fence follows the saving editor's seed only");
+  assert.match(begin, /^\s*this\.editGen\+\+;/m, "begin() counts the editor");
   // Edit is held for a decision's whole round trip: from mutate's hold to its finally, one transition each way
   const mut = SRC.split("async mutate(")[1].split("\n  }\n")[0];
   assert.match(mut, /const decides = DECIDES\.has\(verb\);\n\s*if \(decides\) this\.holdEdit\(1\);\n\s*try \{/, "held before the consent's read and the send");

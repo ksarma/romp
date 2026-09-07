@@ -445,7 +445,7 @@ test("source: the moved-file row latches once per edit before the clocks are rea
   assert.match(fn, /^\s*if \(this\.movedUnderEdit\) return;[^\n]*\n\s*const s = this\.status;\n\s*if \(!this\.ctx\.editing\(\) \|\| !s \|\| !laterNs\(s\.fileMtimeNs, this\.ctx\.mtimeNs\(\)\)\) return;/,
     "the latch is the first thing checked, before the clocks: a status read while the row is already latched re-sets nothing");
   assert.equal((SRC.match(/this\.errors\.set\("edit", \{ text: MOVED_UNDER_EDIT/g) || []).length, 1, "one writer of the row");
-  assert.equal((SRC.match(/this\.noteMovedUnderEdit\(\);/g) || []).length, 3, "the poll's moved branch, every verb reply, the save's re-read");
+  assert.equal((SRC.match(/this\.noteMovedUnderEdit\(\);/g) || []).length, 3, "the poll's moved branch, every verb reply, the save's re-read — and not a save's reply that finds a later editor up: the viewer says that one and re-reads at the exit itself (file-comments-editing-races.test.ts)");
   // the siblings check theirs the same way, so the three rows in the head's `edit` slot agree on once per edit
   assert.match(SRC, /if \(!seed \|\| !s \|\| !this\.ctx\.editing\(\) \|\| this\.changesMovedUnderEdit\) return;/);
   assert.match(SRC, /if \(this\.editSeed \|\| !s \|\| !this\.ctx\.editing\(\) \|\| this\.changesUnreadUnderEdit\) return;/);
