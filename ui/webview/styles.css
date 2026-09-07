@@ -938,12 +938,14 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 #bg-tasks { flex: 0 0 auto; min-height: 0; max-height: min(50vh, 340px); overflow: hidden;
   box-sizing: border-box; margin: 8px 10px 6px; border: 1px solid var(--box-border); border-radius: 8px;
   background: var(--box-bg); display: flex; flex-direction: column; }
-/* level 1: the header BAR at the top of the box ("N background tasks" / "Background task · name"). No own
-   border/radius — the box provides them; a bottom border appears when expanded, separating it from the list below. */
+/* level 1: the header BAR at the top of the box ("Awaiting 3 · 2 agents · 1 command" idle, "In the background ·
+   2 agents · 1 command" working — 2026-09-06). No own border/radius — the box provides them; a bottom border
+   appears when expanded, separating it from the list below. */
 .bg-fold-head { --bgt: var(--st-working-bg); flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
   padding: 7px 11px; cursor: pointer; user-select: none; font-size: 12px; }
 .bg-fold-head.open { border-bottom: 1px solid var(--box-border); }
 .bg-fold-head:hover { background: rgba(255, 255, 255, 0.04); }
+/* Stop (a live task) and Cancel (an armed watch — slice 2, 2026-09-05) wear ONE button treatment */
 .bg-stop { flex: 0 0 auto; font-size: var(--btn-fs-sm); padding: var(--btn-pad-sm); border-radius: 9px; cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg);
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
@@ -960,6 +962,18 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .bg-task { --bgt: var(--st-working-bg); }
 .bg-task.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-task.bg-completed { --bgt: var(--st-ready-bg); }
+/* an armed watch / a peer or timer wait: nothing is computing HERE — the dot wears the await-green (slice 2) */
+.bg-task.bg-armed, .bg-task.bg-waiting { --bgt: var(--st-awaitbg-bg); }
+/* the rows grouped by KIND (slice 2, 2026-09-05): a small dim header per group, in the .bg-status
+   vocabulary (10px uppercase), shown only when more than one group is on screen */
+.bg-group-head { flex: 0 0 auto; padding: 6px 9px 2px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; color: var(--dim); }
+.bg-group-head + .bg-group-head { padding-top: 2px; }
+/* a row with nothing to unfold (a hook-only agent, a PR watch, a peer) is not a toggle: no hand, no hover wash */
+.bg-head.bg-flat { cursor: default; }
+.bg-head.bg-flat:hover { background: none; }
+/* how long a row has been waited on (its own event time; the statusline tick keeps it live) */
+.bg-since { flex: 0 0 auto; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bg-list > .bg-await-note { padding: 2px 9px 4px; }
 /* AWAITED (the user 2026-08-19): the session's await-green chip is waiting on THIS task — the box
    border + the row's thin outline take the chip's green; the dot keeps meaning the task's own status */
 #bg-tasks.bg-awaited { border-color: var(--st-awaitbg-bg); }
@@ -969,7 +983,12 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* SOLID status dot — no pulse (the user 2026-07-07: the pulsating yellow was distracting; a running dot is
    just solid working-yellow, like the rest of the dashboard's status dots). */
 .bg-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--bgt); }
-.bg-sum { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg); }
+/* the row reads LEFT TO RIGHT as one line — label, then its cluster (arrow · elapsed · STATUS · Stop · caret)
+   INLINE right after it (the user 2026-09-05: with the label growing to fill, the cluster sat at the far
+   right edge and a wide desktop pane lost it entirely). The label takes only its own width and shrinks with
+   an ellipsis when too long (flex 0 1 auto, min-width 0); every cluster item is 0 0 auto, so the label can
+   never push them off-screen; no spacer, no margin-left:auto, no space-between. */
+.bg-sum { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg); }
 .bg-status { flex: 0 0 auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600; color: var(--bgt); }
 .bg-caret { flex: 0 0 auto; color: var(--dim); font-size: 10px; width: 10px; }
 /* level 3: a task's command + output, each its own scrollable block, indented under the line (overscroll-
@@ -1321,6 +1340,13 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    #fff default = the no-identity (cross-host) name stays legible on the dark backing. */
 .chip-peer-name { background: rgba(0, 0, 0, 0.85); color: #fff; border-radius: 7px; padding: 0 5px; margin-left: 1px; }
 .chip-awaitingBg { background: var(--st-awaitbg-bg); color: var(--st-awaitbg-fg); }
+/* the Awaiting chip is a BUTTON (slice 2, 2026-09-05): click opens the awaiting box below. The UA
+   button chrome is reset so it wears the chip exactly (.chip supplies size, weight, padding, radius);
+   hover lifts it a touch, :active presses, and the delegate's .romp-acted pulse acknowledges the click. */
+button.chip { font-family: inherit; line-height: normal; border: 0; cursor: pointer; transition: filter 0.12s ease, transform 0.08s ease; }
+button.chip:hover { filter: brightness(1.08); }
+button.chip:active { transform: scale(0.96); }
+button.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* retrying = a SOFT 'blocked on the API' (rate-limit / overload auto-retry) — not a hang, not working. Amber/
    orange, deliberately distinct from working-yellow and blocked-red (the user via api 2026-06-23). */
 .chip-retrying { background: #e67e22; color: #2a1500; }
@@ -1867,7 +1893,15 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
    as the links above: `.md blockquote` ties it later in the sheet and was silently winning. */
 .user-bubble blockquote, .user-bubble.md blockquote { color: rgba(255, 255, 255, 0.88); border-left-color: rgba(255, 255, 255, 0.40);
   font-family: var(--font-prose); }
-.user-bubble :not(pre) > code { background: rgba(255, 255, 255, 0.2); color: #fff; }
+.user-bubble :not(pre) > code, .user-bubble.md :not(pre) > code { background: rgba(255, 255, 255, 0.2); color: #fff; }
+/* fenced code in YOUR bubble sits in a PAGE-colored well: the hljs palette is tuned for the page
+   ground in each theme, and on the saturated fill its inks read as stray reds (the user 2026-09-04,
+   whose light bubbles showed red text). Bold joins the white family — .md's near-page text tones
+   are unreadable on the fill. All doubled: the bubble element wears .md, which ties bare selectors. */
+.user-bubble pre, .user-bubble.md pre { background: var(--bg); }
+.user-bubble strong, .user-bubble.md strong { color: #fff; }
+.user-bubble h1, .user-bubble h2, .user-bubble h3, .user-bubble h4,
+.user-bubble.md h1, .user-bubble.md h2, .user-bubble.md h3, .user-bubble.md h4 { color: #fff; }
 /* a slash COMMAND you sent (the user 2026-06-29): the "/cmd" token renders as a monospace KEYWORD chip inside
    the blue bubble — a darkened, outlined pill so it reads as a command, not prose. Args sit after it as text. */
 .slash-cmd-chip {
@@ -1969,6 +2003,21 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   color: var(--dim); background: transparent; border: 0; border-radius: 6px; padding: 0;
 }
 .queued-x:hover { color: var(--vscode-errorForeground, #f48771); background: rgba(255, 255, 255, 0.08); }
+/* A notice romp itself queued (T243) wears the LANDED romp notice card nested inside the queued bubble: the
+   dashed "you" dress comes off the wrapper (the card brings its own gray tone), and the ✕ moves inside the
+   card's corner so it reads as the card's control. */
+.queued-bubble.queued-romp { background: transparent; border: 0; padding: 0; opacity: 1; }
+.queued-bubble.queued-romp.cancelable { padding-right: 0; }
+.queued-bubble.queued-romp.cancelable:hover { border-color: transparent; }
+.queued-bubble.queued-romp > .notice-card { margin-top: 0; }
+/* The queued NUDGE nests the landed .romp-tag + .romp-bubble: the wrapper is the landed romp turn's own
+   right-aligned column (tag above, bubble flush right), the nested bubble sheds its own 72% cap (the
+   wrapper already carries it — nested, it shrank to 72% of 72% and wrapped one-line gists) and anchors the
+   ✕ in ITS corner, not the wrapper's (T243 follow-up, measured in queued-romp-layout.test.ts). */
+.queued-bubble.queued-romp:not(.queued-sys) { display: flex; flex-direction: column; align-items: flex-end; }
+.queued-bubble.queued-romp > .romp-bubble { max-width: none; position: relative; }
+.queued-bubble.queued-romp.cancelable > .notice-card,
+.queued-bubble.queued-romp.cancelable > .romp-bubble { padding-right: 30px; }   /* room for the ✕ only when there is one */
 /* NEVER-DELIVERED send (ev.undelivered): a message whose CLI died holding it — kept, because the bubble
    is the only surviving copy of the text, but marked as a LOSS instead of posing as delivered history
    (the user 2026-07-29). Dashed like the queued family (a send that never became a turn), red-edged like
@@ -2475,6 +2524,37 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .notice-dot-clear { border-color: var(--dim); }
 .clear-loading { display: inline-flex; align-items: center; gap: 8px; }
 .clear-truncated { color: var(--dim); padding: 4px 0 6px; }
+
+/* ── SUBAGENT TRANSCRIPTS (plans/subagent-transcripts.md, 2026-09-05) ──────────────────────────────
+   The open-transcript arrow on an Agent head / agent bg row and the viewer header's pin share ONE
+   button dress (dim line icon, accent on hover — the house icon-button treatment); the running
+   preview under the head wears the tool-fold-toggle's 0.86em (no new size on the tool head); the
+   viewer header is a sticky dim line above the transcript, tokens only so both themes read. */
+.tool-open-agent, .sub-head-pin { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 4px; color: var(--dim); cursor: pointer; flex: 0 0 auto; align-self: center; }
+.tool-open-agent:hover, .sub-head-pin:hover { color: var(--accent); background: var(--accent-wash); }
+.tool-open-agent svg, .sub-head-pin svg { display: block; }
+.tool-open-agent.bg-open-agent { margin-left: 2px; }
+.sub-head-pin.pinned { color: var(--accent); }
+.agent-gist { display: flex; flex-direction: column; gap: 1px; margin: 1px 0 3px; color: var(--dim); font-size: 0.86em; }
+.agent-gist-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.agent-gist-tool { flex: 0 0 auto; font-weight: 600; }
+.agent-gist-desc { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-gist-meta { flex: 0 0 auto; white-space: nowrap; opacity: 0.8; }
+/* the head's fold lists EVERY call (same rows); the level-0 preview yields to it the instant the fold
+   opens — this rule covers the click, the render-time openFolds check covers every rebuild after */
+.turn-tool.fold-open > .agent-preview { display: none; }
+.agent-folds > .agent-steps { margin: 6px 0 6px 2px; }
+.agent-steps-note { opacity: 0.8; font-style: italic; margin-bottom: 2px; }
+#sub-head { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--box-border); color: var(--dim); font-size: 0.86em; }
+.sub-head-line { display: flex; align-items: center; gap: 6px; padding: 6px 12px; min-width: 0; }
+.sub-head-parent { color: var(--fg); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.sub-head-parent:hover { text-decoration: underline; }
+.sub-head-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sub-head-state.running { color: var(--st-working-bg); }
+.sub-head-state.finished { color: var(--st-ready-bg); }
+.sub-head-pin { margin-left: auto; }
+.sub-head-note { padding: 0 12px 6px; }
+.sub-status-line { color: var(--dim); }
 /* the nested pre-clear transcript: same renderers as the live chat, scoped so its rail hugs the card */
 .clear-episode { border-top: 1px solid var(--box-border); margin-top: 4px; padding-top: 4px; }
 
@@ -2929,11 +3009,11 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    it; render.ts measures its bottom against #content's edge (the composer growing moves it). Below
    toasts/seek (60), above the transcript. */
 #jump-bottom {
-  position: fixed; left: 50%; transform: translateX(-50%); z-index: 40;
+  position: fixed; left: 14px; z-index: 40;   /* bottom-LEFT (the user 2026-09-03; it sat centered and went unnoticed — they were still clicking in + End) */
   width: 40px; height: 22px; border-radius: var(--radius-pill); cursor: pointer; padding: 0;   /* a short PILL, wider than tall, hugging the bottom (the user 2026-08-31, revising the circle) */
   display: flex; align-items: center; justify-content: center;
   background: var(--vscode-menu-background, var(--surface-raised)); color: var(--dim);
-  border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: var(--shadow-toast);
+  border: 1px solid var(--menu-border); box-shadow: var(--shadow-toast);   /* the raw white-alpha border vanished on the light page — cream on cream */
 }
 #jump-bottom:hover { border-color: var(--accent); color: var(--accent); }
 #jump-bottom[hidden] { display: none; }   /* author display:flex defeats [hidden] — the login-modal lesson */
@@ -3538,14 +3618,21 @@ body.fileview-open { overflow: hidden; }
 .fileview-dir { flex: 0 1 auto; min-width: 0; color: var(--dim);
   overflow: hidden; text-overflow: ellipsis; }
 .fileview-base { flex: 0 0 auto; }
-/* the SESSION the file was opened from (the user 2026-09-03), in the waiting pane's chip idiom (.wt-sess): a
-   pill in the session's identity colour (inline, from the resolved row), a remote session's "host:" quiet
-   inside. Fixed width: the chip never yields to the path — only .fileview-dir above gives up room. Uncolored
-   when the session has no colour (a stub for a sid the document cannot name); absent when there is no sid. */
-.fileview-sess { flex: 0 0 auto; display: inline-flex; align-items: center; max-width: 38%; padding: 1px 8px;
-  border-radius: var(--radius-pill, 999px); font-size: 11px; font-weight: 600; line-height: 1.5;
+/* the SESSION the file was opened from (the user 2026-09-03): a pill in the session's identity colour
+   (inline, from the resolved row — the colour its tab wears), a remote session's "host:" quiet inside.
+   Fixed width: the chip never yields to the path — only .fileview-dir above gives up room. Uncolored
+   when the session has no colour (a stub for a sid the document cannot name); absent when there is no
+   sid. The host: token takes the pill's OWN foreground (color: inherit): the global .host-prefix rule's
+   var(--dim) would otherwise beat the inline colour and sit near-invisible on a saturated pill.
+   Sized at the bar's button size — 0.82em of --fs, not a px value — so the chip scales with its
+   neighbours. A BLOCK container, not inline-flex: text-overflow acts on block containers only — on a flex
+   container the text sits in an anonymous flex item the property cannot reach, and an over-long name
+   hard-clipped at max-width (the review of #970). The bar's align-items centres the pill; its one nowrap
+   line centres within it. */
+.fileview-sess { flex: 0 0 auto; display: block; max-width: 38%; padding: 1px 8px;
+  border-radius: var(--radius-pill, 999px); font-size: 0.82em; font-weight: 600; line-height: 1.5;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); }
+  background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); user-select: none; }
 .fileview-sess .host-prefix { color: inherit; opacity: 0.75; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 /* The wrap is the TITLE BAR's, not the classes' (review 2026-09-07, round 2). Two surfaces wear these classes
@@ -3567,13 +3654,16 @@ body.fileview-open { overflow: hidden; }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* the GitHub action is one unit: the control and, when the kernel gave one, its reason as a caption
-   beside it — visible without hover (touch has none, and a disabled button takes no focus), truncated
-   with the full text in its tooltip; same size as the buttons it annotates. Hidden until the kernel
-   answers: an author `display` beats the UA's [hidden] rule, so the hide is spelled out. */
+   beside it — visible without hover (touch has none, and a disabled button takes no focus), and whole:
+   it wraps inside a bounded width rather than truncating, because nothing in the unit takes a tap,
+   click or focus that could finish a cut sentence; same size as the buttons it annotates, ragged edge
+   away from the control it precedes. */
 .fileview-gh { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.fileview-gh[hidden] { display: none; }
-.fileview-gh-why { font-size: 0.82em; color: var(--dim); max-width: 18em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
+.fileview-gh-why { font-size: 0.82em; line-height: 1.25; color: var(--dim); max-width: 18em; text-align: right; }
+/* pending: the kernel's check is on its way (up to 3 s when it must ask origin), so the slot holds the
+   dimmed button and the loader's dots (.fileview-dot, the pane's own) where the caption will go — a slow
+   check must read as a wait, not as the old no-button state nor as a verdict (the loading-state rule) */
+.fileview-gh-dots { display: inline-flex; align-items: center; gap: 4px; }
 /* a disabled bar button, greyed, hover inert: the GitHub unit's no-link state (a real disabled button, never
    hidden: an absent button read as "broken" when the file was simply not committed yet, 2026-09-05) and the
    text-size control's end (A− at the smallest step, A+ at the largest; aria-disabled, so the button keeps the
@@ -3613,14 +3703,20 @@ a.fileview-gh-note { border-style: dashed; }
 
 /* ── the file BROWSER (file-browse.ts) in the CHAT document ── the 642 move made the browser
    pane-local here, but its overlay dress lived only in feed.css, so it mounted as unstyled block
-   flow at the document bottom, below the composer (the user 2026-08-24, near-verbatim: "totally
-   messed up — showing at the bottom"). This block MIRRORS feed.css's (the .romp-acted precedent:
-   the two pages load different sheets, so shared overlays are declared in both — a test pins the
-   pair equal). The browser fills the pane (fixed inset-0), sits one z layer BENEATH the viewer
-   (890 < 1200) so a file opened from a listing overlays it, and body.filebrowse-open locks the
-   thread's scroll while open. */
-.filebrowse { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column;
-  background: var(--bg, #1e1e1e); }
+   flow at the document bottom, below the composer (the user 2026-08-24, who found it broken at
+   the page bottom). This block MIRRORS feed.css's (the .romp-acted precedent: the two pages load
+   different sheets, so shared overlays are declared in both — a test pins the pair equal). The
+   browser WORE the whole pane through 2026-09-04, when the user found the takeover odd once the
+   listing was capped — it presents like the file viewer now: a centered card over the dimmed
+   backdrop (the id rides the BACKDROP: every open/close check looks it up), one z layer BENEATH
+   the viewer (890 < 1200) so a file opened from a listing overlays it, and body.filebrowse-open
+   locks the thread's scroll while open. Height caps in px/%, never vh — in a pane iframe vh IS
+   the pane, so a vh cap would beat 95% on the short panes it exists to protect. */
+#romp-filebrowse { position: fixed; inset: 0; z-index: 890; background: var(--overlay-dim);
+  display: flex; align-items: center; justify-content: center; }
+.filebrowse { width: min(720px, 95%); height: min(760px, 95%); display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg, #1e1e1e); border: 1px solid var(--box-border);
+  border-radius: var(--radius-modal); box-shadow: var(--shadow-modal); }
 body.filebrowse-open { overflow: hidden; }
 .fb-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
@@ -3631,10 +3727,7 @@ body.filebrowse-open { overflow: hidden; }
 .fb-crumb:hover { color: var(--accent); text-decoration: underline; }
 .fb-crumb:last-child { color: var(--fg); }
 .fb-crumb-sep { margin: 0 3px; opacity: 0.6; }
-/* the overlay still takes the whole pane (the user 2026-08-24 ruling) — but the LISTING reads at a
-   centered 720px measure on a wide pane (the user 2026-09-02: full-width rows put a file's size
-   ~800px from its name); 100% wins on narrow panes/phones, pixel-identical to before */
-.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; width: min(720px, 100%); margin-inline: auto; }
+.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; }
 .fb-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 14px; cursor: pointer;
   font-size: 0.86em; }
 .fb-row:hover, .fb-row.active { background: var(--menu-hover); }
@@ -3746,6 +3839,9 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4 {
   font-weight: 600; color: var(--fg); margin: 1em 0 0.4em; line-height: 1.3; }
 .fileview-md h1 { font-size: 1.3em; } .fileview-md h2 { font-size: 1.15em; } .fileview-md h3 { font-size: 1.05em; }
+/* a heading an in-document link lands on (scrollIntoView) sits a breath below the title bar's hairline
+   rather than flush against it — the bar's own 10px spacing */
+.fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6 { scroll-margin-top: 10px; }
 .fileview-md ul, .fileview-md ol { margin: 0.4em 0; padding-left: 1.4em; }
 .fileview-md li { margin: 0.2em 0; }
 .fileview-md strong { color: var(--fg); font-weight: 600; }

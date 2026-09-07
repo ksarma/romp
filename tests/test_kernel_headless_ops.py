@@ -177,6 +177,24 @@ class HeadlessRoutes(unittest.TestCase):
         finally:
             km._pending_ops.clear()
 
+    def test_send_route_reads_the_setters_locked_verdict_not_a_second_gate(self):
+        # #954 moved the deciding park under the queue lock (_gate_or_park); the route must report the
+        # setter's OWN verdict, not a separate unlocked _ops_gate read that can disagree (review find on
+        # #954, 2026-09-07: a parked /model answered queued:false). Force the two apart: _gate_or_park
+        # parks (True) while _ops_gate reads False.
+        fake = mock.Mock(); fake.busy.return_value = None
+        km._pending_ops.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_ops_gate", lambda sid: False), \
+                 mock.patch.object(km, "_gate_or_park", lambda sid, op: (km._pending_ops.setdefault(str(sid), []).append(op) or True)):
+                code, resp = self._post("/send", {"id": "sid-x", "text": "/model sonnet"})
+            self.assertEqual((code, resp), (200, {"ok": True, "queued": True}),
+                             "the route reports the setter's locked park, not the unlocked gate")
+            fake.set_model.assert_not_called()
+        finally:
+            km._pending_ops.clear()
+
     def test_send_route_passes_a_remote_kernels_queued_through(self):
         # a session living on another kernel: its answer's `queued` rides back to the caller; an older
         # remote without the field reads as not queued (today's behaviour)
@@ -201,6 +219,34 @@ class HeadlessRoutes(unittest.TestCase):
         self.assertFalse(resp.get("ok"))
 
 
+class CodexRuntimeSelection(unittest.TestCase):
+    # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept
+    # over upstream's SourceFileLoader.load_module() in the 2026-09-07 fold (a standing fork ruling): patch that.
+    def test_path_codex_does_not_override_managed_runtime(self):
+        fake_mod = mock.Mock()
+        with mock.patch.object(km, "_codex_backend", None), \
+             mock.patch.object(km, "load_source", return_value=fake_mod), \
+             mock.patch.object(km.shutil, "which", return_value="/TESTBIN/codex"):
+            backend = km._codex()
+            self.assertIs(backend, fake_mod.CodexBackend.return_value)
+            self.assertIs(km._codex(), backend)
+        fake_mod.CodexBackend.assert_called_once()
+        self.assertIsNone(fake_mod.CodexBackend.call_args.kwargs.get("codex_bin"),
+                          "the backend must resolve its managed runtime even when codex is on PATH")
+
+    def test_romp_codex_bin_overrides_the_session_runtime(self):
+        # PATH is ignored, but the one explicit knob the judges already read (ROMP_CODEX_BIN) governs
+        # sessions too — an opt-in, not the ambient PATH accident #929 closed (review fold, 2026-09-07)
+        fake_mod = mock.Mock()
+        with mock.patch.object(km, "_codex_backend", None), \
+             mock.patch.object(km, "load_source", return_value=fake_mod), \
+             mock.patch.dict(km.os.environ, {"ROMP_CODEX_BIN": "/opt/codex/bin/codex"}), \
+             mock.patch.object(km.shutil, "which", return_value="/TESTBIN/codex"):
+            km._codex()
+        self.assertEqual(fake_mod.CodexBackend.call_args.kwargs.get("codex_bin"), "/opt/codex/bin/codex",
+                         "the explicit knob is forwarded; PATH is still not")
+
+
 class SdkSingleFlight(unittest.TestCase):
     """Concurrent _sdk() calls must construct exactly ONE backend. The 2026-07-06 storm: the eager
     boot thread + handler threads each passed the unlocked `if _sdk_backend is None` check and built
@@ -220,6 +266,12 @@ class SdkSingleFlight(unittest.TestCase):
         fake_mod = mock.Mock()
         fake_mod.SdkBackend = lambda *a, **k: FakeBackend()
         prev = km._sdk_backend
+        # _sdk_locked wires the loaded module's readers into the SHARED romp_judge module (jd._WORK_KEY_FN
+        # and its siblings, jd._LOGIN_AUTH_ENV_FN included); with the module a Mock those wires would outlive
+        # this test and hand a later module in the same process (test_judge's JudgeEnv) a Mock where it
+        # expects an environment. Saved here, restored below, and checked afterwards so a new wire added to
+        # _sdk_locked without a `_FN` name still shows up here.
+        wires = {n: getattr(km.jd, n) for n in dir(km.jd) if n.endswith("_FN")}
         try:
             km._sdk_backend = None
             results = [None] * 6
@@ -237,6 +289,10 @@ class SdkSingleFlight(unittest.TestCase):
                             "every caller gets the same singleton")
         finally:
             km._sdk_backend = prev
+            for n, fn in wires.items():
+                setattr(km.jd, n, fn)
+        for n in dir(km.jd):
+            self.assertNotIsInstance(getattr(km.jd, n), mock.Mock, "%s still wired to the Mock module" % n)
 
 
 class WiringPins(unittest.TestCase):

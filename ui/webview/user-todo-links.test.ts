@@ -142,42 +142,52 @@ test("render.ts imports the matcher and binds the click itself — the chat's ro
   for (const gone of ["const CLICKABLE_PATH_RE", "function looksLikeFilePath(", "function looksLikeBareFileName(", "function fileUriToPath(", "function openPathLink("]) {
     assert.ok(!RENDER.includes(gone), gone + " lives in path-links.ts now, once");
   }
-  // one binder: data-rel → the named session first (a todo's note), the active tab otherwise; a URI sends none
-  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
-  // every span the walk and the spaced pass emit is bound; the hits feed the figure pass as before
-  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks\)\) \{\n\s*bindPathLink\(link\);/);
-  assert.match(RENDER, /const link = bindPathLink\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/);
+  // one reader of the span: data-rel → the named session first (a todo's note), the active tab otherwise;
+  // a URI sends none. The transcript's binder and the body delegate's openpath both call it
+  // (user-todo-title-links.test.ts drives both), each handing over its click so the gesture rides along
+  // (upstream's PDF own-tab reader, 2026-09-07 fold)
+  assert.match(RENDER, /function openLinkedPath\(a: HTMLElement, e\?: MouseEvent \| null\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);[^\n]*\n\}/);
+  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); openLinkedPath\(a, e\); \}\);\n\s*onMiddleClick\(a, \(e\) => openLinkedPath\(a, e\)\);/);
+  // every span the walk and the spaced pass emit is bound (unless the caller delegates); the hits feed
+  // the figure pass as before
+  assert.match(RENDER, /const bind = delegated \? \(a: HTMLElement\) => a : bindPathLink;/);
+  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks\)\) \{\n\s*bind\(link\);/);
+  assert.match(RENDER, /const link = bind\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/);
 });
 
 test("the chat's todo card and its Reply modal still link the note against the todo's session", () => {
   const card = RENDER.slice(RENDER.indexOf('const d = el("div", "ut-detail" + (utDetailOpen.has(t.id)'), RENDER.indexOf("row.appendChild(d);"));
   assert.match(card, /d\.textContent = t\.detail \|\| "";/);                           // the note stays plain text…
-  assert.match(card, /linkifyFileUris\(d, undefined, undefined, undefined, undefined, renderingSid \|\| null\);/);   // …with paths linked after
+  assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);             // …with paths linked after
+  // the detail's linker is the transcript's with the figure pass, DELEGATED: the card rebuilds every push
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   assert.match(RENDER, /reply\.dataset\.sid = renderingSid \|\| "";/);               // the buttons act where the paths resolve
   const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\")"),
                              RENDER.indexOf("input.className = \"ut-reply-input\""));
-  assert.match(modal, /dd\.textContent = todoDetail; linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\);/);
-  // the one-line text is the fold's click target, never linkified (click safety, ui/CLAUDE.md)
+  assert.match(modal, /dd\.textContent = todoDetail; linkTodoDetailPaths\(dd, sid\);/);
+  // the one-line text links its paths too (the user 2026-09-07), through the same binder but without the
+  // figure pass: a one-line row is the compact form, so never linkifyFileUris there (user-todo-title-links.test.ts)
   const row = RENDER.slice(RENDER.indexOf('const txt = el("span", "ut-text");'), RENDER.indexOf('const reply = el("button", "ut-btn ut-reply");'));
-  assert.match(row, /txt\.textContent = t\.text;/);
+  assert.match(row, /txt\.textContent = t\.text;\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);/);
   assert.doesNotMatch(row, /linkifyFileUris\(/);
 });
 
-test("waiting.ts links the detail at BOTH sites — the row fold and the Reply modal — with the todo's sid, only when framed", () => {
+test("waiting.ts links the text and the detail at BOTH sites (the row and the Reply modal) with the todo's sid, only when framed", () => {
   assert.match(WAITING, /import \{ linkifyPathTokens \} from "\.\/path-links";/);
   // the gate: a pane the shell does not frame has no Files pane to send a click to → plain text
-  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkDetailPaths\(node: HTMLElement, sid: string\): void \{\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
-  // the row: text first, then the links, on the fold body (never on the one-line .ut-text, the fold's click target)
+  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  // the row: text first, then the links, on the one-line text (the user 2026-09-07) and on the fold body
   const row = WAITING.slice(WAITING.indexOf("function rowEl("), WAITING.indexOf("function hostLine("));
-  assert.match(row, /d\.textContent = w\.todo\.detail \|\| "";\n\s*linkDetailPaths\(d, w\.sid\);/);
-  const txt = row.slice(row.indexOf('const txt = el("span", "ut-text");'), row.indexOf('const age = el("span", "wt-age");'));
-  assert.doesNotMatch(txt, /linkDetailPaths|linkifyPathTokens/);
-  // the modal: the same call on the quoted detail, and its own delegate (the overlay lives outside #waiting-list)
+  assert.match(row, /txt\.textContent = w\.todo\.text;\n\s*linkTodoPaths\(txt, w\.sid\);/);
+  assert.match(row, /d\.textContent = w\.todo\.detail \|\| "";\n\s*linkTodoPaths\(d, w\.sid\);/);
+  // the modal: the same call on the quoted line and the quoted detail, and ONE delegate on its box for
+  // both (the overlay lives outside #waiting-list)
   const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
-  assert.match(modal, /dd\.textContent = todoDetail;\n\s*linkDetailPaths\(dd, sid\);/);
-  assert.match(modal, /delegate\(dd, \{ openpath: \(x\) => \{ const p = x\.dataset\.path; if \(p\) openTodoPath\(p, sid, todoId\); \} \}\);/);
-  assert.equal((WAITING.match(/linkDetailPaths\(/g) || []).length, 3, "defined once, applied at the two sites");
+  assert.match(modal, /d\.textContent = todoText;\n\s*linkTodoPaths\(d, sid\);/);
+  assert.match(modal, /dd\.textContent = todoDetail;\n\s*linkTodoPaths\(dd, sid\);/);
+  assert.match(modal, /delegate\(box, \{ openpath: \(x\) => \{ const p = x\.dataset\.path; if \(p\) openTodoPath\(p, sid, todoId\); \} \}\);/);
+  assert.equal((modal.match(/delegate\(/g) || []).length, 1, "one delegate covers the quoted line and the detail");
+  assert.equal((WAITING.match(/linkTodoPaths\(/g) || []).length, 5, "defined once, applied at the four sites");
 });
 
 test("the list's delegate routes openpath from the ROW's sid and todo id, never the span's — click-safe across the per-frame rebuild", () => {
@@ -220,7 +230,7 @@ test("the shell forwards todoId into the Files pane; files.ts hands it to the vi
   assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null\): void \{/);
   assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;/);
   assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; frag\?: string \| null \}\): boolean \{/);   // upstream's frag joined the opts (2026-09-07 fold)
   assert.match(VIEW, /export interface FileViewActionCtx \{\n  path: string; sid: string \| null; todoId\?: string \| null;/);
   assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);   // the seam ctx every action mounts with (Slice 1)
   assert.match(VIEW, /const n = a\.mount\(ctx\);/);

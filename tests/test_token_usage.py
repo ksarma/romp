@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for build_timeline's token-usage split:
-  _session_tokens  — per-session transcript token sums (the SESSIONS half)
+  _session_tokens  — per-session transcript token sums (the SESSIONS half), one row per API
+                     response across the main transcript and its subagents' (_session_tok_rows)
   _judge_usage     — the judge PIPELINE rollup from judge-usage.jsonl (per-judge / per-tier)
 Synthetic data only (placeholder usage numbers, a temp state dir)."""
 import calendar
@@ -63,8 +64,8 @@ class SessionTokens(unittest.TestCase):
     def test_records_sharing_a_message_id_count_once(self):
         """The CLI writes a multi-block response as several assistant records sharing one message.id;
         summing records counted each response 2.3-3.0x. In a MAIN transcript the records repeat one usage
-        block (2026-09-05: 2,515 groups, none differing); subagent transcripts differ — see the next
-        test. One row per id, the largest output count kept; an id-less record stands alone."""
+        block (2,515 groups measured, none differing); subagent transcripts differ — see the next test.
+        One row per id, the largest output count kept; an id-less record stands alone."""
         u = {"input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 200}
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "s.jsonl")
@@ -83,10 +84,10 @@ class SessionTokens(unittest.TestCase):
 
     def test_subagent_same_id_records_keep_the_final_tally_whatever_their_order(self):
         """A SUBAGENT transcript's same-id records DIFFER: every record but the last carries the
-        stream-start snapshot (a few output tokens) and the last the final tally — measured 2026-09-06
-        over 30 days of subagent files, 94% of multi-record groups, the last record the maximum in every
-        one. The fold keeps the LARGEST output count, in either order, so a first-record fold (about a
-        tenth of the subagents' output) or a last-record fold cannot quietly replace it."""
+        stream-start snapshot (a few output tokens) and the last the final tally — measured on one
+        installation's subagent files, about nine in ten multi-record groups (88% and 94% on two
+        samples), the last record the maximum in every one. The fold keeps the LARGEST output count, in either order, so a first-record fold (about
+        a tenth of the subagents' output) or a last-record fold cannot quietly replace it."""
         first = {"input_tokens": 4000, "output_tokens": 3, "cache_read_input_tokens": 50000}    # stream start
         last = {"input_tokens": 4000, "output_tokens": 1950, "cache_read_input_tokens": 50000}  # final tally
         with tempfile.TemporaryDirectory() as d:
@@ -101,8 +102,8 @@ class SessionTokens(unittest.TestCase):
 
     def test_subagent_transcripts_beside_the_main_one_count_and_refresh_the_cache(self):
         """`<sid>/subagents/agent-<id>.jsonl` holds each spawned agent's conversation; its tokens are the
-        session's spend too (the ledger already counts them via modelUsage). The row cache fingerprints
-        every contributing file, so a subagent landing later refreshes the sum while the main file rests."""
+        session's spend too. Each contributing file caches on its own stamp, so a subagent landing
+        later refreshes the sum while the main file rests."""
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "11111111-2222-3333-4444-555555555555.jsonl")
             with open(p, "w") as f:
@@ -127,7 +128,7 @@ class SessionTokens(unittest.TestCase):
             (other / "agent-zz.jsonl").write_text(_asst({"input_tokens": 7777, "output_tokens": 7777}, iso(NOW - 70), mid="m6") + "\n")
             os.symlink(other, sub / "linked")
             # …nor is a symlinked FILE: os.walk lists one like any other file (only DIRECTORY links go
-            # unfollowed), so before 2026-09-06 the reader opened it wherever it pointed — outside the tree
+            # unfollowed), so a reader that trusted the listing would open it wherever it points
             os.symlink(other / "agent-zz.jsonl", sub / "agent-link.jsonl")
             self.assertEqual(km._session_tokens(p, NOW - 3600), {"in": 1110, "out": 555, "cache_w": 0, "cache_r": 1000})
             # a second subagent lands; the main transcript's mtime has not moved
@@ -145,6 +146,47 @@ class SessionTokens(unittest.TestCase):
                              "sorted, nested files included, the symlinked directory not walked, the symlinked file skipped")
             self.assertEqual(km._subagent_transcripts(os.path.join(d, "no-such.jsonl")), [])
             self.assertEqual(km._subagent_transcripts(os.path.join(d, "x.txt")), [])
+
+    def test_each_transcript_caches_on_its_own_stamp_so_one_file_moving_parses_only_itself(self):
+        """The row cache is per FILE (path -> (stamp, rows)), not per session: a subagent file landing or
+        growing parses that file alone while the main transcript's rows stay cached, and the main file
+        moving leaves every subagent's rows in place. A per-session fingerprint re-parsed the whole tree
+        (main transcript plus every subagent file) whenever any one of them moved — on a live session
+        with Workflow agents running, that is every build, on the GIL, in the /analytics handler."""
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "11111111-2222-3333-4444-555555555555.jsonl")
+            with open(p, "w") as f:
+                f.write(_asst({"input_tokens": 10, "output_tokens": 5}, iso(NOW - 100), mid="m1") + "\n")
+            sub = pathlib.Path(d) / "11111111-2222-3333-4444-555555555555" / "subagents"
+            sub.mkdir(parents=True)
+            a1 = sub / "agent-a1.jsonl"
+            a1.write_text(_asst({"input_tokens": 100, "output_tokens": 50}, iso(NOW - 90), mid="m2") + "\n")
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 110)
+            main_rows, a1_rows = km._session_tok_cache[p][1], km._session_tok_cache[str(a1)][1]
+            self.assertEqual([r[1] for r in main_rows], [10], "the main transcript's own rows, cached under its path")
+            self.assertEqual([r[1] for r in a1_rows], [100], "the subagent's own rows, cached under its path")
+            # a second subagent lands: it parses, the two cached files do not
+            mt = os.path.getmtime(p)
+            (sub / "agent-b2.jsonl").write_text(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 10), mid="m4") + "\n")
+            os.utime(p, (mt, mt))
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 111)
+            self.assertIs(km._session_tok_cache[p][1], main_rows, "the main transcript was not re-parsed")
+            self.assertIs(km._session_tok_cache[str(a1)][1], a1_rows, "the untouched subagent was not re-parsed")
+            # the main transcript grows: it parses, the subagents' rows stay
+            with open(p, "a") as f:
+                f.write(_asst({"input_tokens": 1000, "output_tokens": 1}, iso(NOW - 5), mid="m8") + "\n")
+            os.utime(p, (mt + 5, mt + 5))
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 1111)
+            self.assertIsNot(km._session_tok_cache[p][1], main_rows, "the grown main transcript was re-parsed")
+            self.assertIs(km._session_tok_cache[str(a1)][1], a1_rows, "…and the subagent's rows were not")
+            # a same-mtime rewrite that changes the size still refreshes (the stamp is mtime AND size)
+            b2_rows = km._session_tok_cache[str(sub / "agent-b2.jsonl")][1]
+            bmt = os.path.getmtime(sub / "agent-b2.jsonl")
+            with (sub / "agent-b2.jsonl").open("a") as f:
+                f.write(_asst({"input_tokens": 1, "output_tokens": 1}, iso(NOW - 4), mid="m9") + "\n")
+            os.utime(sub / "agent-b2.jsonl", (bmt, bmt))
+            self.assertEqual(km._session_tokens(p, NOW - 3600)["in"], 1112)
+            self.assertIsNot(km._session_tok_cache[str(sub / "agent-b2.jsonl")][1], b2_rows)
 
     def test_a_symlinked_subagents_directory_is_not_walked_either(self):
         """os.walk follows its TOP argument even when it is a symlink (followlinks governs the descent, not

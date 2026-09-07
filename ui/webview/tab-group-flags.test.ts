@@ -64,9 +64,12 @@ test("executed: a resolved todo clears the flag on the next frame — the same f
   // render.ts: the header reads the live store at render time (sessions.get), never a copy…
   assert.match(FOLDED, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/,
     "…over the members the fold hides (a member pinned to show through carries its own glyph; tab-groups.test pins that)");
-  // …and the chat delta that carries the field is followed by renderTabs() — the frame IS the event
+  // …and the chat delta that carries the field asks for the strip repaint in the same handler; the frame IS
+  // the event. Since the 2026-09-07 fold the ask is upstream's scheduleRenderTabs (one rebuild per animation
+  // frame, however many tails a pusher cycle lands): the flag still clears on that frame, with no timer
   const delta = RENDER.slice(RENDER.indexOf('if ("userTodos" in msg) s.userTodos = msg.userTodos;'));
-  assert.ok(delta.slice(0, 200).includes("renderTabs();"), "a userTodos delta repaints the strip within the same handler (no timer)");
+  assert.ok(delta.slice(0, 200).includes("scheduleRenderTabs();"), "a userTodos delta repaints the strip on the handler's own frame (no timer)");
+  assert.match(RENDER, /function scheduleRenderTabs\(\): void \{\n\s*if \(tabsRaf != null\) return;\n\s*tabsRaf = requestAnimationFrame\(\(\) => \{ tabsRaf = null; renderTabs\(\); \}\);/, "…and that ask is an animation frame, not a timeout");
   // the tab's own glyph gates on the very same field, so the two can never disagree on a frame
   assert.match(RENDER, /if \(s\.userTodos && s\.userTodos\.length\) \{\s*\n\s*const ut = el\("span", "tab-usertodo"\);/);
 });

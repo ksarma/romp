@@ -417,6 +417,7 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
         "_push_cb": None, "_push_session_cb": None, "_todo_lost_cb": None, "_log_cb": None,
         "mcp_config": None, "append_prompt_path": None, "cli_scope": False, "thread_wake_model": None,
         "_bench_dormant": bool(dormant_rows), "_bench_all_regs": bool(all_regs),
+        "_owns_memo": {},  # the owns() memo sdk_backend sets in __init__; read on the liveness path since the 2026-09-07 fold
     })
     return be
 

@@ -13,3 +13,5 @@ Upstream ships the same unit, the same manager `startTmuxServer` and the same SD
 Status detail (migrated from the table): **offered** — their PR #953 (2026-09-06), label `feature`; stacked on #941 and #951 (their commits show in its diff until they merge); the /api-health `cliScope` counters stayed home with the `apihealth` row
 
 MERGED 2026-09-07T00:37Z as their PR #953 (merge `d0e3dddf`; head `590ba7dc`) after two fold rounds (the boot-time wanted-but-unavailable verdict filed as a problem, a `startTmuxServer` bats case with a fake systemd-run, the tests/README floor doc, run-then-status bats assertions, the manager's stderr first line, `tests/test_cli_scope_floor.py`). The ETIMEDOUT wording nit is its own entry (`manager-scoped-tmux-etimedout-line`); the memory-limits entry (`session-memory-limits`) is offerable now.
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #953 is in the folded range).

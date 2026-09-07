@@ -448,10 +448,20 @@ function niceStep(W) { for (const s of NICE) if (W / s <= 8) return s; return 17
 //   baseMs  — monotonic ms when baseSec observed  nowMs — monotonic ms now
 // Clamp the advance to [0, maxAheadSec]: never run backward (a clock hiccup), and never fling the edge
 // far ahead if the tab was backgrounded (rAF paused → huge elapsed) or the kernel went quiet.
-const MAX_INTERP_AHEAD = 30;   // seconds the edge may glide past the last data.now before it just waits
-const LIVE_MIN_PX = 0.15;      // the live tick writes its translate once the edge would move at least this many
-                               // px; below it the frame is a no-op — small so the glide stays smooth at high zoom
-                               // (effectively native rAF), but >0 so a near-static (zoomed-out) edge idles
+const MAX_INTERP_AHEAD = 150;  // seconds the edge may glide past the last data.now before it just waits: past
+                               // the kernel's 60 s repost of an unchanged frame (a quiet board sends nothing
+                               // sooner, since 2026-09-04 the skeleton dedups too), so a healthy kernel never
+                               // stalls the edge; a dead one is announced by the socket, not by this cap
+// A full REBUILD advances the live edge in whole-pixel steps: when the last build left the tick no plot group to
+// translate (a glyph rides the live edge; see _tickLive), the loop looks once the edge could have moved this far
+// at the current zoom (_liveWaitMs, 100-2000 ms between looks) and rebuilds then. It used to be 0.15 px on every
+// animation frame — a full SVG rebuild about twice a second at a one-hour window, on the main thread every
+// pane shares, which is what a chat tab click waited behind (measured 2026-09-04).
+const LIVE_MIN_PX = 1;
+// A TRANSLATE (the tick's usual frame, _tickTranslate: one transform write on the plot group the build left) is
+// written once the edge would move at least this many px; below it the frame is a no-op — small so the glide
+// stays smooth at high zoom (effectively native rAF), but >0 so a near-static (zoomed-out) edge idles.
+const TICK_MIN_PX = 0.15;
 function perfNow() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
 function interpNow(baseSec, baseMs, nowMs, live, maxAheadSec) {
   if (!live || baseMs == null) return baseSec;
@@ -570,13 +580,23 @@ function idleGaps(merged, gapCT, now) {
 // "agent", never "agents"). This is the RESOLVED twin of ui/webview/spin-caption.ts kindWord()/KIND_WORD —
 // this file runs standalone (Obsidian too) and cannot import it, so the table and the rule are mirrored
 // here byte for byte and timeline-awaiting.test.ts holds the two together. An unknown count (an older
-// kernel ships none) keeps the plural default each kind always wore; an unknown kind stays "agents".
-const KIND_WORD = { agents: 'agents', task: 'task', job: 'job', peer: 'peer', timer: 'timer' };
+// kernel ships none) keeps the default each kind always wore; an unknown kind stays "agents". The WORDS
+// are the plain ones since 2026-09-05 (plans/subagent-transcripts.md slice 2): the kernel's "task" key
+// reads "command", "job" reads "watch", and "mixed" (several kinds at once) has no word — the badge
+// shows the count alone there (tlAwaitSuffix).
+const KIND_WORD = { agents: 'agents', task: 'command', job: 'watch', peer: 'peer', timer: 'timer', mixed: '' };
 function tlKindWord(kind, count) {
+  if (kind === 'mixed') return '';
   const base = KIND_WORD[kind || ''] || 'agents';
   if (typeof count !== 'number' || !Number.isFinite(count)) return base;
   if (count === 1) return base === 'agents' ? 'agent' : base;
-  return base === 'agents' ? base : base + 's';
+  return base === 'agents' ? base : (/ch$/.test(base) ? base + 'es' : base + 's');
+}
+// " agent" / " watches" after 'Awaiting'; a wordless mixed wait shows its count (" 4"); '' when neither is known.
+function tlAwaitSuffix(kind, count) {
+  const w = kind ? tlKindWord(kind, count) : '';
+  if (w) return ' ' + w;
+  return (kind === 'mixed' && typeof count === 'number' && count > 0) ? ' ' + count : '';
 }
 
 function badgeFor(s) {
@@ -602,7 +622,7 @@ function badgeFor(s) {
   // (The LEGACY lane state 'awaiting' above means blocked-on-you — this name dodges that.)
   // The KIND rides the label ('Awaiting job', the user 2026-08-15), worded by tlKindWord so one agent reads
   // 'Awaiting agent' (T228); an older kernel ships no awaitingKind and the badge reads plain 'Awaiting' as before.
-  else if (s.state === 'awaitingBg' || s.awaitingBg) m = { label: 'Awaiting' + (s.awaitingKind ? ' ' + tlKindWord(s.awaitingKind, s.awaitingCount) : ''), kind: 'awaitbg' };   // agrees in number with the chip (T228)
+  else if (s.state === 'awaitingBg' || s.awaitingBg) m = { label: 'Awaiting' + tlAwaitSuffix(s.awaitingKind, s.awaitingCount), kind: 'awaitbg' };   // agrees in number with the chip (T228); the plain words of slice 2
   else if (s.state === 'ready' || s.state === 'waiting' || s.state === 'idle') m = { label: 'Ready', kind: 'ready' };
   if (!m) return null;
   return { label: m.label, bg: BADGE[m.kind].bg, fg: BADGE[m.kind].fg };
@@ -945,6 +965,15 @@ function mediaUrl(name) {
   return ((typeof window !== 'undefined' && window.__rompMediaBase) || '/media') + '/' + name;
 }
 
+// Does the SORTED numeric array hold a value within ±tol of t? Binary search for the first value ≥ t - tol.
+function sortedHasWithin(arr, t, tol) {
+  if (!arr || !arr.length) return false;
+  let lo = 0, hi = arr.length;
+  const lower = t - tol;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid] < lower) lo = mid + 1; else hi = mid; }
+  return lo < arr.length && arr[lo] <= t + tol;
+}
+
 class TimelinePanel {
   constructor(host) {
     this.host = host;
@@ -1032,7 +1061,7 @@ class TimelinePanel {
     // tick (its plot group, live-edge riders and scale; draw()): the tick moves that group by a transform
     // instead of rebuilding the svg (_tickTranslate, 2026-09-06). Re-armed each poll; self-stops when not live.
     this._nowBaseSec = null; this._nowBaseMs = null; this._wasLive = false;
-    this._liveRAF = null; this._lastLiveNow = null; this._tickPlot = null;
+    this._liveRAF = null; this._liveTO = null; this._liveResume = false; this._lastLiveNow = null; this._tickPlot = null;
     // Newest data.now sample ever seen this page-lifetime (see isFreshNowSample): a push carrying an
     // OLDER now is a RE-EMISSION — federation re-emits the STORED local payload whenever a remote host
     // pushes, and _cached_timeline re-serves its build-time now — never a fresh clock sample, so it must
@@ -1178,6 +1207,7 @@ class TimelinePanel {
       this._pointerHeld = false;
       const tipUp = this.tip && this.tip.classList && this.tip.classList.contains('show');
       if (this._dirtyWhileTip && !tipUp) { this._dirtyWhileTip = false; setTimeout(() => { if (this.data) this.draw(); }, 0); }
+      if (this._liveResume) { this._liveResume = false; this._startLiveTick(); }   // the look skipped under the press
     };
     window.addEventListener('pointerup', _release);
     window.addEventListener('pointercancel', _release);
@@ -1749,28 +1779,67 @@ class TimelinePanel {
   // Arm the rAF loop (no-op if already running or not currently live+visible). Re-armed each poll by
   // update(), so even after the loop self-stops it returns within one poll once we're live again. NOT
   // called from draw() — draw() runs inside the tick, and re-arming there would double the loop.
+  // The live-follow loop: a look (translate the plot the last build left, or draw when only a rebuild can express
+  // the frame; see _tickLive), then the next look on an animation frame, or, when the look had to rebuild and
+  // got no plot to translate, a sleep sized to the edge's speed first. Restarted by update()/applyBars() (each
+  // frame re-paces it: a pending sleep computed for the old zoom or data is dropped), by gestures, and by the
+  // pointer release when a look was skipped under a held pointer. Hidden pane: it keeps sleeping (long) so it
+  // resumes by itself when shown; not live-following: it stops until a gesture pins the edge again.
   _startLiveTick() {
-    if (this._liveRAF != null || !this._liveFollowing() || !this._isVisible()) return;
+    if (!this._liveFollowing() || !this._isVisible()) return;
+    if (this._liveRAF != null) return;                                        // a look is already imminent
+    if (this._liveTO != null) { clearTimeout(this._liveTO); this._liveTO = null; }   // re-pace: the geometry may have changed
     this._liveRAF = requestAnimationFrame(() => this._tickLive());
   }
+  _sleep(ms) {
+    this._liveTO = setTimeout(() => { this._liveTO = null; this._liveRAF = requestAnimationFrame(() => this._tickLive()); }, ms);
+  }
+  // How long until the live edge has moved LIVE_MIN_PX at the current zoom — the loop sleeps exactly that
+  // long between looks instead of waking every animation frame. A full redraw is what a look costs, so at a
+  // one-hour window over a few hundred px that is a redraw every several seconds, not two a second; and the
+  // sleeping loop touches no layout (the old per-frame _isVisible() read forced one — measured 2026-09-04:
+  // ~40% of the main thread on an idle four-pane dashboard, on the thread the chat pane's clicks share).
+  _liveWaitMs() {
+    const g = this._geom;
+    if (!g || !g.winSec || !g.plotW) return 1000;
+    const pxPerSec = g.plotW / g.winSec;
+    return Math.max(100, Math.min(2000, Math.round(LIVE_MIN_PX / Math.max(pxPerSec, 1e-6) * 1000)));
+  }
   _tickLive() {
-    this._liveRAF = null;
-    if (!this._liveFollowing() || !this._isVisible() || !this.data) return;   // gate closed → stop the loop
-    // Click-safe: don't rebuild the SVG under a pressed pointer (a click in progress) — skip this frame's draw
-    // but keep the loop alive so the edge resumes gliding the moment the pointer releases. See the constructor.
-    if (this._pointerHeld) { this._liveRAF = requestAnimationFrame(() => this._tickLive()); return; }
+    this._liveRAF = null; this._liveTO = null;
+    if (!this._liveFollowing() || !this.data) return;          // gate closed → stop; a gesture or a frame re-arms
+    if (!this._isVisible()) { this._sleep(2000); return; }      // hidden pane: stay alive cheaply, resume when shown
+    // Click-safe: don't rebuild the SVG under a pressed pointer (a click in progress). The release event
+    // (_release) restarts the loop — no polling for it. See the constructor.
+    if (this._pointerHeld) { this._liveResume = true; return; }
     const g = this._geom;
     // The tick MOVES THE VIEW, it does not rebuild it (2026-09-06): the last full build left a plot group and its
     // live-edge riders (draw(), `_tickPlot`), and advancing the edge is one transform write on that group plus a
-    // width write per rider — _tickTranslate. It also owns the sub-pixel guard, in COMPRESSED movement (inside a
-    // collapsed trailing gap the edge does not move on screen at all, where the old real-seconds guard redrew
-    // two or three times a second for nothing). The full draw() stays for what a translate cannot express — no
-    // build yet, a message glyph riding the live edge, a drift into the gutter — never for the clock's advance.
-    if (!g || this._lastLiveNow == null || !this._tickTranslate(this._liveNow())) this.draw();
+    // width write per rider (_tickTranslate), cheap enough to run on every animation frame. It also owns the
+    // sub-pixel guard (TICK_MIN_PX), in COMPRESSED movement (inside a collapsed trailing gap the edge does not move
+    // on screen at all, where the old real-seconds guard redrew two or three times a second for nothing). The full
+    // draw() stays for what a translate cannot express — no build yet, a message glyph riding the live edge, a
+    // drift into the gutter — never for the clock's advance. When the last build handed back NO handle (a glyph
+    // rides the edge, so the next look must rebuild too), the loop paces itself as a rebuild must be (the
+    // 2026-09-04 fix): draw once the edge has moved a whole pixel (LIVE_MIN_PX) since the last live draw, then
+    // sleep until it could have moved that far again (_liveWaitMs) instead of rebuilding on every frame.
+    if (!this._tickPlot) {
+      if (!g || this._lastLiveNow == null || ((this._liveNow() - this._lastLiveNow) / g.winSec * g.plotW) >= LIVE_MIN_PX) {
+        this.draw();
+      }
+      if (!this._tickPlot) { this._sleep(this._liveWaitMs()); return; }   // still no handle: the next look rebuilds too
+    } else if (!g || this._lastLiveNow == null || !this._tickTranslate(this._liveNow())) {
+      this.draw();   // the drift reached the gutter: rebuild now and glide on from the fresh handle
+    }
     this._liveRAF = requestAnimationFrame(() => this._tickLive());
   }
+  _stopLiveTick() {
+    if (this._liveRAF != null) { cancelAnimationFrame(this._liveRAF); this._liveRAF = null; }
+    if (this._liveTO != null) { clearTimeout(this._liveTO); this._liveTO = null; }
+    this._liveResume = false;
+  }
   // Advance the live edge to `nowS` by moving the plot group (see draw()'s plot group and `_tickPlot`). Returns
-  // true when the frame is expressed — including the no-op of a sub-LIVE_MIN_PX move, or no movement in
+  // true when the frame is expressed — including the no-op of a sub-TICK_MIN_PX move, or no movement in
   // compressed time (a collapsed trailing gap) — and false when only a full draw() can: no handle (the loader,
   // or a glyph riding the live edge was drawn), or the drift since the build has reached the gutter gap (no
   // frame has rebuilt since — a quiet or disconnected kernel; a frame every ≤5 s keeps it far below that at
@@ -1784,7 +1853,7 @@ class TimelinePanel {
     const px = dc * tp.k;
     if (px < 0 || px >= tp.maxDrift) return false;
     this._lastLiveNow = nowS;
-    if (Math.abs(px - tp.applied) < LIVE_MIN_PX) return true;   // the sub-pixel guard: nothing visible to write yet
+    if (Math.abs(px - tp.applied) < TICK_MIN_PX) return true;   // the sub-pixel guard: nothing visible to write yet
     tp.applied = px;
     tp.g.setAttribute('transform', 'translate(' + (-px) + ' 0)');
     for (const r of tp.riders) { if (r.fn) r.fn(px); else r.el.setAttribute(r.attr, Math.max(r.min || 0, r.base + px)); }   // the build's floor applies to the grown extent, so the frame matches a full draw
@@ -1797,7 +1866,6 @@ class TimelinePanel {
     this._rehover();
     return true;
   }
-  _stopLiveTick() { if (this._liveRAF != null) { cancelAnimationFrame(this._liveRAF); this._liveRAF = null; } }
 
   // (The restart ↻ handler moved to the feed's top-right gear (the kernel's _GEAR_JS) along with the
   // button — the user 2026-06-17. It POSTs the same /restart, polls /healthz, and reloads, as before.)
@@ -2011,6 +2079,19 @@ class TimelinePanel {
   // The heavy second half of a timeline push (the user 2026-06-25): the per-segment work BARS + the judging
   // band + message connectors + nudge marks — ~95% of the payload, deferred so the lanes (update()) paint
   // first. The skeleton always lands first (TCP-ordered on the one socket), so this.data.sessions is set.
+  // Re-anchor the live edge's free-running clock on a fresh sample, the way update() does for the skeleton.
+  // Since the skeleton dedups (2026-09-04) a quiet board sends it only every 60 s, and the bars frame is
+  // then the fresher clock; without this the edge would glide to MAX_INTERP_AHEAD and wait.
+  _anchorNow(sample) {
+    const live = this._liveFollowing(), tMs = perfNow();
+    if (live) {
+      const a = reanchorEdge(this._nowBaseSec, this._nowBaseMs, tMs, sample, this._wasLive);
+      this._nowBaseSec = a.baseSec; this._nowBaseMs = a.baseMs;
+    } else {
+      this._nowBaseSec = sample; this._nowBaseMs = tMs;
+    }
+    this._wasLive = live;
+  }
   applyBars(m) {
     if (!m || !this.data || !this.data.sessions) return;
     this.data.turns = m.turns || {};
@@ -2038,6 +2119,7 @@ class TimelinePanel {
     if (typeof m.now === 'number') {
       if (isFreshNowSample(this._newestNow, m.now)) this._newestNow = m.now;
       this.data.now = (this._newestNow != null) ? this._newestNow : m.now;
+      this._anchorNow(this.data.now);
     }
     if (!this.fitted && Object.keys(this.data.turns).length && this.fitWindow()) this.fitted = true;   // no latch without a clock sample (see fitWindow)
     // honor the same freeze-on-hover / click-hold guard update() uses (don't relayout under a held pointer/tip)
@@ -5438,13 +5520,19 @@ class TimelinePanel {
 
     // turn process-start (prompt) dots — at startAt; CLICKABLE → jump to the prompt that started
     // the period. Skipped where a PROCESSED message dot coincides (the message dot stands in).
+    // Processed messages indexed by recipient, exec times sorted — one pass over the messages instead of
+    // one per TURN (1270 turns × 591 messages was 750k comparisons per redraw, measured 2026-09-04).
+    const execByTo = new Map();
+    data.messages.forEach((mm) => { if (!mm.pending && vidx[mm.toId] != null) { let a = execByTo.get(mm.toId); if (!a) { a = []; execByTo.set(mm.toId, a); } a.push(execAt(mm)); } });
+    execByTo.forEach((a) => a.sort((p, q) => p - q));
+    const execNear = (sid, t) => sortedHasWithin(execByTo.get(sid), t, 1);
     vis.forEach((s, i) => {
       const y = laneY(i);
       turnsOf(s.id).forEach((t) => {
         if (t.cont) return;                  // a post-sleep continuation piece of one segment: its prompt dot belongs to the FIRST piece, not here
         if (!inWin(startAt(t))) return;
         if (t.pending) liveRiders = true;    // a pending prompt's dot rides the live edge (startAt): not a translate
-        if (data.messages.some((mm) => mm.toId === s.id && !mm.pending && Math.abs(execAt(mm) - startAt(t)) <= 1)) return;
+        if (execNear(s.id, startAt(t))) return;
         const dx = x(startAt(t));
         // cross-hover focus (dot GROWN in place, via dot()'s lit param): DAG journey node, a coarse card
         // hover (whole-turn id), OR a prompt-atom hover (promptId) — never a work-only (workId) hover

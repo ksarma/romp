@@ -22,13 +22,14 @@ const FEED_CSS = web("feed.css");
 const CHAT_CSS = web("styles.css");
 
 test("openPath routes by HOST: the in-pane viewer modal on the web, the editor in VS Code", () => {
-  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null\): void/);
-  // web default → the viewer opens in THIS document; the cards-pane preference relays instead (below)
-  assert.match(RENDER, /openFileView\(path, sid \|\| activeId \|\| null\);/);
+  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void/);   // ev: the click, for a PDF's modified-click tab
+  // web → the gesture reader, on every route (a plain click is openFileView here, or the relay below when the
+  // route names a pane; a modified click on a PDF is the tab either way, pdf-new-tab.test.ts)
+  assert.match(RENDER, /openFileClick\(ev, path, to, relay\);/);
   // (setCommentSink left the import with the review layer, 2026-08-23 — quote chips replaced it.
   // Upstream also asserts the viewFile relay is GONE from render.ts; here it is alive on purpose —
   // the fork's fileLinkPane preference sends it since 2026-08-20, pinned by fileLinkRoute below.)
-  assert.match(RENDER, /import \{ openFileView \} from "\.\/file-view";/);
+  assert.match(RENDER, /import \{ openFileClick \} from "\.\/file-view";/);   // the gesture reader is the chat's only way in; openFileView is not imported
   // VS Code keeps the host editor
   assert.match(RENDER, /vscodeApi\.postMessage\(sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \}\);/);
 });
@@ -63,10 +64,11 @@ test("fileLinkRoute: an open Files pane takes the click; otherwise the preferenc
   // the chat imports the shipped function; no local copy that could drift from the table above
   assert.match(RENDER, /import \{ fileLinkRoute, browseRoute, type BrowseRoute \} from "\.\/file-route";/);
   assert.doesNotMatch(RENDER, /function fileLinkRoute\(/, "one definition, in file-route.ts");
-  // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit, and posts up,
-  // the message naming its target pane and carrying the session's identity for the Files pane's chip
-  assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);\n\s*if \(route !== "here"\) \{/);
-  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const s = to \? \(sessions\.get\(to\) \?\? tabMeta\.get\(to\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: to, pane: route,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
+  // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit; a route other than
+  // "here" becomes the plain click's opener (openFileClick's fourth argument, so the PDF gesture is read first),
+  // which posts up a message naming its target pane and carrying the session's identity for the Files pane's chip
+  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);/);
+  assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay\);/);
 });
 
 // The Files-pane bit openPath routes by is the SHELL's pane set, cached from the shell's own broadcast —
@@ -91,8 +93,8 @@ test("the chat caches the shell's pane set from its romp:panes broadcast, and op
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {
-  for (const call of [/openPath\(path\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/,
-                      /openPath\(p, id \|\| null\);/]) assert.match(RENDER, call);
+  for (const call of [/openPath\(path, null, e\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/,
+                      /openPath\(p, id \|\| null, e\);/]) assert.match(RENDER, call);   // each with its click (a PDF's modified-click tab)
   // the ONLY openFile postMessage left in render.ts is openPath's own fallback branch
   assert.equal((RENDER.match(/type: "openFile"/g) || []).length, 2,
                "both remaining mentions are the two arms of openPath's fallback");
@@ -147,7 +149,7 @@ test("a relayed viewFile OPENS the viewer in the feed document, session id intac
   // in-document viewer as relay-opened (a false viewFileClosed on its close) nor ack an open that
   // never happened (a false armed flag shell-side). So openFileView reports, and the branch gates
   // BOTH viaRelay and the viewFileOpened ack on a real open.
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; frag\?: string \| null \}\): boolean \{/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /&& closeGuard && !closeGuard\(\)\) return false;/, "the veto is a reported verdict");
   assert.match(openFn, /\n  return true;\n\}/, "a completed open says so");
@@ -289,7 +291,8 @@ test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop,
 // chat already has. "Comment" means only the transcript's live threads now. ──
 
 test("selecting in the viewer seeds the composer's editor chip — the editorSelection shape, path:line label", () => {
-  // mouseup posts to our OWN window (the browseFiles precedent — no import cycle with render.ts),
+  // mouseup posts to the composer's window — this document's when it holds one (the browseFiles
+  // precedent — no import cycle with render.ts), else the shell's chat pane (composerWindow, below) —
   // and render.ts's existing editorSelection handler owns the chip end to end
   // one handler for the mouse's settle point and the phone's (touchend), since Slice 1 of
   // plans/file-review.md — the comments panel's floating Comment button rides the same gesture
@@ -325,17 +328,22 @@ test("the label's line is minted against a FRESH read, and a failed re-read fall
 
 test("a viewer whose document has no composer seeds THROUGH the shell: the Files pane and the feed reach the chat's chip", () => {
   // Until 2026-09-03 the seed gated on a composer in the SAME document, so the feed-hosted viewer (the
-  // file browser's document) was dead air by design. The Files pane hosts the viewer without a composer
-  // too, and a pane that cannot quote is a step down from the chat modal — so the TARGET is resolved:
-  // this window when it holds the composer, else the same-origin shell, which forwards the unchanged
-  // message into the chat pane. No composer and no shell (VS Code's cross-origin parent, a standalone
-  // pane) still stands the gesture down before the fresh read (the no-sink gating).
+  // file browser's document) was dead air by design: the guide's promise that any passage selected in
+  // the viewer lands in the composer was false there, and each selection still paid the fresh read. The
+  // Files pane hosts the viewer without a composer too, and a pane that cannot quote is a step down from
+  // the chat modal — so the TARGET is resolved: this window when it holds the composer, else the
+  // same-origin shell, which forwards the unchanged message into the chat pane. No composer and no shell
+  // (VS Code's cross-origin parent, a standalone pane) still stands the gesture down before the fresh
+  // read (the no-sink gating).
   assert.match(VIEW, /function composerWindow\(\): Window \| null \{\n\s*if \(document\.getElementById\("composer-input"\)\) return window;\n\s*try \{ if \(window\.parent !== window && window\.parent\.document\.getElementById\("chat-pane"\)\) return window\.parent; \}\n\s*catch \{[^}]*\}\n\s*return null;\n\}/);
   assert.match(VIEW, /const seedTarget = composerWindow\(\);\n\s*if \(!seedTarget\) return;/);
   // the shell's arm: the SAME message, forwarded whole into the chat frame — sid intact, so the chip
   // lands in the session the file was opened for (the 2026-08-19 routing rule holds across documents)
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  assert.match(KERNEL, /if\(m\.type==='editorSelection'&&typeof m\.text==='string'\)\{var fc=document\.getElementById\('f-chat'\);\n\s*try\{fc&&fc\.contentWindow&&fc\.contentWindow\.postMessage\(m,'\*'\);\}catch\(e\)\{\}\}/);
+  assert.match(KERNEL, /if\(m\.type==='editorSelection'&&typeof m\.text==='string'\)\{var fc=document\.getElementById\('f-chat'\);[\s\S]{0,700}?try\{fc&&fc\.contentWindow&&fc\.contentWindow\.postMessage\(m,'\*'\);\}catch\(e\)\{\}\}/);
+  // …and a chat pane toggled OFF is brought forward first, the browseFiles arm's rule for the feed: a chip
+  // seeded into a hidden composer is a silent gesture (review fold on #970, 2026-09-07)
+  assert.match(KERNEL, /if\(!document\.body\.classList\.contains\('po-chat'\)\)\{try\{window\.__rompPaneToggle&&window\.__rompPaneToggle\('chat',true\);\}catch\(e\)\{\}\}\n\s*try\{fc&&fc\.contentWindow&&fc\.contentWindow\.postMessage\(m,'\*'\);/);
   // …and the chat's existing window-message handler is the receiver: nothing new listens in feed.ts
   assert.match(RENDER, /else if \(m\.type === "editorSelection" && typeof m\.text === "string" && m\.text\.trim\(\)\) \{/);
   assert.doesNotMatch(FEED, /editorSelection/);
@@ -379,6 +387,7 @@ test("it waits with the romp loader and fails with the kernel's own words, never
 
 test("it reuses fileUrl, so a REMOTE session's file is relayed from the host that owns it", () => {
   assert.match(VIEW, /import \{ fileUrl \} from "\.\/preview";/);
+  assert.match(VIEW, /import \{ openPdfTab, wantsOwnTab \} from "\.\/preview";/);   // + the PDF tab opener and its gesture test (2026-09-06/07)
   assert.match(VIEW, /fetch\(fileUrl\(path, sid\), \{ cache: "no-store" \}\)/);
 });
 
@@ -476,7 +485,8 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.match(VIEW, /const rendered = isMd && fmt\.md === "rendered";/, "non-md never renders as prose");
   assert.match(VIEW, /import DOMPurify from "dompurify";/);
   // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs as inline <svg>
-  assert.match(VIEW, /box\.innerHTML = DOMPurify\.sanitize\(dirty, \{ USE_PROFILES: \{ html: true, svg: true \}, ADD_DATA_URI_TAGS: \["img"\] \}\);/);
+  // …and data-* never rides in from a document's raw HTML: the page's delegates key actions off data-act
+  assert.match(VIEW, /box\.innerHTML = DOMPurify\.sanitize\(dirty, \{ USE_PROFILES: \{ html: true, svg: true \}, ADD_DATA_URI_TAGS: \["img"\], ALLOW_DATA_ATTR: false \}\);/);
   // a README's links open a NEW tab rather than navigating the hosting pane's document away
   assert.match(VIEW, /target = "_blank"/);
   assert.match(VIEW, /rel = "noopener"/);
@@ -615,7 +625,10 @@ test("Edit is consent-gated, and the gate is the KERNEL's flag, not the button (
   assert.match(VIEW, /const COPY = "Allow editing files from the dashboard\?\\n\\n"/);
   assert.match(VIEW, /Saves and comments write straight to disk on the file's machine/);
   assert.match(VIEW, /if \(!window\.confirm\(COPY\)\) return false;/);
-  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true, gt: Date\.now\(\) \}\);/);
+  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true, gt: gclock\.stamp\("file-editing"\) \}\);/,
+    "…minted through the gesture clock, above every stamp the /version read just reported");
+  assert.match(VIEW, /const gclock = require\("\.\/gesture-clock\.js"\);/, "the viewer loads the clock");
+  assert.match(VIEW, /gclock\.learnAll\(v\.settingsGt\);/, "the consent check's /version read teaches the clock");
   assert.match(VIEW, /void ensureEditingAllowed\(sid\)\.then\(\(ok\) => \{\n\s*if \(!ok\) return;/, "the Edit click asks through the shared helper");
   // the popup's promise of a gear off-switch is real, and the save route refuses server-side
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
@@ -707,8 +720,8 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
   const helper = VIEW.split("export async function ensureEditingAllowed(")[1].split("\n}")[0];
   assert.match(helper, /if \(!\/file editing is off\/\.test\(refusal\)\) return false;/, "only the gate's own text re-offers");
   assert.match(helper, /"Editing is off on " \+ \(host \? "“" \+ host \+ "”" : "this machine"\)/, "names the refusing machine");
-  assert.equal((helper.match(/post\(\{ type: "setFileEditing", enabled: true, gt: Date\.now\(\) \}\);/g) || []).length, 2,
-    "both paths post the one opt-in");
+  assert.equal((helper.match(/post\(\{ type: "setFileEditing", enabled: true, gt: gclock\.stamp\("file-editing"\) \}\);/g) || []).length, 2,
+    "both paths post the one opt-in, stamped through the gesture clock");
   assert.ok(helper.indexOf('post({ type: "setFileEditing"') < helper.indexOf("return true;"), "the opt-in is posted before the caller may retry");
   // the two sides of the text match are pinned TOGETHER so drift fails loudly, and the broadcast
   // route the re-offer relies on is federation's, not a new one
@@ -783,9 +796,9 @@ test("a 200 image renders ONE <img> at an object URL; the quote gesture stays of
 // seeds a labeled quote chip exactly as in any text view; a blanket media gate would make an
 // .svg's XML unquotable. ──
 test("the quote seed gates off RENDERED media only — the SVG Source view is a text view like any other", () => {
-  // executed: the seed offer across the view states (the no-target gate holds throughout —
-  // a reachable composer (own document, or the chat's through the shell) plays the role the old
-  // comment sink did: no real target, no gesture)
+  // executed: the seed offer across the view states (the no-target gate holds throughout — a
+  // reachable composer, own document or the chat's through the shell, is what makes a gesture; it
+  // plays the role the old comment sink did: no real target, no gesture)
   const seedable = (target: boolean, isImage: boolean, isPdf: boolean, srcView: boolean): boolean =>
     target && !((isImage || isPdf) && !srcView);
   assert.equal(seedable(true, true, false, true), true, "SVG Source view: the selection seeds a chip");
@@ -796,7 +809,8 @@ test("the quote seed gates off RENDERED media only — the SVG Source view is a 
   // source: the media arm of the gesture's gate carves out the Source view. Since Slice 1 of
   // plans/file-review.md it sits BEFORE the selection read and the seam's selection hooks, and the
   // no-target (composer) gate comes after the hooks — the hooks are how the comments panel's
-  // floating Comment works in a Files pane with no chat pane anywhere
+  // floating Comment works in a Files pane with no chat pane anywhere (upstream gates on the
+  // composer first; the through-the-shell test above pins the composer gate itself)
   const gesture = VIEW.split("const onSelect = (ev: Event) => {")[1].split("const seedTarget = composerWindow();")[0];
   assert.match(gesture, /if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
   assert.ok(gesture.indexOf("!(svgSource && svgText !== null)) return;") < gesture.indexOf("for (const cb of selHooks)"),
@@ -982,9 +996,10 @@ test("the line gutter numbers every line and drops a trailing newline's phantom 
 });
 
 // ── the session chip (the user 2026-09-03): the title bar names the session the file was opened
-// from. The viewer knows only a sid — and three of its four openers (the shell relay, the conflict
-// Reload, the file browser) live inside this module or hand over a bare sid — so the identity is
-// RESOLVED from the sid through a lookup each hosting document registers once at boot. ──
+// from. The viewer knows only a sid — and its openers mostly know no more (the relay branch and the
+// conflict Reload live inside this module, the file browser hands over a bare sid) — so the identity
+// is RESOLVED from the sid through a lookup each hosting document registers once at boot. The DOM
+// build itself runs for real in fileview-chip.test.ts; these are the source pins. ──
 
 test("the title bar carries a session chip resolved from the sid — never invented, absent when unknown", () => {
   assert.match(VIEW, /import \{ hostOf, bareId, hostNameNodes \} from "\.\/host-prefix";/);
@@ -1002,9 +1017,10 @@ test("the title bar carries a session chip resolved from the sid — never inven
     "capitalized like this bar's other tooltips; 'session' so a name like web is not read as a place");
   assert.match(openFn, /bar\.appendChild\(name\); if \(sess\) bar\.appendChild\(sess\); bar\.appendChild\(acts\);/,
     "between the path and the actions");
-  // the signatures every opener and the relay pin depend on are as they were, plus the optional todoId
-  // provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) — every existing caller unchanged
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
+  // the signatures every opener and the relay pin depend on are as they were, plus the optional opts:
+  // todoId provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) and frag (a sibling
+  // link's fragment lands after the render) — every existing caller unchanged
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; frag\?: string \| null \}\): boolean \{/);
   // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
   assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void\): void \{/);
 });
@@ -1064,11 +1080,16 @@ test("resolver ladder: a named session, then a host-prefixed 8-char stub, then n
 
 test("the chip's dress is in BOTH sheets: a fixed-width pill that never yields to the path", () => {
   for (const css of [CHAT_CSS, FEED_CSS]) {
-    assert.match(css, /\.fileview-sess \{ flex: 0 0 auto; display: inline-flex;/);
+    // A BLOCK container, not inline-flex: text-overflow acts on block containers only — on a flex container
+    // the text sits in an anonymous flex item the property cannot reach, and an over-long name hard-clipped
+    // at max-width (the review of #970). 0.82em of --fs, the size the bar's buttons wear, so the chip scales
+    // with its neighbours; a px value did not.
+    assert.match(css, /\.fileview-sess \{ flex: 0 0 auto; display: block; max-width: 38%;[^}]*font-size: 0\.82em;[^}]*overflow: hidden; white-space: nowrap; text-overflow: ellipsis;/);
+    const sess = css.slice(css.indexOf(".fileview-sess {"), css.indexOf("}", css.indexOf(".fileview-sess {")));
+    assert.doesNotMatch(sess, /inline-flex|align-items|font-size: [\d.]+px/, "no flex container around the text, no px size");
     // color:inherit so the host: token takes the pill's own fg — the global .host-prefix{color:var(--dim)}
-    // otherwise wins over the inline white and the token is near-invisible on a coloured pill (the
-    // 2026-09-03 review: ~1:1 contrast for a remote session's chip). opacity keeps it quiet without dimming
-    // to gray.
+    // otherwise wins over the inline foreground and the token is near-invisible on a coloured pill
+    // (~1:1 contrast for a remote session's chip). opacity keeps it quiet without dimming to gray.
     assert.match(css, /\.fileview-sess \.host-prefix \{ color: inherit; opacity: 0\.75; \}/, "the host: token uses the pill's fg, quiet");
   }
 });

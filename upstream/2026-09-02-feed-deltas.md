@@ -13,3 +13,5 @@ Upstream ships the same pusher, shim and feed, so it ports as-is. Wire contract 
 Status detail (migrated from the table): **offered** — their PR #952 (2026-09-06), label `fix` (the fork's own delta WIRE PROTOCOL is moot: upstream #914 + the #928 fold shipped one on 2026-09-04; only the remainder rode)
 
 MERGED 2026-09-06T19:50Z as their PR #952 (merge `47e0d174`), as offered, together with the Outline-pane entry. The review found one regression (the watchdog's `abandon()` skipped the close rule, so the stale prompt never raised after a silent reconnect), fixed upstream as their PR #957 (its own entry, `shim-watchdog-abandon-stale-prompt`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #952 is in the folded range).

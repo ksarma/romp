@@ -30,7 +30,7 @@ paragraph is the rendered Notes cell:
     Why upstream wants it, in one paragraph.
 
 Required: `title`, `status`, `where`, `added` (the filename's date). Optional: `pr` (fork PR
-number), `tier` (`fix`, `tests-only`, `feature`, `major-feature`), `offered` (the upstream PR once
+number), `tier` (`fix`, `tests-only`, `docs`, `feature`, `major-feature`), `offered` (the upstream PR once
 one is open), `closed` (the date a terminal status was set), `supersedes` (another entry's
 filename). Anything else fails the test. Whoever acts on an entry appends a dated line to its body.
 

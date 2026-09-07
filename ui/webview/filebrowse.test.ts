@@ -16,12 +16,21 @@ const FEED = web("feed.ts");
 const FEED_CSS = web("feed.css");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
-test("the browser is the viewer's sibling overlay, one z layer BENEATH it", () => {
+test("the browser is the viewer's sibling MODAL, one z layer BENEATH it", () => {
   // beneath by design: a file opened from a listing overlays the listing, and closing it returns
-  // there (the viewer is a MODAL since 2026-08-15 — its backdrop, not a pane fill, draws above)
-  assert.match(FEED_CSS, /\.filebrowse \{ position: fixed; inset: 0; z-index: 890;/);
+  // there (the viewer is a MODAL since 2026-08-15). The browser joined the same centered-card
+  // treatment 2026-09-04 (the user, superseding the 2026-08-24 pane takeover they came to find
+  // odd): backdrop wears the id + the dim, the card wears the modal vocabulary.
+  assert.match(FEED_CSS, /#romp-filebrowse \{ position: fixed; inset: 0; z-index: 890; background: var\(--overlay-dim\);/);
+  assert.match(FEED_CSS, /\.filebrowse \{ width: min\(720px, 95%\); height: min\(760px, 95%\);/);
   assert.match(FEED_CSS, /#romp-fileview \{ position: fixed; inset: 0; z-index: 1200;/);
-  assert.match(BROWSE, /box\.id = "romp-filebrowse";/);
+  assert.match(BROWSE, /wrap\.id = "romp-filebrowse";/);
+  // backdrop clicks close; content clicks never do (the lightbox contract) — and a drag that STARTED inside
+  // the card and ended over the dim is not a backdrop click: the close is armed on pointerdown and fires only
+  // when both ends were on the dim (review fold on #924, 2026-09-07)
+  assert.match(BROWSE, /wrap\.addEventListener\("pointerdown", \(e\) => \{ downOnDim = e\.target === wrap; \}\);/);
+  assert.match(BROWSE, /wrap\.onclick = \(ev\) => \{ const close = downOnDim && ev\.target === wrap; downOnDim = false; if \(close\) closeFileBrowse\(\); \};/,
+    "backdrop clicks close; content clicks and card-to-dim drags never do");
   assert.match(BROWSE, /document\.body\.classList\.add\("filebrowse-open"\);/);
 });
 
@@ -94,9 +103,10 @@ test("rows carry an honest verdict: download-only files are dimmed and download 
   assert.match(BROWSE, /row\.dataset\.act = dlOnly \? "dl" : "file";/);
   assert.match(BROWSE, /if \(row\.dataset\.act === "dl"\) startDownload\(p\);/);
   assert.match(FEED_CSS, /\.fb-dlonly \.fb-name \{ color: var\(--dim\); \}/);
-  // viewable files open through the EXISTING viewer — one leaf open action for the whole dashboard; a host
-  // may route the pick through its own open (BrowseHost.openFile: the Files pane's Recent list, 2026-09-07)
-  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ if \(openPick\) openPick\(p, curSid\); else openFileView\(p, curSid\); return; \}/);
+  // viewable files open through the EXISTING viewer — one leaf open action for the whole dashboard, read
+  // through the gesture reader (a modified click on a PDF takes a browser tab); a host may route a plain
+  // pick through its own open (BrowseHost.openFile: the Files pane's Recent list, 2026-09-07)
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \|\| undefined\); return; \}/);
 });
 
 test("clicks are delegated to stable roots and the cap is stated in-band", () => {
@@ -160,7 +170,7 @@ test("the feed boots both overlays side by side", () => {
 test("opening the browser CLOSES an open viewer — the stack is one-directional", () => {
   // a browser painted under the opaque viewer was a dead click, and viewer-first registration made
   // one Escape close both overlays; closing the viewer at browse-open kills both failure modes
-  assert.match(BROWSE, /import \{ openFileView, closeFileView \} from "\.\/file-view";/);
+  assert.match(BROWSE, /import \{ closeFileView, openFileClick \} from "\.\/file-view";/);   // the row opens through the gesture reader only
   assert.match(BROWSE, /if \(document\.getElementById\("romp-fileview"\)\) closeFileView\(\);/);
 });
 

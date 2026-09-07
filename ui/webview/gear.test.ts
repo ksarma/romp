@@ -56,17 +56,26 @@ test("PER-INSTALL kernel settings are stamped like the queued class but stay OUT
   // kernel still orders applies by `gt` (two dashboards on one kernel race), so the emitter stamps
   // the gesture time in the literal exactly like the completeness pin above demands of the queued
   // class. A per-install op that drifted INTO the set would start walking the mesh; one that shipped
-  // unstamped would ride the no-stamp compat path. Extend PER_INSTALL when adding one.
+  // unstamped would ride the no-stamp compat path. The stamp is minted through the gesture clock under
+  // the op's own STALE_TYPE store name, like the queued class (a bare Date.now() is the skew bug the
+  // clock replaced). Extend PER_INSTALL when adding one.
   const PER_INSTALL = ["setThinkingSummaries", "setUserTodos"];
   const FED = read("ui", "webview", "federation.ts");
   const setSrc = FED.match(/const KERNEL_SETTING = new Set\(\[([\s\S]*?)\]\)/);
   assert.ok(setSrc, "federation.ts's KERNEL_SETTING set located");
+  const typeSrc = GEAR.match(/var STALE_TYPE = \{([\s\S]*?)\};/);
+  assert.ok(typeSrc, "gear.js's STALE_TYPE map located");
+  const storeType: Record<string, string> = {};
+  for (const m of typeSrc![1].matchAll(/'([a-z-]+)':\s*'(set[A-Za-z]+)'/g)) storeType[m[1]] = m[2];
   for (const type of PER_INSTALL) {
     assert.ok(!setSrc![1].includes(type), `${type} must not be a KERNEL_SETTING (per-install)`);
     assert.ok(!FED.includes(type), `${type} appears nowhere in federation.ts`);
     const lits: string[] = GEAR.match(new RegExp(`\\{\\s*type:\\s*['"]${type}['"][^}]*\\}`, "g")) || [];
     assert.equal(lits.length, 1, `exactly one emitter for ${type} (the gear row)`);
-    assert.match(lits[0], /\bgt:\s*Date\.now\(\)/, `${type} stamps the gesture time in the literal`);
+    const stamp = lits[0].match(/\bgt:\s*gclock\.stamp\(['"]([a-z-]+)['"]\)/);
+    assert.ok(stamp, `${type} stamps the gesture through the clock in the literal: ${lits[0]}`);
+    assert.equal(storeType[stamp![1]], type, `${type} stamps under its own store name: ${lits[0]}`);
+    assert.doesNotMatch(lits[0], /Date\.now\(\)/, `${type}: the bare wall clock is the bug the clock replaced`);
   }
 });
 
@@ -81,11 +90,22 @@ test("EVERY queued-class kernel setting is emitted with its gesture time (comple
   // stale flush takes the no-stamp compat path, records a forged-fresh arrival stamp, and the
   // judge tiers fan that stamp mesh-wide over genuinely newer gestures. Adding a member without
   // a stamped emitter goes red here: zero emitters found, or an emitter literal without gt.
+  // The stamp is minted through the gesture clock (gesture-clock.js) under the emitter's own STORE
+  // name — stamp('judge-model') for setJudgeModel — so it lands above every stamp the page has seen
+  // for that store; a bare Date.now() is the bug the clock replaced (a device whose clock runs ahead
+  // stamps every store into the future and locks every other device out until the skew elapses).
+  // STALE_TYPE (gear.js) is the store→type map, the same one the stale toast's Apply anyway trusts.
   const FED = read("ui", "webview", "federation.ts");
   const setSrc = FED.match(/const KERNEL_SETTING = new Set\(\[([\s\S]*?)\]\)/);
   assert.ok(setSrc, "federation.ts's KERNEL_SETTING set located");
   const members = Array.from(setSrc![1].matchAll(/"([A-Za-z]+)"/g)).map((m) => m[1]);
   assert.ok(members.length >= 9, `the set parsed (${members.length} members)`);
+  const typeSrc = GEAR.match(/var STALE_TYPE = \{([\s\S]*?)\};/);
+  assert.ok(typeSrc, "gear.js's STALE_TYPE map located");
+  const storeType: Record<string, string> = {};
+  for (const m of typeSrc![1].matchAll(/'([a-z-]+)':\s*'(set[A-Za-z]+)'/g)) storeType[m[1]] = m[2];
+  for (const type of members)
+    assert.ok(Object.values(storeType).includes(type), `STALE_TYPE names a store for ${type}`);
   // scan every webview source that could emit one (the gear, the file viewer's consent posts,
   // the feed's judge-limit switch, and any future emitter under ui/webview)
   const srcDir = path.join(ROOT, "ui", "webview");
@@ -98,8 +118,10 @@ test("EVERY queued-class kernel setting is emitted with its gesture time (comple
       const re = new RegExp(`\\{\\s*type:\\s*['"]${type}['"][^}]*\\}`, "g");
       for (const lit of text.match(re) || []) {
         emitters++;
-        assert.match(lit, /\bgt:\s*Date\.now\(\)/,
-          `${f} must stamp the gesture time inside the ${type} message literal itself: ${lit}`);
+        const stamp = lit.match(/\bgt:\s*gclock\.stamp\(['"]([a-z-]+)['"]\)/);
+        assert.ok(stamp, `${f} must stamp the gesture through the clock inside the ${type} message literal itself: ${lit}`);
+        assert.equal(storeType[stamp![1]], type, `${f} stamps ${type} under its own store name: ${lit}`);
+        assert.doesNotMatch(lit, /Date\.now\(\)/, `${f}: the bare wall clock is the bug the clock replaced: ${lit}`);
       }
     }
     assert.ok(emitters >= 1,
@@ -204,7 +226,7 @@ test("the /compact suggestion is a real settings checkbox beside Auto Nudge (the
   assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < GEAR.indexOf("id=rs-conserve"),
     "…directly after Auto Nudge, where the user asked for it");
   assert.ok(/csg\.addEventListener\('change'/.test(GEAR)
-    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() })"),
+    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: gclock.stamp('compact-suggest') })"),
     "the click posts the kernel's designed setCompactSuggest message — gesture-stamped, like "
     + "every kernel-side setting the gear emits");
   assert.ok(GEAR.includes("csg.checked = !!v.compactSuggest"),
@@ -239,4 +261,12 @@ test("one tooltip per settings row: the Account row's live status is NOT a secon
   assert.ok(GEAR.includes("aria-label='Pick the recency colormap'") && GEAR.includes("aria-label='Pick the session palette'"));
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row:has(#rs-cmap-list:not([hidden])) .rs-sub"), "open cmap menu owns the row");
   assert.ok(GEAR_CSS.includes("#rsettings .rs-row:has(.rs-mixed:hover) .rs-sub { display: none; }"), "the mixed mark's title stands alone");
+});
+
+test("the analytics legend swatch matches its bar (PR #886 review: they split in classic)", () => {
+  // the sessions BAR moved to var(--text-faint, #7d8590) while the legend swatch stayed a literal —
+  // dark resolves --text-faint to #6e7681, so bar and legend no longer agreed in classic
+  assert.ok(GEAR.includes('"ra-sw" style="background:var(--text-faint, #7d8590)"'),
+    "the legend swatch reads the same token as the bar it explains");
+  assert.doesNotMatch(GEAR, /"ra-sw" style="background:#7d8590"/);
 });

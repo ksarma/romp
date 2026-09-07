@@ -878,11 +878,12 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);/, "mdBlock knows the open file's path and sid");
-  const mdFn = VIEW.split("function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {")[1].split("\n}\n")[0];
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
+    "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
+  const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
   const sanitizeAt = mdFn.indexOf("box.innerHTML = DOMPurify.sanitize(dirty");
   const fallbackAt = mdFn.indexOf("box.textContent = text;");
-  const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, path.slice(0, path.lastIndexOf("/") + 1), sid);');
+  const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
   assert.ok(sanitizeAt >= 0 && fallbackAt > sanitizeAt && rewriteAt > fallbackAt, "sanitize → (fallback) → rewrite, in that order, on `box`");
   assert.ok(mdFn.indexOf("return box;") > rewriteAt);
   const rw = VIEW.split("export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {")[1].split("\n}\n")[0];

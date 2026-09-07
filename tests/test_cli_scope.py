@@ -7,14 +7,16 @@ ONCE per backend by cli_scope_supported and applied in _options.
 
 Under test here, with NO real systemd-run ever invoked (which/run are injected; conftest floors
 ROMP_CLI_SCOPE=0 for every backend construction):
-  * the cli_scope_supported truth table and the exact probe argv;
+  * the cli_scope_supported truth table and the exact probe argv, and which off verdicts are filed
+    as problems (wanted on Linux and unavailable: the error center must show that sessions run inside
+    the service cgroup) rather than plain log lines (off by request, or no systemd on the platform);
   * the backend caches one verdict at construction, and _options honours it: cli_path becomes the
     wrapper and ROMP_CLI_REAL carries the real CLI when on; both untouched when off;
   * a missing or non-executable wrapper degrades loudly (a problem line, once) to the direct path;
   * the wrapper's fallback notice (a failed pre-flight, the CLI run directly; its `fallback:` form)
-    is logged the moment it arrives and counted, since on that path the CLI starts and nothing else
-    would ever read it; its `refused:` line (ROMP_CLI_REAL unset, exit 127) is only buffered — no
-    CLI started, and the launch-error path reports it;
+    is logged the moment it arrives, as a problem naming the session, and counted, since on that path
+    the CLI starts and nothing else would ever read it; its `refused:` line (ROMP_CLI_REAL unset, exit
+    127) is only buffered — no CLI started, and the launch-error path reports it;
   * the per-session limits (2026-09-06; cli_scope_limits, CLI_SCOPE_LIMITS): the size and
     oom_score_adj rules, agreement with the wrapper's own shell rules on one shared corpus, the
     once-per-backend read, the _options overlay (vetted values down as themselves, refused ones down
@@ -60,6 +62,25 @@ def _which(found=True):
     return lambda name: ("/usr/bin/" + name) if found else None
 
 
+class _Log:
+    """A recording stand-in for SdkBackend._log, the callback cli_scope_supported is handed: every call
+    as (line, problem). `lines` is the text alone; `problems` the text of the calls flagged problem=True."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, m, problem=None):
+        self.calls.append((m, problem))
+
+    @property
+    def lines(self):
+        return [m for m, _ in self.calls]
+
+    @property
+    def problems(self):
+        return [m for m, p in self.calls if p]
+
+
 class _Run:
     """A recording stand-in for subprocess.run: returns a fixed result, or raises."""
 
@@ -84,44 +105,64 @@ class Supported(unittest.TestCase):
 
     def test_explicit_off_under_supervision(self):
         run = _Run()
+        logged = _Log()
         self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1", "ROMP_CLI_SCOPE": "0"},
-                                                which=_which(), platform="linux", run=run))
+                                                which=_which(), platform="linux", run=run, log=logged))
         self.assertEqual(run.calls, [])
+        self.assertEqual(logged.problems, [], "off by request is not a problem")
+        self.assertIn("ROMP_CLI_SCOPE=0", logged.lines[0])
 
+    # The three ways a WANTED switch fails on Linux — no systemd-run, a probe that exits non-zero, a
+    # probe that raises — are each filed as a problem (the error center shows them), and the line says
+    # what follows: sessions run inside the service cgroup. Before 2026-09-06 these were plain log lines,
+    # and a box whose user manager could not start scopes showed nothing anywhere the user looks.
     def test_supervised_without_systemd_run_is_off(self):
         run = _Run()
-        logged = []
+        logged = _Log()
         self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(False), platform="linux", run=run,
-                                                log=logged.append))
+                                                log=logged))
         self.assertEqual(run.calls, [], "nothing to probe with")
-        self.assertEqual(len(logged), 1)
-        self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
-        self.assertIn("systemd-run", logged[0])
+        self.assertEqual(len(logged.calls), 1)
+        self.assertTrue(logged.lines[0].startswith("cli scope: off — "), logged.lines)
+        self.assertIn("systemd-run", logged.lines[0])
+        self.assertEqual(logged.problems, logged.lines, "wanted and unavailable: a problem entry")
+        self.assertIn("inside the service cgroup", logged.lines[0], "the line says where sessions land")
 
     def test_supervised_with_a_failing_probe_is_off(self):
         run = _Run(returncode=1, stderr=b"Failed to start transient scope unit: Access denied\n")
-        logged = []
+        logged = _Log()
         self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run,
-                                                log=logged.append))
+                                                log=logged))
         self.assertEqual(len(run.calls), 1)
-        self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
-        self.assertIn("Access denied", logged[0], "the probe's stderr is the reason the user reads")
+        self.assertTrue(logged.lines[0].startswith("cli scope: off — "), logged.lines)
+        self.assertIn("Access denied", logged.lines[0], "the probe's stderr is the reason the user reads")
+        self.assertEqual(logged.problems, logged.lines, "a probe the user manager refused: a problem entry")
 
     def test_a_probe_that_raises_is_off(self):
         for exc in (subprocess.TimeoutExpired(PROBE, 10), OSError("boom")):
             run = _Run(raise_=exc)
-            logged = []
+            logged = _Log()
             self.assertFalse(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run,
-                                                    log=logged.append))
-            self.assertTrue(logged[0].startswith("cli scope: off — "), logged)
+                                                    log=logged))
+            self.assertTrue(logged.lines[0].startswith("cli scope: off — "), logged.lines)
+            self.assertEqual(logged.problems, logged.lines, "%r: a problem entry" % (exc,))
+
+    def test_explicit_on_that_cannot_be_honoured_is_a_problem_too(self):
+        # ROMP_CLI_SCOPE=1 outside the service is the user asking by hand; a box that cannot oblige
+        # reports it the same way
+        logged = _Log()
+        self.assertFalse(sb.cli_scope_supported({"ROMP_CLI_SCOPE": "1"}, which=_which(False), platform="linux",
+                                                run=_Run(), log=logged))
+        self.assertEqual(len(logged.problems), 1, logged.calls)
 
     def test_supervised_with_a_passing_probe_is_on(self):
         run = _Run()
-        logged = []
+        logged = _Log()
         self.assertTrue(sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=_which(), platform="linux", run=run,
-                                               log=logged.append))
-        self.assertEqual(len(logged), 1)
-        self.assertTrue(logged[0].startswith("cli scope: on — "), logged)
+                                               log=logged))
+        self.assertEqual(len(logged.calls), 1)
+        self.assertTrue(logged.lines[0].startswith("cli scope: on — "), logged.lines)
+        self.assertEqual(logged.problems, [], "on is not a problem")
 
     def test_explicit_on_outside_supervision_probes_and_turns_on(self):
         run = _Run()
@@ -152,15 +193,18 @@ class Supported(unittest.TestCase):
         for plat in ("darwin", "freebsd13", "win32"):
             run = _Run()
             which_calls = []
-            logged = []
+            logged = _Log()
             ok = sb.cli_scope_supported({"ROMP_SUPERVISED": "1"}, which=lambda n: which_calls.append(n),
-                                        run=run, log=logged.append, platform=plat)
+                                        run=run, log=logged, platform=plat)
             self.assertFalse(ok, plat)
             self.assertEqual(which_calls, [], "no PATH lookup off Linux")
             self.assertEqual(run.calls, [], "no probe off Linux")
-            self.assertEqual(len(logged), 1)
-            self.assertTrue(logged[0].startswith("cli scope: off — not Linux"), logged)
-            self.assertNotIn("PATH", logged[0])
+            self.assertEqual(len(logged.calls), 1)
+            self.assertTrue(logged.lines[0].startswith("cli scope: off — not Linux"), logged.lines)
+            self.assertNotIn("PATH", logged.lines[0])
+            # ...and not a problem: every macOS kernel start would otherwise open with an error-center
+            # entry for a feature the platform does not have
+            self.assertEqual(logged.problems, [], plat)
 
     def test_linux_variants_pass_the_platform_check(self):
         for plat in ("linux", "linux2"):
@@ -169,10 +213,10 @@ class Supported(unittest.TestCase):
 
     def test_the_switch_off_reasons_win_over_the_platform(self):
         # off Linux, an explicit 0 or an unsupervised run still reports ITS reason, not the platform's
-        logged = []
+        logged = _Log()
         sb.cli_scope_supported({"ROMP_SUPERVISED": "1", "ROMP_CLI_SCOPE": "0"}, which=_which(), run=_Run(),
-                               log=logged.append, platform="darwin")
-        self.assertIn("ROMP_CLI_SCOPE=0", logged[0])
+                               log=logged, platform="darwin")
+        self.assertIn("ROMP_CLI_SCOPE=0", logged.lines[0])
 
     def test_the_platform_defaults_to_this_process(self):
         # no injected platform → sys.platform; on Linux that is the on path, elsewhere the off one
@@ -225,6 +269,24 @@ class ConstructionVerdict(_Backend):
     def test_the_test_floor_leaves_the_scope_off(self):
         self.assertFalse(self.be.cli_scope)
         self.assertTrue(any(m.startswith("cli scope: off — ") for m in self.logged), self.logged)
+        self.assertEqual([r for r in self.be.problems() if r["text"].startswith("cli scope:")], [],
+                         "off by request (the floor) files nothing in the error center")
+
+    def test_a_wanted_but_unavailable_verdict_is_filed_as_a_problem(self):
+        # the boot verdict reaches the error center through the backend's own _log, the way the launch-time
+        # fallbacks do: the real cli_scope_supported, on a supervised Linux box with no systemd-run
+        real = sb.cli_scope_supported
+        sb.cli_scope_supported = lambda **kw: real({"ROMP_SUPERVISED": "1"}, which=_which(False),
+                                                   platform="linux", run=_Run(), **kw)
+        try:
+            be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        finally:
+            sb.cli_scope_supported = real
+        self.assertFalse(be.cli_scope)
+        rows = [r for r in be.problems() if r["text"].startswith("cli scope: off — ")]
+        self.assertEqual(len(rows), 1, be.problems())
+        self.assertIn("systemd-run is not on PATH", rows[0]["text"])
+        self.assertIn("inside the service cgroup", rows[0]["text"])
 
     def test_the_verdict_is_taken_once_and_cached(self):
         calls = []
@@ -373,11 +435,12 @@ class FallbackNotice(_Backend):
         self.assertEqual(sess.stderr_tail().splitlines(),
                          ["some CLI chatter", "sh: /x/bin/romp-cli-scope: Permission denied"])
 
-    def test_the_refusal_line_is_not_counted_as_a_fallback(self):
+    def test_the_refusal_line_is_not_logged_as_a_fallback(self):
         # the wrapper's other line (ROMP_CLI_REAL unset, exit 127): no CLI started, so nothing ran
         # outside a scope, and the launch fails — _record_launch_error reports the line from the
-        # stderr tail. Counting and logging it here too reported the one event twice, the first time
-        # as a CLI "started outside a scope" when none had started.
+        # stderr tail. Logging it here too reported the one event twice, the first time as a CLI
+        # "started outside a scope" when none had started; the fork's /api-health counter does not
+        # count it either, for the same reason.
         problems = self._capture()
         sess = self._sess()
         sess._on_cli_stderr(self.REFUSAL + "\n")
@@ -388,8 +451,9 @@ class FallbackNotice(_Backend):
         self.assertEqual(self.be.api_health_snapshot()["cliScope"]["fallbacks"], 0)
 
     def test_the_generic_prefix_alone_is_not_a_fallback(self):
-        # only the fallback FORM counts: a line with the wrapper's prefix and neither second word (a
-        # future third message, say) is buffered and nothing more, rather than miscounted
+        # only the fallback FORM is logged and counted: a line with the wrapper's prefix and neither
+        # second word (a future third message, say) is buffered and nothing more, rather than
+        # misreported or miscounted
         problems = self._capture()
         self._sess()._on_cli_stderr(sb.CLI_SCOPE_NOTICE_PREFIX + " something else entirely\n")
         self.assertEqual(problems, [])

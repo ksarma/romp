@@ -65,13 +65,16 @@ This repo may go public; assume every commit is permanent and world-readable.
   worlds.
 - Two machine-local backstops enforce this, neither a substitute for the rule:
   the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus the lines
-  every commit new to the remote ADDS, for the strings in
+  every commit new to every fetched remote ADDS, for the strings in
   `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
   are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
-  2026-07-25; and added lines rather than every commit's tree, so a branch that
-  only INHERITED a string main has since redacted pushes once it merges main —
-  2026-09-06); and the maintainer's clone carries an UNTRACKED
+  2026-07-25; added lines rather than every commit's tree, so a branch that
+  only INHERITED a string main has since redacted pushes once it merges the
+  main that carries the redaction — 2026-09-06; and "new" to EVERY fetched
+  remote, so a clone with a fork and the project as two remotes is not refused
+  over the project's own history when it pushes a branch cut from the project's
+  main to the fork — 2026-09-07); and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
   deliberately not in the repo: one machine's identifiers mean nothing on anyone
@@ -175,6 +178,33 @@ broad `git add` will sweep up your work). Conventions:
      (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
      must land alone is merged on the user's word. Opening a PR against the upstream
      project is a separate decision only the user makes.
+  Anything in the code that reads the canonical repo (the release script's post-merge
+  fast-forward and tag push, the kernel's update and drift probes) resolves the remote
+  as `upstream` when the clone has one, else `origin` (`_release_remote` in
+  `kernel/kernel.py`, `canonical_remote` in `scripts/release.sh`); never a literal
+  `origin`. In this clone that remote is the project, not the fork: the kernel's update
+  and drift probes read the project's main and tags, and the release script is not
+  ours to run (see the fork section above).
+- **Every PR carries exactly one tier label** (maintainers' rule, 2026-09-06). The
+  project's `pr-tier` check holds a PR with no tier label, or two, red, so an unlabeled
+  offer never auto-merges there. The fork's copy of the check
+  (`.github/workflows/pr-tier.yml`) counts the same four labels plus two of its own:
+  `docs`, upstream's coming name for tests-only, passes in its place, and a batch PR
+  (`scripts/batch.py`, `docs/batching.md`) carries `batch` alone and no tier, so adding
+  a tier to a batch PR turns the check red. Every other fork PR carries one tier label.
+  The author picks the tier at filing time:
+  - `tests-only` (tier 0): tests, docs, repo plumbing; no behavior change. Merges on green
+    upstream; on the fork it lands through a batch like every PR.
+  - `fix` (tier 1): a bug fix with a test that fails before it.
+  - `feature` (tier 2): a self-contained new capability inside romp's existing model;
+    put the design points in the body.
+  - `major-feature` (tier 3): new functionality that changes what romp does or its
+    contracts. Discussed first (an issue, or the PR as the RFC) and merged only on
+    agreement, so an offer at this tier is filed **without** `--auto` and the merge is
+    left to the maintainers.
+  The line that matters is 2 vs 3: adds a capability inside the existing model, `feature`;
+  changes what romp is, `major-feature`, talk first. The ledger entry's `tier:` line
+  records the pick for an offer.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.

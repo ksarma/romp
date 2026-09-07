@@ -299,6 +299,24 @@ class Plan(_Base):
         self.assertEqual(m["101"]["ci"], "success")
         self.assertEqual(st["base"], fx.bare_rev("main"))
 
+    def test_docs_and_tests_only_are_tiers_a_member_can_carry(self):
+        """`docs` is upstream's coming rename of tests-only; the fork accepts both ahead of the rename
+        (its own PRs keep tests-only), so a member labeled either way is planned with that tier and
+        never listed as unlabeled (2026-09-07 sync; the fork's pr-tier.yml counts the same labels)."""
+        fx = self.fx
+        fx.branch("a", {"docs/a.md": "a\n"})
+        fx.branch("b", {"docs/b.md": "b\n"})
+        fx.pr(101, "a", labels=["docs"])
+        fx.pr(102, "b", labels=["tests-only"])
+        p = fx.ok("plan", "--name", "b1")
+        st = fx.state("b1")
+        self.assertEqual(st["order"], [101, 102])
+        self.assertEqual(st["excluded"], [])
+        self.assertEqual(st["members"]["101"]["tier"], "docs")
+        self.assertEqual(st["members"]["102"]["tier"], "tests-only")
+        self.assertNotIn("unlabeled", p.stdout)
+        self.assertIn("[docs]", p.stdout)
+
     def test_a_dependent_of_an_excluded_pr_is_excluded_with_it(self):
         fx = self.fx
         fx.branch("e", {"e.txt": "e\n"})
@@ -1814,6 +1832,8 @@ class Body(unittest.TestCase):
                          ["touches .github/, .githooks/, install.sh"])
         self.assertEqual(r(self.member(4, tier=None), None), ["unlabeled"])
         self.assertEqual(r(self.member(5, tier="feature"), None), ["feature"])
+        self.assertEqual(r(self.member(11, tier="docs"), None), [], "docs is tier 0, like tests-only: not listed")
+        self.assertEqual(r(self.member(12, tier="tests-only"), None), [])
         self.assertEqual(r(self.member(6, trailer=None), None), ["trailer not stated"])
         self.assertEqual(r(self.member(7, ci="none (was conflicting)"), None), ["own CI: none (was conflicting)"])
         self.assertEqual(r(self.member(8), {"files": ["a.py", "b.py"], "how": "x", "hunks": 3, "review": "one round by a subagent: ok"}),
@@ -1974,3 +1994,44 @@ class BisectMessageForms(unittest.TestCase):
 
     def test_a_line_that_names_no_commit_does_not_parse(self):
         self.assertIsNone(batch._FIRST_BAD.search("bisect found first 'bad' commit\nbisect run success\n"))
+
+
+
+class PrTierWorkflow(unittest.TestCase):
+    """The fork's copy of .github/workflows/pr-tier.yml, upstream's check that every PR carries exactly
+    one tier label, also counts `batch` and `docs` (2026-09-07 sync). A batch PR carries `batch` and no
+    tier, and ci_of folds a red check into "ci: failure", so upstream's list would hold every batch PR
+    red; `docs` is upstream's coming rename of tests-only. The workflow's jq filter is run here as the
+    workflow runs it, so the labels it counts and the labels batch.py knows stay in step."""
+
+    WORKFLOW = ROOT / ".github" / "workflows" / "pr-tier.yml"
+
+    @classmethod
+    def setUpClass(cls):
+        assert shutil.which("jq"), "jq is needed: the workflow runs its filter through jq"
+        text = cls.WORKFLOW.read_text(encoding="utf-8")
+        m = re.search(r"count=\$\(jq '([^']*)' <<<\"\$LABELS\"\)", text)
+        assert m, "the workflow's `count=$(jq '...' <<<\"$LABELS\")` line is what this test reads"
+        cls.filter = m.group(1)
+
+    def count(self, labels):
+        p = subprocess.run(["jq", self.filter], input=json.dumps(list(labels)), text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return int(p.stdout.strip())
+
+    def test_every_tier_batch_py_knows_and_the_batch_label_count_as_the_one_label(self):
+        self.assertIn("docs", batch.TIERS)
+        for label in (*batch.TIERS, batch.LABEL_BATCH):
+            self.assertEqual(self.count([label]), 1, label)
+
+    def test_no_tier_two_tiers_and_a_label_that_is_not_a_tier_are_not_one(self):
+        self.assertEqual(self.count([]), 0)
+        self.assertEqual(self.count([batch.LABEL_HOLD]), 0)
+        self.assertEqual(self.count([batch.LABEL_LAND]), 0)
+        self.assertEqual(self.count(["fix", "tests-only"]), 2)
+        self.assertEqual(self.count([batch.LABEL_BATCH, "fix"]), 2, "a batch PR carries no tier of its own")
+
+    def test_the_divergence_is_named_where_the_next_sync_will_read_it(self):
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("Fork divergence", text)
+        self.assertIn("scripts/batch.py", text)

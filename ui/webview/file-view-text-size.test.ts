@@ -842,11 +842,11 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
 });
 
 /** The two surfaces that wear the bar's classes OUTSIDE a bar, as their modules build them: the file browser's bar
- *  (file-browse.ts: fb-bar > fb-crumbs + fileview-acts > [Hidden, close]) under a deep crumb trail, in each document's
- *  sheets; and, in the pane document, the Files pane's Recent row (files.ts: fs-row > fileview-name + fileview-sess). */
+ *  (file-browse.ts: #romp-filebrowse, the backdrop > .filebrowse, the card > fb-bar > fb-crumbs + fileview-acts > [Hidden, close];
+ *  the id and the class are two elements since the 2026-09-04 redress) under a deep crumb trail, in each document's sheets; and, in the pane document, the Files pane's Recent row (files.ts: fs-row > fileview-name + fileview-sess). */
 const CRUMBS = ["/", "repo", "notes-api", "services", "api", "internal", "handlers", "v2", "tests", "fixtures", "golden"];
 const OUTSIDE_PAGE = (mode: "pane" | "chat" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
-<body class="filebrowse-open${mode === "pane" ? " fileview-pane" : ""}"><div class="filebrowse" id="romp-filebrowse"><div class="fb-bar"><div class="fb-crumbs" id="fb-crumbs">${CRUMBS.map((c, i) => (i ? '<span class="fb-crumb-sep">/</span>' : "") + '<span class="fb-crumb">' + c + "</span>").join("")}</div><div class="fileview-acts"><button class="fileview-btn" id="hid">Hidden</button><button class="fileview-btn fileview-close" id="close">✕</button></div></div><div class="fb-list"></div></div>
+<body class="filebrowse-open${mode === "pane" ? " fileview-pane" : ""}"><div id="romp-filebrowse"><div class="filebrowse"><div class="fb-bar"><div class="fb-crumbs" id="fb-crumbs">${CRUMBS.map((c, i) => (i ? '<span class="fb-crumb-sep">/</span>' : "") + '<span class="fb-crumb">' + c + "</span>").join("")}</div><div class="fileview-acts"><button class="fileview-btn" id="hid">Hidden</button><button class="fileview-btn fileview-close" id="close">✕</button></div></div><div class="fb-list"></div></div></div>
 ${mode === "pane" ? '<div id="files-empty"><div class="fs-recent"><div class="fs-row" id="row"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/services/api/docs/</span><span class="fileview-base">report.md</span></div><span class="fileview-sess" id="sess">web</span></div></div></div>' : ""}</body></html>`;
 
 test("in a browser: the file browser's bar stays one line at 320, 360, 480 and 1000px in every document, its two buttons holding their width while the crumb trail ellipsizes; the Files pane's Recent row keeps its session chip inside at 200, 240 and 320px", async (t) => {

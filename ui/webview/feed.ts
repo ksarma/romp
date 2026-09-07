@@ -11,7 +11,7 @@
 // aged it. Its column and order are re-applied on every render regardless.
 import { distillText, distillInputs, applyDistillLine, distillPending, distillStaleNote } from "./distiller-line";
 import { linkifyPrRefs, setLinkedText, senderPrRepo, installPrLinkOpener } from "./pr-links";
-import { spinFor, KIND_WORD, kindWord } from "./spin-caption";
+import { spinFor, awaitWord, groupRows, GROUP_TITLE, ROW_KIND_OF_LEGACY, type AwaitRow } from "./spin-caption";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { searchMatches, searchSids } from "./feed-search";
 import { TagLens, lensAll, lensLabel, lensVisible, lensUnions } from "./tag-lens";
@@ -124,7 +124,8 @@ interface AskItem {
   satellite?: boolean | null;                        // tracked delegation (the user 2026-08-24): this card is the recipient-side copy of a delegator-homed primary — off the default board; the session filter still reaches it (nothing runs in secret)
   delegTracked?: { name: string; host?: string; sid: string; color?: { bg: string; fg: string } | null }[] | null;  // tracked delegation PRIMARY: the recipient identities whose live status this one card carries  // courier handoff: planted by a peer's message → "↪ from <peer>"; peerHost = a FEDERATED sender's host, rendered as the quiet "host:" prefix (absent on older payloads / local senders). live = the sender's linked entry is still OPEN; false → the badge is PROVENANCE, dimmed (the completed-column merge, the user 2026-08-16)
   waitingOn?: { peerSid: string; name: string; color: { bg: string; fg: string } | null; inCycle: boolean; kind?: string; since?: number } | null;  // unanswered msg out to a live peer → "Awaiting <peer>" chip, or "Handed off to <peer>" when kind is "delegate" (peer name in native colour, no emoji; kernel _wait_for_graph; the user 2026-06-22 / 2026-07-25). since = when the unanswered ask was sent → the chip's elapsed readout (the user 2026-08-23)
-  awaiting?: { why?: string | null; kind?: string | null; since?: number | null; tasks?: string[] | null;
+  awaiting?: { why?: string | null; kind?: string | null; since?: number | null; count?: number | null; tasks?: string[] | null;
+               items?: AwaitRow[] | null;   // the awaited ROWS grouped by kind (slice 2, 2026-09-05) — the pill lists them; count = how many (T225)
                peers?: { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null }[] | null } | null;   // peers: delegation wait → the box names them in identity colour (the user 2026-08-23)   // AWAITING flavor: held in Working, ⏳ awaiting badge — waiting on dispatched/delegated work (agents/subagents/a build), NOT on you (kernel build_feed; the user 2026-06-22). The peer case rides waitingOn; this carries the generic "why". `tasks` = live bg-task descriptions (the user 2026-07-13): present → the compact "Awaiting task" pill (expands the list, like Sub-goals) replaces the boxed why. since = the wait's own event time → the box/pill elapsed readout (the user 2026-08-23)
   groupTitle?: string;                             // host: this ask shares a typed turn with siblings → the group's title
   groupN?: number;                                 // host: sibling count for that turn (>1 ⇒ fold into one group card)
@@ -260,6 +261,7 @@ const pendingMoveKind = new Map<string, MoveKind>();
 // trail instead of unreproducible archaeology. Ids only, no card text.
 const shownCol = new Map<string, string>();            // itemId → column as last RENDERED (post-prediction)
 let lastFeedEvent = "init";                            // the input change the next render reflects
+let feedAnnounced = false;                             // {romp:'ready'} posted to the shell once, on the first payload's render
 let lastPayloadBuildId = 0;
 function auditShownColumns(list: AskItem[]) {
   const seen = new Set<string>();
@@ -485,6 +487,10 @@ function prRepoOfSender(frm: string | undefined, origin: string | undefined): st
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { initGear } = require("./gear.js");
 initGear((m: Record<string, unknown>) => vscodeApi?.postMessage(m));
+// the gesture clock the gear stamps its settings posts with — one module graph per document, so
+// the gear's learning (each store's stamp from /version on open) serves the banner below too
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gclock = require("./gesture-clock.js");
 
 // The romp strip (VS Code only — the host opts in via __rompShowStrip): usage
 // bars + the gear button, docked below #feed-foot. The gear raises the modal
@@ -1574,7 +1580,15 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
   // live background tasks (the user 2026-07-13): when the card is AWAITING on tasks, the compact
   // "Awaiting task" pill joins the section toggles and expands this list (the old boxed caption is gone)
   const taskList = ((it.awaiting && it.awaiting.tasks) || []).filter(Boolean);
-  const hasTasks = taskList.length > 0;
+  // …and since slice 2 (2026-09-05) the awaited ROWS, grouped by kind — agents, commands, watches,
+  // peers — so the pill shows for ANY wait the kernel can enumerate, not only a bg-task one (a wait on
+  // live subagents had no clickable affordance on the card). An older kernel ships descriptions only;
+  // they read as rows of the legacy kind's group, so the list never goes blank on a mixed deployment.
+  const awKind = (it.awaiting && it.awaiting.kind) || "";
+  const awItems: AwaitRow[] = ((it.awaiting && it.awaiting.items) || []).filter((r) => r && r.kind);
+  const taskRows: AwaitRow[] = awItems.length ? awItems
+    : taskList.map((d) => ({ kind: ROW_KIND_OF_LEGACY[awKind] || "commands", label: d }));
+  const hasTasks = taskRows.length > 0;
   // resolve the selection (default = summary open), falling back to "none" if the chosen section is empty
   // the stall note (the user 2026-07-23) — shown whenever the kernel says romp is holding this card, with
   // or without a judge-written note, since `why` alone already answers "why is nothing happening"
@@ -1651,16 +1665,23 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
   // Awaiting, and two words for one state read as two states (the user 2026-08-13).
   const taskBtn = a._taskBtn as HTMLElement;
   taskBtn.style.display = hasTasks ? "" : "none";
-  // the KIND words the pill (the user 2026-08-15): "Awaiting job", "Awaiting 3 agents" — the wait's
-  // class in the visible label (tooltips are dead on the touch PWA); kindless keeps the classic "task"
-  const awKind = (it.awaiting && it.awaiting.kind) || "";
-  const kw = KIND_WORD[awKind] || "task";
+  // the KIND words the pill (the user 2026-08-15): "Awaiting watch", "Awaiting 3 agents" — the wait's
+  // class in the visible label (tooltips are dead on the touch PWA). ONE rule with the chat chip and
+  // the awaiting box (awaitWord, slice 2): one row → its word, several of a kind → count + word, mixed
+  // kinds → the number alone ("Awaiting 4"); a single named peer → its name in identity colour.
   // the wait's elapsed time rides the pill exactly as it rides the awaiting box and the working
   // narration — a stuck wait must be glanceable everywhere the state shows (the user 2026-08-23)
-  (a._taskLbl as HTMLElement).replaceChildren(
-    (taskList.length === 1 ? "Awaiting " + (awKind ? kindWord(awKind, 1) : kw)
-                           : "Awaiting " + taskList.length + " " + (awKind ? kindWord(awKind, taskList.length) : kw + "s")),   // one number-agreeing vocabulary (T225)
-    ...durNodes(it.awaiting && it.awaiting.since));   // the waited time, live (durSpan)
+  const pillPeers = (it.awaiting && it.awaiting.peers) || [];
+  const pillWord = awaitWord(awKind, (it.awaiting && it.awaiting.count) ?? taskRows.length, taskRows);
+  const pillLbl = a._taskLbl as HTMLElement;
+  pillLbl.replaceChildren("Awaiting ");
+  if (pillPeers.length === 1 && taskRows.every((r) => r.kind === "peer")) {
+    const nm = el("span", "fask-waiton-name");
+    nm.replaceChildren(...hostPartsNodes(pillPeers[0].host, pillPeers[0].name));
+    if (pillPeers[0].color && pillPeers[0].color.bg) nm.style.color = pillPeers[0].color.bg;
+    pillLbl.appendChild(nm);
+  } else pillLbl.append(pillWord);
+  pillLbl.append(...durNodes(it.awaiting && it.awaiting.since));   // the waited time, live (durSpan), not a string baked at render
   taskBtn.classList.toggle("on", choice === "tasks");
   taskBtn.setAttribute("aria-pressed", choice === "tasks" ? "true" : "false");
   taskBtn.title = choice === "tasks" ? "hide the tasks" : "show the tasks";
@@ -1681,14 +1702,34 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
     // the TASK list (the user 2026-07-13): same view/spot as the sub-goal checklist — one row per live
     // background task, a small spinning swirl as its mark (in flight), the task's own description as text
     if (choice === "tasks") {
-      for (const d of taskList) {
-        const row = el("div", "fcheck ftask");
-        const tri = el("span", "fcheck-tri empty");
-        const mark = el("span", "fcheck-mark");
-        mark.appendChild(el("span", "fask-awaiting-swirl ftask-swirl"));
-        const txt = el("span", "fcheck-text"); txt.textContent = d;
-        row.append(tri, mark, txt);
-        cl.appendChild(row);
+      // …grouped by KIND since slice 2 (2026-09-05): a small dim header per group when more than one
+      // shows (agents / commands / watches / peers), labels only — the chat's box carries the controls
+      const groups = groupRows(taskRows);
+      const peerByName = new Map(pillPeers.map((p) => [p.name, p]));
+      for (const g of groups) {
+        if (groups.length > 1) { const gh = el("div", "ftask-group"); gh.textContent = GROUP_TITLE[g.kind] || "Other"; cl.appendChild(gh); }
+        for (const r of g.rows) {
+          const row = el("div", "fcheck ftask");
+          const tri = el("span", "fcheck-tri empty");
+          const mark = el("span", "fcheck-mark");
+          mark.appendChild(el("span", "fask-awaiting-swirl ftask-swirl"));
+          const txt = el("span", "fcheck-text");
+          const p = r.kind === "peer" ? peerByName.get(r.label || "") : undefined;
+          if (p) {
+            // a peer row names the session the way the awaiting box does: identity colour, quiet host prefix,
+            // click opens the session (the standard session-chip gesture)
+            txt.replaceChildren(...hostPartsNodes(p.host, p.name));
+            if (p.color && p.color.bg) txt.style.color = p.color.bg;
+            if (p.sid) {
+              const sid = p.sid;
+              txt.title = "waiting on " + p.name + " — click opens the session";
+              txt.style.cursor = "pointer";
+              txt.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openSession", id: sid }); };
+            }
+          } else txt.textContent = r.label || r.kind;
+          row.append(tri, mark, txt);
+          cl.appendChild(row);
+        }
       }
       cl.style.display = cl.children.length ? "" : "none";
       return;
@@ -4353,7 +4394,9 @@ function captureCardRects(cols: ReturnType<typeof ensureCols>, which: readonly F
 function flyColumnChanges(first: Map<string, FlipState>, cols: ReturnType<typeof ensureCols>, which: readonly FlyCol[]): void {
   if (!first.size) return;
   try { if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return; } catch { /* no matchMedia */ }
-  // READ phase: every Last rect, before a single write
+  // READ phase: every Last rect, before a single write (a transform written between two rect reads dirties
+  // layout, so the next read forces a fresh layout of the whole document: one per card, 155 times per feed
+  // frame when measured 2026-09-04, the largest single cost on the main thread the chat pane's clicks share)
   const moves: { c: HTMLElement; dx: number; dy: number; crossed: boolean }[] = [];
   for (const key of which) {
     const colEl = cols[key];
@@ -4497,8 +4540,10 @@ function ensureJudgeLimit(): HTMLElement {
   btn.onclick = () => {
     btn.disabled = true;
     btn.textContent = "Switching…";                      // acknowledge before the round-trip
-    // gt: a settings gesture like any gear pick — stamped at the click so the kernel can order it
-    vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus", gt: Date.now() });
+    // gt: a settings gesture like any gear pick — stamped at the click, through the gesture clock, so
+    // the kernel can order it (with the gear never opened in this document the clock has learned
+    // nothing and this is the wall clock; a refusal then offers Apply anyway)
+    vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus", gt: gclock.stamp("judge-model") });
   };
   b.appendChild(btn);
   const sess = el("span", "jl-sess"); b.appendChild(sess);   // who the window actually touches (2026-08-28)
@@ -4775,7 +4820,9 @@ function render() {
   // FLIP step 1 (the user 2026-06-27): record every visible card's position + column BEFORE the reconcile, so
   // a card that changes column can FLY from its old spot to the new one instead of teleporting — in the
   // columns where something moves (see the FLIP block): a column whose planned key sequence equals its
-  // current one has no card entering, leaving or changing place. A quiet delta reads no rects at all.
+  // current one has no card entering, leaving or changing place. A quiet delta reads no rects at all: the
+  // capture and the fly each force a layout of the whole document, and most frames change a card in place
+  // (text, tint, status chip) with every card staying where it was (measured 2026-09-04).
   // In the STACKED layout (the pref, or the narrow-container force) the sections sit one above the other,
   // so a card leaving one section shifts every card in the sections below it: when a column's membership
   // or order changed there, every column is read, as before. (A content-height change alone still
@@ -5385,6 +5432,13 @@ function applyFeedPayload(m: any): void {
   if (typeof m.showDismissed === "boolean") showDismissed = m.showDismissed;
   if (typeof m.canUndoClear === "boolean") canUndoClear = m.canUndoClear;
   render();
+  if (!feedAnnounced) {
+    feedAnnounced = true;
+    // First content is on screen → tell the shell, the way the timeline does: the boot splash's cue, and the
+    // exact event a notification tap's card reveal waits for — the shell holds its {romp:'revealCard'} until
+    // the feed has cards to scroll to (kernel.py _LANDING_REVEAL_JS). Standalone page: no parent, nothing to say.
+    try { if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "ready", app: "feed" }, "*"); } catch { /* no shell */ }
+  }
 }
 
 
@@ -5397,10 +5451,18 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
   if (m.type === "pipeState") { pipeBanner(!!m.up, Number(m.queued) || 0); return; }
   if (m.romp === "paneFocus") { kbEnterCards(); return; }   // the shell handed us keyboard focus → arm card nav
   if (m.romp === "revealCard") {
-    // a bell-entry click jumps back to the card it was minted from (the user 2026-07-28): scroll it
-    // into view and pulse it accent so the eye lands on the right card. A card that no longer exists
-    // under its own key (cleared, or folded into a group) falls back to opening the session.
-    const target = document.querySelector(`[data-key="a:${String(m.itemId || "")}"]`) as HTMLElement | null;
+    // a bell-entry click (the user 2026-07-28) or a notification tap (2026-09-06) jumps to the card it was
+    // minted from: scroll it into view and pulse it accent so the eye lands on the right card. A card in a
+    // FOLDED thread has no element yet — unfold first (the same rule revealCards follows: the navigation wins
+    // over the disclosure). A card that no longer exists under its own key (cleared, or folded into a group)
+    // falls back to opening the session.
+    const key = "a:" + String(m.itemId || "");
+    unfoldThreadsFor(new Set([key]));
+    // Match the key STRUCTURALLY, never an interpolated attribute selector: a crafted push-card value
+    // with a quote or bracket would throw a SyntaxError inside querySelector and abort this handler,
+    // dropping the openSession fallback too (review find on #940, 2026-09-07).
+    const target = (Array.from(document.querySelectorAll("[data-key]")) as HTMLElement[])
+      .find((c) => c.dataset.key === key) || null;
     if (target) {
       target.scrollIntoView({ block: "center", behavior: "smooth" });
       target.classList.remove("reveal-pulse"); void target.offsetWidth;   // restart the animation on a repeat jump
@@ -5679,20 +5741,23 @@ function applyExtHover() {
 // exactly the cards a hover would have outlined. The class is removed and re-added across a forced
 // reflow, or a second click on the same card would re-add a class it already has and CSS would replay
 // nothing — the "clicked again and it didn't flash" bug this shape avoids.
-function revealCards(keys: Set<string>) {
-  // A target inside a FOLDED thread has no element to scroll to, and a jump that lands on nothing is the
-  // silent no-op a collapse must never cause (the user 2026-07-31). Unfold the owning thread(s) and render
-  // before looking: the navigation wins over the disclosure, and the thread stays open afterwards so you
-  // can see where you were taken.
-  if (collapsedThreads.size) {
-    let opened = false;
-    for (const a of asks) {
-      if (collapsedThreads.has(a.sid) && extHoverMatches("a:" + a.itemId, keys)) {
-        collapsedThreads.delete(a.sid); opened = true;
-      }
+// A target inside a FOLDED thread has no element to scroll to, and a jump that lands on nothing is the
+// silent no-op a collapse must never cause (the user 2026-07-31). Unfold the owning thread(s) and render
+// before looking: the navigation wins over the disclosure, and the thread stays open afterwards so you
+// can see where you were taken. Shared by every "take me to this card" entry (revealCards, revealCard).
+function unfoldThreadsFor(keys: Set<string>): void {
+  if (!collapsedThreads.size) return;
+  let opened = false;
+  for (const a of asks) {
+    if (collapsedThreads.has(a.sid) && extHoverMatches("a:" + a.itemId, keys)) {
+      collapsedThreads.delete(a.sid); opened = true;
     }
-    if (opened) render();
   }
+  if (opened) render();
+}
+
+function revealCards(keys: Set<string>) {
+  unfoldThreadsFor(keys);
   const hits = Array.from(document.querySelectorAll<HTMLElement>("[data-key]"))
     .filter((c) => extHoverMatches(c.dataset.key, keys));
   if (!hits.length) return;
