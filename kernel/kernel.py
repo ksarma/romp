@@ -25320,8 +25320,9 @@ _task_fold_stats = {"hit": 0, "miss": 0}         # per TURN: turns served from t
 
 
 def _task_fold_report():
-    """/perf memos.chat_fold_tasks: hit / miss count TURNS (served from the memo vs scanned; a build of an
-    N-turn session with one moved turn is N-1 hits and 1 miss) and the gauge entries (sids held)."""
+    """/perf memos.chat_fold_tasks: hit / miss count TURNS (served from the memo vs scanned): a
+    live-merged build over an unchanged parse of N turns is N-1 hits and 1 miss, a build after a re-parse
+    is N misses. Plus the gauge entries (sids held)."""
     return dict(_task_fold_stats, entries=len(_task_fold_memo))
 
 
@@ -25357,11 +25358,15 @@ def _fold_tasks(session, sid=None):
     PER-TURN MEMO (INTERIM, round-4 plan P3 (b), 2026-09-07; P4's complete chat signature removes most of
     the rebuilds this serves). The scan over a turn's atoms is pure over those atoms (_fold_tasks_turn),
     so each turn's partial is kept per `sid` keyed on its atoms list's identity (held) plus _chat_turn_fp,
-    the fingerprint the chat fold trusts for a turn's atoms (a parse only appends; a full re-parse makes
-    new lists). A live-merged session carries a new atoms list for its last turn only, so a build of a
-    long working transcript scans one turn instead of every turn. The combine over the partials (the
-    result join, the ops replay) runs in full on every call and returns a fresh list, so a caller may
-    keep or alter the result without reaching the memo. No sid: no memo (a direct call)."""
+    the fingerprint the chat fold trusts for a turn's atoms. What it hits: repeated builds over ONE
+    parse, the parse cache's object or its live-merged copy, whose earlier turns share the parse's atom
+    lists, so only the last turn, which the live merge rebuilds, is rescanned (the active tab's builds
+    between transcript writes, the background rebuilds a judge pass or a states row causes). What it does
+    not hit: a build after a transcript write. Every parse, the fold path included, mints new atom lists,
+    so that build scans every turn again; the long-transcript builds that follow each write, the plan's
+    cost-weighted case, are not served. The combine over the partials (the result join, the ops replay)
+    runs in full on every call and returns a fresh list, so a caller may keep or alter the result without
+    reaching the memo. No sid: no memo (a direct call)."""
     prev = _task_fold_memo.get(sid) if sid is not None else None
     cur, parts = {}, []
     for turn in session["turns"]:

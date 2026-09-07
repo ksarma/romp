@@ -2178,9 +2178,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   store copy per build), `bypass_empty` (a store with no nodes), `evict`
   (entries dropped for tabs no longer shown) and the gauge `entries`.
   `chat_fold_tasks` is the per-turn memo of the transcript's task fold
-  (interim, the same reason): `hit` and `miss` count turns served from the
-  memo against turns scanned, so a build of a working session with one moved
-  turn is one miss, plus the gauge `entries` (sessions held).
+  (interim, the same reason). It serves repeated builds over one parse: a
+  live-merged build of an unchanged transcript scans its last turn only. A
+  build after a transcript write scans every turn again, since a parse mints
+  new atom lists. `hit` and `miss` count turns served from the memo against
+  turns scanned, plus the gauge `entries` (sessions held).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
