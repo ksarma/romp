@@ -5559,9 +5559,23 @@ def rollup_status(store, session_closed, now=None):
             return None if p in _umbrellas else p
         for _uid in _umbrellas:
             newp = _solid_parent(_uid)
-            for _cn in nodes.values():
+            for _cid, _cn in nodes.items():
                 if isinstance(_cn, dict) and _cn.get("parentId") == _uid:
                     _cn["parentId"] = newp              # usually None → its own card again
+                    # A child the roll-down had folded under the container (rolledUp) leaves with its
+                    # OWN diary as its state, not the container's: the marker mirrored a resolved
+                    # ancestor, and that ancestor is being removed here. Kept, it made the promoted
+                    # child a top nothing re-derived (materialize and record_verdict both skip
+                    # rolledUp): is_complete read its stale done flag, settledDone never landed, and
+                    # the settle branch below appended a settle row plus a seam on EVERY rollup — one
+                    # live node sat at LOG_CAP (64 settle rows, logTrunc) with its store's seams at cap
+                    # and about 1 MB republished per pass (review 2026-09-06). A child whose new solid
+                    # ancestor is itself resolved is re-folded by this rollup's roll-down; the fold is
+                    # recorded so the held-open rule sees the child like any other top.
+                    if _unroll_node(_cn, materialize=False):
+                        _f = _materialize_node(_cn)
+                        if _f is not None:
+                            folds[_cid] = _f
             nodes.pop(_uid, None)
             store.get("status", {}).pop(_uid, None)
         _pl = store.get("placements") or {}
@@ -7540,11 +7554,8 @@ def _reopen(store, gid, by="?", now=None, msg=False):
     while stack:
         c = stack.pop()
         nd = nodes.get(c)
-        if nd and dict.pop(nd, "rolledUp", None):  # (dict.pop: the guarded pop needs authority)
-            with _authority():
-                nd["nodeComplete"] = nd["blocked"] = nd["cleared"] = False   # undo roll-down's tree cache
-            if "log" in nd:
-                _materialize_node(nd)                  # back under fold ownership: its own history (usually
+        if nd:
+            _unroll_node(nd)                           # back under fold ownership: its own history (usually
         stack.extend(kids.get(c, []))                  # none → open; a rolled-away block resurfaces) rules
 
 
@@ -8135,6 +8146,25 @@ def migrate_all_stores():
     return n
 
 
+def _unroll_node(nd, materialize=True):
+    """Drop roll-down's tree-derived cache from `nd`: the rolledUp marker and the three flags it set, then
+    (with a diary present, unless the caller materializes itself) rewrite the flags from that diary.
+    Returns True when the marker was there. The marker means "a resolved ANCESTOR's roll-down set these
+    flags", so it goes exactly when that ancestor's resolution no longer stands over the node: the
+    ancestor is reopened (_reopen), the container above it dissolves (rollup_status's dissolution sweep),
+    or the node is found at top level still wearing it (no ancestor at all; _materialize_from_log).
+    Eventless, like the roll-down that set it: the node's own history rules from here (usually none, so
+    open; a rolled-away block resurfaces), and the same rollup's roll-down re-derives the cache when a
+    resolved ancestor still stands above the node."""
+    if not dict.pop(nd, "rolledUp", None):             # (dict.pop: the guarded pop needs authority)
+        return False
+    with _authority():
+        nd["nodeComplete"] = nd["blocked"] = nd["cleared"] = False   # undo roll-down's tree cache
+    if materialize and "log" in nd:
+        _materialize_node(nd)
+    return True
+
+
 def _materialize_from_log(nodes):
     """P3.3 AUTHORITY (the user 2026-07-06): the verdict log IS the node's verdict state; the flags are
     a materialized cache the read side keeps consuming unchanged. Rewriting them from the fold every
@@ -8152,7 +8182,14 @@ def _materialize_from_log(nodes):
     folds = {}
     for nid, nd in nodes.items():
         if nd.get("rolledUp"):
-            continue                                   # tree-derived display state; roll-down owns it
+            if nd.get("parentId") is not None:
+                continue                               # tree-derived display state; roll-down owns it
+            # A TOP wearing the marker has no ancestor whose resolution it could mirror: a container
+            # dissolved out from over it and the store was published with the marker still on (the
+            # dissolution sweep dropped nothing before 2026-09-07). Left alone it was a node nothing
+            # re-derived (this skip, and record_verdict's), so its stale done flag settled it again on
+            # every rollup. Drop the cache and fold it from its own diary, like any other top.
+            _unroll_node(nd, materialize=False)
         f = _materialize_node(nd)
         if f is not None:
             folds[nid] = f
