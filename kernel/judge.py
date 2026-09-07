@@ -95,7 +95,7 @@ EPIDIR   = STATE / "episodes"            # per-session append-only episode log, 
 STATESDIR = STATE / "states"             # per-session real idle/compacting transitions → idle atoms (settled gate)
 PCACHE   = STATE / "judge-units-cache"   # (mtime,size) cache of a transcript's ready units
 MESSAGES = STATE / "timeline" / "messages.jsonl"
-ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — surfaced by `romp judges`
+ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — the card warn modal and the debug feed read it
 USAGE    = STATE / "judge-usage.jsonl"   # one line per successful judge call: tokens/cost/ms — the kernel/UI roll up pipeline cost
 JUDGE_AUTH = STATE / "judge-auth.json"   # judge-auth-down latch {fsid: {t, mode, note}}: set by a credential-class error
 JUDGE_LIMIT = STATE / "judge-limit.json"  # usage-limit-down latch {t, bucket, pct, resets_at, model}: the gate
@@ -180,6 +180,12 @@ def _rebind_state(path):
     #                         entries could never hit under the new one; cleared anyway so a rebind starts empty
     with _ABSENT_FLAGS_LOCK:
         _ABSENT_FLAGS.clear()   # the absent-store predicate memo: same full-path keys, same reasoning
+    with _VIEW_CLEARED_LOCK:
+        _VIEW_CLEARED_MEMO.clear()   # the cleared.jsonl replay memo and the states-log scan memo: full-path
+    with _LIVE_PROMPT_LOCK:          # keys, so an old root's entries could never hit under the new one;
+        _LIVE_PROMPT_MEMO.clear()    # cleared anyway so a rebind starts empty
+    with _UNREADABLE_LOCK:
+        _UNREADABLE_LOGGED.clear()   # the read-failure episodes are per path too
     _shared_clear()             # the shared read-only store cache: same path keying, same reason; also lifts
     #                         a test's deliberate write-guard trip (the poison flag) so the next class starts clean
     with _STAGE_LOCK:
@@ -911,7 +917,11 @@ def consume_judge_recovery():
 
 
 def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
-    """Append one failure row to ERRORS (judge-errors.jsonl) so `romp judges` can surface it. The row contract
+    """Append one failure row to ERRORS (judge-errors.jsonl). Rows with a `goal` reach the card's warn modal
+    (the kernel's _card_warn_rows joins them onto cards) and the debug feed; a row without one is file-level
+    and reaches nobody by itself (`romp judges`, which listed them all, was retired 2026-07-27), so a
+    condition that needs the user's eye also needs a surface of its own: the goals-store read failures ride
+    the kernel's once-per-episode warn frame and the /perf gauge (unreadable_store_sids). The row contract
     (the user 2026-07-09) — every row answers who/where/what/why on its own:
       judge  who failed — the judge's own one-per-prompt name, never a tier
       fsid   where — the session it was judging ("" only for fleet-level rows like the rate gate)
@@ -1043,7 +1053,47 @@ def pass_watermark(tier, fsid):
 # _auto_nudge_session, _clear_done_working_notes) see a world up to one pass old for every session, and
 # a turn that ends after a pass's first touch is judged next pass, whole. That is the frame's design
 # (2026-07-21); the gate adds no lag of its own beyond the producer's 3 s backstop for the clock input.
+#
+# SIGNATURE INPUTS PER TIER (P2 of the plan, 2026-09-07, added the four store-only tiers). Each list is
+# what the tier's DECISION path reads, enumerated by reading the stage end to end; a read on a path that
+# ends in a write (or a completeness mark) is not listed, because the write moves the store identity and
+# re-arms the tier on its own. `_sig_inputs` carries the file lists, `_stage_sig` the derived values.
+#  plan        parse pair + candidates; store, journal, archive; captions (_prompt_gist), episodes
+#              (episode_floor), gone marker + reg spawnedAt + _sdk_owned (_cli_epoch), cleared.jsonl
+#              (plan_units -> _live_anchor_gone -> _view_cleared), this sid's stall slice (rollup), the
+#              LEAF stem's task store (_sync_declared_plan). Clock: the bg-launch expiry.
+#  close       parse pair + candidates; store trio; gone marker, reg spawnedAt, _sdk_owned, cleared.jsonl,
+#              stall slice. Clock: the bg-launch expiry.
+#  unblock     parse pair + candidates (due = the parse's ended turns); store trio (load_goals,
+#              _blocked_sub_candidates, _newest_done_at, _completed_since). The candidate scan comes
+#              first, so about half the sessions never reach the parse, yet the pair re-arms them on
+#              every transcript append at one load each: accepted (about 10 ms per pass), stated here.
+#  group       store trio (_group_tops, _overgrown_tops, _group_sig read the store), cleared.jsonl
+#              (_group_tops -> _view_cleared). NO parse: it is read only after a relink, which follows a
+#              model call, which follows a store change. The archive stays in: compaction rewrites it
+#              without a journal row, and a store with a journaled restore row replays from it.
+#  consolidate store trio (_consolidate_tops), cleared.jsonl. NO parse, same reasoning as the grouper.
+#  distill     store trio (todo is a function of status, confirming, the nodes' stamps and diaries), the
+#              states file (_live_prompt_since), this sid's stall slice (stalled_facts, by value). NO
+#              parse and no peer store on the idle path: _title_mirror_tops reads the parse
+#              (_user_ask_text -> _session_user_prompt_record) and a peer's store and archive
+#              (_deleg_frame) only for an UNTITLED mirror top, and every such path ends in a write
+#              (titledT, the caller's save) or the paused incomplete mark; the todo loop reads the parse
+#              only after `if not todo`, and every branch of it writes or marks. `_drain_undiscovered`
+#              calls _distill_session directly for absent stores and is not gated (a straggler never
+#              holds a stamp to be skipped on).
+# Not in any signature, on purpose: MESSAGES (the parse cache key excludes it too: a delivery appends to
+# the transcript); retry-paused.json and usage.json (a skip on either is a "" call, so the belt marks the
+# run incomplete); session-flags.json (_hidden_from_feed filters run_plan's, run_close's and run_unblock's
+# session lists, and the post-pool eviction drops a hidden sid's stamps, so an unmute costs one full run;
+# the other three runners do not filter on it). A store loaded with the `_unread` mark (the file or the
+# journal exists and did not read) marks the run incomplete wherever it happens (_mark_unread), so a run
+# judged from a fallback view never stamps under the identity of files it did not read; the same holds
+# for the side files a stage reads after the gate stat'd them (cleared.jsonl, the states file, the stall
+# records): a read that fails on a file that exists marks the run incomplete and logs a row (_read_failed).
 GATED_TIERS = ("plan", "close", "unblock", "group", "consolidate", "distill")
+PARSE_TIERS = ("plan", "close", "unblock")   # the tiers whose decision path reads the parse: their signature
+#                                              carries the pinned pair, and _gated checks the served pair
 _STAGE_STAMP = {}        # (tier, fsid) -> (sig, not_before): the inputs the tier last judged to completion
 _STAGE_LOCK = threading.Lock()
 _STAGE_STAMP_MAX = 4096  # belt: a wholesale clear at the cap (one full walk next pass)
@@ -1080,6 +1130,52 @@ def _ident(p):
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
+_UNREADABLE_LOGGED = set()   # path strings whose last read failed and was logged: one row per failure episode
+_UNREADABLE_LOCK = threading.Lock()
+
+
+def _read_failed(path_s, err, fsid, exc, note=None):
+    """A file the signature stat'd (or reads by value) could not be READ by the stage: mark the running
+    stage incomplete and log one judge-errors row (`note` names the consequence when the default, written
+    for the side files, does not fit: a goals store's readers stand down rather than judge without it). An absent file is a real state (_ident's None, the
+    scans' FileNotFoundError) and is never this; every other failure (a permission bit, EMFILE, EIO, an
+    unparseable document) means the stage decided WITHOUT an input the signature says it saw, and a stamp
+    would skip the session until that file moved, which a permission or descriptor failure never does
+    (review finding, 2026-09-07; before the memos the same hole stood on main for the planner's and
+    closer's cleared.jsonl input). One row per failure episode, the first failed read after a good one
+    (_read_ok), not one per call: the stall slice alone is read three times per session per pass, and a
+    wedged shared file would otherwise write a row for every one of them."""
+    _judge_ctx.stage_incomplete = True
+    with _UNREADABLE_LOCK:
+        first = path_s not in _UNREADABLE_LOGGED
+        _UNREADABLE_LOGGED.add(path_s)
+    if first:
+        _log_judge_error("romp", fsid or "", err,
+                         note=note or ("%s unreadable: %r — the pass judged without it and stays due until it reads"
+                                       % (os.path.basename(path_s), exc)))
+
+
+def _read_ok(path_s):
+    """A read of `path_s` succeeded: the next failure is a new episode and logs again."""
+    with _UNREADABLE_LOCK:
+        _UNREADABLE_LOGGED.discard(path_s)
+
+
+_STORE_UNREADABLE_NOTE = ("goals store unreadable: %r — every judge stage and the courier stand down on this session "
+                          "and nothing is published for it until the file reads; the kernel warns the app once per "
+                          "episode and GET /perf counts it (goals.unreadable_stores)")
+
+
+def unreadable_store_sids():
+    """The sids whose goals file is in a read-failure episode: load_goals or load_goals_shared found it
+    unreadable or unparseable and no read of it has succeeded since (_read_failed / _read_ok). The one
+    judge-errors row per episode carries no goal, so no card can hold it; the kernel's once-per-episode warn
+    to the app and the /perf gauge (goal_io_stats' `unreadable_stores`) read this instead."""
+    prefix = str(GOALDIR) + os.sep
+    with _UNREADABLE_LOCK:
+        return sorted(p[len(prefix):-5] for p in _UNREADABLE_LOGGED if p.startswith(prefix) and p.endswith(".json"))
+
+
 def _reg_spawned_at(fsid):
     """The spawnedAt VALUE of STATE/sdk/<fsid>.json, the only field _cli_epoch reads from it: model
     picks, task writes, push notes and subagent events rewrite the reg and leave spawnedAt alone (40
@@ -1101,8 +1197,9 @@ def _reg_spawned_at(fsid):
 def _stall_slice(fsid):
     """This session's stall records as a comparable tuple: what rollup_status's stall-warn retire reads
     (stalled_facts). A record appearing or ending for THIS sid moves it; another sid's does not. Read by
-    value from the file each time, for the reason _reg_spawned_at gives."""
-    return tuple(sorted((g, r.get("why"), r.get("since")) for g, r in stalled_facts(fsid).items()))
+    value from the file each time, for the reason _reg_spawned_at gives; strict, so a file that exists and
+    does not read raises and the gate runs the stage without a stamp instead of matching an empty slice."""
+    return tuple(sorted((g, r.get("why"), r.get("since")) for g, r in stalled_facts(fsid, strict=True).items()))
 
 
 def _pair_key(pair):
@@ -1119,8 +1216,10 @@ def _sig_inputs(tier, fsid, path):
     (_prompt_gist), its pre-episode retire reads the episode log (episode_floor), _cli_epoch reads the
     gone marker and the reg, plan_units reads cleared.jsonl (_live_anchor_gone -> _view_cleared),
     rollup_status reads the stall slice, _sync_declared_plan reads the LEAF stem's task store; the
-    closer's idle path is the parse, the store, the marker, the reg, cleared.jsonl and the stall slice.
-    Kept apart from _stage_sig so the completeness test can hold a stage's reads against it."""
+    closer's idle path is the parse, the store, the marker, the reg, cleared.jsonl and the stall slice;
+    the unblocker's is the parse and the store; the grouper's and consolidator's the store and
+    cleared.jsonl; the distiller's the store, the states file and the stall slice (the inventory above
+    GATED_TIERS). Kept apart from _stage_sig so the completeness test can hold a stage's reads against it."""
     ident = [GOALDIR / (fsid + ".json"), _overrides_dir() / (fsid + ".jsonl"), GOALARCHDIR / (fsid + ".json")]
     value = []
     if tier in ("plan", "close"):
@@ -1129,19 +1228,29 @@ def _sig_inputs(tier, fsid, path):
     if tier == "plan":
         ident += [CAPDIR / (fsid + ".jsonl"), EPIDIR / (fsid + ".jsonl")]
         value += [em.task_store_dir(Path(path).stem)]
+    if tier in ("group", "consolidate"):
+        ident += [STATE / "cleared.jsonl"]
+    if tier == "distill":
+        ident += [STATESDIR / (fsid + ".jsonl")]
+        value += [STATE / "auto-nudge.json"]
     return ident, value
 
 
 def _stage_sig(tier, fsid, path):
     """The identity of every input `tier`'s decision path reads for `fsid`, taken BEFORE the stage runs:
-    the pass's pinned parse pair with the candidate files it names (a path swap with a coincidentally
-    equal fileset key cannot match), the store trio, and the tier's side files (_sig_inputs). Raises
-    OSError when a component cannot be computed (a vanished candidate, an unlistable task dir, a pinned
-    None pair): the caller runs the stage and stamps nothing, never a raise out of the submit loop."""
-    pair, _cut, _fr = _frame_parse_key(fsid, [path])
-    if pair is None:
-        raise OSError("no parse pair for %s this pass" % fsid)
-    parse = (tuple(_judge_candidates(fsid, [path])), _pair_key(pair))
+    for the parse tiers (PARSE_TIERS) the pass's pinned parse pair with the candidate files it names (a
+    path swap with a coincidentally equal fileset key cannot match), else None (the grouper, consolidator
+    and distiller read no parse on their decision paths, and pinning a key they never parse under would
+    cost four stats per session for nothing); the store trio; and the tier's side files (_sig_inputs)
+    and derived values. Raises OSError when a component cannot be computed (a vanished candidate, an
+    unlistable task dir, a pinned None pair): the caller runs the stage and stamps nothing, never a raise
+    out of the submit loop."""
+    parse = None
+    if tier in PARSE_TIERS:
+        pair, _cut, _fr = _frame_parse_key(fsid, [path])
+        if pair is None:
+            raise OSError("no parse pair for %s this pass" % fsid)
+        parse = (tuple(_judge_candidates(fsid, [path])), _pair_key(pair))
     ident, _value = _sig_inputs(tier, fsid, path)
     side = tuple(_ident(p) for p in ident)
     extra = ()
@@ -1149,6 +1258,8 @@ def _stage_sig(tier, fsid, path):
         extra = (_reg_spawned_at(fsid), _sdk_owned(fsid), _stall_slice(fsid))
     if tier == "plan":
         extra += (em.task_store_fp(Path(path).stem),)
+    if tier == "distill":
+        extra = (_stall_slice(fsid),)
     return (parse, side, extra)
 
 
@@ -1172,18 +1283,24 @@ def _gate_check(tier, fsid, path, now):
     return False, sig
 
 
-def _gated(tier, fn, fsid, path, now, sig, settle=True, parse=True):
+def _gated(tier, fn, fsid, path, now, sig, settle=True, parse=None):
     """Pool worker: run the stage, then stamp `sig` when the run was COMPLETE: it returned normally, set
-    no completeness bit, and (parse tiers) the frame served its parse under the very pair the signature
-    holds (a cut that moved between the pin and the parse means the judged world is not the stamped
-    one: no stamp). `settle`: the tier rolls up, so the stamp carries the clock input
-    (_settle_not_before). A stage that raises is counted `incomplete` (the run did not complete and
-    keyed nothing new) and the exception goes on to the runner's pass-crash row, so ran == stamped +
-    bypassed + incomplete holds through a crash.
+    no completeness bit, and (parse tiers) any parse the frame served for this sid was served under the
+    very pair the signature holds (a cut that moved between the pin and the parse means the judged world
+    is not the stamped one: no stamp; a stage that read no parse at all judged the store alone, and the
+    pinned pair stands for the transcript world it did not need). `settle`: the tier rolls up on its idle
+    path, so the stamp carries the clock input (_settle_not_before); the store tiers pass False (they
+    consult the settle on write paths only).
+    `parse`: whether to hold the served pair against the signature; None means `tier in PARSE_TIERS`.
+    A stage that raises is counted `incomplete` (the run did not complete and keyed nothing new) and the
+    exception goes on to the runner's pass-crash row, so ran == stamped + bypassed + incomplete holds
+    through a crash.
 
-    No frame, no stamp: the served pair the frame records is what makes a stamp exact. A runner
-    outside a pass frame (romp-judge's --plan, a test calling run_plan alone) therefore never writes a
-    stamp: every session runs and counts as bypassed, and the signature's stats are still paid. It DOES
+    No frame, no stamp, for the parse tiers: the served pair the frame records is what makes their stamp
+    exact. A parse-tier runner outside a pass frame (romp-judge's --plan, a test calling run_plan alone)
+    therefore never writes a stamp: every session runs and counts as bypassed, and the signature's stats
+    are still paid. The store-only tiers have no frame-pinned component (every input is stat'd by the
+    gate itself), so they stamp with or without a frame. Either kind DOES
     honour a stamp a framed pass left: _gate_check reads the live signature either way, so an unframed
     run after a framed one skips the sessions nothing has changed for, exactly as a framed run would."""
     _judge_ctx.stage_incomplete = False
@@ -1200,13 +1317,20 @@ def _gated(tier, fn, fsid, path, now, sig, settle=True, parse=True):
         if getattr(_judge_ctx, "stage_incomplete", False):
             _tier_bump(tier, "incomplete")
             return out
+        if parse is None:
+            parse = tier in PARSE_TIERS
         if parse:
             fr = _frame
-            served = None
-            if fr is not None:
-                with _frame_lock:
-                    served = fr["served"].get(fsid)
-            if served is None or _pair_key(served) != sig[0][1]:
+            if fr is None:
+                _tier_bump(tier, "bypassed")          # no frame: no served pair to make the stamp exact
+                return out
+            with _frame_lock:
+                served = fr["served"].get(fsid, _NO_PIN)
+            # NO parse served for this sid in the pass means the stage never read one (its own read would
+            # have pinned it): the decision depended on the store alone, and the pinned pair the signature
+            # carries is exact for it (the unblocker with no blocked candidate, about half the sessions).
+            # A pair that WAS served must equal the pinned one; a pinned None (a failed stat) never matches.
+            if served is not _NO_PIN and (served is None or _pair_key(served) != sig[0][1]):
                 _tier_bump(tier, "bypassed")
                 return out
         nb = _settle_not_before(fsid, path, now) if settle else None
@@ -2238,6 +2362,7 @@ def _title_mirror_tops(store, fsid, path, now):
         out = mirror_title_llm(nd.get("text") or "", frame=_deleg_frame(store, nid),
                                user_ask=_user_ask_text(store, nid, fsid, path, now))
         if not out and getattr(_judge_ctx, "paused", False):
+            _judge_ctx.stage_incomplete = True         # nothing stamped, nothing written: the gate must not stamp
             continue                                   # skipped, not tried — retry next pass
         nd["titledT"] = int(now)
         titled += 1
@@ -3546,22 +3671,54 @@ def goal_io_stats():
     the memo (`absent_hits`), or loaded and evaluated because the store's files changed or were new
     (`absent_misses`). The counters stay private to this module; readers get a copy."""
     with _GOAL_IO_LOCK:
-        return dict(_GOAL_IO)
+        out = dict(_GOAL_IO)
+    out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the episodes standing now, not a count
+    return out
 
 
-def _fresh_store(fsid, unread=False):
+def _fresh_store(fsid, unread=None):
     """The store a session has before its first publish (no file, or one that does not parse). Born at the
     current identity version — only stores with history recorded under an OLDER derivation are ever sealed
     (see _migrate_placements). Carries _baseRev 0: a writer that CREATES the file still trips the CAS.
-    `unread`: the file EXISTS and could not be read or parsed, so this store is a fallback, not the file's
-    content, and carries the transient `_unread` mark (see load_goals). An absent file is not marked: the
-    empty store IS its content."""
+    `unread`: the reason for the transient `_unread` mark (see _mark_unread): "store" when the file EXISTS
+    and could not be read or parsed, so this store is a fallback, not the file's content, and save_goals
+    refuses to publish it. None for an absent file: the empty store IS its content, it is not marked, and a
+    first mint saves as ever."""
     store = {"rompUuid": fsid, "seq": 0, "nodes": {}, "placements": {}, "status": {},
              "placementsV": PLACEMENTS_V}
     store["_baseRev"] = 0
     if unread:
-        store["_unread"] = True
+        _mark_unread(store, unread)
     return store
+
+
+def _mark_unread(store, reason):
+    """The store is NOT what its files say (see load_goals): mark it with the reason, and mark the running
+    stage incomplete. `reason` is "store" (the goals file exists and did not read or parse: the store is an
+    empty fallback, and save_goals refuses to publish it over the file, see UnreadStoreError) or "journal"
+    (the file parsed; the override journal exists and did not read: the content is the file's, the user's
+    gestures are missing from the rollup until the journal reads, and a publish loses nothing durable because
+    the journal replays on every load, so save_goals allows it). Every reader tests the mark's truth; the
+    reason is for save_goals and the stages' stand-down (_fallback_store).
+    The evidence gate stamps a complete run under the identity of the files the stage read; a run judged
+    from a fallback view would stamp that identity without having read those files, and nothing on disk
+    need change before the next read succeeds (an EMFILE, an EIO), so the per-load judge-errors row and the
+    retry would become once per boot per tier. The mark keeps both (review finding, 2026-09-07). Thread-
+    local, so a loader on the pusher thread marks nothing a stage reads."""
+    store["_unread"] = reason
+    _judge_ctx.stage_incomplete = True
+
+
+def _fallback_store(store):
+    """True when `store` loaded as a fallback for a goals file that exists and did not read or parse
+    (`_unread` == "store"). A stage that finds this stands down for the pass: nothing in the store is the
+    session's, so nothing can be decided from it, and save_goals would refuse the publish; standing down at
+    the load spares the model calls the planner or the courier would otherwise make over the empty view
+    (review of the P2 gate, 2026-09-07: the planner re-minted the whole tree into the fallback and published
+    it over the file). load_goals logged the row (store-unreadable) and marked the stage incomplete, so the
+    gate never stamps a stand-down and the session stays due until the file reads. A store whose JOURNAL did
+    not read is not this (see _mark_unread)."""
+    return store.get("_unread") == "store"
 
 
 def _finish_load(fsid, store, lines=None):
@@ -3595,18 +3752,26 @@ def load_goals(fsid):
     load_goals_shared's fill,
     which never publishes a marked store as the files' content."""
     _goal_io_bump("loads")
+    path = GOALDIR / (fsid + ".json")
     try:
-        store = _guard_nodes(json.loads((GOALDIR / (fsid + ".json")).read_text()))
+        store = _guard_nodes(json.loads(path.read_text()))
+    except FileNotFoundError:
+        return _fresh_store(fsid)                      # no file: the empty store IS its content
     except Exception as e:
         # the file EXISTS and could not be read or parsed: a fallback, not the file's content, and marked
         # so — a reader that caches "what the file holds" by its identity must not cache this answer (the
-        # kernel's awaiting-lift gate skipped a stamped store for good after one EMFILE, 2026-09-06)
-        return _fresh_store(fsid, unread=not isinstance(e, FileNotFoundError))
+        # kernel's awaiting-lift gate skipped a stamped store for good after one EMFILE, 2026-09-06), no
+        # writer publishes it (save_goals refuses), and one judge-errors row per failure episode says so
+        _read_failed(str(path), "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))
+        return _fresh_store(fsid, unread="store")
+    _read_ok(str(path))
     return _finish_load(fsid, store)
 
 
 def _disk_rev(fsid):
-    """The revision the file holds NOW (0 when absent or unreadable), from a fresh read. save_goals' CAS
+    """The revision the file holds NOW, from a fresh read: 0 when absent (a create's base), None when the file
+    exists and cannot be read or parsed (save_goals' CAS refuses rather than take that for a create: both
+    answered 0 until 2026-09-07, and a fallback store's base 0 matched the unparseable file). save_goals' CAS
     compares its base against this, and the answer must be the file's, never the memo's: the memo's identity
     can, in one rare interleaving, sit on a file it does not describe (see _DISK_CONTENT). The no-op check
     can afford that (it skips a publish of content the file once held); the CAS cannot. Served from the memo,
@@ -3615,18 +3780,26 @@ def _disk_rev(fsid):
     path_s = str(GOALDIR / (fsid + ".json"))
     try:
         fd = os.open(path_s, os.O_RDONLY)
+    except FileNotFoundError:
+        return 0                                     # absent: a create's base
     except OSError:
-        return 0
+        return None                                  # exists and cannot be opened: the CAS refuses (save_goals)
     try:
         data = _disk_read(fd, path_s)
     except OSError:
-        return 0
+        return None
     finally:
         os.close(fd)
     try:
-        return int((json.loads(data) or {}).get("rev") or 0)
+        doc = json.loads(data)
     except Exception:
-        return 0
+        return None                                  # exists and does not parse
+    if not isinstance(doc, dict):
+        return None                                  # exists and is not a store document (a list, a null)
+    try:
+        return int(doc.get("rev") or 0)              # a store without a rev is an old one at 0, not a create
+    except (TypeError, ValueError):
+        return None
 
 
 def _rebase_onto_disk(fsid, store):
@@ -3870,8 +4043,8 @@ def _replay_overrides(fsid, store, lines=None):
         except OSError as e:
             _log_judge_error("romp", fsid, "history-unreadable",
                              note="override journal unreadable: %s — user actions may show undone until it reads" % e)
-            store["_unread"] = True                    # the store is not what its files say (see load_goals)
-            return False
+            _mark_unread(store, "journal")             # the store is not what its files say (see load_goals);
+            return False                               # the running stage must not stamp
     applied = False                                    # any write → load_goals re-runs rollup (one truth)
     arch_nodes = None                                  # the archive is read once, only if a restore entry needs it
     for ln in lines:
@@ -4231,6 +4404,14 @@ class FrozenStoreError(TypeError):
     """A write to a goal store served by load_goals_shared. Writers load their own copy with load_goals."""
 
 
+class UnreadStoreError(RuntimeError):
+    """save_goals refused to publish over a goals file that exists and did not read or parse: the store in
+    hand loaded as a fallback for it (load_goals' `_unread` == "store"), or the CAS found the file unreadable
+    at publish time (_disk_rev None). The file is left as it is and a judge-errors row (unread-store-save) is
+    already written; callers tolerate the raise as they tolerate FrozenStoreError (the tick jobs' except
+    wrappers, _gated's incomplete count and the runner's pass-crash row)."""
+
+
 def _shared_bump(key, n=1):
     with _SHARED_LOCK:
         _SHARED_STATS[key] += n
@@ -4550,7 +4731,7 @@ def load_goals_shared(fsid):
         if ent[1] == data:
             _shared_bump("hit")
             _goal_io_bump("loads_shared")            # a store read the cache answered (see goal_io_stats)
-            return ent[2] if ent[2] is not _SHARED_BAD else _fresh_store(fsid, unread=True)
+            return ent[2] if ent[2] is not _SHARED_BAD else _fresh_store(fsid, unread="store")
         _shared_bump("compare_miss")                 # same identity, other bytes: the blind spot, closed here
     else:
         _shared_bump("miss")
@@ -4571,9 +4752,11 @@ def load_goals_shared(fsid):
         _shared_bump("corrupt")
         sys.stderr.write("goals-shared: %s: %s: %s (served as an empty store until the file changes)\n"
                          % (os.path.basename(path_s), type(e).__name__, e))
+        _read_failed(path_s, "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))   # the row, once per episode
         with _SHARED_LOCK:
             _SHARED[path_s] = ((skey, jkey, akey0), data, _SHARED_BAD)
-        return _fresh_store(fsid, unread=True)       # the file exists and is not this: marked, as load_goals marks it
+        return _fresh_store(fsid, unread="store")    # the file exists and is not this: marked, as load_goals marks it
+    _read_ok(path_s)
     store = _finish_load(fsid, store, lines=lines)   # a malformed row raises, as in load_goals
     if store.get("_unread"):
         # the replay marked the store a fallback (see load_goals): not the files' content, so not shared.
@@ -4638,13 +4821,32 @@ def save_goals(fsid, store):
     A store served by load_goals_shared (or a shallow copy of one, whose nodes map is still the shared one)
     is refused here, FIRST — before the no-op check, which would otherwise take a shared view for a
     writer's, and before any write that the frozen containers would turn into a cache-poisoning raise.
-    The row makes the misuse visible through the except-Exception wrappers around every tick job."""
+    The row makes the misuse visible through the except-Exception wrappers around every tick job.
+
+    A store that loaded as a FALLBACK for a goals file that exists and did not read or parse (`_unread` ==
+    "store", see load_goals) is refused next, with a row: its _baseRev is 0, _disk_rev answered 0 for the
+    unparseable file too, and the CAS took the publish for a create, so the grouper's and consolidator's
+    signature write, the planner's and closer's whole pass and the kernel's undo-clear restore each replaced
+    the file with the empty fallback (found by the P2 gate's build, confirmed pre-existing by its refuters,
+    2026-09-07). The CAS itself refuses when _disk_rev answers None (the file exists and cannot be read or
+    parsed at publish time): a writer that cannot read the revision it would write over cannot know what it
+    would erase, so it leaves the file and its own base as they were and raises the same UnreadStoreError. A
+    store whose journal did not read (`_unread` == "journal") still publishes: its content is the file's,
+    and the journal replays on every load (see _mark_unread). An absent file is neither: a first mint saves.
+    """
     if isinstance(store, FrozenDict) or isinstance(store.get("nodes"), FrozenDict):
         _log_judge_error("romp", fsid, "frozen-store-save",
                          note="save_goals was handed the shared read-only store (load_goals_shared); a writer "
                               "loads its own copy with load_goals — nothing was published")
         raise FrozenStoreError("save_goals refuses a shared read-only store (load_goals_shared); load the "
                                "writer's copy with load_goals")
+    if store.get("_unread") == "store":
+        _log_judge_error("romp", fsid, "unread-store-save",
+                         note="the goals file exists and did not read or parse when this store was loaded, so the "
+                              "store is an empty fallback; publishing it would replace the file — nothing was "
+                              "published and the file is left as it is")
+        raise UnreadStoreError("save_goals refuses to publish a store that loaded as a fallback for a goals file "
+                               "that exists and did not read or parse; the file is left as it is")
     _goal_io_bump("saves")
     GOALDIR.mkdir(parents=True, exist_ok=True)
     _h0 = time.perf_counter()
@@ -4655,12 +4857,22 @@ def save_goals(fsid, store):
     if mine is not None and _matches_disk(fsid, store, mine):
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized
-    store.pop("_unread", None)                       # likewise transient (load_goals' fallback mark)
+    unread = store.pop("_unread", None)              # likewise transient (load_goals' fallback mark)
     rebased = False
     if base is not None:
         disk = 0
         for _ in range(4):                           # a busy store settles in a pass or two
             disk = _disk_rev(fsid)
+            if disk is None:                         # the file exists and cannot be read or parsed NOW: the
+                store["_baseRev"] = base             #   CAS cannot know what it would write over. Leave the
+                if unread is not None:               #   holder as it was and refuse (docstring)
+                    store["_unread"] = unread
+                _log_judge_error("romp", fsid, "unread-store-save",
+                                 note="the goals file exists and did not read or parse at publish time; the CAS "
+                                      "cannot tell what a publish would write over — nothing was published and "
+                                      "the file is left as it is")
+                raise UnreadStoreError("save_goals refuses to publish over a goals file that exists and cannot be "
+                                       "read or parsed at publish time; the file is left as it is")
             if disk == base:
                 break                                # nobody published since we loaded → ours is current
             _rebase_onto_disk(fsid, store)           # fold their events in, then re-check
@@ -4687,14 +4899,37 @@ def load_goal_archive(fsid):
     subtrees moved out of the live store by the kernel's compaction sweep. Same shape as the live store
     (nodes/status). The judge reads this ONLY as read-only context (_cleared_context, for the live re-plan's
     <recently-cleared> block) — its placements dedup + view-cleared sealing keep it from ever re-minting an
-    archived node; the kernel's undo-clear restore and the ledger merge are the mutating readers."""
+    archived node; the kernel's undo-clear restore and the ledger merge are the mutating readers.
+
+    A file that exists and cannot be read or parsed answers the same empty shape marked `_unread` = "archive"
+    (one archive-unreadable row per failure episode, as load_goals' store-unreadable): save_goal_archive refuses
+    to publish it and the undo-clear restore stands down on it, so a failed read never costs the archived
+    history (the same shape save_goals closes for the live store, 2026-09-07). An absent file answers unmarked:
+    empty IS its content."""
+    path = GOALARCHDIR / (fsid + ".json")
     try:
-        return _guard_nodes(json.loads((GOALARCHDIR / (fsid + ".json")).read_text()))
-    except Exception:
+        arch = _guard_nodes(json.loads(path.read_text()))
+    except FileNotFoundError:
         return {"rompUuid": fsid, "nodes": {}, "status": {}}
+    except Exception as e:
+        _read_failed(str(path), "archive-unreadable", fsid, e,
+                     note="cleared-card archive unreadable: %r — nothing is archived or restored for this session "
+                          "until it reads" % (e,))
+        return {"rompUuid": fsid, "nodes": {}, "status": {}, "_unread": "archive"}
+    _read_ok(str(path))
+    return arch
 
 
 def save_goal_archive(fsid, store):
+    """Publish the cleared-card archive. Refuses an archive that loaded as a fallback (load_goal_archive's
+    `_unread`): the compaction sweep would otherwise publish the empty fallback plus the tops it just moved
+    over the file that did not read, and the archived history with it."""
+    if store.get("_unread"):
+        _log_judge_error("romp", fsid, "unread-store-save",
+                         note="the cleared-card archive exists and did not read or parse when it was loaded; publishing "
+                              "the empty fallback would replace it — nothing was published and the file is left as it is")
+        raise UnreadStoreError("save_goal_archive refuses to publish an archive that loaded as a fallback for a file "
+                               "that exists and did not read or parse; the file is left as it is")
     GOALARCHDIR.mkdir(parents=True, exist_ok=True)
     tmp = _publish_tmp(GOALARCHDIR, fsid)
     tmp.write_text(json.dumps(store))
@@ -9210,6 +9445,8 @@ def _plan_session(fsid, path, now):
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to plan from (_fallback_store)
     if _heal_quote_titles(store) + _heal_floor_titles(fsid, store) \
             + _heal_ticket_titles(store):              # + ticket-led titles (T146, the live-failure heal)
         save_goals(fsid, store)                       # own words; raw-head → the landed prompt caption), both
@@ -9859,8 +10096,11 @@ def fast_forward_placements(fsid, path=None, now=None):
         if not hit:
             return 0
         path = str(hit[1])
-    session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                      # the file did not read: nothing to seal, and save_goals would refuse
+        #                                               (see _fallback_store; the kernel's un-mute keeps the mute, below)
+    session = parsed_session(fsid, [path], now)
     placements = store["placements"]
     n = 0
     for u in plan_units(session, store):
@@ -9935,20 +10175,62 @@ def _view_cleared():
     cleared.jsonl (a 'clear' row adds, an 'undo' removes, newest-wins). The grouper consults this so it
     NEVER re-organizes a card the user cleared: a relink mints a fresh umbrella whose new id is not in
     cleared.jsonl, so the card escapes the clear and reappears (the user 2026-06-18). Ids are globally
-    unique (<rompUuid>:gN), so no per-session scoping. Decoupled mirror of the kernel's _cleared_ids."""
-    cur = set()
+    unique (<rompUuid>:gN), so no per-session scoping. Decoupled mirror of the kernel's _cleared_ids.
+
+    Memoized on the file's (ino, mtime_ns, size) (P2 of the judge perf plan, 2026-09-07): eight call
+    sites read it (open_menu, _cleared_under, may_apply's reopen guard, the follow-up pivot, _group_tops,
+    _consolidate_tops, the model-fallback mint), several once per session per pass, and each replayed the
+    whole file. The key is exact for this file's writers: every one APPENDS (the kernel's clear, undo and
+    boundary-settle paths and the judge's echo backfill all open it "a"), so no two versions share a size;
+    the one write an identity memo cannot see, a rewrite in place of equal size within one mtime tick, is
+    a pattern nothing uses on this file. Stat before read, so a row landing between the two costs one
+    extra replay, never a stale answer. A file that exists and cannot be read answers empty, is not
+    memoized, marks the running stage incomplete and logs a `cleared-unreadable` row (_read_failed): the
+    evidence gate stat'd this file into the signature, and a stamp over an answer that never read it would
+    skip the session until the file moved. Returns a frozenset: every caller tests membership, and a
+    mutation of the shared memo would be a silent corruption, so it raises instead."""
+    path_s = str(STATE / "cleared.jsonl")
     try:
-        for line in (STATE / "cleared.jsonl").read_text().splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            iid = o.get("id")
-            if not iid:
-                continue
-            cur.discard(iid) if o.get("op") == "undo" else cur.add(iid)
+        st = os.stat(path_s)
     except OSError:
-        pass
+        with _VIEW_CLEARED_LOCK:
+            _VIEW_CLEARED_MEMO.pop(path_s, None)
+        return frozenset()
+    key = (st.st_ino, st.st_mtime_ns, st.st_size)
+    with _VIEW_CLEARED_LOCK:
+        hit = _VIEW_CLEARED_MEMO.get(path_s)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        cur = frozenset(_view_cleared_scan(path_s))
+    except FileNotFoundError:
+        return frozenset()                         # gone between the stat and the read: absent is a real state
+    except OSError as e:
+        _read_failed(path_s, "cleared-unreadable", getattr(_judge_ctx, "fsid", ""), e)
+        return frozenset()
+    _read_ok(path_s)
+    with _VIEW_CLEARED_LOCK:
+        _VIEW_CLEARED_MEMO[path_s] = (key, cur)
+    return cur
+
+
+_VIEW_CLEARED_MEMO = {}    # cleared.jsonl path string -> ((ino, mtime_ns, size), frozenset of ids): see _view_cleared
+_VIEW_CLEARED_LOCK = threading.Lock()
+
+
+def _view_cleared_scan(path):
+    """The unmemoized replay behind _view_cleared over the log at `path`: a 'clear' row adds its id, an
+    'undo' row removes it, newest wins. Raises OSError when the file cannot be read."""
+    cur = set()
+    for line in Path(path).read_text().splitlines():
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
+        iid = o.get("id")
+        if not iid:
+            continue
+        cur.discard(iid) if o.get("op") == "undo" else cur.add(iid)
     return cur
 
 
@@ -10331,6 +10613,8 @@ def _group_store(store, fsid, now):
             if _sig_fail(store, "group", sig, "grouper", fsid,
                          "grouping this open-top set skipped until the set changes"):
                 store["groupedSig"] = sig              # give-up: adopt the set so the gate closes
+        else:
+            _judge_ctx.stage_incomplete = True         # a failed call writes nothing: the gate must not stamp
         return 0                                       # under the cap the sig stays stale → retry next call
     _sig_fail_clear(store, "group")
     relinks = apply_group(store, menu, ops, now)
@@ -10344,6 +10628,8 @@ def _group_session(fsid, path, now):
     own placements). Event-gated via _group_store; a status re-roll follows a structural change."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to group (_fallback_store)
     before = (store.get("groupedSig"), store.get("groupFails"), store.get("groupFailSig"))
     relinks = _group_store(store, fsid, now)
     after = (store.get("groupedSig"), store.get("groupFails"), store.get("groupFailSig"))
@@ -10363,13 +10649,21 @@ def run_group(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, ver
     fleet = discover(now)[:sessions_cap]
     n = 0
     with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = {ex.submit(_group_session, fsid, str(path), now): fsid
-                for fsid, path, anchor, name in fleet}
+        futs = {}
+        for fsid, path, anchor, name in fleet:
+            # the evidence gate: the store trio and cleared.jsonl are the whole decision path (the parse
+            # is read only after a relink); identities taken at THIS tier's moment, so the courier's and
+            # propagate's publishes earlier in the pass are seen
+            skip, sig = _gate_check("group", fsid, str(path), now)
+            if not skip:
+                futs[ex.submit(_gated, "group", _group_session, fsid, str(path), now, sig, settle=False)] = fsid
         for fut in as_completed(futs):
             try:
                 n += fut.result()
+                pass_done("group", futs[fut])
             except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
                 _log_judge_error("grouper", futs[fut], "pass-crash", note=repr(e))
+    _gate_evict("group", {f[0] for f in fleet})
     if verbose:
         sys.stderr.write("romp-judge: grouper relinked %d top goals\n" % n)
     return n
@@ -10425,6 +10719,8 @@ def _consolidate_store(store, fsid, now):
             if _sig_fail(store, "consolidate", sig, "consolidator", fsid,
                          "consolidating this completed-top set skipped until the set changes"):
                 store["consolidatedSig"] = sig         # give-up: adopt the set so the gate closes
+        else:
+            _judge_ctx.stage_incomplete = True         # a failed call writes nothing: the gate must not stamp
         return changed                                 # under the cap the sig stays stale → retry next pass
     _sig_fail_clear(store, "consolidate")
     relinks = apply_group(store, cmenu, ops, now)
@@ -10438,6 +10734,8 @@ def _consolidate_session(fsid, path, now):
     drop off the top-level status map (they become its sub-nodes)."""
     _judge_ctx.fsid = fsid
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to consolidate (_fallback_store)
     before = (store.get("consolidatedSig"), store.get("consolidateFails"), store.get("consolidateFailSig"))
     changed = _consolidate_store(store, fsid, now)
     after = (store.get("consolidatedSig"), store.get("consolidateFails"), store.get("consolidateFailSig"))
@@ -10457,13 +10755,18 @@ def run_consolidate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENC
     fleet = discover(now)[:sessions_cap]
     n = 0
     with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = {ex.submit(_consolidate_session, fsid, str(path), now): fsid
-                for fsid, path, anchor, name in fleet}
+        futs = {}
+        for fsid, path, anchor, name in fleet:
+            skip, sig = _gate_check("consolidate", fsid, str(path), now)   # the evidence gate: store trio + cleared.jsonl
+            if not skip:
+                futs[ex.submit(_gated, "consolidate", _consolidate_session, fsid, str(path), now, sig, settle=False)] = fsid
         for fut in as_completed(futs):
             try:
                 n += fut.result()
+                pass_done("consolidate", futs[fut])
             except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
                 _log_judge_error("consolidator", futs[fut], "pass-crash", note=repr(e))
+    _gate_evict("consolidate", {f[0] for f in fleet})
     if verbose:
         sys.stderr.write("romp-judge: consolidator reorganized %d completed columns\n" % n)
     return n
@@ -11612,6 +11915,8 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return []                                      # the file did not read: nothing to close (_fallback_store)
     seg_by_id = None                                  # built on the first turn the walk judges (below)
     swept = _closed_turns(store)
     sig = dict(store.get("closedSig") or {})
@@ -12107,6 +12412,8 @@ def _unblock_session(fsid, path, now):
     override journal replay on the next pass."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     scan = load_goals(fsid)                            # read-only scan; this copy is NOT saved
+    if _fallback_store(scan):
+        return []                                      # the file did not read: nothing to examine (_fallback_store)
     cands = _blocked_sub_candidates(scan)
     if not cands:
         return []
@@ -12132,10 +12439,13 @@ def _unblock_session(fsid, path, now):
                             for i, (_nid, nd, _bt) in enumerate(due, 1))
     raw = unblock_llm(blocks_text, since, completed)   # ← seconds; no store copy held across this
     if not raw:
+        _judge_ctx.stage_incomplete = True             # nothing written: the evidence gate must not stamp
         return []                                      # call failed / paused (logged) → retry next pass
     lifts = _parse_unblock(raw, len(due))
     store = load_goals(fsid)                           # FRESH load: apply onto the current store, never the
     nodes = store["nodes"]                             #   pre-call snapshot (a stale save clobbers writers)
+    if _fallback_store(store):
+        return []                                      # the file did not read after the call: nothing to apply onto
     if lifts is None:
         _log_judge_error("unblocker", fsid, "parse", note="reply tail: %r" % raw[-160:],
                          goal=[nid for nid, _nd, _bt in due])
@@ -12188,13 +12498,20 @@ def run_unblock(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     fleet = [s for s in discover(now) if not _hidden_from_feed(s[0])][:sessions_cap]
     n = 0
     with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = {ex.submit(_unblock_session, fsid, str(path), now): fsid
-                for fsid, path, anchor, name in fleet}
+        futs = {}
+        for fsid, path, anchor, name in fleet:
+            # the evidence gate: the parse pair (due = the parse's ended turns) and the store trio are
+            # the whole decision path; no rollup on the idle path, so no clock input (settle=False)
+            skip, sig = _gate_check("unblock", fsid, str(path), now)
+            if not skip:
+                futs[ex.submit(_gated, "unblock", _unblock_session, fsid, str(path), now, sig, settle=False)] = fsid
         for fut in as_completed(futs):
             try:
                 n += len(fut.result())
+                pass_done("unblock", futs[fut])
             except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
                 _log_judge_error("unblocker", futs[fut], "pass-crash", note=repr(e))
+    _gate_evict("unblock", {f[0] for f in fleet})
     if verbose:
         sys.stderr.write("romp-judge: unblocker lifted %d stale blocks\n" % n)
     return n
@@ -12888,16 +13205,30 @@ def stall_llm(goal_text, work_text, holding):
 WHY_IN_FLIGHT = (WHY_JUDGING, _WHY_JUDGING_LEGACY, WHY_TURN_IN_FLIGHT, WHY_UNBLOCK_UNSETTLED)
 
 
-def stalled_facts(fsid):
+def stalled_facts(fsid, strict=False):
     """{gid: {"why", "since"}} for THIS session's goals the kernel's nudge gate is holding on a reviver that
     isn't retiring — the mechanical stall reasons it records in auto-nudge.json (kernel _stalled_goals is the
     twin read). Read from the FILE rather than imported: the kernel imports this module, never the reverse.
-    {} on an absent/unreadable file — a stall note is an extra surface, never a reason to fail a pass."""
+    {} on an absent file — a stall note is an extra surface, never a reason to fail a pass. A file that
+    exists and cannot be read or parsed marks the running stage incomplete and logs a `stall-unreadable`
+    row (_read_failed), then answers {} too, unless `strict`, when it raises OSError: the evidence gate
+    reads this file by value into the planner's, closer's and distiller's signatures (_stall_slice), and a
+    signature computed from a failed read would equal the last good one whenever the records were empty,
+    so the gate would skip a session over a file it could not see; raising makes the gate run the stage
+    and stamp nothing, as it does for any other unreadable component. The stage's own read then fails the
+    same way and marks the run, so a read that fails AFTER a good signature read cannot stamp either."""
     out = {}
+    path_s = str(STATE / "auto-nudge.json")
     try:
-        d = json.loads((STATE / "auto-nudge.json").read_text())
-    except Exception:
+        d = json.loads(Path(path_s).read_text())
+    except FileNotFoundError:
         return out
+    except Exception as e:                             # unreadable, or not a JSON document
+        _read_failed(path_s, "stall-unreadable", fsid, e)
+        if strict:
+            raise OSError("auto-nudge.json unreadable: %r" % (e,))
+        return out
+    _read_ok(path_s)
     for gid, rec in ((d.get("deferred") if isinstance(d, dict) else None) or {}).items():
         if not isinstance(rec, dict) or not str(gid).startswith(fsid + ":"):
             continue                                   # a legacy bare-int record predates the why → nothing to say
@@ -12924,29 +13255,71 @@ def _live_prompt_since(fsid):
     EPISODES too (nothing lands in the store mid-turn), so a second prompt in the same open turn kept the
     first prompt's stale brief (the user 2026-07-24: a reply answered the parked question, the session
     asked a NEW one, and the card still briefed the answered one). Consecutive prompt states
-    (picker→permission) are ONE run — the episode starts where the run does."""
-    p = STATESDIR / (fsid + ".jsonl")
-    since, prev = None, ""
+    (picker→permission) are ONE run — the episode starts where the run does.
+
+    Memoized on the states file's (ino, mtime_ns, size) (P2 of the judge perf plan, 2026-09-07): the scan
+    read every session's whole states log on every distiller pass, 31 ms of the tier's 135 ms idle pass on
+    the 31-session snapshot against under 1 ms of stats. The key is exact for this file's writers: every
+    one APPENDS a row (the tmux and SDK status hooks, the kernel's picker watcher and its interrupt idle
+    row all open it "a"), so no two versions share a size; the one write an identity memo cannot see, a
+    rewrite in place of equal size within one mtime tick, is a pattern nothing uses on this file (the
+    evidence gate's value inputs are read by value because their fixtures did). Stat before read: a row
+    landing between the two pairs an old identity with new content, which costs one extra scan next
+    time, never a stale answer. A file that exists and cannot be read answers None, is not memoized, marks
+    the running stage incomplete and logs a `states-unreadable` row (_read_failed): the distiller's
+    signature carries this file by identity, and a stamp over an answer that never read it would skip the
+    session until the file moved (a brief owed to a parked session would wait on an unrelated row)."""
+    path_s = str(STATESDIR / (fsid + ".jsonl"))
     try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"state"' not in line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not (isinstance(rec, dict) and isinstance(rec.get("state"), str)):
-                    continue
-                s = rec["state"]
-                if s in ("picker", "permission"):
-                    if prev not in ("picker", "permission"):
-                        since = rec.get("t") or 0      # entered a prompt run → the episode's own event
-                else:
-                    since = None                       # left the prompt → that episode is over
-                prev = s
+        st = os.stat(path_s)
     except OSError:
+        with _LIVE_PROMPT_LOCK:
+            _LIVE_PROMPT_MEMO.pop(path_s, None)
         return None
+    key = (st.st_ino, st.st_mtime_ns, st.st_size)
+    with _LIVE_PROMPT_LOCK:
+        hit = _LIVE_PROMPT_MEMO.get(path_s)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        since = _live_prompt_since_scan(path_s)
+    except FileNotFoundError:
+        return None                                # gone between the stat and the read: absent is a real state
+    except OSError as e:
+        _read_failed(path_s, "states-unreadable", fsid, e)
+        return None
+    _read_ok(path_s)
+    with _LIVE_PROMPT_LOCK:
+        _LIVE_PROMPT_MEMO[path_s] = (key, since)
+    return since
+
+
+_LIVE_PROMPT_MEMO = {}     # states path string -> ((ino, mtime_ns, size), since): see _live_prompt_since
+_LIVE_PROMPT_LOCK = threading.Lock()
+
+
+def _live_prompt_since_scan(path):
+    """The unmemoized scan behind _live_prompt_since over the states log at `path`: the `t` of the
+    transition into the trailing picker/permission run, else None. Raises OSError when the file cannot be
+    opened, so the memo never records an answer under an identity it did not read."""
+    since, prev = None, ""
+    with open(path, errors="replace") as f:
+        for line in f:
+            if '"state"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not (isinstance(rec, dict) and isinstance(rec.get("state"), str)):
+                continue
+            s = rec["state"]
+            if s in ("picker", "permission"):
+                if prev not in ("picker", "permission"):
+                    since = rec.get("t") or 0          # entered a prompt run → the episode's own event
+            else:
+                since = None                           # left the prompt → that episode is over
+            prev = s
     return since
 
 
@@ -13023,7 +13396,16 @@ def _deleg_frame(store, nid):
     return " | ".join(p for p in parts if p)[:360]
 
 
-def _distill_due_t(store, nid, blocked):
+def _kids_map(nodes):
+    """parentId -> [nid, ...] over every node (None keys the tops), in store order: the index every
+    subtree walk over a goal store uses (_distill_due_t, _distill_session's descendant gather)."""
+    kids = {}
+    for x, d in nodes.items():
+        kids.setdefault(d.get("parentId"), []).append(x)
+    return kids
+
+
+def _distill_due_t(store, nid, blocked, kids=None):
     """The authoritative "this goal (re)resolved" time the distiller/brief gate compares against —
     never `mt` (the user 2026-07-08, the Proton-card regression): since the diary flip an event-only
     reopen→settle cycle bumps no cache stamp, so an mt-keyed gate slept through re-completions and the
@@ -13047,12 +13429,17 @@ def _distill_due_t(store, nid, blocked):
     summary written at done is already right); only a reopen→re-done lands a NEWER done event and
     re-fires — the worst case the user accepted is one re-distill when work actually resumes. Subtree,
     not the top's own log: a bottom-up-completed umbrella carries no done verdict of its own — its
-    children's do. settledAt stays as the fallback for stores whose diary predates done events."""
+    children's do. settledAt stays as the fallback for stores whose diary predates done events.
+
+    `kids`: the store's parent -> children map (_kids_map over these nodes), built ONCE per store by
+    _distill_session and handed through _done_owed (P2 of the judge perf plan, 2026-09-07): rebuilding it
+    here on every call was 40 of the distiller's 135 ms per idle pass on the 31-session snapshot (690
+    calls). None builds it here, as before; the answer is the same either way (pure over the nodes, pinned
+    by tests/test_judge_identity_memos.py), so the kernel's three callers pass nothing."""
     nodes = store["nodes"]
     nd = nodes.get(nid) or {}
-    kids = {}
-    for x, d in nodes.items():
-        kids.setdefault(d.get("parentId"), []).append(x)
+    if kids is None:
+        kids = _kids_map(nodes)
     best = None
     stack = [nid]
     while stack:
@@ -13069,14 +13456,15 @@ def _distill_due_t(store, nid, blocked):
     return best or nd.get("mt")
 
 
-def _done_owed(store, nid):
+def _done_owed(store, nid, kids=None):
     """True when a completed/confirming top owes a (re)distill: no summary yet, or the goal has
-    (re)resolved since the stamp (distilledMt != the newest done event, _distill_due_t)."""
+    (re)resolved since the stamp (distilledMt != the newest done event, _distill_due_t). `kids`: the
+    caller's per-store children map for _distill_due_t, or None to build one."""
     nd = store["nodes"][nid]
     if nd.get("summary") is None:
         return True
     _dmt = nd.get("distilledMt")
-    due = _distill_due_t(store, nid, False)
+    due = _distill_due_t(store, nid, False, kids)
     # A stamp equal to the goal's settle time is ALSO current: pre-07-24 stamps were the settle event,
     # and re-keying the due on the done event must not re-enter every already-distilled card in the
     # deployment at once (a re-distill storm). Match the settledAt cache OR any settle event in the
@@ -13130,6 +13518,8 @@ def _distill_session(fsid, path, now):
     distiller line while you decide. Returns the number of goals (re)summarized."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to distill (_fallback_store)
     status, nodes = store.get("status", {}), store.get("nodes", {})
     if _title_mirror_tops(store, fsid, path, now):     # T146 amendment: fresh mirror tops get their
         save_goals(fsid, store)                        # one-shot LLM title the same cycle (titledT-keyed)
@@ -13146,9 +13536,12 @@ def _distill_session(fsid, path, now):
     # changes nothing; only a reopen→re-done moves the due and re-fires (the one-re-distill worst case the
     # user accepted).
     confirming = set(store.get("confirming") or ())
+    kids = _kids_map(nodes)                            # one parent -> children map per store, shared by every
+    #                                                    _distill_due_t below and the descendant gather (built
+    #                                                    AFTER the title save: a rebase there can add nodes)
     todo = [nid for nid, st in status.items() if nodes.get(nid) and (
-            ((st == "completed" or nid in confirming) and _done_owed(store, nid)) or
-            (st == "blocked" and (nodes[nid].get("briefedMt") != _distill_due_t(store, nid, True)
+            ((st == "completed" or nid in confirming) and _done_owed(store, nid, kids)) or
+            (st == "blocked" and (nodes[nid].get("briefedMt") != _distill_due_t(store, nid, True, kids)
                                   or nodes[nid].get("blockSummary") is None)))]
     # LIVE picker/permission floor (the user 2026-06-29): a session parked RIGHT NOW on a live prompt is
     # blocked-on-you, but the planner hasn't classified its focus goal — its stored status is still 'working',
@@ -13190,9 +13583,7 @@ def _distill_session(fsid, path, now):
         return 0
     session = parsed_session(fsid, [path], now)
     seg_by_id = {seg["id"]: seg for turn in session["turns"] for seg in _segs(turn, store)}
-    children = {}
-    for nid, nd in nodes.items():
-        children.setdefault(nd.get("parentId"), []).append(nid)
+    children = kids                                    # the same map: no node was added since it was built
     n, changed = 0, False
     for top in todo:
         blocked = status.get(top) == "blocked" or top in live_brief   # live-picker focus → brief it like a block
@@ -13201,7 +13592,7 @@ def _distill_session(fsid, path, now):
         # either — its verdict is in; it entered todo for the takeaway.
         stalled = (not blocked) and status.get(top) == "working" and top in stalls and top not in confirming
         due = (stalls[top]["since"] if stalled            # the stall's own start event, not a settle/block
-               else _distill_due_t(store, top, blocked))  # the event time this (re)resolution stamps back
+               else _distill_due_t(store, top, blocked, kids))  # the event time this (re)resolution stamps back
         stack, sub = [top], []                         # the top + all descendants (its whole subtree) — still
         while stack:                                   # needed below for blkd, so kept alongside _goal_work_text
             x = stack.pop(); sub.append(x); stack.extend(children.get(x, []))
@@ -13238,6 +13629,7 @@ def _distill_session(fsid, path, now):
             out = stall_llm(nodes[top].get("text", ""), work, holding)
             if not out:
                 if getattr(_judge_ctx, "paused", False):   # pause-skip, not a real failure (see the briefer)
+                    _judge_ctx.stage_incomplete = True     # deferred with no write: the gate must not stamp
                     continue
                 fails = nodes[top].get("stallFails", 0) + 1
                 _fail_log(nodes[top], "stall", now)    # the chip's attempt history: model + literal error
@@ -13362,6 +13754,7 @@ def _distill_session(fsid, path, now):
                                   user_ask=_user_ask_text(store, top, fsid, path, now)))
             if not out:
                 if getattr(_judge_ctx, "paused", False):   # the call was SKIPPED (global retry-pause on), not
+                    _judge_ctx.stage_incomplete = True     # deferred with no write: the gate must not stamp
                     continue                               # tried — never count a pause-skip toward give-up, else
                     # a retry-pause (esp. one that flaps on/off mid-pass) permanently blanks the card's brief to
                     # the "" sentinel though the API was never actually asked (the user 2026-07-03). Leave
@@ -13407,7 +13800,10 @@ def _distill_session(fsid, path, now):
                     if not _r2 and getattr(_judge_ctx, "paused", False):
                         # the retry was SKIPPED, not tried — the standing pause discipline: leave
                         # the brief null and re-enter next pass once the pause clears; a pause-skip
-                        # never counts as a verdict (the 2026-07-03 rule, met again here)
+                        # never counts as a verdict (the 2026-07-03 rule, met again here). The eager
+                        # promptBriefedT stamp above may already have set `changed`; either way the
+                        # brief is still owed, so the gate must not stamp this run
+                        _judge_ctx.stage_incomplete = True
                         changed = True
                         continue
                     _o2, _s2, _q2 = _split_source(_r2 or "")
@@ -13498,6 +13894,7 @@ def _distill_session(fsid, path, now):
                           user_ask=_user_ask_text(store, top, fsid, path, now))
         if not out:
             if getattr(_judge_ctx, "paused", False):   # pause-skip, not a real failure — don't count it toward
+                _judge_ctx.stage_incomplete = True     # deferred with no write: the gate must not stamp
                 continue                               # give-up (leave summary null → re-enters once unpaused)
             fails = nodes[top].get("distillFails", 0) + 1   # the failed call itself was logged by _judge_run
             _fail_log(nodes[top], "summary", now)      # the chip's attempt history: model + literal error
@@ -13905,12 +14302,20 @@ def run_distill(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     fleet = discover(now)[:sessions_cap]
     n = 0
     with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = {ex.submit(_distill_session, fsid, str(path), now): fsid for fsid, path, anchor, name in fleet}
+        futs = {}
+        for fsid, path, anchor, name in fleet:
+            # the evidence gate: the store trio, the states file and this sid's stall records are the whole
+            # decision path (the inventory above GATED_TIERS); the drain below stays ungated
+            skip, sig = _gate_check("distill", fsid, str(path), now)
+            if not skip:
+                futs[ex.submit(_gated, "distill", _distill_session, fsid, str(path), now, sig, settle=False)] = fsid
         for fut in as_completed(futs):
             try:
                 n += fut.result()
+                pass_done("distill", futs[fut])
             except Exception as e:                     # fail LOUDLY, never silently skip the store
                 _log_judge_error("distiller", futs[fut], "pass-crash", note=repr(e))
+    _gate_evict("distill", {f[0] for f in fleet})
     n += _drain_undiscovered(now, {fsid for fsid, _p, _a, _n2 in fleet})
     if verbose:
         sys.stderr.write("romp-judge: distiller summarized %d completed goals\n" % n)
@@ -14891,6 +15296,9 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         """Save the shared object once and forget it: the next touch re-loads with a fresh CAS base."""
         try:
             save_goals(sid, loaded[sid])
+        except UnreadStoreError:
+            pass                                    # refused and logged by save_goals (the file did not read at
+            #                                         publish time); the completions are re-derived next pass
         finally:
             loaded.pop(sid, None)
             idents.pop(sid, None)
@@ -15066,6 +15474,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             _log_judge_error("courier", fsid, "pass-crash", note="parse: %r" % e)
             continue
         cstore = load_goals(fsid)
+        if _fallback_store(cstore):
+            continue                                   # its messages wait until the store reads (load_goals logged it)
         closed[fsid] = _session_settled(fsid, str(path), session, cstore)
         placed_ids = cstore["placements"]
         floor = episode_floor(fsid)
@@ -15135,6 +15545,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         xrows = []
     for o in xrows:
         sstore = load_goals(o["from_id"])
+        if _fallback_store(sstore):
+            continue                                   # the sender's file did not read: nothing to plant the tracker in
         if any(isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == o["id"]
                for nd in sstore["nodes"].values()):
             continue
@@ -15146,6 +15558,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     pending.sort(key=lambda x: x[0])                  # global cross-session oldest-first
     for seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path in pending:
         store = load_goals(fsid)
+        if _fallback_store(store):
+            continue                                   # the recipient's file did not read: the message stays pending
         if _placed_key(store["placements"], seg_id):  # drift-safe: never re-plant a t-shifted duplicate
             continue
         if now - seg_t > COURIER_RETRY_HORIZON:
@@ -15182,6 +15596,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             placed += 1
             continue
         sender_store = load_goals(sender)
+        if _fallback_store(sender_store):
+            continue                                   # the sender's file did not read: nothing to plant the tracker in
         # cap 40 for the LINK menu (the user 2026-08-24, the resurfaced-ask specimen): open_menu is
         # oldest-first, and a busy sender holds >20 open nodes — the default cap starved exactly the
         # candidates a dispatch usually serves (the fresh ask AND its older original), so the courier

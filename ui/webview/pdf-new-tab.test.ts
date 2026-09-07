@@ -134,8 +134,11 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   assert.match(RENDER, /function onMiddleClick\(a: HTMLElement, fn: \(e: MouseEvent\) => void\): void \{\n  a\.addEventListener\("mousedown", \(e\) => \{ if \(e\.button === 1\) e\.preventDefault\(\); \}\);\n  a\.addEventListener\("auxclick", \(e\) => \{ if \(e\.button !== 1\) return; e\.stopPropagation\(\); fn\(e\); \}\);/);
   assert.match(RENDER, /x\.addEventListener\("auxclick", \(e\) => e\.stopPropagation\(\)\);/, "a middle-click on the composer attachment's ✕ is inert, never the box's open");
   assert.equal((RENDER.match(/onMiddleClick\(/g) || []).length, 5, "the declaration and the four path pills: tool file, image path, path link, composer attachment");
-  // one nested paren allowed: the path pill resolves its session as (sid ?? activeId), a todo's own session first (user-todo-links.test.ts)
-  assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e\)/g) || []).length, 8, "each pill passes its click AND its middle-click");
+  // one nested paren allowed: the path pill resolves its session as (sid ?? activeId), a todo's own session first (user-todo-links.test.ts).
+  // The path link's click and middle-click both go through openLinkedPath, the one reader of the span (the body delegate's
+  // openpath calls it too, user-todo-title-links.test.ts), which hands the event on: three pills × two gestures + that one call
+  assert.equal((RENDER.match(/openPath\((?:[^()]|\([^()]*\))*, e\)/g) || []).length, 7, "each pill passes its click AND its middle-click");
+  assert.equal((RENDER.match(/openLinkedPath\(a, e\)/g) || []).length, 2, "the path link's click and middle-click both hand their gesture to openLinkedPath");
 });
 
 test("the kernel serves a PDF inline WITH its name, so the tab is titled and a Save names the file", () => {

@@ -3608,6 +3608,7 @@ function makeUndoClearBtn(): HTMLElement {
     // user felt). The kernel's undoClear reconciles on its next push; pendingCleared is dropped for these ids
     // so that push can't re-suppress them.
     const batch = clearedStack.pop();
+    lastUndoBatch = batch && batch.length ? batch : null;   // kept so a kernel refusal can put it back (undoClearResult)
     if (batch && batch.length) {
       for (const it of batch) {
         pendingCleared.delete(it.itemId);
@@ -3642,6 +3643,7 @@ function makeUndoClearBtn(): HTMLElement {
 }
 
 let undoBusyBackstop = 0;
+let lastUndoBatch: AskItem[] | null = null;   // the batch the last Undo click restored optimistically
 function clearUndoBusy(): void {
   window.clearTimeout(undoBusyBackstop);
   const b = document.getElementById("feed-undoclear");
@@ -5513,6 +5515,26 @@ listenForFrames(perfFrameHandler("feed", (m) => vscodeApi?.postMessage(m), (e: M
     }
     if (m.ok) feedToast("summary retry armed — it regenerates on the next judge pass over this card");
     else feedToast("couldn't retry the summary: " + (String(m.error || "") || "the kernel refused it"));
+  } else if (m.type === "undoClearResult") {
+    // The kernel's verdict on an Undo click, sent only on refusal (success is the next payload carrying the
+    // restored cards). The kernel stood down before writing anything (a goal store or archive that did not
+    // read), so the batch is still undoable there; here the optimistic restore is put back the way it was,
+    // the working cue ends, and the reason is said out loud (fail loudly, CLAUDE.md).
+    if (!m.ok) {
+      clearUndoBusy();
+      if (lastUndoBatch) {
+        for (const it of lastUndoBatch) {
+          pendingRestored.delete(it.itemId);
+          pendingCleared.add(it.itemId);
+          const i = asks.findIndex((a) => a.itemId === it.itemId);
+          if (i >= 0) asks.splice(i, 1);
+        }
+        clearedStack.push(lastUndoBatch);   // the next click retries the same batch
+        lastUndoBatch = null;
+        render();
+      }
+      feedToast("couldn't undo the clear: " + (String(m.error || "") || "the kernel refused it"));
+    }
   } else if (m.type === "revealCards") {
     // chat rail CLICK → scroll to the card(s) covering that turn and pulse them (the user 2026-07-23).
     // Distinct from hoverCards, which only outlines whatever is already on screen: this one MOVES the

@@ -1786,20 +1786,40 @@ function linkifyImgPaths(root: HTMLElement, paths: string[]): void {
 // its own) links a todo's detail path with the SAME matcher this chat uses. That module marks and binds
 // nothing: every span it emits carries data-act="openpath", data-path, data-rel and data-sid, and the
 // hosting document decides what a click does. Here that is openPath — the editor in VS Code, the viewer
-// or the shell's relay on the web — bound per span, exactly as the chat always did: a `relative` bare
+// or the shell's relay on the web, read off the span in ONE place (openLinkedPath): a `relative` bare
 // path (data-rel) carries the session id so whoever resolves it uses THAT session's cwd — a relative
 // `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06) —
 // the named session first (a todo's note belongs to the session that flagged it, whichever tab reads
-// it), the active tab otherwise; a file:// URI names an absolute path and sends none. stopPropagation
-// as before: a path inside a fold head or a card must open the file, not toggle its container.
-function bindPathLink(a: HTMLElement): HTMLElement {
+// it), the active tab otherwise; a file:// URI names an absolute path and sends none.
+function openLinkedPath(a: HTMLElement, e?: MouseEvent | null): void {
   const open = a.dataset.path || "", relative = a.dataset.rel === "1", sid = a.dataset.sid ?? null;
-  a.addEventListener("click", (e) => {
-    e.stopPropagation();
-    openPath(open, relative ? (sid ?? activeId) : null, e);
-  });
-  onMiddleClick(a, (e) => openPath(open, relative ? (sid ?? activeId) : null, e));   // the same open as the click: a relative path resolves against the pill's own session
+  openPath(open, relative ? (sid ?? activeId) : null, e);   // the gesture rides along: a Cmd/Ctrl- or middle-clicked PDF takes its own tab (openFileClick)
+}
+// The transcript's links are bound per span, exactly as the chat always did, and the click stops there:
+// a path inside a fold head or a card must open the file, not toggle its container, and must never ALSO
+// reach the body delegate's openpath below, which would open it twice (user-todo-title-links.test.ts
+// drives a bound span through both). A bubble is not rebuilt under a press the way the todo card is.
+function bindPathLink(a: HTMLElement): HTMLElement {
+  a.addEventListener("click", (e) => { e.stopPropagation(); openLinkedPath(a, e); });
+  onMiddleClick(a, (e) => openLinkedPath(a, e));   // the same open as the click: a relative path resolves against the pill's own session
   return a;
+}
+// A user todo's text and its detail link their paths through the same matcher as a transcript, but the
+// click is the BODY DELEGATE's (openpath, with the card's uttoggle/utreply/utdismiss), not a per-span
+// listener: the todo card rebuilds on every push, and a per-render listener eats a mid-press click (the
+// click-safety rule, ui/CLAUDE.md; the 2026-09-07 review), so nothing here is bound to a node: the
+// span's own data-act carries the click to the stable root, and the Reply modal (in body too) rides the
+// same handler. The line (the user 2026-09-07: sessions often put the path in the line itself, and the
+// line had no link) gets no figure pass: linkifyFileUris renders a mentioned image or PDF in full at its
+// mention, which suits a message body and the detail fold but not a one-line row (the compact form,
+// ui/CLAUDE.md); the detail, one click away, keeps the figure. The line is the fold's click target
+// (.ut-text, data-act uttoggle), and a link inside it opens the file rather than toggling the fold: the
+// delegate routes a click to the NEAREST data-act (actions.ts).
+function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {
+  linkifyPathTokens(node, sid);
+}
+function linkTodoDetailPaths(node: HTMLElement, sid: string | null): void {
+  linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true);
 }
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
@@ -1824,8 +1844,11 @@ function bindPathLink(a: HTMLElement): HTMLElement {
 // all (an old kernel, a cached payload) keeps today's shape-only linking rather than unlinking history.
 // file:// URIs are explicit absolute paths — never gated on the map. (The gates and the map walk are
 // path-links.ts's; the map is threaded through to it.)
+// `delegated`: leave the spans unbound; the caller's document routes their data-act to the body
+// delegate's openpath (the todo card and its Reply modal, linkTodoDetailPaths); the transcript binds.
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
-    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null): void {
+    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null, delegated = false): void {
+  const bind = delegated ? (a: HTMLElement) => a : bindPathLink;
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
   // 2026-08-16, on mobile, wanting to tap through to a dashboard link a session sent). Bare URLs
   // and [text](url) already link via marked's gfm autolink + the global anchor click delegate;
@@ -1852,7 +1875,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       if (code.closest("a, .file-uri-link, pre")) continue;    // already linked, or a fenced block
       const tok = (code.textContent || "").trim();
       if (!verified.has(tok)) continue;
-      const link = bindPathLink(openPathLink(tok, tok, true, sid));
+      const link = bind(openPathLink(tok, tok, true, sid));
       code.replaceChildren(link);                              // the <code> chrome stays; its content is the link
       kernelVerified.add(tok);
       if (previewKind(tok) && !previewable.includes(tok) && !(skipThumbs && skipThumbs.includes(tok))) {
@@ -1863,9 +1886,10 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
   }
   // The token walk is the shared one (path-links.ts linkifyPathTokens): it marks every path-shaped token
   // — the kernel's pathLinks verdict narrowing it when the event carries one — and hands back the hits in
-  // document order; this document binds each click and reads the hits for the figure pass below.
+  // document order; this document binds each click (unless delegated) and reads the hits for the figure
+  // pass below.
   for (const { el: link, open, verified } of linkifyPathTokens(root, sid, pathLinks)) {
-    bindPathLink(link);
+    bind(link);
     if (verified) kernelVerified.add(open);   // the kernel stat'd it this build
     if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
       previewable.push(open);
@@ -3405,6 +3429,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const line = el("div", "ut-line");
       const txt = el("span", "ut-text");
       txt.textContent = t.text;
+      linkTodoLinePaths(txt, renderingSid || null);   // a path in the line opens like one in the detail: the todo's own session resolves it
       linkifyPrRefs(txt, prRepoFor(renderingSid));   // a `#123` in the ask links to the session's PR (pr-links.ts)
       // progressive disclosure: the one-line version by default, detail one click away — and the row
       // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
@@ -3443,8 +3468,9 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
         d.textContent = t.detail || "";
         // a path in the note opens like one in a transcript (the user 2026-09-02): the same
         // linkifier, with the todo's OWN session resolving relative paths — the note was written
-        // from that session's working directory, whichever tab the card is read in
-        linkifyFileUris(d, undefined, undefined, undefined, undefined, renderingSid || null);
+        // from that session's working directory, whichever tab the card is read in; the click is
+        // the body delegate's, like the line's and the card's buttons (this card rebuilds every push)
+        linkTodoDetailPaths(d, renderingSid || null);
         linkifyPrRefs(d, prRepoFor(renderingSid));
         row.appendChild(d);
       }
@@ -8314,12 +8340,13 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  linkTodoLinePaths(d, sid);   // the quoted line's paths open like the row's
   linkifyPrRefs(d, prRepoFor(sid));
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
   // whole need stays in view while the answer is typed, without opening the fold first; a bare
   // ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
-  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd, undefined, undefined, undefined, undefined, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
+  if (dd) { dd.textContent = todoDetail; linkTodoDetailPaths(dd, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -16865,9 +16892,15 @@ setupSettings();
       rememberFold(el, "expanded", el.dataset.nkey || undefined);
       (el as HTMLElement).title = el.classList.contains("expanded") ? "click to collapse" : "click to expand";
     },
-    // USER TODOS on the split to-do card (plans/user-todos.md). All three delegated like qx: the
+    // USER TODOS on the split to-do card (plans/user-todos.md). All four delegated like qx: the
     // transcript tail rebuilds on every push and a per-render listener eats a mid-press click.
     // The detail fold keys through utDetailOpen so it survives the rebuild.
+    // A path link in the todo's line or its detail fold, and in its Reply modal (linkTodoLinePaths,
+    // linkTodoDetailPaths): what the click does is the transcript's (openLinkedPath, with the click's
+    // gesture, so a Cmd/Ctrl-clicked PDF here takes its own tab too); only the dispatch differs. The
+    // transcript's own links keep their per-span binder, which stops the click before it gets here,
+    // so no link is ever opened twice.
+    openpath: (elx, ev) => openLinkedPath(elx, ev as MouseEvent),
     uttoggle: (elx) => {
       const tid = elx.dataset.tid; if (!tid) return;
       const open = !utDetailOpen.has(tid);
