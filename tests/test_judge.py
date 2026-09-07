@@ -6470,6 +6470,11 @@ class EffortCapability(unittest.TestCase):
            "claude-opus-4-0", "claude-sonnet-4-0", "claude-sonnet-4-5[1m]", "claude-sonnet-4-5-20250929",
            "claude-opus-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022")
 
+    def setUp(self):
+        # `haiku -> False` below reads the table only while the alias record is empty: cleared here so
+        # the pin does not depend on AliasHeadDrift's tearDown having run in the same xdist worker
+        jd._ALIAS_SERVED.clear()
+
     def test_the_catalog_rule_in_both_directions(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             for m in self.ADAPTIVE:
@@ -6541,6 +6546,10 @@ class IndexTierLever(unittest.TestCase):
         (jd.STATE / "index-effort").unlink(missing_ok=True)
         jd._state_cache.clear()
         jd._LEVER_LOGGED.clear()
+        # the alias record and the no-modelUsage latch are per process: cleared here so this class's
+        # `haiku` pins do not depend on AliasHeadDrift's tearDown having run in the same xdist worker
+        jd._ALIAS_SERVED.clear()
+        jd._NO_MODEL_USAGE_LOGGED.clear()
         os.environ.pop("MAX_THINKING_TOKENS", None)
 
         class _P:
@@ -6655,6 +6664,8 @@ class IndexTierLever(unittest.TestCase):
         self.assertIn("--effort low", err, "the line names the lever that applied")
         self.calls.clear()
         _cmd, _env, err2 = self._run("fable")
+        # the stub carries no modelUsage, so the once-per-process line about that lands on the FIRST
+        # call of this test (setUp cleared the latch) and the second is quiet by the latch — in any order
         self.assertEqual(err2, "", "same model again → no second line (one line per lever change)")
         self.calls.clear()
         _cmd, _env, err3 = self._run("haiku")
