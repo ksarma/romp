@@ -919,6 +919,18 @@ class LiftGate(unittest.TestCase):
         self.assertEqual((self._tick(), self.last_probes), (0, 0), "…then gated")
         self.assertEqual(len(self._lift_rows()), 1, "the lift was filed exactly once")
 
+    def test_a_node_keyed_apart_from_its_id_field_still_lifts(self):
+        # a decision names the store's node KEY, which phase 2 resolves on the writer's copy; a node whose
+        # `id` field disagrees with its key (a hand-edited or migrated store) must not be dropped as a noop
+        self._returned_dispatch()
+        nd = dict(self._stamped_node(), id=SID + ":renamed")
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": {self.gid: nd}}))
+        before = dict(km._lift_gate_stats)
+        self.assertEqual((self._tick(), self.last_probes), (1, 1))
+        self.assertIsNone(self._stamp(), "found by key on the writer's copy: lifted")
+        self.assertEqual(km._lift_gate_stats["noop"] - before["noop"], 0)
+
     def test_the_rolled_up_arm_lifts_with_one_writer_load(self):
         self._transcript([])
         nd = {"id": self.gid, "text": "a goal", "parentId": None, "nodeComplete": True,

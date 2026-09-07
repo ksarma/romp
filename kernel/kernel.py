@@ -9930,16 +9930,18 @@ def _lift_spent_awaiting(now, tmux):
 
 
 def _lift_candidates(store):
-    """(stamped, rolled): the nodes one lift tick can rule on, from the store alone. `stamped` carries a
+    """(stamped, rolled): the (node key, node) pairs one lift tick can rule on, from the store alone. The
+    KEY is what a decision names and what phase 2 resolves on the writer's copy, so a node whose `id`
+    field differs from its key is still found there rather than dropped as a no-op. `stamped` carries a
     live awaiting stamp. `rolled` is a stamped node the roll-down folded under a RESOLVED ancestor whose
     newest awaiting row is not yet a lift: its card's story ended, but the stamp survives invisibly (every
     reader skips rolledUp) — lifted explicitly so the diary says why it went, instead of an unretired wait
     no surface can show (the user 2026-07-27); guarded on the diary so an unmaterialized lift never re-fires
     each tick."""
     nodes = store.get("nodes") or {}
-    stamped = [nd for nd in nodes.values()
+    stamped = [(nid, nd) for nid, nd in nodes.items()
                if nd.get("awaitingWhy") and nd.get("awaitingAt") and not nd.get("rolledUp")]
-    rolled = [nd for nd in nodes.values()
+    rolled = [(nid, nd) for nid, nd in nodes.items()
               if nd.get("awaitingWhy") and nd.get("rolledUp") and not _last_awaiting_is_lift(nd)]
     return stamped, rolled
 
@@ -9958,9 +9960,9 @@ def _lift_decisions(sid, s, store, now, tmux):
     out = []
     nodes = store.get("nodes") or {}
     stamped, rolled = _lift_candidates(store)
-    for nd in rolled:
+    for nid, nd in rolled:
         if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
-            out.append((nd.get("id"), None, False))
+            out.append((nid, None, False))
 
     def _top_of(x):
         seen = set()
@@ -9986,12 +9988,12 @@ def _lift_decisions(sid, s, store, now, tmux):
     # never reach here (the sweep's own gate) — the dead-wait conversion reads the stamp RAW
     # on purpose (2026-08-23) and owns that ending.
     answered = _peer_answered(sid)
-    for nd in (list(stamped) if answered[0] else ()):
+    for nid, nd in (list(stamped) if answered[0] else ()):
         if not _peer_stamp_superseded(nd, answered):
             continue
         if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
-            out.append((nd.get("id"), _top_of(nd.get("id")), True))
-            stamped.remove(nd)
+            out.append((nid, _top_of(nid), True))
+            stamped.remove((nid, nd))
     if not stamped:
         return out
     every = _bg_scan_all_cached(s["path"])
@@ -10025,9 +10027,9 @@ def _lift_decisions(sid, s, store, now, tmux):
     # kind=job: expiry is not a return (see docstring) — only a real terminal record lifts
     running_job = {t.get("id") for t in every if t.get("status") == "running"}
     placed = _bg_placed_tops(sid, s["path"], [t.get("id") for t in every], store=store)
-    for nd in stamped:
+    for nid, nd in stamped:
         born = nd.get("t") or 0
-        top = _top_of(nd.get("id"))
+        top = _top_of(nid)
         # The dispatches this goal owns. Placement is authoritative when the judge has spoken:
         # a task placed under ANOTHER card can never retire this stamp (the user 2026-07-27:
         # unrelated returns were lifting CI-wait stamps — one lifted the same minute it was
@@ -10082,7 +10084,7 @@ def _lift_decisions(sid, s, store, now, tmux):
                         # find on #936, 2026-09-07)
                         and _bg_ended_after(every, tombs, sp, _stamp_written_at(nd), now, kind=_kind))):
                 if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
-                    out.append((nd.get("id"), top, True))
+                    out.append((nid, top, True))
             continue
         live_set = running_job if nd.get("awaitingKind") == "job" else running
         if any(t.get("id") in live_set for t in own):
@@ -10132,7 +10134,7 @@ def _lift_decisions(sid, s, store, now, tmux):
             #                                   17s after its merge notification stood 9.5h because
             #                                   write-time was read as the epistemic boundary)
         if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
-            out.append((nd.get("id"), top, True))
+            out.append((nid, top, True))
     return out
 
 
