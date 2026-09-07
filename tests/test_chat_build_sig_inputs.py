@@ -93,7 +93,7 @@ CENSUS = {
     "_idle_faded": ("sig", "clock", "the faded boolean, from the row's since and now"),
     "_interrupt_settle": ("pure", "over the events and an atom"),
     "_launch_error": ("sig", "backend"),
-    "_limit_hold": ("sig", "limit", "folded as its value while the tab has a queue; None when nothing is queued and the build never reads it"),
+    "_limit_hold": ("sig", "limit", "folded as its value while the tab can render a queued bubble (a queue, parked ops, or a tmux session's in-flight echo); None otherwise, when the build never reads it"),
     "_merge_live_atoms": ("sig", "live", "the backend's tail by revision; the transcript-side sets are pure over the parse"),
     "_model_color": ("pure", "over the model string and the colormap name"),
     "_model_pending_now": ("sig", "clock", "the row's flag, the kernel's stamp and its 20 s cap as one boolean"),
@@ -588,6 +588,18 @@ class Differential(_World):
         c = self.sig()
         self.assertEqual(self.moved(b, c), ("limit",), "the account hit its window: the queued bubble's hold")
         self.assertEqual(c[km._CHAT_SIG_LABELS.index("limit")]["reason"], "limit")
+
+    def test_the_limit_hold_is_read_for_a_tmux_sessions_in_flight_echo_too(self):
+        """Review nit (a): a busy tmux session folds a not-yet-landed echo into its queue, so the build
+        reads the hold for it; the key folds the hold under the same condition."""
+        a = self.sig()
+        self.assertIsNone(a[km._CHAT_SIG_LABELS.index("limit")])
+        (km.jd.STATE / "usage.json").write_text(json.dumps({"five_hour": {"pct": 100, "resets_at": time.time() + 3600}}))
+        self.assertEqual(self.sig(), a, "no bubble can render: the hold is not an input yet")
+        km._tmux_echo_add(SID, "a send still in flight")
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("limit", "live"), "the echo is a bubble the hold rides on")
+        self.assertEqual(b[km._CHAT_SIG_LABELS.index("limit")]["reason"], "limit")
 
     def test_the_retry_state_misses_under_retry(self):
         a = self.sig()

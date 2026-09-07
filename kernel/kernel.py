@@ -26399,9 +26399,12 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     ops = tuple(tuple(o) for o in (_pending_ops.get(sid) or ()))
     sig.append(ops)
     # limit: the account-level hold the queued bubble names (_limit_hold: usage windows and their reset
-    # clock, the spend pause, a limit-shaped launch error), by value, read exactly when the build reads
-    # it — while something is queued or parked. None otherwise, and the build never asks.
-    if queued or ops:
+    # clock, the spend pause, a limit-shaped launch error), by value, read whenever the build can render
+    # a queued bubble — something queued or parked, or on a tmux backend an input echo still in flight,
+    # which the build folds into the queue while the session is busy. None otherwise, and the build
+    # never asks.
+    _echoes = bool(be.live_atoms(sid)) if not hasattr(be, "unqueue") else False
+    if queued or ops or _echoes:
         if "usage" not in shared:                        # usage.json (and spend.json) parsed once per push
             try:
                 shared["usage"] = _usage() or {}
