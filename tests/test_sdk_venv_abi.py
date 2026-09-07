@@ -33,7 +33,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = SourceFileLoader("romp_kernel_venv_abi", os.path.join(BIN, "romp-kernel")).load_module()
 jd = km.jd
 
-RUNNING = "python%d.%d" % sys.version_info[:2]
+RUNNING = "python" + km._running_python_tag()     # `python3.12`, or `python3.14t` on a free-threaded build
 
 
 class EnsureSdkOnPath(unittest.TestCase):
@@ -43,8 +43,11 @@ class EnsureSdkOnPath(unittest.TestCase):
         self.path_before = list(sys.path)
         self.err = io.StringIO()
         km._SDK_VENV_BUILT_FOR = []            # the once-per-verdict dedupe must not leak across tests
+        self._be = mock.patch.object(km, "_sdk_backend", None)   # no backend built in this module
+        self._be.start()
 
     def tearDown(self):
+        self._be.stop()
         shutil.rmtree(self.venv, ignore_errors=True)
         sys.path[:] = self.path_before
 
@@ -53,9 +56,9 @@ class EnsureSdkOnPath(unittest.TestCase):
         sp.mkdir(parents=True)
         return str(sp)
 
-    def _run(self, importable_from=None):
-        """Call _ensure_sdk_on_path with find_spec stubbed: the SDK is importable only once a directory
-        under `importable_from` is on sys.path (the real finder would answer from this machine)."""
+    def _run(self, importable_from=None, fn=None):
+        """Call _ensure_sdk_on_path (or `fn`) with find_spec stubbed: the SDK is importable only once a
+        directory under `importable_from` is on sys.path (the real finder would answer from this machine)."""
         import importlib.util
 
         def fake_find_spec(name, *a, **k):
@@ -67,7 +70,11 @@ class EnsureSdkOnPath(unittest.TestCase):
         fake_find_spec.__wrapped__ = importlib.util.find_spec
         with mock.patch.object(importlib.util, "find_spec", fake_find_spec), \
              mock.patch.object(sys, "stderr", self.err):
-            return km._ensure_sdk_on_path()
+            return (fn or km._ensure_sdk_on_path)()
+
+    def _free_threaded(self, minor=99):
+        """Pretend this process is a free-threaded 3.<minor>: venv names its lib dir python3.<minor>t."""
+        return mock.patch.multiple(sys, abiflags="t", version_info=(3, minor, 0, "final", 0), create=True)
 
     def test_a_venv_for_another_python_is_not_added_and_is_named(self):
         sp = self._site("python3.99")
@@ -95,15 +102,53 @@ class EnsureSdkOnPath(unittest.TestCase):
         self.assertNotIn(old, sys.path)
         self.assertEqual(self.err.getvalue(), "")
 
-    def test_the_creation_refusal_follows_the_verdict(self):
-        # `romp new` / the browser's create both refuse with _sdk_setup_hint(): after a mismatch it
-        # names the versions and both remedies; otherwise it is the install hint, unchanged
+    def test_a_free_threaded_interpreter_recognises_its_own_venv(self):
+        # venv names a 3.99t build's lib dir python3.99t; the match is on the full tag, so the venv that
+        # interpreter built is added, not refused as "built for 3.99t but the kernel runs 3.99" (a state
+        # neither remedy could exit: romp-sdk-setup saw nothing to rebuild, ROMP_PYTHON named the same binary)
+        sp = self._site("python3.99t")
+        with self._free_threaded():
+            self.assertEqual(km._running_python_tag(), "3.99t")
+            self.assertTrue(self._run(importable_from=sp))
+        self.assertIn(sp, sys.path)
+        self.assertEqual(self.err.getvalue(), "", "its own venv: nothing to say")
+        self.assertEqual(km._SDK_VENV_BUILT_FOR, [])
+
+    def test_a_free_threaded_interpreter_and_a_default_build_venv_are_a_mismatch(self):
+        # the same major.minor is NOT the same ABI: a python3.99 venv in a 3.99t process must not be added
+        sp = self._site("python3.99")
+        with self._free_threaded():
+            self.assertFalse(self._run(importable_from=sp))
+        self.assertNotIn(sp, sys.path)
+        line = self.err.getvalue()
+        self.assertIn("built for python 3.99 but the kernel runs 3.99t", line)
+
+    def test_the_creation_refusal_comes_from_the_backends_verdict(self):
+        # `romp new` / the browser's create refuse with _sdk_setup_hint(), which reads the SAME verdict
+        # the session card reads (SdkBackend.creation_refusal over unavailable_verdict), evaluated at
+        # request time, so the two surfaces cannot tell different stories; the kernel hands over its
+        # plain install hint as the default for the verdicts where the install remedy fits
+        calls = []
+
+        class Backend:
+            def creation_refusal(self, default):
+                calls.append(default)
+                return "the backend's verdict, whatever it is"
+        with mock.patch.object(km, "_sdk_backend", Backend()):
+            self.assertEqual(km._sdk_setup_hint(), "the backend's verdict, whatever it is")
+        self.assertEqual(calls, [km.SDK_SETUP_HINT])
+
+    def test_without_a_backend_the_refusal_names_only_the_rebuild(self):
+        # the backend module failed to load, so nothing has probed the venv's interpreter: the fallback
+        # names the mismatch and the one remedy this process can vouch for; never a ROMP_PYTHON pin to
+        # an interpreter nothing has seen run, never "isn't installed" over an installed venv
         self._run(importable_from=self._site("python3.99"))
         hint = km._sdk_setup_hint()
         self.assertIn("3.99", hint)
-        self.assertIn("%d.%d" % sys.version_info[:2], hint)
-        self.assertIn("ROMP_PYTHON", hint)
+        self.assertIn(km._running_python_tag(), hint)
         self.assertIn("romp-sdk-setup", hint)
+        self.assertIn("restart romp", hint)
+        self.assertNotIn("ROMP_PYTHON", hint)
         self.assertNotIn("isn't installed", hint)
         shutil.rmtree(self.venv)
         self._run()
@@ -113,6 +158,23 @@ class EnsureSdkOnPath(unittest.TestCase):
         self.assertFalse(self._run())
         self.assertEqual(sys.path, self.path_before)
         self.assertEqual(self.err.getvalue(), "", "no venv: nothing to say here (the backend reports it)")
+
+    def test_the_boot_notice_is_not_found_only_when_no_mismatch_explains_it(self):
+        # _sdk_locked's gate (_sdk_import_notice): with no venv the log says the SDK was not found and
+        # names the install; with a venv for another python the mismatch line stands ALONE, because
+        # "not found, run bin/romp-sdk-setup" over an installed venv was the misleading 2026-09-06 message
+        self.assertFalse(self._run(fn=km._sdk_import_notice))
+        self.assertIn("claude_agent_sdk not found", self.err.getvalue())
+        self.assertIn("romp-sdk-setup", self.err.getvalue())
+        self.err.truncate(0); self.err.seek(0)
+        self._site("python3.99")
+        self.assertFalse(self._run(fn=km._sdk_import_notice))
+        line = self.err.getvalue()
+        self.assertIn("built for python 3.99", line)
+        self.assertNotIn("not found", line, "one verdict per boot: the mismatch, not a contradicting install line")
+        self.err.truncate(0); self.err.seek(0)
+        self.assertTrue(self._run(importable_from=self._site(RUNNING), fn=km._sdk_import_notice))
+        self.assertEqual(self.err.getvalue(), "")
 
 
 if __name__ == "__main__":

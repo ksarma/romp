@@ -28,6 +28,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -106,7 +107,7 @@ class VenvBuiltForAnotherInterpreter(unittest.TestCase):
     the remedy that fits what is on disk, instead of claiming nothing was installed (2026-09-06: two
     hours of "isn't installed" over a venv that was present, intact and built for the old python)."""
 
-    RUNNING = "%d.%d" % sys.version_info[:2]
+    RUNNING = sb.running_python_tag()
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -146,6 +147,23 @@ class VenvBuiltForAnotherInterpreter(unittest.TestCase):
         self.assertIn("romp-sdk-setup", text, "the old interpreter is gone: rebuild for the new one")
         self.assertNotIn("ROMP_PYTHON", text, "a pin to a missing interpreter would not help")
 
+    def test_recorded_interpreter_present_but_not_running_names_the_rebuild(self):
+        # executable, and exits non-zero on `-c pass`: the state pick_python's fallback creates (the
+        # kernel came up on a newer python BECAUSE this one is broken). A pin to it would have romp-serve
+        # exec a binary that cannot start, and the manager respawn it in a loop
+        interp = os.path.join(self.state, "py399", "python3.99")
+        os.makedirs(os.path.dirname(interp))
+        Path(interp).write_text("#!/bin/sh\nexit 1\n")
+        os.chmod(interp, 0o755)
+        self._cfg(interp)
+        text = _backend(self.state, missing=True).launch_error(SID)["text"]
+        self.assertIn("3.99", text)
+        self.assertIn("romp-sdk-setup", text, "it will not run: rebuild for the python romp has")
+        self.assertNotIn("ROMP_PYTHON", text, "never prescribe a pin to an interpreter that does not run")
+        self.assertFalse(sb.interpreter_runs(interp))
+        self.assertFalse(sb.interpreter_runs(os.path.join(self.state, "nope")))
+        self.assertTrue(sb.interpreter_runs(sys.executable))
+
     def test_no_pyvenv_cfg_still_says_mismatch(self):
         # the lib/python3.99 directory alone proves the mismatch; without a cfg the rebuild is the remedy
         text = _backend(self.state, missing=True).launch_error(SID)["text"]
@@ -173,6 +191,128 @@ class VenvBuiltForAnotherInterpreter(unittest.TestCase):
         self.assertTrue(rec["dep"])
         self.assertIn("3.99", rec["text"])
         self.assertNotIn("isn't installed", rec["text"])
+
+    def test_a_free_threaded_tag_is_the_whole_tag(self):
+        # a 3.99t process against a python3.99 venv is a mismatch (and against python3.99t is not)
+        with mock.patch.multiple(sys, abiflags="t", version_info=(3, 99, 0, "final", 0), create=True):
+            self.assertEqual(sb.running_python_tag(), "3.99t")
+            self.assertEqual(sb.sdk_venv_verdict(self.state)["kind"], "mismatch")
+            shutil.rmtree(self.venv)
+            (self.venv / "lib" / "python3.99t" / "site-packages" / "claude_agent_sdk").mkdir(parents=True)
+            (self.venv / "lib" / "python3.99t" / "site-packages" / "claude_agent_sdk" / "__init__.py").write_text("")
+            self.assertEqual(sb.sdk_venv_verdict(self.state)["kind"], "present")
+
+
+class OneVerdictForEverySurface(unittest.TestCase):
+    """The session card (launch_error) and the session-creation refusal (creation_refusal, which the
+    kernel's `romp new` and browser create read) take their text from ONE verdict, read from the disk at
+    request time. After the user runs bin/romp-sdk-setup while the kernel is up, both say to restart
+    romp; before this the refusal flipped back to "isn't installed" (the remedy the user had just
+    applied) while the card still said mismatch, and the refusal offered a ROMP_PYTHON pin without
+    checking the interpreter existed (review 2026-09-06)."""
+
+    RUNNING = sb.running_python_tag()
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.state = self.td.name
+        self.venv = Path(self.state) / "sdkvenv"
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    def _venv(self, tag, with_sdk=False):
+        sp = self.venv / "lib" / ("python" + tag) / "site-packages"
+        sp.mkdir(parents=True, exist_ok=True)
+        if with_sdk:
+            (sp / "claude_agent_sdk").mkdir(exist_ok=True)
+            (sp / "claude_agent_sdk" / "__init__.py").write_text("")
+
+    def _interp(self, body="#!/bin/sh\n"):
+        interp = os.path.join(self.state, "py399", "python3.99")
+        os.makedirs(os.path.dirname(interp), exist_ok=True)
+        Path(interp).write_text(body)
+        os.chmod(interp, 0o755)
+        (self.venv / "pyvenv.cfg").write_text("home = %s\nversion = 3.99.0\nexecutable = %s\n"
+                                              % (os.path.dirname(interp), interp))
+        return interp
+
+    def test_no_venv_is_the_plain_pair(self):
+        be = _backend(self.state, missing=True)
+        self.assertEqual(be.launch_error(SID)["text"], sb.SDK_MISSING_TEXT)
+        self.assertEqual(be.creation_refusal(default="THE KERNEL'S HINT"), "THE KERNEL'S HINT")
+        self.assertEqual(be.creation_refusal(), sb.SDK_SETUP_REFUSAL)
+
+    def test_a_venv_for_this_python_with_no_sdk_in_it_is_the_plain_pair(self):
+        self._venv(self.RUNNING)
+        be = _backend(self.state, missing=True)
+        self.assertEqual(be.unavailable_verdict()["kind"], "broken")
+        self.assertEqual(be.launch_error(SID)["text"], sb.SDK_MISSING_TEXT)
+        self.assertEqual(be.creation_refusal(), sb.SDK_SETUP_REFUSAL)
+
+    def test_mismatch_with_a_running_interpreter_offers_the_pin_on_both(self):
+        self._venv("3.99")
+        interp = self._interp()
+        be = _backend(self.state, missing=True)
+        card, refusal = be.launch_error(SID)["text"], be.creation_refusal()
+        for text in (card, refusal):
+            self.assertIn("3.99", text)
+            self.assertIn(self.RUNNING, text)
+            self.assertIn("ROMP_PYTHON=" + interp, text)
+            self.assertNotIn("romp-sdk-setup", text, "one remedy, the one that fits")
+        self.assertTrue(refusal.startswith("Session not created:"))
+        self.assertIn("restart romp and try again", refusal)
+        self.assertNotIn("messages are being kept", refusal, "no session exists to keep messages for")
+
+    def test_mismatch_with_a_broken_interpreter_offers_the_rebuild_on_both(self):
+        self._venv("3.99")
+        self._interp("#!/bin/sh\nexit 1\n")
+        be = _backend(self.state, missing=True)
+        for text in (be.launch_error(SID)["text"], be.creation_refusal()):
+            self.assertIn("romp-sdk-setup", text)
+            self.assertNotIn("ROMP_PYTHON", text)
+
+    def test_a_rebuild_while_the_kernel_runs_moves_both_surfaces_to_the_restart(self):
+        # kernel on this python, venv for 3.99: both say mismatch. The user rebuilds for this python
+        # WITHOUT restarting: the same backend, asked again, says the backend was set up after romp
+        # started and to restart; neither surface falls back to "isn't installed"
+        self._venv("3.99")
+        be = _backend(self.state, missing=True)
+        self.assertIn("3.99", be.launch_error(SID)["text"])
+        self.assertIn("3.99", be.creation_refusal())
+        shutil.rmtree(self.venv)
+        self._venv(self.RUNNING, with_sdk=True)
+        card, refusal = be.launch_error(SID)["text"], be.creation_refusal()
+        self.assertEqual(be.unavailable_verdict()["kind"], "present")
+        for text in (card, refusal):
+            self.assertIn("after romp started", text)
+            self.assertIn("Restart romp", text)
+            self.assertNotIn("isn't installed", text)
+            self.assertNotIn("romp-sdk-setup", text, "the user just ran it")
+            self.assertNotIn("3.99", text)
+        self.assertTrue(refusal.startswith("Session not created:"))
+        self.assertIn("tmux", card)
+
+    def test_the_verdict_is_cached_on_the_disk_state_and_the_probe_runs_once_per_state(self):
+        self._venv("3.99")
+        self._interp()
+        be = _backend(self.state, missing=True)
+        with mock.patch.object(sb, "interpreter_runs", wraps=sb.interpreter_runs) as probe:
+            for _ in range(5):
+                be.launch_error(SID)
+                be.creation_refusal()
+            self.assertEqual(probe.call_count, 1, "ten reads of the same disk state: one probe")
+            (self.venv / "pyvenv.cfg").write_text("home = /nowhere\nversion = 3.99.0\nexecutable = /nowhere/python3.99\n")
+            self.assertIn("romp-sdk-setup", be.launch_error(SID)["text"], "the cfg changed: re-read")
+
+    def test_a_late_import_error_in_a_process_that_had_the_sdk_is_not_a_late_build(self):
+        # the SDK imported at construction and a session's import then failed with the venv present for
+        # this python: the import broke, so the install text's rebuild is the remedy, not "restart romp"
+        self._venv(self.RUNNING, with_sdk=True)
+        be = _backend(self.state, missing=False)
+        be._record_launch_error(_FakeSess(), ImportError("No module named 'pydantic_core._pydantic_core'"))
+        rec = (sb.read_reg(Path(self.state), SID) or {})["launchError"]
+        self.assertEqual(rec["text"], sb.SDK_MISSING_TEXT)
 
 
 class RecordedLaunchFailures(unittest.TestCase):

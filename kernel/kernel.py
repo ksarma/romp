@@ -12698,28 +12698,40 @@ def _claude_bin():
     return os.environ.get("ROMP_CLAUDE_BIN") or shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 
-# The python X.Y versions the SDK venv on disk was built for, when NONE of them is the one this
-# process runs; [] otherwise. Set by _ensure_sdk_on_path, read by _sdk_setup_hint and _sdk_locked so
-# the creation refusal and the boot log say what is actually wrong (a venv for another interpreter)
-# instead of claiming nothing was installed.
+# The python tags the SDK venv on disk was built for, when NONE of them is the one this process runs;
+# [] otherwise. Set by _ensure_sdk_on_path, read by _sdk_import_notice (so the boot log does not add
+# an "install it" line over an installed venv) and by _sdk_setup_hint's fallback for a kernel whose
+# backend module never loaded. The surfaces a user reads (the session card, the creation refusal)
+# take their verdict from the backend at request time (SdkBackend.unavailable_verdict), not from here.
 _SDK_VENV_BUILT_FOR = []
+
+
+def _running_python_tag():
+    """This interpreter as venv names its lib dir: `3.14`, or `3.14t` for a free-threaded build (venv
+    appends the abi tag to the directory, lib/python3.14t). Matching on major.minor alone made a kernel
+    on 3.14t refuse the venv that very interpreter built as a mismatch, and neither remedy it named
+    could exit that state (review 2026-09-06). Twin of sdk_backend.running_python_tag, which cannot be
+    imported here: this runs before the backend module loads."""
+    return "%d.%d%s" % (sys.version_info[0], sys.version_info[1],
+                        "t" if "t" in getattr(sys, "abiflags", "") else "")
 
 
 def _ensure_sdk_on_path():
     """Make claude_agent_sdk importable by the kernel's interpreter. Prefer an already-installed
     copy; otherwise add the dedicated venv's site-packages (built by bin/romp-sdk-setup under
     ~/.local/state/romp/sdkvenv, never touching system python), but ONLY the one built for the python
-    this process runs. The venv's compiled extensions are per-interpreter: adding a 3.X venv to a 3.Y
-    kernel fails deep inside the import with a message that blamed a missing install (2026-09-06,
-    when a newer python appeared on the box between two respawns and every SDK session died for two
-    hours). A venv present for another version adds nothing and is named on stderr, once, with both
-    remedies. Returns True when importable."""
+    this process runs (_running_python_tag). The venv's compiled extensions are per-interpreter: adding
+    a 3.X venv to a 3.Y kernel fails deep inside the import with a message that blamed a missing
+    install (2026-09-06, when a newer python appeared on the box between two respawns and every SDK
+    session died for two hours). A venv present for another version adds nothing and is named on
+    stderr, once, with both remedies (a log line; the user-facing surfaces name the one remedy the disk
+    supports, see SdkBackend.unavailable_verdict). Returns True when importable."""
     import importlib.util
     import glob
     global _SDK_VENV_BUILT_FOR
     if importlib.util.find_spec("claude_agent_sdk"):
         return True
-    running = "%d.%d" % sys.version_info[:2]
+    running = _running_python_tag()
     found = sorted(glob.glob(str(jd.STATE / "sdkvenv" / "lib" / "python3.*" / "site-packages")))
     match = [sp for sp in found if Path(sp).parent.name == "python" + running]
     for sp in match:
@@ -12737,14 +12749,38 @@ def _ensure_sdk_on_path():
     return importlib.util.find_spec("claude_agent_sdk") is not None
 
 
+def _sdk_import_notice():
+    """The boot log's one line when claude_agent_sdk will not import, and _sdk_locked's gate: "not found,
+    run bin/romp-sdk-setup" ONLY when no venv mismatch explains it. A mismatch was already named by
+    _ensure_sdk_on_path, and a second line prescribing an install over an installed venv was the
+    misleading message of 2026-09-06. Returns whether the SDK is importable."""
+    ok = _ensure_sdk_on_path()
+    if not ok and not _SDK_VENV_BUILT_FOR:
+        sys.stderr.write("sdk-backend: claude_agent_sdk not found — run bin/romp-sdk-setup to "
+                         "enable the non-tmux backend (tmux sessions are unaffected)\n")
+    return ok
+
+
 def _sdk_setup_hint():
-    """SDK_SETUP_HINT, or its accurate sibling when a venv exists but was built for another python: the
-    remedy differs (run the venv's interpreter, or rebuild for this one), and "isn't installed" is false."""
+    """The session-creation refusal (`romp new`, the browser's create) when _sdk_ready() is False. ONE
+    source of truth with the session card: the backend's venv verdict, read at request time
+    (SdkBackend.creation_refusal reads the same unavailable_verdict the card's launch_error does), so a
+    venv rebuilt while the kernel runs makes both say "restart romp", and a ROMP_PYTHON pin is offered
+    only for an interpreter that was seen to run (review 2026-09-06: the two surfaces told two stories,
+    and this one offered a pin without looking). Without a backend to ask (its module failed to load)
+    the fallback names a mismatch _ensure_sdk_on_path saw with the rebuild remedy alone, the one this
+    process can vouch for without a probe; otherwise the plain install hint."""
+    be = _sdk_backend
+    try:
+        if be and hasattr(be, "creation_refusal"):
+            return be.creation_refusal(default=SDK_SETUP_HINT)
+    except Exception:
+        pass
     if _SDK_VENV_BUILT_FOR:
         return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running "
-                "on Python %d.%d. Set ROMP_PYTHON to that Python and restart romp, or re-run "
-                "bin/romp-sdk-setup to rebuild it, then try again. (tmux sessions still work.)"
-                % (" and ".join(_SDK_VENV_BUILT_FOR), *sys.version_info[:2]))
+                "on Python %s. Re-run bin/romp-sdk-setup to rebuild it for Python %s, restart romp and try "
+                "again. (tmux sessions still work.)"
+                % (" and ".join(_SDK_VENV_BUILT_FOR), _running_python_tag(), _running_python_tag()))
     return SDK_SETUP_HINT
 
 
@@ -12778,16 +12814,15 @@ def _sdk_locked():
     global _sdk_backend
     if _sdk_backend is None:
         try:
-            if not _ensure_sdk_on_path() and not _SDK_VENV_BUILT_FOR:   # a mismatch was already named
-                sys.stderr.write("sdk-backend: claude_agent_sdk not found — run bin/romp-sdk-setup to "
-                                 "enable the non-tmux backend (tmux sessions are unaffected)\n")
-                # The backend is STILL built, deliberately: it owns the registry, the persisted queues and
-                # the chat those sessions render from, and dropping it would take the user's unsent
-                # messages off screen along with it. What it must not do is pretend to work — it detects
-                # the missing dep itself and reports every session as unable to start (launch_error), which
-                # is what puts this line in front of the user instead of only in the kernel log. Before
-                # that, a fresh install whose romp-sdk-setup had bailed looked like romp silently eating
-                # every message (the user 2026-07-28).
+            # _sdk_import_notice: the SDK will not import, and the log line says which way (not found,
+            # or a venv for another python). The backend is STILL built, deliberately: it owns the
+            # registry, the persisted queues and the chat those sessions render from, and dropping it
+            # would take the user's unsent messages off screen along with it. What it must not do is
+            # pretend to work — it detects the missing dep itself and reports every session as unable
+            # to start (launch_error), which is what puts the line in front of the user instead of only
+            # in the kernel log. Before that, a fresh install whose romp-sdk-setup had bailed looked
+            # like romp silently eating every message (the user 2026-07-28).
+            _sdk_import_notice()
             sbmod = SourceFileLoader("romp_sdk_backend", str(HERE / "sdk_backend.py")).load_module()
             # ONE claimer for the manager env's API key: the backend's work_api_key pops it out of
             # os.environ (so no session CLI inherits it ambiently), and judges read that same stash
