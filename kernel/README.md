@@ -25,17 +25,36 @@ Session control (how romp drives Claude Code) sits behind one seam:
 Shared lookup tables: `colormap.py` (recency tints, single source shared with
 the web bundles) and `palette.py` (session-identity colors).
 
-`keysource.py` selects the manager's live API key source: a
-`ROMP_API_KEY_REF=op://vault/item/field` reference or a legacy
-`ANTHROPIC_API_KEY`. Source inspection is separate from resolution so UI/status
-reads do not fetch secrets. A selected reference is resolved with `op read
---no-newline` for each Claude session launch/reconnect, key-billed judge call,
-and direct model-catalog refresh. Explicit cycle checks also resolve the key
-to detect rotations; a reconnect resolves it again at launch. Resolved provider
-keys are not cached or written to disk. Resolution failures fail closed.
-`cli/keyswap.py` (`romp keyswap`) shares the path and parser to switch references or legacy keys without
-resolving them. Removing a service-file source cannot restore a stale startup
-key. See `docs/reference.md` for migration and service authentication setup.
+`keysource.py` selects the manager's live API key source: a credential command
+(`ROMP_CREDENTIAL_COMMAND=<shell command>`), a
+`ROMP_API_KEY_REF=op://vault/item/field` reference, or a legacy
+`ANTHROPIC_API_KEY`, in that order of precedence. Source inspection is separate
+from resolution so UI/status reads do not fetch secrets. A selected reference is
+resolved with `op read --no-newline` for each Claude session launch/reconnect,
+key-billed judge call, and direct model-catalog refresh. Explicit cycle checks
+also resolve the key to detect rotations; a reconnect resolves it again at
+launch. Resolved provider keys are not cached or written to disk. Resolution
+failures fail closed. `cli/keyswap.py` (`romp keyswap`) shares the path and
+parser to switch commands, references or legacy keys without resolving them.
+Removing a service-file source cannot restore a stale startup key. See
+`docs/reference.md` for migration and service authentication setup.
+
+`envsource.py` is the command kind's runtime; the reference is that kind's
+built-in default (`docs/reference.md`, "A credential command"). It runs the
+selected command with the selector file's token as `$1`, parses the
+`NAME=VALUE` set it prints, holds the set in one private dict, and lets it out
+only for merging into a child's environment: every session CLI's launch options,
+every judge call's environment and the catalog fetch's header, never its own
+environment or a file. The set is cached on events (a refresh, a cycle, a
+switch, an authentication failure, a selector-file edit, a change of source),
+concurrent readers coalesce on one run, and a failed run keeps the previous set.
+Every function but the value-bearing accessors is value-free. The same module
+fingerprints the configured `apiKeyHelper` when the set carries no key, so a
+cycle converges on it. `sdk_backend.key_source_verdict` checks the
+configuration once at boot, `/api-health` reports it as `keySource`, and
+`/keycycle` drives `romp keyswap`. `keysource.py` reaches it only through
+`keysource.COMMAND_RESOLVER`, so `envsource.py` loads `keysource.py` and never
+the reverse.
 
 Everything here is loaded by file path (`SourceFileLoader`), not installed as a
 package — the repo runs straight from a git clone. Python tests live in

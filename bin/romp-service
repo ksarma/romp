@@ -17,7 +17,8 @@
 # unit. ROMP_API_KEY_REF stores a 1Password reference; the kernel resolves it via op
 # when a key is needed. ROMP_CREDENTIAL_COMMAND names a command the kernel runs for the
 # credentials instead; the reference is that command's built-in default. See
-# SERVICE_ENV_FILE below and docs/reference.md.
+# SERVICE_ENV_FILE below and docs/reference.md ("Service environment and credentials";
+# the `status` lines are under "What romp-service status shows").
 set -euo pipefail
 
 # Resolve the repo root through any symlink (matches the other bin/ consumers).
