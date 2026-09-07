@@ -268,7 +268,7 @@ class CommandSetInJudgeEnv(_JudgeAuthBase):
 
     def test_the_codex_engine_gets_no_anthropic_name_at_all(self):
         import inspect
-        src = inspect.getsource(jd._judge_run)
+        src = inspect.getsource(jd._judge_run_impl)      # the call body; _judge_run is the gate's thin belt
         self.assertIn('if not k.startswith("ANTHROPIC_")', src,
                       "another vendor's process: strip every ANTHROPIC_* name, not only the key")
         self.assertNotIn('if k != "ANTHROPIC_API_KEY"', src)

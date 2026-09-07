@@ -110,11 +110,20 @@ class Collector(unittest.TestCase):
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
         self.assertIn("cpu_ms_workers", snap["judge"])
+        self.assertEqual({k: snap["judge"][k] for k in ("wakes", "wakes_event", "wakes_backstop")},
+                         {"wakes": 0, "wakes_event": 0, "wakes_backstop": 0},
+                         "the producer's wake counters: present and zero on a fresh collector")
+        tiers = snap["judge"]["tiers"]
+        self.assertEqual(set(tiers), set(km.jd.GATED_TIERS) | {"stamps"},
+                         "read through jd.tier_stats: the evidence gate's per-tier counters plus the stamps held")
+        for t in km.jd.GATED_TIERS:
+            self.assertEqual(set(tiers[t]), {"ran", "skipped", "stamped", "bypassed", "incomplete", "due_clock"}, t)
+        self.assertIsInstance(tiers["stamps"], int)
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
-                                              "absent_hits", "absent_misses"},
+                                              "absent_hits", "absent_misses", "noop_hash_ms"},
                          "read through jd.goal_io_stats")
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},
@@ -289,6 +298,47 @@ class WakeCounting(unittest.TestCase):
         self.assertTrue(km._pusher_wake.is_set())
         km._pusher_wake.clear()
 
+    def test_the_producer_wake_counts_sets_under_judge_and_classifies_the_wait(self):
+        # the producer's twin (P4 of the judge perf plan): every _producer_wake.set() lands in judge.wakes,
+        # and the loop's wait outcome lands in wakes_event / wakes_backstop through judge_wake_kind
+        self.assertIsInstance(km._producer_wake, km._CountedEvent)
+        was_set = km._producer_wake.is_set()
+        before = km._PERF_STATS.snapshot()["judge"]
+        km._producer_wake.set(); km._producer_wake.set(); km._producer_wake.set()
+        self.assertTrue(km._producer_wake.is_set())
+        km._PERF_STATS.judge_wake_kind(True); km._PERF_STATS.judge_wake_kind(False)
+        after = km._PERF_STATS.snapshot()["judge"]
+        self.assertEqual(after["wakes"] - before["wakes"], 3)
+        self.assertEqual((after["wakes_event"] - before["wakes_event"], after["wakes_backstop"] - before["wakes_backstop"]), (1, 1))
+        if not was_set:
+            km._producer_wake.clear()
+
+    def test_the_producer_wake_counts_at_call_time_and_sets_before_counting(self):
+        # the counter is resolved when set() runs, not captured at import: an instance patch on the
+        # collector sees every set; and the flag is set BEFORE the count, so a counter that raises never
+        # loses a wake
+        was_set = km._producer_wake.is_set()
+        km._producer_wake.clear()
+        seen = []
+        km._PERF_STATS.judge_wake = lambda: seen.append(1)
+        try:
+            km._producer_wake.set()
+            self.assertEqual(seen, [1], "the patched collector saw the set")
+            km._producer_wake.clear()
+
+            def boom():
+                raise RuntimeError("counter down")
+            km._PERF_STATS.judge_wake = boom
+            with self.assertRaises(RuntimeError):
+                km._producer_wake.set()
+            self.assertTrue(km._producer_wake.is_set(), "the wake landed before the counter raised")
+        finally:
+            del km._PERF_STATS.judge_wake
+            if was_set:
+                km._producer_wake.set()
+            else:
+                km._producer_wake.clear()
+
 
 class PerfLogToggle(unittest.TestCase):
     """_perf() writes only when the switch is on, and the switch flips at runtime."""
@@ -350,6 +400,8 @@ class GoalIoCounters(unittest.TestCase):
         after2 = self.jd.goal_io_stats()
         self.assertEqual(after2["saves"], after["saves"] + 1)
         self.assertEqual(after2["writes"], after["writes"], "the no-op republish skip is visible as saves without writes")
+        self.assertGreater(after2["noop_hash_ms"], after["noop_hash_ms"],
+                           "the no-op check's serialization is timed (the cost a conditional tail save would remove)")
         self.assertEqual(km._PERF_STATS.snapshot()["goals"], after2, "the kernel's snapshot carries the judge counters")
         # the no-op check's disk-side memo: the first publish seeded it from its own temp, so the check
         # above was a hit; a foreign rewrite of the file is a miss

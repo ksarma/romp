@@ -44,6 +44,15 @@ class ProducerPolicy(unittest.TestCase):
         self.assertIn("_producer_wake.wait(3)", body, "the event-poke backstop is 3s")
         self.assertNotIn("_producer_wake.wait(20)", body, "the old 20s backstop is gone")
 
+    def test_the_wait_outcome_is_counted(self):
+        # the producer's wake counters (judge.wakes_event / wakes_backstop): the wait's return value is
+        # kept and classified right after it, so the pass rate can be read against the sets it absorbed
+        body = self._producer_body()
+        i = body.find("_woke = _producer_wake.wait(3)")
+        self.assertGreater(i, -1, "the wait's outcome is kept")
+        self.assertIn("_PERF_STATS.judge_wake_kind(_woke)", body[i:i + 200], "...and classified at once")
+        self.assertIn("_producer_wake = _CountedEvent(", SRC, "the producer's wake is the counted event")
+
 
 if __name__ == "__main__":
     unittest.main()
