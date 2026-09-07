@@ -87,7 +87,8 @@ test("adoption flushes the held messages FOR REAL and carries the draft across",
 });
 
 test("a failed create says so in a dialog, in the kernel's own words — ON the failed thread", () => {
-  assert.match(RENDER, /if \(provisionalId\) failProvisional\(m\.text\); else warnToast\(m\.text\);/);
+  // the one warn a create-in-flight does NOT own: the emoji dialog's, while it awaits its own answer (2026-09-06)
+  assert.match(RENDER, /if \(emojiPrompt\?\.pending\) emojiRefusedLocal\(m\.text\);\n\s*else if \(provisionalId\) failProvisional\(m\.text\);\n\s*else warnToast\(m\.text\);/);
   assert.match(RENDER, /showConfirm\("Couldn't start " \+ name,/);
   assert.match(RENDER, /What you typed is in this tab's message box\./,
     "losing the text would be the one unrecoverable part");
