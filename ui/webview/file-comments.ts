@@ -97,6 +97,17 @@ const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
 const cssStr = (v: string): string => (typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(v) : v.replace(/["\\]/g, "\\$&"));
 /** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
 const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+/** The comment a `comment` reply added, read off the reply's store (the host names no id in the reply): the one comment
+ *  the status before the write did not hold — the write's fence (storeMtimeNs) admits no other write between the two.
+ *  After a moved fence's re-read and retry the baseline `had` predates the retry's, so another client's comments may be
+ *  new too; then the one whose body is the note, and null when that does not name exactly one — nothing to scroll to,
+ *  and nothing in doubt about the save itself. */
+function savedCommentId(had: Set<string>, r: Status, note: string): string | null {
+  const fresh = r.store ? r.store.comments.filter((c) => !had.has(c.id)) : [];
+  if (fresh.length === 1) return fresh[0].id;
+  const mine = fresh.filter((c) => c.body === note);
+  return mine.length === 1 ? mine[0].id : null;
+}
 // The verbs that rewrite the FILE, not only the sidecar (reject applies the engine's reverse edits): they
 // fence on the file's mtime as the panel last saw it, so a `track-edit` landing mid-round refuses `file-moved`
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
@@ -1761,6 +1772,7 @@ class Panel {
       this.renderComposer();
       return;
     }
+    const had = new Set((this.status && this.status.store ? this.status.store.comments : []).map((x) => x.id));   // the comments before the write (savedCommentId)
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -1779,7 +1791,21 @@ class Panel {
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
       r = await this.mutate("comment", args, "composer");
     }
+    if (r) this.scrollToSaved(c, had, r, note);        // the card the save landed in, into view — before the composer closes (scrollToSaved says why)
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
+  }
+  /** The card a save landed in, brought into view, as the re-place gesture brings its card after the write. In the margin
+   *  layout a whole-file comment's card is loose at the top of the track, whose scroll is the body's: with the text
+   *  scrolled anywhere but its top, the composer closed and no card appeared, and the save read as having done nothing
+   *  (the 2026-09-07 review; ui/CLAUDE.md: always acknowledge). A passage comment's or a reply's card is level with its
+   *  mark, and the mark is centered the way a card's opening centers it. BEFORE the composer closes: the reply's render
+   *  placed the cards with the composer's box above the track, and centerOn measures the header live, so the two must
+   *  agree — the composer's closing shortens the header, and the pass that follows it (the track's observer) re-places
+   *  the cards with the header as it is then, at the same places on screen. `had`: the comment ids before the write
+   *  (savedCommentId names the new one off the reply). */
+  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string): void {
+    const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
+    if (saved !== null) this.scrollCard(this.cardKey(saved));
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
@@ -2380,7 +2406,7 @@ class Panel {
     this.ctx.scrollToOffset(loc.range.start);
   }
   scrollCard(id: string): void {
-    if (this.margin && this.centerOn(id)) return;      // the margin layout: the card's mark to the center, the card level with it; a loose card scrolls the track (and the body with it)
+    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssStr(id) + '"]')?.scrollIntoView({ block: "nearest" });
   }
 
@@ -2627,10 +2653,16 @@ class Panel {
     this.writeScroll(track, want, "body");
   }
   /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
-   *  a pushed card whose bottom would fall past the track's box is brought in as far as keeps the mark's top in
-   *  view. Where the body cannot scroll that far (its end, in a body the padding could not lengthen: padBody) the
-   *  track goes on alone, as far as the card's end (followBody keeps it there). False for a card the pass did not
-   *  place beside a mark (loose), which the caller scrolls to as a list item. */
+   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
+   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
+   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
+   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
+   *  loose card moves nothing, afterRender).
+   *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
+   *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
+   *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One
+   *  added on top scrolled the header's height too far, and an opened card that fit the track landed with its head
+   *  — the fold control, the reference link — under the panel's header (the 2026-09-07 review). */
   private centerOn(key: string): boolean {
     const p = this.placed.get(key);
     if (!p || p.desired === null) return false;
@@ -2639,13 +2671,39 @@ class Panel {
     const markY = p.desired + offset;                  // the mark's top in the body's content
     const view = body.clientHeight;
     let want = markY - view / 2;
-    const showCard = p.top + p.height + offset - track.clientHeight + CARD_GAP;   // the least scroll that shows the card's bottom
+    const showCard = p.top + p.height + CARD_GAP - track.clientHeight;   // the least scroll that shows the card's bottom (track content: no header term)
     if (showCard > want) want = Math.min(showCard, markY - CARD_GAP);
+    this.scrollBoth(want);
+    return true;
+  }
+  /** A loose card (no mark: the group at the top of the track) into the track's box, by the least scroll that shows it
+   *  whole — what scrollIntoView's `nearest` scrolls the track by — written onto the body AND the track at once, as
+   *  centerOn writes them. scrollIntoView moved the track alone, and the lock carries a track scroll onto the body only
+   *  on the track's scroll EVENT: the browser delivers one per element per frame, so the render's own write onto the
+   *  track (the echo the lock lets through unmirrored) and the scroll to the card arrived as one event, the body never
+   *  followed, and the frame's pass brought the track back to the body — the card the save had scrolled to was out of
+   *  view again (the 2026-09-07 review, in a real engine). False for a card with a mark (centerOn's) or one the pass did
+   *  not place (the list layout; a card not yet rendered): the caller scrolls it into view as a list item. */
+  private showLoose(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired !== null) return false;
+    const track = this.sections.cards;
+    const at = track.scrollTop, box = track.clientHeight;
+    let want = at;
+    if (p.top - CARD_GAP < at) want = p.top - CARD_GAP;
+    else if (p.top + p.height + CARD_GAP > at + box) want = p.top + p.height + CARD_GAP - box;
+    this.scrollBoth(want);
+    return true;
+  }
+  /** Both scrollers to `want`, a position in the one range the two share: the body as far as it can go, and the track to
+   *  the body's position — or on alone, as far past the body's end as `want` and no further than the last card's end,
+   *  where the body's padding could not lengthen it (padBody; followBody keeps it there). */
+  private scrollBoth(want: number): void {
+    const body = this.ctx.body(), track = this.sections.cards;
     want = Math.max(0, want);
-    body.scrollTop = Math.min(want, body.scrollHeight - view);
+    body.scrollTop = Math.min(want, body.scrollHeight - body.clientHeight);
     const at = body.scrollTop;                         // where the body could go
     this.writeScroll(track, want > at ? Math.min(want, Math.max(at, this.cardsEnd - track.clientHeight)) : at, "body");
-    return true;
   }
   /** The absolute path the kernel acts on, as far as the panel can know it. The kernel resolves the viewer's
    *  path (`~`, a relative chat or todo token against the session's cwd, then realpath) and builds the sent

@@ -948,35 +948,74 @@ elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear 
 beside their own and need no rule of their own to be usable; the sheets are the painter's.
 
 The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked whether comments could
-move with the window when possible, each trying to stay centered near the place in the text it was left as the
-reader scrolls, at least for markdown. The layout is the build's reading of that ask: comment cards that follow the
-text, laid out as margin-aligned cards the way document editors lay out comments, each card's top level with its
-passage rather than centered on it, overlapping cards pushed down in order and never up, and the passage centered
-only on a click. The build described the design to the user as the work began, so the user could redirect it early
-if it was not what the ask meant; the user has not yet said whether it is. Built: beside the body the aside wears
-the margin layout (`fc-margin`). The head and the composer stay put at the top; Accept all · Reject all (moved out of
-the list), Send and the Log stay put at the bottom; the cards section between them is a track whose scroll is locked
-to the body's — each scroller's scroll event writes its position onto the other, the echo let through without a
-write back — and whose content is as tall as the body's, so the two share one range. Every card is absolutely
-positioned at its mark's top in the body's content, less the header's height the track begins under: a comment
-highlight, a framed figure, a region rectangle on a picture or a PDF page, a change mark. Cards are laid by that top
-(ties by the list's order) and each takes the larger of it and the previous card's bottom plus the gap, so cards
-never overlap and only ever move down from their marks; a pushed card draws a dashed leader up the gutter to its
-mark's height. Cards with no mark — a whole-file comment, a detached anchor, a change the view does not paint, a
-region whose figure has not loaded — are the loose group at the top of the track, in the list's order, and the
-placed cards begin below it. The pure rule is `card-layout.ts` (`layoutCards`); the panel measures and applies
-(`placeCards`) after every render, on the body's, the row's, the track's and the cards' resizes, on a figure's load
-and on the window's resize, one pass per frame, and never on scroll. A mark's click, a card's opening and a card's
-reference link scroll the body so the mark sits at the vertical center with the card level beside it, the pass
-having run first so the expanded card's height is known; a fold moves nothing. The narrow fold and edit mode are the
-list layout as before, and the two switch as the layout changes: the fold is read off the row's computed
-flex-direction, since the sheet's container query owns it — and that query, it turned out, had never fired:
-`.fileview-main` is the container it declares, a container query styles a container's descendants and never the
-container itself, and no ancestor declared one, so a narrow column got the fold's aside rules alone beside an
-unstacked body. The viewer's card (`.fileview`) now declares the container the fold resolves against. PDFs and
-standalone images take the same pass, their region rectangles the marks. Tests: `card-layout.test.ts` (the rule),
-`file-comments-margin.test.ts` (the panel driven over a measuring stand-in), `file-comments-margin-browser.test.ts`
-(Chromium and Firefox: placed tops against marks, the collision, the lock, the fold).
+move with the window when possible, each trying to stay centered near the place in the text it was left as the reader
+scrolls, at least for markdown. The layout is the build's reading of that ask: comment cards that follow the text,
+laid out as margin-aligned cards the way document editors lay out comments, each card's top level with its passage
+rather than centered on it, overlapping cards pushed down in order and never up, and the passage centered only on a
+click. The build described the design to the user as the work began, so the user could redirect it early if it was not
+what the ask meant; the user has not yet said whether it is. Built: beside the body the aside wears the margin layout
+(`fc-margin`). The head and the composer stay put at the top; Accept all · Reject all (moved out of the list), Send
+and the Log stay put at the bottom; the cards section between them is a track whose scroll is locked to the body's
+(each scroller's scroll event writes its position onto the other, the echo let through without a write back; every
+write copies an absolute position, so an event taken for the wrong scroller costs one write, and the next genuine one
+puts both scrollers at the same position again), and the two share one range. The track's box ends a footer's height
+above the body's, so a card level with the text's last lines would sit under the footer with the body at its end,
+where no scroll reached it: the pass pads the body's content at its end by the footer's height plus how far the last
+card hangs past the content's end (`padBody`, an inline `padding-bottom` written only when it changes and cleared by
+`layoutOff` when the layout ends: the fold, edit mode, the panel's close), and makes the list as tall as puts the
+track's farthest position at the body's, or as the last card's end, whichever is more, so the body itself reaches
+every card's end. Padding cannot lengthen a body that does not scroll (a short file, a picture sized to its box);
+there the track goes on alone as far as the last card's end, and a pass or a status reply leaves it there instead of
+pulling it back to the body (`followBody`). The track holds cards alone: every row the list held stands in the footer
+above Send (`moveRows`), the foot with Accept all · Reject all first, then a wait's loader, a refusal row, the "… N
+more changes" and Resolved folds and the empty note, in the list's order. A row at the top of a track locked to the
+body's scroll was out of view for a reader anywhere but the top of the text, and the reload's loader and the fold that
+says why a painted change has no card were among them. Every card is absolutely positioned at its mark's top in the
+body's content, less the header's height the track begins under: a comment highlight, a framed figure, a region
+rectangle on a picture or a PDF page, a change mark. Cards are laid by that top (ties by the list's order) and each
+takes the larger of it and the previous card's bottom plus the gap, so cards never overlap and only ever move down
+from their marks; a pushed card draws a dashed leader up the gutter to its mark's height. Cards with no mark — a
+whole-file comment, a detached anchor, a change the view does not paint, a region whose figure has not loaded — are
+the loose group at the top of the track, in the list's order, and the placed cards begin below it. The pure rule is
+`card-layout.ts` (`layoutCards`); the panel measures and applies (`placeCards`) after every render, on the body's, the
+row's, the track's and the cards' resizes, on the body's content's resize (`watchContent`: the body is a flex-sized
+scroller whose box does not change when its content reflows, as when a `<details>` block opens, so its element
+children join the size observer each pass), on a figure's load and on the window's resize, one pass per frame, and
+never on scroll. The pass also makes the cards' DOM order the placement's, so the Tab order runs down the margin;
+`cardsInOrder` gives the keyboard's place that order before a rebuild and after it, and the foot's place is the last
+change card's. The rows' move into the footer and the reorder both detach a focused control, and `moving` gives the
+keyboard back to it, since the browser's focus-fixup rule otherwise drops it to the body; the selectors the pass
+builds from a comment id are CSS-escaped (`cssStr`), so an id holding a quote places its card instead of throwing. A
+mark's click, a card's opening and a card's reference link scroll the body so the mark sits at the vertical center
+with the card level beside it, the pass having run first so the expanded card's height is known; a fold moves nothing.
+The narrow fold and edit mode are the list layout as before, and the two switch as the layout changes: the fold is
+read off the row's computed flex-direction, since the sheet's container query owns it — and that query, it turned out,
+had never fired: `.fileview-main` is the container it declares, a container query styles a container's descendants and
+never the container itself, and no ancestor declared one, so a narrow column got the fold's aside rules alone beside
+an unstacked body. The viewer's card (`.fileview`) now declares the container the fold resolves against. PDFs and
+standalone images take the same pass, their region rectangles the marks. The footer stays inside the panel, in both
+sheets: the panel is `overflow: hidden` (a panel that scrolled would carry the track off the body and every card off
+its mark), the track has a basis of 0 with a floor of 30% of the panel, and a footer section that outgrows its share
+(the Send section with its confirm up, the Log with its rows) shrinks and scrolls inside itself instead of pushing
+Send, Cancel or the Log toggle past the panel's edge, with the Log toggle sticky at the top of its scroller. The one
+range, the footer rows, the content observer, the placement order, the focus fixup, the escaping and the footer's
+yield rule are the follow-on's first review (2026-09-07); before it the list was sized to the body's scroll height
+less the header's offset, so the last lines' cards sat under the footer, the rows scrolled out of the locked track, a
+reflow inside the body left the cards off their marks, and a tall confirm or Log ran past the panel's bottom. Tests:
+`card-layout.test.ts` (the rule), `file-comments-margin.test.ts` (the panel driven over a measuring stand-in),
+`file-comments-margin-browser.test.ts` (Chromium and Firefox: placed tops against marks, the collision, the lock to
+the far end, the fold); from the review, `file-comments-margin-review.test.ts` (the panel over a stand-in with the
+focus-fixup rule, clamped scroll positions, a footer under the track, a reflowing body, escaped selectors and media
+bodies: the one range and the overhang, the non-scrolling body, the footer rows, the placement order, the content
+observer, the escaping, the padding gone on close, a region card on an image and on a PDF page),
+`file-comments-margin-review-browser.test.ts` (the focus fixup, the `<details>` reflow, the Tab order and the footer
+rows in Chromium and Firefox), `feed-css-margin-footers.test.ts` and `styles-fc-margin-footer.test.ts` (each sheet's
+footer: the floor, the yield rule and the sticky toggle as declared, and the confirm and the Log scrolling within
+their sections in both engines), `feed-css-margin-leader.test.ts` (the pushed card's leader: the `::before` rule's
+declarations in feed.css, keyed on the attribute and the variable the pass writes, styles.css held to the same rule,
+and in both engines a dashed leader as tall as the push on a pushed card and none on an unpushed one),
+`tests/test_guide_files_margin_layout.py` (the guide's Files sentence held to the panel and the sheets) and
+`tools/file-review-plan-margin-review.test.mjs` (this account held to the panel, the sheets and the modules it names).
 
 ### Slice 3: region comments on images
 
@@ -1379,9 +1418,33 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
 - `ui/webview/card-layout.test.ts`, `file-comments-margin.test.ts` and
   `file-comments-margin-browser.test.ts` (the margin-layout follow-on, 2026-09-07): the push-down rule,
   the ties, the gap, the loose group and an expanded card pushing the next; the track in two columns, the
-  loose group, the list fallback in the fold and in edit mode, the scroll lock and the re-layout on expand,
-  driven over a measuring stand-in; and in Chromium and Firefox the placed tops against the marks, the
-  collision, the lock both ways, the centering and the fold, under the sheets' own rules.
+  loose group, the list fallback in the fold and in edit mode, the scroll lock and the re-layout on
+  expand, driven over a measuring stand-in; and in Chromium and Firefox the placed tops against the marks,
+  the collision, the lock both ways to the far end (a comment on the last paragraph, both ranges within
+  2px, the last card level with its mark from either scroller and from its reference link), the centering
+  and the fold, under the sheets' own rules. From the follow-on's first review (2026-09-07):
+  `file-comments-margin-review.test.ts` drives the panel over a stand-in that models what the first
+  stand-in did not (the browser's focus-fixup rule, scroll positions clamped to each scroller's range, a
+  footer under the track, a body whose content reflows without its box changing, escaped attribute
+  selectors, and media bodies) and pins the keyboard surviving the rows' move and the reorder, the one
+  range (the footer's height in the body's padding, the overhang growing it, the padding gone on close and
+  back on reopen), the non-scrolling body's track going on alone and coming back level, the footer rows in
+  the list's order, the placement order, a clamped write raising no echo, the content observer and the
+  observer taking the list layout's cards when the margin comes on, the escaped id, and a region card on
+  an image and on a PDF page; `file-comments-margin-review-browser.test.ts` runs the focus fixup, the
+  `<details>` reflow, the Tab order and the footer rows in Chromium and Firefox;
+  `feed-css-margin-footers.test.ts` and `styles-fc-margin-footer.test.ts` hold each sheet's footer block
+  (the floor, the yield rule, the sticky Log toggle) and, in both engines, the Send confirm with its
+  preview and the Log with its rows scrolling within their sections, Send, Cancel and every row in reach
+  and the track keeping its floor; `feed-css-margin-leader.test.ts` holds the pushed card's leader rule in
+  feed.css to the attribute and the variable the pass writes and styles.css to the same rule, and in both
+  engines reads the leader's box off a pushed card (dashed, as tall as the push, its top at the mark's
+  height) and finds none on an unpushed one; `tests/test_guide_files_margin_layout.py` holds the guide's
+  Files sentence (level with the passage, scrolling with the text, the narrow column listing the cards) to
+  the panel source and to both sheets; and `tools/file-review-plan-margin-review.test.mjs` holds the
+  note's Built account to the panel and the sheets, and every module the note and this bullet name to the
+  tree and to the pin credited to it (the round's commit message said the section named them, and it named
+  none; found in review, 2026-09-07).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
@@ -1411,7 +1474,10 @@ session will write into, and to keep figures out of tracked folders until Slice 
 in place; "Waiting on you" notes the linked path and the ended-session case; "Files"
 (`:126-138`) gains the panel, the poll, the consent gate the guide omits today, commenting in
 either view and on images and PDFs, the comments log and the `.gitignore` opt-out, and where to
-look when the action is missing. `docs/reference.md`, under install-time switches, notes the
+look when the action is missing; with the margin-layout follow-on (2026-09-07) it says that beside
+the file each card sits level with the passage it is about and scrolls with the text, and that a
+narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds the sentence to the
+panel and both sheets). `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
 kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
 `SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the

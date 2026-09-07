@@ -238,7 +238,10 @@ const guide = read('docs', 'guide.md');
 
 test('the margin-layout note stands beside the Slice 2 build note and names what was asked and what was built', () => {
   assert.ok(slice2.includes('The margin-layout follow-on (2026-09-07), panel side.'), 'the note, in the Slice 2 section');
-  assert.ok(slice2.includes('asked that comment cards follow the text: each card level with the passage it is about and scrolling with the window, at least for markdown'), 'what the user asked for');
+  // The ask as the user made it, hedges kept, then the build's reading of it: the review-round-1 rewording
+  // (tools/file-review-plan-attribution.test.mjs holds the two apart; this pin says the note carries both).
+  assert.ok(slice2.includes('asked whether comments could move with the window when possible, each trying to stay centered near the place in the text it was left as the reader scrolls, at least for markdown'), 'what the user asked for');
+  assert.ok(slice2.includes('The layout is the build\'s reading of that ask: comment cards that follow the text'), 'what was built, named as the build\'s reading');
   assert.ok(slice2.includes('laid out as margin-aligned cards the way document editors lay out comments'));
   // the layout model, as the note states it, is the code's
   assert.ok(slice2.includes('a track whose scroll is locked to the body\'s'));
@@ -271,7 +274,9 @@ test('the note\'s fold statement is the sheets\': the row\'s computed flex-direc
     assert.ok(/\.fileview-main \{ flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; \}/.test(css), name + ': the row stays a container for the aside\'s own fold rules');
     assert.ok(/@container \(max-width: 680px\) \{\n\s*\.fileview-main \{ flex-direction: column; \}/.test(css), name + ': the fold stacks the row');
     assert.ok(/\.fc-panel\.fc-margin \{ overflow: hidden; padding: 0; gap: 0; \}/.test(css), name + ': the margin layout\'s root rule');
-    assert.ok(/\.fc-margin > \.fc-sec-cards \{ flex: 1 1 auto; min-height: 0; position: relative; overflow: auto; scrollbar-width: none; \}/.test(css), name + ': the track is the scroller');
+    // basis 0 with a 30% floor since the footer fix (styles-fc-margin-footer.test.ts pins the chat sheet's geometry;
+    // this pins that both sheets carry the same rule)
+    assert.ok(/\.fc-margin > \.fc-sec-cards \{ flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; \}/.test(css), name + ': the track is the scroller');
   }
 });
 

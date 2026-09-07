@@ -420,9 +420,11 @@ test("expand: the card's new height pushes the card below it down (with the lead
   assert.equal(pushed.dataset.pushed, "1");
   assert.equal(pushed.style.getPropertyValue("--fc-push"), (pushedTo - desired(5)) + "px", "the leader runs from the card up to its mark's height");
   // the click centered the opened card's mark: the least scroll that shows the card's bottom wins over the mark's center here (a short body),
-  // capped so the mark's top stays in view
+  // capped so the mark's top stays in view. The card's top is in the TRACK's content, which scrolls with the body, so that
+  // scroll has no header term: the card's bottom plus the gap, less the track's box (a header term here over-scrolled by the
+  // header's height and put the opened card's head under it — the 2026-09-07 review; file-comments-margin-fixes.test.ts)
   const markY = desired(3) + OFFSET;
-  const showCard = desired(3) + OPEN + OFFSET - (BODY_VIEW - OFFSET) + 8;
+  const showCard = desired(3) + OPEN + 8 - (BODY_VIEW - OFFSET);
   assert.equal(body.scrollTop, Math.min(showCard, markY - 8));
   assert.equal(w.track().scrollTop, body.scrollTop, "the track came along at once");
   // a fold moves nothing: the text stays where it is
@@ -440,7 +442,7 @@ test("a card's reference link (fcgoto) and a mark's click (fcopen) center the ma
   const body = w.body;
   w.card(passage.id)!.querySelector('[data-act="fcgoto"]')!.click();
   const markY = desired(5) + OFFSET;
-  const showCard = desired(5) + CARD + OFFSET - (BODY_VIEW - OFFSET) + 8;
+  const showCard = desired(5) + CARD + 8 - (BODY_VIEW - OFFSET);   // track content: no header term
   assert.equal(body.scrollTop, Math.max(markY - BODY_VIEW / 2, Math.min(showCard, markY - 8)));
   assert.equal(w.track().scrollTop, body.scrollTop);
   assert.deepEqual(scrolledInto, [], "no scrollIntoView: the body's position is set from the placement");

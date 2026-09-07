@@ -4,8 +4,10 @@
 // section that could shrink, so an open Send confirm (fifteen comments listed, the message preview under them) or an
 // open Log (up to the host's 200 rows) collapsed the track to nothing and pushed its own Send, Cancel and Log controls
 // past the panel's bottom edge, where no scroller reached them (found 2026-09-07). The sheet's rule now: the track
-// keeps a floor and the section holding the content that grew becomes a scroller of its own. Pinned twice: the
-// declarations in styles.css, and the geometry in a real engine — the worktree's file-comments.ts bundled as the
+// keeps a floor, and every section but the track shrinks and scrolls inside itself, the one holding the content that
+// grew first (the review's second round: the first cut let only the confirm's and the Log's sections yield, and the
+// composer or a confirm row still pushed Send off the bottom — styles-fc-margin-fit.test.ts holds those). Pinned twice:
+// the declarations in styles.css, and the geometry in a real engine — the worktree's file-comments.ts bundled as the
 // webview is built, mounted under the chat page's own file-comments block, in Chromium and Firefox (skips LOUDLY
 // without a playwright browser; CI installs none). Synthetic values only: invented prose, placeholder ids.
 import { test } from "node:test";
@@ -33,10 +35,13 @@ test("styles.css: the margin layout's track has a floor, the expanded footer sec
   assert.match(css, /\n\.fc-panel\.fc-margin \{ overflow: hidden; padding: 0; gap: 0; \}/, "the panel itself stays overflow: hidden");
   // the track: basis 0 (it never joins the shrink, so a tall footer costs it nothing past the floor) with a floor of the panel's height
   assert.match(css, /\n\.fc-margin > \.fc-sec-cards \{ flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; \}/, "the track's basis is 0 with a 30% floor");
-  // collapsed, the footer sections keep their size: Accept all · Reject all, Send and the Log toggle are never squeezed
-  assert.match(css, /\n\.fc-margin > \.fc-sec-send, \.fc-margin > \.fc-sec-log \{ flex: 0 0 auto; padding: 0 12px; \}/, "the collapsed footer sections do not shrink");
-  // expanded — the confirm up, rows in the Log — a section yields and scrolls on its own
-  assert.match(css, /\n\.fc-margin > \.fc-sec-send:has\(\.fc-confirm\), \.fc-margin > \.fc-sec-log:has\(\.fc-log-row\) \{ flex: 0 1 auto; min-height: 0; overflow: auto; \}/, "the expanded sections shrink and scroll");
+  // the footer sections are their content's height with a shrink, and scroll inside themselves when they give — never
+  // flex 0 0 auto, which is what ran them past the aside's bottom
+  assert.match(css, /\n\.fc-margin > \.fc-sec-send, \.fc-margin > \.fc-sec-log \{ flex: 0 1 auto; min-height: 0; overflow: auto; padding: 0 12px; \}/, "the footer sections shrink and scroll inside themselves");
+  // expanded — the confirm up, rows in the Log, a row moved into the footer — a section gives first, a million times as
+  // readily as a collapsed one, so Accept all · Reject all, Send and the Log toggle are squeezed only once everything
+  // grown has reached its floor
+  assert.match(css, /\n\.fc-margin > \.fc-sec-send:has\([^{]*\n\.fc-margin > \.fc-sec-log:has\(\.fc-log > :nth-child\(n\+2\)\) \{ flex-shrink: 1000000; min-height: min\(15%, 2\.4em\); \}/, "the grown sections give first, down to a floor");
   // the Log's fold stays in reach while its rows scroll under it
   assert.match(css, /\n\.fc-margin \.fc-log > \.fc-sec \{ position: sticky; top: 0; background: var\(--bg\); \}/, "the Log toggle is sticky in its scroller");
 });
