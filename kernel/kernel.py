@@ -7882,7 +7882,14 @@ def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
         d["supersedes"] = prev.get("supersedes", 0)
     _RETRY_PAUSE_SEQ[0] += 1
     _atomic_write(jd.STATE / "retry-paused.json", json.dumps(d))
-    _mark_views_dirty()   # the queued bubble renders this hold; every writer publishes the flip (review 2026-09-05)
+    # No dirty mark and no wake HERE (perf batch 2 P1, 2026-09-06; kept at the 2026-09-07 upmerge over
+    # upstream's writer-side _mark_views_dirty of review 2026-09-05): every caller publishes the flip
+    # itself. The auto paths (_auto_pause_on_limit, _auto_pause_on_spend_limit, _lift_retry_pause) wake
+    # the pusher with _push_soon, the setGlobalRetryPaused gesture marks the views dirty, and the active
+    # tab's key stats this file (_active_chat_sig), so the queued bubble follows on that push. Neither
+    # build_feed nor build_timeline reads the flag, so a dirty mark here rebuilt both for nothing; and a
+    # bare write (a Resume landing on an already-unpaused file) delivers nothing, as the idempotent
+    # engage does (tests/test_kernel_usage_limit.py, tests/test_retry_pause_autoresume.py).
 
 
 def _retry_pause_reason():

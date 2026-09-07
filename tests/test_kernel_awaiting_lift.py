@@ -80,7 +80,7 @@ class AwaitingLift(unittest.TestCase):
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": self.path}]
         km._mark_views_dirty = lambda *a, **k: None
         km._SESSION_STAMP_CACHE.clear()
-        km._LIFT_GATE.clear()          # stores are re-seeded in place under recycled tempdir inodes
+        km._lift_seen.clear()          # stores are re-seeded in place under recycled tempdir inodes
         km._bgall_cache.clear()
         km._bgtasks_cache.clear()
         self.gid = SID + ":g1"
@@ -89,7 +89,7 @@ class AwaitingLift(unittest.TestCase):
         for k, v in self.saved.items():
             setattr(km, k, v)
         km.jd.STATE, km.jd.GOALDIR = self.saved_jd
-        km._SESSION_STAMP_CACHE.clear(); km._LIFT_GATE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        km._SESSION_STAMP_CACHE.clear(); km._lift_seen.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.td.cleanup()
 
     def _transcript(self, recs):
@@ -446,14 +446,14 @@ class RestartReconcile(unittest.TestCase):
         km._mark_views_dirty = lambda *a, **k: None
         km._sdk_spawned_at = lambda sid: self.spawn      # the CLI epoch — the restart moment
         self.spawn = BACK                                # default: the backend respawned after the stamp
-        km._SESSION_STAMP_CACHE.clear(); km._LIFT_GATE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        km._SESSION_STAMP_CACHE.clear(); km._lift_seen.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.gid = SID + ":g1"
 
     def tearDown(self):
         for k, v in self.saved.items():
             setattr(km, k, v)
         km.jd.STATE, km.jd.GOALDIR = self.saved_jd
-        km._SESSION_STAMP_CACHE.clear(); km._LIFT_GATE.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
+        km._SESSION_STAMP_CACHE.clear(); km._lift_seen.clear(); km._bgall_cache.clear(); km._bgtasks_cache.clear()
         self.td.cleanup()
 
     def _transcript(self, recs):
@@ -622,16 +622,19 @@ class LiftStandsDown(unittest.TestCase):
 
 
 class LiftGate(unittest.TestCase):
-    """The identity gate in front of the lift's store load (perf plan 2, P6a). `stamped`/`rolled` are
-    functions of the loaded store alone, and load_goals reads exactly three files — the store, the
-    override journal and (for a `restore` row) the goals-archive — so a session whose three identities
-    are unchanged since a load that found no candidate is skipped before the parse. Every writer moves
-    an identity (rename publishes, journal appends), so a lift happens on exactly the events it did
-    before; the gate skips only loads that would have found nothing. Loads are counted through a
-    wrapper on jd.load_goals (the candidates path loads once more inside _bg_placed_tops, so a tick
-    that re-evaluates is asserted as at least one load; a gated tick is exactly zero); in-place
-    rewrites after a tick go through save_goals, a journal append, an archive publish, or os.utime
-    (coarse-mtime filesystems in CI)."""
+    """The inputs gate in front of the lift's store load (perf plan 2, P6a; upmerge 2026-09-07: upstream's
+    _sid_inputs_fp / _lift_seen fingerprint adopted over the fork's _LIFT_GATE identity key, with the
+    fork's intents layered on, kernel-code DECISIONS 1). The ruling reads the store, the override journal,
+    the goals-archive (a `restore` row re-inserts a node only when neither holds it), the transcript, the
+    postal log and the SDK reg, plus two live facts (the registry's task ids and subagent count, and
+    whether each running dispatch's deadline has passed), so a session whose fingerprint is unchanged
+    since the last ruling is skipped before the parse, stamped or not (the fork's gate re-loaded a stamped
+    store every tick). Every writer moves an input (rename publishes, journal appends, transcript records),
+    so a lift happens on exactly the events it did before. Loads are counted through a wrapper on
+    jd.load_goals (the candidates path loads once more inside _bg_placed_tops, so a tick that
+    re-evaluates is asserted as at least one load; a gated tick is exactly zero); in-place rewrites after
+    a tick go through save_goals, a journal append, an archive publish, or os.utime (coarse-mtime
+    filesystems in CI)."""
 
     def setUp(self):
         AwaitingLift.setUp(self)
@@ -692,10 +695,10 @@ class LiftGate(unittest.TestCase):
         self._seed_unstamped()
         skips = km._lift_gate_stats["skip"]
         self.assertEqual(self._tick(), 1, "the first tick has to look")
-        self.assertEqual(self._tick(), 0, "same three identities, nothing stamped last time: no load")
+        self.assertEqual(self._tick(), 0, "same inputs as the last ruling: no load")
         self.assertEqual(self._tick(), 0)
         self.assertEqual(km._lift_gate_stats["skip"] - skips, 2, "the /perf counter saw both skips")
-        self.assertEqual(km._LIFT_GATE[SID][1], False, "the entry remembers: no candidate")
+        self.assertIn(SID, km._lift_seen, "the entry remembers the inputs it ruled on")
 
     def test_a_missing_store_is_gated_until_it_appears(self):
         self._returned_dispatch()
@@ -758,7 +761,7 @@ class LiftGate(unittest.TestCase):
         km.jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {self.gid: self._stamped_node()}, "status": {}})
         km.jd.append_restore(SID, {self.gid: self._stamped_node()}, {}, BACK + 50)
         self.assertEqual(self._tick(), 1)
-        self.assertIsNotNone(km._LIFT_GATE[SID][0][2], "the archive's identity is in the key")
+        self.assertIsNotNone(km._lift_seen[SID][2], "the archive's identity is in the fingerprint (the fork's intent)")
         self.assertEqual(self._tick(), 0, "archive, journal, store unchanged: gated")
         km.jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})
         self.assertGreaterEqual(self._tick(), 1, "the archive changed: reloaded")
@@ -805,23 +808,30 @@ class LiftGate(unittest.TestCase):
         self.assertGreaterEqual(self._tick(), 1, "the inode alone moved the identity: reloaded")
         self.assertIsNone(self._stamp())
 
-    # ---- what the gate never touches ----
-    def test_a_stamped_store_loads_every_tick(self):
-        self._transcript([_launch("t1", LAUNCH)])       # still out: the stamp stands, every tick decides
+    # ---- a stamped store is gated on the same terms (upmerge 2026-09-07, kernel-code DECISIONS 1: the
+    #      fork's _LIFT_GATE re-loaded a stamped store every tick; upstream's fingerprint gate skips it
+    #      until an input moves, and the return that ends the wait is itself a transcript write) ----
+    def test_a_stamped_store_with_unchanged_inputs_is_skipped_too(self):
+        self._transcript([_launch("t1", LAUNCH)])       # still out: the stamp stands
         self._seed()
         loads = km._lift_gate_stats["load"]
-        for _ in range(3):
-            self.assertGreaterEqual(self._tick(), 1, "a candidate exists: the full path runs")
-            self.assertIsNotNone(self._stamp())
-        self.assertEqual(km._LIFT_GATE[SID][1], True)
-        self.assertEqual(km._lift_gate_stats["load"] - loads, 3)
+        self.assertGreaterEqual(self._tick(), 1, "the first tick has to look")
+        self.assertIsNotNone(self._stamp())
+        self.assertEqual(self._tick(), 0, "store, journal, transcript and live facts unchanged: same ruling, no load")
+        self.assertEqual(self._tick(), 0)
+        self.assertIsNotNone(self._stamp(), "the stamp stands through the skipped ticks")
+        self.assertEqual(km._lift_gate_stats["load"] - loads, 1)
+        self.assertIn(SID, km._lift_seen)
+        self._transcript([_launch("t1", LAUNCH), _notification("t1", BACK)])   # the return lands: an input moved
+        self.assertGreaterEqual(self._tick(), 1, "a fingerprint input moved: re-evaluated")
+        self.assertIsNone(self._stamp(), "...and the lift proceeded exactly as without the gate")
 
     def test_a_dormant_session_is_not_gated_or_recorded(self):
         self._seed_unstamped()
         before = len(self.calls)
         km._lift_spent_awaiting(BACK + 100, {SID: None})     # dormant: no tmux/SDK row for the sid
         self.assertEqual(len(self.calls) - before, 0)
-        self.assertNotIn(SID, km._LIFT_GATE, "dormant: skipped before the gate, nothing remembered")
+        self.assertNotIn(SID, km._lift_seen, "dormant: skipped before the gate, nothing remembered")
 
     def test_a_failed_load_records_no_skip(self):
         import contextlib, io
@@ -835,7 +845,7 @@ class LiftGate(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(self._tick(), 1)
         self.assertIn("awaiting-lift", err.getvalue(), "the failure is reported, as before")
-        self.assertNotIn(SID, km._LIFT_GATE, "an error is never cached as a skip")
+        self.assertNotIn(SID, km._lift_seen, "an error is never cached as a skip")
         km.jd.load_goals = counted
         self.assertEqual(self._tick(), 1, "the next tick retries the load")
 
@@ -865,7 +875,7 @@ class LiftGate(unittest.TestCase):
             self.assertEqual(self._tick(), 1)            # load_goals swallowed the error: an empty store
         self.assertEqual(state["fired"], 1)
         self.assertIsNotNone(self._stamp(), "tick 1 saw the fallback, not the stamp: no lift yet")
-        self.assertNotIn(SID, km._LIFT_GATE, "a fallback answer is not the files' content: no entry")
+        self.assertNotIn(SID, km._lift_seen, "a fallback answer is not the files' content: no entry")
         self.assertGreaterEqual(self._tick(), 1, "the file reads fine now and is unchanged: loaded anyway")
         self.assertIsNone(self._stamp(), "…and the stamp lifts one cycle late, not never")
 
@@ -879,7 +889,7 @@ class LiftGate(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self._tick(), 1)            # the replay logged history-unreadable and skipped
         self.assertEqual(state["fired"], 1)
-        self.assertNotIn(SID, km._LIFT_GATE, "the journal was not read: no entry")
+        self.assertNotIn(SID, km._lift_seen, "the journal was not read: no entry")
         self.assertGreaterEqual(self._tick(), 1, "the journal reads now, unchanged: loaded anyway")
         nodes = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())["nodes"]
         self.assertIn(self.gid, nodes, "the restore replayed and the node was saved back")
@@ -888,10 +898,10 @@ class LiftGate(unittest.TestCase):
     def test_entries_for_sids_that_left_the_alive_set_are_dropped(self):
         self._seed_unstamped()
         self._tick()
-        self.assertIn(SID, km._LIFT_GATE)
+        self.assertIn(SID, km._lift_seen)
         km._alive_sessions = lambda now, tmux: []
         self._tick()
-        self.assertNotIn(SID, km._LIFT_GATE, "the sid left the alive set: its entry went with it")
+        self.assertNotIn(SID, km._lift_seen, "the sid left the alive set: its entry went with it")
 
     def test_a_writer_racing_the_load_costs_one_reload_never_a_wrong_skip(self):
         """The key is stat-ed BEFORE the read. A closer that publishes a stamp while the load is in flight
@@ -914,7 +924,7 @@ class LiftGate(unittest.TestCase):
         self.assertEqual(self._tick(), 1, "tick 1 read once and saw nothing to lift")
         self.assertEqual(len(raced), 1)
         self.assertIsNotNone(self._stamp(), "the racing publish's stamp stands after tick 1")
-        self.assertEqual(km._LIFT_GATE[SID][1], False, "the entry says what that read found")
+        self.assertIn(SID, km._lift_seen, "the entry is keyed on the pre-write files")
         self.assertGreaterEqual(self._tick(), 1, "tick 2: the files moved under the read, so it loads")
         self.assertIsNone(self._stamp(), "…and lifts the stamp one cycle late, never never")
 
@@ -924,7 +934,7 @@ class LiftGate(unittest.TestCase):
         lg = km._PERF_STATS.snapshot()["memos"]["lift_gate"]
         self.assertEqual(lg["skip"], km._lift_gate_stats["skip"])
         self.assertEqual(lg["load"], km._lift_gate_stats["load"])
-        self.assertEqual(lg["entries"], len(km._LIFT_GATE))
+        self.assertEqual(lg["entries"], len(km._lift_seen))
         self.assertGreaterEqual(lg["skip"], 1)
 
 
