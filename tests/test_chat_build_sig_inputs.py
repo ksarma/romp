@@ -801,6 +801,40 @@ class RealBuildIdleBoard(_World):
         finally:
             km._chat_sig_deps = real
 
+    def test_a_build_whose_signature_moved_is_not_cached_and_counts_under_moved(self):
+        """Review should-fix 4: the post-build gate. A build during which a keyed input moves (here the
+        warm-anchor revision, bumped by a stub around the real build) is not cached, builds.chat.moved
+        counts it, the tab's earlier entry stays as it was, and the next push rebuilds under that label
+        and caches."""
+        km._push([self.client], tmux=self.tmux)                   # the entry a quiet world caches
+        e1 = km._built_chat[SID]
+        with open(self.tpath, "a") as f:                          # something else moved, so the next push builds
+            f.write(json.dumps(_uline(T0 + 200, "and the docs", "u3", "a2")) + "\n")
+        real = km.build_session
+
+        def moving(sid, now, tmux):
+            m = real(sid, now, tmux)
+            km._node_anchor_rev[SID] = km._node_anchor_rev.get(SID, 0) + 1   # a keyed input moves mid-build
+            return m
+        km.build_session = moving
+        c0 = self._chat()
+        try:
+            km._push([self.client], tmux=self.tmux)
+        finally:
+            km.build_session = real
+        c1 = self._chat()
+        self.assertEqual(c1["moved"] - c0["moved"], 1)
+        self.assertEqual(c1["bg_built"] - c0["bg_built"], 1)
+        self.assertIs(km._built_chat[SID], e1, "the moved build was not stored; the earlier entry stands")
+        km._push([self.client], tmux=self.tmux)
+        c2 = self._chat()
+        self.assertEqual(c2["moved"] - c1["moved"], 0)
+        self.assertEqual({k: v - c1["bg_miss"].get(k, 0) for k, v in c2["bg_miss"].items() if v - c1["bg_miss"].get(k, 0)},
+                         {"anchors": 1, "transcript": 1}, "the next push rebuilds under the labels that moved since the standing entry")
+        self.assertIsNot(km._built_chat[SID], e1, "…and caches")
+        km._push([self.client], tmux=self.tmux)
+        self.assertEqual(self._chat()["cached"] - c2["cached"], 1)
+
     def _pusher_push(self, *clients):
         """A push as _pusher_cycle runs it: the cycle's scopes open on this thread."""
         km._live_scope.snapshot = self.tmux
