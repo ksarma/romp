@@ -471,6 +471,34 @@ class MsgSummariesKey(unittest.TestCase):
         self.assertIn("jd._store_identity(sid)[1:]", inspect.getsource(km._msg_sum_key))
         self.assertIn("goal store", km._msg_summaries.__doc__, "the docstring names the store as an input")
 
+    def test_reads_within_one_pusher_cycle_fetch_the_map_once_and_stat_the_files_once(self):
+        keyed = []
+        real_key = km._msg_sum_key
+        km._msg_sum_key = lambda s: (keyed.append(s["sid"]) or real_key(s))
+        self.addCleanup(setattr, km, "_msg_sum_key", real_key)
+        self.assertIsNone(getattr(km._live_scope, "msgsum", None), "no cycle scope on this thread to begin with")
+        km._live_scope.msgsum = [km._MSGSUM_UNSET]               # the slot _pusher_cycle opens
+        try:
+            first = km._msg_summaries_scoped()
+            for _ in range(4):
+                self.assertIs(km._msg_summaries_scoped(), first, "the cycle's map, not a fresh fetch")
+            self.assertEqual(sorted(keyed), sorted([SID_A, SID_B]), "the key's stats ran once per session, once per cycle")
+        finally:
+            km._live_scope.msgsum = None
+        keyed.clear()
+        for _ in range(3):
+            km._msg_summaries_scoped()                              # no scope: the direct path, as a handler thread takes it
+        self.assertEqual(len(keyed), 6, "three direct reads stat every session three times")
+
+    def test_the_pusher_cycle_opens_and_closes_the_slot_and_the_chat_build_reads_it(self):
+        cyc = inspect.getsource(km._pusher_cycle)
+        self.assertLess(cyc.index("_live_scope.msgsum = [_MSGSUM_UNSET]"), cyc.index("_pusher_cycle_jobs(now, tmux, any_client)"),
+                        "opened inside the try, before the jobs")
+        self.assertLess(cyc.index("finally:"), cyc.index("_live_scope.msgsum = None"), "closed in the finally")
+        self.assertIn("_msum_slot[0] = _msg_summaries_scoped()", inspect.getsource(km.build_session))
+        self.assertIn("captions() if captions is not None else _msg_summaries()", inspect.getsource(km._hydrate_postal),
+                      "the hydrations read the build's getter, so they see the cycle's map too")
+
 
 # ── (a) the ledger memo, (b) the task fold memo ──────────────────────────────────────────────────
 def _iso(t):

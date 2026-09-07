@@ -477,6 +477,35 @@ class PostalCards(_Fold):
         self.assertEqual(km._chat_fold_get(SID)["postal_deps"],
                          ((self.MID, "peer: api tests green", "api", {"bg": "#123456", "fg": "#ffffff"}),))
 
+    def test_builds_within_one_pusher_cycle_read_the_caption_map_once(self):
+        # the gate's per-card caption check and the hydrations read the cycle's caption map
+        # (_msg_summaries_scoped): one fetch per cycle however many tabs build; a build with no cycle scope
+        # (a handler thread) fetches once per build
+        s = self.s
+        self._log()
+        calls = []
+
+        def summaries(mid=self.MID):
+            calls.append(1)
+            return {mid: "peer: api tests green"}
+        for m in MODS:
+            m._msg_summaries = summaries
+        self.grow(1)
+        self._incoming()
+        self.equiv("sealed")
+        calls.clear()
+        km._live_scope.names, km._live_scope.msgsum = km._names_snapshot(), [km._MSGSUM_UNSET]   # one cycle
+        try:
+            for _ in range(3):
+                km.build_session(SID, s.now, s.tm)
+        finally:
+            km._live_scope.names, km._live_scope.msgsum = None, None
+        self.assertEqual(len(calls), 1, "three builds in one cycle: one fetch")
+        calls.clear()
+        for _ in range(3):
+            s.build()
+        self.assertEqual(len(calls), 3, "no cycle slot: one fetch per build")
+
     def test_a_build_outside_the_names_scope_seals_unverified_and_the_next_scoped_build_verifies_once(self):
         # a handler-thread build (a connect push) reads the registry per card, so the values it embeds and
         # the values it would record are two reads: it records None, and the pusher's next build, which reads

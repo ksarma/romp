@@ -25106,8 +25106,14 @@ def _postal_card_deps(cards, index, captions):
     which the gate keys beside this by the log's identity (_chat_postal_key). Everything else a card
     carries comes from the raw event or the log row. `captions` is the build's caption-map getter and is
     called only when a card carries a mid, so a tab whose cards join no caption never pays for the map.
-    The gate re-hydrates when this tuple moved: O(cards) dict lookups against the ~400 whole-list
-    re-hydrations per 120 s the _judge_gen key cost (round-4 plan, P17 merged with P3(c))."""
+    The gate re-hydrates when this tuple moved (round-4 plan, P17 merged with P3(c)).
+
+    Per-build cost: O(cards) dict lookups, plus one name and one colour lookup per card from the cycle's
+    names snapshot. The caption map is the cycle's (_msg_summaries_scoped): on the pusher one
+    threading.local read per build, with _msg_sum_key's stats (four files per discovered session) run
+    once per cycle; a handler-thread build with a captioned card pays one _msg_summaries() call, the
+    same it paid to hydrate. Against the ~400 whole-list re-hydrations per 120 s the _judge_gen key
+    cost."""
     deps = []
     _map = [None]                                    # the caption map, fetched once on the first mid
     for c in cards:
@@ -29641,9 +29647,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # appended between two of them would otherwise be embedded by one hydration and recorded by another).
     _pidx = _postal_index()
     _msum_slot = [None]
-    def _msum():
-        if _msum_slot[0] is None:
-            _msum_slot[0] = _msg_summaries()
+    def _msum():                              # the cycle's map on the pusher (_msg_summaries_scoped), fetched
+        if _msum_slot[0] is None:             # once per build on a handler thread
+            _msum_slot[0] = _msg_summaries_scoped()
         return _msum_slot[0]
     # The sealed cards' recorded values are trusted only when this build read names from the pusher's
     # cycle snapshot (_live_scope.names): a handler-thread build reads the registry per card, so the values
@@ -34276,6 +34282,27 @@ def _msg_summaries():
                 m.update(sub)
             _msg_sum_cache["per"], _msg_sum_cache["map"] = per, m
         return _msg_sum_cache["map"]
+
+
+_MSGSUM_UNSET = object()                          # the cycle slot's "not fetched yet" mark (_msg_summaries_scoped)
+
+
+def _msg_summaries_scoped():
+    """_msg_summaries() once per pusher cycle. _pusher_cycle opens _live_scope.msgsum as a one-slot list
+    holding _MSGSUM_UNSET (thread-confined, the _live_scope.names idiom); the first build of the cycle
+    that needs the caption map fetches it into the slot and every later build of the cycle reads the
+    slot, so the fold gate's per-card caption check (_postal_card_deps) is one threading.local read per
+    build and _msg_sum_key's stats (four files per discovered session) run once per cycle instead of
+    once per build: 31 sessions x 4 stats x 72-156 builds per 30 s before this. Within a cycle the map
+    is the cycle's snapshot: a caption appended mid-cycle is seen next cycle, the staleness every
+    _live_scope memo tolerates by construction (see _sessions). A thread with no scope, a handler-thread
+    build, takes the direct path. Review of perf4-chat, should-fix 2 (2026-09-07)."""
+    slot = getattr(_live_scope, "msgsum", None)
+    if slot is None:
+        return _msg_summaries()
+    if slot[0] is _MSGSUM_UNSET:
+        slot[0] = _msg_summaries()
+    return slot[0]
 
 
 _postal_log_cache = {}        # messages.jsonl -> _fold_records entry; every timeline rebuild used to re-parse the whole log
@@ -42829,12 +42856,16 @@ def _pusher_cycle():
         #                                       token and per postal card (~38% of pusher wall, py-spy
         #                                       2026-08-31). INSIDE the try: a raise here must still hit
         #                                       the finally, or the liveness scope above leaks set
+        _live_scope.msgsum = [_MSGSUM_UNSET]    # …and the cycle's caption-map slot (_msg_summaries_scoped):
+        #                                       filled by the first chat build that needs the map, read by
+        #                                       every later build of the cycle
         _pusher_cycle_jobs(now, tmux, any_client)
     finally:
         _live_scope.snapshot = None
         _live_scope.names = None
         _live_scope.paths = None
         _live_scope.sessions = None
+        _live_scope.msgsum = None
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 
