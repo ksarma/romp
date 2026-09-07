@@ -20,8 +20,9 @@ body.fileview-pane .fileview{width:100%;height:100%;border:0;border-radius:0;box
    phone-wide pane (320-375px) clipped Copy path and the close button off the pane (.fileview is
    overflow:hidden), with no backdrop to tap and no Escape on a phone (review round 2, 2026-09-07). The
    text-size control then pushed the MODAL's row off its card below about 600px the same way, so the wrap moved
-   into the base rules (.fileview-bar, .fileview-name, .fileview-acts in styles.css / feed.css, the parity
-   pair) and every surface has it; this sheet adds nothing to the bar. Measured at 320px and 360px in
+   into the base sheets (.fileview-bar and its two .fileview-bar .fileview-name / .fileview-acts rules in
+   styles.css / feed.css, the parity pair; scoped to the bar, since the Recent rows below and the file browser's
+   action row wear the same classes outside one) and every surface has it; this sheet adds nothing to the bar. Measured at 320px and 360px in
    browse-route.test.ts's browser legs, and at 380-600px in file-view-text-size.test.ts's. */
 /* the empty state: what the pane is for, and the files most recently open here as re-open links. The rows
    wear the viewer's own title-bar classes (.fileview-name / -dir / -base / -sess), so a path and its session

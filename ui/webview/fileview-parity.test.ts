@@ -15,7 +15,9 @@ const FEED = read("feed.css");
 
 const RULES = [
   "#romp-fileview {", ".fileview {", "body.fileview-open {", ".fileview-bar {", ".fileview-name {",
-  ".fileview-dir {", ".fileview-base {", ".fileview-sess {", ".fileview-sess .host-prefix {", ".fileview-acts {", ".fileview-btn {", ".fileview-btn:hover {",
+  ".fileview-dir {", ".fileview-base {", ".fileview-sess {", ".fileview-sess .host-prefix {", ".fileview-acts {",
+  ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {",   // the bar's own wrap (scoped: the browser's row and the pane's Recent rows wear the classes too)
+  ".fileview-btn {", ".fileview-btn:hover {",
   "a.fileview-btn {", ".fileview-gh {", ".fileview-gh[hidden] {", ".fileview-gh-why {",
   '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",

@@ -160,8 +160,13 @@ test("the viewer's title bar wraps in every sheet: the path and its directory li
   assert.doesNotMatch(pane, /\.fileview-bar|\.fileview-acts|\.fileview-name/, "the pane sheet leaves the bar to the base rules");
   for (const css of [CHAT_CSS, read("feed.css")]) {
     assert.match(css, /\.fileview-bar \{ flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;/);
-    assert.match(css, /\.fileview-name \{ flex: 1 1 0; min-width: 12em;/);
-    assert.match(css, /\.fileview-acts \{ flex: 0 1 auto; min-width: 0; margin-left: auto; display: flex; flex-wrap: wrap; align-items: center;\n\s*justify-content: flex-end; gap: 6px; \}/);
+    assert.match(css, /\.fileview-bar \.fileview-name \{ flex: 1 1 0; min-width: 12em; \}/);
+    assert.match(css, /\.fileview-bar \.fileview-acts \{ flex: 0 1 auto; min-width: 0; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; \}/);
+    // scoped to the BAR (round 2): the browser's action row (.fb-bar, one line at every width) and the Files pane's
+    // Recent rows wear the two classes outside any bar, and keep the plain flex they had before the control
+    assert.match(css, /\n\.fileview-acts \{ flex: 0 0 auto; display: flex; align-items: center; gap: 6px; \}/);
+    assert.match(css, /\n\.fileview-name \{ flex: 1 1 auto; min-width: 0;/);
+    assert.doesNotMatch(css, /\.fb-bar \{[^}]*flex-wrap/, "the browser's bar never wraps");
   }
 });
 

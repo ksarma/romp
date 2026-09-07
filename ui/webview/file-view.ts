@@ -874,6 +874,23 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const selHooks: Array<(sel: Selection) => void> = [];
   const savedHooks: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
   const fireRendered = () => { for (const cb of renderHooks) { try { cb(); } catch { /* a hook must never cost the view */ } } };
+  // A REFLOW's paint keeps the person's selection. The panel answers onRendered by unwrapping and re-wrapping every
+  // highlight (file-comments.ts paintAll), and a selection with an end inside a mark lost that end with the mark's
+  // node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane resize (review
+  // 2026-09-07, round 2). The text has not changed, only its elements, so the two ends are taken as offsets into the
+  // body's text before the hooks run and put back from them after, direction kept (setBaseAndExtent). A collapsed
+  // selection, or one with an end outside the body (the bar, the aside's input), is not over the repainted text and
+  // is left alone. The paints that REPLACE the body (renderBody) keep nothing: there the text itself is new.
+  const fireRenderedKeepingSelection = () => {
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
+      && typeof document.createRange === "function"
+      ? { a: textOffset(body, sel.anchorNode, sel.anchorOffset), f: textOffset(body, sel.focusNode, sel.focusOffset) } : null;
+    fireRendered();
+    if (!sel || !kept || kept.a === null || kept.f === null) return;
+    const a = textPoint(body, kept.a); const f = textPoint(body, kept.f);
+    try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
+  };
   const ctx: FileViewActionCtx = {
     path, sid: sid || null, todoId: opts?.todoId ?? null,
     body: () => body,
@@ -928,14 +945,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const textShowing = (): boolean => !editing && ctx.mode() !== "media" && viewText() !== null;
   // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
   // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
-  // Comment button hides, since the passage it sat by has moved). A step that changes nothing (the table's end)
-  // fires nothing: a card may move only on new information (CLAUDE.md), and no paint happened.
+  // Comment button hides, since the passage it sat by has moved; a standing selection is kept across the pass,
+  // see fireRenderedKeepingSelection). A step that changes nothing (the table's end) fires nothing: a card may
+  // move only on new information (CLAUDE.md), and no paint happened.
   const setTextSize = (pct: number) => {
     if (pct === sizePct) return;
     sizePct = pct;
     saveTextSize(pct);
     applyTextSize();
-    if (textShowing()) fireRendered();
+    if (textShowing()) fireRenderedKeepingSelection();
   };
   sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
   sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
@@ -974,7 +992,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       frame = 0;
       if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
       paintedWidth = seenWidth;
-      if (textShowing()) fireRendered();
+      if (textShowing()) fireRenderedKeepingSelection();
     };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
@@ -1124,12 +1142,16 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
   const onSelect = (ev: Event) => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
-    // A press on the title bar (A−, A+, the readout, Raw, Copy path...) settles no selection: the mouseup lands on
-    // the button while a passage may still stand selected in the body, and running the hooks again re-seeded the
-    // quote chip and re-fetched the file for its label on every step of the text size (review 2026-09-07; the
-    // listener sits on the viewer root so a drag that ends over the aside or the margins still settles).
-    const at = ev.target as Node | null;
-    if (at && bar.contains(at)) return;
+    // A press on a title-bar CONTROL (A−, A+, the readout, Raw, Copy path, the GitHub link...) settles no selection:
+    // the mouseup lands on the button while a passage may still stand selected in the body, and running the hooks
+    // again re-seeded the quote chip and re-fetched the file for its label on every step of the text size (review
+    // 2026-09-07, round 1). The gate is the control under the lift, not the bar: a drag that starts in the body and
+    // is released over the bar's path or its padding (the overshoot when selecting back to a file's first line) is a
+    // selection like any other and settles (round 2: the round-1 guard read the whole bar and swallowed it, so the
+    // passage stood selected with no Comment button and no quote chip). The listener sits on the viewer root so a
+    // drag that ends over the aside or the margins settles too.
+    const at = ev.target as Element | null;
+    if (at && bar.contains(at) && typeof at.closest === "function" && at.closest("button, a")) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
     // surface; the SVG SOURCE view is a real text view and quotes like any other (renderBody's
     // media gate, same rule).
@@ -1917,6 +1939,28 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     img.setAttribute("data-fv-src", src);
     img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
   });
+}
+
+// ── a selection across a repaint (fireRenderedKeepingSelection): the two ends as character offsets into the body's text ──
+/** A point (node, offset) as a character offset into root's text: the data of root's text nodes in document order up to
+ *  the point (a Range's toString), the count the panel's re-wrapping of its marks leaves unchanged. null when the point
+ *  lies outside root. */
+function textOffset(root: Node, node: Node, offset: number): number | null {
+  if (!root.contains(node)) return null;
+  const r = document.createRange();
+  r.setStart(root, 0); r.setEnd(node, offset);
+  return r.toString().length;
+}
+/** The point at character offset n of root's text, in the text nodes root holds NOW: inside the text node that reaches n
+ *  (a point between two nodes lands at the end of the earlier one), root's end when n lies past its text. */
+function textPoint(root: Node, n: number): [Node, number] {
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let seen = 0; let last: Text | null = null;
+  for (let t = w.nextNode() as Text | null; t; t = w.nextNode() as Text | null) {
+    if (seen + t.data.length >= n) return [t, n - seen];
+    seen += t.data.length; last = t;
+  }
+  return last ? [last, last.data.length] : [root, root.childNodes.length];
 }
 
 // The media body's "shown" moment, for the seam's onRendered (Slice 3: the region overlay sizes itself against

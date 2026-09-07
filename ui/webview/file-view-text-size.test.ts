@@ -562,7 +562,15 @@ test("a press on the title bar settles no selection: with a passage selected in 
   assert.equal(hooked, 2, "a drag that ends over the viewer's margins or the aside still settles: the listener stays on the viewer root");
   md.dispatchEvent(new Ev("touchend"));
   assert.equal(hooked, 3, "the phone's lift too");
-  assert.match(VIEW, /const onSelect = \(ev: Event\) => \{\n\s*if \(editing\) return;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const at = ev\.target as Node \| null;\n\s*if \(at && bar\.contains\(at\)\) return;/, "the gate reads the event's target against the bar");
+  // the overshoot (round 2): a drag that starts in the body and is released over the bar's path, or its padding, is a
+  // selection like any other; the round-1 guard read the whole bar and swallowed it (no Comment button, no chip)
+  o.wrap.querySelector(".fileview-name")!.dispatchEvent(new Ev("mouseup"));
+  assert.equal(hooked, 4, "released over the bar's path, the drag settles: the gate is the control under the lift, not the bar");
+  o.wrap.querySelector(".fileview-dir")!.dispatchEvent(new Ev("mouseup"));
+  assert.equal(hooked, 5, "...the directory link is a span, not a control");
+  o.wrap.querySelector(".fileview-bar")!.dispatchEvent(new Ev("mouseup"));
+  assert.equal(hooked, 6, "...and the bar's own padding");
+  assert.match(VIEW, /const onSelect = \(ev: Event\) => \{\n\s*if \(editing\) return;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*const at = ev\.target as Element \| null;\n\s*if \(at && bar\.contains\(at\) && typeof at\.closest === "function" && at\.closest\("button, a"\)\) return;/, "the gate: a control (a button, the GitHub anchor) inside the bar");
 });
 
 // ── the re-measure: every reflow of a text view fires the seam's onRendered ────────────────────────
@@ -584,6 +592,11 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.float\.hidden = true; [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
   assert.match(VIEW, /onRendered\(cb: \(\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
+  // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:
+  // a selection over a highlight lost the end inside the mark); the body-replacing paints keep nothing
+  assert.equal((VIEW.match(/if \(textShowing\(\)\) fireRenderedKeepingSelection\(\);/g) || []).length, 2, "the step and the width's frame");
+  assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
+  assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
 });
 
 test("the body's width: a ResizeObserver on the body fires onRendered once per animation frame when the width changed; not for its first report, a same-width report, a width back where it was, or a media body; it leaves with the viewer", async (t) => {
@@ -691,10 +704,15 @@ test("both sheets: the title bar wraps and the action row shrinks and wraps to t
     // control's three buttons joined the row (.fileview is overflow: hidden); the pane variant had wrapped already
     const bar = decls(ruleOf(css, ".fileview-bar {"));
     assert.ok(bar.includes("flex-wrap: wrap") && bar.includes("gap: 6px 10px"), name + ": the bar wraps, 6px between its lines");
+    // the wrap is the BAR's (round 2): the Files pane's Recent rows wear .fileview-name and the file browser's action row
+    // .fileview-acts outside any bar, and the base rules keep the plain flex they had before the control
+    assert.deepEqual(decls(ruleOf(css, ".fileview-bar .fileview-name {")), ["flex: 1 1 0", "min-width: 12em"], name + ": in the bar the path keeps 12em and takes the rest of a wide bar");
     const nm = decls(ruleOf(css, ".fileview-name {"));
-    assert.ok(nm.includes("flex: 1 1 0") && nm.includes("min-width: 12em"), name + ": the path keeps 12em and takes the rest of a wide bar");
-    const acts = decls(ruleOf(css, ".fileview-acts {"));
-    for (const d of ["flex: 0 1 auto", "min-width: 0", "margin-left: auto", "flex-wrap: wrap", "justify-content: flex-end"]) assert.ok(acts.includes(d), name + ": the action row " + d);
+    assert.ok(nm.includes("flex: 1 1 auto") && nm.includes("min-width: 0"), name + ": the class alone shrinks freely (a Recent row in a 200px pane)");
+    const barActs = decls(ruleOf(css, ".fileview-bar .fileview-acts {"));
+    for (const d of ["flex: 0 1 auto", "min-width: 0", "margin-left: auto", "flex-wrap: wrap", "justify-content: flex-end"]) assert.ok(barActs.includes(d), name + ": in the bar the action row " + d);
+    assert.deepEqual(decls(ruleOf(css, ".fileview-acts {")), ["flex: 0 0 auto", "display: flex", "align-items: center", "gap: 6px"], name + ": the class alone is one rigid row (the browser's bar never wraps)");
+    assert.ok(!decls(ruleOf(css, ".fb-bar {")).some((d) => d.startsWith("flex-wrap")), name + ": .fb-bar has no wrap of its own");
     // one disabled dress for every bar button: the GitHub unit's no-link state (disabled) and the control's ends (aria-disabled)
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {')), ["opacity: 0.55", "cursor: default"], name + ": dimmed, default cursor");
     assert.deepEqual(decls(ruleOf(css, '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {')), ["border-color: var(--card-border)", "color: var(--fg)", "background: transparent"], name + ": the hover is inert (the rest colours, not the accent)");
@@ -705,7 +723,7 @@ test("both sheets: the title bar wraps and the action row shrinks and wraps to t
     assert.deepEqual(decls(ruleOf(css, ".fileview-size-reset.fileview-size-default {")), ["visibility: hidden"], name + ": the empty slot keeps its box and leaves the tab order");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-bar {", ".fileview-name {", ".fileview-acts {", ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {"]) assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly");
+  for (const head of [".fileview-bar {", ".fileview-name {", ".fileview-acts {", ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {", ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {"]) assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly");
   const pane = web("files-pane.css").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.doesNotMatch(pane, /\.fileview-bar|\.fileview-acts|\.fileview-name/, "the pane sheet adds nothing to the bar: the wrap is the base rules' (browse-route.test.ts measures the pane at 320 and 360px)");
 });
@@ -807,6 +825,66 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
   });
 });
 
+/** The two surfaces that wear the bar's classes OUTSIDE a bar, as their modules build them: the file browser's bar
+ *  (file-browse.ts: fb-bar > fb-crumbs + fileview-acts > [Hidden, close]) under a deep crumb trail, in each document's
+ *  sheets; and, in the pane document, the Files pane's Recent row (files.ts: fs-row > fileview-name + fileview-sess). */
+const CRUMBS = ["/", "repo", "notes-api", "services", "api", "internal", "handlers", "v2", "tests", "fixtures", "golden"];
+const OUTSIDE_PAGE = (mode: "pane" | "chat" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
+<body class="filebrowse-open${mode === "pane" ? " fileview-pane" : ""}"><div class="filebrowse" id="romp-filebrowse"><div class="fb-bar"><div class="fb-crumbs" id="fb-crumbs">${CRUMBS.map((c, i) => (i ? '<span class="fb-crumb-sep">/</span>' : "") + '<span class="fb-crumb">' + c + "</span>").join("")}</div><div class="fileview-acts"><button class="fileview-btn" id="hid">Hidden</button><button class="fileview-btn fileview-close" id="close">✕</button></div></div><div class="fb-list"></div></div>
+${mode === "pane" ? '<div id="files-empty"><div class="fs-recent"><div class="fs-row" id="row"><div class="fileview-name"><span class="fileview-dir">/repo/notes-api/services/api/docs/</span><span class="fileview-base">report.md</span></div><span class="fileview-sess" id="sess">web</span></div></div></div>' : ""}</body></html>`;
+
+test("in a browser: the file browser's bar stays one line at 320, 360, 480 and 1000px in every document, its two buttons holding their width while the crumb trail ellipsizes; the Files pane's Recent row keeps its session chip inside at 200, 240 and 320px", async (t) => {
+  // round 2: round 1's base rules reached both surfaces (Hidden and the close button stacked at 320-480px under a long
+  // trail; a 200px pane's Recent row overflowed under the name's 12em and pushed its chip past the row)
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["pane", "chat", "feed"] as const) {
+      const page = await browser.newPage({ viewport: { width: 1000, height: 600 } });
+      const errors: string[] = [];
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      await page.setContent(OUTSIDE_PAGE(mode));
+      const barOf = () => page.evaluate(() => {
+        const bar = document.querySelector(".fb-bar") as HTMLElement; const crumbs = document.getElementById("fb-crumbs")!; const acts = document.querySelector(".fb-bar .fileview-acts") as HTMLElement;
+        const hid = document.getElementById("hid")!.getBoundingClientRect(); const close = document.getElementById("close")!.getBoundingClientRect();
+        return { barH: bar.getBoundingClientRect().height, hidTop: hid.top, closeTop: close.top, closeLeft: close.left, closeRight: close.right, acts: acts.getBoundingClientRect().width,
+          crumbsClient: crumbs.clientWidth, crumbsScroll: crumbs.scrollWidth, barOver: bar.scrollWidth - bar.clientWidth, wrap: getComputedStyle(acts).flexWrap, win: innerWidth };
+      });
+      const wide = await barOf();
+      assert.equal(wide.win, 1000);
+      assert.equal(wide.hidTop, wide.closeTop, mode + " @1000: Hidden and the close button share a line");
+      for (const w of [480, 360, 320]) {
+        await page.setViewportSize({ width: w, height: 600 });
+        const m = await barOf();
+        const cell = mode + " @" + w;
+        assert.equal(m.hidTop, m.closeTop, cell + ": Hidden and the close button share a line");
+        near(m.barH, wide.barH, cell + ": the bar is the height it has at 1000px (one line, not two)");
+        near(m.acts, wide.acts, cell + ": the action row holds its width");
+        assert.equal(m.wrap, "nowrap", cell + ": the row does not wrap");
+        assert.ok(m.closeLeft >= 0 && m.closeRight <= w + 0.5, cell + `: the close button lies inside the pane: x ${m.closeLeft}-${m.closeRight}`);
+        assert.ok(m.crumbsScroll > m.crumbsClient, cell + ": the crumb trail is what gives up room, ellipsized (" + m.crumbsScroll + " in " + m.crumbsClient + ")");
+        assert.equal(m.barOver, 0, cell + ": the bar overflows nothing");
+      }
+      if (mode === "pane") {
+        for (const w of [320, 240, 200]) {
+          await page.setViewportSize({ width: w, height: 600 });
+          const r = await page.evaluate(() => {
+            const row = document.getElementById("row")!; const rr = row.getBoundingClientRect(); const sess = document.getElementById("sess")!.getBoundingClientRect();
+            const name = row.querySelector(".fileview-name") as HTMLElement;
+            return { rowOver: row.scrollWidth - row.clientWidth, rowLeft: rr.left, rowRight: rr.right, sessLeft: sess.left, sessRight: sess.right,
+              nameMin: getComputedStyle(name).minWidth, base: (name.querySelector(".fileview-base") as HTMLElement).getBoundingClientRect().width };
+          });
+          const cell = "pane, the Recent row @" + w;
+          assert.equal(r.rowOver, 0, cell + ": the row overflows nothing");
+          assert.ok(r.sessLeft >= r.rowLeft - 0.5 && r.sessRight <= r.rowRight + 0.5, cell + `: the session chip lies inside the row: x ${r.sessLeft}-${r.sessRight} in ${r.rowLeft}-${r.rowRight}`);
+          assert.equal(r.nameMin, "0px", cell + ": the name shrinks freely, no 12em floor outside the bar");
+          assert.ok(r.base > 40, cell + ": the filename keeps its width (" + r.base + "): only the directory gives up room");
+        }
+      }
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
+    }
+  });
+});
+
 // ── the real module in a page ──────────────────────────────────────────────────────────────────────
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 let viewerBundle: string | null = null;
@@ -814,7 +892,7 @@ function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, closeFileView, registerFileViewAction } from "./file-view";', resolveDir: UI, loader: "ts", sourcefile: "text-size-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, closeFileView, registerFileViewAction } from "./file-view"; export { paintRendered } from "./anchor-map";', resolveDir: UI, loader: "ts", sourcefile: "text-size-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.resolve(process.cwd(), "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -828,7 +906,9 @@ const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
  *  registered actions standing in for Comments and the GitHub unit (both mount once the kernel answers; the row is measured
- *  with them, its widest ordinary form). The probe action counts the seam's paints and selection hooks. */
+ *  with them, its widest ordinary form). The probe action counts the seam's paints and selection hooks. Opened with ?hl=1,
+ *  a third action paints a comment highlight over the first paragraph the panel's way (file-comments.ts paintAll: every
+ *  onRendered unwraps the marks, normalizes the text and re-wraps them through the real painter). */
 const REAL_PAGE = (mode: "chat" | "feed" | "pane") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
 window.__docs = ${JSON.stringify({ [REPORT]: README })};
@@ -851,14 +931,26 @@ FV.registerFileViewAction({ id: "gh", mount: function () {
   var b = document.createElement("button"); b.className = "fileview-btn"; b.type = "button"; b.textContent = "GitHub"; b.disabled = true;
   var why = document.createElement("span"); why.className = "fileview-gh-why"; why.textContent = "not committed yet";
   s.appendChild(b); s.appendChild(why); return s; } });
+window.__hl = location.search.indexOf("hl=1") >= 0; window.__marks = 0;
+FV.registerFileViewAction({ id: "marks", mount: function (ctx) {
+  window.__repaintMarks = function () {
+    var body = ctx.body(); var src = ctx.text(); var root = body.querySelector(".fileview-md");
+    if (src === null || !root) return 0;
+    Array.prototype.slice.call(body.querySelectorAll(".fc-hl")).forEach(function (n) { var p = n.parentNode; while (n.firstChild) p.insertBefore(n.firstChild, n); p.removeChild(n); p.normalize(); });
+    var at = src.indexOf("lorem ipsum");
+    var out = FV.paintRendered(root, src, { start: at, end: at + 60 }, "fc-hl", { act: "fcopen", id: "c1" });
+    return out ? out.length : 0;
+  };
+  if (window.__hl) ctx.onRendered(function () { window.__marks = window.__repaintMarks(); });
+  return null; } });
 </script></body></html>`;
 type Real = { page: any; errors: string[] };
-async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: number, size?: number): Promise<Real> {
+async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: number, size?: number, hl = false): Promise<Real> {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: REAL_PAGE(mode) }));
-  await page.goto(ORIGIN + "/");
+  await page.goto(ORIGIN + (hl ? "/?hl=1" : "/"));
   if (size !== undefined) await page.evaluate((s: number) => { localStorage.setItem("romp:fileviewTextSize", String(s)); }, size);
   await page.evaluate((p: string) => { (window as any).FV.openFileView(p, null); }, REPORT);
   await page.waitForFunction(() => !!document.querySelector(".fileview-md > pre"), null, { timeout: 10000 });
@@ -1011,6 +1103,81 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       const s2 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
       assert.equal(await sizeOf(page), "80", mode + ": the step happened");
       assert.equal(s2.sels, 1, mode + ": the press on A+ ran no hook (no re-seed, no re-fetch)"); assert.ok(s2.chars > 0, mode + ": the selection stands");
+      // the overshoot (round 2): a drag that starts in the body and is released over the bar's path (selecting back to the
+      // file's first line) settles like any other; the round-1 guard read the whole bar and swallowed it
+      // the standing selection goes first: a mousedown on selected text starts a text drag-and-drop, not a selection
+      await page.evaluate(() => { getSelection()!.removeAllRanges(); document.addEventListener("mouseup", (e) => { (window as any).__lastUp = (e.target as Element).className; }, true); });
+      const p2 = await rectOf(page, ".fileview-md > p"); const nameBox = await rectOf(page, ".fileview-name");
+      await page.mouse.move(p2.left + 4, p2.top + 8); await page.mouse.down(); await page.mouse.move(nameBox.left + 30, (nameBox.top + nameBox.bottom) / 2, { steps: 6 }); await page.mouse.up();
+      const s3 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length, lastUp: (window as any).__lastUp as string, anchorInBody: !!document.querySelector(".fileview-body")!.contains(getSelection()!.anchorNode) }));
+      assert.match(s3.lastUp, /fileview-(dir|base|name)/, mode + ": the lift landed on the bar's path: " + s3.lastUp);
+      assert.ok(s3.chars > 0 && s3.anchorInBody, mode + ": a passage anchored in the body is selected (" + s3.chars + " chars)");
+      assert.equal(s3.sels, 2, mode + ": released over the bar's path, the drag settles: the hooks ran");
+      await page.mouse.click(up.left + 6, up.top + 6);
+      const s4 = await page.evaluate(() => ({ sels: (window as any).__sels, lastUp: (window as any).__lastUp as string }));
+      assert.equal(await sizeOf(page), "90", mode + ": A+ stepped again"); assert.match(s4.lastUp, /fileview-btn/);
+      assert.equal(s4.sels, 2, mode + ": ...and the press on the control ran no hook");
+      assert.deepEqual(errors, [], mode + ": no script error");
+      await page.close();
+    }
+  });
+});
+
+test("in a browser, the real module: a selection overlapping a comment highlight survives a size step and a pane resize, forwards and backwards; the panel's repaint alone (unwrap, normalize, re-wrap) truncates it", async (t) => {
+  // round 2, against the base: file-comments.ts answers onRendered with paintAll, which re-wraps every highlight, and a
+  // selection with an end inside a mark lost that end with the mark's node (58 characters to 21 after one A+, 45 to 7
+  // after a 900 to 800px resize). The viewer keeps the selection's ends as text offsets across the pass.
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["pane", "feed"] as const) {
+      const { page, errors } = await openReal(browser, mode, 900, undefined, true);
+      assert.ok((await page.evaluate(() => (window as any).__marks as number)) >= 1, mode + ": the marks action painted a highlight over the first paragraph");
+      /** Select from 5 characters into the highlight's own text node to 30 characters into the text after it, or the reverse. */
+      const pick = (backwards: boolean) => page.evaluate((backwards: boolean) => {
+        const mark = document.querySelector(".fileview-md .fc-hl") as HTMLElement;
+        const inMark = mark.firstChild as Text; const after = mark.nextSibling as Text;
+        if (!inMark || inMark.nodeType !== 3 || !after || after.nodeType !== 3 || after.data.length < 40) throw new Error("the paragraph's shape around the mark: " + (inMark && inMark.nodeType) + " / " + (after && after.nodeType));
+        const sel = getSelection()!;
+        if (backwards) sel.setBaseAndExtent(after, 30, inMark, 5); else sel.setBaseAndExtent(inMark, 5, after, 30);
+        (window as any).__m0 = mark;
+        return sel.toString();
+      }, backwards);
+      const read = () => page.evaluate(() => {
+        const sel = getSelection()!; const m0 = (window as any).__m0 as Element; const a = sel.anchorNode; const f = sel.focusNode;
+        const back = !!a && !!f && (a === f ? sel.anchorOffset > sel.focusOffset : !!(a.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_PRECEDING));
+        return { text: sel.toString(), back, oldMarkGone: !m0.isConnected, marks: document.querySelectorAll(".fileview-md .fc-hl").length, paints: (window as any).__paints as number };
+      });
+      const text0 = await pick(false);
+      assert.ok(text0.length > 60 && text0.indexOf("lorem") >= 0, mode + ": a selection from inside the mark past its end: " + text0.length + " chars");
+      // the mechanism, bare: the marks action's own repaint (unwrap, normalize, re-wrap), with no viewer around it
+      await page.evaluate(() => { (window as any).__marks = (window as any).__repaintMarks(); });
+      const bare = await read();
+      assert.ok(bare.oldMarkGone && bare.marks >= 1, mode + ": the repaint replaced the mark");
+      assert.notEqual(bare.text, text0, mode + ": ...and the selection did not survive it on its own (" + bare.text.length + " of " + text0.length + " chars): the round-2 measurement, reproduced");
+      // the same repaint through the viewer's step: the selection stands, every character of it
+      assert.equal(await pick(false), text0);
+      let up = await rectOf(page, SEL.up);
+      await page.mouse.click(up.left + 6, up.top + 6);
+      assert.equal(await sizeOf(page), "115", mode + ": the step happened");
+      let r = await read();
+      assert.ok(r.oldMarkGone && r.marks >= 1, mode + ": the step's paint re-wrapped the highlight");
+      assert.equal(r.text, text0, mode + ": the selection over the highlight survives the step, the same " + text0.length + " characters");
+      assert.equal(r.back, false, mode + ": ...forwards, as made");
+      // the pane's width: the frame's repaint keeps it too
+      const paints0 = r.paints;
+      await page.evaluate(() => { (window as any).__m0 = document.querySelector(".fileview-md .fc-hl"); });
+      await page.setViewportSize({ width: 800, height: 900 });
+      await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 });
+      r = await read();
+      assert.ok(r.oldMarkGone && r.marks >= 1, mode + ": the resize's paint re-wrapped the highlight");
+      assert.equal(r.text, text0, mode + ": the selection survives the resize");
+      // backwards (the anchor after the focus, a drag made leftwards): the direction is kept across the step
+      assert.equal(await pick(true), text0);
+      up = await rectOf(page, SEL.up);
+      await page.mouse.click(up.left + 6, up.top + 6);
+      assert.equal(await sizeOf(page), "130");
+      r = await read();
+      assert.equal(r.text, text0, mode + ": a backwards selection survives the step too");
+      assert.equal(r.back, true, mode + ": ...with its direction kept (the anchor after the focus)");
       assert.deepEqual(errors, [], mode + ": no script error");
       await page.close();
     }
