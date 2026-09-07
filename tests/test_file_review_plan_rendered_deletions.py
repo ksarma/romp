@@ -13,6 +13,12 @@ The premise is read from the painter's source rather than hard-coded: if a delet
 in Rendered, the premise test fails first and the passage tests name what must change with it. Every
 mention of the older behaviour must sit in a paragraph that dates the follow-on, so a reader knows
 which statement is current. Synthetic: the repo's own text only.
+
+The premise pin reads the del branch, not its line breaks. Its first form required the point-painter call
+on the line after `if (c.kind === "del") {`, and the round-1 fix in the same commit put
+`const label = deletionLabel(c.oldText);` there, so the module shipped red (review finding, 2026-09-07).
+The pin now admits any statements inside the branch and still rejects a call outside it, and a self-check
+holds it to both on synthetic snippets.
 """
 import os
 import re
@@ -51,6 +57,12 @@ def _paragraphs(md):
     return [_flat(p) for p in re.split(r"\n\s*\n|\n(?=- )", md) if p.strip()]
 
 
+# The del branch of `paintChangesRendered` calls the point painter on `c.curFrom` with the `fc-del` class.
+# `[^}]*?` lets locals precede the call (the label, its styles) but stops at the brace that closes the branch,
+# so a call that moved outside the branch does not satisfy it.
+DEL_POINT_CALL = r'if \(c\.kind === "del"\) \{[^}]*?const p = paintRenderedPoint\(renderedRoot, source, c\.curFrom, "fc-del"'
+
+
 class ThePainterPlacesADeletionInRendered(unittest.TestCase):
     """The premise, read from `anchor-map.ts`: a `del` is painted as a point through the index map."""
 
@@ -64,12 +76,45 @@ class ThePainterPlacesADeletionInRendered(unittest.TestCase):
     def test_a_del_goes_through_paint_rendered_point(self):
         self._has(r"^export function paintRenderedPoint\(", "the point painter is gone; the plan's surface paragraph, "
                   "build note, Slice 2 line and Risks bullet all describe it")
-        self._has(r'if \(c\.kind === "del"\) \{\s*const p = paintRenderedPoint\(renderedRoot, source, c\.curFrom, "fc-del"',
-                  "paintChangesRendered no longer paints a deletion as the point")
+        self._has(DEL_POINT_CALL, "paintChangesRendered no longer paints a deletion as the point")
 
     def test_a_deletion_the_map_refuses_is_reported_unpainted(self):
         # the card-only case the plan's Risks bullet keeps: the point painter declines, the id lands in `unpainted`
         self._has(r"\(p \? painted : unpainted\)\.push\(c\.id\)", "a refused deletion must be reported unpainted")
+
+
+class ThePremisePinReadsTheBranchNotItsLineBreaks(unittest.TestCase):
+    """The pin holds on the branch's shape, not on which line the call sits: a local declared before the call is
+    fine, a call after the branch closes is not. Synthetic snippets, not the painter's source."""
+
+    def test_a_local_before_the_call_matches(self):
+        # the shape that shipped red under the first pin: the label is computed, then the point is painted
+        snippet = ('    if (c.kind === "del") {\n'
+                   '      const label = deletionLabel(c.oldText);\n'
+                   '      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, label, styles);\n'
+                   '      (p ? painted : unpainted).push(c.id);\n'
+                   '      continue;\n'
+                   '    }\n')
+        self.assertTrue(re.search(DEL_POINT_CALL, snippet, re.M))
+
+    def test_the_call_on_the_next_line_matches(self):
+        snippet = ('    if (c.kind === "del") {\n'
+                   '      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, label, styles);\n')
+        self.assertTrue(re.search(DEL_POINT_CALL, snippet, re.M))
+
+    def test_a_call_after_the_branch_closes_does_not_match(self):
+        # a del that is only reported unpainted, with the point painter reached by some other kind: not the premise
+        snippet = ('    if (c.kind === "del") {\n'
+                   '      unpainted.push(c.id);\n'
+                   '      continue;\n'
+                   '    }\n'
+                   '    const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, label, styles);\n')
+        self.assertIsNone(re.search(DEL_POINT_CALL, snippet, re.M))
+
+    def test_a_del_branch_that_paints_another_class_does_not_match(self):
+        snippet = ('    if (c.kind === "del") {\n'
+                   '      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-ins", data, label, styles);\n')
+        self.assertIsNone(re.search(DEL_POINT_CALL, snippet, re.M))
 
 
 class TheRisksBulletMatchesThePainter(unittest.TestCase):

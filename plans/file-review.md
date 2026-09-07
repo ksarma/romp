@@ -969,7 +969,12 @@ feed footer). Off, no change mark is painted in either view, comment highlights 
 every change card is plain (no "not shown" tag, since nothing is shown by choice) and offers Reveal. A
 flip repaints from the status already held, with no request; a flip in another pane or tab reaches an
 open panel through the settings signal. The sheets gained no rule: the point is the same inline span,
-and the label takes the block's font and white-space.
+and the label takes the block's font. Its white-space is the block's when the label has a visible
+character, which folds a multi-line label onto its line. A label of spaces or tabs alone (a removed
+space beside one that stayed, a substitution of whitespace) carries the Raw rows' `white-space:
+pre-wrap` as an inline style (`renderedPointStyles` in `anchor-map.ts`): under the block's normal
+white-space such a label collapsed to a 0px point with no struck mark and nothing to hover, while the
+painter reported the change shown (the review, 2026-09-07).
 
 ### Slice 3: region comments on images
 
@@ -1366,6 +1371,34 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `delegate()` root, string mtime comparison, no client-computed sidecar path, keyed expand
   state), pure tests for the card model, the Raw and Rendered mapping walks over the fixtures
   named in the acceptance criteria, and the message builder against the kernel's text.
+- The inline-display follow-on (2026-09-07), in webview tests beside the Slice 2 suites:
+  `anchor-map.test.ts` gains the Rendered change marks and the deletion points' placement (before
+  the word the offset is on, against a word the deletion followed, a paragraph's end, the file's
+  end, a list item, a blockquote, the capped label) and the blocks the map refuses (a code fence,
+  a table, an HTML block, a blank line between blocks, a nested code block's inside);
+  `anchor-map-rendered-points.test.ts` pins a table nested in a list item as a hole with the
+  table's own extent, the block that begins at an offset holding the point where one block ends
+  as the next begins, and the `white-space: pre-wrap` a label of spaces or tabs alone carries;
+  `anchor-map-whitespace-point-browser.test.ts` and `file-comments-rendered-point-browser.test.ts`
+  measure the points under the real sheets in headless Chromium and Firefox (skipped where
+  playwright or an engine is missing): a removed space or tab has width and takes the pointer, a
+  short label adds no line, a long one wraps with the prose, the selection never carries the
+  struck text, and unpaint restores the markup; `file-comments-changes-review.test.ts`'s Rendered
+  half now expects the struck point and a plain card; `file-comments-inline-toggle.test.ts`
+  drives Show changes inline as a panel: the ON default with nothing written until a flip, the
+  deletion and substitution points and their cards, off with no status ask and the comment
+  highlights kept, the store's `changesInline` read on the next open and a corrupt store as the
+  default, the settings-signal and storage-event repaint, and the source pins (the delegate
+  action, the header's order, the key and default, the listener's install);
+  `file-comments-inline-review.test.ts`: a change mark inside the author's link opens its card
+  and opens no tab, by click and by Enter and under the chat pane's capture-phase link handler,
+  the toggle withheld while the editor holds the body, and the generic "not shown" title on a
+  deletion inside a code fence; `file-comments-reveal-title.test.ts`: Reveal's title with the
+  marks off, in both views, with and without a line number.
+  `tests/test_file_review_plan_rendered_deletions.py` holds this plan's Rendered-deletion
+  passages (the surface paragraph, the Slice 2 line, the Risks bullet, the not-in-v1 list) to the
+  painter's source, and `tests/test_file_review_plan_inline_display.py` holds the follow-on
+  note's white-space clause to `renderedPointStyles` and this bullet's file names to the tree.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its

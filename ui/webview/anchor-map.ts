@@ -1209,25 +1209,61 @@ function makePoint(doc: DElement["ownerDocument"], className: string, data: Reco
   return m;
 }
 
-/** Insert `m` right after text node `t`. */
-function insertAfterText(t: DText, m: DElement): void {
-  const parent = t.parentNode as DElement;
+// ── where a point at a mark's boundary goes ─────────────────────────────────────────────────────────
+//
+// A mark's extent is its text, so a point at either end of a painter's mark — a change's `fc-ins`, a
+// comment's `fc-hl`, the composer's `fc-presel` — is not in it: a deletion right after an insertion sits
+// after the insertion's mark, as its sibling, and one right before it sits before the mark; a substitution
+// whose tint begins a comment highlight has its point before the highlight. This holds in both views and
+// whichever mark was painted first, however the marks nest. Without it the placement followed the paint
+// order: with the insertion painted first, the "after" position was the last text node INSIDE its mark,
+// and the point became the mark's last child, so in Rendered the struck old text wore the insertion's tint
+// and author underline as if it were part of the inserted run, while Raw, whose insertPointAt puts the
+// same offset before the NEXT text node, showed it after the tint (the review, 2026-09-07); at a mark's
+// start, and at a row's end in Raw, the point nested or not by the order the changes came in. The
+// renderer's own inline elements are left alone: a point after the last word of a `<strong>` stays in it.
+//
+// Points at one offset keep the order they were painted in — a later point goes after the points already
+// there — as Raw places a later point before the next text node, after the earlier ones.
+
+/** The painters' own wrappers, which a point climbs out of at their edges. */
+const isPaintMark = (n: DNode): boolean => hasClass(n, "fc-ins") || hasClass(n, "fc-hl") || hasClass(n, "fc-presel");
+const isPoint = (n: DNode): boolean => hasClass(n, "fc-del");
+const indexIn = (parent: DNode, n: DNode): number => {
   let i = 0;
-  while (i < parent.childNodes.length && parent.childNodes[i] !== t) i++;
-  parent.insertBefore(m, i + 1 < parent.childNodes.length ? parent.childNodes[i + 1] : null);
+  while (i < parent.childNodes.length && parent.childNodes[i] !== n) i++;
+  return i;
+};
+
+/** Insert `m` right after text node `t` — outside every painter's mark that ends with `t`, and after the
+ *  points already at that position. */
+function insertAfterText(t: DText, m: DElement): void {
+  let n: DNode = t;
+  while (n.parentNode && isPaintMark(n.parentNode) && n.parentNode.childNodes[n.parentNode.childNodes.length - 1] === n) n = n.parentNode;
+  const parent = n.parentNode as DElement;
+  let i = indexIn(parent, n) + 1;
+  while (i < parent.childNodes.length && isPoint(parent.childNodes[i])) i++;
+  parent.insertBefore(m, i < parent.childNodes.length ? parent.childNodes[i] : null);
+}
+
+/** Insert `m` right before node `n` (a text node, or a mark whose text begins at the offset) — outside every
+ *  painter's mark that begins with `n`, and so after the points already before it. */
+function insertBeforeNode(n: DNode, m: DElement): void {
+  while (n.parentNode && isPaintMark(n.parentNode) && n.parentNode.childNodes[0] === n) n = n.parentNode;
+  (n.parentNode as DElement).insertBefore(m, n);
 }
 
 /** Insert `m` at character `col` of the concatenated text of `nodes` (consecutive text nodes): before the
  *  node the column begins, inside it after a split, or right after the last node when the column is the
- *  text's end. False when there are no nodes to place it among. */
+ *  text's end — at a painter's mark's edge, outside the mark (insertBeforeNode / insertAfterText). False
+ *  when there are no nodes to place it among. */
 function insertPointAt(nodes: DText[], col: number, m: DElement): boolean {
   let cum = 0;
   for (const t of nodes) {
     const len = t.data.length;
     if (col < cum + len) {
-      const parent = t.parentNode as DElement;
-      if (col === cum) parent.insertBefore(m, t);
-      else parent.insertBefore(m, t.splitText(col - cum));
+      if (col === cum) insertBeforeNode(t, m);
+      else (t.parentNode as DElement).insertBefore(m, t.splitText(col - cum));
       return true;
     }
     cum += len;
@@ -1241,7 +1277,8 @@ function insertPointAt(nodes: DText[], col: number, m: DElement): boolean {
  * A zero-width marker element at source `offset` in the Raw view: inserted between the row's text nodes,
  * splitting one when the offset falls inside it, never adding a text node. The label is carried in
  * `data-fc-text` for the sheet's `::before` to draw. An offset on a line ending sits at the end of its
- * row; the end of the file sits at the end of the last row. Returns null when the rows do not match
+ * row; the end of the file sits at the end of the last row; at the edge of another change's mark the point
+ * sits outside the mark (the boundary rule above insertAfterText). Returns null when the rows do not match
  * `source` (nothing is trusted then) or the file has no rows.
  */
 export function paintRawPoint(codeRoot: Element, source: string, offset: number, className: string,
@@ -1316,8 +1353,9 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
  * The Rendered view's twin of paintRawPoint: the same zero-width element, placed in the rendered text at
  * the position the index map gives source `offset` (renderedSpot), splitting a text node when the offset
  * falls inside one and never adding a text node, so mapRenderedSelection and paintRendered read the body
- * as before. Returns null when the offset cannot be placed (a refused block, a hole, an offset between
- * blocks): the change stays unpainted and keeps its card.
+ * as before. At the edge of another change's mark the point sits outside the mark, as in Raw (the
+ * boundary rule above insertAfterText). Returns null when the offset cannot be placed (a refused block, a
+ * hole, an offset between blocks): the change stays unpainted and keeps its card.
  */
 export function paintRenderedPoint(renderedRoot: Element, source: string, offset: number, className: string,
                                    data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
@@ -1327,7 +1365,7 @@ export function paintRenderedPoint(renderedRoot: Element, source: string, offset
   const m = makePoint(root.ownerDocument, className, data, label, styles);
   const parent = spot.t.parentNode as DElement | null;
   if (!parent) return null;
-  if (spot.off <= 0) parent.insertBefore(m, spot.t);
+  if (spot.off <= 0) insertBeforeNode(spot.t, m);
   else if (spot.off >= spot.t.data.length) insertAfterText(spot.t, m);
   else parent.insertBefore(m, spot.t.splitText(spot.off));
   return m as unknown as Element;
@@ -1388,8 +1426,9 @@ function renderedPointStyles(label: string, styles: Record<string, string>): Rec
  * text (the source-offset path, the text-match fallback inside a refused block), class `fc-ins`, with the
  * same data attributes and styles as the Raw marks; a `del` as the Raw view's zero-width `span.fc-del`
  * point, placed through the index map (paintRenderedPoint) and labelled with the old text (deletionLabel);
- * a `sub` as that point immediately before its tint, wherever the tint was found, so the struck old text
- * and the new read together as they do in Raw. No chip: the plan gives the author chip to the Raw view. A
+ * a `sub` as that point immediately before its tint, wherever the tint was found (and before a highlight the
+ * tint begins: the boundary rule above insertAfterText), so the struck old text and the new read together as
+ * they do in Raw. No chip: the plan gives the author chip to the Raw view. A
  * point whose label has no visible character carries the Raw rows' white-space (renderedPointStyles), so a
  * removed space is a struck space here too and not a 0px point the block's white-space collapsed.
  * Returns which ids got paint and which did not — a deletion whose offset the map cannot place (a refused
@@ -1415,9 +1454,8 @@ export function paintChangesRendered(renderedRoot: Element, source: string, chan
     for (const m of marks) applyStyles(m as unknown as DElement, styles);
     if (c.kind === "sub") {
       const first = marks[0] as unknown as DElement;
-      const parent = first.parentNode as DElement | null;
       const label = deletionLabel(c.oldText);
-      if (parent) parent.insertBefore(makePoint(first.ownerDocument, "fc-del", data, label, renderedPointStyles(label, styles)), first);
+      if (first.parentNode) insertBeforeNode(first, makePoint(first.ownerDocument, "fc-del", data, label, renderedPointStyles(label, styles)));
     }
     painted.push(c.id);
   }
