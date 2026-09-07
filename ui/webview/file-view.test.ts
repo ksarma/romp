@@ -147,7 +147,7 @@ test("a relayed viewFile OPENS the viewer in the feed document, session id intac
   // in-document viewer as relay-opened (a false viewFileClosed on its close) nor ack an open that
   // never happened (a false armed flag shell-side). So openFileView reports, and the branch gates
   // BOTH viaRelay and the viewFileOpened ack on a real open.
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null \}\): boolean \{/);
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   assert.match(openFn, /&& closeGuard && !closeGuard\(\)\) return false;/, "the veto is a reported verdict");
   assert.match(openFn, /\n  return true;\n\}/, "a completed open says so");
@@ -1002,9 +1002,9 @@ test("the title bar carries a session chip resolved from the sid — never inven
     "between the path and the actions");
   // the signatures every opener and the relay pin depend on are as they were, plus the optional todoId
   // provenance (plans/file-review.md Slice 0: the Waiting-on-you detail link) — every existing caller unchanged
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null \}\): boolean \{/);
   // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
-  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void\): void \{/);
+  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null\) => void \}\): void \{/);
 });
 
 test("both hosting documents register a resolver beside their initFileView boot", () => {

@@ -675,7 +675,7 @@ test("rawTarget's fallbacks: a rawRange the source no longer holds gives way to 
 
 test("the registry entry: exported by file-comments.ts, registered in file-view.ts, with no runtime import cycle", () => {
   assert.match(SRC, /export const fileCommentsAction: FileViewAction = \{\n  id: "file-comments",/);
-  assert.match(VIEW, /import \{ fileCommentsAction \} from "\.\/file-comments";/);
+  assert.match(VIEW, /import \{ fileCommentsAction, panelMark \} from "\.\/file-comments";/);   // panelMark: the body's link delegate yields to a painted mark
   assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);\n(?:\/\/[^\n]*\n)*registerFileViewAction\(fileCommentsAction\);/, "second entry, after the GitHub link");
   assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /registerFileViewAction/, "registered by the viewer, not at this module's top level");
   const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];

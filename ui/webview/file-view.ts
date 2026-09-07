@@ -22,7 +22,8 @@ import { fileUrl } from "./preview";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
-import { fileCommentsAction } from "./file-comments";
+import { fileCommentsAction, panelMark } from "./file-comments";
+import { linkifyFileText, linkMarkdownAnchors, URL_LINK_CLASS } from "./file-view-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -148,6 +149,12 @@ export function hostStub(sid: string): FileViewIdentity | null {
   const host = hostOf(sid);
   return { name: (host ? host + ":" : "") + bare.slice(0, 8), color: null };
 }
+// Where a FILE LINK inside a shown file opens (file-view-links.ts marks them; the body's delegate in openFileView
+// reads the click): this document's own open when the host registered one (initFileView's `openFile`: the Files
+// pane's openHere, so the file enters its Recent list and names its session), else the shared viewer in place,
+// replacing the file that carried the link. The same document either way: the person is reading here.
+let openLinkedFile: (path: string, sid: string | null, line: number | null) => void =
+  (path, sid, line) => { openFileView(path, sid, { line }); };
 let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
@@ -481,7 +488,10 @@ export function closeFileView(): void {
  *  viewer, whose provenance the caller must not touch (initFileView's relay branch keys viaRelay
  *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
  *  survivor as relay-opened nor arm a restore for an open that never happened). */
-export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null }): boolean {
+// `opts.line`: a line the open should show (a `path:12` link in another file, file-view-links.ts): the code view
+// scrolls its row into view once the text lands; a markdown file opens in its Raw view for THIS open (the Rendered
+// view has no rows), without touching the saved preference.
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; line?: number | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -995,6 +1005,30 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   box.addEventListener("mouseup", onSelect);
   box.addEventListener("touchend", onSelect);   // the phone's selection settles on the lift, with no mouseup
 
+  // Links inside the file (file-view-links.ts): one listener on the body, which every paint keeps and only
+  // refills (click-safe, ui/CLAUDE.md). A path link opens the file through the host's opener, with this
+  // viewer's session (a relative path was already joined onto this file's directory at mark time; the kernel
+  // reads `~` and the session's machine). A URL anchor opens itself (target _blank) and is left to the browser;
+  // the chat's document-level opener takes it first there, the same way. Two clicks are not the link's: a
+  // click that ends a drag which selected text (the selection is still open at click time; a press on text
+  // collapses it first, so a plain click never sees one), which selects and navigates nowhere; and a click on
+  // a mark the comments panel painted over the link (a highlight, a change mark), which is the card's
+  // opening: the panel's own delegate on the row takes it, as render.ts yields to panelMark (the 2026-09-06
+  // precedent). Enter on a focused path link is its click (path-links.ts) and lands here too.
+  body.addEventListener("click", (ev) => {
+    const t = ev.target as Element | null;
+    const x = t && typeof t.closest === "function" ? t.closest('[data-act="openpath"], a.' + URL_LINK_CLASS) as HTMLElement | null : null;
+    if (!x || !body.contains(x) || panelMark(t)) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && box.contains(sel.anchorNode)) { ev.preventDefault(); return; }   // a drag-select ended on the link
+    if (x.dataset.act !== "openpath") return;                 // the URL anchor: the browser's own open
+    ev.preventDefault();
+    const p = x.dataset.path;
+    if (!p) return;
+    const ln = Number(x.dataset.line);
+    openLinkedFile(p, sid || null, ln > 0 ? ln : null);
+  });
+
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
   // is a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
   // mtime floor does the real safety work (agents edit these same trees — see _save_file).
@@ -1503,6 +1537,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //   the edit ends (exitEdit, refetchAfterEdit): the exit is the event, not a timer.
   let fetchSeq = 0;
   let refetchAfterEdit = false;
+  // The row for a 1-based line of the code view, scrolled to the middle (scrollToOffset's own gesture); `pendingLine`
+  // is the open's `line`, spent on the first text that lands. A reload keeps the reader's place and does not scroll.
+  const scrollToLine = (n: number) => {
+    const rows = body.querySelectorAll("code.hljs .fv-cl");
+    if (rows.length) (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+  };
+  let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
   const fetchFile = () => {
     const my = ++fetchSeq;
     type Verdict = { isText: boolean; mtimeNs: string; isImage: boolean; isPdf: boolean; isSvgImage: boolean };
@@ -1563,7 +1604,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         return;
       }
       text = t;
+      // a line the link named: the Raw view for this open (unsaved: the preference stays), then the row
+      if (pendingLine !== null && isMd && fmt.md === "rendered") fmt.md = "raw";
       renderBody();
+      if (pendingLine !== null) { scrollToLine(pendingLine); pendingLine = null; }
     }).catch((err) => {
       if (!document.getElementById("romp-fileview")) return;
       if (my !== fetchSeq) return;                              // the same guards as a landing: an older failure paints over nothing…
@@ -1662,6 +1706,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   if (wrapLines) {
     pre.classList.add("fileview-wrap");
     code.innerHTML = wrapNumberedHtml(hl !== null ? hl : escapeHtml(text));
+    linkifyFileText(code, path);   // URLs and paths in the text, on the DOM the highlight built (file-view-links.ts)
     pre.appendChild(code);
     wrap.appendChild(pre);
     return wrap;
@@ -1670,6 +1715,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   gutter.textContent = lines.map((_, i) => String(i + 1)).join("\n");
   gutter.setAttribute("aria-hidden", "true");
   if (hl !== null) code.innerHTML = hl; else code.textContent = text;
+  linkifyFileText(code, path);
   pre.appendChild(code);
   wrap.appendChild(gutter); wrap.appendChild(pre);
   return wrap;
@@ -1681,6 +1727,7 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
 // <img onerror> or a javascript: href in a README must never run in the dashboard.
 function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {
   const box = el("div", "fileview-md");
+  let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
   try {
     const dirty = marked.parse(text) as string;
     // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
@@ -1688,16 +1735,15 @@ function mdBlock(text: string, path: string, sid: string | null | undefined): HT
     box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
+    rendered = false;
   }
   // Figures: a relative src is re-pointed at the kernel, on the SANITIZED DOM (rewriteFigureSrcs, below) — after
   // DOMPurify, so it touches only the attributes the sanitizer let stand and never re-parses marked's HTML.
   rewriteFigureSrcs(box, path.slice(0, path.lastIndexOf("/") + 1), sid);
-  // Links open a NEW tab: the viewer lives inside the chat pane's document, and letting a README link
-  // navigate it away would silently eat the chat until a reload.
-  box.querySelectorAll("a[href]").forEach((a) => {
-    (a as HTMLAnchorElement).target = "_blank";
-    (a as HTMLAnchorElement).rel = "noopener";
-  });
+  // Links to the web open a NEW tab: the viewer lives inside the chat pane's document, and letting a README
+  // link navigate it away would silently eat the chat until a reload. A link whose target is a file relative
+  // to this one opens THAT file in the viewer instead (file-view-links.ts linkMarkdownAnchors).
+  if (rendered) linkMarkdownAnchors(box, path);
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
   // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.
   box.querySelectorAll("pre code").forEach((node) => {
@@ -1709,6 +1755,10 @@ function mdBlock(text: string, path: string, sid: string | null | undefined): HT
       codeEl.classList.add("hljs");
     } catch { /* leave plain */ }
   });
+  // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
+  // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.
+  // The fallback's bare text is left bare: it is the content and nothing else, which is that branch's promise.
+  if (rendered) linkifyFileText(box, path);
   return box;
 }
 
@@ -1808,8 +1858,10 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
  *  owes the shell no pane restore, since the pane stays up). */
 export function initFileView(poster: (m: Record<string, unknown>) => void,
-                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void): void {
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown; todoId?: unknown }) => void,
+                             host?: { openFile?: (path: string, sid: string | null, line: number | null) => void }): void {
   post = poster;
+  if (host && host.openFile) openLinkedFile = host.openFile;   // a link inside a shown file opens through the host (the Files pane's Recent list)
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
