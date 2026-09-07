@@ -1,4 +1,4 @@
-// The reply's box changing CARDS under the person's hands (plans/file-review.md, "The composer follow-on (2026-09-07)", its
+// The reply's box changing CARDS while the person types in it (plans/file-review.md, "The composer follow-on (2026-09-07)", its
 // closing sentence; the review of that change). A reply's box stands in the card the list shows for its comment, and the
 // list can show the comment in another card mid-reply: a passage comment the session answers with a track-edit bound to it
 // moves onto the change's card, among the change cards at the top of the list; a hosted comment whose change is accepted —

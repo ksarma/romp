@@ -644,5 +644,5 @@ test("source: every kind change over a reply renders the cards (renderFrom); the
   assert.match(SRC, /if \(was && was\.kind === "reply" && held\) this\.focusAway\(was\);/, "closeComposer hands the keyboard on when no Reply is rendered");
   assert.match(SRC, /const back = this\.replyAway\(was\)\.back;\n\s*const row = back \? root\.querySelector\('\[data-act="' \+ back \+ '"\]'\) as HTMLElement \| null : null;\n\s*if \(row\) row\.focus\(\{ preventScroll: true \}\);\n\s*else this\.focusNear\(\{ act: "fcreply", id: was\.commentId, at: 0 \}\);/, "…to the fold row, else the nearest control");
   assert.match(SRC, /return isCoarsePointer\(\) \? el\("div", "fc-note fc-held", HOLD_WORDS \+ "\."\) : null;/, "the held head's line on a coarse pointer");
-  assert.doesNotMatch(SRC, /under the (person's )?hands/, "the render comment says what moved, literally");
+  for (const f of ["file-comments.ts", "file-comments-reply-keep.test.ts", "file-comments-reply-move.test.ts"]) assert.doesNotMatch(web(f), /under the (person's )?hands/, f + " says what moved, literally: the person was typing in the box");
 });
