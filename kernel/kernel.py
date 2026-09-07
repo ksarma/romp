@@ -5632,6 +5632,24 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
         _AUTO_NUDGE_TICK_LOCK.release()
 
 
+def _ws_act_now_tick():
+    """The setAutoNudge / setCompactSuggest arms' act-now pass on the WS handler thread — ONE wrap for
+    both (PR #943 review). The reader loop (Handler._ws) re-raises OSError as a socket failure and its
+    outer handler tears the connection down silently, so an OSError out of the pass head (the
+    session-listing fork, a store read) closed the dashboard's socket with no log line — since #846 for
+    setCompactSuggest, for setAutoNudge once #943 restored its tick. Catches Exception as the pusher's
+    wrap does, and that is safe HERE because the tick never writes to the delivering socket: its only
+    push is _push_soon(), a wake flag, so nothing caught is that socket's own failure (a tick that wrote
+    to the client would have to let its socket errors through). Skips the dead-wait sweep: the death
+    transition has ONE observer, the pusher's tick (see _auto_nudge_tick), and this thread racing its
+    prev-swap could spend a transition uncorroborated. Single-flight against the pusher's pass through
+    _AUTO_NUDGE_TICK_LOCK, inside the call."""
+    try:
+        _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+    except Exception:
+        sys.stderr.write("auto-nudge (ws act-now): %s\n" % traceback.format_exc())
+
+
 def _auto_nudge_pass(now, tmux, run_dead_wait):
     """The body of one pass — the walk, the sweeps, the push. Only _auto_nudge_tick calls it, under
     the single-flight guard (split out the way _pusher_cycle_jobs is from _pusher_cycle)."""
@@ -36226,23 +36244,20 @@ class Handler(BaseHTTPRequestHandler):
             if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
                 # turn-ON acts at once instead of waiting out the pusher's 0.5 s backstop; turning off
                 # has nothing to act on (the tick is a no-op when off, so this also spares the WS
-                # thread the listing fork). The tick is single-flight against the pusher's pass
-                # (_AUTO_NUDGE_TICK_LOCK) and skips the dead-wait sweep: the death transition has ONE
-                # observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing its
-                # prev-swap could spend a transition uncorroborated
+                # thread the listing fork). The single-flight rule, the dead-wait sweep skip and the
+                # try/except that keeps a failing tick from reading as a socket failure are all
+                # _ws_act_now_tick's; the stale reply below stays outside it (a real client write)
                 if msg["enabled"]:
-                    _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+                    _ws_act_now_tick()
             else:
                 _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
             # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
-            # real apply acts at once on turn-on (instead of waiting out the pusher's 0.5 s backstop;
-            # single-flight against its pass, _AUTO_NUDGE_TICK_LOCK) — a stood-down toggle is not
-            # new information — and the tick skips the dead-wait sweep: the death transition has
-            # ONE observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing
-            # its prev-swap could spend a transition uncorroborated
+            # real apply acts at once on turn-on (instead of waiting out the pusher's 0.5 s backstop)
+            # — a stood-down toggle is not new information — through the same wrap as setAutoNudge
+            # (_ws_act_now_tick: single-flight, no dead-wait sweep, a failure logged not raised)
             if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
-                _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+                _ws_act_now_tick()
             else:
                 _tell_stale_gesture(client, msg)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
