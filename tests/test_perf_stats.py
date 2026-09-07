@@ -134,11 +134,15 @@ class Collector(unittest.TestCase):
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
-                          "captions", "states_overlay", "thread_reg", "bg_tops"},
+                          "captions", "states_overlay", "thread_reg", "bg_tops",
+                          "feed_segs"},
                          "one block per memo the kernel keeps (plan D4)")
+        self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
+                         "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
+        self.assertEqual(snap["builds"]["feed"]["dirty"], 0)
         self.assertEqual(set(snap["memos"]["goals_snap"]),
-                         {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
-                         "the judge pass's goal-store memo: counters plus its occupancy")
+                         {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
+                         "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
         for k, v in snap["memos"]["goals_snap"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
@@ -181,6 +185,12 @@ class Collector(unittest.TestCase):
         for blk in ("captions", "states_overlay", "thread_reg"):
             for k, v in snap["memos"][blk].items():
                 self.assertIsInstance(v, int, "%s.%s" % (blk, k))
+        self.assertEqual(set(snap["memos"]["feed_segs"]),
+                         {"hit", "miss", "bypass_live", "bypass_degraded", "bypass_unkeyed", "bypass_unscoped",
+                          "evict", "entries"},
+                         "build_feed's per-session memo (round-4 plan P2-A): counters plus its occupancy")
+        for k, v in snap["memos"]["feed_segs"].items():
+            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["process"]), PROCESS_KEYS)
         self.assertGreater(snap["process"]["threads"], 0)
         self.assertGreaterEqual(snap["process"]["rss_kb"], 0)

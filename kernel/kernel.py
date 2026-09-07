@@ -346,7 +346,9 @@ class _PerfStats:
                                    caller, connect pushes on handler threads included, so their sum
                                    can exceed `push`
       builds                       chat / feed / timeline -> {cached, built, ms}: served from the
-                                   build cache vs rebuilt, and the rebuild time
+                                   build cache vs rebuilt, and the rebuild time; feed also carries
+                                   dirty, the rebuilds a kernel-side mutation forced past the view
+                                   signature (_mark_views_dirty)
       sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
                                    name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
                                    under "other"). A deduped frame was built and compared, not sent
@@ -406,9 +408,11 @@ class _PerfStats:
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs
                                    decoded, summed over passes), fail (versions that did not
                                    decode), evict (entries dropped for files gone from the
-                                   directory), punch (snapshot entries copied for a user gesture),
-                                   and the gauges entries / bytes (memoized paths and their summed
-                                   file size); lift_gate (the awaiting-lift job's per-session
+                                   directory), punch (sids whose snapshot entry was copied for a
+                                   user gesture, once per pass each), live / snap (_feed_goals_view serves: the live read through the
+                                   shared cache, or the pass snapshot), and the gauges entries /
+                                   bytes (memoized paths and their summed file size); lift_gate
+                                   (the awaiting-lift job's per-session
                                    inputs gate, see _lift_seen) -> skip / load (session-cycles
                                    that took no store read vs the ones that read it, the probe on
                                    the shared view), shared (probes the shared cache answered),
@@ -453,7 +457,15 @@ class _PerfStats:
                                    not memoized) / evict (sessions that left the alive set) and
                                    entries; thread_reg (_thread_reg, the SDK registry keyed like
                                    captions) -> hit / miss / fail / evict (the LRU bound or the pop
-                                   of an absent file's entry) and entries
+                                   of an absent file's entry) and entries;
+                                   feed_segs (build_feed's per-session memo of the seam maps, the
+                                   tree shape and the flattened goal trees, see _FeedSegs) -> hit /
+                                   miss / bypass_live (a live-merge copy) / bypass_degraded (a walk
+                                   that swallowed an exception) / bypass_unkeyed (a store key that
+                                   is a sentinel: a rewind hold, a failed punch, the shared cache
+                                   off, no store file) / bypass_unscoped (a build outside a pusher
+                                   cycle's names scope) / evict (entries dropped for sessions that
+                                   left the alive set), and the gauge entries
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -482,6 +494,7 @@ class _PerfStats:
             self.ring = collections.deque(maxlen=self.RING)
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
+            self.builds["feed"]["dirty"] = 0       # rebuilds a kernel-side mutation forced past the view signature
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0}
@@ -513,7 +526,7 @@ class _PerfStats:
         with self.lock:
             self.stages[name] = self.stages.get(name, 0.0) + dt * 1000.0
 
-    def build(self, kind, cached, dt=0.0):
+    def build(self, kind, cached, dt=0.0, dirty=False):
         with self.lock:
             b = self.builds[kind]
             if cached:
@@ -521,6 +534,8 @@ class _PerfStats:
             else:
                 b["built"] += 1
                 b["ms"] += dt * 1000.0
+                if dirty and "dirty" in b:
+                    b["dirty"] += 1
 
     def send(self, key, kind, nbytes):
         slot = key[0] if isinstance(key, tuple) else key
@@ -619,7 +634,8 @@ class _PerfStats:
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
                              ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
-                             ("thread_reg", _thread_reg_report)):
+                             ("thread_reg", _thread_reg_report),
+                             ("feed_segs", _feed_segs_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -25341,7 +25357,8 @@ _goals_snap_lock = threading.Lock()
 # (plan C1) when it lands.
 _goals_memo = [{}]                               # path → ((st_ino, st_mtime_ns, st_size), parsed store | _GOALS_MEMO_BAD)
 _GOALS_MEMO_BAD = object()                       # a file version that did not decode: no snapshot entry, no retry until it changes
-_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0}   # observability + tests (/perf memos)
+_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0,   # observability + tests (/perf memos)
+                     "live": 0, "snap": 0}           # _feed_goals_view serves: the live branch / the snapshot branch
 
 
 def _goals_memo_decode(data):
@@ -25453,18 +25470,57 @@ def _feed_goals(sid):
     ladder the judge already encodes (user > judges) applied to the view, and it is how a CLEAR has always
     behaved (cleared.jsonl is read live, outside the snapshot). Replay is idempotent, but rollup_status is
     not free, so a sid re-punches only when its mark MOVES — a second gesture in the same pass must land
-    too, which a plain already-done flag would have swallowed."""
+    too, which a plain already-done flag would have swallowed.
+
+    The store only; _feed_goals_view returns it with the key a memo can hold for it."""
+    return _feed_goals_view(sid)[0]
+
+
+def _feed_goals_view(sid):
+    """`(store, key)`: the store _feed_goals serves for `sid` and a KEY that stands for its content.
+
+    Two served stores with the same key (compared by identity, `is`) have equal content, so a consumer
+    that derives values from the store may keep them under the key (build_feed's per-session memo).
+    The key is the served object itself where that object's identity already implies its content, and a
+    fresh `object()` (equal to nothing, so every consumer misses) where it does not:
+    - LIVE branch (no pass in flight, or a sid the pass did not snapshot): the store is read through
+      jd.load_goals_shared, the shared read-only cache (round-4 plan P1; the plain jd.load_goals here
+      was the pusher's single largest raw_decode caller, re-parsing stores the timeline and the chat
+      already held in the cache). A FrozenStore from the cache is the key: the cache hands one object
+      per (store identity, journal identity, archive identity) AND compares the store's bytes on a hit,
+      so equal objects mean equal bytes, and a publish, a journal append or an archive move yields a new
+      object. Anything else the loader answers (the cache switched off after a write attempt, no store
+      file, an unreadable journal, an archive that moved under the fill) is a private object per call
+      with no identity guarantee: the key is a sentinel.
+    - SNAPSHOT branch: the pass's memoized decode is the key while nothing has been punched onto it.
+      Every user gesture recorded since the snapshot is replayed onto a FRESH private copy (one per
+      moved mark, never in place on an earlier copy), and that copy is the key once the replay
+      succeeded, so an object an earlier build derived from is never re-punched under its identity. A
+      punch that FAILED (the mark is newer than the snapshot and not recorded done) retries on the next
+      read onto another fresh copy; until it succeeds the key is a sentinel.
+    - A REWIND HOLD armed on the sid: _apply_rewind_hold serves a filtered view built per call, whose
+      content also depends on the transcript (the kept-chain lookup); the key is a sentinel for as long
+      as the hold stands.
+    build_feed is read-only on the store (tests/test_feed_goals_shared.py pins it): a write on the
+    shared object raises FrozenStoreError and switches the cache off, loudly (memos.goals_shared `off`).
+    Serve counters ride memos.goals_snap: `live` and `snap` count the branch taken, `punch` the copies."""
+    hold = _rewind_hold_get(sid)
     with _goals_snap_lock:
         snap = _goals_snap[0]
         if snap is not None and sid in snap:
+            _goals_memo_stats["snap"] += 1
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
+                # COPY-ON-PUNCH, a FRESH copy per gesture: the entry is the memo's object, shared with every
+                # later pass that finds the file unchanged, so the replay and rollup below land on a copy
+                # of it (the _apply_rewind_hold idiom) — and a second gesture in the same pass copies
+                # again instead of re-punching the first copy in place. The served object's identity is
+                # the key build_feed's per-session memo holds a session's rows under, so an object an
+                # earlier build saw must never change under it (review 2026-09-07: re-punching the first
+                # copy in place made the memo serve the pre-gesture rows for the rest of the pass). One
+                # json round trip per gesture; `punch` counts the sids copied, once per pass each.
+                store = snap[sid] = json.loads(json.dumps(store))
                 if sid not in _goals_snap_owned:
-                    # COPY-ON-PUNCH: the entry is the memo's object, shared with every later pass that
-                    # finds the file unchanged, so the replay and rollup below must land on a copy of it
-                    # (the _apply_rewind_hold idiom). Once per pass per sid: a second gesture in the
-                    # same pass punches the copy this one made.
-                    store = snap[sid] = json.loads(json.dumps(store))
                     _goals_snap_owned.add(sid)
                     _goals_memo_stats["punch"] += 1
                 try:
@@ -25475,9 +25531,14 @@ def _feed_goals(sid):
                     #                                    card for the whole pass (the user 2026-07-23)
                 except Exception:
                     sys.stderr.write("feed-goals: user-override replay: %s\n" % traceback.format_exc())
-            return _apply_rewind_hold(sid, store)      # a pending rewind's cards are hidden NOW (latched
-            #                                            at the gesture; archive lands at the branch-take)
-    return _apply_rewind_hold(sid, jd.load_goals(sid))   # no pass in flight → live read, outside the lock
+            settled = not (mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark)
+            key = store if (settled and not hold) else object()
+            return _apply_rewind_hold(sid, store), key   # a pending rewind's cards are hidden NOW (latched
+            #                                              at the gesture; archive lands at the branch-take)
+        _goals_memo_stats["live"] += 1
+    store = jd.load_goals_shared(sid)                    # no pass in flight → the shared read-only view, outside the lock
+    key = store if (isinstance(store, jd.FrozenStore) and not hold) else object()
+    return _apply_rewind_hold(sid, store), key
 
 # Delta-send (the user 2026-06-25, who wanted to stop re-sending what didn't change): the chat pusher used to send the
 # FULL events array (~8MB for a 34MB transcript) on every change, even when one event was appended. Keep the
@@ -31154,7 +31215,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
         text = pre + g if g else prompt[:140].strip()
     t = held.get("t", lt["t"])
     return {"itemId": "provisional:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -31190,7 +31251,7 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, 
     # the headline. The task list rides `awaiting` for the pill, so the headline needn't repeat every task.
     text = (why[:1].upper() + why[1:]) if why else "Waiting on a background command"
     return {"itemId": "awaiting:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -31256,7 +31317,7 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
     if not text:
         text = "Awaiting your input" if perm_state == "picker" else "Awaiting your approval"
     return {"itemId": "blocked:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": perm_state,
@@ -31288,7 +31349,7 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
     if len(todos) > 1:
         text += "  (+%d more)" % (len(todos) - 1)
     return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": newest, "live": live, "trgb": list(cm.age_rgb(now - newest, _colormap())),
+            "t": newest, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": "userTodos", "count": len(todos),
@@ -31608,6 +31669,366 @@ def _state_unknown_names(alive, tmux, working, awaiting):
     return out
 
 
+# ── build_feed's per-session memo (round-4 plan P2-A, 2026-09-07) ──────────────────────────────────
+# The per-session loop held 1306 of build_feed's 1362 pusher samples in the steady profile, and most
+# of that was spent recomputing values that are pure functions of the session's parse and its goal
+# store: the seam maps (the per-turn anchor walk: _segs_seam, _seg_anchors, _seg_last_text,
+# _atom_prose_chars, jd._prompt_anchor_uuid), the tree shape (children, the agent-open set, the
+# parked rows, the done/blocked/watermark closures) and each top goal's flattened tree. An idle
+# session's parse and store do not change between builds (31 sessions, 36 ticks: 0.78 transcript and
+# 0.39 store changes per 5 s), so those values are kept per session and reused while their inputs
+# hold. The memo may only return what the uncached computation would return NOW, so every input is
+# in the key or bypasses it:
+#   1. the PARSE: the _parse_cached object, by identity (held strongly, so `is` is exact); a build
+#      whose parse is a live-merge copy (_merge_live_atoms returned a new object) bypasses, counted
+#      bypass_live, because that object exists for this build only;
+#   2. the STORE: _feed_goals_view's key, by identity; the key IS the served store where its identity
+#      implies its content (the shared cache's FrozenStore; the pass snapshot's object, or the fresh
+#      copy a settled gesture replay minted — one copy per gesture, so a store an earlier build saw is
+#      never re-punched under the same identity), and a never-equal sentinel otherwise (a rewind hold,
+#      a failed punch that will retry, the shared cache switched off, no store file), which bypasses,
+#      counted bypass_unkeyed;
+#   3. the NAMES registry, by value (_names_key over the cycle's snapshot): flatten resolves the
+#      session's colour and every handoff row's recipient name and colour through it;
+#   4. who_working, by value: every row carries it;
+#   5. the session row's name and colour, by value (the row's name is not always the registry's:
+#      a live session outside the discover window, an SDK session with no transcript yet);
+#   6. the remembered warm anchors a cold row read (_node_anchor_last, global state a warm resolve
+#      writes and a cold resolve reads): every such read is recorded per node with the value read,
+#      and an entry whose recorded values no longer match misses; the warm resolves an entry made
+#      are re-applied when its tree is served, so the global state after a hit equals the state
+#      after a fresh build.
+# jd.CITE_MIN_CHARS and the helpers above are constants of the process. A walk that swallowed an
+# exception is computed for its build and never stored (bypass_degraded). A build outside a pusher
+# cycle's names scope (a gesture build on a WS thread) reads the memo but never fills it
+# (bypass_unscoped), so the pusher is the one writer of entries; get, store and evict run under one
+# lock and the build itself runs outside it. Entries for sessions that left the alive set are
+# dropped at the end of every build (evict). Trees are served as a fresh list of shared row dicts:
+# nothing in build_feed writes into a row (the serving fold's commit copies the row it re-parents
+# under), and the clock-derived tint is stamped onto copies at serialization (_stamp_trgb), so a
+# row is a fixed value while its inputs hold. Counters ride /perf under memos.feed_segs.
+_feed_segs_memo = {}                             # sid -> _FeedSegs
+_FEED_SEGS_LOCK = threading.Lock()               # get / store / evict, and the counters
+_feed_segs_stats = {"hit": 0, "miss": 0, "bypass_live": 0, "bypass_degraded": 0, "bypass_unkeyed": 0,
+                    "bypass_unscoped": 0, "evict": 0}
+
+
+def _feed_segs_bump(key, n=1):
+    with _FEED_SEGS_LOCK:
+        _feed_segs_stats[key] += n
+
+
+def _feed_segs_report():
+    """The memo's counters plus its occupancy, for /perf (memos.feed_segs)."""
+    with _FEED_SEGS_LOCK:
+        out = dict(_feed_segs_stats)
+        out["entries"] = len(_feed_segs_memo)
+    return out
+
+
+def _feed_segs_forget(alive):
+    """Drop every entry whose sid is not in `alive` (the build's alive set): a session leaving it is
+    the event that releases the parse and store its entry pins."""
+    with _FEED_SEGS_LOCK:
+        gone = [k for k in _feed_segs_memo if k not in alive]
+        for k in gone:
+            del _feed_segs_memo[k]
+        _feed_segs_stats["evict"] += len(gone)
+
+
+def _names_key(snap):
+    """A value key for a names snapshot ({sid: tab fields}): equal keys mean every registry entry
+    reads the same, so every name and colour the feed resolves through it is the same."""
+    return tuple(sorted((k, tuple(v)) for k, v in snap.items()))
+
+
+class _FeedSegs:
+    """One session's store-and-parse-derived feed values (see the memo note above): the seam maps,
+    the tree shape and its closures, and the flattened tree per top goal, computed on demand and kept.
+    `tree(nid)` serves a top's rows as a fresh list; the row dicts are shared and never written."""
+    __slots__ = ("ps", "store", "names_key", "who_working", "name", "color", "nodes",
+                 "seg_uuid", "seg_trig", "seg_best", "cite_uuids", "children", "agent_open", "parked_rows",
+                 "subtree", "closure_done", "fsubmax", "closure_blocked", "block_check_floor",
+                 "flatten", "trees", "anchor_deps", "degraded")
+
+    def __init__(self, ps, store, who_working, name, color, nodes, seg_uuid, seg_trig, seg_best, cite_uuids,
+                 children, agent_open, parked_rows, subtree, closure_done, fsubmax, closure_blocked,
+                 block_check_floor, flatten, degraded):
+        self.ps, self.store, self.names_key = ps, store, None
+        self.who_working, self.name, self.color, self.nodes = who_working, name, color, nodes
+        self.seg_uuid, self.seg_trig, self.seg_best, self.cite_uuids = seg_uuid, seg_trig, seg_best, cite_uuids
+        self.children, self.agent_open, self.parked_rows = children, agent_open, parked_rows
+        self.subtree, self.closure_done, self.fsubmax = subtree, closure_done, fsubmax
+        self.closure_blocked, self.block_check_floor, self.flatten = closure_blocked, block_check_floor, flatten
+        self.trees = {}                              # top nid -> (rows, the warm anchors the flatten recorded)
+        self.anchor_deps = {}                        # nid -> the remembered anchor a cold row read (None = none held)
+        self.degraded = degraded
+
+    def anchors_hold(self):
+        """True while every remembered anchor a cold row of this entry read still reads the same. The
+        dependency map is read as a snapshot taken under the memo lock: a concurrent build (a gesture
+        build on a handler thread beside the pusher's) may be filling another top's tree into it, and
+        iterating the live dict raised on the size change (review 2026-09-07)."""
+        with _FEED_SEGS_LOCK:
+            deps = list(self.anchor_deps.items())
+        return all(_node_anchor_last.get(nid) == held for nid, held in deps)
+
+    def tree(self, nid):
+        e = self.trees.get(nid)
+        if e is None:
+            rows, deps, writes = [], {}, {}
+            self.flatten(nid, rows, deps, writes, boundary=jd.review_boundary(self.nodes[nid]))
+            with _FEED_SEGS_LOCK:                    # the flatten ran on locals; publish them in one step
+                self.anchor_deps.update(deps)
+                e = self.trees.get(nid)
+                if e is None:                        # a concurrent fill of the same top published first:
+                    e = self.trees[nid] = (rows, writes)   # one object for every reader of it
+                rows, writes = e
+        else:
+            rows, writes = e
+            if writes:
+                _node_anchor_last.update(writes)   # what a fresh flatten would have remembered
+        return list(rows)
+
+
+def _feed_segs_build(fsid, name, color, ps, store, who_working):
+    """Compute one session's _FeedSegs from its parse and store (the code build_feed's loop ran per
+    session until 2026-09-07; see the memo note above for what may vary it)."""
+    nodes = store.get("nodes", {})
+    degraded = False
+    # Exact click-to-jump anchors: map each goal segment → the work/reply uuid — the SAME anchors the
+    # timeline/ledger already use — so a card click deep-links to the precise turn BY ID instead of the
+    # old time-nearest heuristic. _parse is cache-backed (cheap); reply uuid preferred (the readable
+    # assistant text). A missing entry → anchorUuid None → feed falls back to time. (the user 2026-06-17.)
+    # seg_uuid → the WORK anchor (reply/work assistant atom, for the mark/time zones); seg_trig → the
+    # PROMPT anchor (the segment's TRIGGER atom = the user's message that opened it, for the TITLE). A
+    # title is prompt-intent and must land on the USER turn — passing the trigger uuid (which the chat
+    # tags + the kind guard accepts as turn-user) lets it resolve BY ID instead of a kind-restricted
+    # nearest-time landing (the user 2026-06-17). (Both are emitted .turn[data-uuid]s in the chat.)
+    seg_uuid, seg_trig, seg_best, cite_uuids = {}, {}, {}, set()
+    try:
+        for turn in (ps["turns"] if ps else []):     # cached parse only; anchors fill in after _warm_fleet_bg
+            for seg in _segs_seam(turn, store):
+                w, r = _seg_anchors(seg["atoms"])
+                seg_uuid[_seg_key(seg["id"])] = r or _seg_jump(seg["atoms"])   # timestamp-invariant key; landable
+                #                                  anchors only — never a thinking-only uuid (SDK echo/real drift)
+                seg_trig[_seg_key(seg["id"])] = jd._prompt_anchor_uuid(seg)   # attachment-safe: a
+                #                                  title click must land on the USER message, never an
+                #                                  attachment record no chat event carries (2026-08-25)
+                _lu, _lsub = _seg_last_text(seg["atoms"])
+                seg_best[_seg_key(seg["id"])] = (_lu, _lsub, seg.get("t", 0))   # latest prose → summary deep-link fallback
+                for _a in seg["atoms"]:              # citable-uuid set: gates the distiller's CITED anchor.
+                    # Resolvable in THIS parse AND substantive (the user 2026-07-14): a stored citation
+                    # pointing at a connective stub (a lead-in that merely names the goal) is a wrong
+                    # link by construction — the outcome never lives there — so it falls through to the
+                    # deterministic fallback below, healing bad anchors already in stores at read time.
+                    if _a.get("uuid") and _atom_prose_chars(_a) >= jd.CITE_MIN_CHARS:
+                        cite_uuids.add(_a["uuid"])
+    except Exception:
+        degraded = True                          # a partial walk: computed for this build, never memoized
+    children = {}
+    for nid, nd in nodes.items():
+        children.setdefault(nd.get("parentId"), []).append(nid)
+    agent_open = _agent_open_set(nodes, children)   # authoritative-open subtree → never rendered 'done' (see helper)
+    parked_rows = _parked_rows(nodes, children)     # leapfrogged open rows → the quiet "parked" row cue (see helper)
+
+    def _subtree(root):                          # all node ids at/under root (pre-order)
+        stack, acc = [root], []
+        while stack:
+            x = stack.pop(); acc.append(x); stack.extend(children.get(x, []))
+        return acc
+
+    # VERDICTS ONLY (the user 2026-07-15; roll-UP removed — it painted an authored-looking ✓ on a
+    # goal nobody ruled done, see build_session's _subtree_done twin): a node is "done" if it's
+    # explicitly nodeComplete (verdict or roll-down cache), OR if a done ancestor checks it off
+    # (roll-DOWN, threaded by flatten through ancestor_done — dimmed disc). All-children-done alone
+    # no longer checks a parent; the closer rules those (_subtree_done_candidates) and the check
+    # appears when its verdict lands.
+    _cdone = {}
+    def _closure_done(nid):
+        if nid in _cdone:
+            return _cdone[nid]
+        nd = nodes.get(nid)
+        if not nd:
+            _cdone[nid] = False
+            return False
+        res = bool(nd.get("nodeComplete"))
+        if not res and nd.get("umbrella"):         # ARCHIVED pre-T101 container — history renders
+            # structurally-complete (mints retired; live ones dissolve every rollup): the
+            kids = [c for c in children.get(nid, []) if not nodes[c].get("cleared")]
+            res = bool(kids) and all(_closure_done(c) for c in kids)
+        _cdone[nid] = res
+        return res
+
+    # Order children MOST-RECENT-FIRST by subtree-max mt — the SAME recency key the ledger tree uses
+    # (build_session _submax), so every goal-tree view reads newest-first: the card's inline sub-goal
+    # checklist, the modal tree, and the ledger TOC all agree (the user 2026-06-17). mt (last-touched)
+    # falls back to t for never-modified nodes.
+    _fsmemo = {}
+    def _fsubmax(cid):
+        if cid in _fsmemo:
+            return _fsmemo[cid]
+        cn = nodes.get(cid) or {}
+        m = cn.get("mt", cn.get("t", 0))
+        for k in children.get(cid, []):
+            m = max(m, _fsubmax(k))
+        _fsmemo[cid] = m
+        return m
+
+    # BLOCKED rolls UP the tree (the user 2026-07-11: nimbus's Needs-you traced to a block buried
+    # under a collapsed row — "shouldn't the block propagate up so I see it?"). Mirror of the judge's
+    # any_blocked: a node reads "question" when it — or any descendant chain not inside a completed
+    # subtree — holds an open block (a done subtree's block is moot, same short-circuit). This is
+    # also what the CLIENT was designed for: hasQuestionDescendant exists to find the LOWEST ? (the
+    # actual ask) beneath rolled-up ancestors.
+    _qmemo = {}
+    def _closure_blocked(nid):
+        if nid in _qmemo:
+            return _qmemo[nid]
+        nd = nodes.get(nid)
+        if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
+            _qmemo[nid] = False
+            return False
+        res = bool(nd.get("blocked")) or any(_closure_blocked(c) for c in children.get(nid, []))
+        _qmemo[nid] = res
+        return res
+
+    # The rejudging latch's CLEAR bound (the user 2026-07-31): the block a top card surfaces may
+    # live on a DESCENDANT (blocked rolls up, _closure_blocked above), and the unblocker stamps
+    # blockCheckT on the node it EXAMINES — the blocked child — never on the top. The latch used
+    # to read the top's own watermark, which for a child-held block stays None forever: every
+    # plain reply dropped the card to Working (plain_user_t > 0 is always true) and every landing
+    # turn advanced disp_t past the reply and lifted it back to Needs-You — the same strobe the
+    # watermark bound fixed for top-level blocks (PR #144), reintroduced one level down. The
+    # audited card flipped seconds-apart pairs at every conversational turn for half an hour.
+    # The bound is therefore the OLDEST watermark among the subtree's OPEN blocked nodes (the
+    # exact closure _closure_blocked walks, same done/cleared gates): the card returns to
+    # Needs-You only once EVERY block it is surfacing has been re-examined with evidence
+    # covering the reply. None when the walk finds no open block (a stale rollup) — the caller
+    # falls back to the top's own watermark, the pre-existing semantics.
+    _bcmemo = {}
+    def _block_check_floor(nid):
+        if nid in _bcmemo:
+            return _bcmemo[nid]
+        nd = nodes.get(nid)
+        if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
+            _bcmemo[nid] = None
+            return None
+        vals = [int(nd.get("blockCheckT") or 0)] if nd.get("blocked") else []
+        vals += [v for v in (_block_check_floor(c) for c in children.get(nid, [])) if v is not None]
+        res = min(vals) if vals else None
+        _bcmemo[nid] = res
+        return res
+
+    def flatten(nid, out, deps, writes, ancestor_done=False, boundary=None):  # AskTreeNode flat list, root first; nest via children ids
+        nd = nodes[nid]
+        kids = sorted(children.get(nid, []), key=_fsubmax, reverse=True)   # most-recent-first (matches the ledger)
+        explicit = bool(nd.get("nodeComplete"))
+        # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella
+        # holding one — is NEVER done, even if a nodeComplete ancestor would roll 'done' down onto it.
+        # Mirrors the judge's rollup_status; without it the open item read 'done' → the "checked off" hover.
+        done = (explicit or _closure_done(nid) or ancestor_done) and nid not in agent_open
+        derived = done and not explicit            # roll-up / roll-down → DIMMED ✓ disc, not the full one
+        st = "done" if done else ("question" if _closure_blocked(nid) else "open")
+        # The node's deep-link target SEGMENT: its NEWEST trail seg — the resolve turn for
+        # done/blocked nodes, the latest activity for open ones (where it stands, not where born).
+        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid, deps, writes)
+        # A HANDOFF tracking node ("↪ delegated to <peer>") finally ships as its designed kind: the
+        # feed's delegations section (fask-delegations, built to the 2026-06-10 handoff spec) keys on
+        # kind "handoff" and had sat dormant because flatten hardcoded "ask" — the sender's card
+        # showed a bare text row with no recipient identity and no visible cross-card LINK (the user
+        # 2026-08-16, who watched a clear take the linked card with it and had no way to see why).
+        # who/whoSid/whoColor become the RECIPIENT's identity for these rows — exact, from the
+        # courier-recorded handoff.peer, never inferred.
+        _ho = nd.get("handoff") if isinstance(nd.get("handoff"), dict) else None
+        _ho_sid = str(_ho.get("peer") or "") if _ho else ""
+        out.append({"id": nid, "kind": "handoff" if _ho_sid else "ask", "text": nd["text"],
+                    "who": (_name_of(_ho_sid) or _ho_sid[:8]) if _ho_sid else name,
+                    "whoSid": _ho_sid or fsid,
+                    "whoColor": _name_color(_ho_sid) if _ho_sid else color,
+                    "whoWorking": who_working, "status": st, "derived": derived,
+                    # user-cleared sub (nodeOverride op:clear) → renders struck-through + faded with a
+                    # "cleared" chip; `status` above stays honest (box = done, the user 2026-07-26)
+                    "cleared": bool(nd.get("cleared")),
+                    # this DONE sub's outcome was already REVIEWED: its done predates the top's
+                    # review boundary (jd.review_boundary — the same boundary the distiller scopes
+                    # the takeaway with, so the fold and the summary can never disagree). The card
+                    # collapses these behind one "N reviewed earlier" row instead of re-presenting
+                    # them on every re-completion (the user 2026-08-19). `out` is empty only for
+                    # the ROOT row, which is the card head, never a checklist row.
+                    "reviewedEarlier": bool(boundary and out and done
+                                            and jd._done_since(nd) <= boundary) or None,
+                    # a rolled-UP question (the block lives in a descendant, not here) — the client's
+                    # mark tooltip says "blocked inside", and the actual ask keeps its own ⏸ below
+                    "qderived": st == "question" and not nd.get("blocked"),
+                    # LEAPFROGGED row (the user 2026-08-24): open, nothing filed under it, while N
+                    # younger siblings were dispatched past it — the quiet "parked" tag + the card's
+                    # dim sub-goals suffix. Gated on the OPEN render state so a rolled-down or
+                    # closed row can never wear it; mint/retire events live in _parked_rows.
+                    "parked": ({"n": parked_rows[nid]} if (st == "open" and nid in parked_rows) else None),
+                    # AUTHORITATIVE tier: this node mirrors an item on the agent's OWN to-do list, so its
+                    # open/done is agent-asserted (solidity = authority in the disc render). None = a plain
+                    # judge-inferred node. (the user 2026-07-01)
+                    "auth": (nd.get("agentTask") or {}).get("status"),
+                    # `last` drives each row's "(Xm ago)" age + recency tint: the node's LAST ACTIVITY
+                    # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
+                    # the modal tree just as its card does — not pinned to the mint `t` (the user
+                    # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
+                    "t": nd["t"], "last": _fsubmax(nid),   # the age tint is stamped at serialization (_stamp_trgb)
+                    # mt = last-modified (the segment the planner applied done / block) → a blocked or
+                    # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
+                    # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
+                    "mt": nd.get("mt", nd["t"]),
+                    # anchorUuid = the WORK anchor (reply assistant atom of the resolve/mint segment) →
+                    # the mark/time zones deep-link here. promptAnchorUuid = the PROMPT anchor (the
+                    # MINTING segment's trigger = the user's message) → the TITLE deep-links here, by id,
+                    # landing on the user turn (no kind-restricted nearest-time needed). (2026-06-17.)
+                    "anchorUuid": _wa,
+                    "promptAnchorUuid": _pa,
+                    "summary": nd.get("summary"),                   # distiller's key takeaway — shown in the MODAL only — the user 2026-06-17
+                    "blockSummary": nd.get("blockSummary"),         # block-distiller's DECISION BRIEF (MODAL); null until produced — the user 2026-06-18
+                    "followupPending": nd.get("followupPending"),   # per-node "Followed up" chip in the modal tree (business 2026-06-17)
+                    # the per-item story (MODAL, non-done only): newest block/unblock/verdict rows with
+                    # anchors, so an open sub answers 'is this still active?' in place (the user 2026-07-20)
+                    "log": _node_log_rows(nd, seg_uuid) if st != "done" else None,
+                    "children": kids})
+        for c in kids:
+            flatten(c, out, deps, writes, ancestor_done=done, boundary=boundary)
+        return out
+
+    return _FeedSegs(ps, store, who_working, name, color, nodes, seg_uuid, seg_trig, seg_best, cite_uuids,
+                     children, agent_open, parked_rows, _subtree, _closure_done, _fsubmax, _closure_blocked,
+                     _block_check_floor, flatten, degraded)
+
+
+def _feed_segs_for(fsid, name, color, ps, live_merged, store, store_key, names_key, who_working, scoped):
+    """The session's _FeedSegs for this build: the memo's entry when every input holds, else a fresh
+    computation, stored only when it may stand for later builds (see the memo note above)."""
+    if live_merged:
+        _feed_segs_bump("bypass_live")
+        return _feed_segs_build(fsid, name, color, ps, store, who_working)
+    if store_key is not store:
+        _feed_segs_bump("bypass_unkeyed")
+        return _feed_segs_build(fsid, name, color, ps, store, who_working)
+    with _FEED_SEGS_LOCK:
+        e = _feed_segs_memo.get(fsid)
+    if (e is not None and e.ps is ps and e.store is store and e.names_key == names_key
+            and e.who_working == who_working and e.name == name and e.color == color and e.anchors_hold()):
+        _feed_segs_bump("hit")
+        return e
+    e = _feed_segs_build(fsid, name, color, ps, store, who_working)
+    e.names_key = names_key
+    if e.degraded:
+        _feed_segs_bump("bypass_degraded")
+    elif not scoped:
+        _feed_segs_bump("bypass_unscoped")
+    else:
+        _feed_segs_bump("miss")
+        with _FEED_SEGS_LOCK:
+            _feed_segs_memo[fsid] = e
+    return e
+
+
 def build_feed(now, tmux=None):
     """The {type:"feed"} message the tuned feed.js bundle consumes (ui-parity.md: feed = ADAPT).
     Goals map onto the AskItem/AskTreeNode shape the render already speaks: the goal tree IS the
@@ -31617,6 +32038,11 @@ def build_feed(now, tmux=None):
     if tmux is None:
         tmux = _tmux_sessions()
     cleared = _cleared_ids()
+    _names = getattr(_live_scope, "names", None)
+    _scoped = _names is not None                 # inside a pusher cycle's names scope: the per-session memo below
+    #                                              may be filled; a build outside one (a gesture build on a WS
+    #                                              thread) reads it and never fills it (see _feed_segs_for)
+    names_key = _names_key(_names if _scoped else _names_snapshot())
     # Debug mode (the user 2026-07-09): join judge-failure rows onto each card so a rejection is
     # inspectable from the card modal (judge, kind, evidence, and in-debug capture: input + reply).
     # Zero cost when off: no rows read, no key emitted.
@@ -31645,12 +32071,13 @@ def build_feed(now, tmux=None):
         # once on a cold start, so the working-dot + the deep-link anchors read the parse ONLY if it's already
         # cached — never paying the ~1s cold parse here. _warm_fleet_bg fills the cache + re-pushes; the dots
         # and anchors snap in a beat later.
-        ps = _parse_cached(s["path"])
+        ps0 = ps = _parse_cached(s["path"])
         if ps is None:
             cold_parse = True
         else:
             ps = _merge_live_atoms(ps, fsid)         # the same LIVE-MERGED session the chat chip + timeline lane read
             #                                          (the feed was the one surface deriving from the bare cache, 2026-07-05)
+        _live_merged = ps is not ps0                 # a live-merge copy exists for this build only (the memo bypasses)
         try:                                             # WORKING from the EVENT MODEL (open turn), not tmux state —
             who_working = _session_working(ps["turns"]) if ps else False   # one backend-agnostic dot signal
         except Exception:
@@ -31689,8 +32116,9 @@ def build_feed(now, tmux=None):
         # (aerr) only fires once the session is idle-stalled, so without this a storm reads as plain
         # healthy Working for its whole life — nimbus's card said Working through an ~80-minute storm.
         sess_retrying = _session_retrying(fsid, tm)
-        store = _feed_goals(fsid)                # pre-pass snapshot while a judge pass is mid-flight → the card's
-                                                 # status never shows a half-applied intermediate (atomic visibility)
+        store, _skey = _feed_goals_view(fsid)    # pre-pass snapshot while a judge pass is mid-flight → the card's
+                                                 # status never shows a half-applied intermediate (atomic visibility);
+                                                 # _skey: the store's identity key for the per-session memo below
         # ANALYZING (the user 2026-07-13; broadened 2026-08-12): the card must say when romp is working
         # on it. Two prongs, either lights the swirl:
         #   * the SETTLE GAP — the turn just settled but the closer hasn't delivered its verdict yet
@@ -31711,205 +32139,13 @@ def build_feed(now, tmux=None):
                                  or (live and ps and _closer_pending(fsid, s["path"], now, store))))
         nodes, status = store.get("nodes", {}), store.get("status", {})
         confirming = set(store.get("confirming") or ())   # rollup export: done verdict in, settle pending (judge rollup_status, the user 2026-07-24)
-        # Exact click-to-jump anchors: map each goal segment → the work/reply uuid — the SAME anchors the
-        # timeline/ledger already use — so a card click deep-links to the precise turn BY ID instead of the
-        # old time-nearest heuristic. _parse is cache-backed (cheap); reply uuid preferred (the readable
-        # assistant text). A missing entry → anchorUuid None → feed falls back to time. (the user 2026-06-17.)
-        # seg_uuid → the WORK anchor (reply/work assistant atom, for the mark/time zones); seg_trig → the
-        # PROMPT anchor (the segment's TRIGGER atom = the user's message that opened it, for the TITLE). A
-        # title is prompt-intent and must land on the USER turn — passing the trigger uuid (which the chat
-        # tags + the kind guard accepts as turn-user) lets it resolve BY ID instead of a kind-restricted
-        # nearest-time landing (the user 2026-06-17). (Both are emitted .turn[data-uuid]s in the chat.)
-        seg_uuid, seg_trig, seg_best, cite_uuids = {}, {}, {}, set()
-        try:
-            for turn in (ps["turns"] if ps else []):     # cached parse only; anchors fill in after _warm_fleet_bg
-                for seg in _segs_seam(turn, store):
-                    w, r = _seg_anchors(seg["atoms"])
-                    seg_uuid[_seg_key(seg["id"])] = r or _seg_jump(seg["atoms"])   # timestamp-invariant key; landable
-                    #                                  anchors only — never a thinking-only uuid (SDK echo/real drift)
-                    seg_trig[_seg_key(seg["id"])] = jd._prompt_anchor_uuid(seg)   # attachment-safe: a
-                    #                                  title click must land on the USER message, never an
-                    #                                  attachment record no chat event carries (2026-08-25)
-                    _lu, _lsub = _seg_last_text(seg["atoms"])
-                    seg_best[_seg_key(seg["id"])] = (_lu, _lsub, seg.get("t", 0))   # latest prose → summary deep-link fallback
-                    for _a in seg["atoms"]:              # citable-uuid set: gates the distiller's CITED anchor.
-                        # Resolvable in THIS parse AND substantive (the user 2026-07-14): a stored citation
-                        # pointing at a connective stub (a lead-in that merely names the goal) is a wrong
-                        # link by construction — the outcome never lives there — so it falls through to the
-                        # deterministic fallback below, healing bad anchors already in stores at read time.
-                        if _a.get("uuid") and _atom_prose_chars(_a) >= jd.CITE_MIN_CHARS:
-                            cite_uuids.add(_a["uuid"])
-        except Exception:
-            pass
-        children = {}
-        for nid, nd in nodes.items():
-            children.setdefault(nd.get("parentId"), []).append(nid)
-        agent_open = _agent_open_set(nodes, children)   # authoritative-open subtree → never rendered 'done' (see helper)
-        parked_rows = _parked_rows(nodes, children)     # leapfrogged open rows → the quiet "parked" row cue (see helper)
-
-        def _subtree(root):                          # all node ids at/under root (pre-order)
-            stack, acc = [root], []
-            while stack:
-                x = stack.pop(); acc.append(x); stack.extend(children.get(x, []))
-            return acc
-
-        # VERDICTS ONLY (the user 2026-07-15; roll-UP removed — it painted an authored-looking ✓ on a
-        # goal nobody ruled done, see build_session's _subtree_done twin): a node is "done" if it's
-        # explicitly nodeComplete (verdict or roll-down cache), OR if a done ancestor checks it off
-        # (roll-DOWN, threaded by flatten through ancestor_done — dimmed disc). All-children-done alone
-        # no longer checks a parent; the closer rules those (_subtree_done_candidates) and the check
-        # appears when its verdict lands.
-        _cdone = {}
-        def _closure_done(nid):
-            if nid in _cdone:
-                return _cdone[nid]
-            nd = nodes.get(nid)
-            if not nd:
-                _cdone[nid] = False
-                return False
-            res = bool(nd.get("nodeComplete"))
-            if not res and nd.get("umbrella"):         # ARCHIVED pre-T101 container — history renders
-                # structurally-complete (mints retired; live ones dissolve every rollup): the
-                kids = [c for c in children.get(nid, []) if not nodes[c].get("cleared")]
-                res = bool(kids) and all(_closure_done(c) for c in kids)
-            _cdone[nid] = res
-            return res
-
-        # Order children MOST-RECENT-FIRST by subtree-max mt — the SAME recency key the ledger tree uses
-        # (build_session _submax), so every goal-tree view reads newest-first: the card's inline sub-goal
-        # checklist, the modal tree, and the ledger TOC all agree (the user 2026-06-17). mt (last-touched)
-        # falls back to t for never-modified nodes.
-        _fsmemo = {}
-        def _fsubmax(cid):
-            if cid in _fsmemo:
-                return _fsmemo[cid]
-            cn = nodes.get(cid) or {}
-            m = cn.get("mt", cn.get("t", 0))
-            for k in children.get(cid, []):
-                m = max(m, _fsubmax(k))
-            _fsmemo[cid] = m
-            return m
-
-        # BLOCKED rolls UP the tree (the user 2026-07-11: nimbus's Needs-you traced to a block buried
-        # under a collapsed row — "shouldn't the block propagate up so I see it?"). Mirror of the judge's
-        # any_blocked: a node reads "question" when it — or any descendant chain not inside a completed
-        # subtree — holds an open block (a done subtree's block is moot, same short-circuit). This is
-        # also what the CLIENT was designed for: hasQuestionDescendant exists to find the LOWEST ? (the
-        # actual ask) beneath rolled-up ancestors.
-        _qmemo = {}
-        def _closure_blocked(nid):
-            if nid in _qmemo:
-                return _qmemo[nid]
-            nd = nodes.get(nid)
-            if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
-                _qmemo[nid] = False
-                return False
-            res = bool(nd.get("blocked")) or any(_closure_blocked(c) for c in children.get(nid, []))
-            _qmemo[nid] = res
-            return res
-
-        # The rejudging latch's CLEAR bound (the user 2026-07-31): the block a top card surfaces may
-        # live on a DESCENDANT (blocked rolls up, _closure_blocked above), and the unblocker stamps
-        # blockCheckT on the node it EXAMINES — the blocked child — never on the top. The latch used
-        # to read the top's own watermark, which for a child-held block stays None forever: every
-        # plain reply dropped the card to Working (plain_user_t > 0 is always true) and every landing
-        # turn advanced disp_t past the reply and lifted it back to Needs-You — the same strobe the
-        # watermark bound fixed for top-level blocks (PR #144), reintroduced one level down. The
-        # audited card flipped seconds-apart pairs at every conversational turn for half an hour.
-        # The bound is therefore the OLDEST watermark among the subtree's OPEN blocked nodes (the
-        # exact closure _closure_blocked walks, same done/cleared gates): the card returns to
-        # Needs-You only once EVERY block it is surfacing has been re-examined with evidence
-        # covering the reply. None when the walk finds no open block (a stale rollup) — the caller
-        # falls back to the top's own watermark, the pre-existing semantics.
-        _bcmemo = {}
-        def _block_check_floor(nid):
-            if nid in _bcmemo:
-                return _bcmemo[nid]
-            nd = nodes.get(nid)
-            if not nd or nd.get("cleared") or (_closure_done(nid) and nid not in agent_open):
-                _bcmemo[nid] = None
-                return None
-            vals = [int(nd.get("blockCheckT") or 0)] if nd.get("blocked") else []
-            vals += [v for v in (_block_check_floor(c) for c in children.get(nid, [])) if v is not None]
-            res = min(vals) if vals else None
-            _bcmemo[nid] = res
-            return res
-
-        def flatten(nid, out, ancestor_done=False, boundary=None):  # AskTreeNode flat list, root first; nest via children ids
-            nd = nodes[nid]
-            kids = sorted(children.get(nid, []), key=_fsubmax, reverse=True)   # most-recent-first (matches the ledger)
-            explicit = bool(nd.get("nodeComplete"))
-            # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella
-            # holding one — is NEVER done, even if a nodeComplete ancestor would roll 'done' down onto it.
-            # Mirrors the judge's rollup_status; without it the open item read 'done' → the "checked off" hover.
-            done = (explicit or _closure_done(nid) or ancestor_done) and nid not in agent_open
-            derived = done and not explicit            # roll-up / roll-down → DIMMED ✓ disc, not the full one
-            st = "done" if done else ("question" if _closure_blocked(nid) else "open")
-            # The node's deep-link target SEGMENT: its NEWEST trail seg — the resolve turn for
-            # done/blocked nodes, the latest activity for open ones (where it stands, not where born).
-            _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid)
-            # A HANDOFF tracking node ("↪ delegated to <peer>") finally ships as its designed kind: the
-            # feed's delegations section (fask-delegations, built to the 2026-06-10 handoff spec) keys on
-            # kind "handoff" and had sat dormant because flatten hardcoded "ask" — the sender's card
-            # showed a bare text row with no recipient identity and no visible cross-card LINK (the user
-            # 2026-08-16, who watched a clear take the linked card with it and had no way to see why).
-            # who/whoSid/whoColor become the RECIPIENT's identity for these rows — exact, from the
-            # courier-recorded handoff.peer, never inferred.
-            _ho = nd.get("handoff") if isinstance(nd.get("handoff"), dict) else None
-            _ho_sid = str(_ho.get("peer") or "") if _ho else ""
-            out.append({"id": nid, "kind": "handoff" if _ho_sid else "ask", "text": nd["text"],
-                        "who": (_name_of(_ho_sid) or _ho_sid[:8]) if _ho_sid else name,
-                        "whoSid": _ho_sid or fsid,
-                        "whoColor": _name_color(_ho_sid) if _ho_sid else color,
-                        "whoWorking": who_working, "status": st, "derived": derived,
-                        # user-cleared sub (nodeOverride op:clear) → renders struck-through + faded with a
-                        # "cleared" chip; `status` above stays honest (box = done, the user 2026-07-26)
-                        "cleared": bool(nd.get("cleared")),
-                        # this DONE sub's outcome was already REVIEWED: its done predates the top's
-                        # review boundary (jd.review_boundary — the same boundary the distiller scopes
-                        # the takeaway with, so the fold and the summary can never disagree). The card
-                        # collapses these behind one "N reviewed earlier" row instead of re-presenting
-                        # them on every re-completion (the user 2026-08-19). `out` is empty only for
-                        # the ROOT row, which is the card head, never a checklist row.
-                        "reviewedEarlier": bool(boundary and out and done
-                                                and jd._done_since(nd) <= boundary) or None,
-                        # a rolled-UP question (the block lives in a descendant, not here) — the client's
-                        # mark tooltip says "blocked inside", and the actual ask keeps its own ⏸ below
-                        "qderived": st == "question" and not nd.get("blocked"),
-                        # LEAPFROGGED row (the user 2026-08-24): open, nothing filed under it, while N
-                        # younger siblings were dispatched past it — the quiet "parked" tag + the card's
-                        # dim sub-goals suffix. Gated on the OPEN render state so a rolled-down or
-                        # closed row can never wear it; mint/retire events live in _parked_rows.
-                        "parked": ({"n": parked_rows[nid]} if (st == "open" and nid in parked_rows) else None),
-                        # AUTHORITATIVE tier: this node mirrors an item on the agent's OWN to-do list, so its
-                        # open/done is agent-asserted (solidity = authority in the disc render). None = a plain
-                        # judge-inferred node. (the user 2026-07-01)
-                        "auth": (nd.get("agentTask") or {}).get("status"),
-                        # `last` drives each row's "(Xm ago)" age + recency tint: the node's LAST ACTIVITY
-                        # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
-                        # the modal tree just as its card does — not pinned to the mint `t` (the user
-                        # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
-                        "t": nd["t"], "last": _fsubmax(nid), "trgb": list(cm.age_rgb(now - _fsubmax(nid), _colormap())),
-                        # mt = last-modified (the segment the planner applied done / block) → a blocked or
-                        # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
-                        # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
-                        "mt": nd.get("mt", nd["t"]),
-                        # anchorUuid = the WORK anchor (reply assistant atom of the resolve/mint segment) →
-                        # the mark/time zones deep-link here. promptAnchorUuid = the PROMPT anchor (the
-                        # MINTING segment's trigger = the user's message) → the TITLE deep-links here, by id,
-                        # landing on the user turn (no kind-restricted nearest-time needed). (2026-06-17.)
-                        "anchorUuid": _wa,
-                        "promptAnchorUuid": _pa,
-                        "summary": nd.get("summary"),                   # distiller's key takeaway — shown in the MODAL only — the user 2026-06-17
-                        "blockSummary": nd.get("blockSummary"),         # block-distiller's DECISION BRIEF (MODAL); null until produced — the user 2026-06-18
-                        "followupPending": nd.get("followupPending"),   # per-node "Followed up" chip in the modal tree (business 2026-06-17)
-                        # the per-item story (MODAL, non-done only): newest block/unblock/verdict rows with
-                        # anchors, so an open sub answers 'is this still active?' in place (the user 2026-07-20)
-                        "log": _node_log_rows(nd, seg_uuid) if st != "done" else None,
-                        "children": kids})
-            for c in kids:
-                flatten(c, out, ancestor_done=done, boundary=boundary)
-            return out
+        # THE PER-SESSION MEMO (round-4 plan P2-A): the seam maps, the tree shape with its closures and each
+        # top's flattened tree are pure functions of the parse, the store, the names registry and the
+        # working bit, so they are kept per session across builds — _feed_segs_for names every input.
+        E = _feed_segs_for(fsid, name, color, ps, _live_merged, store, _skey, names_key, who_working, _scoped)
+        seg_uuid, seg_best, cite_uuids, children = E.seg_uuid, E.seg_best, E.cite_uuids, E.children
+        _subtree, _closure_done, _fsubmax = E.subtree, E.closure_done, E.fsubmax
+        _closure_blocked, _block_check_floor = E.closure_blocked, E.block_check_floor
         # HARD blocked floor: a session stopped RIGHT NOW on a live permission prompt (tmux state)
         # floors its ACTIVE-FOCUS card under BLOCKED — the strongest signal, beats the goal's planner
         # status. (The planner's SOFT block, nd["blocked"], is the model's "needs user" verdict; this is
@@ -32473,8 +32709,7 @@ def build_feed(now, tmux=None):
                 _sa_u = _cited
             card = {
                 "itemId": nid, "sid": fsid, "name": name, "color": color, "text": card_text,
-                "t": disp_t, "live": live,
-                "trgb": list(cm.age_rgb(now - disp_t, _colormap())),
+                "t": disp_t, "live": live,       # the age tint (trgb) is stamped at serialization (_stamp_trgb)
                 "turnId": nid, "origin": origin,
                 **({"handoffTo": handoff_to} if handoff_to else {}),
                 **({"delegTracked": _tracked_peers} if _tracked_peers else {}),
@@ -32596,7 +32831,7 @@ def build_feed(now, tmux=None):
                 "warnRows": (_card_warn_rows(dbg_rows, fsid, set(_subtree(nid)),
                                              store.get("placements") or {}) or None)
                             if dbg_rows is not None else None,   # debug mode only: the card's judge failures, modal "Warnings" section
-                "tree": flatten(nid, [], boundary=jd.review_boundary(nodes[nid]))}
+                "tree": E.tree(nid)}             # the memoized rows, in a fresh list (never written into)
             # THE SERVING FOLD, candidate side (the user 2026-08-28, T137: fan-out lives inside the
             # ask card — the T101 ruling applied to the mirror, view-side): a to-do mirror top the
             # sync stamped as SERVING a dispatch folds into the sender's ask card instead of
@@ -32668,18 +32903,22 @@ def build_feed(now, tmux=None):
     if serving_folds:
         _byrow = {}
         for _c in asks:
-            for _r in _c.get("tree") or []:
+            for _i, _r in enumerate(_c.get("tree") or []):
                 if _r.get("kind") == "handoff":
-                    _byrow[_r["id"]] = (_c, _r)
+                    _byrow[_r["id"]] = (_c, _i)
         for _f in serving_folds:
             _hit = _byrow.get(_f["tracker"])
             if not _hit:
                 asks.append(_f["card"])
                 continue
-            _c, _r = _hit
+            _c, _i = _hit
             _rows = _f["card"].get("tree") or []
             if _rows:
-                _r.setdefault("children", []).append(_rows[0]["id"])
+                # COPY-ON-WRITE: the tracker row is a memoized row shared with later builds (_FeedSegs), so
+                # the re-parent lands on a copy in this build's own tree list, never on the shared dict
+                _r = dict(_c["tree"][_i])
+                _r["children"] = list(_r.get("children") or []) + [_rows[0]["id"]]
+                _c["tree"][_i] = _r
                 _c["tree"].extend(_rows)
     if cold_parse:
         _warm_fleet_bg(now)                          # a living session wasn't parsed yet → warm it + re-push (dots/anchors)
@@ -32700,7 +32939,6 @@ def build_feed(now, tmux=None):
             "itemId": item_id, "sid": ph["toId"], "name": ph["toName"], "color": _name_color(ph["toId"]),
             "text": "Hand-off parked for %s (offline)" % ph["toName"],
             "t": ph["t"], "live": False,
-            "trgb": list(cm.age_rgb(now - ph["t"], _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -32721,6 +32959,7 @@ def build_feed(now, tmux=None):
     _ncards = _notify_cards()
     for _a in asks:
         _a["notify"] = True if _notify_card_effective(_ncards, _a["itemId"], str(_a.get("sid") or "")) else None
+    _feed_segs_forget({s["sid"] for s in alive})     # a session that left the alive set releases its memo entry
     return {"type": "feed", "asks": asks, "now": now,
             # sid -> open user-todo count (plans/user-todos.md): the quiet per-card marker's data +
             # the badge's todo half. Sorted so the serialized payload is byte-stable across builds
@@ -33815,7 +34054,6 @@ def _quarantine_cards(now, cleared):
             "color": _name_color(rec.get("toId") or ""),
             "text": "New message",
             "t": t, "live": False,
-            "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -34079,7 +34317,7 @@ def _node_log_rows(nd, seg_work, cap=8):
 _node_anchor_last = {}   # node id → its last WARM-resolved (prompt, work) anchors — see _node_anchor_uuids
 
 
-def _node_anchor_uuids(nd, seg_trig, seg_work):
+def _node_anchor_uuids(nd, seg_trig, seg_work, deps=None, writes=None):
     """(promptAnchorUuid, anchorUuid) — the EXACT chat .turn[data-uuid]s a goal node's ledger/feed zones
     deep-link to. promptAnchorUuid = the MINTING segment's trigger (the user message that asked — the
     text/title zones for DONE nodes, landing on the user turn). anchorUuid = the WORK anchor (reply
@@ -34110,7 +34348,12 @@ def _node_anchor_uuids(nd, seg_trig, seg_work):
     (_node_anchor_last, per kernel run) and a cold/missed one serves, in order: the remembered warm
     anchor (exact — at worst one resolve behind), the node's stored summaryAnchor (the distiller's
     validated citation, the same fallback family as build_feed's card-level cold fix), else None — the
-    honest-fail toast stays for the truly unanchorable."""
+    honest-fail toast stays for the truly unanchorable.
+
+    `deps` and `writes` (build_feed's per-session memo, 2026-09-07): when given, a cold resolve records
+    the remembered anchor it READ under the node's id in `deps` (None when none was held) and a warm
+    resolve records what it WROTE in `writes`, so a memoized tree can say exactly which global state
+    it depends on and re-apply its own writes when served."""
     trail = nd.get("trail") or []
     anchor_seg = trail[-1] if trail else None
     prompt = nd.get("promptUuid") or seg_trig.get(_seg_key(trail[0] if trail else None))
@@ -34121,8 +34364,12 @@ def _node_anchor_uuids(nd, seg_trig, seg_work):
     if work is not None:
         if nid:
             _node_anchor_last[nid] = (prompt, work)
+            if writes is not None:
+                writes[nid] = (prompt, work)
     else:
         held = _node_anchor_last.get(nid) if nid else None
+        if deps is not None and nid:
+            deps[nid] = held
         if held:
             prompt = prompt or held[0]
             work = held[1]
@@ -36409,11 +36656,42 @@ _DEDUP_VOLATILE = ("now", "buildId")
 _DEDUP_REPOST_S = 60.0
 
 
+def _stamp_trgb(card, now, cmap):
+    """A shallow copy of a feed card wearing the clock-derived `trgb` tint at the top level (from its `t`) and
+    on every tree row (from the row's `last`, its newest activity) — the tint the builders computed per card
+    until 2026-09-07 (round-4 plan P2-A, decision 4). Stamping at serialization keeps the built cards and
+    their memoized tree rows fixed values (_FeedSegs), so the per-card wire strings hold across builds; the
+    tint itself is unchanged: `now` is the BUILD's clock, as it was."""
+    out = dict(card)
+    out["trgb"] = list(cm.age_rgb(now - card["t"], cmap))
+    tree = card.get("tree")
+    if isinstance(tree, list) and tree:
+        out["tree"] = [(dict(r, trgb=list(cm.age_rgb(now - r.get("last", r.get("t", now)), cmap)))
+                        if isinstance(r, dict) else r) for r in tree]
+    return out
+
+
+def _tinted_asks(feed):
+    """The frame's cards as the tinted legacy form every whole frame carries: one _stamp_trgb copy per card,
+    the colormap read once."""
+    asks = feed.get("asks")
+    if not isinstance(asks, list):
+        return asks
+    now, cmap = feed.get("now"), _colormap()
+    return [_stamp_trgb(a, now, cmap) if isinstance(a, dict) else a for a in asks]
+
+
 def _strip_trgb(card):
     """A feed card minus its clock-derived `trgb` tint — at the top level and in every sub-goal node — for the
     delta path and the dedup signature. The tint is a function of (`t`, the clock), so it steps on every build
-    with nothing having happened; a full frame still carries it for older bundles (see _DEDUP_REPOST_S)."""
+    with nothing having happened; a full frame still carries it for older bundles (see _DEDUP_REPOST_S). A card
+    that carries no tint anywhere (every build since 2026-09-07: the tint is stamped at serialization) is
+    returned as it is, so the per-card encode reads the built dict itself."""
     if not isinstance(card, dict):
+        return card
+    tree = card.get("tree")
+    if "trgb" not in card and not (isinstance(tree, list)
+                                   and any(isinstance(n, dict) and "trgb" in n for n in tree)):
         return card
     out = dict(card)                      # C-level copies + a pop: ~4 ms for 600 cards x 24 nodes, vs 13 ms as comprehensions
     out.pop("trgb", None)
@@ -37319,8 +37597,12 @@ def _feed_body(feed):
     the delta cap — once per build at most; a rebuild whose clients all hold a base never serializes the
     frame. This is the tinted legacy body for every whole frame, cap clients' first frame included (the pane
     computes its tints from `t` and ignores these). The `default` is _wire_default like _feed_parts', so a
-    value the per-card encode can carry never makes the whole frame raise where the delta went."""
-    return json.dumps({k: v for k, v in feed.items() if k != "now"}, default=_wire_default_in("_feed_body"))
+    value the per-card encode can carry never makes the whole frame raise where the delta went. The cards are
+    stamped with their age tints here (_tinted_asks): the built frame carries none since 2026-09-07."""
+    body = {k: v for k, v in feed.items() if k != "now"}
+    if isinstance(body.get("asks"), list):
+        body["asks"] = _tinted_asks(feed)
+    return json.dumps(body, default=_wire_default_in("_feed_body"))
 
 
 def _feed_ms(body, now):
@@ -40277,7 +40559,8 @@ def _push(targets, connect=False, tmux=None):
     # per-entry), about 0.6 s of a 1.6 s rebuild cycle on the 2026-09-06 profile. Every whole frame is the
     # tinted legacy body, a cap client's first frame included (the pane tints from `t` and ignores it); a
     # ?delta=1 feed client WITHOUT the cap (a pre-09-05 Outline tab) takes the view-delta slot path, whose
-    # _delta_parts("feed") encodes every card again with its tint — zero such clients today, left until seen.
+    # _delta_parts("feed") encodes every card again, tint-free since 2026-09-07 (the builders no longer
+    # stamp it; _feed_body does, for whole frames) — zero such clients today, left until seen.
     # The section runs after the build try above: a raise here used to escape _push, ride _push_all (no
     # except) into _pusher's while-True and kill the pusher thread for the life of the process — every
     # dashboard frozen until a restart. A fill that raises stands its slot down for THIS cycle (its clients
@@ -40780,7 +41063,7 @@ def _cached_feed(now, tmux, sig, connect=False):
     started = time.time()                # …and the dirty floor for the NEXT check: mutations after this
     _t0 = time.monotonic()
     feed = build_feed(now, tmux)         # instant may be invisible to the build below → must rebuild
-    _PERF_STATS.build("feed", False, time.monotonic() - _t0)
+    _PERF_STATS.build("feed", False, time.monotonic() - _t0, dirty=dirty)
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
     _feed_needs_input[0] = _needs_input_sids(feed)        # the per-session needs-you the session ledgers read
@@ -46959,8 +47242,8 @@ class Handler(BaseHTTPRequestHandler):
                 # from the pusher's warmed build (the connect semantics: never triggers a rebuild;
                 # a cold kernel builds once, a read like any client connect). Token-gated like its
                 # stateful siblings; read-only, no side effects.
-                return self._send(200, json.dumps(_cached_feed(time.time(), _tmux_sessions(), None,
-                                                               connect=True)),
+                _fj = _cached_feed(time.time(), _tmux_sessions(), None, connect=True)
+                return self._send(200, json.dumps(dict(_fj, asks=_tinted_asks(_fj))),   # tinted, as the board's frame is
                                   "application/json", cache="no-cache")
             if p == "/classify":
                 # One session's LIVE classification as the kernel derives it right now (both teams'
