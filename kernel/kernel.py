@@ -3252,6 +3252,227 @@ def _prune_notify_cards(live_ids):
         _atomic_write(jd.STATE / "notify-cards.json", json.dumps(kept, sort_keys=True))
 
 
+# ── user todos (plans/user-todos.md; docs/adr/0001 — the authority tier) ─────────────────────────
+# A need a session registers with the person it works for — a decision, input, or action only they
+# can provide — held open while the agent keeps working on whatever else it can. user-todos.json
+# under STATE maps sid → a list of records; resolution STAMPS (`resolved: {kind, t}`, kind one of
+# answered / dismissed / withdrawn) rather than deletes, so a record carries its own history.
+# Exactly three events clear one — the user answers (the split card's Reply), the user dismisses,
+# the agent withdraws (the postal tool) — and NOTHING that reasons by inference may write this
+# store: no judge, no unblocker (grep-provable; test_user_todos.py pins that judge.py never names
+# it). Registration rides POST /usertodo from the postal bus's add_user_todo, the way set_working
+# rides POST /working. Same mtime+size cache as _session_flags; _atomic_write publish.
+_user_todos_cache = {}   # str(path) -> ((mtime_ns,size), dict)
+_user_todos_lock = threading.RLock()  # store read-modify-writes from route/WS/pusher threads (the
+#                                       _comments_lock doctrine): every mutation below reads, edits a
+#                                       copy, and publishes under this lock, or two postal buses
+#                                       registering concurrently lose confirmed rows and a racing
+#                                       answer+dismiss both "win" — first-stamp-wins must be real.
+#                                       RE-ENTRANT: the answered stamp's stand-down and the loss
+#                                       seam's verdict are each ONE critical section that nests the
+#                                       locked store helpers it rules with — deciding and recording
+#                                       must not straddle a release, or the write the record exists
+#                                       to stand down lands in the gap
+
+
+def _user_todos():
+    """The store, mtime+size cached: {sid: [record, ...]}. A missing file is the empty store; a
+    file that is not a JSON object reads as empty too (a garbled store hides nothing that a write
+    could then lose — every writer copies this read and the corrupt bytes are replaced by a valid
+    store on the next register)."""
+    p = jd.STATE / "user-todos.json"
+    try:
+        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    hit = _user_todos_cache.get(str(p))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        d = json.loads(p.read_text())
+        if not isinstance(d, dict):
+            d = {}
+    except Exception:
+        d = {}
+    _user_todos_cache[str(p)] = (key, d)
+    return d
+
+
+def _write_user_todos(cur):
+    """Publish the store (atomic rename, sort_keys — byte-stable for an unchanged store)."""
+    _atomic_write(jd.STATE / "user-todos.json", json.dumps(cur, sort_keys=True))
+
+
+def _add_user_todo(sid, text, detail=""):
+    """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
+    for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
+    optional longer context; empty means the short line carries it all and no key is stored."""
+    with _user_todos_lock:                           # full read-modify-write under the lock: a racing
+        cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
+        lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
+        taken = {t.get("id") for t in lst}
+        tid = "ut-" + uuid.uuid4().hex[:8]
+        while tid in taken:
+            tid = "ut-" + uuid.uuid4().hex[:8]
+        rec = {"id": tid, "text": str(text), "createdT": int(time.time())}
+        if str(detail or "").strip():
+            rec["detail"] = str(detail)
+        lst.append(rec)
+        cur[sid] = lst
+        _write_user_todos(cur)
+    return tid
+
+
+# Per-sid bound on RESOLVED rows: sessions can live for weeks and never hit the prune's death
+# gate, so stamped history would accumulate without bound while _user_todo_fp re-serialized every
+# row on every chat build. A SIZE bound in the store's own idiom (the LIVE_TAIL_CAP order of
+# magnitude — these are small per-session ledgers, not archives), never a time heuristic: 64
+# resolved rows is weeks of glance-back history for one session, and small enough that the
+# per-build fp fold stays trivial. OPEN rows are NEVER capped — the ADR's authority tier: an open
+# ask leaves the store by answer/dismiss/withdraw alone.
+_USER_TODO_RESOLVED_KEEP = 64
+
+
+def _resolve_user_todo(sid, tid, kind):
+    """Stamp one clearing event (answered / dismissed / withdrawn) onto a STILL-OPEN todo. False
+    when the id is unknown or already cleared — every caller must be LOUD about that, never a
+    silent success (the withdraw contract) — and a second stamp never overwrites the first: the
+    record's history is the point of stamping over deleting. The whole read-modify-write holds
+    the store lock, or first-stamp-wins is only single-threaded prose: a concurrent answer and
+    withdraw both read "open", both report success, and the surviving stamp is whichever write
+    landed last.
+
+    Each stamp also enforces the resolved-history bound (_USER_TODO_RESOLVED_KEEP): the newest K
+    resolved rows stay, the oldest leave, open rows are untouched. Enforced HERE because every
+    resolved row is born here — one choke point, no sweep. Stated corollary: a row the cap
+    evicts can no longer be reopened by a recall of its still-queued answer — that would take K
+    NEWER resolutions in the SAME session while the recalled answer sat unfed, and the recall's
+    reopen then no-ops loudly instead of corrupting anything. The loss path hits the same wall
+    the same way: an evicted row's answer that then dies with its holder reopens nothing, and the
+    caller logs that no-op just as loudly — for an evicted row that line is the only record left
+    that the user still owes the session an answer, because no card can show an ask the cap
+    removed."""
+    with _user_todos_lock:
+        cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
+        lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
+        hit = next((t for t in lst if t.get("id") == tid and not t.get("resolved")), None)
+        if hit is None:
+            return False
+        hit["resolved"] = {"kind": str(kind), "t": int(time.time())}
+        resolved = [(i, t) for i, t in enumerate(lst) if t.get("resolved")]
+        if len(resolved) > _USER_TODO_RESOLVED_KEEP:
+            # newest by stamp time (list position breaks same-second ties: later in the list =
+            # registered later) — drop the oldest beyond the keep
+            resolved.sort(key=lambda p: (int((p[1].get("resolved") or {}).get("t") or 0), p[0]))
+            drop = {p[0] for p in resolved[:len(resolved) - _USER_TODO_RESOLVED_KEEP]}
+            lst = [t for i, t in enumerate(lst) if i not in drop]
+        cur[sid] = lst
+        _write_user_todos(cur)
+    return True
+
+
+def _reopen_user_todo(sid, tid):
+    """Lift an 'answered' stamp — the ONE un-stamp, and only when the answer's own DELIVERY came
+    undone: the recall of its send (the queued bubble's ✕ before the message ever reached the
+    agent — the user changed their mind about the ANSWER, so the ask still stands), or the
+    corroborated loss of its holder (the entry's echo drop-marked with the text provably not in
+    the transcript). Never lifts a dismiss or a withdraw (those clearing events had no delivery
+    to fail), and never fires from inference — every caller keys on the exact delivery-failure
+    event of the send the stamp recorded, so the authority tier holds."""
+    with _user_todos_lock:
+        cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
+        lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
+        hit = next((t for t in lst
+                    if t.get("id") == tid and (t.get("resolved") or {}).get("kind") == "answered"), None)
+        if hit is None:
+            return False
+        del hit["resolved"]
+        cur[sid] = lst
+        _write_user_todos(cur)
+    return True
+
+
+def _open_user_todos(sid):
+    """The still-open todos for one session, oldest first — the exact shape the chat payload ships
+    (id, text, createdT, optional detail). STORE VALUES ONLY: this rides the dedup-compared chat
+    payload, so a derived per-build value here (an age, a `now`) would defeat _send_client's
+    serialized-payload dedup and re-send the full chat every push — the firstSeen lesson."""
+    out = []
+    for t in _user_todos().get(sid) or []:
+        if not isinstance(t, dict) or t.get("resolved") or not t.get("id"):
+            continue
+        rec = {"id": str(t["id"]), "text": str(t.get("text") or ""), "createdT": t.get("createdT") or 0}
+        if str(t.get("detail") or "").strip():
+            rec["detail"] = str(t["detail"])
+        out.append(rec)
+    out.sort(key=lambda t: (t["createdT"], t["id"]))
+    return out
+
+
+def _user_todo_session_ended(sid):
+    """Has this todo's session ENDED, by CORROBORATED evidence only — never a raw listing miss
+    (a tmux list collapse must not fabricate a death). SDK-owned sids answer from the registry's
+    alive bit (alive:false = ended-but-revivable, exactly build_session's gate). A reg-less
+    (tmux) sid answers from the durable death record (STATE/gone/<sid>.json, written only by
+    corroborated death writers) — and the marker counts only while it is the NEWEST event,
+    _death_stamp_due's own time key, so a revival's fresh states row un-ends the session without
+    anyone deleting the marker. No marker → not ended, whatever a live listing momentarily says.
+    Cost: one reg read; the states scan runs only when a marker exists (dead sessions only, off
+    the hot path — build_session bodies are sig-cached)."""
+    sid = str(sid)
+    reg = _thread_reg(sid)
+    if reg:
+        return not reg.get("alive")
+    try:
+        m = json.loads((jd.STATE / "gone" / (sid + ".json")).read_text())
+    except Exception:
+        return False
+    if not isinstance(m, dict):
+        return False
+    last = _last_states_row(sid)
+    return not (int((last or {}).get("t") or 0) > int(m.get("t") or 0))
+
+
+def _prune_user_todos():
+    """Bound the store WITHOUT ever deleting an open ask: a row leaves the file only when it is
+    already RESOLVED (stamped history no surface renders) AND its session has a durable death
+    record (_user_todo_session_ended — corroborated, never a display-set miss). Open todos persist
+    until the user dismisses or the agent withdraws, whatever the session's state — that survival
+    is the ADR's whole point, and a first cut of this sweep broke it: it dropped whole sids absent
+    from the tab-GC's known-set, which loses alive-but-idle tmux sessions during list-collapse
+    cycles and 48h transcript ageouts, silently deleting a LIVE session's open asks. Writes only
+    when something actually left (no churn on the per-cycle call); the death check runs only for
+    sids that hold resolved rows."""
+    with _user_todos_lock:
+        cur = _user_todos()
+        out = {}
+        changed = False
+        for s, rows in cur.items():
+            rows = [t for t in rows if isinstance(t, dict)] if isinstance(rows, list) else []
+            if any(t.get("resolved") for t in rows) and _user_todo_session_ended(s):
+                kept = [t for t in rows if not t.get("resolved")]
+                changed = True                       # at least one resolved row leaves with its dead session
+                if kept:
+                    out[s] = kept
+            elif rows:
+                out[s] = rows
+        if changed:
+            _write_user_todos(out)
+
+
+def _user_todo_fp(sid):
+    """This sid's OWN rows, serialized — the chat-build sig's per-session fold. Scoped on purpose:
+    a fold of the shared file's stat would bust EVERY tab's chat cache on ANY session's todo write
+    (the store write rides a hot synchronous route, and every other tab would pay a rebuild for a
+    row it doesn't render). Store values only, sort_keys — byte-stable across builds when this
+    sid's rows are unchanged, so the fold busts exactly the owning session's cache. Cheap:
+    _user_todos() is the mtime-cached dict, and one sid's rows are a handful of records."""
+    rows = _user_todos().get(str(sid))
+    if not rows:
+        return None
+    return json.dumps(rows, sort_keys=True)
+
+
 # ── Auto Nudge (the user 2026-06-19) ──────────────────────────────────────────────────────────────
 # When ON, a background pass follows up on an ORPHANED goal: a session that is ALIVE but went IDLE (its
 # turn ended) while its top goal still shows "working" — not blocked, not completed, not awaiting your
@@ -7727,6 +7948,12 @@ def _chat_tab_sessions(now, tmux):
     # session-order.json stays bounded and a closed / aged-out session drops out on its own (the user
     # 2026-06-24). A session merely dead-but-in-window (or explicitly kept-open) stays known and keeps its slot.
     _gc_session_order(live_sids | {s["sid"] for s in all_sessions} | set(_kept_open))
+    # user todos do NOT ride that known-set (plans/user-todos.md): it drops alive-but-idle tmux
+    # sessions during list-collapse cycles and 48h transcript ageouts, and an open ask deleted on
+    # that evidence is the silent vanishing the ADR exists to stop. The sweep keys on its own
+    # corroborated evidence — resolved rows of sessions with a durable death record — and open
+    # todos persist regardless of session state (hidden by the ended gate, back on revive).
+    _prune_user_todos()
     return result
 
 
@@ -18998,6 +19225,13 @@ def _chat_build_sig(sess):
             sig += [0, 0]
     sig.append(_judge_gen[0])     # a judge pass (goal/caption change) busts every tab's cache once
     sig.append(_task_store_fp(fsid))   # a store update (incl. a subagent completing a task) refreshes the to-do card
+    # a user-todo write (register / answer / dismiss / withdraw) changes the split card + the
+    # payload's userTodos field with NO transcript write — without this fold a background tab's
+    # cached chat never showed the new row (plans/user-todos.md). Folded PER-SID (_user_todo_fp,
+    # the _task_store_fp shape): the sig busts exactly the owning session's cache — a shared-file
+    # stat here would make every session's write rebuild every tab once, extra load the register
+    # route's postal caller then waits behind.
+    sig.append(_user_todo_fp(sess.get("sid") or ""))
     # a pending DELETE rollback changes the payload with NO transcript write (the parse-cache lesson,
     # one level up): without this a BACKGROUND tab's cached, uncut payload keeps pushing the deleted
     # tail until the file next changes. Cheap: live SDK sessions answer from memory, no I/O.
@@ -35709,6 +35943,61 @@ class Handler(BaseHTTPRequestHandler):
                     _remote_forward(r, "/working", {"id": sid, "text": str(body.get("text") or "")})
                     return self._send(200, json.dumps({"ok": True}), "application/json")
                 Sessions.set_working_note(sid, str(body.get("text") or ""))
+                return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path == "/usertodo":
+                # Register a USER TODO — a need the session flags with the person it works for while
+                # it keeps working (plans/user-todos.md). The postal bus's add_user_todo posts here
+                # the way set_working posts /working. Body: {"id": <sid>, "text": <one short line>,
+                # "detail"?: <longer context>} → {"ok": true, "todoId": "ut-…"}. Only answer /
+                # dismiss / withdraw ever clear it (the authority tier, docs/adr/0001) — no judge
+                # writes this store. Like the other postal-called routes, the body is shape-validated
+                # and the sid's existence is not (the house style: be honest about outcomes instead).
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                sid = str((body or {}).get("id") or "") if isinstance(body, dict) else ""
+                text = str((body or {}).get("text") or "").strip() if isinstance(body, dict) else ""
+                if not sid or not text:
+                    return self._send(400, json.dumps({"ok": False, "error": "id and text required"}), "application/json")
+                r = _host_for_sid(sid)
+                if r is not None:                                   # remote session → forward over its -L tunnel
+                    res = _remote_forward(r, "/usertodo", {"id": sid, "text": text,
+                                                           "detail": str(body.get("detail") or "")})
+                    tid = str((res or {}).get("todoId") or "") if isinstance(res, dict) else ""
+                    return self._send(200, json.dumps({"ok": bool(tid), "todoId": tid}), "application/json")
+                tid = _add_user_todo(sid, text, str(body.get("detail") or ""))
+                # ack-fast (the push-architecture rule, 2026-07-05): wake the pusher, never build the
+                # whole payload set synchronously on this handler thread — the postal bus times its
+                # POST out at 2s, so an inline _push_all here turned a SAVED todo into a loud false
+                # "will NOT see it — try again" at the agent, whose retry then filed a duplicate.
+                _push_soon()                                        # the split card shows the new row at once
+                return self._send(200, json.dumps({"ok": True, "todoId": tid}), "application/json")
+            if u.path == "/usertodo/withdraw":
+                # The agent takes back its own todo, by id — the ONE agent-side clearing event. An
+                # unknown or already-cleared id answers ok:false and the tool surface says so LOUDLY:
+                # a silent success would teach agents their withdrawals worked when nothing changed.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                sid = str((body or {}).get("id") or "") if isinstance(body, dict) else ""
+                tid = str((body or {}).get("todoId") or "") if isinstance(body, dict) else ""
+                if not sid or not tid:
+                    return self._send(400, json.dumps({"ok": False, "error": "id and todoId required"}), "application/json")
+                r = _host_for_sid(sid)
+                if r is not None:                                   # remote session → forward over its -L tunnel
+                    res = _remote_forward(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
+                    return self._send(200, json.dumps({"ok": bool(isinstance(res, dict) and res.get("ok"))}),
+                                      "application/json")
+                if not _resolve_user_todo(sid, tid, "withdrawn"):
+                    return self._send(200, json.dumps({"ok": False,
+                                                       "error": "no open todo with that id"}), "application/json")
+                _push_soon()                                        # ack-fast: the row leaves the split card
+                #                                                     on the pusher's woken cycle, and the
+                #                                                     postal caller's 2s POST never waits
+                #                                                     behind a synchronous build of every
+                #                                                     session's payload
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/deliver":
                 # Live-deliver a postal banner to a session — the deliver-time WAKE. The bus drains its maildir

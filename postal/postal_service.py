@@ -2961,6 +2961,23 @@ MCP_TOOLS = [
      "description": "Publish what you're working on (files/surface) so peers steer clear; your branch shows automatically. Empty text clears it (romp also auto-clears once your work is done and the session idles).",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "short note, e.g. 'editing scripts/romp-postal + tmux.conf'"}}}},
+    # The two user-todo tools (plans/user-todos.md) describe an obligation to the PERSON THE AGENT
+    # WORKS FOR, so unlike the peer-mail tools above their descriptions follow the veil: no romp
+    # machinery named (test_injected_voice.py scans them). Note the caller-identity caveat: postal
+    # resolves who's calling from the CLI process env, so a SUBAGENT's call registers the todo as
+    # its parent session — the right behavior (the need belongs to the session the user talks to),
+    # it just means "who filed this" is always the session, never an individual subagent.
+    {"name": "add_user_todo",
+     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
+     "inputSchema": {"type": "object",
+                     "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why"},
+                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it"}},
+                     "required": ["text"]}},
+    {"name": "withdraw_user_todo",
+     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a stale request.",
+     "inputSchema": {"type": "object",
+                     "properties": {"id": {"type": "string", "description": "the id add_user_todo returned"}},
+                     "required": ["id"]}},
     {"name": "check_sent",
      "description": "See your recently sent messages and whether each was read/acted on by the recipient yet, or is still pending — instead of asking 'did you get it?'.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -3043,6 +3060,40 @@ def _mcp_call(name, args):
         _publish_working(mid, text)        # backend-agnostic kernel store (POST /working), not the @romp-working var
         return ("Cleared your 'working on' note." if not text.strip()
                 else "Published — others see: working on '%s'." % text), False
+    if name == "add_user_todo":
+        # Register a need with the person the agent works for (plans/user-todos.md) — the kernel
+        # owns the store (POST /usertodo, the set_working/_publish_working shape) and mints the id.
+        # `mid` is the calling SESSION (a subagent's call files under its parent — see MCP_TOOLS).
+        if not mid:
+            return "Not inside a romp session.", True
+        text = str(args.get("text") or "").strip()
+        if not text:
+            return "Need 'text' — one short line: what you need from them and why.", True
+        res = _kernel_post("/usertodo", {"id": mid, "text": text,
+                                         "detail": str(args.get("detail") or "").strip()})
+        tid = res.get("todoId") if isinstance(res, dict) else None
+        if not tid:
+            # LOUD, never a silent drop: an unsaved need the agent believes is filed is exactly
+            # the vanishing this tool exists to stop.
+            return ("Couldn't save that — the person you work for will NOT see it. Say what you "
+                    "need directly in your next reply instead, or try again shortly."), True
+        return ("Noted (id %s) — the person you work for will see it. Withdraw it "
+                "(withdraw_user_todo) the moment the need is met or moot." % tid), False
+    if name == "withdraw_user_todo":
+        # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain
+        # answer — never a silent success (plans/user-todos.md).
+        if not mid:
+            return "Not inside a romp session.", True
+        tid = str(args.get("id") or "").strip()
+        if not tid:
+            return "Need 'id' — the one add_user_todo returned when you flagged the need.", True
+        res = _kernel_post("/usertodo/withdraw", {"id": mid, "todoId": tid})
+        if not isinstance(res, dict):
+            return "Couldn't withdraw '%s' — it still stands. Try again shortly." % tid, True
+        if not res.get("ok"):
+            return ("No open note '%s' of yours — it was already answered, dismissed, or "
+                    "withdrawn. Nothing changed." % tid), True
+        return "Withdrawn — '%s' no longer stands." % tid, False
     if name == "check_sent":
         if not mid:
             return "Not inside a romp session.", True
