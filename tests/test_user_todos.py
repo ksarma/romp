@@ -812,7 +812,7 @@ class BuildSessionSeam(unittest.TestCase):
                          "revived → the todos return with the session")
 
     def test_a_muted_session_still_ships_its_todos_to_the_tab(self):
-        # THE DESIGNED ASYMMETRY (review call, 2026-08-22): hideFromFeed quiets the feed and every
+        # THE DESIGNED ASYMMETRY (2026-08-22): hideFromFeed quiets the feed and every
         # aggregate built from it, because mute means "stop interrupting me about this session".
         # The CHAT payload still carries the open todos: the session's own tab remains truthful
         # about what it holds.
@@ -3340,12 +3340,14 @@ class FloorNotificationDedup(_StoreSandbox):
                           "%s must hold the latch lock around its read-modify-write" % fn.__name__)
 
 
-class BadgeArithmetic(unittest.TestCase):
+class BadgeArithmetic(_StoreSandbox):
     """_needs_you_count widens to 'things only the user can move' (plans/user-todos.md, (d)):
     open user todos of non-ended sessions PLUS hard-stopped needs-input sessions — counted per
     SESSION ('counts once as itself'), with the escalation floor adding nothing (a presentation
     of todos the count already includes). Ended sessions are excluded upstream: the map is built
-    behind the ended gate (FeedSeamUserTodos)."""
+    behind the ended gate (FeedSeamUserTodos). The sandbox turns the switch ON: the widened rule
+    is part of the feature, and OFF keeps the pre-feature count (OffOnTheBadge in
+    test_user_todos_switch.py)."""
 
     def test_todos_plus_hard_stopped_sessions(self):
         feed = {"asks": [{"itemId": "a", "sid": "S1", "column": "needs_input"}],

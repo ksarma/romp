@@ -31557,7 +31557,16 @@ def _needs_you_count(feed):
     per CARD: they are independent decisions, not session stops (2026-08-22). A sid-less
     needs-input card (nothing to dedup against) still counts alone; provisional placeholders stay
     out, as ever (churn is not news). Runs on the pusher: a malformed map (a stale or foreign
-    frame) contributes nothing rather than raising."""
+    frame) contributes nothing rather than raising.
+
+    The per-install switch covers the arithmetic too (2026-09-03): the widened rule is part of the
+    feature, so while the switch is OFF the count is what it was before user todos existed — every
+    real needs-input card, per card — and an install that never turned the feature on sees no
+    change in the number its icon wears. (A frame built while off carries an empty map and no
+    floored card anyway; this keeps the dedup off as well.)"""
+    if not _user_todos_on():
+        return sum(1 for a in (feed.get("asks") or [])
+                   if not a.get("provisional") and a.get("column") == "needs_input")
     n = 0
     _utm = feed.get("userTodos")
     if isinstance(_utm, dict):

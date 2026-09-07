@@ -262,14 +262,14 @@ the permission-prompt class stays in (the user confirmed, 2026-08-20). Dedup rul
 escalation floor is a *presentation* of todos the count already includes, so an idle session
 escalated by its todos adds nothing extra; a session hard-stopped for a non-todo reason
 (permission prompt, on-you API error) counts once as itself. Per-item decision cards count per
-CARD, not per session (as built, review 2026-08-22): a parked handoff (deliver-or-dismiss per
+CARD, not per session (2026-08-22): a parked handoff (deliver-or-dismiss per
 send) and a quarantined peer mail (approve/deny/edit per message) are each an independent user
 decision, not a state of their session — `_NEEDS_YOU_PER_ITEM` enumerates them from
 build_feed's own needs-input constructors, and the per-session dedup was absorbing real
 decisions (a permission stop plus two held mails read badge 1). Rides the existing push
 (`_badge_push` → the shell WS `{type:'badge'}`, and the service-worker copy).
 
-**Muted sessions — a deliberate asymmetry (review call, 2026-08-22).** A `hideFromFeed` mute
+**Muted sessions — a deliberate asymmetry (2026-08-22).** A `hideFromFeed` mute
 quiets the feed and every aggregate built from it — the card marker (c), the idle-escalation
 floor, and the badge (d) — because mute means "stop interrupting me about this session". The
 tab glyph (b) stays: it reads the chat payload's `userTodos`, which mute does not touch, so the
@@ -392,12 +392,15 @@ choice never propagates. While off, every surface refuses and says so: `POST /us
 `/usertodo/withdraw` answer 409 with one plain line; `userTodoAnswer` and `userTodoDismiss` answer
 with a warning toast; `/usertodo/context` answers `enabled: false` with an empty block, so the
 SessionStart hook injects nothing; the postal bus leaves the two tools out of `tools/list` and
-refuses a call anyway before any post; and `_open_user_todos`, the one gated read, returns `[]`,
-so the card, the tab glyph, the feed marker, the badge, the escalation floor, the nudge
-stand-down and the push latch all show nothing, with no client logic. The store is untouched by
-the switch: rows registered while it was on stay on disk and reappear when it is turned back on,
-and a boot notice counts the open rows stored behind an off switch. The switch is its own commit,
-so dropping that commit ships the feature on by default.
+refuses a call anyway before any post; and `_open_user_todos`, the one gated store read, returns
+`[]`, so the card, the tab glyph, the feed marker, the escalation floor, the nudge stand-down and
+the push latch all show nothing, with no client logic. The badge's arithmetic is part of the
+feature too: `_needs_you_count` reads the switch and, while off, is the pre-feature count (every
+real needs-input card, per card), so an install that never turned the feature on sees no change
+in the number its icon wears. The store is untouched by the switch: rows registered while it was
+on stay on disk and reappear when it is turned back on, and a boot notice counts the open rows
+stored behind an off switch. The switch is its own commit, so dropping that commit ships the
+feature on by default.
 
 The store also guards its own shape, because the switch file is easy to mistake for it. A
 `user-todos.json` that is not sid → list (a settings blob, a JSON list, unparsable text) reads as
