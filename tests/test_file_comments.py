@@ -631,14 +631,16 @@ class RejectTellsTheSession(_TraceWorld):
 
 
 class SaveTellsTheSession(_TraceWorld):
-    """Slice 5 (plans/file-review.md, Consent, trace, routing; the Slice 5 contract, H4): the editor's
-    Save over a tracked file goes through the `save` verb, and the host writes the file and the
-    remapped sidecar together. The kernel forwards it like every verb and, after a successful reply,
-    sends the SAME trace a saveFile sends — _edit_trace, the direct-edit body, to the session whose
-    tree holds the file — and nothing else: no log-edit (the host appended the log's `edit` entry
-    itself), no reject trace. The reply carries the host's fields untouched (fileMtimeNs, storeMtimeNs,
-    logged), which file-view.ts reads as its saved event. The stub plays the host; the real verb is the
-    host's own node tests' concern."""
+    """Slice 5 (plans/file-review.md, Consent, trace, routing): the editor's Save over a tracked file
+    goes through the `save` verb, and the host writes the file and the remapped sidecar together. The
+    kernel forwards it like every verb and, after a successful reply, tells the session whose tree
+    holds the file. A save that rejected none of the session's changes (this class's fixtures) sends
+    the SAME trace a saveFile sends — _edit_trace, the direct-edit body — and nothing else: no log-edit
+    (the host appended the log's `edit` entry itself; plans/file-review.md, The comments log), no
+    reject trace. A save whose `rejected` list names some sends _save_trace_body with the count
+    instead (tests/test_kernel_file_comments_save.py). The reply carries the host's fields untouched
+    (fileMtimeNs, storeMtimeNs, logged), which file-view.ts reads as its saved event. The stub plays
+    the host; the real verb is the host's own node tests' concern."""
 
     ARGS = {"content": "# Findings\n\nThe api session cut p95 latency by 45%.\n",
             "suggestions": [{"id": "1781100000000-1", "author": "api", "ts": 1781100000000, "kind": "sub",
@@ -689,7 +691,7 @@ class SaveTellsTheSession(_TraceWorld):
         self.assertEqual(self.reached[0][1], self.reached[1][1], "the save verb's trace IS saveFile's trace")
 
     def test_a_save_runs_the_host_once_and_never_calls_log_edit(self):
-        # the host appended the log's `edit` entry itself (contract H4), so the kernel's log-edit follow-up
+        # the host appended the log's `edit` entry itself (plans/file-review.md, The comments log), so the kernel's log-edit follow-up
         # — saveFile's — must not run here: one host call, the save, with the request forwarded untouched
         calls, real_call = [], km._file_comments_call
 

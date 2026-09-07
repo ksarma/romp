@@ -748,7 +748,7 @@ def test_a_save_from_the_editor_writes_the_file_and_the_remapped_change_together
     h = r["hunks"][0]
     assert (h["id"], h["curFrom"], h["newText"]) == (rec["id"], remapped["from"], rec["newText"]), "the reply's hunks index the new text"
     assert content[h["curFrom"]:h["curTo"]] == h["newText"]
-    # exactly one trace, the direct edit's, to the session whose tree holds the file, after the reply (contract H4)
+    # exactly one trace, the direct edit's, to the session whose tree holds the file, after the reply (plans/file-review.md, Consent, trace, routing)
     real = os.path.realpath(str(world.fp))
     assert world.traced == [(SID, km._edit_trace_body(real))]
     assert "I just edited `%s` directly on disk" % km._tilde(real) in world.traced[0][1]

@@ -526,7 +526,7 @@ export function authorIdByLabel(store: Store | null, author: string): string | n
   return null;
 }
 
-/** The `save` verb's arguments (the Slice 5 contract, H4): the whole new text, the records as the editor's field
+/** The `save` verb's arguments (plans/file-review.md, Slice 5): the whole new text, the records as the editor's field
  *  holds them after the person's typing remapped them, and the decisions taken in the editor. Built here so the
  *  panel speaks the person's words and the wire keeps the format's. */
 export function saveArgs(content: string, records: unknown[], decided: EditDecisions): Record<string, unknown> {

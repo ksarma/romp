@@ -31364,7 +31364,7 @@ def _save_trace_body(path, n):
     changes gone, and had no word they were refused rather than lost, where the same decision from
     the panel's Reject says the count (the review, 2026-09-06). The person's voice, the same marker
     tail and the same neutralized, tilde-collapsed path as the two bodies it joins;
-    tests/test_kernel_file_comments_save.py renders it against the injected-voice vocabulary."""
+    tests/test_injected_voice.py renders it with every other injected body."""
     n = int(n or 0)
     return ("Heads up: I just edited `%s` directly on disk, outside our conversation, and rejected %d of your "
             "tracked changes in it; the file and its sidecar both changed, so re-read it before writing."
@@ -31377,9 +31377,10 @@ def _save_trace(path, sid, n):
     edit changes it), _save_trace_body naming `n` when it rejected some. The count is the request's own
     `rejected` list, and for THIS verb the request is the record: a reject's ids are a request the
     host may narrow (land, coalesce, refuse one by one — so _reject_trace counts the reply), but a
-    save's `rejected` names decisions already taken in the editor, which the host checks entry by
-    entry and refuses WHOLE on any fault (its requireDecisions: a BadRequest, exit 2, the kernel's
-    host-error) before it writes anything, and logs verbatim as its `reject` entry — an ok reply means
+    save's `rejected` names decisions already taken in the editor, which the host checks before it
+    writes anything and refuses WHOLE on any fault — the lists' shape (requireDecisions: a BadRequest,
+    exit 2, the kernel's host-error) and every id against what was pending (decisionRoots, rootedIn: a
+    `no-change` refusal, ok false) — and logs verbatim as its `reject` entry, so an ok reply means
     exactly these landed. Same owner lookup, same direct backend send, best-effort and loud on failure,
     as its two siblings; the save itself already succeeded and was acked before this runs."""
     if int(n or 0) <= 0:
