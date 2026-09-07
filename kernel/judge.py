@@ -1187,7 +1187,7 @@ _UNREADABLE_LOGGED = set()   # path strings whose last read failed and was logge
 _UNREADABLE_LOCK = threading.Lock()
 
 
-def _read_failed(path_s, err, fsid, exc, note=None):
+def _read_failed(path_s, err, fsid, exc, note=None, mark=True):
     """A file the signature stat'd (or reads by value) could not be READ by the stage: mark the running
     stage incomplete and log one judge-errors row (`note` names the consequence when the default, written
     for the side files, does not fit: a goals store's readers stand down rather than judge without it). An absent file is a real state (_ident's None, the
@@ -1197,8 +1197,13 @@ def _read_failed(path_s, err, fsid, exc, note=None):
     (review finding, 2026-09-07; before the memos the same hole stood on main for the planner's and
     closer's cleared.jsonl input). One row per failure episode, the first failed read after a good one
     (_read_ok), not one per call: the stall slice alone is read three times per session per pass, and a
-    wedged shared file would otherwise write a row for every one of them."""
-    _judge_ctx.stage_incomplete = True
+    wedged shared file would otherwise write a row for every one of them.
+    `mark=False`: the row without the mark, for a file that READ but holds something the reader cannot use
+    and the stage's decision over it is the one it takes over an absent file (the archiver rebuilds a
+    record that is not one): the stage decided WITH the input, the row keeps the corruption visible once
+    per episode, and the stage's own write ends the episode."""
+    if mark:
+        _judge_ctx.stage_incomplete = True
     with _UNREADABLE_LOCK:
         first = path_s not in _UNREADABLE_LOGGED
         _UNREADABLE_LOGGED.add(path_s)
@@ -3409,25 +3414,35 @@ def session_turn_captions(fsid, rows=None):
 
 def _read_archive(fsid):
     """(record, failed) for archive/<fsid>.json: the session's archive record ({headline, abstract, turns,
-    t, and the fail counters}) or None, and whether a file that EXISTS failed to read. Strict about the
+    t, and the fail counters}) or None, and whether a file that EXISTS could not be READ. Strict about the
     file (the evidence gate, 2026-09-07): absent is (None, False), a real state; a file that exists and
-    does not read or decode, or decodes to something other than a record, is (None, True), through
-    _read_failed, which marks the running stage incomplete and logs one session-archive-unreadable row per
-    episode (a name of its own: the goals archive's row is archive-unreadable). The archiver stands down on
-    `failed` rather than rebuild the record over a file it could not see. Before, every failure was a
-    silent None, the archiver rebuilt over it, and the gate would have stamped that decision until the
-    file moved."""
+    does not read (a permission bit, EMFILE, EIO) is (None, True), through _read_failed, which marks the
+    running stage incomplete and logs one session-archive-unreadable row per episode (a name of its own:
+    the goals archive's row is archive-unreadable), and the archiver stands down on `failed` rather than
+    rebuild over a record it could not see. A file that reads but does not decode, or decodes to something
+    other than a record, is CONTENT, not a read failure (review should-fix, 2026-09-07): (None, False),
+    the same answer as an absent record, so the archiver rebuilds it and write_archive replaces the file,
+    which ends the episode; standing down would have left a corrupt record unrebuilt and the session due
+    every pass forever. The row is still written once per episode (unmarked) so the corruption is visible.
+    Before this reader, every failure was a silent None: the archiver rebuilt over an unreadable file it
+    could not see, and a non-empty document that was not a record crashed the pass at `prev.get`."""
     p = ARCHDIR / (fsid + ".json")
     try:
-        rec = json.loads(p.read_text())
+        text = p.read_text()
     except (FileNotFoundError, NotADirectoryError):   # absent, as _ident reads it
         return None, False
-    except Exception as e:
+    except OSError as e:
         _read_failed(str(p), "session-archive-unreadable", fsid, e)
         return None, True
-    if not isinstance(rec, dict):
-        _read_failed(str(p), "session-archive-unreadable", fsid, TypeError("not a record: %s" % type(rec).__name__))
-        return None, True
+    try:
+        rec = json.loads(text)
+        bad = None if isinstance(rec, dict) else TypeError("not a record: %s" % type(rec).__name__)
+    except ValueError as e:
+        bad = e
+    if bad is not None:
+        _read_failed(str(p), "session-archive-unreadable", fsid, bad, mark=False,
+                     note="archive %s is not a record: %r — the archiver rebuilds it from the turn captions" % (p.name, bad))
+        return None, False
     _read_ok(str(p))
     return rec, False
 

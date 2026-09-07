@@ -2337,12 +2337,16 @@ class IndexReaders(_Gate):
         jd._judge_ctx.stage_incomplete = False
         self.assertEqual(jd.load_archive(SID)["turns"], 2, "readable again")
         self.assertFalse(jd._judge_ctx.stage_incomplete)
+        # a file that READS but is not a record is content, not a read failure (review should-fix): the
+        # answer is an absent record's, so the archiver rebuilds it; the row is still written, once per
+        # episode, and the stage is not marked (it decided with the input)
         ap.write_text("[1, 2]")                                          # decodes, but is not a record
+        self.assertEqual(jd._read_archive(SID), (None, False))
         self.assertIsNone(jd.load_archive(SID))
-        self.assertTrue(jd._judge_ctx.stage_incomplete, "a document that is not a record is unreadable as one")
-        self.assertEqual(len(self._rows("session-archive-unreadable")), 2)
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "content: the stage is not marked")
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 2, "but the corruption is logged once")
         ap.write_text("{ not json")
-        self.assertIsNone(jd.load_archive(SID))
+        self.assertEqual(jd._read_archive(SID), (None, False))
         self.assertEqual(len(self._rows("session-archive-unreadable")), 2, "the same episode: no second row")
         self.assertEqual(self._rows("archive-unreadable"), [], "the goals archive's row name is not borrowed")
 
@@ -2704,6 +2708,41 @@ class IndexGate(_Gate):
         self._reset()
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (1, 0, 1, 0))
+
+    def test_a_corrupt_archive_record_is_rebuilt_once_and_an_unreadable_one_still_stands_down(self):
+        # the review's should-fix: a record that reads but is not one (a truncated write, a non-record document)
+        # is content, so the archiver rebuilds it on the next pass and the publish replaces the file; before, the
+        # strict reader stood down on it too, and the session ran every pass forever with the record never rebuilt
+        self._session(SID)
+        self._converge(tiers=("index",))
+        ap = jd.ARCHDIR / (SID + ".json")
+        a0 = len(self.archive_calls)
+        ap.write_text("{ not the record")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "a refresh due (no readable record): work, no stamp")
+        self.assertEqual(len(self.archive_calls), a0 + 1, "one archive call rebuilds it")
+        self.assertEqual(jd.load_archive(SID)["turns"], 2, "a readable record after it")
+        self.assertEqual(len(self._rows("session-archive-unreadable")), 1, "the corruption was logged once")
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "the publish re-armed once; the hit path stamps")
+        ap.write_text("[1, 2]")                                          # decodes, is not a record: the base crashed on this shape
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual((self._ran(), len(self.archive_calls)), ((1, 0, 0, 1), a0 + 2), "rebuilt, not crashed")
+        self.assertEqual(jd.load_archive(SID)["turns"], 2)
+        if os.geteuid() != 0:
+            self._converge(tiers=("index",))
+            os.chmod(ap, 0)
+            try:
+                os.utime(ap, ns=(os.stat(ap).st_atime_ns, os.stat(ap).st_mtime_ns + 1_000_000_000))   # re-arm: chmod moves ctime only
+                self._reset()
+                self._pass(tiers=("index",))
+                self.assertEqual((self._ran(), len(self.archive_calls)), ((1, 0, 0, 1), a0 + 2),
+                                 "a record that cannot be READ still stands the archiver down: no rebuild over it")
+            finally:
+                os.chmod(ap, 0o644)
 
     def test_an_unreadable_unit_cache_leaves_no_stamp_and_the_miss_path_repairs_it(self):
         # plan test (b), the unit cache: a cache that exists and does not decode is a voided read (a row, no
