@@ -2,17 +2,20 @@
 // user 2026-09-07: sessions often put the path in the line itself, and then the line gave no way to open
 // the file). One matcher and one span for both (path-links.ts linkifyPathTokens / openPathLink), applied
 // by the function each host already used for the detail: waiting.ts's linkTodoPaths on the row's text and
-// the Reply modal's quoted line, render.ts's linkTodoLinePaths (the chat's binder, no figure pass) on the
-// todo card's text and its Reply modal's quoted line. The grammar is the detail's, not a wider one: an
-// absolute, ~/, ./ or ../ path, a relative path whose last segment has an extension, or a file:// URI. A
-// ":line" suffix is not part of it, so the path before the colon links and the suffix stays text, on the
-// line exactly as in the detail.
+// the Reply modal's quoted line, render.ts's linkTodoLinePaths (no figure pass) on the todo card's text
+// and its Reply modal's quoted line. The grammar is the detail's, not a wider one: an absolute, ~/, ./ or
+// ../ path, a relative path whose last segment has an extension, or a file:// URI. A ":line" suffix is
+// not part of it, so the path before the colon links and the suffix stays text, on the line exactly as in
+// the detail.
 //
 // The matcher runs for real over a DOM stand-in (the user-todo-links.test.ts idiom; there is no jsdom),
 // and the click tests run the real delegate() from actions.ts with the openpath handlers lifted out of
-// waiting.ts's source and transpiled (the waiting-detail-link.test.ts idiom): a link inside the fold's
+// each host's source and transpiled (the waiting-detail-link.test.ts idiom): a link inside the fold's
 // click target (.ut-text, data-act uttoggle) opens the file and does not fold; a click on the text beside
-// it folds and opens nothing. Both hosts' wiring is pinned at source.
+// it folds and opens nothing. On the chat host the click is the BODY delegate's (the card rebuilds on
+// every push, so nothing is bound per span; the 2026-09-07 review), and it still opens after a rebuild;
+// the transcript's own per-span binder stops the click before that delegate, so a bound span opens once.
+// Both hosts' wiring is pinned at source.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -86,13 +89,20 @@ function textNodesOf(root: Elm): TextNode[] {
   createTreeWalker: (root: Elm) => { const nodes = textNodesOf(root); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
 };
 
-// the line as rowEl builds it, marked by the real matcher with the todo's session
-async function line(text: string, cls = "ut-text"): Promise<Elm> {
+// the line as rowEl builds it, marked by the real matcher with the todo's session (null: none named)
+async function line(text: string, cls = "ut-text", sid: string | null = SID): Promise<Elm> {
   const { linkifyPathTokens } = await import("./path-links");
   const t = new Elm(cls === "ut-text" ? "span" : "div"); t.className = cls;
   t.textContent = text;
-  linkifyPathTokens(t as unknown as HTMLElement, SID);
+  linkifyPathTokens(t as unknown as HTMLElement, sid);
   return t;
+}
+// the browser's dispatch, for a span with a listener of its own: the target's listeners first, then each
+// ancestor's, until one stops the propagation (Elm.click above calls only the root's)
+function dispatch(target: Elm): void {
+  let stopped = false;
+  const ev = { target, stopPropagation: () => { stopped = true; } };
+  for (let n: Elm | null = target; n && !stopped; n = n.parentElement) for (const fn of n.listeners.click || []) fn(ev);
 }
 
 test("a path in the line becomes the link; the words around it stay text, with the todo's session on the span", async () => {
@@ -235,6 +245,89 @@ test("the Reply modal's one delegate opens a link in the quoted line and one in 
   assert.deepEqual(opened, [["docs/design.md", SID, TID], ["/tmp/TESTHOST/notes-api/layouts.md", SID, TID]]);
 });
 
+// ── the chat host: openLinkedPath (what a click does), bindPathLink (the transcript's per-span binder)
+// and the body delegate's openpath handler, lifted out of render.ts and transpiled, with openPath and
+// activeId injected
+type ChatOpened = [string, string | null];
+function liftRender(name: string): string {
+  const at = RENDER.indexOf("function " + name + "(");
+  const end = RENDER.indexOf("\n}\n", at);
+  assert.ok(at > 0 && end > at, "anchor not found: render.ts's " + name + " moved; re-anchor");
+  return RENDER.slice(at, end + 2);
+}
+function chatHost(opened: ChatOpened[], activeId: string | null): { openpath: Handler; bindPathLink: (a: Elm) => Elm } {
+  const body = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
+  const ln = body.split("\n").find((l) => /^\s*openpath: /.test(l));
+  assert.ok(ln, "anchor not found: the body delegate's openpath moved; re-anchor");
+  const handler = ln!.trim().replace(/^openpath:\s*/, "").replace(/,$/, "");
+  const code = transpile(liftRender("openLinkedPath") + liftRender("bindPathLink") + "const openpath = " + handler + ";");
+  const fn = new Function("openPath", "activeId", code + "\nreturn { openpath, bindPathLink };");
+  return fn((p: string, sid: string | null) => opened.push([p, sid]), activeId);
+}
+// the card as renderTodo builds it: .ut-item > .ut-line > .ut-text.ut-has-detail[data-act=uttoggle][data-tid]
+// (the linked line, then the hint), and the detail fold beneath, both marked by the real matcher
+async function chatCard(sid: string | null = SID): Promise<{ row: Elm; txt: Elm; d: Elm }> {
+  const row = new Elm("div"); row.className = "ut-item";
+  const ln = new Elm("div"); ln.className = "ut-line";
+  const txt = await line("Review docs/design.md before I go on", "ut-text", sid);
+  txt.className = "ut-text ut-has-detail"; txt.dataset.act = "uttoggle"; txt.dataset.tid = TID;
+  const more = new Elm("span"); more.className = "ut-more"; more.textContent = "details"; txt.appendChild(more);
+  ln.appendChild(txt); row.appendChild(ln);
+  const d = await line("The layouts are in /tmp/TESTHOST/notes-api/layouts.md (see file:///tmp/TESTHOST/out%20dir/a.png)", "ut-detail open", sid);
+  row.appendChild(d);
+  return { row, txt, d };
+}
+
+test("the chat's todo card: a link in the line or the detail opens through the BODY delegate with the todo's session, does not fold, and still opens after the card is rebuilt", async () => {
+  const { delegate } = await import("./actions");
+  const opened: ChatOpened[] = [];
+  const ACTIVE = "66666666-7777-8888-9999-000000000000";
+  const { openpath } = chatHost(opened, ACTIVE);
+  let folds = 0;
+  const body = new Elm("body");
+  delegate(body as unknown as HTMLElement, { openpath: openpath as any, uttoggle: (() => { folds++; }) as any });   // once, on the stable root, as render.ts does
+  const card = new Elm("div"); card.className = "todo-card"; body.appendChild(card);
+  let { row, txt, d } = await chatCard(); card.appendChild(row);
+  assert.equal(txt.spans[0].listeners.click, undefined, "nothing is bound on the span: the click is the delegate's");
+  assert.equal(d.spans[0].listeners.click, undefined);
+  body.click(txt.spans[0]);
+  assert.deepEqual(opened, [["docs/design.md", SID]], "a relative path opens against the todo's own session");
+  assert.equal(folds, 0, "the fold did not move: the nearest data-act wins (actions.ts)");
+  assert.ok(txt.spans[0].classList.contains("romp-acted"), "the delegate's press flash on the link");
+  body.click(d.spans[0]); body.click(d.spans[1]);
+  assert.deepEqual(opened.slice(1), [["/tmp/TESTHOST/notes-api/layouts.md", SID], ["/tmp/TESTHOST/out dir/a.png", null]], "a URI names an absolute path and no session");
+  body.click(txt); assert.equal(folds, 1, "the text beside the link folds");
+  // a push rebuilds the card: the pressed nodes are gone, and the new link opens through the same root
+  row.parentElement = null; card.childNodes = [];
+  ({ row, txt, d } = await chatCard()); card.appendChild(row);
+  body.click(txt.spans[0]);
+  assert.deepEqual(opened[3], ["docs/design.md", SID]);
+  assert.equal(opened.length, 4); assert.equal(folds, 1);
+  // a span the matcher gave no session (none named) resolves against the active tab, as the transcript's do
+  const bare = await chatCard(null); card.appendChild(bare.row);
+  body.click(bare.txt.spans[0]);
+  assert.deepEqual(opened[4], ["docs/design.md", ACTIVE]);
+});
+
+test("the transcript's per-span binder stops the click before the body delegate: a bound span opens ONCE, a delegated span once", async () => {
+  const { delegate } = await import("./actions");
+  const opened: ChatOpened[] = [];
+  const { openpath, bindPathLink } = chatHost(opened, null);
+  const body = new Elm("body");
+  delegate(body as unknown as HTMLElement, { openpath: openpath as any });
+  const bubble = new Elm("div"); bubble.className = "md"; body.appendChild(bubble);
+  const p = await line("see docs/design.md", "p"); bubble.appendChild(p);
+  const bound = bindPathLink(p.spans[0]);
+  assert.equal(bound, p.spans[0]); assert.equal(p.spans[0].listeners.click?.length, 1, "the binder's own listener");
+  dispatch(p.spans[0]);
+  assert.deepEqual(opened, [["docs/design.md", SID]], "opened once: the binder's stopPropagation kept the delegate out");
+  assert.ok(!p.spans[0].classList.contains("romp-acted"), "the delegate never ran");
+  const q = await line("see docs/other.md", "p"); bubble.appendChild(q);   // the delegated form, dispatched the same way
+  dispatch(q.spans[0]);
+  assert.deepEqual(opened, [["docs/design.md", SID], ["docs/other.md", SID]]);
+  assert.ok(q.spans[0].classList.contains("romp-acted"));
+});
+
 // ── parity at source: every site that links the detail links the line, on both hosts
 test("both hosts apply their todo linker to the line AND the detail, at the row and in the Reply modal", () => {
   // waiting.ts: one function, four sites (the row's text and detail, the modal's quoted line and detail)
@@ -245,16 +338,22 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   assert.match(modal, /d\.textContent = todoText;\n\s*linkTodoPaths\(d, sid\);/);
   assert.match(modal, /dd\.textContent = todoDetail;\n\s*linkTodoPaths\(dd, sid\);/);
   assert.equal((WAITING.match(/linkTodoPaths\(/g) || []).length, 5, "defined once, applied at the four sites");
-  // render.ts: the line through linkTodoLinePaths (the chat's binder, no figure pass), the detail through
-  // linkifyFileUris (the binder with the figure pass); both mark through path-links.ts and bind through bindPathLink
-  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*for \(const \{ el: link \} of linkifyPathTokens\(node, sid\)\) bindPathLink\(link\);\n\}/);
+  // render.ts: the line through linkTodoLinePaths (no figure pass), the detail through linkTodoDetailPaths
+  // (linkifyFileUris with the figure pass, delegated); both mark through path-links.ts and bind NOTHING:
+  // the body delegate's openpath is the click (the tests above drive it)
+  assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
+  const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
+  assert.match(bodyMap, /\n    openpath: \(elx\) => openLinkedPath\(elx\),\n/, "the body delegate opens a path link");
   const card = RENDER.slice(RENDER.indexOf('const head = el("div", "todo-head ut-head");'), RENDER.indexOf("card.appendChild(row);"));
   assert.match(card, /txt\.textContent = t\.text;\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);/);
-  assert.match(card, /linkifyFileUris\(d, undefined, undefined, undefined, undefined, renderingSid \|\| null\);/);
+  assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);
+  assert.doesNotMatch(card, /bindPathLink\(|addEventListener\("click"/, "nothing on the card is bound per node");
   const cardLine = card.slice(card.indexOf('const txt = el("span", "ut-text");'), card.indexOf('const reply = el("button", "ut-btn ut-reply");'));
-  assert.doesNotMatch(cardLine, /linkifyFileUris\(/, "no figure pass on a one-line row");
+  assert.doesNotMatch(cardLine, /linkifyFileUris\(|linkTodoDetailPaths\(/, "no figure pass on a one-line row");
   const rmodal = RENDER.slice(RENDER.indexOf("function showUserTodoReply("), RENDER.indexOf('input.className = "ut-reply-input"'));
   assert.match(rmodal, /d\.textContent = todoText;\n\s*linkTodoLinePaths\(d, sid\);/);
-  assert.match(rmodal, /dd\.textContent = todoDetail; linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\);/);
+  assert.match(rmodal, /dd\.textContent = todoDetail; linkTodoDetailPaths\(dd, sid\);/);
   assert.equal((RENDER.match(/linkTodoLinePaths\(/g) || []).length, 3, "defined once, applied at the two line sites");
+  assert.equal((RENDER.match(/linkTodoDetailPaths\(/g) || []).length, 3, "defined once, applied at the two detail sites");
 });

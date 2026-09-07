@@ -190,11 +190,13 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
-  linkTodoPaths(d, sid);   // the quoted line's paths open like the row's
+  linkTodoPaths(d, sid);   // the quoted line's paths open like the row's…
+  linkifyPrRefs(d, repoBySid.get(sid) || null);   // …and its `#123` links as in the row: paths first, then PR refs (rowEl's order)
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
   if (dd) {
     dd.textContent = todoDetail;
     linkTodoPaths(dd, sid);
+    linkifyPrRefs(dd, repoBySid.get(sid) || null);
   }
   // the modal lives outside #waiting-list and is built once per open, never rebuilt, so it carries its
   // own delegate for the same act: one listener on the box, over the quoted line and the detail both

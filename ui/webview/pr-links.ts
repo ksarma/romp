@@ -46,6 +46,14 @@
 // word, a URL fragment or a color literal — `#1EA1EB` and `#0c1a2e` fail the number shape (hex letters
 // after the digits, or a leading zero; a PR number has neither). Typographic wrappers (<em>, <strong>,
 // <sup>) are walked: a `#13` in them is still a reference.
+//
+// The boundary is judged over the RENDERED text, not per text node. A pass that ran before this one may
+// have cut a run of text into several nodes (the path pass, path-links.ts, turns `docs/a.md#12` into a
+// path link followed by a text node that begins `#12`), and the start of such a node is no boundary: the
+// walk carries the last character of the text before it (a skipped element's included) into the node, so
+// `#12` right after `docs/a.md`, or after `<code>x</code>`, stays the fragment it is, while `#12` after
+// a space, or at the start of the root, links as before (the 2026-09-07 review: the split case linked
+// `#12` in a todo titled `Read docs/a.md#12 before merging` to an unrelated PR).
 // A session with no GitHub repository (`githubRepo` null: no repo, no origin, or an origin elsewhere)
 // links NOTHING, the cross-repo form included — the honest rendering is the plain text, never a
 // guessed host.
@@ -72,8 +80,11 @@ const DOT_TAIL = /\.$/;                        // `.`, `..`, `repo.`: inside the
 // which is what keeps `#12abc`, `#1EA1EB` and a `#12/x` path fragment out — the run is greedy and the
 // lookahead follows it, so `#12/#13/x` backtracks to nothing rather than to `#12`
 const RUN = "((?:/#" + NUM + ")*)";
+// the characters a reference may follow (the header's list); `^` stands for the start of the rendered text
+const BOUNDARY = "\\s(\\[{<,;:\"'“‘«—–";
+const BOUNDARY_RE = new RegExp("^[" + BOUNDARY + "]$");
 const REF_SRC =
-  "(^|[\\s(\\[{<,;:\"'“‘«—–])(?:" +
+  "(^|[" + BOUNDARY + "])(?:" +
   "(" + OWNER + ")/(" + REPO + ")#(" + NUM + ")" +
   "|(?:(?:PR|pull)\\s?#(" + NUM + ")|#(" + NUM + "))" + RUN +
   ")(?![\\w#/])";
@@ -100,8 +111,12 @@ export function prUrl(repo: string, n: string): string {
 }
 
 /** Split `text` into plain runs and PR-reference links against `repo`. Pure: no DOM. With no valid
- *  repo, or no reference in the text, the whole text comes back as one plain segment. */
-export function prRefSegments(text: string, repo: string | null | undefined): PrRefSegment[] {
+ *  repo, or no reference in the text, the whole text comes back as one plain segment. `before` is the
+ *  character that precedes `text` in the run it was cut from, "" (the default) when `text` starts the
+ *  run: a `^` match then counts as a boundary only if that character is one (see the header; the DOM
+ *  applier passes the last character of the preceding node). A refused match at the start is skipped
+ *  whole, the way a refused cross-repo form is, so `#12/#13` glued to a path links nothing. */
+export function prRefSegments(text: string, repo: string | null | undefined, before = ""): PrRefSegment[] {
   const r = validPrRepo(repo);
   if (!r || !text || text.indexOf("#") < 0) return [{ text }];
   const re = new RegExp(REF_SRC, "gi");
@@ -110,6 +125,7 @@ export function prRefSegments(text: string, repo: string | null | undefined): Pr
   while ((m = re.exec(text))) {
     const start = m.index + m[1].length;          // the boundary character stays plain text
     const end = m.index + m[0].length;
+    if (start === 0 && before && !BOUNDARY_RE.test(before)) continue;   // glued to the text before this node: no boundary
     let target: string, n: string;
     if (m[4]) {
       // `a/..#12` and `a/repo.#12` are no repo; `docs/x.html#12` is a path's fragment — the scan resumes after either
@@ -150,7 +166,10 @@ function skipElement(e: Element): boolean {
  *  existing anchors (SKIP_TAGS) and the chat's path links; a root that itself sits inside one of those
  *  is left alone. Returns the number of links made. A root whose whole text has no `#` — the common
  *  case — costs one native textContent read and no walk. Walks childNodes and edits through
- *  insertBefore/removeChild only, so a test's plain-object DOM stand-in runs it as the browser does. */
+ *  insertBefore/removeChild only, so a test's plain-object DOM stand-in runs it as the browser does.
+ *  The walk carries the last character of the text before each node (a skipped element's text
+ *  counts, an element with no text does not), so a node's start is a boundary only when the rendered
+ *  text has one there (the header: `docs/a.md` + `#12` split across two nodes is still one path). */
 export function linkifyPrRefs(root: Node | null | undefined, repo: string | null | undefined): number {
   const r = validPrRepo(repo);
   if (!r || !root) return 0;
@@ -158,22 +177,33 @@ export function linkifyPrRefs(root: Node | null | undefined, repo: string | null
   const rootEl = root as Element;
   if (root.nodeType === 1 && typeof rootEl.closest === "function" && rootEl.closest(CODE_LIKE)) return 0;
   let made = 0;
-  const visit = (node: Node): void => {
+  /** links the text under `node`, given the character before it; returns the character before whatever follows */
+  const visit = (node: Node, before: string): string => {
     const kids = Array.from(node.childNodes || []);   // snapshot: text children are replaced as we go
     for (const c of kids) {
-      if (c.nodeType === 3) { made += linkifyTextNode(c, r); continue; }
-      if (c.nodeType !== 1 || skipElement(c as Element)) continue;
-      visit(c);
+      if (c.nodeType === 3) {
+        const text = c.textContent || "";
+        made += linkifyTextNode(c, r, before);
+        if (text) before = text.slice(-1);
+        continue;
+      }
+      if (c.nodeType !== 1 || skipElement(c as Element)) {
+        const text = c.textContent || "";
+        if (text) before = text.slice(-1);
+        continue;
+      }
+      before = visit(c, before);
     }
+    return before;
   };
-  visit(root);
+  visit(root, "");
   return made;
 }
 
-function linkifyTextNode(tn: Node, repo: string): number {
+function linkifyTextNode(tn: Node, repo: string, before: string): number {
   const text = tn.textContent || "";
   if (text.indexOf("#") < 0) return 0;
-  const segs = prRefSegments(text, repo);
+  const segs = prRefSegments(text, repo, before);
   if (!segs.some((s) => s.href)) return 0;
   const parent = tn.parentNode;
   if (!parent) return 0;

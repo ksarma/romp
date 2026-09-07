@@ -142,22 +142,28 @@ test("render.ts imports the matcher and binds the click itself — the chat's ro
   for (const gone of ["const CLICKABLE_PATH_RE", "function looksLikeFilePath(", "function looksLikeBareFileName(", "function fileUriToPath(", "function openPathLink("]) {
     assert.ok(!RENDER.includes(gone), gone + " lives in path-links.ts now, once");
   }
-  // one binder: data-rel → the named session first (a todo's note), the active tab otherwise; a URI sends none
-  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
-  // every span the walk and the spaced pass emit is bound; the hits feed the figure pass as before
-  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks\)\) \{\n\s*bindPathLink\(link\);/);
-  assert.match(RENDER, /const link = bindPathLink\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/);
+  // one reader of the span: data-rel → the named session first (a todo's note), the active tab otherwise;
+  // a URI sends none. The transcript's binder and the body delegate's openpath both call it
+  // (user-todo-title-links.test.ts drives both)
+  assert.match(RENDER, /function openLinkedPath\(a: HTMLElement\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null\);\n\}/);
+  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); openLinkedPath\(a\); \}\);/);
+  // every span the walk and the spaced pass emit is bound (unless the caller delegates); the hits feed
+  // the figure pass as before
+  assert.match(RENDER, /const bind = delegated \? \(a: HTMLElement\) => a : bindPathLink;/);
+  assert.match(RENDER, /for \(const \{ el: link, open, verified \} of linkifyPathTokens\(root, sid, pathLinks\)\) \{\n\s*bind\(link\);/);
+  assert.match(RENDER, /const link = bind\(openPathLink\(tok, tok, true, sid\)\);\n\s*code\.replaceChildren\(link\);/);
 });
 
 test("the chat's todo card and its Reply modal still link the note against the todo's session", () => {
   const card = RENDER.slice(RENDER.indexOf('const d = el("div", "ut-detail" + (utDetailOpen.has(t.id)'), RENDER.indexOf("row.appendChild(d);"));
   assert.match(card, /d\.textContent = t\.detail \|\| "";/);                           // the note stays plain text…
-  assert.match(card, /linkifyFileUris\(d, undefined, undefined, undefined, undefined, renderingSid \|\| null\);/);   // …with paths linked after
+  assert.match(card, /linkTodoDetailPaths\(d, renderingSid \|\| null\);/);             // …with paths linked after
+  // the detail's linker is the transcript's with the figure pass, DELEGATED: the card rebuilds every push
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   assert.match(RENDER, /reply\.dataset\.sid = renderingSid \|\| "";/);               // the buttons act where the paths resolve
   const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\")"),
                              RENDER.indexOf("input.className = \"ut-reply-input\""));
-  assert.match(modal, /dd\.textContent = todoDetail; linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\);/);
+  assert.match(modal, /dd\.textContent = todoDetail; linkTodoDetailPaths\(dd, sid\);/);
   // the one-line text links its paths too (the user 2026-09-07), through the same binder but without the
   // figure pass: a one-line row is the compact form, so never linkifyFileUris there (user-todo-title-links.test.ts)
   const row = RENDER.slice(RENDER.indexOf('const txt = el("span", "ut-text");'), RENDER.indexOf('const reply = el("button", "ut-btn ut-reply");'));

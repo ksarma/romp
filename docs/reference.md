@@ -57,8 +57,10 @@ can be rebuilt if the store is ever lost. The **Waiting on you** pane (bottom ba
 collects every open request across all sessions and attached machines into one list with the same
 Reply and Dismiss; because the switch is per machine, the pane says when it is off on this one and
 still lists the other machines' requests. A file path in the one-line text or in the detail is a link
-that opens the file, on the session's card and in the pane alike; a relative path is read against the
-working directory of the session that flagged it.
+that opens the file, on the session's card and in the pane alike. Paths that link: absolute, `~/`, `./`
+and `../` paths, relative paths whose last segment has a file extension, and `file://` URIs; a link ends
+at a space or a non-ASCII character. A relative path is read against the working directory of the
+session that flagged it.
 
 These are for scripting and for agents rather than daily use:
 
