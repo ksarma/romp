@@ -629,5 +629,80 @@ def _free_port():
     return p
 
 
+class CommandSetCredential(unittest.TestCase):
+    """The command source's set at the catalog fetch: its ANTHROPIC_LP_API_KEY line is the first rung
+    of _models_api_credential (read through the judges' wire, jd._ENV_SET_FN, so like the work key it
+    is never read before the backend exists); the rungs after it are unchanged. A fetch the API
+    accepted on that key re-arms envsource's once-per-credential refusal path through jd._ENV_OK_FN
+    (_credential_accepted); a credential from any other rung says nothing about the set. Synthetic,
+    never key-shaped values."""
+
+    VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_LP_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ROMP_API_KEY_REF",
+            "ROMP_CREDENTIAL_COMMAND", "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV")
+
+    def setUp(self):
+        self._env = {k: os.environ.get(k) for k in self.VARS}
+        for k in self.VARS:
+            os.environ.pop(k, None)
+        self.td = tempfile.TemporaryDirectory()
+        os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(self.td.name, "service.env")   # absent: no source
+        self._wires = {n: getattr(jd, n, None) for n in ("_WORK_KEY_FN", "_ENV_SET_FN", "_ENV_OK_FN", "_LOGIN_AUTH_ENV_FN")}
+        jd._WORK_KEY_FN = jd._ENV_SET_FN = jd._ENV_OK_FN = jd._LOGIN_AUTH_ENV_FN = None
+
+    def tearDown(self):
+        for n, fn in self._wires.items():
+            setattr(jd, n, fn)
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.td.cleanup()
+
+    def test_the_command_sets_lp_key_comes_first(self):
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-lp-credential"))
+
+    def test_a_set_without_an_lp_key_falls_to_the_work_key_rung(self):
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_API_KEY": "synthetic-set-work-credential", "A_TOKEN": "x"}
+        self.assertIsNone(km._models_api_credential(), "the set's work key is not read here: it rides the claimer")
+        jd._WORK_KEY_FN = lambda: "synthetic-set-work-credential"    # what the kernel wires under the command kind
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-set-work-credential"))
+
+    def test_a_broken_or_empty_set_wire_changes_nothing(self):
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"))
+        jd._ENV_SET_FN = lambda: {}
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"))
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "   "}
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"), "blank is absent")
+        jd._ENV_SET_FN = None
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"), "unwired")
+
+    def test_a_fetch_on_the_sets_lp_key_reports_the_set_accepted_and_nothing_else_does(self):
+        ok = []
+        jd._ENV_OK_FN = lambda fp: ok.append(fp) or True      # the real wire answers whether it re-armed
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": " synthetic-set-lp-credential ", "A_TOKEN": "x"}
+        self.assertTrue(km._credential_accepted(km._models_api_credential()))
+        self.assertEqual(ok, [""])
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-claimed-credential")), "the work key rung")
+        self.assertFalse(km._credential_accepted(("Authorization", "Bearer synthetic-bearer-credential")), "a bearer")
+        self.assertFalse(km._credential_accepted(None))
+        self.assertEqual(ok, [""])
+        jd._ENV_SET_FN = lambda: {"A_TOKEN": "x"}
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "the set carries no LP key now")
+        jd._ENV_SET_FN = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "a broken wire re-arms nothing")
+        jd._ENV_OK_FN = None
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_LP_API_KEY": "synthetic-set-lp-credential"}
+        self.assertFalse(km._credential_accepted(("x-api-key", "synthetic-set-lp-credential")), "unwired: no command source")
+        self.assertEqual(ok, [""])
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn("            _credential_accepted(cred)\n            added = _apply_model_catalog(", src,
+                      "fired on the fetch's success path, before the catalog is applied")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1072,6 +1072,18 @@ def _models_api_credential():
     — the key the judges ride), else an ANTHROPIC_AUTH_TOKEN bearer. A login-only box (Claude Code's
     OAuth, no key) has no HTTP credential the kernel can borrow: the refresh says so once and serves
     the seed — the CLI's own alias table still tracks each family's newest there."""
+    # The command source's set first (kernel/envsource.py): its ANTHROPIC_LP_API_KEY line is the
+    # direct-call key on an installation whose credentials come from a command. Read through the judges'
+    # wire (jd._ENV_SET_FN, sdk_backend.credential_set), so like the work key it is never read here before
+    # the backend exists; {} under every other kind.
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if setfn is not None:
+        try:
+            lp = (setfn() or {}).get("ANTHROPIC_LP_API_KEY") or ""
+        except Exception:
+            lp = ""
+        if lp.strip():
+            return ("x-api-key", lp.strip())
     fn = getattr(jd, "_WORK_KEY_FN", None)
     key = ""
     if fn is not None:
@@ -1084,6 +1096,26 @@ def _models_api_credential():
     if tok:
         return ("Authorization", "Bearer " + tok)
     return None
+
+
+def _credential_accepted(cred) -> bool:
+    """The Models API accepted `cred`. When that credential is the command source's own direct-call key
+    (the set's ANTHROPIC_LP_API_KEY, the first rung of _models_api_credential), this is a success of the
+    set, and the event that re-arms envsource's once-per-credential refusal path: through the judges'
+    wire (jd._ENV_OK_FN, sdk_backend.credential_auth_ok), as the set itself arrives. A credential from
+    any other rung (the work key, a bearer) says nothing about the set and re-arms nothing. Compares
+    values inside this process only; nothing is rendered. Returns whether the path was re-armed."""
+    okfn = getattr(jd, "_ENV_OK_FN", None)
+    setfn = getattr(jd, "_ENV_SET_FN", None)
+    if okfn is None or setfn is None or not cred:
+        return False
+    try:
+        lp = ((setfn() or {}).get("ANTHROPIC_LP_API_KEY") or "").strip()
+        if lp and tuple(cred) == ("x-api-key", lp):
+            return bool(okfn(""))
+    except Exception:
+        pass
+    return False
 
 
 def _fetch_models_api(cred, timeout=8):
@@ -1140,6 +1172,7 @@ def _refresh_model_catalog(reason, _async=True):
                                  % (reason, _catalog_status["lastError"], _catalog_status["source"],
                                     len(_catalog_status["added"])))
                 return
+            _credential_accepted(cred)
             added = _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "api")
             now = int(time.time())
             _catalog_status["fetchedAt"] = now
@@ -10092,6 +10125,13 @@ def _sdk_locked():
             jd._WORK_KEY_FN = sbmod.work_api_key
             jd._WORK_KEY_CONFIGURED_FN = lambda: sbmod.work_api_key_source().configured
             jd._LOGIN_AUTH_ENV_FN = sbmod.startup_auth_env
+            # The command source's set (kernel/envsource.py) reaches the judges and the catalog fetch
+            # through the same kind of wire: the set for a call's environment (minus the key, which rides
+            # the billing decision), the invalidation a credential refusal fires, and the served call
+            # that re-arms it. Each is a no-op unless the selected kind is `command`.
+            jd._ENV_SET_FN = sbmod.credential_set
+            jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate
+            jd._ENV_OK_FN = sbmod.credential_auth_ok
             # T222: the live model catalog — the last fetched list installs before any picker asks,
             # then the BOOT event refreshes it (async; the key is claimable from here on)
             try:

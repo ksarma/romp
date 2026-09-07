@@ -31,6 +31,7 @@ import threading
 import time
 import traceback
 import uuid
+import weakref
 from collections import deque
 from pathlib import Path
 
@@ -50,6 +51,12 @@ _pal = _SFL("romp_palette", str(Path(__file__).resolve().parent / "palette.py"))
 # the reader can never disagree about which path holds the key or how its line is parsed.
 _keysrc = sys.modules.get("romp_keysource") or _SFL(
     "romp_keysource", str(Path(__file__).resolve().parent / "keysource.py")).load_module()
+# The COMMAND kind's runtime (envsource.py): the set a configured credential command prints, held in that
+# module's memory and handed to each child at launch. It loads keysource for the env file's path (one
+# module object, the same `romp_keysource`), and keysource never loads it back: KeySource.resolve for the
+# command kind goes through the keysource.COMMAND_RESOLVER hook this module wires below (_resolve_command_key).
+_envsrc = sys.modules.get("romp_envsource") or _SFL(
+    "romp_envsource", str(Path(__file__).resolve().parent / "envsource.py")).load_module()
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -2452,6 +2459,19 @@ def _without_scope_fallback_notices(text: str) -> str:
                      if not ln.startswith((CLI_SCOPE_FALLBACK_PREFIX, CLI_SCOPE_IGNORED_PREFIX)))
 
 
+def is_auth_failure_text(text) -> bool:
+    """A credential-class failure in a CLI's own words: the kernel's _is_auth_error rule (kept in step by
+    tests/test_session_auth.py, since this module loads standalone). No retry can fix it; under the command
+    kind it is the event that makes the cached set stale evidence (_record_launch_error)."""
+    low = str(text or "").lower()
+    return ("not logged in" in low
+            or "api key is invalid" in low
+            or "invalid x-api-key" in low
+            or "failed to authenticate" in low
+            or ("oauth token" in low and ("expired" in low or "revoked" in low))
+            or "authentication_error" in low)
+
+
 def launch_failure_text(exc: BaseException, tail: str = "") -> str:
     """The most SPECIFIC human text a failed CLI launch carries. The SDK's ProcessError keeps the CLI's
     own stderr on the exception (the class that actually names the cause); `tail` is what romp captured
@@ -3189,19 +3209,20 @@ def work_api_key_source():
         if source.kind == "file":
             _check_key_file_agrees(startup, source.value)
             _note_key_file_gone(source.value)
-        if source.kind in ("file", "op"):
+        if source.kind in ("file", "op", "command"):
             # A real selection retires the startup key for good. Said ONCE when that key was non-empty:
             # an operator who delivers the key through a systemd drop-in or a launchd plist rather than
             # service.env would otherwise watch every session bill the login with nothing in the log
             # (review find, 2026-09-05) — the silent fallback this module exists to end.
             # (the standard install exports the file's own key line into the manager environment, so the
             # SAME key on both sides is nothing to say; a DIFFERENT file key is _check_key_file_agrees's line)
-            discarded = source.kind == "op" or (source.kind == "file" and not source.value)
+            discarded = source.kind in ("op", "command") or (source.kind == "file" and not source.value)
             if startup and discarded and not _STARTUP_KEY_DISCARD_SAID:
                 _STARTUP_KEY_DISCARD_SAID = True
                 why = ("supervised managers read %s only" % _keysrc.service_env_path()
                        if source.kind == "file" and os.environ.get("ROMP_SUPERVISED") == "1"
                        else "%s selects the 1Password source" % _keysrc.REF_VAR if source.kind == "op"
+                       else "%s selects the command source" % _keysrc.CMD_VAR if source.kind == "command"
                        else "the env file's key line is empty")
                 sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. Sessions without an "
                                  "explicit Billing pick %s.\n"
@@ -3221,6 +3242,109 @@ def work_api_key() -> str:
     descriptor instead, and no resolved provider value is cached by this module.
     """
     return work_api_key_source().resolve()
+
+
+def _resolve_command_key(source) -> str:
+    """keysource.COMMAND_RESOLVER: KeySource.resolve for the command kind. Every caller of resolve() (this
+    module's work_api_key, the judges' _resolve_work_key_gated, the catalog's fallback rung, cycle_key)
+    reads the set's ANTHROPIC_API_KEY through ONE noted read of the command source (_noted_take): the last
+    good set's key, or "" when the set carries none (a helper- or login-billed installation). A failed run
+    is a problem line here, once per episode, never a raise: the launch and the judge call go on with the
+    set that stands. Wired at import (the statement after credential_auth_ok) and re-asserted by
+    _register_credential_noter, so the module copy whose backend is live owns the hook."""
+    return _noted_take(source)[1].get(_envsrc.KEY_VAR, "")
+
+
+_CREDENTIAL_NOTER = None   # a WEAK reference to the last constructed backend's _note_credential_set: where
+                           # the module-level readers (no backend in hand) say a credential-command run.
+                           # The kernel builds ONE backend per process and never rebuilds it, so "last
+                           # constructed" is the live one there; a test process constructs several, and
+                           # each backend's own readers (_work_key_and_source) note on that backend, not on
+                           # this. Weak, so a backend that is dropped is released and receives nothing.
+
+
+def _register_credential_noter(fn) -> None:
+    """Register `fn` (a backend's bound _note_credential_set) as the module-level readers' noter,
+    replacing whatever was registered: last constructed wins (see _CREDENTIAL_NOTER). The same backend's
+    module copy takes the resolver hook: a test process loads this module under several names, and the
+    hook on the shared keysource must route a resolve() to the noter registered here."""
+    global _CREDENTIAL_NOTER
+    try:
+        _CREDENTIAL_NOTER = weakref.WeakMethod(fn)
+    except TypeError:                      # a plain function (a test's stand-in): held as it is
+        _CREDENTIAL_NOTER = lambda: fn
+    _keysrc.COMMAND_RESOLVER = _resolve_command_key
+
+
+def _credential_noter():
+    """The registered noter, or None when none was registered or its backend has been dropped."""
+    ref = _CREDENTIAL_NOTER
+    return ref() if ref is not None else None
+
+
+def _noted_take(source) -> tuple:
+    """(record, values) from ONE read of the command source (envsource.take) for `source`, the record
+    routed through the registered backend's noter (SdkBackend._note_credential_set), so a run that FAILED
+    here is a problem line, once per failure episode, exactly as one on a connect is. The module-level
+    readers go through this: work_api_key for a judge's key-billed call (through the resolver hook),
+    credential_set for the judges' environment and the catalog fetch. With no backend constructed yet (a
+    standalone import) or the registered one dropped, the read is plain and the next path with a backend
+    says the run. The record reaches the noter after envsource's lock is released, so it can be older
+    than one another thread noted meanwhile; the noter orders records (its `attempt` watermark) rather
+    than this reader holding the lock across a log write. The `values` half is under injection()'s rule:
+    nothing may log, store or send it."""
+    snap, vals = _envsrc.take(source)
+    noter = _credential_noter()
+    if noter is not None:
+        noter(snap)
+    return snap, vals
+
+
+def _command_source():
+    """The selected source when its kind is `command`, else None: the gate every module-level command-kind
+    path stands behind (credential_set, credential_invalidate, credential_auth_ok). The selection is
+    keysource's, through work_api_key_source so the startup key is retired as on any read; under another
+    kind nothing here runs, and every launch path is the base's."""
+    source = work_api_key_source()
+    return source if source.kind == "command" else None
+
+
+def credential_set() -> dict:
+    """The command source's current set: THE value-bearing seam for the callers outside this module that
+    merge it into a CHILD's environment, the judges' subprocess env (kernel/judge.py, wired as
+    jd._ENV_SET_FN) and the catalog fetch's header (kernel _models_api_credential). {} when the selected
+    kind is not `command`. Nothing calling this may log, store or send what it gets. The read is
+    _noted_take's: a failed run here is said once, like one on a connect."""
+    source = _command_source()
+    if source is None:
+        return {}
+    return _noted_take(source)[1]
+
+
+def credential_invalidate(reason: str = "") -> bool:
+    """An authentication failure somewhere a credential from the set was used (a judge call, a session's
+    turn or launch): the cached set is stale, the next reader re-runs the command. The exact event, never
+    a timer, and once per credential (envsource.invalidate_for_auth_failure): a second refusal of the same
+    set is not new information, so a revoked credential does not turn every judge call into a command
+    run. Returns whether it fired. A no-op unless the selected kind is `command`."""
+    if _command_source() is None:
+        return False
+    return _envsrc.invalidate_for_auth_failure(reason)
+
+
+def credential_auth_ok(fp: str = "") -> bool:
+    """A credential from the set (or the helper envsource fingerprints) was ACCEPTED somewhere a refusal
+    would have fired credential_invalidate: a judge call served (kernel/judge.py, wired as jd._ENV_OK_FN),
+    the catalog fetch on the set's direct-call key, a session's completed turn. The event that re-arms the
+    once-per-credential path (envsource.credential_auth_ok). `fp` is the credential's fingerprint when the
+    caller knows it, "" for the current set as a whole. Returns whether it re-armed. A no-op unless the
+    selected kind is `command`."""
+    if _command_source() is None:
+        return False
+    return _envsrc.credential_auth_ok(fp)
+
+
+_keysrc.COMMAND_RESOLVER = _resolve_command_key
 
 
 def _note_key_file_gone(live: str) -> None:
@@ -3570,9 +3694,13 @@ class SdkSession:
         self._ah_gaveup = None
         self._interrupted = False                    # user interrupted the in-flight turn → snapshot reads 'waiting' (display only; inflight stays event-driven)
         self._intr_level = 0                         # interrupt escalation rung this episode (interrupt_action); reset on settle / fresh turn
-        self._launched_key_fp = None                 # fingerprint of the work key this session's CURRENT client launched on
-        #   ("" = launched on the login); set per connect in _options, read by cycle_key so `romp keyswap --cycle`
-        #   is idempotent — a session already on the live key is "current", never reconnected again
+        self._launched_key_fp = None                 # fingerprint of the CREDENTIAL this session's CURRENT client launched on:
+        #   the injected work key's, else (the command kind, nothing injected) the apiKeyHelper's output's, else ""
+        #   (launched on the login). Set per connect in _options, read by cycle_key so `romp keyswap --cycle`
+        #   is idempotent: a session already on the current credential is "current", never reconnected again
+        self._launched_set_fp = None                 # fingerprint of the ROLE VARIABLES injected at that connect (the
+        #   command source's set minus ANTHROPIC_API_KEY; "" when none): a rotation there is the other reason a
+        #   cycle reconnects, since the CLI's tool shells hold the set their connect injected
         self._subagents: dict[str, dict] = {}        # LIVE subagents (Task/Agent AND Workflow-run agents): agent_id ->
         #   {"type","since"}. Fed by the SubagentStart hook — the exact, event-based "what's running right now"
         #   signal the tmux backend never had; drained by SubagentStop, a Workflow run's per-agent progress list,
@@ -4919,12 +5047,29 @@ class SdkSession:
         self._ah_gaveup = None
         turn = getattr(self, "_ah_turn", 0)
         self._ah_turn = turn + 1
-        ah = getattr(self.backend, "api_health", None)
-        if ah is None or getattr(msg, "parent_tool_use_id", None):
-            return
+        sidechain = bool(getattr(msg, "parent_tool_use_id", None))
         is_error = bool(getattr(msg, "is_error", False))
         status = getattr(msg, "api_error_status", None) if is_error else None
         status = status if isinstance(status, int) and not isinstance(status, bool) else None
+        if not sidechain:
+            # The command source's two events, on the parent stream only. A 401: the credential this
+            # turn used was refused, the exact event that makes the cached set stale (a rotation landed
+            # behind the command); the set is re-read at the next launch, and nothing here retries the
+            # turn (that is the user's call, as before). A completed turn: the credential this CLI
+            # launched on was accepted, the event that re-arms the once-per-credential refusal path.
+            # Both are no-ops unless the selected kind is `command`.
+            try:
+                if status == 401:
+                    self.backend._credential_auth_failed(self, "HTTP 401 on a turn")
+                elif not is_error:
+                    self.backend._credential_auth_ok(self)
+            except Exception as e:
+                _lg = getattr(self.backend, "_log", None)
+                if _lg:
+                    _lg("credential command: the turn's credential event failed (%s): %s" % (self.name, e))
+        ah = getattr(self.backend, "api_health", None)
+        if ah is None or sidechain:
+            return
         if pend is None and status is None:
             return
         try:
@@ -6407,6 +6552,22 @@ class SdkBackend:
         # once, here, where the problem ring exists to carry it, before the boot reconcile below can
         # launch a session on the account the declaration says it does not bill.
         _check_env_file_vs_declaration(self._log, self.state_dir)
+        # The command source's noter (_note_credential_set): what the set hands launches, change-only, and
+        # one problem line per failure episode, from the value-free record. The guards are per backend; the
+        # noter runs on session, judge and catalog threads at once, hence the lock.
+        self._cred_fp_said = None                 # last set fingerprint written to the log (change-only)
+        self._cred_err_said = None                # the failure reason last said (one line per episode)
+        self._cred_dropped_said = ()              # the ROMP_* names last said dropped (change-only)
+        self._cred_dropped_auth_said = ()         # the CLI-auth names last said dropped (change-only)
+        self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
+        self._cred_noted_attempt = -1             # the `attempt` of the record last noted: an older record is ignored
+        self._cred_note_lock = threading.Lock()
+        # The module-level readers (work_api_key for a judge's key-billed call, credential_set for the
+        # judges' environment and the catalog fetch) say a failed run through THIS backend's noter: one
+        # episode guard for every path that can run the command (_noted_take). The kernel constructs one
+        # backend per process, so the last one registered is the live one; the reference is weak, so a
+        # backend a test drops is released and notes nothing (_CREDENTIAL_NOTER).
+        _register_credential_noter(self._note_credential_set)
         # The /api-health aggregator (one ring, one lock; see ApiHealth). Fed from _on_message on each
         # session's thread, read by the kernel's route; the salt is minted lazily at the first label.
         self.api_health = ApiHealth(self.state_dir, log=self._log)
@@ -6513,12 +6674,22 @@ class SdkBackend:
         """Non-secret source identity; runtime references never resolve here."""
         return self._work_key_source().fingerprint()
 
-    def _work_key_and_source(self, source=None) -> tuple:
-        """Resolve ONE selected source and report its kind for safe launch logging."""
+    def _work_key_and_source(self, source=None, cred=None) -> tuple:
+        """Resolve ONE selected source and report its kind for safe launch logging. Under the command kind
+        `cred` is the (record, values) pair the caller took from envsource.take, ONE read of the set, so the
+        key decided on here and the role variables _options merges come from the same run; with none in
+        hand the read happens here. Either way the record is noted through this backend. The key is the
+        set's ANTHROPIC_API_KEY, "" when it carries none (source ""); a failed run stands on the last good
+        set and is never a raise."""
         if self._work_key_pin is not None:
             return self._work_key_pin, ("pin" if self._work_key_pin else "")
         if source is None:
             source = work_api_key_source()
+        if source.kind == "command":
+            snap, vals = cred if cred is not None else _envsrc.take(source)
+            self._note_credential_set(snap)
+            key = vals.get(_envsrc.KEY_VAR, "")
+            return key, ("command" if key else "")
         return source.resolve(), ("startup" if source.kind == "environment" else source.kind)
 
     def work_key_fp(self) -> str:
@@ -6540,9 +6711,118 @@ class SdkBackend:
                        % (_keysrc.service_env_path(), _keysrc.KEY_VAR))
             elif source == "op":
                 src = "retrieved at runtime from 1Password"
+            elif source == "command":
+                src = "the ANTHROPIC_API_KEY line the credential command printed"
             else:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
+
+    def _note_credential_set(self, snap: dict, *, reported: bool = False) -> None:
+        """Log what the command source is handing launches, change-only, from its value-free record:
+        the set's fingerprint and names when they change; ONE problem line per failure episode (a new
+        KIND of failure is new information; the same kind again is not), and the recovery; the ROMP_*
+        names and the CLI-auth names it dropped, once per distinct list; the timeout problem. Never a
+        value. The episode is keyed on the record's `reasonKey`, the failure's kind (the exit code, a
+        timeout, a start error): the full `reason` carries the run's duration and stderr byte count,
+        which differ at every run of the same failure, so a guard on it said the same failure again per
+        run. That per-run detail stays in the record.
+
+        Every path that can run the command reports through here: the connect (_work_key_and_source) and,
+        through _noted_take, a judge's key-billed call (work_api_key), the judges' environment and the
+        catalog fetch (credential_set). One guard, so a failure first seen on any of them is one line, and
+        the same failure seen next on another path is none; a run that succeeds ends the episode wherever
+        it happens. `reported` sets the guards from the record and says nothing, for a caller that logged
+        the record itself. Serialised: the paths run on session, judge and catalog threads at once, and
+        two threads seeing one new failure must not both say it.
+
+        Ordered: a record is noted only when it is at least as new as the last one noted, by its `attempt`
+        (envsource's ordinal of the run or refusal that produced it; callers that coalesced on one run
+        share it, so an equal ordinal is noted and only an older one is ignored). envsource releases its
+        lock when take() returns, before the record reaches here, so a thread can be held between the two
+        while another thread's run succeeds and is noted first; without the order the held thread said a
+        stale failure after the recovery, and that failure's kind then held the guard against the next
+        real failure of the same kind. A record without the field (a hand-built one) is noted unordered."""
+        with self._cred_note_lock:
+            self._note_credential_set_locked(snap, reported)
+
+    def _note_credential_set_locked(self, snap: dict, reported: bool = False) -> None:
+        attempt = snap.get("attempt")
+        if attempt is not None:
+            if attempt < self._cred_noted_attempt:
+                return                        # an older run's record: the log already holds a newer one
+            self._cred_noted_attempt = attempt
+        say = (lambda *a, **k: None) if reported else self._log
+        if snap.get("ok") is False:
+            reason = snap.get("reasonKey") or snap.get("reason") or "no reason recorded"
+            if reason != self._cred_err_said:
+                self._cred_err_said = reason
+                say("credential command: failed (%s). %s" % (
+                    reason,
+                    "Sessions launch on the set from its last successful run (sha256:%s) until a run succeeds."
+                    % (snap.get("setFp") or "") if snap.get("stale") else
+                    "Sessions launch with nothing injected (the apiKeyHelper or the login bills) until a run "
+                    "succeeds; the next launch or judge call re-runs it."), problem=True)
+            return
+        if snap.get("ok") is None:
+            return
+        if self._cred_err_said is not None:
+            self._cred_err_said = None
+            say("credential command: succeeded again; the set is sha256:%s" % (snap.get("setFp") or ""))
+        fp = snap.get("setFp") or ""
+        if fp != self._cred_fp_said:
+            self._cred_fp_said = fp
+            names = list(snap.get("names") or [])
+            say("credential command: sessions now launch with the set sha256:%s (%d name%s: %s); %s"
+                % (fp, len(names), "" if len(names) == 1 else "s", ", ".join(names),
+                   ("key sha256:%s" % snap.get("keyFp")) if snap.get("hasKey")
+                   else "no ANTHROPIC_API_KEY in it (the apiKeyHelper or the login bills)"))
+        dropped = tuple(snap.get("dropped") or ())
+        if dropped and dropped != self._cred_dropped_said:
+            self._cred_dropped_said = dropped
+            say("credential command: dropped %d ROMP_* variable%s it printed (%s); romp owns those names"
+                % (len(dropped), "" if len(dropped) == 1 else "s", ", ".join(dropped)), problem=True)
+        dropped_auth = tuple(snap.get("droppedAuth") or ())
+        if dropped_auth and dropped_auth != self._cred_dropped_auth_said:
+            self._cred_dropped_auth_said = dropped_auth
+            say("credential command: dropped %s it printed; %s the CLI reads as its own authentication or "
+                "endpoint, and the key rides ANTHROPIC_API_KEY alone"
+                % (", ".join(dropped_auth), "a name" if len(dropped_auth) == 1 else "names"), problem=True)
+        tmo = snap.get("timeoutProblem") or ""
+        if tmo and tmo != self._cred_timeout_said:
+            self._cred_timeout_said = tmo
+            say("credential command: " + tmo, problem=True)
+
+    def _credential_auth_failed(self, sess, what: str) -> None:
+        """A credential the command source supplied (or the helper it fingerprints) was refused on `sess`:
+        a 401 give-up, a launch refused as unauthenticated. The exact event the cached set goes stale on:
+        invalidate, so the next launch re-runs the command, ONCE per credential
+        (envsource.invalidate_for_auth_failure): a second refusal of the same set is not new information,
+        and a revoked credential must not turn every refusal into a command run. Keyed on the session's
+        launch stamp, like _credential_auth_ok below: a refusal on a session still running on the
+        credential from before a rotation is not a refusal of the current set, so it invalidates nothing
+        (before this, an uncycled session on the old credential cost one command run, one helper run and
+        two log lines per turn). A session with no stamp forwards "" and is keyed on the set alone. Logged
+        when it fires; a no-op unless the selected kind is `command` (nothing cached to refresh)."""
+        if self._work_key_source().kind != "command":
+            return
+        fp = getattr(sess, "_launched_key_fp", None) or ""
+        if _envsrc.invalidate_for_auth_failure("auth failure: " + what, fp):
+            self._log("credential command: %s reported an authentication failure (%s); the set is re-read at the "
+                      "next launch" % (getattr(sess, "name", "?"), what))
+
+    def _credential_auth_ok(self, sess) -> None:
+        """A turn on `sess` completed (a ResultMessage that is not an error): the credential its CLI
+        launched on was accepted. The event that re-arms the once-per-credential path
+        (envsource.credential_auth_ok), keyed on the session's launch stamp: a session still running on
+        the credential from before a rotation re-arms nothing, since its success says nothing about the
+        set a refusal was reported for. A session with no fingerprinted credential (the login) has nothing
+        to report. Logged when it re-arms; a no-op unless the selected kind is `command`."""
+        if self._work_key_source().kind != "command":
+            return
+        fp = getattr(sess, "_launched_key_fp", None) or ""
+        if fp and _envsrc.credential_auth_ok(fp):
+            self._log("credential command: %s completed a turn on the credential last refused (sha256:%s); a later "
+                      "refusal re-runs the command again" % (getattr(sess, "name", "?"), fp))
 
     def cycle_key(self, sid: str, expected_source_fp: str | None = None, current_key_fp: str | None = None,
                   probe: bool = False, resolve_error: str | None = None) -> str:
@@ -7879,10 +8159,24 @@ class SdkBackend:
         # kernel's log wire and in the problem ring the dashboard's error center reads).
         env_vars = sess.env_vars
         key_source = self._work_key_source()
-        # Under runtime retrieval a per-session API key is always a competing credential; a login
-        # session's own token override is not (review find, 2026-09-05) — keysource.runtime_reserved_names
-        # is the one rule the doors, this launch and the fork copy share.
-        reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(sess.auth, key_source)
+        # The command kind (kernel/envsource.py): the set is read ONCE per connect (envsource.take: the
+        # record and the values under one lock) and shared with the key decision below, so the key
+        # injected and the role variables merged come from the same run; read twice, a re-run could land
+        # between them. Whether the launch is keyed is decided HERE, after the take: a key pick whose set
+        # carries no ANTHROPIC_API_KEY injects nothing (never an empty variable, never a refusal), so it
+        # reserves the key name only. `cred` stays None under every other kind, where each line below is
+        # the base's.
+        cred = None
+        if key_source.kind == "command":
+            cred = _envsrc.take(key_source)
+            work_key, key_src = self._work_key_and_source(key_source, cred)
+            launch_keyed = bool(work_key) and sess.effective_auth(work_key) == "key"
+            reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(sess.auth, key_source, keyed=launch_keyed)
+        else:
+            # Under runtime retrieval a per-session API key is always a competing credential; a login
+            # session's own token override is not (review find, 2026-09-05) — keysource.runtime_reserved_names
+            # is the one rule the doors, this launch and the fork copy share.
+            reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(sess.auth, key_source)
         legacy = [k for k in reserved if k in env_vars]
         if legacy:
             env_vars = {k: v for k, v in env_vars.items() if k not in reserved}
@@ -7894,21 +8188,57 @@ class SdkBackend:
                                 env=env_vars, log=self._log)
         if fs:
             kw["settings"] = fs
-        # Authentication is resolved only for a launch that selects API-key billing.
-        # Source presence is metadata; a provider failure cannot turn it into login.
-        launch_keyed = sess.auth == "key" or (sess.auth != "login" and key_source.configured)
-        work_key = ""
+        if cred is not None:
+            # The command source's ROLE VARIABLES (its set minus ANTHROPIC_API_KEY; the key reaches a child
+            # only through the decision below) ride UNDER romp's own entries: the CLI and every tool shell
+            # it runs see them, and a reconnect re-presents the current set.
+            role_vars = dict(cred[1])
+            role_vars.pop(_envsrc.KEY_VAR, None)
+            if role_vars:
+                kw["env"] = {**role_vars, **kw["env"]}
+        else:
+            # Authentication is resolved only for a launch that selects API-key billing.
+            # Source presence is metadata; a provider failure cannot turn it into login.
+            launch_keyed = sess.auth == "key" or (sess.auth != "login" and key_source.configured)
+            work_key = ""
+            if launch_keyed:
+                work_key, key_src = self._work_key_and_source(key_source)
+                if not work_key:
+                    raise _keysrc.KeySourceError("API key billing selected but no API key source is configured")
         if launch_keyed:
-            work_key, key_src = self._work_key_and_source(key_source)
-            if not work_key:
-                raise _keysrc.KeySourceError("API key billing selected but no API key source is configured")
             self._note_work_key(work_key, key_src)
             kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=work_key,
                              **key_fast_org_env(work_key, self._log))
-        else:
+        elif cred is None or sess.auth != "key":
+            # a login launch (an explicit pick, or no pick with nothing to inject) restores the startup
+            # tokens claimed at boot, under every kind
             kw["env"] = dict(kw["env"], **startup_auth_env())
+        else:
+            # picked "key", but the command's set carries none to inject: falling to the helper or the
+            # login silently would bill another account with nothing to see; say so where the Log panel
+            # shows it. Nothing is injected (never an empty variable), and the launch goes ahead.
+            self._log("auth (%s): session is set to the API key but the credential command printed no "
+                      "ANTHROPIC_API_KEY; launching without one (the apiKeyHelper or the login bills)"
+                      % sess.name, problem=True)
         sess._launched_keyed = launch_keyed
-        sess._launched_key_fp = _keysrc.fingerprint(work_key) if launch_keyed else ""
+        if cred is None:
+            sess._launched_key_fp = _keysrc.fingerprint(work_key) if launch_keyed else ""
+            sess._launched_set_fp = ""
+        elif launch_keyed:
+            sess._launched_key_fp = _keysrc.fingerprint(work_key)
+            sess._launched_set_fp = _envsrc.set_fingerprint(role_vars)
+        else:
+            # The stamps cycle_key converges on: with nothing injected, the credential is the apiKeyHelper
+            # output's fingerprint (envsource runs it and hashes inside; "" with no helper). The set this
+            # connect already took rides along: the helper's environment is built from it rather than from
+            # a second read, which on a failing command would be a second run; its generation and set
+            # identity (setSeq) ride with it, so an invalidate that landed since the take leaves the
+            # fingerprint stored stale rather than served as current, and a set that changed under one
+            # generation (a recovery after a failed run, a selector-file edit) gets its own fingerprint
+            # rather than the previous set's cached one.
+            sess._launched_key_fp = _envsrc.helper_fingerprint(
+                values=cred[1], generation=cred[0].get("generation"), set_seq=cred[0].get("setSeq"))[0]
+            sess._launched_set_fp = _envsrc.set_fingerprint(role_vars)
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----
@@ -10154,6 +10484,13 @@ class SdkBackend:
             self._update_reg(sess.sid, launchError=rec)
         except Exception:
             self._log("record launch error (%s): %s" % (sess.name, traceback.format_exc()))
+        if is_auth_failure_text(text) or is_auth_failure_text(tail):
+            # the CLI refused to start for want of a credential: the command source's cached set, if any,
+            # is stale evidence, re-read at the next launch (see _credential_auth_failed)
+            try:
+                self._credential_auth_failed(sess, "the CLI refused to start: not authenticated")
+            except Exception:
+                pass
         self._log("session %s: claude CLI failed to start%s — %s"
                   % (sess.name, " (account usage limit)" if rec["limit"] else "", text))
         # The FULL captured stderr to the log, once, at the failure. The card gets one truncated line

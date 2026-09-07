@@ -1019,6 +1019,46 @@ _WORK_KEY_FN = None   # the kernel wires this to sdk_backend.work_api_key when i
                       # (_sdk_locked), so judges read the SAME once-per-process stash sessions bill from
 _WORK_KEY_CONFIGURED_FN = None  # metadata only; never retrieve a secret to decide billing
 _LOGIN_AUTH_ENV_FN = None      # login tokens claimed out of the manager's ambient environment
+_ENV_SET_FN = None    # the kernel wires this to sdk_backend.credential_set: the command source's set
+                      # (kernel/envsource.py), role variables for a judge call's env minus the key, which
+                      # rides the explicit billing decision below. None = another kind selected or
+                      # standalone: nothing merged, byte for byte the environment as before
+_ENV_INVALIDATE_FN = None   # and to sdk_backend.credential_invalidate: a credential-class refusal on a
+                            # judge call is the event that makes the cached set stale
+_ENV_OK_FN = None           # and to sdk_backend.credential_auth_ok: a served call is the event that
+                            # re-arms the once-per-credential refusal path for the set it ran on
+
+
+def _env_set():
+    """The command source's current set, {} when unwired or on any failure, read through the kernel's
+    wire and never by running anything here (judge.py loads standalone; the runner lives in the kernel)."""
+    if _ENV_SET_FN is None:
+        return {}
+    try:
+        return dict(_ENV_SET_FN() or {})
+    except Exception:
+        return {}
+
+
+def _env_invalidate(reason):
+    if _ENV_INVALIDATE_FN is None:
+        return
+    try:
+        _ENV_INVALIDATE_FN(reason)
+    except Exception:
+        pass
+
+
+def _env_auth_ok():
+    """A judge call was served: the set its environment carried (or the helper the CLI ran) was
+    accepted. Passes no fingerprint: the call ran on the current set as a whole. A broken wire never
+    breaks the reply path."""
+    if _ENV_OK_FN is None:
+        return
+    try:
+        _ENV_OK_FN("")
+    except Exception:
+        pass
 
 
 def _work_key():
@@ -1298,11 +1338,23 @@ def _judge_env(tier, auth="login", model=None):
     standalone the var is still there, where a login-mode child would otherwise bill the key by mere
     inheritance — and injected back EXPLICITLY for a key-mode call only. Removal, not blanking, same
     rule as sdk_backend._options: the CLI treats even an empty var as key-mode-without-a-key and
-    refuses with "Not logged in"."""
+    refuses with "Not logged in".
+
+    The command source's set (_env_set, kernel/envsource.py) is merged over the stripped environment
+    MINUS its ANTHROPIC_API_KEY, the same one door for the key: a login-billed call never receives the
+    command's key by inheritance, and a key-billed call gets it through _resolve_work_key_gated (which
+    reads the same set under the command kind). Its other names (a direct-call key, role variables)
+    reach the child exactly as a session CLI's tool shells get them. Empty under every other kind. A
+    Codex call merges nothing: another vendor's process has no use for the set, and the ANTHROPIC_
+    strip at the call keeps the rest of that namespace out."""
     env = dict(os.environ)
     for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
         env.pop(k, None)                             # billing is an explicit choice per call
     _keysrc.strip_op_env(env)                        # op's own credential never rides a judge child (2026-09-05)
+    if auth != "codex":
+        overlay = _env_set()
+        overlay.pop("ANTHROPIC_API_KEY", None)       # the key rides the billing decision below, never the overlay
+        env.update(overlay)
     if auth == "login":
         env.update(_login_auth_env())
     for k in ("TMUX", "TMUX_PANE"):
@@ -1681,6 +1733,9 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                     # credential-class: only the user can fix it — latch, so build_feed floors this
                     # session's focus card instead of leaving the board silently frozen (2026-08-12)
                     _auth_down_mark(fsid, auth, msg[:160])
+                    # and the command source's cached set is stale evidence: re-run it before the next
+                    # call rather than re-presenting a rotated-out credential (the exact event, no timer)
+                    _env_invalidate("judge call refused as unauthenticated (%s)" % (judge or tier))
                 return ""
             if isinstance(wrap, dict) and isinstance(wrap.get("result"), str):
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
@@ -1688,6 +1743,8 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 _note_served_model(model, wrap)       # the envelope names the model a bare alias resolved to;
                                                       # the alias table is checked against it (one line per drift)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
+                _env_auth_ok()                        # and the command source's set was accepted: a later
+                #                                       refusal of it is new information again
                 if auth == "login":
                     # only a LOGIN-billed success is evidence the login window reset early — a
                     # key-billed success says nothing about it (the user 2026-08-28; before this,
