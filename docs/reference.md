@@ -1967,14 +1967,25 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   clear, a follow-up: the mutation is invisible to the signature and must not wait out the
   rebuild interval).
   `chat` also carries `active_built` and `bg_built` (rebuilds of the watched
-  tab, which always rebuilds, against rebuilds of a background tab whose
-  signature moved) and `bg_miss`, a map from each labelled component of the
-  chat-build signature (`judge_gen`, `transcript`, `states`, `tasks`, `todos`,
-  `cut`, `note`, `needs`, plus `cold` for a tab with no cached build and
-  `nosig` for one whose signature could not be taken) to the background
-  rebuilds it caused. A rebuild with several moved components counts under
-  each, so the map's sum can exceed `bg_built`. `romp perf` prints the split
-  and the non-zero causes after the chat average.
+  tab against rebuilds of a background tab; every tab, the watched one
+  included, is served while its complete per-session signature is unchanged
+  and rebuilds when a component moved), `bg_miss`, a map from each labelled component of the
+  chat-build signature (the kernel's `_CHAT_SIG_LABELS`: the transcript, the
+  states files, the goal store and its hold, the archive, episodes, sdk
+  registry and death marker, the task and user-todo stores, the pending cut,
+  the working note, the needs-you bit, the live tail's revision, the liveness
+  row, the clock booleans, the backend's queue and brackets, the parked ops,
+  the limit hold, the retry state, the live task rows, the watches, the
+  awaiting-stamp view, the warm-anchor revision, the suspension count, the names revision, the flags
+  and bell files, the colormap, the account, cleared.jsonl, the host, the
+  cwd-derived rows, the CLAUDE.md chain, the forks, and the three build-time
+  dependencies `taskout`, `pathlink` and `postal`; plus `cold` for a tab with
+  no cached build and `nosig` for one whose signature could not be taken) to
+  the background rebuilds it caused, and `moved`, the builds left uncached
+  because their signature changed while they ran (the next cycle rebuilds and
+  caches). A rebuild with several moved components counts under each, so the
+  map's sum can exceed `bg_built`. `romp perf` prints the split and the
+  non-zero causes after the chat average.
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.

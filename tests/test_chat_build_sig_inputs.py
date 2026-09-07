@@ -53,14 +53,18 @@ CENSUS = {
     "_atom_md": ("pure", "over an atom"),
     "_atom_user_texts": ("pure", "over an atom"),
     "_auth_both": ("sig", "acct", "the credential store's login and the manager's key presence"),
-    "_awaiting_task_descs": ("sig", "bg", "the live task rows; the split reads the store and the transcript"),
+    "_awaiting_task_descs": ("sig", "bg", "the live task rows; the split reads the stamped tops (stamp), the store and the transcript"),
     "_awaiting_task_ids": ("sig", "bg", "as _awaiting_task_descs"),
+    "_awaiting_items_payload": ("sig", "bg", "the wait's own rows (as _session_awaiting), else the rows in flight mid-turn: the row's agents (row), the live task rows and the watches (watch)"),
     "_bg_tasks": ("sig", "row", "the row's live task set gates the transcript's scan; each output tail is a taskout dep; the spawn epoch reads reg and gone"),
     "_chat_cleared_key": ("sig", "cleared"),
+    "_chat_agent_open_at": ("pure", "over the events"),
+    "_chat_agents_moved": ("pure", "the fold's sealed-agent gate: over the sidecar map (a taskout dep, recorded by _subagent_meta_map), the transcript's task scan (transcript), the row and the spawn epoch (row, reg, gone)"),
     "_chat_fold_count": ("out", "a fold counter"),
     "_chat_fold_demote": ("out", "a fold counter"),
     "_chat_fold_get": ("memo", "the sealed prefix: every gate it checks is an input classified here, and its output is the events an unfolded build produces"),
     "_chat_fold_put": ("out", "the fold entry's write"),
+    "_chat_memo_bump": ("out", "a memo counter's increment"),
     "_chat_postal_key": ("sig", "postal", "the log's identity, folded when the payload carries postal traffic"),
     "_chat_postal_relevant": ("pure", "over a raw event"),
     "_chat_seam_open_at": ("pure", "over the events"),
@@ -94,7 +98,7 @@ CENSUS = {
     "_model_color": ("pure", "over the model string and the colormap name"),
     "_model_pending_now": ("sig", "clock", "the row's flag, the kernel's stamp and its 20 s cap as one boolean"),
     "_model_tone": ("pure", "over the model string"),
-    "_msg_summaries": ("sig", "postal", "read only through the caption values each card embeds (the postal deps)"),
+    "_msg_summaries_scoped": ("sig", "postal", "the cycle's caption map (one fetch per pusher cycle; fresh on a handler thread), read only through the caption values each card embeds (the postal deps)"),
     "_name_color": ("sig", "names"),
     "_name_emoji": ("sig", "names"),
     "_name_of": ("sig", "names"),
@@ -112,6 +116,7 @@ CENSUS = {
     "_postal_card_deps": ("sig", "postal"),
     "_postal_index": ("sig", "postal", "memoized on the log's identity"),
     "_queue_recallable": ("sig", "backend"),
+    "_queued_romp_flags": ("pure", "over a queued text"),
     "_read_task_store": ("sig", "tasks"),
     "_retry_gate_state": ("sig", "retry"),
     "_retry_gaveups": ("sig", "states"),
@@ -125,7 +130,7 @@ CENSUS = {
     "_seg_key": ("pure", "over a segment id"),
     "_segs_seam": ("pure", "over a turn and the store's seams (store)"),
     "_self_host": ("sig", "host"),
-    "_session_awaiting": ("sig", "bg", "the row's subagents and task set, the live task rows, the watches (watch), the states overlay (states), the store's stamps and delegation (store, hold) and the peers' names (names)"),
+    "_session_awaiting": ("sig", "bg", "the row's subagents and task set, the live task rows, the watches (watch), the states overlay (states), the durable stamp view with its delegation peers (stamp: the store, the journal and the postal log, since a peer's answer supersedes a peer wait), the blocked-yield read of the store (store, hold) and the peers' names (names)"),
     "_session_backend": ("sig", "row", "the row's backend field; else the reg's existence (reg)"),
     "_session_chip": ("pure", "over classified inputs: the parse and live tail, the row, the backend brackets, the clock booleans, the live task rows, the watches, the states overlay, the store and the downtime list"),
     "_session_cwd": ("sig", "cwd", "the names entry's cwd, else the transcript's stamp"),
@@ -137,6 +142,7 @@ CENSUS = {
     "_space_paths": ("memo", "the first resolution of a message's spaced spans latches for the process's life"),
     "_split_followup": ("pure", "over a text"),
     "_split_reminders": ("pure", "over a text"),
+    "_stamp_agents": ("sig", "taskout", "the sidecar directory and each agent transcript it reads are taskout deps (stat'd before the read, re-stat'd per cycle); the task scan is over the transcript, the liveness gate over the row and the spawn epoch (row, reg, gone)"),
     "_stamp_interrupt_causes": ("pure", "over the events"),
     "_strip_hook_notices": ("pure", "over a text"),
     "_task_outputs_for": ("sig", "taskout", "the launch record from the transcript's scan; each output file's tail is a taskout dep"),
@@ -146,7 +152,6 @@ CENSUS = {
     "_tree_of": ("sig", "cwd"),
     "_user_images": ("pure", "over a turn's blocks and text"),
     "_user_todo_session_ended": ("sig", "reg", "the reg's alive bit; else the death marker (gone) against the last states row (states)"),
-    "_watch_awaiting": ("sig", "watch"),
     "iso": ("pure", "over a timestamp"),
 }
 
@@ -198,6 +203,7 @@ GLOBALS = {
     "_chat_fold_last": ("out", "the perf line's per-thread record"),
     "_chat_fold_lock": ("const", "a lock"),
     "_chat_fold_warned": ("out", "a once-flag"),
+    "_chat_dep_scope": ("out", "the running build's dependency record, written for the pusher (see _chat_build_deps)"),
     "_chat_postal_stats": ("out", "counters"),
     "_ledger_memo": ("memo", "see _ledger_memo.get"),
     "_ledger_memo_stats": ("out", "counters"),
@@ -299,7 +305,6 @@ class Census(unittest.TestCase):
         for name in GLOBALS:
             self.assertTrue(hasattr(km, name), name)
 
-    @unittest.skipUnless(hasattr(km, "_CHAT_SIG_LABELS"), "the labelled signature lands in the next commit")
     def test_every_sig_entry_is_a_component_of_the_signature(self):
         labels = set(km._CHAT_SIG_LABELS)
         for table in (CENSUS, DOTTED, GLOBALS):
