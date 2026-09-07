@@ -250,8 +250,9 @@ class _PerfStats:
                                    plan, close, unblock, courier, group, consolidate, distill; plus
                                    stamps held), from which skipped / (ran + skipped) is the share
                                    of per-session runs the gate declined; the courier's incomplete
-                                   counts scans that produced pending rows or consulted another
-                                   session's store, which run again next pass by design
+                                   counts scans that produced pending rows, or whose link repair
+                                   found the sender's tracker completed or the sender outside the
+                                   discover window, so the next pass scans the session again
       memos                        one entry per memo the kernel keeps, each a flat dict of counters:
                                    goals_snap (the judge pass's stat-keyed goal-store snapshot, see
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs

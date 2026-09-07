@@ -1763,8 +1763,9 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   judged), `bypassed` (runs with no signature to record, or whose parse ran
   under a cut that moved after the gate looked), `incomplete` (runs a
   deferral or a failed call left unfinished; for the courier, scans that
-  produced pending rows or consulted another session's store, which run again
-  next pass by design), `due_clock` (runs a background task's deadline made
+  produced pending rows, or whose link repair found the sender's tracker
+  completed or the sender outside the discover window, so the next pass scans
+  the session again), `due_clock` (runs a background task's deadline made
   due), plus `stamps`, the number of per-session records held. `skipped / (ran + skipped)` is the share of per-session runs the gate
   saved; `romp perf` prints it per tier on the `tiers` line and adds
   `cpu/pass` to the `judge` line, since the judge's CPU share alone cannot

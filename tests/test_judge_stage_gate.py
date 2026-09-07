@@ -1788,51 +1788,119 @@ class CourierGate(_Gate):
         self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "then both skip")
         self.assertEqual(len(self.courier_calls), 4)
 
-    def test_a_link_repair_that_reaches_the_backref_leaves_no_stamp(self):
-        # a placed delegate segment whose store carries no link for the message: the repair looks for the
-        # sender's tracker in every discovered store, which no per-session signature carries, so the run is
-        # incomplete and the session is scanned again next pass with nothing else changed. Once a tracker
-        # exists the link attaches (a save: the store moves), the follow-on scan finds the link and stamps.
-        path = self._peer_session(SID, SID2)
+    def _placed_delegate(self, sender_discovered=True, from_host=""):
+        """A recipient whose peer delegate segment was PLACED by another writer under a node with no courier
+        link (the link-repair shape). Returns (seg_id, nid)."""
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, parent="a2"), aline(T0 + 230, "On it.", "a3", "p1")]
+        extra = {"from_host": from_host} if from_host else {}
+        self._ledger_row(MID, SID2, SID, t=T0 + 190, **extra)
+        path = self._session(SID, recs)
+        if sender_discovered:
+            self._session(SID2, name="api")
         seg_id = self._peer_seg_id(SID, path)
         store = jd.load_goals(SID)
         nid = SID + ":g7"
         store["nodes"][nid] = {"id": nid, "text": "Wire up the export button", "parentId": None, "t": T0 + 200,
                                "mt": T0 + 200, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
         store["status"][nid] = "working"
-        store["placements"][seg_id] = nid                               # placed by another writer, no courier link
+        store["placements"][seg_id] = nid
         jd.save_goals(SID, store)
+        return seg_id, nid
+
+    def _tracker(self, complete):
+        snd = jd.load_goals(SID2)
+        tid = SID2 + ":g1"
+        snd["nodes"][tid] = {"id": tid, "text": "delegated to web: wire up the export button", "parentId": None,
+                             "t": T0 + 190, "mt": T0 + 190, "log": [], "trail": [], "nodeComplete": complete,
+                             "cleared": False, "handoff": {"peer": SID, "msgId": MID}}
+        snd["status"][tid] = "completed" if complete else "working"
+        jd.save_goals(SID2, snd)
+        return tid
+
+    def test_a_placed_delegate_with_no_sender_tracker_stamps_after_one_scan(self):
+        # the review's nit (2026-09-07): the repair found no tracker in any discovered store, and nothing can
+        # plant one later for a placed local segment (the two planters plant for unplaced rows and for remote
+        # recipients), so marking the run kept the session hot forever at N+1 store loads per pass. It stamps.
+        seg_id, nid = self._placed_delegate()
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "no tracker anywhere: the scan is complete and stamps")
+        self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid])
+        self.assertEqual(self.courier_calls, [], "a placed segment is never re-judged")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "and skips")
+
+    def test_a_completed_sender_tracker_keeps_the_scan_due_until_a_reopen_links_it(self):
+        # the one shape in which a later pass can attach the link with none of this session's inputs moving:
+        # the sender's tracker exists and is complete (never linked); a user reopening it moves the SENDER's
+        # store, so the recipient's run stays incomplete until the reopened tracker is linked
+        seg_id, nid = self._placed_delegate()
+        tid = self._tracker(complete=True)
         seen = self._scan_log()
         for i in range(2):
             seen.clear()
             self._reset()
             self._pass(tiers=("courier",))
             self.assertIn(SID, seen, "pass %d: scanned" % i)
-            self.assertIsNone(self._stamp("courier", SID), "pass %d: the backref was consulted, no stamp" % i)
-            self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid], "no tracker anywhere: no link")
-        self.assertEqual(self.courier_calls, [], "a placed segment is never re-judged")
-        snd = jd.load_goals(SID2)                                        # the sender's tracker appears
-        tid = SID2 + ":g1"
-        snd["nodes"][tid] = {"id": tid, "text": "delegated to web: wire up the export button", "parentId": None,
-                             "t": T0 + 190, "mt": T0 + 190, "log": [], "trail": [], "nodeComplete": False,
-                             "cleared": False, "handoff": {"peer": SID, "msgId": MID}}
+            self.assertIsNone(self._stamp("courier", SID), "pass %d: a completed tracker keeps the run incomplete" % i)
+            self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid], "a completed tracker is never linked")
+        self.assertIsNotNone(self._stamp("courier", SID2), "the sender, with nothing pending, stamped")
+        snd = jd.load_goals(SID2)                                        # the user reopens the tracker
+        snd["nodes"][tid]["nodeComplete"] = False
         snd["status"][tid] = "working"
         jd.save_goals(SID2, snd)
         seen.clear()
         self._reset()
         self._pass(tiers=("courier",))
+        self.assertIn(SID, seen, "still due: the reopened tracker is found")
         links = jd.load_goals(SID)["nodes"][nid].get("links") or []
         self.assertEqual(links, [{"peer": SID2, "goalId": tid, "msgId": MID}], "the link attached")
-        self.assertIsNone(self._stamp("courier", SID), "the attaching run reached the backref: no stamp")
+        self.assertIsNotNone(self._stamp("courier", SID), "the attaching run is complete (its save re-arms it once)")
         seen.clear()
         self._reset()
         self._pass(tiers=("courier",))
-        self.assertIn(SID, seen, "the link's save moved the store: one more scan")
-        self.assertIsNotNone(self._stamp("courier", SID), "the link is in the store: the repair stops before the backref")
+        self.assertEqual(sorted(seen), sorted([SID, SID2]), "both stores moved: one more scan each")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the link is in the store: the repair stops before the lookup")
         seen.clear()
         self._reset()
         self._pass(tiers=("courier",))
-        self.assertNotIn(SID, seen, "then it skips")
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "then both skip")
+
+    def test_a_local_sender_outside_the_discover_window_keeps_the_scan_due_and_a_remote_one_does_not(self):
+        # no tracker is visible because the sender's store was not READ (the sender is a local session outside
+        # the discover window): its return makes an open tracker visible with nothing of the recipient's moving,
+        # so the run stays incomplete; once the sender is discovered and holds no tracker, the scan stamps.
+        # A sender on another kernel (the ledger row's from_host) keeps its tracker there: stamp at once.
+        seg_id, nid = self._placed_delegate(sender_discovered=False)
+        seen = self._scan_log()
+        for i in range(2):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertEqual(seen, [SID], "pass %d: the recipient is scanned" % i)
+            self.assertEqual(self._ran(), (1, 0, 0, 1), "pass %d: a local sender outside the window: incomplete" % i)
+        self._session(SID2, name="api")                                  # the sender returns, with no tracker
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "discovered and trackerless: nothing can appear later, both stamp")
+        # the remote sender, from a clean root
+        jd._rebind_state(self.td); jd._STAGE_STAMP.clear()
+        for c in (jd._PARSE_CACHE, jd._discover_cache):
+            c.clear()
+        shutil.rmtree(jd.GOALDIR, ignore_errors=True); shutil.rmtree(jd.NAMES, ignore_errors=True)
+        jd.NAMES.mkdir(parents=True)
+        jd.MESSAGES.unlink()
+        seg_id, nid = self._placed_delegate(sender_discovered=False, from_host="TESTHOST-B")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID])
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "a remote sender's tracker is never local: stamp")
 
     def test_the_settle_is_read_once_per_written_session_and_never_on_the_idle_path(self):
         # two peer rows in one session, both filed without a model call (a declared coordinate and a declared

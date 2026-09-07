@@ -14530,7 +14530,7 @@ def _postal_ledger():
             mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
                            str(r.get("body") or ""),
                            ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None,
-                           str(r.get("originMid") or ""))
+                           str(r.get("originMid") or ""), str(r.get("from_id") or ""))
             if r.get("kind") == "delegate" and r.get("toName") and str(r.get("to_id") or "").startswith("peer:"):
                 xcands.append(r)
     except OSError:
@@ -14540,7 +14540,7 @@ def _postal_ledger():
 
 
 def _postal_row(mid):
-    """(from_name, from_host, tracked, body, userAsk, originMid) for a delivered postal message id, from the
+    """(from_name, from_host, tracked, body, userAsk, originMid, from_id) for a delivered postal message id, from the
     "sent" row — the AUTHORITATIVE record of who sent it and how (the row schema is the postal
     consumer contract). The sender may be a session of ANOTHER kernel (federated mail), so the local
     names registry cannot resolve it; the log row carries the name the sender wore, the origin host
@@ -14551,12 +14551,15 @@ def _postal_row(mid):
     sending kernel ran its local chain walk at relay time and the bus carried the proof, so a
     cross-host delegate reads user-anchored though the local walk rightly refuses foreign hops.
     originMid (2026-08-28, the dead-session round) is the SENDER-side id deliver() stamps on a
-    relayed row — the durable join key when the two sides mint different mids for one message.
-    ("", "", False, "", None, "") for None/unknown mids. Memoized on the log file's (mtime, size) through
-    _postal_ledger, one parse per ledger version shared with the courier's cross-host candidate rows."""
+    relayed row — the durable join key when the two sides mint different mids for one message. from_id
+    (2026-09-07) is the sender's sid as the row records it, the value the parse's postal index resolves a
+    peer author to; _attach_courier_link reads it to tell a local sender outside the discover window from
+    one whose store holds no tracker. ("", "", False, "", None, "", "") for None/unknown mids. Memoized on
+    the log file's (mtime, size) through _postal_ledger, one parse per ledger version shared with the
+    courier's cross-host candidate rows."""
     if not mid:
-        return ("", "", False, "", None, "")
-    return _postal_ledger()[0].get(mid, ("", "", False, "", None, ""))
+        return ("", "", False, "", None, "", "")
+    return _postal_ledger()[0].get(mid, ("", "", False, "", None, "", ""))
 
 
 def _frame_head(s):
@@ -14683,13 +14686,31 @@ def _attach_courier_link(store, seg_id, mid):
     if not tgt or tgt not in nodes:
         return False
     top = _top_ancestor(nodes, tgt)
-    # The backref reads OTHER sessions' stores (every discovered one), which no per-session signature
-    # carries: a courier scan that reached this line is never stamped (the evidence gate), so a tracker
-    # that appears later in a sender's store is linked on a later pass rather than skipped over. A link
-    # that IS attached saves the store, which re-arms the scan on its own.
-    _judge_ctx.stage_incomplete = True
-    peer_sid, peer_gid = _handoff_backref(mid)
-    if not (peer_sid and peer_gid):
+    # The tracker lookup reads OTHER sessions' stores (every discovered one), which no per-session
+    # signature carries. The evidence gate (2026-09-07) marks the courier's scan incomplete here only in
+    # the shapes where a later pass could attach the link with none of THIS session's inputs moving, so
+    # the session is scanned again instead of skipped over; every other shape may stamp (the review's
+    # nit: an unconditional mark kept a planner-placed delegate's session hot forever, N+1 store loads
+    # per pass). The shapes:
+    #  - an OPEN tracker: the link attaches now, and the save re-arms the scan on its own;
+    #  - a COMPLETE tracker: no link (a completed tracker is never linked), and a user reopening it moves
+    #    the sender's journal, not this session's inputs: mark;
+    #  - no tracker in any discovered store: nothing can plant one later for a placed local segment (the
+    #    two planters, run_courier's write loop and its cross-host arm, plant for unplaced rows and for
+    #    remote recipients), so the scan may stamp, with one exception: a LOCAL sender outside the
+    #    discover window (the ledger row names it and carries no from_host) was not read here, and its
+    #    return makes an open tracker visible with nothing of this session's moving: mark. A sender on
+    #    another kernel keeps its tracker there, where no local pass can ever link it: stamp.
+    fleet = discover(int(time.time()))
+    hit = _handoff_tracker(mid, fleet)
+    if hit is None:
+        row = _postal_row(mid)
+        if row[6] and not row[1] and row[6] not in {f[0] for f in fleet}:
+            _judge_ctx.stage_incomplete = True
+        return False
+    peer_sid, peer_gid, complete = hit
+    if complete:
+        _judge_ctx.stage_incomplete = True
         return False
     nodes[top].setdefault("links", []).append({"peer": peer_sid, "goalId": peer_gid, "msgId": mid})
     save_goals(store["rompUuid"], store)
@@ -14745,17 +14766,29 @@ def _serving_ref(serving):
     return ref
 
 
-def _handoff_backref(mid):
-    """(sender sid, sender tracking-node id) for a delegate message id — read from the SENDER boards'
-    own handoff nodes (the durable record _plant_handoff_track wrote at send time). '' pair when no
-    sender tracks this message (a delegate from a non-romp source, or the sender's store is gone)."""
-    for fsid, path, anchor, name in discover(int(time.time())):
+def _handoff_tracker(mid, fleet=None):
+    """The sender-side tracking node for a delegate message id, read from the DISCOVERED sessions' stores
+    (the durable record _plant_handoff_track wrote at send time): (sender sid, node id, nodeComplete), an
+    open tracker preferred over a completed one; None when no discovered store tracks the message (a
+    delegate from a non-romp source, a sender on another kernel or outside the discover window, or a
+    message no courier filed). `fleet`: the discover() list to read, when the caller holds it already."""
+    found = None
+    for fsid, path, anchor, name in (discover(int(time.time())) if fleet is None else fleet):
         st = load_goals(fsid)
         for nid, nd in st.get("nodes", {}).items():
             h = nd.get("handoff")
-            if isinstance(h, dict) and h.get("msgId") == mid and not nd.get("nodeComplete"):
-                return fsid, nid
-    return "", ""
+            if isinstance(h, dict) and h.get("msgId") == mid:
+                if not nd.get("nodeComplete"):
+                    return fsid, nid, False
+                found = (fsid, nid, True)
+    return found
+
+
+def _handoff_backref(mid):
+    """(sender sid, sender tracking-node id) for a delegate message id: the OPEN tracker _handoff_tracker
+    finds, else the '' pair (no sender tracks this message, or its tracker is complete)."""
+    hit = _handoff_tracker(mid)
+    return (hit[0], hit[1]) if hit is not None and not hit[2] else ("", "")
 
 
 def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tracked=False):
@@ -15326,13 +15359,15 @@ def _courier_scan(fsid, path, now):
     pass's parse of `fsid` for peer-triggered segments and return the pending rows the pass's write loop
     files, `(seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path)`, in transcript order.
     Reads exactly what the courier's signature carries (the inventory above GATED_TIERS): the pinned
-    parse, the store trio and the episode log. Two outcomes mark the run incomplete, so the gate never
-    stamps it: rows returned (the write loop that consumes them runs after every scan and every branch
-    of it writes or defers, so the session stays due until its rows are consumed), and the LINK-ONLY
-    repair reaching _handoff_backref (other sessions' stores; the mark sits in _attach_courier_link) or
-    raising (the repair did not run: the next pass retries it). A store that did not read stands the
-    session down (load_goals marked the run, so it stays due). A parse or walk that raises propagates:
-    _gated counts it incomplete and the runner logs the pass-crash row and goes on to the next session.
+    parse, the store trio and the episode log. Four outcomes leave no stamp, so the session is scanned
+    again next pass: rows returned (the write loop that consumes them runs after every scan and every
+    branch of it writes or defers, so the session stays due until its rows are consumed); the LINK-ONLY
+    repair finding the sender's tracker complete, or the sender a local session outside the discover
+    window (the two shapes in which a later pass could attach the link with none of this session's
+    inputs moving; the mark sits in _attach_courier_link, which stamps every other shape); a repair that
+    raises (it did not run: the next pass retries it); a store that did not read (the session stands
+    down; load_goals marked the run). A parse or walk that raises propagates: _gated counts it incomplete
+    and the runner logs the pass-crash row and goes on to the next session.
     The settle is NOT read here: run_courier reads it at its write sites, from the store being written
     (the scan used to read it for every session, every pass)."""
     session = parsed_session(fsid, [path], now)       # states-aware + cached, so _session_closed is correct
