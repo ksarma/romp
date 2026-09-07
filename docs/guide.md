@@ -234,6 +234,21 @@ running session). Comment threads have no tab and inherit nothing until they
 are broken out; `romp new` run inside a thread inherits from the session the
 thread belongs to.
 
+A session's tab can carry one emoji before its name, so you can tell the
+sessions apart at a glance by role or state: a moon on the one left running
+overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**, or run
+`romp emoji <session> <emoji>` (`romp emoji <session> --clear` removes it; with
+no emoji argument it prints the current one). A session can also set or change
+its own, with the `set_emoji` tool it gets alongside its mail tools, so you can
+ask one to show a moon while it works unattended and a checkmark when it is
+done. Exactly one emoji is accepted (a skin tone, a flag or a joined sequence
+counts as one); letters, digits, a bare text symbol such as `©`, or a second
+emoji are refused with the reason. The tab draws the emoji with the viewing
+machine's own emoji font, so one from the newest Unicode release, accepted by
+Romp, can still show as an empty box on a machine whose font predates it. The
+emoji is stored with the session's name and color, so every dashboard shows the
+same one, including a dashboard on another machine that has linked to this one.
+
 Search reaches inside sessions, not just across their names. As sessions run, a
 lightweight index judge writes each one a headline and an abstract of what it
 did, so searching for the work finds the session that did it, months later.
