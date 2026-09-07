@@ -86,6 +86,11 @@ def tool_result_line(t, uuid, parent, tool_id, text):
             "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id, "content": text}]}}
 
 
+def boundary(t, uuid, parent):
+    """A compaction boundary record: the event model opens a trigger-less turn on it."""
+    return {"type": "system", "subtype": "compact_boundary", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent}
+
+
 TWO_TURNS = [uline(T0, "task A", "u1"), aline(T0 + 30, "did A", "a1", "u1"),
              uline(T0 + 100, "task B", "u2", "a1"), aline(T0 + 130, "did B", "a2", "u2")]
 
@@ -341,6 +346,45 @@ class TheCut(_Gate):
         retired = [k for k, v in store["placements"].items() if v is None]
         self.assertTrue(retired, "the unit is retired, not planned")
         self.assertNotIn("task C", " ".join(self.plan_calls))
+
+
+class ARollbackArmingDuringTheCall(_Gate):
+    def test_the_apply_time_pending_leg_leaves_no_stamp(self):
+        # the review's second finding (2026-09-07): a bare rollback arming DURING the planner's model call
+        # reaches apply_plan_guarded's pending leg past the unit loop's own check; the leg defers the unit
+        # with no write, so the run must mark itself incomplete or the stamp holds the deferred unit until
+        # an unrelated re-arm. The latest segment is trigger-less (a compaction boundary) so the plan-sync
+        # stand-down, the other pending mark, cannot fire: the mark seen here is the apply leg's own.
+        path = self._session(SID, TWO_TURNS + [boundary(T0 + 300, "cb1", "a2")])
+        self._converge()
+        store = jd.load_goals(SID)
+        segs = [s for t in jd.parsed_session(SID, [str(path)], NOW)["turns"] for s in jd._segs(t, store)]
+        self.assertIsNone(max(segs, key=lambda s: s.get("t") or 0).get("trigger"), "fixture: the latest segment has no trigger")
+        seg2 = next(s for s in segs if s.get("trigger") == "u2")
+        self.assertIn(seg2["id"], store["placements"], "fixture: turn 2's unit was placed")
+        del store["placements"][seg2["id"]]                            # turn 2's unit falls due again
+        jd.save_goals(SID, store)
+        real = jd.plan_llm
+
+        def arm_during_call(text, menu, human=False, **kw):
+            jd._PENDING_CUT_FN = lambda fsid: "a1"                        # the rollback arms while the model thinks
+            return real(text, menu, human=human, **kw)
+        jd.plan_llm = arm_during_call
+        self._reset()
+        self._pass(tiers=("plan",))
+        jd.plan_llm = real
+        s = self._st("plan")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "deferred at apply time: no stamp")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        self.assertEqual([r["err"] for r in rows if "rewind" in str(r.get("err"))], ["rewind-stand-down-pending"],
+                         "the apply leg's own row, and no other stand-down")
+        self.assertNotIn(seg2["id"], jd.load_goals(SID)["placements"], "deferred: no write, the key stays absent")
+        jd._PENDING_CUT_FN = None                                       # the rollback dissolves: no file change
+        self._reset()
+        self._pass(tiers=("plan",))
+        self.assertEqual(self._st("plan")["ran"], 1, "still due: the deferred run left no stamp")
+        self.assertIn(seg2["id"], jd.load_goals(SID)["placements"], "and the unit is placed")
+        self.assertEqual(self._st("plan")["stamped"], 1)
 
 
 class ReArms(_Gate):

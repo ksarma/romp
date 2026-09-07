@@ -5781,6 +5781,10 @@ def apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu, place_key=No
     fresh parses carry the leaf_override, so the deferred unit never reaches the nudge gate."""
     away = _rewound_away(fsid, path, prompt_uuid) if prompt_uuid else False
     if away == "pending":
+        _judge_ctx.stage_incomplete = True         # deferred with no write: the evidence gate must not stamp
+        #                                             this run, or the unit waits for an unrelated re-arm
+        #                                             (a rollback arming during the model call reaches this
+        #                                             leg past the unit loop's own check; review 2026-09-07)
         _log_judge_error("planner", fsid, "rewind-stand-down-pending", seg=seg_id,
                          note="the unit's prompt is abandoned only under a still-pending cut — "
                               "deferred, not retired (the rewind can still fail)")
