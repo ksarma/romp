@@ -509,7 +509,8 @@ test("resolved elsewhere: the card goes into the closed Resolved fold and the bo
   assert.ok(h.q('[data-act="fcresolved"]'), "the Resolved fold");
   assert.deepEqual(h.sections(), SLOT);
   assert.deepEqual(h.q(".fc-composer-ref")!.childNodes.map((n) => (n as E).className + ":" + n.textContent),
-    ["fc-note:Reply on shipping the cache in v1.2", "fc-note:The comment was resolved meanwhile; the reply still goes to it."]);
+    ["fc-note:Reply on shipping the cache in v1.2", "fc-note:The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it."],
+    "the row says what happened and, like the other two fold rows, where the card is (ui/CLAUDE.md: no dead ends)");
   assert.equal(box.value, "One more thing.");
   h.click('[data-act="fcresolved"]');
   const card = h.card(passage.id)!;

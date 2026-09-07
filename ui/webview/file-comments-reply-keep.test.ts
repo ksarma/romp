@@ -579,7 +579,10 @@ test("a reply on an already-resolved comment, then the person closes the Resolve
   await g.open();
   g.startReply(passage.id, passage.id);
   await g.repoll({ store: { v: 3, path: "docs/report.md", suggestions: [], comments: [{ ...passage, resolved: true }, whole] }, unsent: unsent(whole.id), storeMtimeNs: "1757145600000000005" });
-  assert.equal(g.row()[1], "fc-note:The comment was resolved meanwhile; the reply still goes to it.");
+  assert.equal(g.row()[1], "fc-note:The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it.");
+  // both sentences name the fold row that brings the card back (replyAway's `back` is fcresolved for both; the first is
+  // pinned above): the person reads where the card is, whichever way it got there
+  assert.ok(g.row()[1].includes("under “Resolved” below"), "the meanwhile sentence names the fold too");
   g.dispose();
 });
 

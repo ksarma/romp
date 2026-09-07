@@ -2933,7 +2933,7 @@ class Panel {
   private replyAway(c: { commentId: string; resolved: boolean }): { text: string; gone: boolean; back: "fcresolved" | "fcmore" | null } {
     const card = this.cards().find((x) => x.id === c.commentId);
     if (!card) return { text: "The comment is gone from the file's comments.", gone: true, back: null };
-    if (card.resolved && card.hunk === null) return { gone: false, back: "fcresolved", text: c.resolved ? "The comment's card is under “Resolved” below; the reply still goes to it." : "The comment was resolved meanwhile; the reply still goes to it." };
+    if (card.resolved && card.hunk === null) return { gone: false, back: "fcresolved", text: c.resolved ? "The comment's card is under “Resolved” below; the reply still goes to it." : "The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it." };
     const view = this.changeView();
     if (view.hidden.some((g) => g.changes.some((ch) => ch.comments.some((cm) => cm.id === c.commentId)))) {
       return { gone: false, back: "fcmore", text: "The comment's card is under “" + moreChangesLabel(view.hiddenChanges) + "” below; the reply still goes to it." };
