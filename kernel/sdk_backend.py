@@ -9941,11 +9941,18 @@ class SdkBackend:
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     with self._reg_lock:                   # _lock → _reg_lock: the rider's order above
                         cur = read_reg(self.state_dir, sid) or dict(reg)
-                        rest = [t for t in (cur.get("queue") or [])
-                                if isinstance(t, str) and t and t not in notices]
+                        # Entries keep their PERSISTED shape: a user-todo ANSWER rides the queue as a
+                        # {"text","todo"} dict (_queue_wire), and the strings-only filter this replaces
+                        # erased it, so a thread woken by its dead life lost the very answer the user
+                        # had typed, with its ask already stamped answered (2026-09-07). The dict-aware
+                        # rule every other reg['queue'] rewrite follows (the 2026-08-22 sweep): decode
+                        # each entry for the junk test and the not-in-notices dedup, write it back as is.
+                        rest = [e for e in (cur.get("queue") or [])
+                                if (qt := _queue_text(e)) and qt not in notices]
                         # a resume nudge at the head stays there — continuation context first, then
                         # the notices, the sweep's order; the crash resume prepends one before it
-                        # calls here
+                        # calls here (a dict head is an answer, never a nudge: is_resume_nudge's own
+                        # str guard says so)
                         head = rest[:1] if rest and is_resume_nudge(rest[0]) else []
                         cur["queue"] = head + notices + rest[len(head):]
                         cur["bgTasks"] = []                # reported — never re-notify for the same deaths
