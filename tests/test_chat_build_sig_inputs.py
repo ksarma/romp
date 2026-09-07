@@ -409,6 +409,7 @@ class _World(unittest.TestCase):
         km._rewind_hold_clear(SID)
         km._built_chat.clear()
         km._live_scope.names = None
+        km._live_scope.snapshot = None
         km._live_scope.chat_shared = None
         for k in [k for k in km._PATH_LINK_CACHE if k[0] == SID]:
             km._PATH_LINK_CACHE.pop(k, None)
@@ -603,6 +604,8 @@ class Differential(_World):
         self.assertIsNone(c[km._CHAT_SIG_LABELS.index("names")], "outside a pusher cycle: no names revision")
         snap = km._names_snapshot()
         km._live_scope.names = snap
+        self.assertEqual(self.sig(), c, "a names snapshot alone (a handler-thread push's) carries no revision")
+        km._live_scope.snapshot = self.tmux                    # a pusher cycle's scope
         d = self.sig()
         self.assertEqual(self.moved(c, d), ("names",), "inside a cycle the revision is an integer")
         self.assertEqual(self.sig(), d, "the same snapshot again: the same revision")
@@ -748,3 +751,76 @@ class RealBuildIdleBoard(_World):
                          {"transcript": 1})
         km._push([self.client])
         self.assertEqual(self._chat()["cached"] - c2["cached"], 1, "served again once nothing moves")
+
+
+class KeyCost(_World):
+    """The key's cost amendments: the pending-token pre-check vouches per directory, the row and the usage
+    reading the key already holds are handed down, and a push outside a pusher cycle opens its own scopes."""
+
+    def _record(self, uuids_md):
+        for u, md in uuids_md:
+            km._path_links(md, SID, u, {})
+        deps = {"task_outs": [], "pl_pending": list(uuids_md), "postal_any": False, "postal_cards": [], "at_build": None,
+                "pl_at": tuple((u, {}, None) for u, _ in uuids_md), "pl_check": None}
+        return deps
+
+    def test_the_precheck_vouches_and_a_quiet_cycle_re_resolves_nothing(self):
+        sub = self.cdir / "notes"
+        sub.mkdir()
+        deps = self._record([("u1", "see report.md"), ("u2", "and notes/plan.md too")])
+        calls = []
+        real = km._path_links
+        km._path_links = lambda md, sid, u, memo: calls.append(u) or real(md, sid, u, memo)
+        try:
+            a = self.sig(deps=deps)
+            self.assertEqual(sorted(calls), ["u1", "u2"], "the first check after a build re-resolves once (pl_check starts None)")
+            self.assertIsNotNone(deps["pl_check"], "…and vouches: every answer held")
+            del calls[:]
+            self.assertEqual(self.sig(deps=deps), a)
+            self.assertEqual(calls, [], "nothing under a candidate directory moved: no token was re-probed")
+            (sub / "unrelated.txt").write_text("x")            # notes/ moved: only the message naming notes/ is re-resolved
+            self.assertEqual(self.sig(deps=deps), a)
+            self.assertEqual(calls, ["u2"])
+            del calls[:]
+            (self.cdir / "report.md").write_text("42\n")        # the cwd moved: u1's file appeared
+            b = self.sig(deps=deps)
+            self.assertEqual(calls, ["u1"], "u2's directory did not move again")
+            self.assertEqual(self.moved(a, b), ("pathlink",))
+        finally:
+            km._path_links = real
+
+    def test_bg_live_norm_reads_the_row_it_is_handed(self):
+        row = {"state": "idle", "bgTasks": [{"toolUseId": "t1", "desc": "batch", "since": NOW - 5, "type": "local_bash"}]}
+        self.assertEqual([r["tid"] for r in km._bg_live_norm(SID, str(self.tpath), live=row)], ["t1"])
+        self.assertEqual(km._bg_live_norm(SID, str(self.tpath), live=None), [], "None is a dormant session")
+        self.assertEqual(km._bg_live_norm(SID, str(self.tpath)), [], "no row passed: the liveness map's (no task set here)")
+
+    def test_limit_hold_reads_the_usage_it_is_handed(self):
+        capped = {"limited": {"fiveHour": True}, "fiveHour": {"pct": 100, "resetsAt": NOW + 3600}}
+        self.assertEqual(km._limit_hold(SID, usage=capped)["resetsAt"], NOW + 3600)
+        self.assertIsNone(km._limit_hold(SID, usage={}), "no windows, no pause, no error: no hold")
+        self.assertIsNone(km._limit_hold(SID, usage=None), "a failed reading: never invent a hold")
+
+    def test_a_push_outside_a_cycle_opens_its_own_scopes_and_closes_them(self):
+        self.assertIsNone(getattr(km._live_scope, "snapshot", None))
+        km._live_scope.names = None
+        km._live_scope.msgsum = None
+        km._chat_push_scopes_open()
+        self.assertIsNotNone(km._live_scope.chat_shared)
+        self.assertIsNotNone(km._live_scope.names, "a names snapshot for the loop")
+        self.assertEqual(km._live_scope.msgsum, [km._MSGSUM_UNSET])
+        self.assertIsNone(km._chat_sig_shared()["names"], "no cycle: the names revision stays None on this thread")
+        km._chat_push_scopes_close()
+        self.assertIsNone(km._live_scope.chat_shared)
+        self.assertIsNone(km._live_scope.names)
+        self.assertIsNone(km._live_scope.msgsum)
+        # a cycle's own scopes are the cycle's: opened by _pusher_cycle, left alone here
+        km._live_scope.names = {"x": ["y"]}
+        km._live_scope.msgsum = [km._MSGSUM_UNSET]
+        km._chat_push_scopes_open()
+        self.assertEqual(km._live_scope.chat_push_owned, ["chat_shared"])
+        km._chat_push_scopes_close()
+        self.assertEqual(km._live_scope.names, {"x": ["y"]})
+        self.assertEqual(km._live_scope.msgsum, [km._MSGSUM_UNSET])
+        km._live_scope.names = None
+        km._live_scope.msgsum = None
