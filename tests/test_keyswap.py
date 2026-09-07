@@ -1375,6 +1375,38 @@ class KeyswapCliCommandMode(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("the kernel predates the credential command: `romp refresh` restarts it on this code", out)
 
+    def test_an_alias_only_shell_is_told_the_installer_reads_the_primary_name(self):
+        # bin/romp-service resolves its SERVICE_ENV_FILE from ROMP_SERVICE_ENV_FILE only, so a shell whose path
+        # rides the alias ROMP_SERVICE_ENV would bake the DEFAULT path into the unit or the plist: the other-file
+        # hint says so and names the export that makes the install remedy work, and never claims the installer
+        # reads the alias. A shell with the primary name set gets no alias lines.
+        self.kernel_view.update({"keySource": "file", "keyFp": "", "launched": {"": 3}})
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertFalse(cli._path_alias(), "ROMP_SERVICE_ENV_FILE is set: not an alias-only shell")
+        self.assertNotIn("does not read: export ROMP_SERVICE_ENV_FILE", out)
+        os.environ.pop("ROMP_SERVICE_ENV_FILE")
+        self.assertTrue(cli._path_alias())
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        flat = " ".join(out.split())
+        self.assertIn("this shell reads %s." % self.path, flat)
+        self.assertIn("This shell set the path under the alias ROMP_SERVICE_ENV, which `romp-service install` "
+                      "does not read: export ROMP_SERVICE_ENV_FILE with this shell's path (or prefix the install "
+                      "command with it) before installing from this shell.", flat)
+        for false_claim in ("which the installer reads too", "resolves the alias", "writes into the unit"):
+            self.assertNotIn(false_claim, flat)
+        # the alias lines follow the remedy they qualify, and every line fits the report's width under the
+        # caller's pad; only a path, which is never broken, may run past it
+        lines = cli._other_file(self.path, 14, alias=True)
+        self.assertEqual(len(lines) - len(cli._other_file(self.path, 14)), 3)
+        self.assertTrue(lines[-4].startswith("`romp-service install` from this shell."), lines[-4])
+        self.assertTrue(lines[-3].startswith("This shell set the path under the alias"), lines[-3])
+        for path in (self.path, "/" + "p" * 120 + "/service.env"):
+            for line in cli._other_file(path, 14, alias=True):
+                if path not in line:
+                    self.assertLessEqual(14 + len(line), cli.WIDTH, line)
+
     def test_mismatch_when_the_kernel_runs_another_command_text(self):
         # the kernel's sourceFp is the hash of the command text it selected: another text is another source,
         # and the credential compare is not attempted (nothing to compare)

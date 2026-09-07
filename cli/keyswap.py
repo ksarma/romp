@@ -427,8 +427,10 @@ def _path_alias():
     """True when this shell's service.env path comes from ROMP_SERVICE_ENV, the alias kernel/keysource.py
     accepts after ROMP_SERVICE_ENV_FILE (service_env_path). The other-file hint then says so: its "unset
     the variable in this shell" otherwise names a variable such a shell never set, and its "install from
-    this shell" remedy holds only because bin/romp-service resolves the alias the same way and writes the
-    primary name into the unit or the plist."""
+    this shell" remedy does not hold as written, because bin/romp-service resolves its SERVICE_ENV_FILE
+    from ROMP_SERVICE_ENV_FILE only and never reads the alias: an alias-only shell installs the DEFAULT
+    path into the unit or the plist, and the mismatch stands. The hint names the export that makes the
+    remedy work."""
     primary = (os.environ.get("ROMP_SERVICE_ENV_FILE") or "").strip()
     return not primary and bool((os.environ.get("ROMP_SERVICE_ENV") or "").strip())
 
@@ -446,19 +448,21 @@ def _other_file(path, indent=0, alias=False):
     service.env:", and `indent` is the width of the pad the caller prints before each line. The path can
     be any length: when it would carry its sentence past WIDTH columns, pad included, the sentence stops
     at "reads" and the path follows whole on a line of its own, four columns deeper, so a path is never
-    broken. `alias` (_path_alias) adds two lines after the path under a shell whose path comes from the
-    alias: which variable this shell set, and that the installer reads it too and writes the primary."""
+    broken. `alias` (_path_alias) adds three lines after the remedy under a shell whose path comes from
+    the alias: which variable this shell set, that `romp-service install` does not read it (bin/romp-service
+    resolves ROMP_SERVICE_ENV_FILE only, so an alias-only install bakes the default path into the unit or
+    the plist), and the export of ROMP_SERVICE_ENV_FILE that makes the install remedy work."""
     reads = "in their own environment; this shell reads"
     inline = "%s %s." % (reads, path)
     if indent + len(inline) <= WIDTH:
         where = (inline,)
     else:
         where = (reads, "    %s." % path)
-    if alias:
-        where += (
-            "This shell set it under the alias ROMP_SERVICE_ENV, which the installer reads too; the",
-            "line it writes into the unit or the plist is ROMP_SERVICE_ENV_FILE.",
-        )
+    tail = (
+        "This shell set the path under the alias ROMP_SERVICE_ENV, which `romp-service install`",
+        "does not read: export ROMP_SERVICE_ENV_FILE with this shell's path (or prefix the",
+        "install command with it) before installing from this shell.",
+    ) if alias else ()
     return (
         "the kernel and this shell each resolve the service.env path from ROMP_SERVICE_ENV_FILE",
     ) + where + (
@@ -471,7 +475,7 @@ def _other_file(path, indent=0, alias=False):
         "value, or change it there and restart the manager. If not found, the kernel reads the",
         "default path: unset the variable in this shell, or point the kernel at this file with",
         "`romp-service install` from this shell.",
-    )
+    ) + tail
 
 
 def _kind_word(kind):
