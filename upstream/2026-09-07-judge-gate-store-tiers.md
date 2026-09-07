@@ -1,9 +1,9 @@
 ---
 title: Judge: the store-only tiers (unblocker, grouper, consolidator, distiller) on the evidence gate, with three identity memos
 status: candidate
-where: fork branch `judge-gate-p2` (based on PR #301; no PR yet): `kernel/judge.py` (`PARSE_TIERS`, `_sig_inputs`, `_stage_sig`, `_gated`, `run_unblock`, `run_group`, `run_consolidate`, `run_distill`, `_mark_unread`, the stage-site completeness marks; `_kids_map` and `_distill_due_t`, `_live_prompt_since`, `_view_cleared`); tests `tests/test_judge_stage_gate.py`, `tests/test_judge_identity_memos.py`, `tests/romp-perf.bats`
+where: fork PR #317 (`judge-gate-p2`, based on #301): `kernel/judge.py` (`PARSE_TIERS`, `_sig_inputs`, `_stage_sig`, `_gated`, `run_unblock`, `run_group`, `run_consolidate`, `run_distill`, `_mark_unread`, `_read_failed` and the stage-site completeness marks; `_kids_map` and `_distill_due_t`, `_live_prompt_since`, `_view_cleared`, `stalled_facts`); tests `tests/test_judge_stage_gate.py`, `tests/test_judge_identity_memos.py`, `tests/romp-perf.bats`
 added: 2026-09-07
-pr:
+pr: 317
 tier: feature
 offered:
 closed:
