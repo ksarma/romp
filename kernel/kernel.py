@@ -41352,6 +41352,9 @@ def _push(targets, connect=False, tmux=None):
                     # caching a payload under a signature it may not match. The one flip this cannot see is
                     # an in-memory value that went A -> B -> A between the two readings, with the build
                     # reading B: accepted, and stated here (round-4 plan P4, the value-flip amendment).
+                    # the dependency record first (which tokens are still pending reads _PATH_LINK_CACHE, and the
+                    # signature below must not have moved it in between), then the post-build signature
+                    _rec = _chat_build_deps(s["sid"], m) if (sig is not None and m) else None
                     if sig is not None:
                         try:
                             post = _chat_build_sig(s, chat_tmux, now, deps=False)   # compared on the static part only
@@ -41404,10 +41407,9 @@ def _push(targets, connect=False, tmux=None):
                         _built_chat.pop(next(iter(_built_chat)))
                     if served:
                         _built_chat[s["sid"]] = (hit[0], m, ms, hit[3] if len(hit) > 3 else None)
-                    elif post is not None and post[:-_nd] == sig[:-_nd]:
+                    elif post is not None and post[:-_nd] == sig[:-_nd] and _rec is not None:
                         # the dependency components come from THIS build's record (what it embedded), never
                         # from a re-read: the record is what the next cycle's signature evaluates
-                        _rec = _chat_build_deps(s["sid"], m)
                         _built_chat[s["sid"]] = (post[:-_nd] + _rec["at_build"], m, ms, _rec)
                     elif post is not None:
                         _PERF_STATS.build_chat_moved()
