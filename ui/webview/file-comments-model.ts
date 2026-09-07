@@ -24,9 +24,13 @@ export type Anchor = { quote: string; prefix: string; suffix: string };
  *  DECODED (describeComment, decodeSrc): the embed may percent-encode it, and the file on disk has the space. */
 export type Target = { kind: "image" | "pdf"; region: Region; page?: number; hash?: string; src?: string };
 export type StoreReply = { author: string; authorId?: string; ts: number; body?: string; kind?: string; oldText?: string; newText?: string };
+/** `anchorAt` is the second romp-only field (the anchors follow-on, 2026-09-07): the offset the passage's anchor
+ *  located at, set by the host when the comment is made and refreshed on every sidecar write it makes. The painter
+ *  passes it to the engine as the tie-break, so a comment on text that recurs with the same surroundings past the
+ *  anchor's context stays on the copy that was chosen. Only an anchored comment carries it. */
 export type StoreComment = {
   id: string; author: string; authorId?: string; ts: number; body: string;
-  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; suggestionId?: string; target?: Target;
+  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; suggestionId?: string; target?: Target;
 };
 export type Store = {
   v: number; id?: string; path: string; suggestions: unknown[]; comments: StoreComment[];
@@ -425,6 +429,8 @@ export type CardTurn =
 export type Card = {
   id: string; author: string; authorId: string | null; ts: number; body: string; resolved: boolean;
   kind: CardKind; ref: string; anchor: Anchor | null; hunk: Hunk | null; target: Target | null;
+  /** the stored position beside the anchor (StoreComment.anchorAt), the painter's tie-break; null without one */
+  anchorAt: number | null;
   /** for a comment bound to a change the log has decided: which way, so the card can say so */
   decision: "accepted" | "rejected" | null;
   replies: CardTurn[];
@@ -451,6 +457,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     const verdict = b && (b.state === "accepted" || b.state === "rejected") ? b.state : null;
     const target = c.target && c.target.region ? c.target : null;
     const anchor = c.anchor && typeof c.anchor.quote === "string" ? c.anchor : null;
+    const anchorAt = anchor && typeof c.anchorAt === "number" && Number.isFinite(c.anchorAt) ? c.anchorAt : null;
     let kind: CardKind; let ref: string;
     if (b) { kind = "change"; ref = changeRef(b); }
     else if (target) { kind = "region"; ref = describeComment(c, hunks).replace(/^on /, ""); }
@@ -458,7 +465,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     else { kind = "file"; ref = "this file"; }
     return {
       id: c.id, author: c.author, authorId: c.authorId || null, ts: c.ts, body: c.body, resolved: !!c.resolved,
-      kind, ref, anchor, hunk, target, decision: verdict,
+      kind, ref, anchor, hunk, target, anchorAt, decision: verdict,
       replies: (c.replies || []).map((r): CardTurn | null => {
         if (typeof r.body === "string") return { kind: "msg", author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body };
         if (r.kind === "edit") return { kind: "rev", author: r.author, authorId: r.authorId || null, ts: r.ts, oldText: r.oldText || "", newText: r.newText || "" };

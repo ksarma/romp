@@ -1871,7 +1871,9 @@ class Panel {
     const rendered = this.ctx.mode() === "rendered";
     for (const card of this.cards()) {
       if (card.resolved || !card.anchor) continue;
-      const loc = locateComment(src, card.anchor);
+      // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
+      // surroundings past the anchor's context is painted on the copy that was chosen; `??`, not `||`: 0 is a position
+      const loc = locateComment(src, card.anchor, card.anchorAt ?? undefined);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
