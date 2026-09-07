@@ -1621,6 +1621,10 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
+/* a comment on a change card (.fc-hosted; renderHosted) is a column at the turns' own 5px (.fc-replies): its row, its
+   turns, a reply's box (placeComposer) and its buttons. As a plain block it stood the box against the turn above and the
+   buttons below at 0px, and after a turn of yours the two accent washes ran together as one (the 2026-09-07 review). */
+.fc-hosted { display: flex; flex-direction: column; gap: 5px; }
 /* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
    turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
    reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */
