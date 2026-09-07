@@ -496,7 +496,13 @@ class _PerfStats:
                                    _postal_card_deps) -> gate (fold-gate checks that re-hydrated a
                                    tab's sealed cards), hit (checks that verified them from their
                                    recorded values), commit_new (raw postal events hydrated at fold
-                                   commits, each once)
+                                   commits, each once); chat_ledger (build_session's goal-tree walk
+                                   and live roots per sid, interim, see _ledger_memo) -> hit / miss,
+                                   bypass_live (live atoms merged), bypass_hold (a rewind hold
+                                   armed), bypass_empty (a store with no nodes), evict, and the
+                                   gauge entries; chat_fold_tasks (the per-turn task fold, interim,
+                                   see _fold_tasks) -> hit / miss counted per TURN and the gauge
+                                   entries (sids held)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -697,7 +703,8 @@ class _PerfStats:
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
                              ("thread_reg", _thread_reg_report),
                              ("feed_segs", _feed_segs_report), ("lanes", _lanes_memo_report),
-                             ("chat_merge_sets", _merge_sets_report), ("chat_postal", _chat_postal_report)):
+                             ("chat_merge_sets", _merge_sets_report), ("chat_postal", _chat_postal_report),
+                             ("chat_ledger", _ledger_memo_report), ("chat_fold_tasks", _task_fold_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -25302,69 +25309,113 @@ def _read_task_store(fsid, fold=None):
     return [dict(t) for t in out]
 
 
-def _fold_tasks(session):
+_task_fold_memo = {}                             # sid → {id(turn atoms): (atoms, fp, partial)} — see _fold_tasks
+_task_fold_stats = {"hit": 0, "miss": 0}         # per TURN: turns served from the memo vs scanned
+
+
+def _task_fold_report():
+    """/perf memos.chat_fold_tasks: hit / miss count TURNS (served from the memo vs scanned; a build of an
+    N-turn session with one moved turn is N-1 hits and 1 miss) and the gauge entries (sids held)."""
+    return dict(_task_fold_stats, entries=len(_task_fold_memo))
+
+
+def _fold_tasks_turn(atoms):
+    """One turn's share of _fold_tasks, pure over its atoms: (results, rejected, ops). results: tool_use_id →
+    the content of the turn's tool_result blocks (a TaskCreate's carries 'Task #N'); rejected: the
+    tool_use_ids whose result came back is_error (the CLI refused the call: nothing created, nothing moved);
+    ops: the turn's TaskCreate and TaskUpdate tool_use blocks in order, as (name, input, tool_use_id)."""
+    results, rejected, ops = {}, set(), []
+    for a in atoms:
+        if a.get("type") == "user":
+            for b in (a.get("message") or {}).get("content", []) or []:
+                if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
+                    results[b["tool_use_id"]] = b.get("content")
+                    if b.get("is_error"):
+                        rejected.add(b["tool_use_id"])
+        elif a.get("type") == "assistant":
+            for b in (a.get("message") or {}).get("content", []) or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in ("TaskCreate", "TaskUpdate"):
+                    ops.append((b["name"], b.get("input") or {}, b.get("id")))
+    return results, rejected, ops
+
+
+def _fold_tasks(session, sid=None):
     """Fold a session's TaskCreate/TaskUpdate tool calls into ONE checklist — the FALLBACK for _read_task_store
     when a session has no live task store (mirrors the old TS transcript.foldTasks the Python rewrite dropped).
     Task id = the number in TaskCreate's RESULT text ('Task #N created…'); status rides each TaskUpdate
     {taskId,status} the CLI accepted. NOTE this is lossy — it can't see a completion a subagent wrote only to the store (see
     _read_task_store). Returns the tasks in creation
     order, or None if there were none. The webview renders this as a todo card (kind:'todo') and hides the
-    raw Task* calls (ACK_TOOLS) — so the kernel emits the folded card and skips the raw tool events."""
-    out = {}                                              # tool_use_id → result content (a TaskCreate's carries 'Task #N')
-    rejected = set()                                      # tool_use_ids whose result came back is_error
+    raw Task* calls (ACK_TOOLS) — so the kernel emits the folded card and skips the raw tool events.
+
+    PER-TURN MEMO (INTERIM, round-4 plan P3 (b), 2026-09-07; P4's complete chat signature removes most of
+    the rebuilds this serves). The scan over a turn's atoms is pure over those atoms (_fold_tasks_turn),
+    so each turn's partial is kept per `sid` keyed on its atoms list's identity (held) plus _chat_turn_fp,
+    the fingerprint the chat fold trusts for a turn's atoms (a parse only appends; a full re-parse makes
+    new lists). A live-merged session carries a new atoms list for its last turn only, so a build of a
+    long working transcript scans one turn instead of every turn. The combine over the partials (the
+    result join, the ops replay) runs in full on every call and returns a fresh list, so a caller may
+    keep or alter the result without reaching the memo. No sid: no memo (a direct call)."""
+    prev = _task_fold_memo.get(sid) if sid is not None else None
+    cur, parts = {}, []
     for turn in session["turns"]:
-        for a in turn["atoms"]:
-            if a.get("type") != "user":
-                continue
-            for b in (a.get("message") or {}).get("content", []) or []:
-                if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id"):
-                    out[b["tool_use_id"]] = b.get("content")
-                    if b.get("is_error"):
-                        rejected.add(b["tool_use_id"])
+        atoms = turn["atoms"]
+        fp = _chat_turn_fp(turn)
+        ent = prev.get(id(atoms)) if prev else None
+        if ent is not None and ent[0] is atoms and ent[1] == fp:
+            _task_fold_stats["hit"] += 1
+            part = ent[2]
+        else:
+            _task_fold_stats["miss"] += 1
+            part = _fold_tasks_turn(atoms)
+        if sid is not None:
+            cur[id(atoms)] = (atoms, fp, part)
+        parts.append(part)
+    if sid is not None:
+        _task_fold_memo[sid] = cur                   # only this session's current turns: the memo shrinks with a rewrite
+    out = {}                                          # tool_use_id → result content (a TaskCreate's carries 'Task #N')
+    rejected = set()                                  # tool_use_ids whose result came back is_error
+    for results, rej, _ops in parts:
+        out.update(results)
+        rejected |= rej
     tasks, order = {}, 0
-    for turn in session["turns"]:
-        for a in turn["atoms"]:
-            if a.get("type") != "assistant":
-                continue
-            for b in (a.get("message") or {}).get("content", []) or []:
-                if not isinstance(b, dict) or b.get("type") != "tool_use":
+    for _results, _rejected, ops in parts:
+        for name, inp, bid in ops:
+            if name == "TaskCreate":
+                # A TaskCreate the CLI REJECTED is not a checklist item. A malformed call — no `subject`
+                # ({agent_hint, prompt}), or a {tasks: [...]} batch — draws a paired tool_result with
+                # is_error set and an InputValidationError naming the missing field: nothing was created,
+                # nothing launched, and nothing renders it (the chat skips every raw TaskCreate row).
+                # Folded as a pending task it gave a session whose only TaskCreate was rejected a phantom
+                # open item, which tripped the card's "can't read the task store" error the moment the
+                # store was unresolvable. The skip keys on the result's is_error — the event that says no
+                # task exists — not on the input's key names, which would miss every other rejected
+                # shape. A create whose result has not landed yet still folds under its creation-order
+                # id, as before.
+                if bid in rejected:
                     continue
-                inp = b.get("input") or {}
-                if b.get("name") == "TaskCreate":
-                    # A TaskCreate the CLI REJECTED is not a checklist item. A malformed call — no `subject`
-                    # ({agent_hint, prompt}), or a {tasks: [...]} batch — draws a paired tool_result with
-                    # is_error set and an InputValidationError naming the missing field: nothing was created,
-                    # nothing launched, and nothing renders it (the chat skips every raw TaskCreate row).
-                    # Folded as a pending task it gave a session whose only TaskCreate was rejected a phantom
-                    # open item, which tripped the card's "can't read the task store" error the moment the
-                    # store was unresolvable. The skip keys on the result's is_error — the event that says no
-                    # task exists — not on the input's key names, which would miss every other rejected
-                    # shape. A create whose result has not landed yet still folds under its creation-order
-                    # id, as before.
-                    if b.get("id") in rejected:
-                        continue
-                    # Only a TaskCreate's result is ever read, so only it is encoded, here, to the same text
-                    # the regex saw when every result was encoded up front. Encoding every Bash and Read
-                    # output (list-shaped ones, image blocks) for a value nothing read was 0.3% of the pusher
-                    # (kernel4 profile, 2026-09-06).
-                    r = out.get(b.get("id"), "")
-                    m = re.search(r"Task #(\d+)", (r if isinstance(r, str) else json.dumps(r)) or "")
-                    tid = m.group(1) if m else "c%d" % order
-                    af = inp.get("activeForm")
-                    tasks[tid] = {"_order": order, "id": tid, "subject": str(inp.get("subject") or ""),
-                                  "activeForm": str(af) if af else None, "status": "pending"}
-                    order += 1
-                elif b.get("name") == "TaskUpdate":
-                    # A TaskUpdate the CLI REJECTED — its paired tool_result carries is_error (a status value
-                    # outside its set, a transition it refused) — wrote nothing to the store, so it moves no
-                    # checklist item; applied, the refused status stood in for the store's. Keyed on the
-                    # result's is_error like the TaskCreate skip above, so this fold and event_model's
-                    # declared_plan stay identical. An update whose result has not landed still applies.
-                    if b.get("id") in rejected:
-                        continue
-                    t = tasks.get(str(inp.get("taskId", "")))
-                    if t:
-                        t["status"] = str(inp.get("status") or t["status"])
+                # Only a TaskCreate's result is ever read, so only it is encoded, here, to the same text
+                # the regex saw when every result was encoded up front. Encoding every Bash and Read
+                # output (list-shaped ones, image blocks) for a value nothing read was 0.3% of the pusher
+                # (kernel4 profile, 2026-09-06).
+                r = out.get(bid, "")
+                m = re.search(r"Task #(\d+)", (r if isinstance(r, str) else json.dumps(r)) or "")
+                tid = m.group(1) if m else "c%d" % order
+                af = inp.get("activeForm")
+                tasks[tid] = {"_order": order, "id": tid, "subject": str(inp.get("subject") or ""),
+                              "activeForm": str(af) if af else None, "status": "pending"}
+                order += 1
+            else:                                     # TaskUpdate
+                # A TaskUpdate the CLI REJECTED — its paired tool_result carries is_error (a status value
+                # outside its set, a transition it refused) — wrote nothing to the store, so it moves no
+                # checklist item; applied, the refused status stood in for the store's. Keyed on the
+                # result's is_error like the TaskCreate skip above, so this fold and event_model's
+                # declared_plan stay identical. An update whose result has not landed still applies.
+                if bid in rejected:
+                    continue
+                t = tasks.get(str(inp.get("taskId", "")))
+                if t:
+                    t["status"] = str(inp.get("status") or t["status"])
     if not tasks:
         return None
     ordered = sorted(tasks.values(), key=lambda t: t["_order"])
@@ -25961,6 +26012,34 @@ def _chat_postal_key():
     except OSError:
         return None
 _prev_chat_ledger = {}                           # sid → the previous build's ledger (so a delta carries it only when changed)
+
+# The ledger memo (INTERIM, round-4 plan P3 (a), 2026-09-07): build_session's goal-tree walk and live
+# roots per sid, keyed on every input of the walk (see the ledger section of build_session for the list).
+# P4's complete chat signature removes most of the background rebuilds this serves; the plan keeps it for
+# the active tab and for what P4 leaves, and its counters say what that is worth.
+_LEDGER_TREE_ROWS = 80                           # rows the ledger ships (tree[:80]); the walk appends no row past it
+_ledger_memo = {}                                # sid → (key, parsed, gstore, tree, live_roots); parsed and gstore held by identity
+_ledger_memo_stats = {"hit": 0, "miss": 0, "bypass_live": 0, "bypass_hold": 0, "bypass_empty": 0, "evict": 0}
+
+
+def _ledger_memo_report():
+    """/perf memos.chat_ledger: hit / miss (ledgers served from the memo vs walked), bypass_live (builds
+    that merged live atoms: the last turn's segments differ from the parse's), bypass_hold (an armed
+    rewind hold filters a store copy per build), bypass_empty (a store with no nodes: no file, so
+    load_goals_shared mints a fresh object per call and the walk is empty anyway), evict (entries the
+    pusher dropped for tabs no longer shown) and the gauge entries."""
+    return dict(_ledger_memo_stats, entries=len(_ledger_memo))
+
+
+def _chat_cleared_key():
+    """cleared.jsonl's (mtime_ns, size), or None when absent: the ledger memo's identity for the set
+    _cleared_ids reads from it. Taken BEFORE the read (stat-then-read), so a row landing between the two
+    pairs an old key with new content, one extra miss next build, never a stale hit."""
+    try:
+        st = os.stat(jd.STATE / "cleared.jsonl")
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 # Wire tail-windowing (the user 2026-06-25, who found startup slow): delta-send already trims STEADY-STATE pushes,
 # but a FRESH connect still got every open tab's WHOLE transcript (the 42MB active session + the others) —
@@ -30163,7 +30242,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # error worth alarming on. Only while work is OUTSTANDING does a card show at all — a fully
     # completed/cancelled list isn't a live to-do (the user 2026-06-10).
     _fsid = os.path.basename(sess["path"]).rsplit(".", 1)[0] if sess.get("path") else ""
-    fold = _fold_tasks(session)                       # the transcript's own task record — feeds the store
+    fold = _fold_tasks(session, sid)                  # the transcript's own task record — feeds the store
     todo = _read_task_store(_fsid, fold)              # content join for team-named interactive stores
     # USER TODOS (plans/user-todos.md): the needs this session registered with the person it works
     # for, sharing the checklist's transcript-bottom card — two sections, each auto-hiding when
@@ -30377,131 +30456,175 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     #                                            doomed asks for the whole armed window while the
     #                                            feed hid them (the "one chokepoint" premise was
     #                                            false; the window is unbounded on a bare delete)
-    gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
-    gkids = {}
-    for _gid, _gn in gnodes.items():
-        gkids.setdefault(_gn.get("parentId"), []).append(_gid)
-    g_agent_open = _agent_open_set(gnodes, gkids)   # authoritative-open subtree → never 'done' (mirrors build_feed / the judge)
-    focus = gstore.get("lastNode")
-    tree = []
+    # ── the ledger memo (INTERIM: round-4 plan P3 (a), 2026-09-07; P4's complete chat signature removes
+    # most of the background rebuilds this serves, and the plan keeps it for the active tab and for what
+    # P4 leaves; its counters ride /perf under memos.chat_ledger). The tree walk and the live roots below
+    # are a function of exactly these inputs, each in the key or held by identity: the parse (seg_trig and
+    # seg_work come from it; by the parsed object's identity, and only while no live atoms were merged,
+    # since the merge reshapes the last turn's segments); the store's seams (_seams_sig, which decide the
+    # seg ids); the store itself (by identity: load_goals_shared hands back one object until the store,
+    # its override journal or its archive changes; a rewind hold filters a copy per build, so a held sid
+    # bypasses; a store with no nodes is a fresh object per call, so it bypasses too and its walk is
+    # empty anyway); cleared.jsonl (its (mtime_ns, size), stat'd BEFORE _cleared_ids reads it: a write
+    # landing between the two pairs an old key with new content, one extra miss next build, never a
+    # stale hit); and the warm-anchor table's per-sid revision (_node_anchor_rev, read BEFORE the walk
+    # and stored as read: a resolve another build lands during the walk bumps it after this read, so the
+    # next build misses instead of serving the pre-resolve tree). jd.junk_quote, _agent_open_set and the
+    # seg helpers are pure over those inputs; _session_flag (the mute) is applied after the memo, live.
+    _ck = _chat_cleared_key()
+    _lkey, _lhit = None, None
+    if session is not parsed:
+        _ledger_memo_stats["bypass_live"] += 1
+    elif _rewind_hold_get(sid):
+        _ledger_memo_stats["bypass_hold"] += 1
+    elif not gstore.get("nodes"):
+        _ledger_memo_stats["bypass_empty"] += 1
+    else:
+        _lkey = (_seams_sig, _ck, _node_anchor_rev.get(sid, 0))
+        _lent = _ledger_memo.get(sid)
+        if _lent is not None and _lent[0] == _lkey and _lent[1] is parsed and _lent[2] is gstore:
+            _lhit = _lent
+    if _lhit is not None:
+        _ledger_memo_stats["hit"] += 1
+        tree, _live_roots = _lhit[3], _lhit[4]       # the memo's own lists: the ledger slices them, nothing writes a row
+    else:
+        gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
+        gkids = {}
+        for _gid, _gn in gnodes.items():
+            gkids.setdefault(_gn.get("parentId"), []).append(_gid)
+        g_agent_open = _agent_open_set(gnodes, gkids)   # authoritative-open subtree → never 'done' (mirrors build_feed / the judge)
+        focus = gstore.get("lastNode")
+        tree = []
 
-    def _cleared(cid):
-        cn = gnodes.get(cid)
-        return bool(cn) and (cn.get("cleared") or cid in gcleared or gstatus.get(cid) == "cleared")
+        def _cleared(cid):
+            cn = gnodes.get(cid)
+            return bool(cn) and (cn.get("cleared") or cid in gcleared or gstatus.get(cid) == "cleared")
 
-    # VERDICTS ONLY (the user 2026-07-15; was roll-UP since 2026-06-16): a node shows done if it's
-    # explicitly nodeComplete (a judge/agent/user verdict, or the roll-down cache under a verdicted
-    # ancestor). CLEARED is a SEPARATE axis, not a flavor of done (the user 2026-07-26: the box means
-    # done, and only done — a cleared-but-unfinished node keeps its open ring; the strike + chip say
-    # dismissed). The old derived arm — all children done ⇒ dimmed ✓ on the parent — painted an
-    # authored-looking check on a goal nobody ruled done (children are filed prerequisites/retries,
-    # not a promised breakdown: the load-testing card's unrun experiment wore a ✓ because its "retry
-    # the connection" child closed). The judge-side twin (rollup_status is_complete's bottom-up arm)
-    # is gone the same way; the closer now RULES such nodes via _subtree_done_candidates, so an
-    # honest check appears when the verdict lands.
-    _dmemo = {}
-    def _subtree_done(nid):
-        if nid in _dmemo:
-            return _dmemo[nid]
-        nd = gnodes.get(nid)
-        if not nd:
-            _dmemo[nid] = False
-            return False
-        res = bool(nd.get("nodeComplete"))
-        if not res and nd.get("umbrella"):             # ARCHIVED pre-T101 container (mints retired; live
-            # ones dissolve every rollup) — history still renders structurally-complete: the
-            # mint asserted "this node IS its children"; cleared kids are out of the closure either
-            # way (neither done nor holding it open), mirroring build_feed's _closure_done
-            kids = [c for c in gkids.get(nid, []) if not _cleared(c)]
-            res = bool(kids) and not nd.get("blocked") and all(_subtree_done(c) for c in kids)
-        _dmemo[nid] = res
-        return res
+        # VERDICTS ONLY (the user 2026-07-15; was roll-UP since 2026-06-16): a node shows done if it's
+        # explicitly nodeComplete (a judge/agent/user verdict, or the roll-down cache under a verdicted
+        # ancestor). CLEARED is a SEPARATE axis, not a flavor of done (the user 2026-07-26: the box means
+        # done, and only done — a cleared-but-unfinished node keeps its open ring; the strike + chip say
+        # dismissed). The old derived arm — all children done ⇒ dimmed ✓ on the parent — painted an
+        # authored-looking check on a goal nobody ruled done (children are filed prerequisites/retries,
+        # not a promised breakdown: the load-testing card's unrun experiment wore a ✓ because its "retry
+        # the connection" child closed). The judge-side twin (rollup_status is_complete's bottom-up arm)
+        # is gone the same way; the closer now RULES such nodes via _subtree_done_candidates, so an
+        # honest check appears when the verdict lands.
+        _dmemo = {}
+        def _subtree_done(nid):
+            if nid in _dmemo:
+                return _dmemo[nid]
+            nd = gnodes.get(nid)
+            if not nd:
+                _dmemo[nid] = False
+                return False
+            res = bool(nd.get("nodeComplete"))
+            if not res and nd.get("umbrella"):             # ARCHIVED pre-T101 container (mints retired; live
+                # ones dissolve every rollup) — history still renders structurally-complete: the
+                # mint asserted "this node IS its children"; cleared kids are out of the closure either
+                # way (neither done nor holding it open), mirroring build_feed's _closure_done
+                kids = [c for c in gkids.get(nid, []) if not _cleared(c)]
+                res = bool(kids) and not nd.get("blocked") and all(_subtree_done(c) for c in kids)
+            _dmemo[nid] = res
+            return res
 
-    # mt = node last-modified (the judge writes it on create / amend / done / block); fall back to t for
-    # pre-rename nodes. Recency orders the tree (top goals + children freshest-first) and picks the single
-    # most-recently-CHANGED node; the render marks it → and auto-expands the path (onpath) down to it.
-    def _mt(cid):
-        cn = gnodes.get(cid) or {}
-        return cn.get("mt", cn.get("t", 0))
-    _smemo = {}
-    def _submax(cid):
-        if cid in _smemo:
-            return _smemo[cid]
-        m = _mt(cid)
-        for c in gkids.get(cid, []):
-            m = max(m, _submax(c))
-        _smemo[cid] = m
-        return m
-    # ONE "here" marker (the user 2026-06-17): the highlight (current) and the → arrow (recent) mark the SAME
-    # node now — the working cursor, lastNode/focus. They used to be computed DIFFERENTLY — the highlight from
-    # the stored lastNode pointer, the arrow from the node with the freshest mt — so nothing forced them onto
-    # the same node, and they read as two competing "current" claims when a re-touched older node out-stamped
-    # the cursor. Keying the arrow + the auto-expand path to focus collapses them to one. (_submax above is the
-    # tree-ORDERING key — still mt-based, unchanged.)
-    recent = focus
-    onpath = set()                                         # the marked node + its ancestors → the render auto-expands
-    _p = recent
-    while _p:
-        onpath.add(_p)
-        _p = gnodes.get(_p, {}).get("parentId")
+        # mt = node last-modified (the judge writes it on create / amend / done / block); fall back to t for
+        # pre-rename nodes. Recency orders the tree (top goals + children freshest-first) and picks the single
+        # most-recently-CHANGED node; the render marks it → and auto-expands the path (onpath) down to it.
+        def _mt(cid):
+            cn = gnodes.get(cid) or {}
+            return cn.get("mt", cn.get("t", 0))
+        _smemo = {}
+        def _submax(cid):
+            if cid in _smemo:
+                return _smemo[cid]
+            m = _mt(cid)
+            for c in gkids.get(cid, []):
+                m = max(m, _submax(c))
+            _smemo[cid] = m
+            return m
+        # ONE "here" marker (the user 2026-06-17): the highlight (current) and the → arrow (recent) mark the SAME
+        # node now — the working cursor, lastNode/focus. They used to be computed DIFFERENTLY — the highlight from
+        # the stored lastNode pointer, the arrow from the node with the freshest mt — so nothing forced them onto
+        # the same node, and they read as two competing "current" claims when a re-touched older node out-stamped
+        # the cursor. Keying the arrow + the auto-expand path to focus collapses them to one. (_submax above is the
+        # tree-ORDERING key — still mt-based, unchanged.)
+        recent = focus
+        onpath = set()                                         # the marked node + its ancestors → the render auto-expands
+        _p = recent
+        while _p:
+            onpath.add(_p)
+            _p = gnodes.get(_p, {}).get("parentId")
 
-    # Emit the FULL goal tree — every node, with its child ids — so the RENDER can fold / expand at ANY
-    # level (the user 2026-06-16): completed / cleared nodes fold by default, the recent path + open work
-    # expand. Pruning moved to the render; the kernel just supplies the structure + done / derived /
-    # cleared / recent / onpath flags. Cleared nodes are INCLUDED now (shown faded), not skipped.
-    def _twalk(nid, depth, ancestor_done=False, ancestor_cleared=False):
-        nd = gnodes.get(nid)
-        if not nd:
-            return
-        # cleared rolls DOWN (replacing the old cleared→done roll-down): dismissing a parent dismisses
-        # its subtree, so the children fade + strike with it instead of sitting as live-looking open
-        # rings under a struck parent — while every box keeps meaning done (the user 2026-07-26).
-        clr = _cleared(nid) or ancestor_cleared
-        # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella holding
-        # one — is never 'done' here either, so the ledger matches the feed + the judge (see _agent_open_set).
-        # A CLEARED node is still dismissed (the strike + chip carry that), so the override only applies live.
-        aopen = (nid in g_agent_open) and not clr
-        explicit = bool(nd.get("nodeComplete")) and not aopen
-        # done rolls BOTH ways, like the ask-tree flatten() (the user 2026-06-16): a node under a done
-        # parent is derived-done too (roll-DOWN via ancestor_done), not just when its own subtree is done
-        # (roll-UP via _subtree_done). So a completed subtree reads as all-dimmed-✓, instead of a child
-        # showing ○ under a done top. CLEARED no longer counts as done for any of this (the user
-        # 2026-07-26: the box means done) — a dismissed-unfinished node keeps its ring under the strike.
-        derived = (not explicit) and (not aopen) and (_subtree_done(nid) or ancestor_done)
-        kids = sorted(gkids.get(nid, []), key=_submax, reverse=True)
-        # EXACT deep-link anchors (the user 2026-06-19): a ledger TOC click lands on the precise chat turn
-        # BY UUID — the SAME anchors build_feed gives its cards — so the ledger and the feed for one node
-        # land identically, replacing the ledger's old nearest-time landing. promptAnchorUuid → the minting
-        # user message (text zone); anchorUuid → the newest trail segment (mark + time zones).
-        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_work)
-        tree.append({"id": nid, "text": nd["text"], "depth": depth,
-                     "done": explicit or derived, "derived": derived, "cleared": clr,
-                     "blocked": bool(nd.get("blocked")), "t": nd["t"],
-                     # mt = the segment where this node was last touched (resolved/blocked) — the click-
-                     # to-jump nav lands done/blocked goals on their mt (the assistant turn that finished
-                     # them), open goals on t (where they began). Matches build_feed (the user 2026-06-16).
-                     "mt": nd.get("mt", nd["t"]), "current": nid == focus,
-                     "onpath": nid in onpath,
-                     "promptAnchorUuid": _pa, "anchorUuid": _wa,
-                     # the distiller's takeaway (done) / the block-distiller's decision brief (blocked),
-                     # null until produced — the ledger row's ⊕ expander reveals it inline (the user 2026-06-21)
-                     "summary": nd.get("summary"), "blockSummary": nd.get("blockSummary"),
-                     "children": [c for c in kids if c in gnodes]})
-        for c in kids:
-            _twalk(c, depth + 1, ancestor_done=explicit or derived, ancestor_cleared=clr)
-    for _rid in sorted(gkids.get(None, []), key=_submax, reverse=True):
-        _twalk(_rid, 0)
-    # "Recent" for the tab-hover (the user 2026-06-30): the up-to-5 most-recently-touched TOP-level tasks across
-    # the LIVE store AND the archive, REGARDLESS of status (done / blocked / cleared) — so a session whose tops
-    # were all crossed off still lists the last 5 things it did, not just its summary. Roots only (tasks, not
-    # steps). The live tree usually holds ≤1 open top; the rest are cleared+archived, hence the archive merge.
-    _live_roots = [{"text": nd["text"], "t": nd.get("mt", nd.get("t", 0))}
-                   for nid, nd in gnodes.items()
-                   if nd.get("parentId") is None and (nd.get("text") or "").strip()]
+        # Emit the FULL goal tree — every node, with its child ids — so the RENDER can fold / expand at ANY
+        # level (the user 2026-06-16): completed / cleared nodes fold by default, the recent path + open work
+        # expand. Pruning moved to the render; the kernel just supplies the structure + done / derived /
+        # cleared / recent / onpath flags. Cleared nodes are INCLUDED now (shown faded), not skipped.
+        def _twalk(nid, depth, ancestor_done=False, ancestor_cleared=False):
+            nd = gnodes.get(nid)
+            if not nd:
+                return
+            if len(tree) >= _LEDGER_TREE_ROWS:
+                # Past the rows the ledger ships (tree[:_LEDGER_TREE_ROWS] is its only reader; the walk is
+                # pre-order with sorted children, so the rows appended before this point are the full walk's
+                # first rows): no row and no flags, but the anchor resolve still runs for every node, so
+                # _node_anchor_last learns exactly what the full walk taught it (round-4 plan P3 (a)).
+                _node_anchor_uuids(nd, seg_trig, seg_work, sid=sid)
+                for c in gkids.get(nid, []):
+                    _twalk(c, depth + 1)
+                return
+            # cleared rolls DOWN (replacing the old cleared→done roll-down): dismissing a parent dismisses
+            # its subtree, so the children fade + strike with it instead of sitting as live-looking open
+            # rings under a struck parent — while every box keeps meaning done (the user 2026-07-26).
+            clr = _cleared(nid) or ancestor_cleared
+            # AUTHORITATIVE-open override (the user 2026-07-01): an open agent to-do item — or an umbrella holding
+            # one — is never 'done' here either, so the ledger matches the feed + the judge (see _agent_open_set).
+            # A CLEARED node is still dismissed (the strike + chip carry that), so the override only applies live.
+            aopen = (nid in g_agent_open) and not clr
+            explicit = bool(nd.get("nodeComplete")) and not aopen
+            # done rolls BOTH ways, like the ask-tree flatten() (the user 2026-06-16): a node under a done
+            # parent is derived-done too (roll-DOWN via ancestor_done), not just when its own subtree is done
+            # (roll-UP via _subtree_done). So a completed subtree reads as all-dimmed-✓, instead of a child
+            # showing ○ under a done top. CLEARED no longer counts as done for any of this (the user
+            # 2026-07-26: the box means done) — a dismissed-unfinished node keeps its ring under the strike.
+            derived = (not explicit) and (not aopen) and (_subtree_done(nid) or ancestor_done)
+            kids = sorted(gkids.get(nid, []), key=_submax, reverse=True)
+            # EXACT deep-link anchors (the user 2026-06-19): a ledger TOC click lands on the precise chat turn
+            # BY UUID — the SAME anchors build_feed gives its cards — so the ledger and the feed for one node
+            # land identically, replacing the ledger's old nearest-time landing. promptAnchorUuid → the minting
+            # user message (text zone); anchorUuid → the newest trail segment (mark + time zones).
+            _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_work, sid=sid)
+            tree.append({"id": nid, "text": nd["text"], "depth": depth,
+                         "done": explicit or derived, "derived": derived, "cleared": clr,
+                         "blocked": bool(nd.get("blocked")), "t": nd["t"],
+                         # mt = the segment where this node was last touched (resolved/blocked) — the click-
+                         # to-jump nav lands done/blocked goals on their mt (the assistant turn that finished
+                         # them), open goals on t (where they began). Matches build_feed (the user 2026-06-16).
+                         "mt": nd.get("mt", nd["t"]), "current": nid == focus,
+                         "onpath": nid in onpath,
+                         "promptAnchorUuid": _pa, "anchorUuid": _wa,
+                         # the distiller's takeaway (done) / the block-distiller's decision brief (blocked),
+                         # null until produced — the ledger row's ⊕ expander reveals it inline (the user 2026-06-21)
+                         "summary": nd.get("summary"), "blockSummary": nd.get("blockSummary"),
+                         "children": [c for c in kids if c in gnodes]})
+            for c in kids:
+                _twalk(c, depth + 1, ancestor_done=explicit or derived, ancestor_cleared=clr)
+        for _rid in sorted(gkids.get(None, []), key=_submax, reverse=True):
+            _twalk(_rid, 0)
+        # "Recent" for the tab-hover (the user 2026-06-30): the up-to-5 most-recently-touched TOP-level tasks across
+        # the LIVE store AND the archive, REGARDLESS of status (done / blocked / cleared) — so a session whose tops
+        # were all crossed off still lists the last 5 things it did, not just its summary. Roots only (tasks, not
+        # steps). The live tree usually holds ≤1 open top; the rest are cleared+archived, hence the archive merge.
+        _live_roots = [{"text": nd["text"], "t": nd.get("mt", nd.get("t", 0))}
+                       for nid, nd in gnodes.items()
+                       if nd.get("parentId") is None and (nd.get("text") or "").strip()]
+        if _lkey is not None:
+            _ledger_memo_stats["miss"] += 1
+            _ledger_memo[sid] = (_lkey, parsed, gstore, tree, _live_roots)
     recent_tops = sorted(_live_roots + _archive_roots(sid), key=lambda r: r["t"] or 0, reverse=True)[:5]
     if _session_flag(sid, "hideFromFeed"):       # muted → out of task tracking: the ledger shows no goal tree / current task
         tree, current, recent_tops = [], None, []
-    ledger = {"summary": arch.get("headline", ""), "tree": tree[:80],
+    ledger = {"summary": arch.get("headline", ""), "tree": tree[:_LEDGER_TREE_ROWS],
               "current": current, "recent": recent_tops,
               # the session's own claim of what it is doing (the postal set_working note, the store
               # list_agents reads): the chat's section snapshot shows it as a row's own second line
@@ -32165,7 +32288,7 @@ def _feed_segs_build(fsid, name, color, ps, store, who_working):
         st = "done" if done else ("question" if _closure_blocked(nid) else "open")
         # The node's deep-link target SEGMENT: its NEWEST trail seg — the resolve turn for
         # done/blocked nodes, the latest activity for open ones (where it stands, not where born).
-        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid, deps, writes)
+        _pa, _wa = _node_anchor_uuids(nd, seg_trig, seg_uuid, deps, writes, sid=fsid)   # sid: the ledger memo's revision (see _node_anchor_rev)
         # A HANDOFF tracking node ("↪ delegated to <peer>") finally ships as its designed kind: the
         # feed's delegations section (fask-delegations, built to the 2026-06-10 handoff spec) keys on
         # kind "handoff" and had sat dormant because flatten hardcoded "ask" — the sender's card
@@ -34571,9 +34694,18 @@ def _node_log_rows(nd, seg_work, cap=8):
 
 
 _node_anchor_last = {}   # node id → its last WARM-resolved (prompt, work) anchors — see _node_anchor_uuids
+_node_anchor_rev = {}    # sid → how many times _node_anchor_last CHANGED for a node resolved under that sid: the
+#                          ledger memo's key for the table (build_session). Bumped AFTER the entry is written,
+#                          so a reader that took the rev before its walk and stored it misses on the next build
+#                          whenever a resolve landed during the walk, and can never serve the pre-resolve tree.
+#                          The feed memo's hit path (_FeedSegs.tree_for) re-applies the warm writes its flatten
+#                          recorded with a plain update and no bump: for one session those are the values the
+#                          table already holds (the same parse and store resolve the same anchors), so the
+#                          re-apply changes an entry only when another session's node of the same bare id
+#                          overwrote it in between, the collision named in _node_anchor_uuids' docstring.
 
 
-def _node_anchor_uuids(nd, seg_trig, seg_work, deps=None, writes=None):
+def _node_anchor_uuids(nd, seg_trig, seg_work, deps=None, writes=None, sid=None):
     """(promptAnchorUuid, anchorUuid) — the EXACT chat .turn[data-uuid]s a goal node's ledger/feed zones
     deep-link to. promptAnchorUuid = the MINTING segment's trigger (the user message that asked — the
     text/title zones for DONE nodes, landing on the user turn). anchorUuid = the WORK anchor (reply
@@ -34609,7 +34741,14 @@ def _node_anchor_uuids(nd, seg_trig, seg_work, deps=None, writes=None):
     `deps` and `writes` (build_feed's per-session memo, 2026-09-07): when given, a cold resolve records
     the remembered anchor it READ under the node's id in `deps` (None when none was held) and a warm
     resolve records what it WROTE in `writes`, so a memoized tree can say exactly which global state
-    it depends on and re-apply its own writes when served."""
+    it depends on and re-apply its own writes when served.
+
+    `sid`: the session whose build resolves this node. A warm resolve that CHANGES the table's entry
+    bumps _node_anchor_rev[sid] after the write, so build_session's ledger memo, which keys on the rev it
+    read before its walk, misses on the next build instead of serving a tree whose cold nodes read an
+    older entry (round-4 plan P3 (a), 2026-09-07). Node ids are bare (g1, g2), so a resolve under one
+    session names the same key as another session's node of the same id; that collision predates the
+    rev and is the hygiene item the plan lists, not something the rev widens."""
     trail = nd.get("trail") or []
     anchor_seg = trail[-1] if trail else None
     prompt = nd.get("promptUuid") or seg_trig.get(_seg_key(trail[0] if trail else None))
@@ -34619,7 +34758,10 @@ def _node_anchor_uuids(nd, seg_trig, seg_work, deps=None, writes=None):
     nid = nd.get("id")
     if work is not None:
         if nid:
-            _node_anchor_last[nid] = (prompt, work)
+            if _node_anchor_last.get(nid) != (prompt, work):
+                _node_anchor_last[nid] = (prompt, work)  # the entry first, then the revision (see _node_anchor_rev)
+                if sid is not None:
+                    _node_anchor_rev[sid] = _node_anchor_rev.get(sid, 0) + 1
             if writes is not None:
                 writes[nid] = (prompt, work)
     else:
@@ -40871,6 +41013,13 @@ def _push(targets, connect=False, tmux=None):
                 for sid in list(_merge_sets_memo):           # …and the live-merge sets of a sid neither shown nor
                     if sid not in shown_sids and sid not in tmux:   # alive (the feed and timeline merge every
                         _merge_sets_memo.pop(sid, None)      # alive session, tab or not)
+                for sid in list(_ledger_memo):               # …and the two chat-only memos of tabs no longer shown
+                    if sid not in shown_sids:
+                        _ledger_memo.pop(sid, None)
+                        _ledger_memo_stats["evict"] += 1
+                for sid in list(_task_fold_memo):
+                    if sid not in shown_sids:
+                        _task_fold_memo.pop(sid, None)
             _retry_parked_creates()   # lag-parked comment creates ride every pusher cycle (T106)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
             # comments/ store exists — an ~free stat for everyone else). Each frame rides its OWN

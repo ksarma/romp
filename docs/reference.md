@@ -2168,6 +2168,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   first sealed). Before this memo every judge pass re-hydrated every tab's
   sealed cards, although a caption is the only judge-written value a card
   carries.
+  `chat_ledger` is the chat build's memo of a session's goal-tree walk and
+  live roots (interim: the round-4 plan expects P4's complete chat signature
+  to remove most of the rebuilds it serves), keyed on the parsed transcript's
+  identity, the store's identity and seams, `cleared.jsonl`'s identity and
+  the warm-anchor table's per-session revision: `hit` and `miss`,
+  `bypass_live` (a build that merged live atoms: the last turn's segments
+  differ from the parse's), `bypass_hold` (an armed rewind hold filters a
+  store copy per build), `bypass_empty` (a store with no nodes), `evict`
+  (entries dropped for tabs no longer shown) and the gauge `entries`.
+  `chat_fold_tasks` is the per-turn memo of the transcript's task fold
+  (interim, the same reason): `hit` and `miss` count turns served from the
+  memo against turns scanned, so a build of a working session with one moved
+  turn is one miss, plus the gauge `entries` (sessions held).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

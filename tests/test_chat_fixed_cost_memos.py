@@ -15,7 +15,9 @@ import json
 import os
 import re
 import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from romp_load import load_source
@@ -435,6 +437,407 @@ class MsgSummariesKey(unittest.TestCase):
         self.assertLess(src.index("key = _msg_sum_key(s)"), src.index('_msg_sum_scan_session(sid, s["path"], now)'))
         self.assertIn("jd._store_identity(sid)[1:]", inspect.getsource(km._msg_sum_key))
         self.assertIn("goal store", km._msg_summaries.__doc__, "the docstring names the store as an input")
+
+
+# ── (a) the ledger memo, (b) the task fold memo ──────────────────────────────────────────────────
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _uline(t, text, uuid, parent=None):
+    return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent, "promptSource": "typed",
+            "message": {"role": "user", "content": text}, "cwd": "/tmp/notes-api", "version": "2.1.0", "gitBranch": "main"}
+
+
+def _aline(t, text, uuid, parent, tool=None, stop="end_turn"):
+    content = [{"type": "text", "text": text}]
+    if tool:
+        content.append({"type": "tool_use", "id": "tu_%s" % uuid, "name": tool, "input": {"command": "uv run pytest -q"}})
+    return {"type": "assistant", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "model": "claude-sonnet-4", "content": content, "stop_reason": stop},
+            "cwd": "/tmp/notes-api", "version": "2.1.0", "gitBranch": "main"}
+
+
+def _trline(t, tool_use_id, uuid, parent, content="ok\n"):
+    return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_use_id, "content": content}]}}
+
+
+class World:
+    """A synthetic session build_session can build: names/ + projects/<cdir>/<sid>.jsonl under a hermetic
+    state root the kernel's judge module is rebound to (tests/test_chat_fold.py's Sess, reduced to what the
+    ledger tests need), plus a goal-store writer."""
+
+    def __init__(self, sid):
+        self.sid = sid
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        self.cdir = td / "launchdir"
+        self.cdir.mkdir()
+        proj = td / "projects"
+        pdir = proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(self.cdir)))
+        pdir.mkdir(parents=True)
+        self.tpath = pdir / (sid + ".jsonl")
+        self.tpath.write_text("")
+        names = td / "names"
+        names.mkdir()
+        (names / sid).write_text("web\t%s\t#abcdef\n" % str(self.cdir))
+        self.saved = (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.GOALARCHDIR, jd.STATE,
+                      km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD, km._msg_summaries, km._sdk)
+        self.now = int(time.time())                       # discovery keys on the real clock
+        self.t = self.now - 3 * 86400
+        self.tm = {sid: {"state": "working", "since": self.now - 100, "model": "", "effort": "",
+                         "context": None, "compactPct": None, "color": None}}
+        jd.NAMES, jd.PROJECTS = names, proj
+        jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.GOALARCHDIR = td / "captions", td / "archive", td / "goals", td / "goals-archive"
+        jd.STATE = td
+        km.NAMES = names
+        km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+        km._tmux_sessions = lambda: self.tm
+        km._msg_summaries = lambda: {}
+        km._sdk = lambda: None                            # the tmux path: the live tail is the kernel's echo store
+        self.reset_memos()
+        km._parse_cache.clear(); km._PATH_LINK_CACHE.clear(); km._SPACE_PATH_CACHE.clear()
+        km._postal_index_memo[0] = None
+        if isinstance(jd._discover_cache, dict):
+            jd._discover_cache.clear()
+        self.n = 0
+        self.last = None
+
+    @staticmethod
+    def reset_memos():
+        for d in (km._chat_fold, km._ledger_memo, km._task_fold_memo, km._node_anchor_last, km._node_anchor_rev,
+                  km._merge_sets_memo, km._tmux_echo):
+            d.clear()
+
+    def close(self):
+        km._rewind_hold_clear(self.sid)
+        (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.GOALARCHDIR, jd.STATE,
+         km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD, km._msg_summaries, km._sdk) = self.saved
+        self.reset_memos()
+        self.td.cleanup()
+
+    def uid(self):
+        self.n += 1
+        return "bbbbbbbb-0000-0000-0000-%012d" % self.n
+
+    def tick(self, dt=5):
+        self.t += dt
+        return self.t
+
+    def turn(self, i):
+        """One complete turn: prompt, one Bash round (use + result), a closing reply."""
+        u = self.uid()
+        recs = [_uline(self.tick(), "step %d: tighten the notes-api search" % i, u, self.last)]
+        a = self.uid()
+        recs.append(_aline(self.tick(), "Round %d: adjusting `search.py`." % i, a, u, tool="Bash", stop="tool_use"))
+        r = self.uid()
+        recs.append(_trline(self.tick(), "tu_%s" % a, r, a))
+        b = self.uid()
+        recs.append(_aline(self.tick(), "Step %d done." % i, b, r))
+        self.last = b
+        return recs
+
+    def append(self, recs):
+        with open(self.tpath, "a") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+        os.utime(self.tpath, None)
+
+    def store(self, nodes, seams=None, last=None):
+        """Publish goals/<sid>.json by rename, as save_goals does."""
+        p = jd.GOALDIR / (self.sid + ".json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps({"nodes": nodes, "status": {}, "seams": seams or [], "lastNode": last}))
+        os.replace(tmp, p)
+
+    def nodes(self, n, trail=(), parent=None):
+        return {"g%d" % i: {"id": "g%d" % i, "text": "goal %d" % i, "t": self.t + i, "mt": self.t + i,
+                            "parentId": parent, "trail": list(trail)} for i in range(1, n + 1)}
+
+    def build(self):
+        km._live_scope.names = km._names_snapshot()       # the pusher's names scope, as _pusher_cycle sets it
+        try:
+            return km.build_session(self.sid, self.now, self.tm)
+        finally:
+            km._live_scope.names = None
+
+
+class LedgerMemo(unittest.TestCase):
+    """The goal-tree walk and live roots, memoized per sid on every input of the walk (interim, P3 (a))."""
+
+    def setUp(self):
+        self.w = World(SID_A)
+        self.w.append(self.w.turn(0))
+        self.w.append(self.w.turn(1))
+
+    def tearDown(self):
+        self.w.close()
+
+    @staticmethod
+    def _stats():
+        return dict(km._ledger_memo_stats)
+
+    @staticmethod
+    def _delta(before):
+        now = km._ledger_memo_stats
+        return {k: now[k] - before[k] for k in now if now[k] != before[k]}
+
+    def test_unchanged_inputs_hit_and_each_input_change_misses_once(self):
+        w = self.w
+        s = self._stats()
+        self.assertEqual(w.build()["ledger"]["tree"], [])
+        self.assertEqual(self._delta(s), {"bypass_empty": 1}, "no store: a fresh object per call, and nothing to walk")
+        w.store(w.nodes(3))
+        s = self._stats()
+        m = w.build()
+        self.assertEqual([r["id"] for r in m["ledger"]["tree"]], ["g3", "g2", "g1"], "freshest first")
+        self.assertEqual(self._delta(s), {"miss": 1})
+        s = self._stats()
+        m2 = w.build()
+        self.assertEqual(self._delta(s), {"hit": 1})
+        self.assertIs(m2["ledger"]["tree"][0], m["ledger"]["tree"][0], "the memo's own rows, sliced")
+        self.assertEqual(m2["ledger"]["recent"], m["ledger"]["recent"])
+        # a store publish
+        w.store(w.nodes(4))
+        s = self._stats()
+        self.assertEqual(len(w.build()["ledger"]["tree"]), 4)
+        self.assertEqual(self._delta(s), {"miss": 1})
+        # a journaled user gesture (the store's identity carries its override journal)
+        jd._overrides_dir().mkdir(parents=True, exist_ok=True)
+        with open(jd._overrides_dir() / (SID_A + ".jsonl"), "a") as f:
+            f.write(json.dumps({"op": "resolve", "node": "absent", "t": w.now}) + "\n")
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"miss": 1})
+        # a clear
+        with open(jd.STATE / "cleared.jsonl", "a") as f:
+            f.write(json.dumps({"id": "g1", "t": w.now}) + "\n")
+        s = self._stats()
+        m = w.build()
+        self.assertEqual(self._delta(s), {"miss": 1})
+        self.assertTrue(next(r for r in m["ledger"]["tree"] if r["id"] == "g1")["cleared"])
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1})
+        # a transcript append: a new parse
+        w.append(w.turn(2))
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"miss": 1})
+        # a seam change (the seg ids of every turn after it)
+        w.store(w.nodes(4), seams=[{"segs": ["no-such-seg"], "t": w.t - 30, "top": "g1", "text": "seam"}])
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"miss": 1})
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1})
+        self.assertEqual(km._ledger_memo_report()["entries"], 1)
+
+    def test_a_rewind_hold_and_a_live_merge_bypass(self):
+        w = self.w
+        w.store(w.nodes(2))
+        w.build()
+        km._rewind_hold_set(SID_A, w.t + 3, "")
+        try:
+            s = self._stats()
+            self.assertEqual(len(w.build()["ledger"]["tree"]), 2)
+            self.assertEqual(self._delta(s), {"bypass_hold": 1})
+        finally:
+            km._rewind_hold_clear(SID_A)
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1}, "the hold gone, the earlier entry serves")
+        km._tmux_echo_add(SID_A, "one more thing")           # a live atom merged into the last turn
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"bypass_live": 1})
+
+    def test_a_warm_anchor_learned_for_this_sids_node_misses_once_and_an_unrelated_sids_does_not(self):
+        w = self.w
+        w.store(w.nodes(2))
+        w.build()
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1})
+        km._node_anchor_uuids({"id": "g9", "trail": ["s1"]}, {"s1": "u-1"}, {"s1": "a-1"}, sid=SID_B)
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1}, "another session's revision is not this key")
+        km._node_anchor_uuids({"id": "g1", "trail": ["s1"]}, {"s1": "u-1"}, {"s1": "a-1"}, sid=SID_A)
+        s = self._stats()
+        m = w.build()
+        self.assertEqual(self._delta(s), {"miss": 1})
+        self.assertEqual(next(r for r in m["ledger"]["tree"] if r["id"] == "g1")["anchorUuid"], "a-1",
+                         "the cold node now reads the warm anchor the table holds")
+        km._node_anchor_uuids({"id": "g1", "trail": ["s1"]}, {"s1": "u-1"}, {"s1": "a-1"}, sid=SID_A)
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1}, "the same resolve again changes no entry: no bump")
+
+    def test_a_resolve_landing_during_the_walk_misses_next_build_never_a_stale_hit(self):
+        w = self.w
+        w.store(w.nodes(2))
+        w.build()
+        w.store(w.nodes(3))                                 # the next build walks
+        real, fired = km._node_anchor_uuids, []
+
+        def racing(nd, trig, work, sid=None):
+            if not fired:                                    # a peer build's resolve lands after this build read the rev
+                fired.append(1)
+                km._node_anchor_rev[SID_A] = km._node_anchor_rev.get(SID_A, 0) + 1
+            return real(nd, trig, work, sid=sid)
+        km._node_anchor_uuids = racing
+        try:
+            s = self._stats()
+            w.build()
+            self.assertEqual(self._delta(s), {"miss": 1})
+        finally:
+            km._node_anchor_uuids = real
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"miss": 1}, "the stored revision predates the racing bump: a miss")
+        s = self._stats()
+        w.build()
+        self.assertEqual(self._delta(s), {"hit": 1})
+
+    def test_the_orderings_the_memo_rests_on(self):
+        src = inspect.getsource(km._node_anchor_uuids)
+        self.assertLess(src.index("_node_anchor_last[nid] = (prompt, work)"),
+                        src.index("_node_anchor_rev[sid] = _node_anchor_rev.get(sid, 0) + 1"),
+                        "the table entry is written before the revision bumps")
+        led = inspect.getsource(km.build_session)
+        self.assertLess(led.index("_lkey = (_seams_sig, _ck, _node_anchor_rev.get(sid, 0))"), led.index("_twalk(_rid, 0)"),
+                        "the revision is read before the walk")
+        self.assertLess(led.index("_ck = _chat_cleared_key()"), led.index("_cleared_ids()"),
+                        "cleared.jsonl is stat'd before it is read")
+        self.assertIn("_node_anchor_uuids(nd, seg_trig, seg_uuid, deps, writes, sid=fsid)", inspect.getsource(km._feed_segs_build),
+                      "the feed's resolves bump the same per-sid revision")
+
+    def test_the_walk_caps_the_rows_it_ships_but_resolves_every_nodes_anchor(self):
+        w = self.w
+        w.build()
+        parsed = km._parse(str(w.tpath), SID_A, w.now)
+        seg = km._segs_seam(parsed["turns"][0], {})[0]
+        w.store(w.nodes(200, trail=[seg["id"]]))
+        km._node_anchor_last.clear()
+        tree = w.build()["ledger"]["tree"]
+        self.assertEqual(len(tree), 80)
+        self.assertEqual(len(km._node_anchor_last), 200, "every node's anchor resolved, the 120 unshipped rows included")
+        self.assertTrue(all(r["anchorUuid"] for r in tree))
+        saved = km._LEDGER_TREE_ROWS
+        km._LEDGER_TREE_ROWS = 10 ** 6
+        try:
+            km._ledger_memo.clear()
+            full = w.build()["ledger"]["tree"]
+        finally:
+            km._LEDGER_TREE_ROWS = saved
+        self.assertEqual(len(full), 200)
+        self.assertEqual(full[:80], tree, "the capped walk's rows are the full walk's first rows")
+
+    def test_a_muted_tab_still_ships_no_tree(self):
+        w = self.w
+        w.store(w.nodes(3))
+        w.build()
+        (jd.STATE / "session-flags.json").write_text(json.dumps({SID_A: {"hideFromFeed": True}}))
+        s = self._stats()
+        m = w.build()
+        self.assertEqual((m["ledger"]["tree"], m["ledger"]["recent"], m["ledger"]["current"]), ([], [], None))
+        self.assertEqual(self._delta(s), {"hit": 1}, "the mute is applied after the memo, live")
+        self.assertEqual(len(km._ledger_memo[SID_A][3]), 3, "the memo keeps the walk for an unmute")
+
+
+class TaskFold(unittest.TestCase):
+    """_fold_tasks' per-turn partials, memoized per sid on each turn's atoms list identity and fingerprint."""
+
+    T = 1781100000
+
+    def setUp(self):
+        self._saved = (dict(km._task_fold_memo), dict(km._task_fold_stats), os.environ.get("CLAUDE_CONFIG_DIR"))
+        km._task_fold_memo.clear()
+        for k in km._task_fold_stats:
+            km._task_fold_stats[k] = 0
+        self.td = tempfile.mkdtemp()
+        os.environ["CLAUDE_CONFIG_DIR"] = self.td              # no real task store is read
+
+    def tearDown(self):
+        km._task_fold_memo.clear(); km._task_fold_memo.update(self._saved[0])
+        km._task_fold_stats.clear(); km._task_fold_stats.update(self._saved[1])
+        if self._saved[2] is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = self._saved[2]
+
+    def _turn(self, i, create=None, update=None):
+        T = self.T + 100 * i
+        atoms = [{"type": "user", "uuid": "u%d" % i, "t": T, "author": "human",
+                  "message": {"role": "user", "content": [{"type": "text", "text": "step %d" % i}]}}]
+        content, results = [], []
+        if create:
+            content.append({"type": "tool_use", "id": "tu_c%d" % i, "name": "TaskCreate",
+                            "input": {"subject": create[0], "activeForm": create[1]}})
+            results.append({"type": "tool_result", "tool_use_id": "tu_c%d" % i, "content": "Task #%d created" % (i + 1)})
+        if update:
+            content.append({"type": "tool_use", "id": "tu_u%d" % i, "name": "TaskUpdate",
+                            "input": {"taskId": update[0], "status": update[1]}})
+        content.append({"type": "tool_use", "id": "tu_b%d" % i, "name": "Bash", "input": {"command": "uv run pytest -q"}})
+        results.append({"type": "tool_result", "tool_use_id": "tu_b%d" % i, "content": "ok"})
+        atoms.append({"type": "assistant", "uuid": "a%d" % i, "t": T + 10, "message": {"role": "assistant", "content": content}})
+        atoms.append({"type": "user", "uuid": "r%d" % i, "t": T + 20, "message": {"role": "user", "content": results}})
+        return {"id": "t%d" % i, "trigger": "u%d" % i, "t": T, "end": T + 20, "ended": True, "atoms": atoms}
+
+    def _session(self):
+        return {"turns": [self._turn(0, create=("write the tests", "Writing the tests")),
+                          self._turn(1, create=("run the suite", "Running the suite")),
+                          self._turn(2, update=("1", "completed"))]}
+
+    EXPECTED = [{"id": "1", "subject": "write the tests", "activeForm": "Writing the tests", "status": "completed"},
+                {"id": "2", "subject": "run the suite", "activeForm": "Running the suite", "status": "pending"}]
+
+    def test_identity_hits_a_new_parse_misses_and_a_live_merge_misses_the_last_turn_only(self):
+        sess = self._session()
+        self.assertEqual(km._fold_tasks(sess), self.EXPECTED, "no sid: the unmemoized fold")
+        self.assertEqual(km._task_fold_stats, {"hit": 0, "miss": 3}, "a direct call scans and memoizes nothing")
+        got = km._fold_tasks(sess, SID_A)
+        self.assertEqual(got, self.EXPECTED)
+        self.assertEqual(km._task_fold_stats, {"hit": 0, "miss": 6})
+        got2 = km._fold_tasks(sess, SID_A)
+        self.assertEqual(got2, self.EXPECTED)
+        self.assertIsNot(got2, got, "a fresh list per call")
+        self.assertEqual(km._task_fold_stats, {"hit": 3, "miss": 6}, "the same turns: every turn served")
+        merged = dict(sess, turns=[dict(t) for t in sess["turns"]])       # _merge_live_atoms' shape
+        merged["turns"][-1]["atoms"] = list(merged["turns"][-1]["atoms"]) + [
+            {"type": "assistant", "uuid": "live", "t": self.T + 999,
+             "message": {"role": "assistant", "content": [{"type": "text", "text": "streaming"}]}}]
+        self.assertEqual(km._fold_tasks(merged, SID_A), self.EXPECTED)
+        self.assertEqual(km._task_fold_stats, {"hit": 5, "miss": 7}, "a live merge: the last turn scanned, the rest served")
+        fresh = json.loads(json.dumps(sess))                              # a re-parse: new atom lists
+        self.assertEqual(km._fold_tasks(fresh, SID_A), self.EXPECTED)
+        self.assertEqual(km._task_fold_stats, {"hit": 5, "miss": 10})
+        self.assertEqual(km._task_fold_report(), {"hit": 5, "miss": 10, "entries": 1})
+        self.assertIsNone(km._fold_tasks({"turns": []}, SID_A), "no turns: no checklist")
+
+    def test_a_turn_that_grew_in_place_is_rescanned(self):
+        sess = self._session()
+        km._fold_tasks(sess, SID_A)
+        sess["turns"][1]["atoms"].append({"type": "assistant", "uuid": "a1b", "t": self.T + 150, "message": {
+            "role": "assistant", "content": [{"type": "tool_use", "id": "tu_u1b", "name": "TaskUpdate",
+                                              "input": {"taskId": "2", "status": "in_progress"}}]}})
+        got = km._fold_tasks(sess, SID_A)
+        self.assertEqual(got[1]["status"], "in_progress", "the appended update is folded")
+        self.assertEqual(km._task_fold_stats, {"hit": 2, "miss": 4}, "the grown turn's fingerprint moved")
+
+    def test_the_result_is_not_the_memo_and_the_store_reader_leaves_it_unchanged(self):
+        sess = self._session()
+        got = km._fold_tasks(sess, SID_A)
+        before = json.dumps(got)
+        self.assertIsNone(km._read_task_store("no-such-fsid-" + SID_A[:8], got), "no store dir: the loud None")
+        self.assertEqual(json.dumps(got), before, "the reader alters nothing")
+        got[0]["status"] = "cancelled"                                    # a caller altering its copy
+        self.assertEqual(km._fold_tasks(sess, SID_A)[0]["status"], "completed", "the memo is untouched")
+        self.assertIn("fold = _fold_tasks(session, sid)", inspect.getsource(km.build_session))
 
 
 if __name__ == "__main__":
