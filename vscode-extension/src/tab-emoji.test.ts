@@ -1,8 +1,11 @@
 // The tab's emoji label (the user 2026-09-06): one glyph before the session name, set from the tab menu
-// (Emoji… → a one-field dialog → the setSessionEmoji WS op), by the session itself (the postal set_emoji
+// (Emoji… → the picker dialog → the setSessionEmoji WS op), by the session itself (the postal set_emoji
 // tool) or by `romp emoji` — one kernel validator and one store behind all three doors. Source pins on
 // render.ts (no jsdom for the chat render — the tab-menu-flags idiom); the pure sync lives in tab-meta.ts
-// and runs for real in ui/webview/tab-meta.test.ts; the kernel side in tests/test_session_emoji.py.
+// and runs for real in ui/webview/tab-meta.test.ts; the kernel side in tests/test_session_emoji.py. The
+// picker itself (search, Recent row, grid, keyboard) is pinned in ui/webview/tab-emoji-picker.test.ts and
+// its pure half runs in ui/webview/emoji-picker.test.ts (2026-09-07); what this file pins is the contract
+// the picker inherited from the one-field dialog it replaced.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -84,9 +87,12 @@ test("the tab menu's Emoji… row sits with Rename, wears the current emoji as i
 test("the dialog: Set posts the typed value, Clear posts \"\", an empty Set is refused locally, and the pressed button acknowledges BEFORE the post", () => {
   const body = slice("function showEmojiPrompt(sid: string): void {", "\nfunction emojiLanded(");
   assert.match(body, /input\.value = cur;/);   // prefilled with the current emoji
-  assert.match(body, /if \(!v\) \{ input\.classList\.add\("bad"\); input\.focus\(\); return; \}/);
-  assert.match(body, /submit\(v, go, "Setting…"\)/);
-  assert.match(body, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…"\)\);/);
+  // the empty Set: marked, focused and SAID (the hint; the mark alone was invisible on this field, review round 1)
+  assert.match(body, /if \(!v\) \{[^\n]*\n\s*input\.classList\.add\("bad"\); input\.focus\(\);\n\s*hint\.textContent = EMPTY_SET;[^\n]*\n\s*return;/);
+  // the fourth argument (2026-09-07, the picker): whether the FIELD holds the value, said by the caller; the
+  // two cases and the refusal's reading of it are pinned in ui/webview/tab-emoji-picker.test.ts
+  assert.match(body, /submit\(v, go, "Setting…", true\)/);
+  assert.match(body, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…", false\)\);/);
   // the click-safe rule: acknowledge first (label + disabled + locked input), then the round trip; the dialog
   // is NOT closed on the click any more — the kernel's answer is what changes it next
   const ack = body.indexOf("btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;");
@@ -97,9 +103,10 @@ test("the dialog: Set posts the typed value, Clear posts \"\", an empty Set is r
   assert.match(body, /p\.pending = true; p\.asked = value;/);   // and the dialog remembers what it asked (the late-confirm close)
   assert.match(body, /30000\)/);                            // the backstop: a wait never traps
   // the dialog lives on document.body, outside #tabs — renderTabs (every kernel push) never rebuilds its
-  // buttons mid-click, so per-node listeners here are click-safe (the move and fork dialogs' arrangement)
-  assert.match(body, /document\.body\.appendChild\(overlay\);/);
-  assert.match(body, /box\.appendChild\(input\); box\.appendChild\(hint\); box\.appendChild\(actions\);/);
+  // Set/Clear mid-click, so per-node listeners on those are click-safe (the move and fork dialogs'
+  // arrangement); the footer keeps the field, then Clear, then Set (2026-09-07: the picker's footer)
+  assert.match(body, /document\.body\.appendChild\(card\);/);
+  assert.match(body, /foot\.appendChild\(input\); foot\.appendChild\(clear\); foot\.appendChild\(go\);/);
 });
 
 test("the disabled Clear (nothing to clear) is dressed as disabled and says why; the move dialog's Moving… gets the same dress", () => {
@@ -124,7 +131,8 @@ test("the kernel's answer drives the dialog: emojiSet for its session closes it,
   // arriving late, after the 30 s backstop had painted "still waiting" — it used to stay open with a red hint
   // under a value the tab already wore (review round 3, 2026-09-06)
   const landed = slice("function emojiLanded(sid: string, emoji: string): void {", "\nfunction emojiRefusedLocal(");
-  assert.match(landed, /^function emojiLanded\(sid: string, emoji: string\): void \{\n  if \(emojiConfirmClosesDialog\(emojiPrompt, sid, emoji\)\) closeEmojiPrompt\(\);\n\}/);
+  // 2026-09-07: the decision is still the pure function's alone; a landed emoji is filed as a recent on the way out
+  assert.match(landed, /^function emojiLanded\(sid: string, emoji: string\): void \{\n  if \(!emojiConfirmClosesDialog\(emojiPrompt, sid, emoji\)\) return;\n  if \(emoji\) rememberRecentEmoji\(emoji\);\n  closeEmojiPrompt\(\);\n\}/);
   assert.match(SRC, /import \{[^}]*\bemojiConfirmClosesDialog\b[^}]*\} from "\.\/tab-meta";/);
   assert.match(SRC, /backstop\?: number; asked\?: string \} \| null = null;/);
   // the refusal: buttons back, input unlocked with the value in place, the reason where the move dialog puts its
