@@ -1365,27 +1365,31 @@ let panesOn: Record<string, boolean> = {};
 function openPath(path: string, sid?: string | null, ev?: MouseEvent | null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
+    const to = sid || activeId || null;
     const route = fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true);
-    if (route !== "here") {
-      // Fire-and-forget by nature: postMessage to a live parent never throws, so there is no
-      // catchable failure here and no honest in-document fallback to offer. The one real loss mode
-      // is a stale shell page from before this relay existed — it has no viewFile arm and WILL
-      // swallow the click until it reloads (a known limitation). The shell arms its pane-restore
-      // only on the feed's viewFileOpened ack, so a swallowed or lost message can never leave a
-      // stale armed flag behind either.
-      // The message names its target pane and carries the session's IDENTITY (name + colour, the
-      // tab set's own — nameOf's ladder) for the Files pane, which has no session list to resolve a
-      // title-bar chip from; the feed resolves its own and ignores it. Looked up, never invented: a
-      // sid neither list names sends null, and the receiving resolver falls to the kernel's stub.
-      // The click's gesture does not travel: a relayed open lands in the target pane's viewer whatever
-      // the modifier (the own-tab reading of a Cmd/Ctrl- or middle-click is openFileClick's, below).
-      const to = sid || activeId || null;
-      const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
-      window.parent.postMessage({ romp: "viewFile", path, sid: to, pane: route,
-        identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
-      return;
-    }
-    openFileClick(ev, path, sid || activeId || null);   // with its gesture: a Cmd/Ctrl- or middle-click on a PDF → the browser's own tab
+    // The gesture is read FIRST, at this end, on every route: openFileClick opens a Cmd/Ctrl- or middle-clicked
+    // PDF in the browser's own tab inside the click itself, and hands only a plain click, a tab the browser
+    // blocked, or a non-PDF to the route's opener: the viewer in this document for "here", the shell relay
+    // below for a pane. The tab cannot open at the relay's far end: window.open passes a popup blocker only
+    // inside the user's gesture, and a message into another pane's iframe lands outside it. Before this the
+    // relay swallowed the modifier, so the tab was reachable only while the Files pane was closed and no
+    // File-links preference was set (review of the 2026-09-07 fold).
+    // The relay is fire-and-forget by nature: postMessage to a live parent never throws, so there is no
+    // catchable failure here and no honest in-document fallback to offer. The one real loss mode is a
+    // stale shell page from before this relay existed — it has no viewFile arm and WILL swallow the click
+    // until it reloads (a known limitation). The shell arms its pane-restore only on the feed's
+    // viewFileOpened ack, so a swallowed or lost message can never leave a stale armed flag behind either.
+    // The message names its target pane and carries the session's IDENTITY (name + colour, the tab set's
+    // own — nameOf's ladder) for the Files pane, which has no session list to resolve a title-bar chip
+    // from; the feed resolves its own and ignores it. Looked up, never invented: a sid neither list names
+    // sends null, and the receiving resolver falls to the kernel's stub. It carries no gesture: a relayed
+    // open is always the target pane's viewer.
+    const relay = route === "here" ? undefined : (p: string, s: string | null) => {
+      const meta = s ? (sessions.get(s) ?? tabMeta.get(s)) : undefined;
+      window.parent.postMessage({ romp: "viewFile", path: p, sid: s, pane: route,
+        identity: meta && meta.name ? { name: meta.name, color: meta.color ?? null } : null }, "*");
+    };
+    openFileClick(ev, path, to, relay);   // the gesture, then the viewer here or the relay to the pane
     return;
   }
   vscodeApi.postMessage(sid ? { type: "openFile", path, id: sid } : { type: "openFile", path });

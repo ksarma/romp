@@ -10,7 +10,11 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { openPdfTab, fileUrl, wantsOwnTab } from "./preview";
+import { fileLinkRoute } from "./file-route";
+
+const requireCjs = createRequire(__filename);   // esbuild, required at run time so the test bundle does not bundle it
 
 const UI = path.resolve(process.cwd(), "..", "ui", "webview");
 const PREVIEW = fs.readFileSync(path.join(UI, "preview.ts"), "utf8");
@@ -119,7 +123,14 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   assert.match(BROWSE, /list\.addEventListener\("auxclick", \(ev\) => \{[\s\S]*?if \(ev\.button !== 1\) return;[\s\S]*?const row = fileRowOf\(ev\);[\s\S]*?onAct\(row, ev\);/);
   assert.match(BROWSE, /if \(active\) \{ e\.preventDefault\(\); onAct\(active, e\); \}/, "Enter on a row carries its modifiers: Cmd/Ctrl+Enter on a PDF → its own tab");
   assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \|\| undefined\); return; \}/);
-  assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void \{[\s\S]*?openFileClick\(ev, path, sid \|\| activeId \|\| null\);/);
+  // the chat's click site reads the gesture BEFORE any relay, on every route: the shell relay (a click the fork routes
+  // to the Files or feed pane) is handed to openFileClick as the plain click's opener, so a modified click on a PDF
+  // is the tab whichever pane the route names (executed below)
+  const openPath = RENDER.slice(RENDER.indexOf("function openPath("), RENDER.indexOf("\n}\n", RENDER.indexOf("function openPath(")));
+  assert.match(openPath, /^function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void \{/);
+  assert.match(openPath, /const relay = route === "here" \? undefined : \(p: string, s: string \| null\) => \{/);
+  assert.match(openPath, /openFileClick\(ev, path, to, relay\);/);
+  assert.doesNotMatch(openPath, /openPdfTab|wantsOwnTab/, "one gesture reader: openFileClick's, never a second read here");
   assert.match(RENDER, /function onMiddleClick\(a: HTMLElement, fn: \(e: MouseEvent\) => void\): void \{\n  a\.addEventListener\("mousedown", \(e\) => \{ if \(e\.button === 1\) e\.preventDefault\(\); \}\);\n  a\.addEventListener\("auxclick", \(e\) => \{ if \(e\.button !== 1\) return; e\.stopPropagation\(\); fn\(e\); \}\);/);
   assert.match(RENDER, /x\.addEventListener\("auxclick", \(e\) => e\.stopPropagation\(\)\);/, "a middle-click on the composer attachment's ✕ is inert, never the box's open");
   assert.equal((RENDER.match(/onMiddleClick\(/g) || []).length, 5, "the declaration and the four path pills: tool file, image path, path link, composer attachment");
@@ -158,6 +169,88 @@ test("an oversize PDF's tab is not a dead end, and the listing marks such a file
   // the relay names a remote PDF from the REQUESTED path, never the remote's header, on HEAD and GET
   const relay = KERNEL.slice(KERNEL.indexOf("def _remote_file("), KERNEL.indexOf("def _relay_download("));
   assert.equal((relay.match(/_attachment_disposition\(os\.path\.basename\(rp\), kind="inline"\)/g) || []).length, 2, "HEAD and GET");
+});
+
+// openPath, executed (review of the 2026-09-07 fold): the chat's click site reads the gesture on EVERY route. A file
+// link the fork routes to another pane (the Files pane open, or the gear's File-links preference naming a pane) used
+// to be relayed to the shell whatever the modifier, so a Cmd/Ctrl- or middle-click on a PDF landed in that pane's
+// viewer and the tab was reachable only on the default route. The tab cannot open at the relay's far end: window.open
+// passes a popup blocker only inside the user's gesture, and a message into another pane's iframe lands outside it.
+// So the gesture is decided here, and only a plain click, a blocked tab or a non-PDF goes to the route's opener. The
+// function is the shipped text (transpiled), run against the REAL openFileClick, wantsOwnTab/openPdfTab and
+// fileLinkRoute; the document's state (settings, the pane set, the session lists) and the browser are the stubs.
+test("openPath, executed: a modified click on a PDF opens the tab on every route; a plain click, a blocked tab or a non-PDF goes to the route's opener, the shell relay for a pane", async () => {
+  // file-view.ts's import graph touches window/document/localStorage at load: the stand-in the figure tests use
+  const savedWin = g.window, savedDoc = g.document, savedLs = g.localStorage;
+  const win0: any = new EventTarget(); win0.parent = win0;
+  g.window = win0;
+  g.document = { createElement: () => ({ style: {}, classList: { add() {}, remove() {} }, appendChild: (c: unknown) => c, setAttribute() {}, addEventListener() {} }),
+    createTextNode: (t: string) => t, getElementById: () => null, addEventListener() {}, removeEventListener() {}, body: { classList: { add() {}, remove() {} } } };
+  const store = new Map<string, string>();
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, String(v)); }, removeItem: (k: string) => { store.delete(k); } };
+  try {
+    const fv = await import("./file-view");
+    const start = RENDER.indexOf("function openPath(");
+    const text = RENDER.slice(start, RENDER.indexOf("\n}\n", start) + 3);
+    const js = requireCjs("esbuild").transformSync(text, { loader: "ts" }).code;
+    // every free identifier of the shipped function is a parameter: a new one throws ReferenceError, loudly
+    const make = new Function("vscodeApi", "location", "window", "settings", "panesOn", "activeId", "sessions", "tabMeta",
+      "fileLinkRoute", "openFileClick", js + "\nreturn openPath;");
+    const PDF = "/repo/notes-api/docs/paper.pdf";
+    type Case = { setting?: string; filesOpen?: boolean; framed?: boolean; ev: unknown; path?: string; sid?: string | null; blocked?: boolean };
+    const run = (c: Case) => {
+      const opened: unknown[][] = [], posted: unknown[][] = [];
+      const parent = { postMessage: (m: unknown, target: unknown) => posted.push([m, target]) };
+      const win: any = { open: (...a: unknown[]) => { opened.push(a); return c.blocked ? null : { opener: { theDashboard: true } }; } };
+      win.parent = c.framed === false ? win : parent;
+      const loc = { protocol: "https:" };
+      g.window = win; g.location = loc;   // preview.ts reads the globals inside the gesture
+      try {
+        const openPath = make({ postMessage: () => { /* VS Code's poster, unused on the web */ } }, loc, win, { fileLinkPane: c.setting ?? "chat" },
+          { files: c.filesOpen === true }, SID, new Map([[SID, { name: "web", color: "#4a7" }]]), new Map(), fileLinkRoute, fv.openFileClick);
+        openPath(c.path ?? PDF, c.sid, c.ev);
+      } finally { g.window = win0; g.location = undefined; }
+      return { opened, posted };
+    };
+    const tab = [fileUrl(PDF, SID), "_blank"];
+    const relayed = (pane: string, p = PDF, identity: unknown = { name: "web", color: "#4a7" }, sid: string | null = SID) =>
+      [[{ romp: "viewFile", path: p, sid, pane, identity }, "*"]];
+    // the Files pane is OPEN (route "pane"): the tab on a modified click, the relay on a plain one
+    let r = run({ filesOpen: true, ev: { metaKey: true } });
+    assert.deepEqual(r.opened, [tab], "Cmd-click, Files pane open: the browser's own tab");
+    assert.deepEqual(r.posted, [], "…and nothing is relayed: the pane's viewer is not asked for a file the tab shows");
+    r = run({ filesOpen: true, ev: { ctrlKey: true } });
+    assert.deepEqual([r.opened, r.posted], [[tab], []], "Ctrl-click: the same");
+    r = run({ filesOpen: true, ev: { button: 1 } });
+    assert.deepEqual([r.opened, r.posted], [[tab], []], "a middle-click (auxclick, button 1): the same");
+    r = run({ filesOpen: true, ev: {} });
+    assert.deepEqual(r.opened, [], "a plain click never tries the tab");
+    assert.deepEqual(r.posted, relayed("pane"), "…it is relayed to the shell for the Files pane, with the session's identity, as before");
+    r = run({ filesOpen: true, ev: { metaKey: true }, blocked: true });
+    assert.equal(r.opened.length, 1, "the tab was tried");
+    assert.deepEqual(r.posted, relayed("pane"), "the browser blocked it: the route's opener takes over, so the PDF is never unreachable");
+    r = run({ filesOpen: true, ev: { metaKey: true }, path: "/repo/notes-api/docs/notes.md" });
+    assert.deepEqual(r.opened, [], "a non-PDF is not the opener's business, modifier or not");
+    assert.deepEqual(r.posted, relayed("pane", "/repo/notes-api/docs/notes.md"), "…it goes where a plain click goes");
+    // the gear's File-links preference, pane closed (route "feed" or "pane"): the same two verdicts, the route's own target
+    r = run({ setting: "feed", ev: { metaKey: true } });
+    assert.deepEqual([r.opened, r.posted], [[tab], []], "Cmd-click with the feed preference: the tab");
+    r = run({ setting: "feed", ev: {} });
+    assert.deepEqual(r.posted, relayed("feed"), "a plain click with the feed preference: the relay names the feed");
+    r = run({ setting: "pane", ev: { button: 1 } });
+    assert.deepEqual([r.opened, r.posted], [[tab], []], "a middle-click with the Files-pane preference: the tab");
+    // the default route ("here"): the tab as before; the plain click there is openFileView (pinned above, never a relay)
+    r = run({ ev: { metaKey: true } });
+    assert.deepEqual([r.opened, r.posted], [[tab], []], "Cmd-click, default route: the tab, no relay");
+    r = run({ ev: { metaKey: true }, framed: false, filesOpen: true, setting: "pane" });
+    assert.deepEqual([r.opened, r.posted], [[tab], []], "standalone /chat (unframed): the tab; there is no shell to relay to either way");
+    // the relay's message is openPath's own: a sid neither list names sends a null identity; the session's own id rides
+    r = run({ filesOpen: true, ev: {}, sid: "22222222-3333-4444-5555-666666666666" });
+    assert.deepEqual(r.posted, relayed("pane", PDF, null, "22222222-3333-4444-5555-666666666666"), "an unlisted sid: identity null, never invented");
+    // a federated session's PDF: the tab through the owning host's relay URL, as the here-route did
+    r = run({ filesOpen: true, ev: { metaKey: true }, sid: "gpu1:" + SID });
+    assert.deepEqual(r.opened, [["/remote/gpu1/file?path=" + encodeURIComponent(PDF) + "&sid=" + SID, "_blank"]]);
+  } finally { g.window = savedWin; g.document = savedDoc; g.localStorage = savedLs; }
 });
 
 test("the guide says so, in the user's terms", () => {

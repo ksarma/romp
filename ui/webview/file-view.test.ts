@@ -23,9 +23,9 @@ const CHAT_CSS = web("styles.css");
 
 test("openPath routes by HOST: the in-pane viewer modal on the web, the editor in VS Code", () => {
   assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null, ev\?: MouseEvent \| null\): void/);   // ev: the click, for a PDF's modified-click tab
-  // web default → the viewer opens in THIS document, through the gesture reader (a plain click is
-  // openFileView, pdf-new-tab.test.ts); the cards-pane preference relays instead (below)
-  assert.match(RENDER, /openFileClick\(ev, path, sid \|\| activeId \|\| null\);/);
+  // web → the gesture reader, on every route (a plain click is openFileView here, or the relay below when the
+  // route names a pane; a modified click on a PDF is the tab either way, pdf-new-tab.test.ts)
+  assert.match(RENDER, /openFileClick\(ev, path, to, relay\);/);
   // (setCommentSink left the import with the review layer, 2026-08-23 — quote chips replaced it.
   // Upstream also asserts the viewFile relay is GONE from render.ts; here it is alive on purpose —
   // the fork's fileLinkPane preference sends it since 2026-08-20, pinned by fileLinkRoute below.)
@@ -64,10 +64,11 @@ test("fileLinkRoute: an open Files pane takes the click; otherwise the preferenc
   // the chat imports the shipped function; no local copy that could drift from the table above
   assert.match(RENDER, /import \{ fileLinkRoute, browseRoute, type BrowseRoute \} from "\.\/file-route";/);
   assert.doesNotMatch(RENDER, /function fileLinkRoute\(/, "one definition, in file-route.ts");
-  // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit, and posts up,
-  // the message naming its target pane and carrying the session's identity for the Files pane's chip
-  assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);\n\s*if \(route !== "here"\) \{/);
-  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const s = to \? \(sessions\.get\(to\) \?\? tabMeta\.get\(to\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: to, pane: route,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
+  // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit; a route other than
+  // "here" becomes the plain click's opener (openFileClick's fourth argument, so the PDF gesture is read first),
+  // which posts up a message naming its target pane and carrying the session's identity for the Files pane's chip
+  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);/);
+  assert.match(RENDER, /const relay = route === "here" \? undefined : \(p: string, s: string \| null\) => \{\n\s*const meta = s \? \(sessions\.get\(s\) \?\? tabMeta\.get\(s\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path: p, sid: s, pane: route,\n\s*identity: meta && meta\.name \? \{ name: meta\.name, color: meta\.color \?\? null \} : null \}, "\*"\);\n\s*\};\n\s*openFileClick\(ev, path, to, relay\);/);
 });
 
 // The Files-pane bit openPath routes by is the SHELL's pane set, cached from the shell's own broadcast —
