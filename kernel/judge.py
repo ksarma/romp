@@ -4122,6 +4122,14 @@ def save_goals(fsid, store):
     the override journal still backstops the state. Stores built without load_goals carry no `_baseRev`
     and keep the old unconditional behavior (nothing to rebase onto).
 
+    A store that came through load_goals stays CAS-protected for EVERY save of its lifetime (review
+    2026-09-06): after a publish the base is re-stamped to the revision just written, which the file now
+    holds with exactly this content. Before that, the first publish popped the base and nothing restored
+    it, so every later save of the same object — _plan_session saves its store several times per pass,
+    _distill_session saves after titling and again after distilling — took the unconditional branch,
+    wrote over whatever a concurrent writer (the nudge tick, the unblocker, a peer tier) had published in
+    between, and skipped the no-op check as well.
+
     A publish that would write back EXACTLY what the file already holds is skipped (the user 2026-07-22).
     Callers save unconditionally on purpose — `_plan_session` ends every pass with a rollup + save whether or
     not the pass placed anything — so an idle fleet rewrote ~24 stores with byte-identical content about ten
@@ -4175,6 +4183,9 @@ def save_goals(fsid, store):
     tmp.rename(GOALDIR / (fsid + ".json"))            # atomic publish
     _shared_forget(str(GOALDIR / (fsid + ".json")))   # the shared read-only view of the old version goes with
     #                                                   it (its identity check would miss anyway; this frees the bytes)
+    if base is not None:
+        store["_baseRev"] = store["rev"]             # the file holds exactly this content at this revision:
+        #                                              the holder's NEXT save compares against it (docstring)
 
 
 def load_goal_archive(fsid):

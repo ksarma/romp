@@ -225,6 +225,30 @@ class StoreCas(unittest.TestCase):
         blocks = [e for e in log if e.get("kind") == "block" and int(e.get("ev_t") or 0) == T0 + 100]
         self.assertEqual(len(blocks), 1, "the same verdict from both writers folds to one entry")
 
+    def test_a_second_save_of_the_same_store_still_rebases(self):
+        # One holder saving the SAME store twice (the planner saves its store several times per pass;
+        # the distiller saves after titling and again after distilling): the first publish popped the
+        # base and nothing restored it, so every later save of the object took the unconditional branch
+        # and wrote over whatever a concurrent writer published in between (review 2026-09-06).
+        self._seed()
+        gid = self._nid(1)
+        s = jd.load_goals(SID)
+        jd.record_verdict(s, s["nodes"][gid], "planner", "done", T0 + 30, why="shipped")
+        jd.save_goals(SID, s)                        # our first publish
+        other = jd.load_goals(SID)                   # a kernel-side writer, between our two saves
+        jd.apply_plan(other, "s2", T0 + 40, [{"do": "mint", "why": "x", "text": "Their new goal"}],
+                      jd.open_menu(other))
+        jd.save_goals(SID, other)
+        s["nodes"][gid]["summary"] = "Shipped the exporter end to end."   # our second change, SAME object
+        s["nodes"][gid]["distilledMt"] = T0 + 500
+        jd.save_goals(SID, s)                        # must rebase onto their publish, not clobber it
+        after = jd.load_goals(SID)
+        self.assertIn(self._nid(2), after["nodes"], "the other writer's node survives our second save")
+        self.assertEqual(after["nodes"][gid].get("summary"), "Shipped the exporter end to end.",
+                         "and our second change landed too")
+        self.assertNotIn("_baseRev", json.loads((jd.GOALDIR / (SID + ".json")).read_text()),
+                         "the re-stamped base is still never written to disk")
+
     def test_an_uncontended_save_does_not_rebase(self):
         self._seed()
         gid = self._nid(1)
