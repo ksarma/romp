@@ -898,7 +898,8 @@ Size: ~250 / ~10 / ~40.
 
 User-visible: a PDF opens as rendered pages inside the viewer instead of the browser's own frame,
 with the same Comment on this file button and the same rectangle gesture per page; a region
-comment names its page; the card shows the page crop.
+comment names its page; the card shows the page crop once its page has been drawn (pages draw as the
+reader nears them), and until then a line naming the page that scrolls it in.
 
 Why a slice of its own: the browser's PDF frame gives the page no coordinates or selection, so
 region comments need romp to render pages itself. Ruled (decision 12): a lazily loaded PDF chunk

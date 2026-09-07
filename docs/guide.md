@@ -177,12 +177,16 @@ file as a whole instead.
 **PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
 draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
 the same way as on an image; the comment names its page, and its card shows that part of the
-page. A rectangle drawn on one page can be placed again on another. Pages are drawn only up to
-25 MB of PDF; above that, or when the page renderer cannot be loaded or the file cannot be
-opened, the browser's viewer stays with a line above it saying why, and a comment on the whole
-file still works. The renderer ships without pdf.js's standard fonts, CMaps, and JPEG 2000
-decoder, so a PDF that does not embed its fonts may show some text in a system font, and a
-JPEG 2000 image may render blank; the pages still draw.
+page once the page has been drawn. Pages are drawn as you scroll near them, so until then the
+card shows a line naming the page, and clicking it scrolls the page in. A rectangle drawn on
+one page can be placed again on another. Pages are drawn only up to 25 MB of PDF; above that,
+or when the page renderer cannot be loaded or the file cannot be opened, the browser's viewer
+stays with a line above it saying why, and a comment on the whole file still works. The
+renderer ships without pdf.js's standard fonts and CMaps, and without its JPEG 2000, JBIG2, and
+fax (CCITT) image decoders, so a PDF that does not embed its fonts may show some text in a
+system font, and an image in one of those encodings is left blank, with a line at the top of
+the page saying how many; the rest of the page still draws, and the browser's own viewer shows
+the whole page.
 
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,

@@ -41,7 +41,7 @@ test("the cap the guide states is PDF_MAX_BYTES, as a whole number of MB, and th
   assert.equal(capMb, Math.round(capMb), "the guide says the cap as a whole number of MB; a fractional cap needs its sentence rewritten");
   const figures = PARA.match(/\d+(?:\.\d+)?\s?[KMG]i?B\b/g) || [];
   assert.deepEqual(figures, [capMb + " MB"], "the paragraph names the cap once and no other size");
-  assert.ok(PARA.includes("Pages are drawn only up to " + capMb + " MB of PDF; above that,"), "the cap is stated as what happens above it");
+  assert.ok(PARA.includes("Pages are drawn only up to " + capMb + " MB of PDF; above that, or when"), "the cap is stated as what happens above it");
   // and the code's cap is the one the paragraph is checked against: file-view refuses on PDF_MAX_BYTES, not a literal
   assert.match(VIEW, /if \(blob\.size > PDF_MAX_BYTES\) \{ fallback\(pdfCapMessage\(blob\.size, PDF_MAX_BYTES\)\); return; \}/);
   assert.doesNotMatch(VIEW, /\b25 \* 1024 \* 1024\b/, "file-view carries no cap literal of its own");
@@ -58,20 +58,28 @@ test("the fallback the guide describes is the one the viewer builds: the browser
   assert.match(VIEW, /const note = el\("div", "fileview-err"\);/, "in the error dress, so it is loud");
 });
 
-test("the renderer's omissions the guide names are the build's: only the worker is copied from pdf.js, and getDocument gets no font, CMap or wasm URL", () => {
-  assert.ok(PARA.includes("The renderer ships without pdf.js's standard fonts, CMaps, and JPEG 2000 decoder"));
+test("the renderer's omissions the guide names are the build's: only the worker is copied from pdf.js, getDocument gets no font, CMap or wasm URL, and the three encodings named are the chunk's own notice's", () => {
+  assert.ok(PARA.includes("The renderer ships without pdf.js's standard fonts and CMaps, and without its JPEG 2000, JBIG2, and fax (CCITT) image decoders"));
   assert.ok(PARA.includes("a PDF that does not embed its fonts may show some text in a system font"));
-  assert.ok(PARA.includes("a JPEG 2000 image may render blank; the pages still draw."));
+  assert.ok(PARA.includes("an image in one of those encodings is left blank, with a line at the top of the page saying how many; the rest of the page still draws, and the browser's own viewer shows the whole page."));
+  // the encodings the guide names are the ones the chunk's notice band names (droppedImagesMessage): the two texts move together
+  assert.match(CHUNK, /This view has no JPEG 2000, JBIG2, or fax \(CCITT\) decoder yet; the browser's own PDF viewer shows the whole page\./,
+    "the chunk's band names the same three encodings and the same way out");
   const copies = ESBUILD.match(/node_modules\/pdfjs-dist\/[^"']+/g) || [];
   assert.deepEqual(copies, ["node_modules/pdfjs-dist/build/pdf.worker.mjs"],
-    "the build ships one pdf.js asset, the worker — shipping the fonts, the CMaps or the OpenJPEG wasm means rewriting the guide's sentence");
+    "the build ships one pdf.js asset, the worker — shipping the fonts, the CMaps or the wasm decoders means rewriting the guide's sentence (and restating the plan's Security posture: pdf.js would then fetch)");
   assert.match(CHUNK, /pdfjsLib\.getDocument\(\{ data: new Uint8Array\(bytes\.slice\(0\)\) \}\)/, "getDocument is handed the bytes and nothing else");
   assert.doesNotMatch(CHUNK, /standardFontDataUrl|cMapUrl|wasmUrl|useSystemFonts/, "no asset URL is configured, so the omission the guide states is real");
 });
 
-test("a region comment names its page, and a PDF region may be placed again on another page", () => {
-  assert.ok(PARA.includes("the comment names its page, and its card shows that part of the page"));
+test("a region comment names its page, its card shows the crop once the page is drawn and a line that scrolls the page in until then, and a PDF region may be placed again on another page", () => {
+  assert.ok(PARA.includes("the comment names its page, and its card shows that part of the page once the page has been drawn."));
   assert.equal(regionDesc({ x: 0.1, y: 0.2, w: 0.3, h: 0.4 }, 3).endsWith(" of page 3"), true, "the card's reference ends in the page");
+  // the wait the guide describes is the panel's cropWaitNote (file-comments-crop-wait.test.ts drives it): the chunk draws a
+  // page as the reader nears it, so a card on an undrawn page shows one line naming the page, itself the control that scrolls it in
+  assert.ok(PARA.includes("Pages are drawn as you scroll near them, so until then the card shows a line naming the page, and clicking it scrolls the page in."));
+  assert.match(PANEL, /"Page " \+ page \+ " is not drawn yet\. Go to the page to see this region\."/, "the line names the page and the remedy");
+  assert.match(PANEL, /n\.dataset\.act = "fcgoto"; n\.dataset\.id = c\.id;/, "…and is the control that scrolls the page in");
   assert.ok(PARA.includes("A rectangle drawn on one page can be placed again on another."));
   // onRegionDrawn: a re-place is refused only when the target has NO page and is a different picture — a PDF page
   // (page !== null) is never refused, so any page takes the new rectangle, with the page riding in the new target
