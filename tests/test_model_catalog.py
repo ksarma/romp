@@ -457,6 +457,11 @@ class CredentialPolicy(unittest.TestCase):
         jd._ENV_SET_FN = None
         self._okfn = getattr(jd, "_ENV_OK_FN", None)
         jd._ENV_OK_FN = None
+        # the bearer rung reads jd._login_auth_env() since the upstream fold, which returns the wire the
+        # kernel's _sdk_locked installs (sdk_backend.startup_auth_env: the tokens claimed at boot, a
+        # process-lifetime stash) when one is set — unwired here, so the environment is what it reads
+        self._login_fn = jd._LOGIN_AUTH_ENV_FN
+        jd._LOGIN_AUTH_ENV_FN = None
         self._stash = sb._WORK_KEY       # the claimer's process-lifetime stash: unclaimed, so a claim happens HERE
         sb._WORK_KEY = None
 
@@ -465,6 +470,7 @@ class CredentialPolicy(unittest.TestCase):
         jd._WORK_KEY_FN = self._fn
         jd._ENV_SET_FN = self._setfn
         jd._ENV_OK_FN = self._okfn
+        jd._LOGIN_AUTH_ENV_FN = self._login_fn
         _restore_env(self._env)
 
     def test_a_fetch_on_the_sets_lp_key_reports_the_set_accepted_and_nothing_else_does(self):
