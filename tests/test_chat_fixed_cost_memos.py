@@ -217,6 +217,26 @@ class TwoTabAttribution(unittest.TestCase):
             km._merge_sets_memo.pop(stray, None)
             km._merge_sets_memo.pop(SID_B, None)
 
+    def test_the_sweep_drops_the_ledger_and_task_fold_memos_of_a_tab_no_longer_shown_and_counts_it(self):
+        stray = "66666666-7777-8888-9999-aaaaaaaaaaa9"
+        km._ledger_memo[stray] = (("seams", None, 0), {"turns": []}, {"nodes": {}}, [], [])
+        km._ledger_memo[SID_B] = (("seams", None, 0), {"turns": []}, {"nodes": {}}, [], [])
+        km._task_fold_memo[stray] = {}
+        km._task_fold_memo[SID_B] = {}
+        evict0 = km._ledger_memo_stats["evict"]
+        try:
+            km._push([self.chat, self.tl])
+            self.assertNotIn(stray, km._ledger_memo, "the ledger memo of a tab no longer shown is evicted")
+            self.assertNotIn(stray, km._task_fold_memo, "and its task fold memo")
+            self.assertIn(SID_B, km._ledger_memo, "a shown tab's entries stay")
+            self.assertIn(SID_B, km._task_fold_memo)
+            self.assertEqual(km._ledger_memo_stats["evict"], evict0 + 1, "one eviction counted")
+            self.assertEqual(km._ledger_memo_report()["entries"], len(km._ledger_memo))
+        finally:
+            for d in (km._ledger_memo, km._task_fold_memo):
+                d.pop(stray, None)
+                d.pop(SID_B, None)
+
 
 class MemoCounters(unittest.TestCase):
     """The four memos' counters share one lock (_chat_memo_bump, the _chat_fold_count shape): the pusher,
@@ -824,6 +844,41 @@ class LedgerMemo(unittest.TestCase):
             km._LEDGER_TREE_ROWS = saved
         self.assertEqual(len(full), 200)
         self.assertEqual(full[:80], tree, "the capped walk's rows are the full walk's first rows")
+
+    def test_the_cap_inside_a_subtree_ships_the_full_walks_rows_and_resolves_the_unshipped_children(self):
+        # 30 roots with two children each: 90 nodes, 3 rows per root, so the 80th row is a first child
+        # and the cap falls INSIDE root 27's subtree; the second child ships no row but its anchor resolves
+        w = self.w
+        w.build()
+        parsed = km._parse(str(w.tpath), SID_A, w.now)
+        seg = km._segs_seam(parsed["turns"][0], {})[0]
+        nodes = {}
+        for i in range(1, 31):
+            nodes["r%d" % i] = {"id": "r%d" % i, "text": "goal %d" % i, "t": w.t + 10 * i, "mt": w.t + 10 * i,
+                                "parentId": None, "trail": [seg["id"]]}
+            for j in (1, 2):
+                nodes["c%d_%d" % (i, j)] = {"id": "c%d_%d" % (i, j), "text": "step %d of goal %d" % (j, i),
+                                            "t": w.t + 10 * i + j, "mt": w.t + 10 * i + j,
+                                            "parentId": "r%d" % i, "trail": [seg["id"]]}
+        w.store(nodes)
+        km._node_anchor_last.clear()
+        tree = w.build()["ledger"]["tree"]
+        self.assertEqual(len(tree), 80)
+        self.assertEqual([r["depth"] for r in tree[:3]], [0, 1, 1], "pre-order: a root, then its children")
+        self.assertEqual(tree[-1]["depth"], 1, "the cap fell after a root's first child")
+        self.assertIn(tree[-1]["id"], tree[-2]["children"], "that child belongs to the root shipped just before it")
+        self.assertEqual(len(km._node_anchor_last), 90, "every node's anchor resolved, the unshipped children included")
+        saved = km._LEDGER_TREE_ROWS
+        km._LEDGER_TREE_ROWS = 10 ** 6
+        try:
+            km._ledger_memo.clear()
+            full = w.build()["ledger"]["tree"]
+        finally:
+            km._LEDGER_TREE_ROWS = saved
+        self.assertEqual(len(full), 90)
+        self.assertEqual(full[:80], tree, "the capped walk's rows are the full walk's first rows, subtree cut included")
+        self.assertEqual(full[80]["depth"], 1, "the first unshipped row is the cut subtree's second child")
+        self.assertEqual(full[80]["children"], [])
 
     def test_a_muted_tab_still_ships_no_tree(self):
         w = self.w
