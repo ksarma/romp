@@ -101,7 +101,7 @@ class E extends N {
   listeners = new Map<string, Array<(ev: Ev) => void>>();
   hidden = false; title = ""; type = ""; disabled = false; placeholder = ""; value = ""; checked = false; offsetWidth = 0; readOnly = false;
   rows = 0;
-  // the layout a test gives a box: what the browser would measure at height: auto (autosizeNote reads these)
+  // the layout a test gives a box: what the browser would measure at height: auto (autosizeComposer reads these)
   scrollHeight = 0; offsetHeight = 0; clientHeight = 0;
   scrollTop = 0;                                       // the box's scroll offset; a detach zeroes it (unscroll), as a browser's does
   selectionStart = 0; selectionEnd = 0;

@@ -1,9 +1,9 @@
 // The comment box under a REAL renderer (plans/file-review.md, "The composer follow-on (2026-09-07)"): headless
 // Chromium and Firefox lay the worktree's textarea out under the sheet's own .fc-input rule and press its keys. This
-// is the leg no stand-in can stand in for — the stand-in tests set scrollHeight by hand and cannot cap anything:
-// the browser decides how tall three rows are, whether autosizeNote's height lands where the sheet's max-height caps
-// it at twelve rows and scrolls past that, and what a real Enter does in a textarea whose keydown listener left it
-// alone (a newline), against a real Ctrl+Enter (no newline; the save). Skips LOUDLY without a playwright browser
+// is the part a DOM stand-in cannot test — the stand-in tests set scrollHeight by hand and cannot cap anything:
+// the browser decides how tall three rows are, whether autosizeComposer's cap lands at twelve rows of the sheet's
+// line-height and the box scrolls past that, and what a real Enter, plain or with Shift, does in a textarea whose keydown
+// listener left it alone (a newline), against a real Ctrl+Enter (no newline; the save). Skips LOUDLY without a playwright browser
 // (CI installs none), as the region layer's browser leg does. Synthetic values only: typed placeholder lines.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
@@ -21,7 +21,7 @@ function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { autosizeNote, composerKeyAction, NOTE_ROWS, NOTE_MAX_ROWS } from "./file-comments";\n(window as any).__romp = { autosizeNote, composerKeyAction, NOTE_ROWS, NOTE_MAX_ROWS };\n',
+      contents: 'import { autosizeComposer, composerKeyAction, COMPOSER_ROWS, COMPOSER_MAX_ROWS } from "./file-comments";\n(window as any).__romp = { autosizeComposer, composerKeyAction, COMPOSER_ROWS, COMPOSER_MAX_ROWS };\n',
       resolveDir: UI, loader: "ts", sourcefile: "composer-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -49,7 +49,7 @@ ${sheet()}</style></head><body><div class="fileview-aside"><div class="fc-panel"
 
 type Box = { height: number; clientHeight: number; scrollHeight: number; lineHeight: number; padBorder: number; width: number; asideWidth: number; resize: string; overflowY: string };
 
-/** Wire the page's box the way the panel wires its own — keydown through composerKeyAction, input through autosizeNote —
+/** Wire the page's box the way the panel wires its own — keydown through composerKeyAction, input through autosizeComposer —
  *  and report its layout. */
 function setup(page: any): Promise<Box> {
   return page.evaluate(() => {
@@ -61,7 +61,7 @@ function setup(page: any): Promise<Box> {
       if (act === "save") { e.preventDefault(); calls.push("save"); }
       else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); calls.push("cancel"); }
     });
-    ta.addEventListener("input", () => { const h = w.__romp.autosizeNote(ta); calls.push("sized:" + h); });
+    ta.addEventListener("input", () => { const h = w.__romp.autosizeComposer(ta); calls.push("sized:" + h); });
     ta.focus();
     return w.__measure();
   });
@@ -106,14 +106,14 @@ async function inBrowser(t: any, name: "chromium" | "firefox", body: (page: any)
 }
 
 for (const name of ["chromium", "firefox"] as const) {
-  test("in " + name + ": three rows to start, full width, draggable; the box grows a row per line to twelve, then scrolls; Enter is a newline and Ctrl+Enter is the save", async (t) => {
+  test("in " + name + ": three rows to start, full width, draggable; the box grows a row per line to twelve, then scrolls; Enter and Shift+Enter are newlines and Ctrl+Enter is the save", async (t) => {
     await inBrowser(t, name, async (page) => {
-      const { NOTE_ROWS, NOTE_MAX_ROWS } = await page.evaluate(() => ({ NOTE_ROWS: (window as any).__romp.NOTE_ROWS, NOTE_MAX_ROWS: (window as any).__romp.NOTE_MAX_ROWS }));
+      const { COMPOSER_ROWS, COMPOSER_MAX_ROWS } = await page.evaluate(() => ({ COMPOSER_ROWS: (window as any).__romp.COMPOSER_ROWS, COMPOSER_MAX_ROWS: (window as any).__romp.COMPOSER_MAX_ROWS }));
       const rows = (m: Box, n: number) => n * m.lineHeight + m.padBorder;
       const m0 = await setup(page);
       assert.ok(m0.lineHeight > 0, "the sheet's line-height resolved");
       near(m0.padBorder, 12, "5+5 padding and 1+1 border, the 12px the sheet's calc() counts");
-      near(m0.height, rows(m0, NOTE_ROWS), "empty: exactly NOTE_ROWS rows tall");
+      near(m0.height, rows(m0, COMPOSER_ROWS), "empty: exactly COMPOSER_ROWS rows tall");
       near(m0.width, m0.asideWidth - 24, "the panel's full width (its 12px side padding aside)");
       assert.equal(m0.resize, "vertical", "the person may drag it taller or shorter");
       assert.equal(m0.overflowY, "auto");
@@ -121,7 +121,7 @@ for (const name of ["chromium", "firefox"] as const) {
       await page.keyboard.type("one\ntwo\nthree\nfour\nfive");
       assert.equal(await value(page), "one\ntwo\nthree\nfour\nfive", "five lines: four Enters went in as newlines");
       const m5 = await measure(page);
-      near(m5.height, rows(m5, 5), "five rows tall, grown by autosizeNote on each input");
+      near(m5.height, rows(m5, 5), "five rows tall, grown by autosizeComposer on each input");
       assert.ok(m5.scrollHeight <= m5.clientHeight + 1, "nothing to scroll: every line is on screen");
       const c5 = await calls(page);
       assert.equal(c5.filter((x) => x === "save").length, 0, "no save fired from a plain Enter");
@@ -129,8 +129,16 @@ for (const name of ["chromium", "firefox"] as const) {
       // past the cap the box stops growing and scrolls
       await page.keyboard.type("\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nfourteen\nfifteen");
       const m15 = await measure(page);
-      near(m15.height, rows(m15, NOTE_MAX_ROWS), "fifteen lines: capped at NOTE_MAX_ROWS rows by the sheet's max-height");
+      near(m15.height, rows(m15, COMPOSER_MAX_ROWS), "fifteen lines: capped at COMPOSER_MAX_ROWS rows by autosizeComposer");
       assert.ok(m15.scrollHeight > m15.clientHeight + m15.lineHeight, "…and the rest scrolls inside the box");
+      assert.equal((await value(page)).split("\n").length, 15);
+      await calls(page);
+      // Shift+Enter, the chat composer's line break, is the textarea's own newline here too — a real key, since the
+      // stand-in cannot insert one
+      await page.keyboard.press("Shift+Enter");
+      assert.equal((await value(page)).split("\n").length, 16, "Shift+Enter inserted a newline");
+      assert.equal((await calls(page)).filter((x) => x === "save").length, 0, "…and saved nothing");
+      await page.keyboard.press("Backspace");
       assert.equal((await value(page)).split("\n").length, 15);
       await calls(page);
       // the chord: no newline goes in, the save fires
@@ -140,7 +148,7 @@ for (const name of ["chromium", "firefox"] as const) {
       // a shorter comment shrinks the box back, never under the floor
       await page.evaluate(() => { const ta = document.querySelector("textarea.fc-input") as HTMLTextAreaElement; ta.value = "one"; ta.dispatchEvent(new Event("input")); });
       const m1 = await measure(page);
-      near(m1.height, rows(m1, NOTE_ROWS), "one line: back to the NOTE_ROWS floor (the sheet's min-height)");
+      near(m1.height, rows(m1, COMPOSER_ROWS), "one line: back to the COMPOSER_ROWS floor (the sheet's min-height)");
       await calls(page);
       // Escape is the cancel
       await page.keyboard.press("Escape");

@@ -501,11 +501,12 @@ const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in
  *  (holdHead, heldNote) — one sentence for both, so the pointer and the touch read the same words. */
 const HOLD_WORDS = "The card stays open while its reply is written; Save or Cancel the reply first";
 // ── the composer's box (the follow-on of 2026-09-07: a comment is often several lines) ──────────────
-/** The box starts at this many rows and grows with its content to the cap (autosizeNote; the sheets' min-height and
- *  max-height say the same in em), then scrolls; the person may also drag its handle (resize: vertical). */
-export const NOTE_ROWS = 3;
-export const NOTE_MAX_ROWS = 12;
-/** Which modifier the save chord wears: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
+/** The box starts at this many rows (the sheets' min-height says the same in em) and grows with its content to the cap,
+ *  COMPOSER_MAX_ROWS rows, then scrolls. The cap is autosizeComposer's alone, not a max-height in the sheets: the person
+ *  may also drag the box's handle (resize: vertical), past the cap too, and a sheet clamp would take the drag with it. */
+export const COMPOSER_ROWS = 3;
+export const COMPOSER_MAX_ROWS = 12;
+/** Which modifier the save chord uses: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
  *  marks module, the same test; that module stays in the lazy chunk, so the test is repeated here rather than imported),
  *  detected once. Only the HINT reads it: either modifier saves on every platform. */
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
@@ -521,20 +522,64 @@ export function composerKeyAction(e: { key: string; metaKey?: boolean; ctrlKey?:
 }
 /** The chord the hint under the box names, in the platform's words. */
 export function saveChord(mac: boolean): string { return (mac ? "Cmd" : "Ctrl") + "+Enter"; }
-export function composerHint(mac: boolean): string { return saveChord(mac) + " saves; Enter adds a line"; }
-/** Size the box to its content: height auto, then the scroll height plus the border (box-sizing: border-box). The
- *  sheet's max-height caps the result at NOTE_MAX_ROWS rows — past that the box scrolls — and its min-height floors it
- *  at NOTE_ROWS. Returns the height set, or null when the box has no layout to measure (hidden, or a document with no
- *  renderer), in which case the inline height it had is put back. */
-export function autosizeNote(ta: HTMLTextAreaElement): string | null {
+/** The hint on a coarse pointer (a phone, a tablet): a soft keyboard has no modifier to hold, so a chord would name a
+ *  key the device lacks, and the person who pressed Return for the old one-line box's save got a newline and no word on
+ *  what saves now. The hint names the button beside it instead — the chat composer's rule for its own placeholder
+ *  (render.ts composerRestingPlaceholder drops the key chart on a coarse pointer), and decideInEditor's for a tap. */
+export const COMPOSER_HINT_TOUCH = "Enter adds a line; tap Save when done";
+/** The hint under the box, in the device's words: the platform's chord with a keyboard, COMPOSER_HINT_TOUCH on a coarse
+ *  pointer. `touch` defaults to the device's answer (isCoarsePointer), read at each call — the hint is built per render,
+ *  and the primary pointer can change (a tablet docks to a keyboard and trackpad), as decideInEditor reads it too; a
+ *  test passes it. */
+export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): string {
+  return touch ? COMPOSER_HINT_TOUCH : saveChord(mac) + " saves; Enter adds a line";
+}
+/** Size the box to its content: height auto, then the scroll height — capped at COMPOSER_MAX_ROWS rows of the box's
+ *  computed line-height plus its padding (rowCap), past which the box scrolls — plus the border (box-sizing: border-box).
+ *  The sheet's min-height floors it at COMPOSER_ROWS. The cap is here and not a max-height in the sheet because the
+ *  person's resize drag and this function write the same inline height: a sheet clamp capped the drag too, so a drag at
+ *  the cap could not make the box taller yet read as a drag (Panel.autosize), and the box froze at the cap for the rest
+ *  of the comment (the 2026-09-07 review). Returns the inline height as the box holds it after the write — read back,
+ *  not the string written: Chromium serializes a written 199.82399999999998px as 199.824px, and Panel.autosize tells a
+ *  drag from this function's own last write by comparing the inline height to this return — or null when the box has no
+ *  layout to measure (hidden, or a document with no renderer), in which case the inline height it had is put back.
+ *
+ *  The measurement leaves the page's scroll where it found it. `height: auto` collapses a grown box to its rows for the
+ *  read, and the layout that read forces is up to nine rows shorter: a scrolled ancestor near its bottom — the panel's
+ *  aside, which is short on the phone and in a short pane — is clamped in it, and putting the height back does not put
+ *  the scroll back (with cards below the box the browser's anchoring over-corrects the other way instead). Every keystroke
+ *  in a grown box jumped the panel toward its top, the Save row and the cards the person had scrolled to leaving the
+ *  viewport. So the scrolled ancestors' positions are read first and written back last, on both paths. */
+export function autosizeComposer(ta: HTMLTextAreaElement): string | null {
   const prev = ta.style.height;
+  const held = scrolledAncestors(ta);
   ta.style.height = "auto";
   const sh = ta.scrollHeight;
-  if (!(sh > 0)) { ta.style.height = prev; return null; }
+  if (!(sh > 0)) { ta.style.height = prev; restoreScroll(held); return null; }
   const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
-  const h = sh + border + "px";
-  ta.style.height = h;
-  return h;
+  ta.style.height = Math.min(sh, rowCap(ta)) + border + "px";
+  restoreScroll(held);
+  return ta.style.height;
+}
+/** The scroll height of a box at the cap: COMPOSER_MAX_ROWS rows of its computed line-height plus its vertical padding
+ *  (scrollHeight counts the padding, not the border). Infinity — no cap — where the row height cannot be read: a document
+ *  with no computed style (the panel tests' stand-in), or a box no sheet reaches, which has no floor either. */
+function rowCap(ta: HTMLTextAreaElement): number {
+  const win = typeof window !== "undefined" ? window : null;
+  if (!win || typeof win.getComputedStyle !== "function") return Infinity;
+  const cs = win.getComputedStyle(ta);
+  const lh = parseFloat(cs.lineHeight);
+  if (!(lh > 0)) return Infinity;
+  return COMPOSER_MAX_ROWS * lh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+}
+/** The ancestors scrolled down from their top, with how far: the only ones a shorter layout can clamp. */
+function scrolledAncestors(el: Element): Array<[Element, number]> {
+  const out: Array<[Element, number]> = [];
+  for (let p = el.parentElement; p; p = p.parentElement) if (p.scrollTop > 0) out.push([p, p.scrollTop]);
+  return out;
+}
+function restoreScroll(held: Array<[Element, number]>): void {
+  for (const [p, top] of held) if (p.scrollTop !== top) p.scrollTop = top;
 }
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
@@ -665,6 +710,35 @@ function ensureListener(): void {
   });
   window.addEventListener("romp:wsdown", () => { if (live) live.failAll("the connection dropped; try again once it returns"); });
 }
+/** The save chord, claimed at the WINDOW in the capture phase while the live panel's box is the key's target: the first
+ *  listener a keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts
+ *  runs every bound chord from a capture listener on this pane's document, wired when the pane loaded (so ahead of
+ *  anything the panel hangs on the document), and a chord with a real modifier dispatches while typing (keybindings.ts
+ *  dispatchable). Ctrl+Enter and Cmd+Enter are bindable there and conflict with no shell command, so a shell command the
+ *  person bound to one stopped the event before boxKey and ran instead: nothing saved, the hint under the box false. The
+ *  chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind that): the claim stops the event
+ *  short of every other listener and hands it to boxKey, which saves. Nothing else is claimed: an Escape, a plain Enter,
+ *  a composing IME's Enter and a key anywhere but the box pass untouched.
+ *
+ *  ONE listener for the module, added when it loads and keyed on `live` — not one per panel, added when the panel is
+ *  built (the 2026-09-07 review). The chat pane runs its history keys, chat.navBack and chat.navForward, from a
+ *  window-capture listener of its own (render.ts, added when that module loads, reading the same overrides store as the
+ *  shell's dispatcher), and a rebind of either to Ctrl+Enter or Meta+Enter reached it: listeners on one target in one
+ *  phase run in the order they were added, and stopPropagation stops none of them, so a claim added when the panel was
+ *  built ran after the chat's listener had navigated — the comment saved and the session switched under the viewer.
+ *  Only an earlier listener can stop a same-target one, and only with stopImmediatePropagation. This module is a static
+ *  dependency of render.ts (file-view.ts imports fileCommentsAction from here; render.ts imports panelMark), so its body
+ *  runs before render.ts's and this listener is added before the chat's; the feed's window listeners leave every Ctrl and
+ *  Meta chord alone, and the shell's dispatcher sits on the document, behind the window in the capture phase whatever the
+ *  order. A panel adds and removes nothing: dispose clears `live`, and a chord in what was its box passes on as before.
+ *  The guard is for an import with no window at all (a node test of the pure helpers), where there is no keyboard. */
+function claimSaveChord(ev: KeyboardEvent): void {
+  const p = live;
+  if (!p || ev.target !== p.input || composerKeyAction(ev) !== "save") return;
+  ev.stopImmediatePropagation();
+  p.boxKey(ev);
+}
+if (typeof window !== "undefined") window.addEventListener("keydown", claimSaveChord, true);
 
 // The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
 // and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
@@ -829,20 +903,25 @@ class Panel {
     ev.preventDefault(); ev.stopPropagation();
     this.closeComposer();
   };
+  /** A key in the box. A plain Enter is the browser's own newline; the chord saves (composerKeyAction); Escape cancels.
+   *  An Escape under a composing IME is the IME's (composerKeyAction: null, and its default cancels the composition), but
+   *  it is still not the viewer's: the document-level Escape (file-view.ts onKey) reads no isComposing and closes the whole
+   *  viewer — the panel and the typed comment with it — or peels edit mode. So EVERY Escape stops at the box. */
+  boxKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") e.stopPropagation();
+    const act = composerKeyAction(e);
+    if (act === "save") { e.preventDefault(); void this.saveComposer(); }
+    else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
+  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
     live = this;
     this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
-    this.input.rows = NOTE_ROWS;
+    this.input.rows = COMPOSER_ROWS;
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
-    this.input.addEventListener("keydown", (e) => {
-      // a plain Enter is the browser's own newline in the box; the chord saves (composerKeyAction); Escape cancels
-      const act = composerKeyAction(e);
-      if (act === "save") { e.preventDefault(); void this.saveComposer(); }
-      else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
-    });
+    this.input.addEventListener("keydown", this.boxKey);   // Escape here; the save chord arrives through the window's claim (claimSaveChord); a plain Enter is left to the textarea
     this.input.addEventListener("input", () => this.autosize());
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
@@ -1191,7 +1270,7 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
-    if (live === this) live = null;
+    if (live === this) live = null;   // …and the window's save-chord claim (claimSaveChord reads `live`) is no longer this box's
   }
 
   // ── the session color map: one GET /sessions per panel open, authorId → name + colour ──────────
@@ -1358,7 +1437,7 @@ class Panel {
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
     // a write ABOUT a figure — `comment` with a target, `retarget` — is fenced on the figure's bytes too: the hash the
     // status holds for it (figureFenceHash), which the host compares with the bytes it stamps and refuses `figure-changed`
-    // when they differ. Without it a figure regenerated between the drag and Enter was stamped with the NEW bytes' hash,
+    // when they differ. Without it a figure regenerated between the drag and the save was stamped with the NEW bytes' hash,
     // which every reply then equalled, so a rectangle drawn on the old picture read as current on the new one — the one
     // write the hash exists to catch (the Slice 3 review, 2026-09-06; the host's fence stood unarmed until the panel sent this)
     const fh = FIGURE_VERBS.has(verb) && args.target ? figureFenceHash(s, args.target as Target) : null;
@@ -1773,7 +1852,7 @@ class Panel {
     const held = this.composerBox.contains(document.activeElement);   // the keyboard is in the box (the textarea, Save, Cancel)
     this.composer = null;
     this.input.value = "";
-    this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at NOTE_ROWS, autosized again
+    this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at COMPOSER_ROWS, autosized again
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderFrom(was);                              // …which puts the box back in the panel's slot (placeComposer); after a reply, the cards too
@@ -2807,12 +2886,19 @@ class Panel {
     }
     return head;
   }
-  /** The box follows its content (autosizeNote) on every input — unless the person dragged the handle, when their
-   *  height stands until the composer closes; a box with no layout to measure keeps the height it had. */
+  /** The box follows its content (autosizeComposer) on every input — unless the person dragged the handle, when their
+   *  height stands until the composer closes; a box with no layout to measure keeps the height it had. An inline
+   *  height that is not the one autosize last set was dragged there (the sheet's resize: vertical writes it, and
+   *  fires no input); sizedTo holds that write as the box serialized it, so the comparison is string to string of one
+   *  origin. Before the first keystroke autosize has set none — the box opens with no inline height, and
+   *  closeComposer clears the height with sizedTo — so an inline height while sizedTo is null is a drag too: the
+   *  first guard is that case, which the second cannot see (the 2026-09-07 review: a box dragged taller before a
+   *  word was typed snapped back to its content on the first keystroke). */
   private autosize(): void {
     const ta = this.input;
-    if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;
-    const h = autosizeNote(ta);
+    if (this.sizedTo === null && ta.style.height) return;                    // dragged before the first keystroke
+    if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;   // dragged since
+    const h = autosizeComposer(ta);
     if (h !== null) this.sizedTo = h;
   }
   private renderComposer(): void {

@@ -1,7 +1,8 @@
 // The Comments panel's composer as a multi-line box (plans/file-review.md, "The composer follow-on (2026-09-07)"):
 // after walking the loop the user found the one-line box too small. Every composer the panel offers — a passage, the
 // whole file, a region, a reply on a card, a comment bound to a change — is one textarea: three rows to start, grown
-// to its content up to twelve rows (then it scrolls), draggable taller. Enter adds a line; Cmd+Enter or Ctrl+Enter, or
+// to its content up to twelve rows (then it scrolls), draggable taller. Enter, plain or with Shift, adds a line (the
+// textarea's own newline; never a save, even for someone used to Enter sending in a chat composer); Cmd+Enter or Ctrl+Enter, or
 // the Save button, saves; Escape cancels as before. The draft (text, caret, chosen height) survives the poll's
 // re-render and a refusal, saving trims the blank ends and keeps the breaks inside, a blank comment saves nothing, and
 // a card renders a multi-line body with its breaks. Driven through the same DOM stand-in the panel tests use (there is
@@ -14,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
-import type { Status, StoreComment } from "./file-comments-model";
+import type { LogEntry, Status, StoreComment } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -91,7 +92,7 @@ class E extends N {
   listeners = new Map<string, Array<(ev: Ev) => void>>();
   hidden = false; title = ""; type = ""; disabled = false; placeholder = ""; value = ""; checked = false; offsetWidth = 0; readOnly = false;
   rows = 0;
-  // the layout a test gives a box: what the browser would measure at height: auto (autosizeNote reads these)
+  // the layout a test gives a box: what the browser would measure at height: auto (autosizeComposer reads these)
   scrollHeight = 0; offsetHeight = 0; clientHeight = 0;
   selectionStart = 0; selectionEnd = 0;
   style: Record<string, string> = {};
@@ -320,9 +321,17 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
 
 // ── the key policy, pure ───────────────────────────────────────────────────────────────────────────
 
-test("composerKeyAction: Enter is the browser's newline, Enter with Cmd or Ctrl saves, Escape cancels, a composing IME keeps its keys", async () => {
-  const { composerKeyAction, saveChord, composerHint, NOTE_ROWS, NOTE_MAX_ROWS } = await import("./file-comments");
+test("composerKeyAction: Enter, plain or with Shift, is the browser's newline; Enter with Cmd or Ctrl saves; Escape cancels; a composing IME keeps its keys", async () => {
+  const { composerKeyAction, saveChord, composerHint, COMPOSER_ROWS, COMPOSER_MAX_ROWS } = await import("./file-comments");
   assert.equal(composerKeyAction({ key: "Enter" }), null, "a plain Enter is not ours: the textarea inserts the newline");
+  // The browser's KeyboardEvent carries shiftKey; the function's parameter type names only the modifiers it reads, so
+  // the key arrives as the event would (a typed value, not a literal) — and the point is that shiftKey is NOT read: the
+  // chat composer sends on Enter and breaks a line on Shift+Enter, and a habit formed there must not save a half-written
+  // comment here (the docstring's "a plain or Shift+Enter is the browser's own newline").
+  const shiftEnter: Pick<KeyboardEvent, "key" | "shiftKey"> = { key: "Enter", shiftKey: true };
+  assert.equal(composerKeyAction(shiftEnter), null, "Shift+Enter is the textarea's newline too, never a save");
+  const shiftEscape: Pick<KeyboardEvent, "key" | "shiftKey"> = { key: "Escape", shiftKey: true };
+  assert.equal(composerKeyAction(shiftEscape), "cancel", "Shift changes nothing about Escape");
   assert.equal(composerKeyAction({ key: "Enter", metaKey: true }), "save", "Cmd+Enter");
   assert.equal(composerKeyAction({ key: "Enter", ctrlKey: true }), "save", "Ctrl+Enter");
   assert.equal(composerKeyAction({ key: "Enter", ctrlKey: true, metaKey: true }), "save");
@@ -334,20 +343,44 @@ test("composerKeyAction: Enter is the browser's newline, Enter with Cmd or Ctrl 
   assert.equal(saveChord(true), "Cmd+Enter"); assert.equal(saveChord(false), "Ctrl+Enter");
   assert.equal(composerHint(true), "Cmd+Enter saves; Enter adds a line");
   assert.equal(composerHint(false), "Ctrl+Enter saves; Enter adds a line");
-  assert.equal(NOTE_ROWS, 3); assert.equal(NOTE_MAX_ROWS, 12);
+  assert.equal(COMPOSER_ROWS, 3); assert.equal(COMPOSER_MAX_ROWS, 12);
 });
 
-test("autosizeNote: height auto, then the scroll height plus the border; a box with no layout keeps the height it had", async () => {
-  const { autosizeNote } = await import("./file-comments");
+test("autosizeComposer: height auto, then the scroll height plus the border; a box with no layout keeps the height it had", async () => {
+  const { autosizeComposer } = await import("./file-comments");
   const fake = { style: { height: "" } as Record<string, string>, scrollHeight: 100, offsetHeight: 102, clientHeight: 100 };
   const ta = fake as unknown as HTMLTextAreaElement;
-  assert.equal(autosizeNote(ta), "102px");
+  assert.equal(autosizeComposer(ta), "102px");
   assert.equal(fake.style.height, "102px", "border-box: the two 1px borders ride on the scroll height");
   fake.scrollHeight = 40;
-  assert.equal(autosizeNote(ta), "42px", "…and it shrinks when lines go (the sheet's min-height floors it at three rows)");
+  assert.equal(autosizeComposer(ta), "42px", "…and it shrinks when lines go (the sheet's min-height floors it at three rows)");
   const none = { style: { height: "77px" } as Record<string, string>, scrollHeight: 0, offsetHeight: 0, clientHeight: 0 } as unknown as HTMLTextAreaElement;
-  assert.equal(autosizeNote(none), null, "nothing to measure (hidden, or a document with no renderer)");
+  assert.equal(autosizeComposer(none), null, "nothing to measure (hidden, or a document with no renderer)");
   assert.equal(none.style.height, "77px", "the inline height it had is put back, never left at auto");
+});
+
+test("autosizeComposer caps the content at COMPOSER_MAX_ROWS rows of the box's computed line-height plus its padding, and returns the inline height as the box holds it, not the string it wrote", async () => {
+  const { autosizeComposer, COMPOSER_MAX_ROWS } = await import("./file-comments");
+  // the stand-in's window has no getComputedStyle; this test lends it one that answers from the box's own `cs`, as a
+  // renderer would from the sheet (line-height 1.4 at the 0.86em of a 13px body: 15.652px; 5px of padding each side)
+  const cs = { lineHeight: "15.652px", paddingTop: "5px", paddingBottom: "5px" };
+  win.getComputedStyle = (el: any) => el.cs;
+  try {
+    // Chromium's serialization: a written 199.82399999999998px reads back as 199.824px — the fake's style rounds the same
+    // way, so the return must come from the read, or Panel.autosize's comparison of the two would call every keystroke a drag
+    const style = { _h: "", get height() { return this._h; }, set height(v: string) { this._h = /px$/.test(v) ? Math.round(parseFloat(v) * 1000) / 1000 + "px" : v; } };
+    const tall = { style, cs, scrollHeight: 325, offsetHeight: 327, clientHeight: 325 } as unknown as HTMLTextAreaElement;
+    const cap = COMPOSER_MAX_ROWS * 15.652 + 10;
+    assert.equal(cap + 2 + "px", "199.82399999999998px", "the arithmetic the write produces");
+    assert.equal(autosizeComposer(tall), "199.824px", "twenty lines: the cap, plus the border, as the box serialized it");
+    assert.equal(tall.style.height, "199.824px");
+    // under the cap the content height stands, as before
+    const short = { style: { height: "" }, cs, scrollHeight: 100, offsetHeight: 102, clientHeight: 100 } as unknown as HTMLTextAreaElement;
+    assert.equal(autosizeComposer(short), "102px", "under the cap: the content's height");
+    // a box no sheet reaches has no row height to count: no cap (and no floor either)
+    const bare = { style: { height: "" }, cs: { lineHeight: "normal", paddingTop: "0px", paddingBottom: "0px" }, scrollHeight: 325, offsetHeight: 327, clientHeight: 325 } as unknown as HTMLTextAreaElement;
+    assert.equal(autosizeComposer(bare), "327px", "no computed row height: the content's height, uncapped");
+  } finally { delete win.getComputedStyle; }
 });
 
 // ── the box ────────────────────────────────────────────────────────────────────────────────────────
@@ -384,7 +417,7 @@ test("every composer is one textarea of three rows with the reference row above 
   h.dispose();
 });
 
-test("Enter adds a line and saves nothing; Ctrl+Enter or Cmd+Enter saves the text with its line breaks, the blank ends trimmed", async () => {
+test("Enter, plain or with Shift, adds a line and saves nothing; Ctrl+Enter or Cmd+Enter saves the text with its line breaks, the blank ends trimmed", async () => {
   const h = await harness();
   await h.open();
   h.click('[data-act="fcfile"]');
@@ -395,6 +428,12 @@ test("Enter adds a line and saves nothing; Ctrl+Enter or Cmd+Enter saves the tex
   assert.equal(plain.defaultPrevented, false, "the browser's default — a newline in the box — is left to it");
   assert.equal(h.posted.length, before, "nothing was written");
   assert.equal(h.q(".fc-composer")!.hidden, false, "the composer stays open");
+  // Shift+Enter, the chat composer's soft break, is the same newline here: the listener leaves it alone and nothing is saved
+  const soft = h.key({ key: "Enter", shiftKey: true });
+  assert.equal(soft.defaultPrevented, false, "Shift+Enter is left to the textarea as well");
+  assert.equal(h.posted.length, before, "…and writes nothing");
+  assert.equal(h.q(".fc-composer")!.hidden, false);
+  assert.equal(box.value, "First line.", "the draft is untouched (the stand-in inserts no newline; the browser leg sees the real one)");
   box.value = "First line.\nSecond line.  \n\n";
   const ev = h.chord();
   assert.equal(ev.defaultPrevented, true, "the chord is ours: no newline goes in with the save");
@@ -518,7 +557,7 @@ test("the draft survives the poll's re-render and a refusal: the same node, its 
   assert.deepEqual([box.selectionStart, box.selectionEnd], [5, 5], "the caret");
   assert.equal(box.style.height, "65px", "the height");
   assert.equal(doc.activeElement, box, "the keyboard");
-  // the host refuses the save: the note is never discarded
+  // the host refuses the save: the comment is never discarded
   h.chord(); await tick();
   assert.equal(h.last().verb, "comment");
   assert.equal(h.last().args.note, "Line one.\nLine two.");
@@ -564,10 +603,14 @@ test("a refused mapping offers no Save and no hint — Switch to Raw and Cancel 
 
 test("a card renders a two-line body with its break; the collapsed preview and the Log's list fold it to one line", async () => {
   const two: StoreComment = { ...passage, id: T0 + "-119", body: "Which cache?\nSay which." };
+  // the same comment after a send: the Log's entry carries the body as it went, break included
+  const log: LogEntry[] = [{ ts: "2026-09-06T08:05:00.000Z", kind: "send", author: "you", sid: SID, sessionName: "api", accepted: 0, rejected: 0, queued: false, watermark: T0,
+    comments: [{ id: two.id, desc: 'on "shipping the cache in v1.2"', body: two.body }] }];
   const h = await harness();
   const over: Partial<Status> = {
     store: { v: 3, path: "docs/report.md", suggestions: [], comments: [two] },
     unsent: { comments: [two.id], replies: [], accepted: 0, rejected: 0, watermark: null },
+    log,
   };
   await h.open(over);
   const card = h.q('.fc-card[data-id="' + two.id + '"]')!;
@@ -575,24 +618,37 @@ test("a card renders a two-line body with its break; the collapsed preview and t
   h.click('.fc-card[data-id="' + two.id + '"] .fc-card-head');
   const body = h.q('.fc-card[data-id="' + two.id + '"] .fc-body')!;
   assert.equal(body.textContent, "Which cache?\nSay which.", "the open card holds the body verbatim, break included");
-  // the sheets keep the break on screen: pre-wrap on .fc-body, in both pages' sheets
+  // the Log's list: one click down, the send's item holds the body verbatim in one span — the break is in the text,
+  // not split into lines — and the sheet's nowrap is what folds the item to one line (the desc, then the first line)
+  h.click('[data-act="fclog"]');
+  h.click('[data-act="fclogrow"]');
+  const items = h.qa(".fc-log-detail .fc-list li");
+  assert.equal(items.length, 1, "the one comment the send carried");
+  assert.equal(items[0].textContent, 'on "shipping the cache in v1.2": Which cache?\nSay which.', "the desc, then the body as it went, break included");
+  assert.deepEqual(items[0].childNodes.map((c) => (c as E).tagName + ":" + (c as E).className), ["SPAN:fc-list-desc", "SPAN:"], "two spans, no line split: the fold is the sheet's");
+  assert.equal(items[0].childNodes[1].textContent, "Which cache?\nSay which.", "the body span keeps the break");
+  // the sheets: pre-wrap on .fc-body keeps a card's break on screen; nowrap on .fc-list li folds the Log's item — both pages' sheets
   for (const [name, css] of [["styles.css", CHAT_CSS], ["feed.css", FEED_CSS]] as const) {
     assert.match(css, /\n\.fc-body \{ font-size: 0\.86em; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; \}\n/, name + ": .fc-body wraps and keeps its breaks");
+    assert.match(css, /\n\.fc-list li \{ margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}\n/, name + ": .fc-list li folds to one line with an ellipsis");
   }
   h.dispose();
 });
 
 // ── pinned at source: the box, the chord, the delegate action, the sheets, the docs ───────────────
 
-test("source: the box is a textarea of NOTE_ROWS rows; keydown goes through composerKeyAction; input autosizes; Save is the delegate's fcsave; the hint rides the platform", () => {
+test("source: the box is a textarea of COMPOSER_ROWS rows; keydown goes through composerKeyAction; input autosizes; Save is the delegate's fcsave; the hint rides the platform", () => {
   assert.match(SRC, /input = el\("textarea", "fc-input"\) as HTMLTextAreaElement;/);
   assert.doesNotMatch(SRC, /el\("input", "fc-input"\)/, "the one-line input is gone");
   assert.doesNotMatch(SRC, /this\.input\.type = "text";/);
-  assert.match(SRC, /this\.input\.rows = NOTE_ROWS;\n\s*this\.input\.placeholder = "Your comment";/);
+  assert.match(SRC, /this\.input\.rows = COMPOSER_ROWS;\n\s*this\.input\.placeholder = "Your comment";/);
   assert.match(SRC, /const act = composerKeyAction\(e\);\n\s*if \(act === "save"\) \{ e\.preventDefault\(\); void this\.saveComposer\(\); \}\n\s*else if \(act === "cancel"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/,
     "the chord saves, Escape cancels and stops there, a plain Enter is left to the textarea");
   assert.match(SRC, /this\.input\.addEventListener\("input", \(\) => this\.autosize\(\)\);/);
   assert.match(SRC, /if \(this\.sizedTo !== null && ta\.style\.height !== this\.sizedTo\) return;/, "a dragged height stands");
+  assert.match(SRC, /ta\.style\.height = Math\.min\(sh, rowCap\(ta\)\) \+ border \+ "px";\n\s*restoreScroll\(held\);\n\s*return ta\.style\.height;/,
+    "the cap is the autosize's own (rowCap), and the return is the inline height read back — the string the box holds, which sizedTo is compared to");
+  assert.match(SRC, /return COMPOSER_MAX_ROWS \* lh \+ \(parseFloat\(cs\.paddingTop\) \|\| 0\) \+ \(parseFloat\(cs\.paddingBottom\) \|\| 0\);/, "COMPOSER_MAX_ROWS rows of the computed line-height plus the padding");
   assert.match(SRC, /this\.input\.style\.height = ""; this\.sizedTo = null;/, "closeComposer resets the height with the words");
   assert.match(SRC, /fcsave: \(\) => \{ void this\.saveComposer\(\); \},/, "Save is a delegated action on the panel's one root (click-safe, flash())");
   assert.match(SRC, /const hint = el\("span", "fc-note fc-hint", composerHint\(IS_MAC\)\);\n\s*acts\.replaceChildren\(\.\.\.\(noSave \? \[\] : \[hint, save\]\), btn\("Cancel", "fccancel"\)\);/);
@@ -604,16 +660,16 @@ test("source: the box is a textarea of NOTE_ROWS rows; keydown goes through comp
   assert.doesNotMatch(SRC, /Enter saves, Esc cancels/, "the old placeholder is gone");
 });
 
-test("the sheets: the box rule says textarea — resize, a floor of NOTE_ROWS and a cap of NOTE_MAX_ROWS rows — and the hint rule exists, byte-equal in both", async () => {
-  const { NOTE_ROWS, NOTE_MAX_ROWS } = await import("./file-comments");
+test("the sheets: the box rule says textarea — resize, a floor of COMPOSER_ROWS rows and NO max-height (the cap is autosizeComposer's, so a drag may pass it) — and the hint rule exists, byte-equal in both", async () => {
+  const { COMPOSER_ROWS } = await import("./file-comments");
   const rule = (css: string, head: string): string => { const a = css.indexOf("\n" + head); assert.ok(a >= 0, head); return css.slice(a + 1, css.indexOf("}", a) + 1); };
   const input = rule(CHAT_CSS, ".fc-input {");
   assert.equal(input, rule(FEED_CSS, ".fc-input {"), ".fc-input mirrors byte for byte");
   assert.ok(input.includes("resize: vertical;"), "draggable taller or shorter");
   assert.ok(input.includes("overflow-y: auto;"), "scrolls past the cap");
   assert.ok(input.includes("line-height: 1.4;"), "one row is 1.4em, which the floor and the cap count in");
-  assert.ok(input.includes("min-height: calc(" + NOTE_ROWS + " * 1.4em + 12px);"), "the floor is NOTE_ROWS rows plus padding and border");
-  assert.ok(input.includes("max-height: calc(" + NOTE_MAX_ROWS + " * 1.4em + 12px);"), "the cap is NOTE_MAX_ROWS rows plus padding and border");
+  assert.ok(input.includes("min-height: calc(" + COMPOSER_ROWS + " * 1.4em + 12px);"), "the floor is COMPOSER_ROWS rows plus padding and border");
+  assert.ok(!input.includes("max-height"), "no max-height: the resize drag and autosizeComposer write the same inline height, so a sheet clamp capped the drag too and a drag at the cap froze the box there (the review consolidation)");
   assert.ok(input.includes("padding: 5px 8px;") && input.includes("border: 1px solid var(--box-border);") && input.includes("box-sizing: border-box;"), "5+5 padding and 1+1 border are the 12px");
   assert.ok(input.includes("width: 100%;"), "full panel width");
   assert.equal(rule(CHAT_CSS, ".fc-hint {"), rule(FEED_CSS, ".fc-hint {"));
