@@ -598,11 +598,19 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
   assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
   // round 3: the ends go back only when the paint cost the selection one (the browser's own record is exact where the
-  // offsets are not), never when the two offsets coincide (a figure alone), and a start at a boundary lands in the later node
+  // offsets are not), never when the two offsets coincide (a figure alone)
   assert.match(VIEW, /sel\.toString\(\) === kept\.text\) return;/, "a selection the paint left standing is not touched");
-  assert.match(VIEW, /if \(kept\.a === kept\.f\) return;/, "no text between the ends: no restore");
-  assert.match(VIEW, /textPoint\(body, kept\.a, kept\.a < kept\.f\); const f = textPoint\(body, kept\.f, kept\.f < kept\.a\)/, "the earlier end is the start");
-  assert.match(VIEW, /start \? seen \+ t\.data\.length > n : seen \+ t\.data\.length >= n/, "strict for the start, the boundary's later node");
+  assert.match(VIEW, /if \(kept\.a\.at === kept\.f\.at\) return;/, "no text between the ends: no restore");
+  // round 4: each end is kept with its node, offset, text offset and the side of a text-node boundary it sat on; an end whose
+  // node came through the paint at the same text offset goes back to it, and only an end whose node is gone is mapped from
+  // its offset, the side of a boundary chosen by the side kept (a point inside a text node has none: its role decides)
+  assert.match(VIEW, /a: keepPoint\(body, sel\.anchorNode, sel\.anchorOffset\), f: keepPoint\(body, sel\.focusNode, sel\.focusOffset\)/, "both ends kept before the hooks run");
+  assert.match(VIEW, /side: boundarySide\(node, offset\)/, "the side bit is captured with the point");
+  assert.match(VIEW, /return offset >= \(node as Text\)\.data\.length \? "end" : offset === 0 \? "start" : null;/, "a text node's end, start, or inside");
+  assert.match(VIEW, /const a = pointBack\(body, kept\.a, kept\.a\.at < kept\.f\.at\); const f = pointBack\(body, kept\.f, kept\.f\.at < kept\.a\.at\)/, "anchor and focus put back through one path");
+  assert.match(VIEW, /k\.node\.isConnected && root\.contains\(k\.node\) && k\.offset <= nodeLength\(k\.node\) && textOffset\(root, k\.node, k\.offset\) === k\.at\) return \[k\.node, k\.offset\];/, "a node that stands at the same text offset is reused as it was");
+  assert.match(VIEW, /return textPoint\(root, k\.at, k\.side === null \? earlier : k\.side === "start"\);/, "a gone node: the offset mapped, the boundary side from the side kept");
+  assert.match(VIEW, /start \? seen \+ t\.data\.length > n : seen \+ t\.data\.length >= n/, "strict for the start side, the boundary's later node");
 });
 
 test("the body's width: a ResizeObserver on the body fires onRendered once per animation frame when the width changed; not for its first report, a same-width report, a width back where it was, or a media body; it leaves with the viewer", async (t) => {
@@ -898,7 +906,7 @@ function bundleViewer(): string {
   if (viewerBundle) return viewerBundle;
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'export { initFileView, openFileView, closeFileView, registerFileViewAction } from "./file-view"; export { paintRendered } from "./anchor-map";', resolveDir: UI, loader: "ts", sourcefile: "text-size-leg.ts" },
+    stdin: { contents: 'export { initFileView, openFileView, closeFileView, registerFileViewAction } from "./file-view"; export { paintRendered, paintRaw } from "./anchor-map";', resolveDir: UI, loader: "ts", sourcefile: "text-size-leg.ts" },
     bundle: true, write: false, format: "iife", globalName: "FV", platform: "browser", target: "es2020",
     nodePaths: [path.resolve(process.cwd(), "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -911,6 +919,9 @@ const ORIGIN = "http://notes-api.test";   // a synthetic origin: the viewer's lo
 // a short markdown file for the Raw view's rows: an empty row (no text node) between a heading and a two-line snippet
 const SNIPPET = ROOT + "/docs/snippet.md";
 const SNIPPET_MD = "# Notes\n\ndef main():\n    return 1\n\nDone.\n";
+// a short markdown file for the Rendered view's hard break: a paragraph of two lines around a <br> (two trailing spaces)
+const BREAK = ROOT + "/docs/break.md";
+const BREAK_MD = "# Notes\n\nfirst line  \nsecond line of prose here\n\nDone.\n";
 const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n\nProse ${"lorem ipsum ".repeat(60)}\n\n![plot](${SVG(1600)})\n\n<div align="center"><img src="${SVG(1600)}" width="1600" height="200"></div>\n\n\`\`\`\nconst x = 1;\nconst y = 2;\n\`\`\`\n\n\`\`\`\n${"const z = 1; ".repeat(20)}\n\`\`\`\n\n| run | p95 |\n| --- | --- |\n| a | 120 |\n`;
 /** The page a viewer surface is: the chat modal (styles.css), the feed modal (feed.css) or the Files pane (styles.css +
  *  files-pane.css under body.fileview-pane), the bundle, a fetch that serves the README with the kernel's headers, and two
@@ -922,7 +933,7 @@ const README = `<img src="${SVG(1600)}" width="1600" height="200">\n\n# Report\n
  *  the selection stands in. */
 const REAL_PAGE = (mode: "chat" | "feed" | "pane") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>${mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + PANE_CSS : web("styles.css")}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${JSON.stringify({ [REPORT]: README, [SNIPPET]: SNIPPET_MD })};
+window.__docs = ${JSON.stringify({ [REPORT]: README, [SNIPPET]: SNIPPET_MD, [BREAK]: BREAK_MD })};
 window.fetch = async function (url) {
   url = String(url);
   if (url.indexOf("/version") === 0) return new Response(JSON.stringify({ fileEditing: true }), { headers: { "Content-Type": "application/json" } });
@@ -942,32 +953,42 @@ FV.registerFileViewAction({ id: "gh", mount: function () {
   var b = document.createElement("button"); b.className = "fileview-btn"; b.type = "button"; b.textContent = "GitHub"; b.disabled = true;
   var why = document.createElement("span"); why.className = "fileview-gh-why"; why.textContent = "not committed yet";
   s.appendChild(b); s.appendChild(why); return s; } });
-window.__hl = location.search.indexOf("hl=1") >= 0; window.__marks = 0;
+window.__hl = location.search.indexOf("hl=1") >= 0; window.__marks = 0; window.__afterMarks = null;
 FV.registerFileViewAction({ id: "marks", mount: function (ctx) {
   window.__repaintMarks = function () {
-    var body = ctx.body(); var src = ctx.text(); var root = body.querySelector(".fileview-md");
+    var body = ctx.body(); var src = ctx.text(); var rendered = ctx.mode() === "rendered";
+    var root = body.querySelector(rendered ? ".fileview-md" : "code.hljs");
     if (src === null || !root) return 0;
     Array.prototype.slice.call(body.querySelectorAll(".fc-hl")).forEach(function (n) { var p = n.parentNode; while (n.firstChild) p.insertBefore(n.firstChild, n); p.removeChild(n); p.normalize(); });
-    var at = src.indexOf("lorem ipsum");
-    var out = FV.paintRendered(root, src, { start: at, end: at + 60 }, "fc-hl", { act: "fcopen", id: "c1" });
+    var spec = window.__hlSpec || { find: "lorem ipsum", len: 60 };   // the passage: the README's first paragraph unless the test chose one
+    var at = src.indexOf(spec.find);
+    if (at < 0) return 0;
+    var range = { start: at, end: at + spec.len };
+    var out = rendered ? FV.paintRendered(root, src, range, "fc-hl", { act: "fcopen", id: "c1" }) : FV.paintRaw(root, src, range, "fc-hl", { act: "fcopen", id: "c1" });
     return out ? out.length : 0;
   };
-  if (window.__hl) ctx.onRendered(function () { window.__marks = window.__repaintMarks(); });
+  // __afterMarks: the browser's own record of the selection once the repaint has moved the mark's text node, before the
+  // viewer puts the ends back (the hooks run inside fireRenderedKeepingSelection, the restore after them)
+  if (window.__hl) ctx.onRendered(function () { window.__marks = window.__repaintMarks(); var s = getSelection(); window.__afterMarks = s ? s.toString() : null; });
   return null; } });
 </script></body></html>`;
 type Real = { page: any; errors: string[] };
+type HlSpec = { find: string; len: number };
 /** Opens the README rendered, or `doc` (in the Raw view when `raw`: the Rendered/Raw key is written first, the way a
- *  person's earlier choice would stand). */
-async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: number, size?: number, hl = false, doc?: { path: string; raw: boolean }): Promise<Real> {
+ *  person's earlier choice would stand). `hl` paints a highlight through the marks action on every paint: over the
+ *  README's first paragraph when `true`, over the passage a spec names. */
+async function openReal(browser: any, mode: "chat" | "feed" | "pane", width: number, size?: number, hl: boolean | HlSpec = false, doc?: { path: string; raw: boolean }): Promise<Real> {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", (e: Error) => { errors.push(e.message); });
   await page.route((u: URL) => u.href.startsWith(ORIGIN), (route: any) => route.fulfill({ status: 200, contentType: "text/html", body: REAL_PAGE(mode) }));
   await page.goto(ORIGIN + (hl ? "/?hl=1" : "/"));
+  if (typeof hl === "object") await page.evaluate((spec: HlSpec) => { (window as any).__hlSpec = spec; }, hl);
   if (size !== undefined) await page.evaluate((s: number) => { localStorage.setItem("romp:fileviewTextSize", String(s)); }, size);
   if (doc?.raw) await page.evaluate(() => { localStorage.setItem("romp:fileviewFmt", JSON.stringify({ md: "raw" })); });
   await page.evaluate((p: string) => { (window as any).FV.openFileView(p, null); }, doc ? doc.path : REPORT);
   if (doc?.raw) await page.waitForFunction(() => !!document.querySelector(".fileview-body .fv-cl"), null, { timeout: 10000 });
+  else if (doc) await page.waitForFunction(() => !!document.querySelector(".fileview-md > p"), null, { timeout: 10000 });
   else await page.waitForFunction(() => !!document.querySelector(".fileview-md > pre"), null, { timeout: 10000 });
   return { page, errors };
 }
@@ -1315,6 +1336,134 @@ test("in a browser, the real module, the Raw view: a drag from a row's first col
       await page.evaluate(() => { (window as any).__disturb = null; });
       assert.deepEqual(errors, [], mode + ": no script error");
       await page.close();
+    }
+  });
+});
+
+test("in a browser, the real module: an end on a text-less line boundary keeps its side through a forced restore — a drag begun after a row's last glyph (Raw) or before a <br> (Rendered) into a highlight keeps its leading newline and its anchor line; a triple-clicked row (Raw) or line (Rendered) whose whole text is highlighted from column 0 keeps its trailing newline; plain prose, a collapsed caret and no selection are left as they are", async (t) => {
+  // round 4: the Raw view's rows carry no newline text and a <br> is none either, so the end of one line's text and the
+  // first column of the next share ONE offset. Round 3 chose the side by the end's role, and a forced restore (the other
+  // end inside a re-wrapped highlight) moved a START that sat after a row's last glyph to the next row's first character
+  // (the leading newline lost, the anchor a line down) and an END at a row's first column (a triple-click's) to the end of
+  // the row above (the trailing newline lost). Each end now keeps its own node and offset and goes back to them when the
+  // node came through the paint; only an end whose node is gone is mapped, and by the side it sat on.
+  await inBrowser(t, async (browser) => {
+    for (const mode of ["pane", "feed"] as const) {
+      const read = (page: any) => page.evaluate(() => {
+        const sel = getSelection()!; const a = sel.anchorNode; const f = sel.focusNode;
+        const rows = Array.from(document.querySelectorAll(".fileview-body .fv-cl"));
+        const rowOf = (n: Node | null) => rows.findIndex((r) => !!n && r.contains(n));
+        const kind = (n: Node | null) => (!n ? "none" : n.nodeType === 3 ? "text" : (n as Element).tagName.toLowerCase());
+        // the Rendered view's line: 1 at or before the <br>'s start, 2 after it, 0 outside its paragraph
+        const br = document.querySelector(".fileview-md br");
+        const lineOf = (n: Node | null, o: number) => { if (!br || !n || !br.parentNode!.contains(n)) return 0; const p = br.parentNode!; const r = document.createRange(); r.setStart(n, o); r.setEnd(n, o); return r.comparePoint(p, Array.prototype.indexOf.call(p.childNodes, br)) >= 0 ? 1 : 2; };
+        const mark = document.querySelector(".fileview-body .fc-hl");
+        return { text: sel.toString(), collapsed: sel.isCollapsed, ranges: sel.rangeCount,
+          anchorKind: kind(a), anchorOffset: sel.anchorOffset, anchorRow: rowOf(a), anchorLine: lineOf(a, sel.anchorOffset), anchorInMark: !!a && !!mark && mark.contains(a),
+          focusKind: kind(f), focusOffset: sel.focusOffset, focusRow: rowOf(f), focusLine: lineOf(f, sel.focusOffset), focusInMark: !!f && !!mark && mark.contains(f),
+          afterMarks: (window as any).__afterMarks as string | null, marks: document.querySelectorAll(".fileview-body .fc-hl").length, paints: (window as any).__paints as number };
+      });
+      type Shape = Awaited<ReturnType<typeof read>>;
+      const ends = (r: Shape) => [r.anchorKind, r.anchorOffset, r.anchorRow, r.anchorLine, r.focusKind, r.focusOffset, r.focusRow, r.focusLine];
+      /** A step and then a resize, each paint re-wrapping the highlight the selection ends in: the browser's own record
+       *  loses that end (__afterMarks, read inside the paint, differs), and the viewer's restore brings the selection
+       *  back to the same bytes with both ends exactly where they were. */
+      const forced = async (page: any, what: string, before: Shape) => {
+        for (const trigger of ["step", "resize"] as const) {
+          const paints0 = (await read(page)).paints;
+          if (trigger === "step") {
+            const up = await rectOf(page, SEL.up); const size0 = Number(await sizeOf(page));
+            await page.mouse.click(up.left + 6, up.top + 6);
+            assert.ok(Number(await sizeOf(page)) > size0, mode + ": " + what + ": the step happened");
+          } else {
+            const w = (await page.viewportSize()).width;
+            await page.setViewportSize({ width: w - 100, height: 900 });
+          }
+          await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 });
+          const r = await read(page);
+          assert.ok(r.marks >= 1, mode + ": " + what + ": the " + trigger + "'s paint re-wrapped the highlight");
+          assert.ok(typeof r.afterMarks === "string" && r.afterMarks !== before.text, mode + ": " + what + ": the " + trigger + "'s repaint cost the browser's selection an end (the restore was forced): " + JSON.stringify(r.afterMarks) + " vs " + JSON.stringify(before.text));
+          assert.equal(r.text, before.text, mode + ": " + what + " copies the same bytes after the " + trigger);
+          assert.deepEqual(ends(r), ends(before), mode + ": " + what + " keeps both ends exactly where they were after the " + trigger);
+        }
+      };
+      const rowRect = (page: any, i: number) => page.evaluate((i: number) => { const r = (document.querySelectorAll(".fileview-body .fv-cl")[i] as HTMLElement).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; }, i);
+      const markRect = (page: any) => rectOf(page, ".fileview-body .fc-hl");
+      const mid = (r: { top: number; bottom: number }) => (r.top + r.bottom) / 2;
+
+      // (1) Raw: a drag begun after the last glyph of "def main():" into the highlighted "    return 1" below
+      {
+        const { page, errors } = await openReal(browser, mode, 900, undefined, { find: "    return 1", len: 12 }, { path: SNIPPET, raw: true });
+        assert.ok((await read(page)).marks >= 1, mode + ": a highlight stands over the fourth row");
+        const r2 = await rowRect(page, 2); const m = await markRect(page);
+        await page.mouse.move(r2.right - 10, mid(r2)); await page.mouse.down(); await page.mouse.move(m.left + m.width / 2, mid(m), { steps: 6 }); await page.mouse.up();
+        const drag = await read(page);
+        assert.ok(drag.text.startsWith("\n    ") && drag.text.length > 5, mode + ": the drag begins with the row break: " + JSON.stringify(drag.text));
+        assert.deepEqual([drag.anchorKind, drag.anchorOffset, drag.anchorRow, drag.focusRow, drag.focusInMark], ["text", 11, 2, 3, true], mode + ": anchored at the end of the third row's text, the focus inside the highlight");
+        await forced(page, "the drag from the row's end", drag);
+        assert.deepEqual(errors, [], mode + ": no script error");
+        await page.close();
+      }
+      // (2) Raw: a triple-click on "def main():", highlighted whole from column 0; the end is the next row's first column
+      {
+        const { page, errors } = await openReal(browser, mode, 900, undefined, { find: "def main():", len: 11 }, { path: SNIPPET, raw: true });
+        assert.ok((await read(page)).marks >= 1, mode + ": a highlight stands over the third row");
+        const m = await markRect(page);
+        await page.mouse.click(m.left + 20, mid(m), { clickCount: 3 });
+        const triple = await read(page);
+        assert.equal(triple.text, "def main():\n", mode + ": the triple-click selected the row, its newline included");
+        assert.deepEqual([triple.anchorOffset, triple.anchorRow, triple.anchorInMark, triple.focusOffset, triple.focusRow], [0, 2, true, 0, 3], mode + ": from the highlight's first character to the next row's first column");
+        await forced(page, "the triple-clicked row", triple);
+        assert.deepEqual(errors, [], mode + ": no script error");
+        await page.close();
+      }
+      // (3) Rendered: a drag begun after "first line", before the <br>, into the highlighted "second line" below it
+      {
+        const { page, errors } = await openReal(browser, mode, 900, undefined, { find: "second line", len: 11 }, { path: BREAK, raw: false });
+        const shape = await page.evaluate(() => { const p = document.querySelector(".fileview-md br")!.parentElement!; return Array.from(p.childNodes).map((n) => (n.nodeType === 3 ? "text" : (n as Element).tagName.toLowerCase())); });
+        assert.deepEqual(shape, ["text", "br", "mark", "text"], mode + ": the paragraph: the first line, the break, the highlighted start of the second line, its rest");
+        const first = await page.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.querySelector(".fileview-md br")!.parentElement!.firstChild!); const b = r.getBoundingClientRect(); return { left: b.left, right: b.right, top: b.top, bottom: b.bottom }; });
+        const m = await markRect(page);
+        await page.mouse.move(first.right + 40, mid(first)); await page.mouse.down(); await page.mouse.move(m.left + m.width / 2, mid(m), { steps: 6 }); await page.mouse.up();
+        const drag = await read(page);
+        assert.ok(drag.text.startsWith("\nsec") && drag.text.length > 3, mode + ": the drag begins with the break: " + JSON.stringify(drag.text));
+        assert.deepEqual([drag.anchorLine, drag.focusLine, drag.focusInMark], [1, 2, true], mode + ": anchored on the first line, the focus inside the highlight on the second");
+        await forced(page, "the drag from before the <br>", drag);
+        assert.deepEqual(errors, [], mode + ": no script error");
+        await page.close();
+      }
+      // (4) Rendered: a triple-click on "first line", highlighted whole; the end is the second line's start, past the <br>.
+      // Then, on the same page, the shapes the restore must leave alone.
+      {
+        const { page, errors } = await openReal(browser, mode, 900, undefined, { find: "first line", len: 10 }, { path: BREAK, raw: false });
+        const m = await markRect(page);
+        await page.mouse.click(m.left + 10, mid(m), { clickCount: 3 });
+        const triple = await read(page);
+        assert.equal(triple.text, "first line\n", mode + ": the triple-click selected the line, its break included");
+        assert.deepEqual([triple.anchorOffset, triple.anchorLine, triple.anchorInMark, triple.focusLine], [0, 1, true, 2], mode + ": from the highlight's first character to the second line's start");
+        await forced(page, "the triple-clicked line", triple);
+        // plain prose away from the highlight: the paint leaves it standing, and the viewer does not touch it (the same node)
+        const step = async () => { const paints0 = (await read(page)).paints; const up = await rectOf(page, SEL.up); await page.mouse.click(up.left + 6, up.top + 6); await page.waitForFunction((n: number) => (window as any).__paints > n, paints0, { timeout: 5000 }); };
+        const same = () => page.evaluate(() => { const s = getSelection()!; return s.anchorNode === (window as any).__n && s.focusNode === (window as any).__n; });
+        await page.evaluate(() => { const done = Array.from(document.querySelectorAll(".fileview-md p")).pop()!.firstChild as Text; (window as any).__n = done; getSelection()!.setBaseAndExtent(done, 1, done, 4); });
+        let r = await read(page);
+        assert.equal(r.text, "one", mode + ": plain prose selected");
+        await step();
+        r = await read(page);
+        assert.deepEqual([r.text, r.anchorOffset, r.focusOffset, r.afterMarks, await same()], ["one", 1, 4, "one", true], mode + ": plain prose stands through the step, in its own node, untouched");
+        // a collapsed caret: nothing to keep, nothing moved
+        await page.evaluate(() => { const done = (window as any).__n as Text; getSelection()!.setBaseAndExtent(done, 2, done, 2); });
+        await step();
+        r = await read(page);
+        assert.deepEqual([r.collapsed, r.anchorOffset, r.focusOffset, await same()], [true, 2, 2, true], mode + ": a collapsed caret stays where it was");
+        // no selection at all
+        await page.evaluate(() => { getSelection()!.removeAllRanges(); });
+        await step();
+        r = await read(page);
+        assert.deepEqual([r.ranges, r.marks >= 1], [0, true], mode + ": no selection: none after the paint either, the highlight re-wrapped");
+        assert.deepEqual(errors, [], mode + ": no script error");
+        await page.close();
+      }
     }
   });
 });

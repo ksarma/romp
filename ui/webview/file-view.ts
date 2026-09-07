@@ -877,26 +877,30 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // A REFLOW's paint keeps the person's selection. The panel answers onRendered by unwrapping and re-wrapping every
   // highlight (file-comments.ts paintAll), and a selection with an end inside a mark lost that end with the mark's
   // node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane resize (review
-  // 2026-09-07, round 2). The text has not changed, only its elements, so the two ends are taken as offsets into the
-  // body's text before the hooks run and put back from them after, direction kept (setBaseAndExtent), but only when
-  // the paint cost the selection an end. A selection the paint left standing (both ends in connected nodes, the same
-  // text between them) is not touched: the browser's record of it is exact where the offsets are not. A selection
-  // holding NO text (a figure alone, the shape a drag across a picture makes) has one offset for both ends, and put
-  // back from them it collapsed after every reflow though the paint had touched nothing near it (review 2026-09-07,
-  // round 3); such a selection is never rebuilt from offsets, so when a paint does disturb it, it stays as the paint
-  // left it. A collapsed selection, or one with an end outside the body (the bar, the aside's input), is not over the
-  // repainted text and is left alone. The paints that REPLACE the body (renderBody) keep nothing: there the text
-  // itself is new.
+  // 2026-09-07, round 2). The text has not changed, only its elements, so each end is kept before the hooks run
+  // (keepPoint: its node and offset, its offset into the body's text, and which side of a text node it sat on) and
+  // put back after (pointBack), direction kept (setBaseAndExtent), but only when the paint cost the selection an
+  // end. A selection the paint left standing (both ends in connected nodes, the same text between them) is not
+  // touched: the browser's record of it is exact where the offsets are not. A selection holding NO text (a figure
+  // alone, the shape a drag across a picture makes) has one offset for both ends, and put back from them it collapsed
+  // after every reflow though the paint had touched nothing near it (review 2026-09-07, round 3); such a selection is
+  // never rebuilt from offsets, so when a paint does disturb it, it stays as the paint left it. An end whose own node
+  // came through the paint (moved into a mark, or untouched) goes back to that node, and only an end whose node is
+  // gone is mapped from its offset (round 4: an end on a text-less line boundary, the end of a row's text or the first
+  // column of the next, has the offset of both sides, and mapped by its role as start or end it landed on the wrong
+  // one, losing the newline between). A collapsed selection, or one with an end outside the body (the bar, the
+  // aside's input), is not over the repainted text and is left alone. The paints that REPLACE the body (renderBody)
+  // keep nothing: there the text itself is new.
   const fireRenderedKeepingSelection = () => {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
       && typeof document.createRange === "function"
-      ? { a: textOffset(body, sel.anchorNode, sel.anchorOffset), f: textOffset(body, sel.focusNode, sel.focusOffset), text: sel.toString() } : null;
+      ? { a: keepPoint(body, sel.anchorNode, sel.anchorOffset), f: keepPoint(body, sel.focusNode, sel.focusOffset), text: sel.toString() } : null;
     fireRendered();
-    if (!sel || !kept || kept.a === null || kept.f === null) return;
+    if (!sel || !kept || !kept.a || !kept.f) return;
     if (!sel.isCollapsed && sel.anchorNode?.isConnected && sel.focusNode?.isConnected && sel.toString() === kept.text) return;   // the paint left it standing
-    if (kept.a === kept.f) return;   // no text between the ends: the offsets cannot rebuild it, and would collapse it
-    const a = textPoint(body, kept.a, kept.a < kept.f); const f = textPoint(body, kept.f, kept.f < kept.a);
+    if (kept.a.at === kept.f.at) return;   // no text between the ends: the offsets cannot rebuild it, and would collapse it
+    const a = pointBack(body, kept.a, kept.a.at < kept.f.at); const f = pointBack(body, kept.f, kept.f.at < kept.a.at);
     try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
   };
   const ctx: FileViewActionCtx = {
@@ -1949,7 +1953,36 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
   });
 }
 
-// ── a selection across a repaint (fireRenderedKeepingSelection): the two ends as character offsets into the body's text ──
+// ── a selection across a repaint (fireRenderedKeepingSelection): each end kept, and put back ──
+/** One end of a selection as kept across a paint: the point itself (node, offset), its character offset into the body's
+ *  text (at), and the side of a text-node boundary it sat on (side: "end" for the end of a text node, "start" for the
+ *  beginning of one, null for a point inside one). The side is what the offset loses. The Raw view's rows (.fv-cl) carry
+ *  no newline text and a markdown <br> is no text either, so the end of a row's text and the first column of the next
+ *  have ONE offset; the point kept (a start after a row's last glyph, a triple-click's end at the next row's first
+ *  column) says which. An element point (a triple-click's end, the browser's point before or after a <br> or a picture)
+ *  is read by what stands beside it: before a child whose first leaf is text it is that text's start; before anything
+ *  else (a <br>, a picture, an empty row) it is where the text before ends. With no child after it: after a child whose
+ *  last leaf is text it is that text's end, after anything else the start of the text that follows. */
+type KeptPoint = { node: Node; offset: number; at: number; side: "start" | "end" | null };
+function keepPoint(root: Node, node: Node, offset: number): KeptPoint | null {
+  if (offset > nodeLength(node)) return null;
+  const at = textOffset(root, node, offset);
+  return at === null ? null : { node, offset, at, side: boundarySide(node, offset) };
+}
+const nodeLength = (n: Node): number => (n.nodeType === 3 ? (n as Text).data.length : n.childNodes.length);
+function boundarySide(node: Node, offset: number): "start" | "end" | null {
+  if (node.nodeType === 3) return offset >= (node as Text).data.length ? "end" : offset === 0 ? "start" : null;
+  const after = node.childNodes[offset]; const before = offset > 0 ? node.childNodes[offset - 1] : undefined;
+  if (after) return leafIsText(after, true) ? "start" : "end";
+  if (before) return leafIsText(before, false) ? "end" : "start";
+  return null;
+}
+/** Whether the first (or last) leaf under n, through its elements, is a text node. */
+function leafIsText(n: Node, first: boolean): boolean {
+  let c: Node | null = n;
+  while (c && c.nodeType !== 3) c = first ? c.firstChild : c.lastChild;
+  return !!c;
+}
 /** A point (node, offset) as a character offset into root's text: the data of root's text nodes in document order up to
  *  the point (a Range's toString), the count the panel's re-wrapping of its marks leaves unchanged. null when the point
  *  lies outside root. */
@@ -1959,13 +1992,20 @@ function textOffset(root: Node, node: Node, offset: number): number | null {
   r.setStart(root, 0); r.setEnd(node, offset);
   return r.toString().length;
 }
+/** The kept end, in the body as the paint left it. Its own point when that still stands: the node inside root, the
+ *  offset within it, and the same text before it (a text node the paint moved into a mark, or left alone; an element
+ *  whose children the paint split means something else at that index, and fails the last test). Otherwise the offset
+ *  mapped back into the text nodes root holds NOW, the side of a boundary chosen by the side kept — an end that sat at
+ *  the end of a text node goes to the end of the earlier node, one at the start to the start of the later — and, for a
+ *  point that sat inside a text node the paint has since split there, by its role (`earlier`: the selection's start
+ *  takes the later node, its end the earlier), the two homes holding the same text. */
+function pointBack(root: Node, k: KeptPoint, earlier: boolean): [Node, number] {
+  if (k.node.isConnected && root.contains(k.node) && k.offset <= nodeLength(k.node) && textOffset(root, k.node, k.offset) === k.at) return [k.node, k.offset];
+  return textPoint(root, k.at, k.side === null ? earlier : k.side === "start");
+}
 /** The point at character offset n of root's text, in the text nodes root holds NOW: inside the text node that holds n,
- *  root's end when n lies past its text. A point BETWEEN two text nodes has two homes, and which is right depends on
- *  the end of the selection it is: the END lands at the end of the earlier node (the text before it is selected), the
- *  START at the beginning of the later one (the text after it is). The Raw view's rows (.fv-cl) carry no newline text
- *  and an empty row holds no text node, so a start at a row's first column has the offset of the last non-empty row's
- *  end above it; put there, the selection came back with a leading newline and without its trailing one (review
- *  2026-09-07, round 3). */
+ *  root's end when n lies past its text. A point BETWEEN two text nodes has two homes: `start` takes the beginning of the
+ *  later one, else the end of the earlier. */
 function textPoint(root: Node, n: number, start: boolean): [Node, number] {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let seen = 0; let last: Text | null = null;
