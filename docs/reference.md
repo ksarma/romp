@@ -161,13 +161,21 @@ A session's tab can carry one emoji before its name, so you can tell the
 sessions apart at a glance by role or state. It can be set from three places,
 which share one validator and one store:
 
-- **The tab.** Right-click it and choose **Emoji…**. The dialog's **Set** sends
-  the `setSessionEmoji` WebSocket op (`{type: "setSessionEmoji", id, emoji}`;
-  `emoji: ""` clears, and **Clear** sends exactly that). The kernel answers with
-  `{type: "emojiSet", id, emoji}` when the store has it, and the strip changes
-  on that confirm, the way a rename changes on `renamed`; a refusal comes back
-  as a `warn` with the reason, which the dialog shows in place, under the input,
-  with the typed value still there to fix.
+- **The tab.** Right-click it and choose **Emoji…** for the picker: a search
+  box over a curated list (name and keyword prefixes, no network), a **Recent**
+  row (the last 16 picks, kept per browser), a grid by category with a strip
+  that jumps to each, and a footer with a field for an emoji the list does not
+  have, **Set**, and **Clear**. Clicking a cell, Enter in the search box (the
+  first result) and **Set** with a typed value all send the same
+  `setSessionEmoji` WebSocket op (`{type: "setSessionEmoji", id, emoji}`;
+  `emoji: ""` clears, and **Clear** sends exactly that); only the kernel
+  judges the value. The picker stays open for the answer. The kernel answers
+  with `{type: "emojiSet", id, emoji}` when the store has it: the tab strip
+  changes on that confirm, the way a rename changes on `renamed`, the picker
+  closes, and the emoji joins the Recent row. A refusal comes back as a `warn`
+  with the reason, which the picker shows in its hint line above the field,
+  with a typed value left in the field to fix. **Set** with the field empty is
+  refused in place, without a round trip: to clear, use **Clear**.
 - **The session itself.** The `set_emoji(emoji)` tool, beside `set_working`, so
   a session can mark what it is doing (a moon while it runs unattended).
 - **The shell.** `romp emoji <session> <emoji>`, `romp emoji <session> --clear`,

@@ -162,7 +162,26 @@ test("Clear: present in the footer, disabled and dressed as disabled with nothin
 });
 
 test("the guide's emoji paragraph names the picker: search, the Recent row, the categories, or type or paste one", () => {
-  assert.match(GUIDE, /choose \*\*Emoji…\*\*\s+for a picker: search by name or keyword, take one from the \*\*Recent\*\* row, browse\s+the categories, or type or paste one the list does not have\./);
+  assert.match(GUIDE, /choose \*\*Emoji…\*\*\s+to open a picker: search by name or keyword, reuse one from the \*\*Recent\*\* row,\s+browse the categories, or type or paste one the list does not have\./);
+});
+
+test("the reference describes the picker, not the one-field dialog: every sender, the hint ABOVE the field, the Recent row, the local empty-Set refusal", () => {
+  const REF = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "reference.md"), "utf8");
+  const bullet = REF.slice(REF.indexOf("- **The tab.** Right-click it and choose **Emoji…**"), REF.indexOf("- **The session itself.**"));
+  assert.ok(bullet.length > 0, "the tab bullet exists and precedes the session bullet");
+  const flat = bullet.replace(/\s+/g, " ");   // wrap-tolerant: the pins are phrases, not line breaks
+  // what sends: a cell, Enter in the search box (the first result), Set with a typed value; the same op
+  assert.ok(flat.includes("Clicking a cell, Enter in the search box (the first result) and **Set** with a typed value all send the same `setSessionEmoji` WebSocket op"), "the three senders");
+  assert.match(DIALOG, /const top = sections\[0\]\?\.cells\[0\];/);   // the premise: Enter in the search box picks the first result
+  assert.ok(flat.includes('`emoji: ""` clears, and **Clear** sends exactly that'), "the Clear contract");
+  assert.ok(flat.includes("only the kernel judges the value"), "no client-side judgment");
+  // the picker stays open; the confirm closes it and files the emoji as a recent
+  assert.ok(flat.includes("The picker stays open for the answer."), "stays open");
+  assert.ok(flat.includes("the picker closes, and the emoji joins the Recent row"), "the confirm closes it and files a recent");
+  // the hint sits ABOVE the field (card.appendChild(hint); card.appendChild(foot)), not "under the input"
+  assert.ok(flat.includes("shows in its hint line above the field, with a typed value left in the field to fix"), "the hint above the field");
+  assert.doesNotMatch(flat, /under the input|The dialog's \*\*Set\*\*/, "the one-field dialog's wording is gone");
+  assert.ok(flat.includes("**Set** with the field empty is refused in place, without a round trip: to clear, use **Clear**."), "the local empty-Set refusal");
 });
 
 test("Set with the field empty: the mark is VISIBLE (a rule matches the class the field wears) and the hint says why; a later submit drops both", () => {

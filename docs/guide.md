@@ -254,8 +254,8 @@ agent works in the new folder and reads its `CLAUDE.md`.
 A session's tab can carry one emoji before its name, so you can tell the
 sessions apart at a glance by role or state: a moon on the one left running
 overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**
-for a picker: search by name or keyword, take one from the **Recent** row, browse
-the categories, or type or paste one the list does not have. Or run
+to open a picker: search by name or keyword, reuse one from the **Recent** row,
+browse the categories, or type or paste one the list does not have. Or run
 `romp emoji <session> <emoji>` (`romp emoji <session> --clear` removes it; with
 no emoji argument it prints the current one). A session can also set or change
 its own, with the `set_emoji` tool it gets alongside its mail tools, so you can
