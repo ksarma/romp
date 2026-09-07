@@ -305,6 +305,15 @@ class CommandKindChecks(unittest.TestCase):
         self.assertEqual(len(line), 1)
         self.assertIn("sha256:abcdefabcdef", line[0])
         self.assertIn("bill the key", line[0])
+        # the remedy is the reference's (_check_env_file_vs_declaration), worded for a command line: a removed
+        # or blanked command is an error at every launch in keysource, never a fall-back to the login, so the
+        # line never says "remove the line"; the third way out is the one this kind alone has
+        self.assertNotIn("remove the line", line[0])
+        self.assertIn("Do not remove or blank the ROMP_CREDENTIAL_COMMAND line", line[0])
+        self.assertIn("drop ROMP_EXPECTED_AUTH=login", line[0])
+        self.assertIn("Login under Billing", line[0])
+        self.assertIn("error at every launch", line[0])
+        self.assertIn("print no ANTHROPIC_API_KEY", line[0])
         self.assertEqual([t for t in problems(verdict(env, snapshot=ok_snap())) if "while" in t], [],
                          "no key printed: the declaration holds")
 

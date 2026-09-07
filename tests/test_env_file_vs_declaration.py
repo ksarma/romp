@@ -13,6 +13,9 @@ billed the wrong account. What these tests pin (sdk_backend._check_env_file_vs_d
   * the remedy is worded per shape: a valued key line may be removed; a reference line must not be
     (a removed reference is a durable error in keysource), so that shape is told to drop the
     declaration or to pick Login under Billing;
+  * a ROMP_CREDENTIAL_COMMAND= line is the boot verdict's to weigh (key_source_verdict), since only the
+    set the command prints says whether a key is billed; its line carries the reference's remedy worded
+    for a command: never remove or blank the line to get the login (both are errors at every launch);
   * undeclared is quiet, as is a declaration over a file that selects no source, whatever else the
     file carries (another service's token beside a reference is the documented shape), and so is a
     file keysource reports as an error (garbled, unreadable): the launch reports that itself;
@@ -55,14 +58,18 @@ class _Env(unittest.TestCase):
         self.path = os.path.join(self.d, "service.env")
         self._before = {v: os.environ.get(v) for v in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV",
                                                        "ROMP_EXPECTED_AUTH", "ANTHROPIC_API_KEY",
-                                                       "ROMP_API_KEY_REF")}
+                                                       "ROMP_API_KEY_REF", "ROMP_CREDENTIAL_COMMAND",
+                                                       "ROMP_CREDENTIAL_SELECTOR_FILE")}
         os.environ["ROMP_SERVICE_ENV_FILE"] = self.path
         os.environ["ROMP_SERVICE_ENV"] = self.path
-        for v in ("ROMP_EXPECTED_AUTH", "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF"):
+        for v in ("ROMP_EXPECTED_AUTH", "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF", "ROMP_CREDENTIAL_COMMAND"):
             os.environ.pop(v, None)
+        # a command-line test's fake command gets an empty `$1`: never this machine's selector file
+        os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(self.d, "selector")
         self._checked = sb._ENV_FILE_AUTH_CHECKED
         sb._ENV_FILE_AUTH_CHECKED = False
         ks._CACHE = ((), "")          # the stat-identity cache is module-global
+        sb._envsrc._reset()           # so is the command source's event-keyed cache
 
     def tearDown(self):
         for v, was in self._before.items():
@@ -73,6 +80,7 @@ class _Env(unittest.TestCase):
         sb._ENV_FILE_AUTH_CHECKED = self._checked
         ks._CACHE = ((), "")
         ks._AUTHORITATIVE_PATHS.pop(self.path, None)
+        sb._envsrc._reset()
 
     def write_env(self, body, path=None):
         p = path or self.path
@@ -162,6 +170,58 @@ class EnvFileVsDeclaration(_Backend):
         self.assertIn("drop ROMP_EXPECTED_AUTH=login", lines[0])
         self.assertIn("Login under Billing", lines[0])
         self.assertIn("error at every launch", lines[0])
+
+    def test_login_declared_over_a_command_line_is_the_verdicts_line_and_carries_the_same_remedy(self):
+        """A `ROMP_CREDENTIAL_COMMAND=` line is the third shape the file can select, and this check leaves it
+        to the boot verdict (key_source_verdict): whether its sessions bill a key is the SET's fact, known
+        only once the command has run (a command that prints no ANTHROPIC_API_KEY satisfies the declaration),
+        so the verdict says the line from the first run's record, at boot, before anything launches. That
+        line carries the reference's remedy worded for a command: a removed OR blanked command line is an
+        error at every launch (keysource: an empty line is still the command kind and an empty command is
+        invalid; a removed line is remembered on the marker), never a fall-back to the login, so the operator
+        drops the declaration, has the command print no key, or picks Login under Billing."""
+        cmd = os.path.join(self.d, "cmd.sh")
+        with open(cmd, "w") as fh:
+            fh.write("#!/bin/sh\necho '%s=%s'\n" % (ks.KEY_VAR, KEY))
+        os.chmod(cmd, 0o700)
+        self.write_env("ROMP_PERF=1\n%s=%s \"$1\"\n" % (ks.CMD_VAR, cmd))
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        self.assertEqual(ks.read_source(self.path).kind, "command", "the shape under test")
+        # this check: quiet, the one-shot unspent; the command kind's line is the verdict's
+        said = []
+        log = lambda m, problem=None: said.append((str(m), problem))
+        self.assertEqual(sb._check_env_file_vs_declaration(log, self.state), "")
+        self.assertEqual(said, [])
+        self.assertFalse(sb._ENV_FILE_AUTH_CHECKED)
+        # the backend's boot: one problem line, from the command's first run
+        be = self.construct()
+        self.assertEqual(self.flagged(be), [], "the file check says nothing for this shape")
+        lines = [p["text"] for p in be.problems() if "ROMP_EXPECTED_AUTH=login while" in p["text"]]
+        self.assertEqual(len(lines), 1, be.problems())
+        self.assertIn(ks.CMD_VAR, lines[0])
+        self.assertIn("sha256:" + ks.fingerprint(KEY), lines[0], "the key by fingerprint")
+        self.assertFalse(any(KEY in m for m in self.logged), "no log line carries the value")
+        self.assertFalse(any(cmd in m for m in self.logged), "nor the command's text: it may name an account")
+        self.assertEqual(be.default_auth({}), "key", "the sentence describes what the code does")
+        # the remedy: the reference's, worded for a command line, plus the one this kind alone has
+        self.assertNotIn("remove the line", lines[0])
+        self.assertIn("Do not remove or blank the %s line" % ks.CMD_VAR, lines[0])
+        self.assertIn("drop ROMP_EXPECTED_AUTH=login", lines[0])
+        self.assertIn("Login under Billing", lines[0])
+        self.assertIn("error at every launch", lines[0])
+        self.assertIn("print no %s" % ks.KEY_VAR, lines[0])
+        # the facts the wording rests on, in keysource: a blanked line is still the command kind and is
+        # invalid; a removed line is remembered on the marker and the selection is an error, not the login
+        self.write_env("ROMP_PERF=1\n%s=\n" % ks.CMD_VAR)
+        blank = ks.read_source(self.path)
+        self.assertEqual((blank.kind, blank.configured), ("command", True))
+        with self.assertRaises(ks.KeySourceError):
+            blank.validate()
+        self.write_env("ROMP_PERF=1\n")
+        self.assertEqual(ks.read_marker(self.path), "command")
+        removed = ks.select_source()
+        self.assertEqual(removed.kind, "error")
+        self.assertIn("was removed", removed.error)
 
     def test_the_direct_call_returns_the_variable_it_named_and_files_a_problem(self):
         self.write_env("%s=%s\n" % (ks.REF_VAR, REF))

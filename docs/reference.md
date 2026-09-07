@@ -285,6 +285,15 @@ value) or dropping the declaration. For a `ROMP_API_KEY_REF=` line, removing
 the line is not a fix: a removed reference is an error at every launch until a
 source is selected again (see "Removing or emptying" under 1Password), so
 either drop the declaration or select **Login** in Billing, which outranks it.
+A `ROMP_CREDENTIAL_COMMAND=` line is checked once the command has run, in
+the boot's `key source:` lines (see
+[A credential command](#a-credential-command)): the contradiction exists only
+when the set it prints carries an `ANTHROPIC_API_KEY`, and the line then
+names that key's fingerprint. The remedy is the reference's: removing or
+blanking the command line is an error at every launch until a source is
+selected again, so drop the declaration, have the command print no
+`ANTHROPIC_API_KEY` (the `apiKeyHelper` or the login then bills the
+sessions), or select **Login** in Billing.
 Under `key`, a key source in the file agrees with the declaration and nothing
 is said. With no declaration, or once a Billing pick has made it inert,
 nothing is said either. The per-init check above still confirms each landing.
@@ -530,8 +539,10 @@ up`); a supervised manager reads the file only. It outranks a
 an installation that configured a reference and sets no command changes
 nothing.
 
-The line is remembered the way the reference is. Removing it is an error until
-another source is configured, and the memory survives restarts in
+The line is remembered the way the reference is. Removing or blanking it is
+an error until another source is configured: an empty
+`ROMP_CREDENTIAL_COMMAND=` line is still the command kind, not a request to
+use the reference or a key. The memory survives restarts in
 `service.env.source` (the word `command`). A `service.env.<name>` profile may
 carry a single `ROMP_CREDENTIAL_COMMAND=` line, and `romp keyswap <name>`
 selects it like a reference profile from the reference or a key line; under a
@@ -661,8 +672,13 @@ fingerprints only:
   session's CLI and tool shells and the set does not (information).
 - `ExecStart` routed through a shell, whose variables freeze until a manager
   restart (problem).
-- `ROMP_EXPECTED_AUTH=login` while the command prints a key (problem), or
-  `=key` with no key to inject and no `apiKeyHelper` configured (problem).
+- `ROMP_EXPECTED_AUTH=login` while the command prints a key (problem). The
+  line names the remedy: drop the declaration, have the command print no
+  `ANTHROPIC_API_KEY`, or select **Login** in Billing. Removing or blanking
+  the command line is not a way to the login, since either is an error at
+  every launch.
+- `ROMP_EXPECTED_AUTH=key` with no key to inject and no `apiKeyHelper`
+  configured (problem).
 
 Under the reference the same check adds only a leftover `ANTHROPIC_API_KEY`
 line (the reference outranks it; remove and rotate) and the informational

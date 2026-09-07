@@ -102,6 +102,16 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" != *"kernel not reachable"* ]]
 }
 
+@test "romp api-health: the payload's key-source block rides through the status split, byte for byte" {
+    # `keySource` (docs/reference.md, The API-health signal) is more payload beside `cliScope`: the -w split
+    # that reads the status hands a consumer the whole body, that block included, exactly as the kernel sent it
+    body='{"schema": 1, "overall": {"state": "healthy"}, "cliScope": {"on": true}, "keySource": {"mode": "command", "selector": "(hp)", "sessionKeyPath": "injected", "expectedAuth": "", "fingerprint": "0123456789ab", "fingerprintKind": "key", "setFingerprint": "abcdefabcdef", "names": ["ANTHROPIC_API_KEY", "A_TOKEN"], "lastRun": {"ok": true, "at": 1756800000, "reason": "", "exitCode": 0, "durationS": 0.4, "stale": false, "failures": 0, "lastOkAt": 1756800000}, "sessionsByFingerprint": {"0123456789ab": 2}}}'
+    CURL_CODE=200 CURL_BODY="$body" run "$ROMP_SCRIPT" api-health
+    [ "$status" -eq 0 ]
+    [ "$output" = "$body" ]
+    echo "$output" | python3 -c 'import json,sys; d=json.load(sys.stdin); k=d["keySource"]; assert k["mode"] == "command" and k["lastRun"]["ok"] is True and k["sessionsByFingerprint"] == {"0123456789ab": 2}'
+}
+
 @test "romp api-health: an unknown flag is refused rather than silently ignored" {
     run "$ROMP_SCRIPT" api-health --nope
     [ "$status" -eq 2 ]

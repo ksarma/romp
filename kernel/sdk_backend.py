@@ -3419,7 +3419,13 @@ def _check_env_file_vs_declaration(log, state_dir, path: str | None = None) -> s
     and the source marker remembers it across restarts), so an operator told to remove it would get a
     launch failure on every session without a Billing pick, not the login. That shape is told to drop
     the declaration or to pick Login under Billing (the pick outranks the declaration: _declared_auth).
-    Returns the variable named ("" when quiet) so the caller and the tests can see what it decided."""
+    A ROMP_CREDENTIAL_COMMAND= line, the third shape the file can select, is not weighed here: whether
+    its sessions bill a key is the SET's fact (a command that prints no ANTHROPIC_API_KEY satisfies the
+    declaration), known only once the command has run, so the boot verdict says that shape's line from
+    the first run's record (key_source_verdict), with the reference's remedy worded for a command: a
+    removed OR blanked command line is an error at every launch (an empty line is still the command
+    kind), never a fall-back to the login. Returns the variable named ("" when quiet) so the caller and
+    the tests can see what it decided."""
     global _ENV_FILE_AUTH_CHECKED
     if _ENV_FILE_AUTH_CHECKED:
         return ""
@@ -3429,8 +3435,11 @@ def _check_env_file_vs_declaration(log, state_dir, path: str | None = None) -> s
     p = path or _keysrc.service_env_path()
     source = _keysrc.read_source(p)
     if source.kind not in ("file", "op") or not source.configured:
-        return ""                    # no source selected (a missing file, an empty key line) or a file the
-    _ENV_FILE_AUTH_CHECKED = True    # launch itself will report as unreadable: nothing to weigh against the declaration
+        # Nothing to weigh against the declaration: no source selected (a missing file, an empty key line),
+        # a file the launch itself will report as unreadable, or the command kind, whose line is the boot
+        # verdict's once the set says whether a key is billed (the docstring).
+        return ""
+    _ENV_FILE_AUTH_CHECKED = True
     var = _keysrc.REF_VAR if source.kind == "op" else _keysrc.KEY_VAR
     if source.kind == "op":
         fix = ("Fix whichever side is wrong: keep the reference and drop ROMP_EXPECTED_AUTH=login, or select "
@@ -3758,8 +3767,19 @@ def key_source_verdict(environ=None, *, source_kind=None, service_env_text: str 
                 "a manager restart. The command source needs none of them: the generated unit runs the manager "
                 "directly (`romp-service install` rewrites it).")
         if exp == "login" and snap.get("hasKey"):
+            # The remedy is _check_env_file_vs_declaration's for a reference, worded for a command line: a
+            # removed command is an error at every launch (select_source, the marker), and so is a blanked one
+            # (an empty line is still the command kind, and KeySource.validate refuses an empty command), so
+            # neither is a fall-back to the login. The third way out is this kind's alone: the declaration
+            # holds when the set carries no ANTHROPIC_API_KEY (the condition above).
             say("key source: ROMP_EXPECTED_AUTH=login while the credential command prints ANTHROPIC_API_KEY "
-                "(sha256:%s); every session without an explicit Billing pick will bill the key." % (snap.get("keyFp") or ""))
+                "(sha256:%s); every session without an explicit Billing pick will bill the key. Fix whichever side "
+                "is wrong: keep the command and drop ROMP_EXPECTED_AUTH=login, have the command print no "
+                "ANTHROPIC_API_KEY (the apiKeyHelper or the login then bills the sessions), or select Login under "
+                "Billing in a session tab's menu (that pick outranks the declaration and seeds every new session). "
+                "Do not remove or blank the %s line to get the login: a removed or empty command is an error at "
+                "every launch until a key source is configured again, never a fall-back to the login."
+                % (snap.get("keyFp") or "", _keysrc.CMD_VAR))
         if exp == "key" and not work_key_present and not helper_command:
             say("auth: ROMP_EXPECTED_AUTH=key, but there is no key to inject (the credential command prints no "
                 "ANTHROPIC_API_KEY) and settings.json names no apiKeyHelper; sessions will land on the login, and "
