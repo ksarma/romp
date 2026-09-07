@@ -117,7 +117,7 @@ class Collector(unittest.TestCase):
                          "the chat builder carries the active/background split and the miss attribution (round-4 P3)")
         self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
         self.assertEqual(set(km._PerfStats.CHAT_MISS),
-                         {"judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "cold", "nosig"})
+                         {"judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "tmux", "cold", "nosig"})
         self.assertEqual(sum(snap["builds"]["chat"]["bg_miss"].values()), 0)
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")

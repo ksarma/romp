@@ -349,10 +349,10 @@ class _PerfStats:
                                    build cache vs rebuilt, and the rebuild time. feed also carries
                                    dirty, the rebuilds a kernel-side mutation forced past the view
                                    signature (_mark_views_dirty); chat also carries active_built /
-                                   bg_built (rebuilds of the watched tab, which always
-                                   rebuilds, against rebuilds of a background tab whose signature
-                                   moved) and bg_miss {judge_gen, transcript, states, tasks, todos,
-                                   cut, note, needs, cold, nosig}: per labelled _chat_build_sig
+                                   bg_built (rebuilds of the watched tab, served since
+                                   2026-09-03 while its exact key is unchanged, against rebuilds of
+                                   a background tab whose signature moved) and bg_miss {judge_gen, transcript, states, tasks, todos,
+                                   cut, note, needs, tmux, cold, nosig}: per labelled _chat_build_sig
                                    component, the background rebuilds it caused (one count per
                                    differing component, so the sum can exceed bg_built; cold = no
                                    cached build, nosig = no signature could be taken)
@@ -519,7 +519,7 @@ class _PerfStats:
     BUILDS = ("chat", "feed", "timeline")
     # builds.chat's bg_miss labels: _chat_build_sig's components (_CHAT_SIG_TAIL plus the transcript and
     # states sections), a tab with no cached build, and a tab whose signature could not be taken
-    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "cold", "nosig")
+    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "tmux", "cold", "nosig")
     SEND_KINDS = ("full", "delta", "deduped")
 
     def __init__(self):
@@ -26158,13 +26158,15 @@ def _chat_build_sig(sess, tm=None):
     # every tab a None sig on the first push and a False one on the next (0.5 s later) and rebuilt the
     # whole strip once for a value the row reads the same (needsInput === true). Only True is a verdict.
     sig.append(_feed_needs_input_of(sess.get("sid") or "") is True)
-    if tm is not None:
-        t = tm
-        sig.append((t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"),
-                    len(t.get("subagents") or ()), len(t.get("bgTasks") or ()), bool(t.get("interrupting")),
-                    bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
-                    int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
-                    t.get("auth"), t.get("authLive")))
+    # the push's row for this sid (its live facts; 2026-09-03 upstream), ONE component so the tail keeps a
+    # fixed length for _chat_sig_labels: None when the push has no row for the sid
+    t = tm
+    sig.append(None if t is None else
+               (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"),
+                len(t.get("subagents") or ()), len(t.get("bgTasks") or ()), bool(t.get("interrupting")),
+                bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
+                int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
+                t.get("auth"), t.get("authLive")))
     return tuple(sig)
 
 
@@ -26174,7 +26176,7 @@ def _chat_build_sig(sess, tm=None):
 # whose length varies (one or two files, two values each); the head and the tail are fixed. A component
 # appended to _chat_build_sig must be appended here too; tests/test_chat_fixed_cost_memos.py pins the
 # appends against this tuple.
-_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "cut", "note", "needs")
+_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "cut", "note", "needs", "tmux")
 
 
 def _chat_sig_labels(sig):

@@ -440,11 +440,11 @@ class ViewBuilder(unittest.TestCase):
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None            # store unresolvable, as in the repro
         try:
-            km._fold_tasks = lambda session: real_fold(bg)
+            km._fold_tasks = lambda session, sid=None: real_fold(bg)
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
-            km._fold_tasks = lambda session: real_fold(batch)
+            km._fold_tasks = lambda session, sid=None: real_fold(batch)
             kinds_batch = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
-            km._fold_tasks = lambda session: real_fold(mixed)
+            km._fold_tasks = lambda session, sid=None: real_fold(mixed)
             todo = [e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo"]
         finally:
             (km._read_task_store, km._fold_tasks) = saved

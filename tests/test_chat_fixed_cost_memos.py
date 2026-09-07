@@ -50,14 +50,15 @@ class SigLabels(unittest.TestCase):
         self.assertEqual(len(re.findall(r"^\s*sig\.append\(", src, re.M)), len(km._CHAT_SIG_TAIL),
                          "one label per sig.append in _chat_build_sig; a new component needs a new label")
         markers = {"judge_gen": "_judge_gen[0]", "tasks": "_task_store_fp(", "todos": "_user_todo_fp(",
-                   "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of("}
+                   "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of(",
+                   "tmux": 't.get("authLive")'}
         pos = [src.index(markers[lab]) for lab in km._CHAT_SIG_TAIL]
         self.assertEqual(pos, sorted(pos), "the labels are in the appends' order")
         self.assertIn("sig = [st.st_mtime, st.st_size]", src, "the head: the transcript's two values")
         self.assertIn("sig += [ss.st_mtime, ss.st_size]", src, "the middle: two values per states file")
 
     def test_each_single_component_change_is_attributed_to_its_label(self):
-        base = (1.0, 10, 2.0, 20, 7, ("tf",), ("uf",), "", "note", False)      # one states file
+        base = (1.0, 10, 2.0, 20, 7, ("tf",), ("uf",), "", "note", False, None)   # one states file; no push row
         labels = km._chat_sig_labels(base)
         self.assertEqual(labels, ("transcript", "transcript", "states", "states") + km._CHAT_SIG_TAIL)
         for i, lab in enumerate(labels):
@@ -77,7 +78,7 @@ class SigLabels(unittest.TestCase):
         self.assertEqual(km._chat_sig_labels(longer), ("transcript", "transcript") + ("states",) * 4 + km._CHAT_SIG_TAIL)
         self.assertEqual(km._chat_sig_miss(base, longer), ("states",))
         longer2 = list(longer)
-        longer2[-1] = True
+        longer2[-2] = True                                 # `needs`, the component before the push row's
         self.assertEqual(km._chat_sig_miss(base, tuple(longer2)), ("needs", "states"))
         self.assertEqual(km._chat_sig_miss(longer, base), ("states",), "and the other way round")
 
@@ -184,14 +185,14 @@ class TwoTabAttribution(unittest.TestCase):
                                                "bg_miss": {"cold": 1}}, "first cycle: the background tab is cold")
         km._push([self.chat, self.tl])
         c2 = self._chat()
-        self.assertEqual(self._delta(c1, c2), {"cached": 1, "built": 1, "active_built": 1, "bg_built": 0, "bg_miss": {}},
-                         "nothing moved: the background tab is served, the watched one rebuilds")
+        self.assertEqual(self._delta(c1, c2), {"cached": 2, "built": 0, "active_built": 0, "bg_built": 0, "bg_miss": {}},
+                         "nothing moved: both tabs are served (the watched one on its exact key, 2026-09-03 upstream)")
         with open(self.tx[SID_B], "a") as f:
             f.write('{"type": "assistant"}\n')
         km._push([self.chat, self.tl])
         c3 = self._chat()
-        self.assertEqual(self._delta(c2, c3), {"cached": 0, "built": 2, "active_built": 1, "bg_built": 1,
-                                               "bg_miss": {"transcript": 1}}, "the background tab's transcript grew")
+        self.assertEqual(self._delta(c2, c3), {"cached": 1, "built": 1, "active_built": 0, "bg_built": 1,
+                                               "bg_miss": {"transcript": 1}}, "the background tab's transcript grew; the watched one is served")
         km._judge_gen[0] += 1
         km._push([self.chat, self.tl])
         c4 = self._chat()
