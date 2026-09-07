@@ -146,7 +146,7 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
                           "captions", "states_overlay", "thread_reg", "bg_tops",
-                          "feed_segs", "lanes", "chat_merge_sets"},
+                          "chat_merge_sets", "chat_postal"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
                          "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
@@ -155,6 +155,10 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]["chat_merge_sets"]), {"hit", "miss", "entries"},
                          "the live-merge sets memo (round-4 P3 d): counters plus its occupancy")
         for k, v in snap["memos"]["chat_merge_sets"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_postal"]), {"gate", "hit", "commit_new"},
+                         "the fold's sealed postal cards (round-4 P17/P3 c): gate re-hydrations, verified checks, new raw hydrated")
+        for k, v in snap["memos"]["chat_postal"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},

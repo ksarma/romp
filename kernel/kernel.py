@@ -491,7 +491,12 @@ class _PerfStats:
                                    chat_merge_sets (the live-merge's transcript-side sets, one entry
                                    per sid on the parsed session's identity, see _merge_tx_sets)
                                    -> hit / miss (merges served from the memo vs derived) and the
-                                   gauge entries (sids held)
+                                   gauge entries (sids held); chat_postal (the chat fold's sealed
+                                   postal cards, keyed on the values they embed, see
+                                   _postal_card_deps) -> gate (fold-gate checks that re-hydrated a
+                                   tab's sealed cards), hit (checks that verified them from their
+                                   recorded values), commit_new (raw postal events hydrated at fold
+                                   commits, each once)
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -692,7 +697,7 @@ class _PerfStats:
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
                              ("thread_reg", _thread_reg_report),
                              ("feed_segs", _feed_segs_report), ("lanes", _lanes_memo_report),
-                             ("chat_merge_sets", _merge_sets_report)):
+                             ("chat_merge_sets", _merge_sets_report), ("chat_postal", _chat_postal_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -24952,11 +24957,19 @@ def _POSTAL_UNRESOLVED_RESET():
     _POSTAL_UNRESOLVED["suppressed"] = 0
 
 
-def _hydrate_postal(events, index, sid=None):
+def _hydrate_postal(events, index, sid=None, captions=None):
     """Replace postal traffic with clean cards: a send_message tool (or `romp mail send` Bash) → an
     OUTGOING card; a user event (or a MAIL READER's output — see _reads_mail) carrying romp-msg-id
     marker(s) addressed to `sid` → INCOMING card(s) with the clean body from the log. Anything not
-    fully resolved passes through unchanged."""
+    fully resolved passes through unchanged.
+
+    `captions`: a zero-argument callable returning the {msg id: caption} map, or None for
+    _msg_summaries() on first need. build_session hands its three hydrations (the fold gate's check,
+    the tail pass, the commit) one shared getter, so they read ONE map and the fold entry records
+    exactly the captions its cards embed; a caption appended between two of them would otherwise be
+    embedded by one and recorded by another. Per-event independent: hydrate(A + B) == hydrate(A) +
+    hydrate(B) (pinned in tests/test_postal_hydrate_scope.py), which is what lets the fold's commit
+    hydrate only the raw events new since the seal (round-4 plan, P17 merged with P3(c), 2026-09-07)."""
     out = []
     # {id: Haiku caption} → show the ≤9-word caption, not the verbose body. Computed LAZILY (the user
     # 2026-07-03: "startup is slow"): _msg_summaries() re-scans the WHOLE fleet's captioned transcripts,
@@ -24966,7 +24979,7 @@ def _hydrate_postal(events, index, sid=None):
     _bodies = [None]   # the index's body map, fetched on the first outgoing card (none → never)
     def caption_for(mid):
         if _msgsum[0] is None:
-            _msgsum[0] = _msg_summaries()
+            _msgsum[0] = captions() if captions is not None else _msg_summaries()
         return _msgsum[0].get(mid)
     def enrich_out(card, ev):
         # OUTGOING gist (the user 2026-07-25): the sender's card used to show a raw body prefix while the
@@ -25065,6 +25078,45 @@ def _hydrate_postal(events, index, sid=None):
                                         ",".join(_unres)))
         out.append(ev)
     return out
+
+
+_chat_postal_stats = {"gate": 0, "hit": 0, "commit_new": 0}   # /perf memos.chat_postal — see _postal_card_deps
+
+
+def _chat_postal_report():
+    """/perf memos.chat_postal: `gate`, fold-gate checks that re-hydrated a tab's sealed postal cards (the
+    log or a value a card embeds moved, or the entry was unverified); `hit`, checks that verified the
+    sealed cards from their recorded values without hydrating; `commit_new`, raw postal events hydrated
+    at fold commits, each once (the sealed ones are reused)."""
+    return dict(_chat_postal_stats)
+
+
+def _postal_card_deps(cards, index, captions):
+    """What the fold's sealed postal cards EMBED from outside the transcript, read from the same objects a
+    re-hydration in this build would read: per card its mid, the caption under that mid, and its peer's
+    identity (the sender's name and colour for an incoming card, the recipient's colour for an outgoing
+    one); a raw event that did not hydrate contributes None, its rendering depending on the log alone,
+    which the gate keys beside this by the log's identity (_chat_postal_key). Everything else a card
+    carries comes from the raw event or the log row. `captions` is the build's caption-map getter and is
+    called only when a card carries a mid, so a tab whose cards join no caption never pays for the map.
+    The gate re-hydrates when this tuple moved: O(cards) dict lookups against the ~400 whole-list
+    re-hydrations per 120 s the _judge_gen key cost (round-4 plan, P17 merged with P3(c))."""
+    deps = []
+    _map = [None]                                    # the caption map, fetched once on the first mid
+    for c in cards:
+        if c.get("kind") != "postal-service":
+            deps.append(None)
+            continue
+        mid = c.get("mid")
+        if mid and _map[0] is None:
+            _map[0] = captions()
+        cap = _map[0].get(mid) if mid else None
+        if c.get("direction") == "in":
+            fid = ((index.get(mid) or {}).get("fromId") or "") if mid else ""
+            deps.append((mid, cap, _name_of(fid) if fid else None, _name_color(fid) if fid else None))
+        else:
+            deps.append((mid, cap, _name_color_by_name(c.get("peer") or "")))
+    return tuple(deps)
 
 
 def _tasks_base():
@@ -29494,6 +29546,19 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     _pref_len = 0
     _seams_sig = json.dumps((_bs_store or {}).get("seams") or [], sort_keys=True, default=str)
     _pk = _chat_postal_key()
+    # ONE postal index and ONE caption map per build: the fold gate's check, the tail pass and the commit
+    # hydrate against the same objects, so the entry records exactly the values its cards embed (a caption
+    # appended between two of them would otherwise be embedded by one hydration and recorded by another).
+    _pidx = _postal_index()
+    _msum_slot = [None]
+    def _msum():
+        if _msum_slot[0] is None:
+            _msum_slot[0] = _msg_summaries()
+        return _msum_slot[0]
+    # The sealed cards' recorded values are trusted only when this build read names from the pusher's
+    # cycle snapshot (_live_scope.names): a handler-thread build reads the registry per card, so the values
+    # it embeds and the values it would record are two reads, not one. Such a build records None.
+    _scoped = getattr(_live_scope, "names", None) is not None
     if path_override:
         _chat_fold_count("bypass")
     elif _n_pref > 0:
@@ -29551,16 +29616,31 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                         if _ot in _tail_texts or any(dt.startswith(_ot) or _ot.startswith(dt) for dt in _tail_texts):
                             _fold_why = "orphan"      # a new reply retires an interleaved orphan in the prefix
                             break
-            if _fold_why is None and _fe["postal_raw"] and (_pk != _fe["postal_key"] or _judge_gen[0] != _fe["judge_gen"]):
-                # re-hydrate just the sealed RAW postal events against the current index and captions; a
-                # different card means the prefix must be rebuilt. Every card, not only the pending ones
-                # (review find 2026-09-03): the judge writes a LIVE caption under an id it later overwrites
-                # with the final one, and a peer's colour can change — a card sealed complete was frozen
-                _cards = _hydrate_postal(list(_fe["postal_raw"]), _postal_index(), sid)
-                if _cards != _fe["postal_cards"]:
-                    _fold_why = "postal"
+            if _fold_why is None and _fe["postal_raw"]:
+                # The sealed postal cards are keyed on the VALUES they embed from outside the transcript
+                # (round-4 plan, P17 merged with P3(c), 2026-09-07): the log's identity (_pk, the index
+                # memo's own key) and, per card, its caption and its peer's name and colour, read from the
+                # same index and caption map a re-hydration in this build would read (_postal_card_deps).
+                # They used to be re-hydrated on every judge pass (_judge_gen), although the only
+                # judge-written input a card embeds is its caption: about 400 whole-list re-hydrations per
+                # 120 s on a 31-tab kernel against a caption row moving in one round of ten. A deps tuple
+                # of None is an entry sealed outside the pusher's names scope (see _scoped): unverified,
+                # so it re-hydrates once here and is recorded by this build if it is scoped.
+                _deps = _fe["postal_deps"]
+                if _pk != _fe["postal_key"] or _deps is None or _postal_card_deps(_fe["postal_cards"], _pidx, _msum) != _deps:
+                    # re-hydrate just the sealed RAW postal events against the current index and captions; a
+                    # different card means the prefix must be rebuilt. Every card, not only the pending ones
+                    # (review find 2026-09-03): the judge writes a LIVE caption under an id it later overwrites
+                    # with the final one, and a peer's colour can change — a card sealed complete was frozen
+                    _chat_postal_stats["gate"] += 1
+                    _cards = _hydrate_postal(list(_fe["postal_raw"]), _pidx, sid, captions=_msum)
+                    if _cards != _fe["postal_cards"]:
+                        _fold_why = "postal"
+                    else:
+                        _fe["postal_key"] = _pk         # the values observed NOW, never a fresh read at the commit
+                        _fe["postal_deps"] = _postal_card_deps(_cards, _pidx, _msum) if _scoped else None
                 else:
-                    _fe["postal_key"], _fe["judge_gen"] = _pk, _judge_gen[0]
+                    _chat_postal_stats["hit"] += 1
             if _fold_why is None and _fe["task_outs"]:
                 # a sealed task-notification card carries its output file's tail: a file that grew, appeared
                 # or vanished since the seal renders differently (review find 2026-09-03), so re-stat each
@@ -29943,7 +30023,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
         _raw_turn[id(_ev)] = _ti
         if _ev.get("uuid") and _ev["uuid"] not in _raw_turn:
             _raw_turn[_ev["uuid"]] = _ti
-    events = _hydrate_postal(events, _postal_index(), sid)   # swap postal traffic for clean in/out cards (no boilerplate)
+    events = _hydrate_postal(events, _pidx, sid, captions=_msum)   # swap postal traffic for clean in/out cards (no boilerplate)
     _stamp_interrupt_causes(events)                     # a restart/crash resume notice names the seam's cause
     for ev in events:
         # tlId = the timeline atom a chat hover lights: a message/prompt → the DOT (segment promptId),
@@ -29990,8 +30070,25 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                 _cur = _tsnap[_np][0] if _np in _tsnap else _fe["cursors"]
                 _lt, _lm = (_tsnap[_np][1], _tsnap[_np][2]) if _np in _tsnap else (_fe["last_t"], _fe["last_model"])
                 _raw_new = [_e for _e in _raw_tail if _raw_turn.get(id(_e), _fk) < _np]
-                _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + [_e for _e in _raw_new if _chat_postal_relevant(_e)]
-                _pcards = _hydrate_postal(list(_praw), _postal_index(), sid) if _praw else []
+                _praw_new = [_e for _e in _raw_new if _chat_postal_relevant(_e)]
+                _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + _praw_new
+                # Only the raw events NEW since the seal are hydrated here: the gate above verified the sealed
+                # cards (or re-hydrated them and found them equal) against the same index and caption map,
+                # and _hydrate_postal is per-event independent, so sealed + hydrate(new) == hydrate(all).
+                _pcards_new = _hydrate_postal(list(_praw_new), _pidx, sid, captions=_msum) if _praw_new else []
+                _chat_postal_stats["commit_new"] += len(_praw_new)
+                _pcards = (list(_fe["postal_cards"]) if _fold_ok else []) + _pcards_new
+                # The values the entry's cards embed (_postal_card_deps): the sealed part as the gate observed
+                # it, the new part read now from the objects the new cards were just built from. None
+                # (unverified; the next scoped build re-hydrates once) when the sealed part was unverified, or
+                # when this build hydrated anything outside the pusher's names scope.
+                _pdeps_sealed = _fe["postal_deps"] if _fold_ok else ()
+                if not _praw:
+                    _pdeps = ()
+                elif _pdeps_sealed is None or (_praw_new and not _scoped):
+                    _pdeps = None
+                else:
+                    _pdeps = tuple(_pdeps_sealed) + _postal_card_deps(_pcards_new, _pidx, _msum)
                 _plp = list(_fe["pl_pending"]) if _fold_ok else []
                 _touts = list(_fe["task_outs"]) if _fold_ok else []
                 for _e in _newpart:
@@ -30036,7 +30133,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                                     + [(_e.get("md") or "").strip() for _e in _newpart if _e.get("orphaned")],
                     "open_tools": _open_tools, "skill_unfilled": _skill_unf,
                     "postal_raw": _praw, "postal_cards": _pcards,
-                    "postal_key": _pk, "judge_gen": _judge_gen[0], "pl_pending": _plp,
+                    "postal_key": _pk, "postal_deps": _pdeps, "pl_pending": _plp,
                     "task_outs": _touts,
                     # the sealed Agent cards, for _chat_agents_moved: (toolUseId, agentId, pending) —
                     # pending = a background launch sealed without its report (the ack stands as output)
@@ -33972,6 +34069,26 @@ def _msg_sum_scan_session(sid, path, now):
     return sub
 
 
+def _msg_sum_key(s):
+    """The key of one session's _msg_summaries submap: every input _msg_sum_scan_session reads, by
+    identity, stat'd BEFORE the scan. The transcript's mtime (discovery's row; the parse), the session's
+    captions/<sid>.jsonl as (st_mtime_ns, st_size) (the captions its segments join to) and its goal
+    store's identity (jd._store_identity: the store, its override journal and its archive, each
+    (ino, mtime_ns, size) or None; the seams decide which segment a message id belongs to). The key was
+    the transcript mtime alone until 2026-09-07: a caption the judge wrote after the segment's last
+    transcript record never reached the union until the session's next turn, and a seam change never
+    did (round-4 plan, the P17/P3(c) item). Stat-then-read: a write landing between the stat and the
+    scan pairs an old key with new content, which is one extra rescan on the next call, never a stale
+    hit."""
+    sid = s["sid"]
+    try:
+        st = os.stat(jd.CAPDIR / (sid + ".jsonl"))
+        caps = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        caps = None
+    return (s["mtime"], caps, jd._store_identity(sid)[1:])
+
+
 def _msg_summaries():
     """{msg id: caption} — the caption of the recipient segment a peer message triggered. Join the
     msgId (its `romp-msg-id` marker, via _seg_mids) to the segment that bore it, then to that segment's
@@ -33981,9 +34098,11 @@ def _msg_summaries():
     PER-SESSION incremental cache (the user 2026-07-03, who found startup slow and opening each session slow). The
     old memo keyed the WHOLE map on the fleet's (path, mtime) signature — so ANY session writing (a busy
     fleet is always writing) invalidated it and every build_session re-scanned all ~15 transcripts, ~1.2s
-    per chat-open. Now each session's submap is cached against its OWN mtime: a build re-scans only the
-    sessions that actually changed (usually just the one being viewed) and unions the rest from cache. The
-    parses are _parse-mtime-cached too, so an unchanged session costs nothing."""
+    per chat-open. Now each session's submap is cached against its OWN inputs (_msg_sum_key: the
+    transcript's mtime, its captions file and its goal store, whose seams place each message id in a
+    segment): a build re-scans only the sessions whose inputs changed (usually just the one being viewed)
+    and unions the rest from cache. The parses are _parse-mtime-cached too, so an unchanged session
+    costs nothing but the key's stats."""
     now = time.time()
     try:
         sess = _sessions(now)
@@ -34003,13 +34122,14 @@ def _msg_summaries():
         sid = s["sid"]
         live.add(sid)
         ent = per.get(sid)
-        if ent and ent[0] == s["mtime"]:             # unchanged since last scan → reuse its submap
+        key = _msg_sum_key(s)                        # taken BEFORE the scan (see _msg_sum_key)
+        if ent and ent[0] == key:                    # unchanged since last scan → reuse its submap
             continue
         try:
             sub = _msg_sum_scan_session(sid, s["path"], now)
         except Exception:
             sub = ent[1] if ent else {}              # keep last-known on a transient error
-        per[sid] = (s["mtime"], sub)
+        per[sid] = (key, sub)
         dirty = True
     for sid in [k for k in per if k not in live]:    # forget dead sessions so `per` can't grow unbounded
         del per[sid]

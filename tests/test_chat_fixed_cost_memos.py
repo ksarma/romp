@@ -342,5 +342,100 @@ class MergeSets(unittest.TestCase):
         self.assertIn("_merge_tx_sets(session, sid)", inspect.getsource(km._merge_live_atoms))
 
 
+# ── (c) the sealed postal cards' values and the _msg_summaries re-key ────────────────────────────
+class PostalCardDeps(unittest.TestCase):
+    """_postal_card_deps: per sealed card, exactly the values it embeds from outside the transcript."""
+
+    MID = "1788400000.100_1.TESTHOST"
+    PEER = "66666666-7777-8888-9999-aaaaaaaaaaa3"
+
+    def setUp(self):
+        self._names = getattr(km._live_scope, "names", None)
+        km._live_scope.names = {self.PEER: ["api", "/tmp/notes-api", "#abcdef"]}
+
+    def tearDown(self):
+        km._live_scope.names = self._names
+
+    def test_each_embedded_value_is_a_component_and_nothing_else_is(self):
+        index = {self.MID: {"id": self.MID, "from": "api", "fromId": self.PEER, "toId": SID_A, "body": "b",
+                            "kind": "coordinate", "t": 1, "park": False}}
+        colour = {"bg": "#abcdef", "fg": "#ffffff"}
+        cards = [{"kind": "postal-service", "direction": "in", "peer": "api", "mid": self.MID, "summary": "cap", "body": "b"},
+                 {"kind": "postal-service", "direction": "out", "peer": "api", "mid": self.MID, "body": "b"},
+                 {"kind": "postal-service", "direction": "out", "peer": "tests", "body": "no row joined"},
+                 {"kind": "tool", "name": "Bash", "output": "a raw event that did not hydrate"}]
+        calls = []
+
+        def caps():
+            calls.append(1)
+            return {self.MID: "cap"}
+        deps = km._postal_card_deps(cards, index, caps)
+        self.assertEqual(deps, ((self.MID, "cap", "api", colour), (self.MID, "cap", colour), (None, None, None), None))
+        self.assertEqual(len(calls), 1, "the caption map is fetched once, and only because a card carries a mid")
+        km._live_scope.names = {self.PEER: ["api", "/tmp/notes-api", "#000000"]}      # the sender's colour
+        self.assertNotEqual(km._postal_card_deps(cards, index, caps), deps)
+        km._live_scope.names = {self.PEER: ["renamed", "/tmp/notes-api", "#abcdef"]}  # the sender's name
+        self.assertNotEqual(km._postal_card_deps(cards, index, caps), deps)
+        km._live_scope.names = {self.PEER: ["api", "/tmp/notes-api", "#abcdef"]}
+        self.assertNotEqual(km._postal_card_deps(cards, index, lambda: {self.MID: "other"}), deps, "the caption")
+        self.assertEqual(km._postal_card_deps(cards, index, caps), deps, "the same inputs, the same tuple")
+        self.assertEqual(km._postal_card_deps([cards[2], cards[3]], index, lambda: self.fail("no mid, no map")),
+                         ((None, None, None), None))
+
+
+class MsgSummariesKey(unittest.TestCase):
+    """_msg_summaries' per-session submap is keyed on every input the scan reads: the transcript's mtime,
+    the captions file and the goal store (store, override journal, archive)."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.saved_state = jd.STATE
+        jd._rebind_state(Path(self.td.name))
+        self.saved = (km._sessions, km._msg_sum_scan_session, dict(km._msg_sum_cache))
+        km._msg_sum_cache.clear()
+        self.scanned = []
+        km._msg_sum_scan_session = lambda sid, path, now: (self.scanned.append(sid) or {sid + ":m": "cap"})
+        self.rows = [{"sid": SID_A, "name": "web", "path": "/x/a", "mtime": 100},
+                     {"sid": SID_B, "name": "api", "path": "/x/b", "mtime": 100}]
+        km._sessions = lambda now: list(self.rows)
+        for d in (jd.CAPDIR, jd.GOALDIR, jd.GOALARCHDIR, jd._overrides_dir()):
+            d.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        km._sessions, km._msg_sum_scan_session = self.saved[:2]
+        km._msg_sum_cache.clear(); km._msg_sum_cache.update(self.saved[2])
+        jd._rebind_state(self.saved_state)
+        self.td.cleanup()
+
+    def _scan(self):
+        self.scanned.clear()
+        km._msg_summaries()
+        return list(self.scanned)
+
+    def test_each_input_change_rescans_that_session_only_and_unchanged_inputs_rescan_nothing(self):
+        self.assertEqual(sorted(self._scan()), sorted([SID_A, SID_B]), "the first call scans everything")
+        self.assertEqual(self._scan(), [], "unchanged inputs: no rescan")
+        (jd.CAPDIR / (SID_A + ".jsonl")).write_text(json.dumps({"id": "seg", "caption": "c"}) + "\n")
+        self.assertEqual(self._scan(), [SID_A], "a caption written with no transcript change rescans its session")
+        self.assertEqual(self._scan(), [])
+        (jd.GOALDIR / (SID_B + ".json")).write_text(json.dumps({"nodes": {}, "status": {}, "seams": [1]}))
+        self.assertEqual(self._scan(), [SID_B], "a store publish (its seams) rescans its session")
+        with open(jd._overrides_dir() / (SID_B + ".jsonl"), "a") as f:
+            f.write('{"op": "reopen"}\n')
+        self.assertEqual(self._scan(), [SID_B], "a journaled user gesture rescans its session")
+        (jd.GOALARCHDIR / (SID_A + ".json")).write_text("{}")
+        self.assertEqual(self._scan(), [SID_A], "an archive write rescans its session")
+        self.rows[0] = {**self.rows[0], "mtime": 200}
+        self.assertEqual(self._scan(), [SID_A], "the transcript's mtime still keys")
+        self.assertEqual(self._scan(), [])
+        self.assertEqual(km._msg_summaries(), {SID_A + ":m": "cap", SID_B + ":m": "cap"})
+
+    def test_the_key_is_taken_before_the_scan_and_names_the_store(self):
+        src = inspect.getsource(km._msg_summaries)
+        self.assertLess(src.index("key = _msg_sum_key(s)"), src.index('_msg_sum_scan_session(sid, s["path"], now)'))
+        self.assertIn("jd._store_identity(sid)[1:]", inspect.getsource(km._msg_sum_key))
+        self.assertIn("goal store", km._msg_summaries.__doc__, "the docstring names the store as an input")
+
+
 if __name__ == "__main__":
     unittest.main()

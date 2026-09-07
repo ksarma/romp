@@ -2157,6 +2157,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   builds of one cycle: `hit` and `miss` (merges served from the memo against
   derived) and the gauge `entries` (sessions held; the pusher drops a session
   that is neither shown as a tab nor alive).
+  `chat_postal` is the chat fold's memo of a tab's sealed postal cards, keyed
+  on the values the cards embed from outside the transcript (the message log's
+  identity and, per card, its caption and its peer's name and colour): `gate`
+  (fold-gate checks that re-hydrated a tab's sealed cards because one of those
+  values moved, or because the entry was sealed outside the pusher's names
+  snapshot and had to be verified), `hit` (checks that verified the sealed
+  cards from their recorded values without hydrating), and `commit_new` (raw
+  postal events hydrated at fold commits; each is hydrated once, when it is
+  first sealed). Before this memo every judge pass re-hydrated every tab's
+  sealed cards, although a caption is the only judge-written value a card
+  carries.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
