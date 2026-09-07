@@ -1,6 +1,5 @@
 import { marked } from "marked";
-import DOMPurify from "dompurify";
-import type { Config } from "dompurify";   // the one sanitizer profile both md() and userMd() share
+import { sanitizeMd } from "./md-sanitize";   // the one sanitizer every markdown surface shares (md-sanitize.ts)
 import hljs from "highlight.js/lib/core";
 import { highlightHtml } from "./highlight-cache";
 import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
@@ -1090,23 +1089,17 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
-// ONE sanitizer profile for both renderers. svg profile too (the user 2026-08-19): KaTeX's html output
-// still draws STRETCHY glyphs — \sqrt radicals, wide accents, extensible arrows — as inline <svg><path>,
-// and the html-only profile silently ate them: $\sqrt{d}$ rendered as a bare serif "d", the radical gone.
-// DOMPurify's svg profile is still sanitized (no scripts, handlers, or foreignObject). Keep data: URIs on
-// <img> (the CSP allows them and inline transcript images rely on them).
-// ALLOW_DATA_ATTR: false (2026-09-07): transcript HTML must not mint data-* attributes — the chat's
-// document-level delegate keys every action off data-act, so a `<span data-act="stopRetrying">` in a
-// message would post an interrupt on a click. Nothing the renderer needs rides data-* through md().
-const MD_PURIFY: Config = { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], ALLOW_DATA_ATTR: false };
-
+// ONE sanitizer for both renderers, shared with the file viewer: sanitizeMd in md-sanitize.ts holds the
+// profile (html + svg for KaTeX's stretchy glyphs, data: URIs on <img>, no data-* attributes, GitHub's
+// rules for a message's own HTML: no <style>, no form controls, prefixed ids, colour-only inline styles)
+// and returns the sanitized <body> for the DOM walk below.
 function md(src: string, repo: string | null = prRepoFor()): string {
   // Transcript text (user prompts, assistant output, subagent reports, postal
   // bodies) is UNTRUSTED and `marked` emits raw HTML verbatim, so its output
   // must be sanitized before it ever reaches .innerHTML — otherwise a payload
   // like `<img src=x onerror=...>` or `[x](javascript:...)` runs in the webview
   // (which can postMessage the host to open files / drive sessions). DOMPurify
-  // strips event-handler attributes and dangerous URL schemes (profile: MD_PURIFY).
+  // strips event-handler attributes and dangerous URL schemes (md-sanitize.ts).
   try {
     const dirty = marked.parse(src) as string;
     // RETURN_DOM hands back the sanitized <body> instead of its innerHTML — the same nodes, ours to
@@ -1114,8 +1107,8 @@ function md(src: string, repo: string | null = prRepoFor()): string {
     // in the prose (`#123`, `PR #123`, `owner/repo#123`) become links to the session's repository
     // (pr-links.ts; the user 2026-09-06). Text inside code, pre or an existing anchor is skipped, so
     // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice. The
-    // profile is MD_PURIFY, the one shared with userMd below; only the return shape differs.
-    const clean = DOMPurify.sanitize(dirty, { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
+    // profile is sanitizeMd's, the one shared with userMd below and the file viewer.
+    const clean = sanitizeMd(dirty);   // the sanitized <body>
     linkifyPrRefs(clean, repo);
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
@@ -1129,7 +1122,7 @@ function md(src: string, repo: string | null = prRepoFor()): string {
 // here too (md() above): the words are the reading session's own, so its repository is the one they mean.
 function userMd(src: string): string {
   try {
-    const clean = DOMPurify.sanitize(userMdHtml(src), { ...MD_PURIFY, RETURN_DOM: true }) as HTMLElement;
+    const clean = sanitizeMd(userMdHtml(src));   // the sanitized <body>
     linkifyPrRefs(clean, prRepoFor());
     return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }

@@ -3831,7 +3831,11 @@ body.filebrowse-open { overflow: hidden; }
    sheets — the .romp-acted precedent); font sizes reuse what this surface already wears (the page base,
    12px mono, the err-hint's 0.92em). Vars the feed sheet does not define carry the chat's literals as
    fallbacks (feed-css-vars.test.ts holds that line). */
-.fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); }
+/* contain: layout makes the md box the containing block for any fixed or absolutely positioned descendant: an author's
+   element wearing one of the page's fixed classes stays inside the note instead of covering the viewer's chrome
+   (plans/markdown-viewer.md, Slice 1). Layout only, not paint: the body's vertical scroll and a table's own
+   horizontal scroll are untouched. Pinned byte-equal in both sheets (fileview-parity.test.ts). */
+.fileview-md { padding: 14px 18px; overflow-wrap: anywhere; font-family: var(--font-prose); font-size: calc(1em * var(--fv-scale, 1)); contain: layout; }
 .fileview-md > :where(:not(table)) { max-width: calc(860px * var(--fv-scale, 1)); }
 .fileview-md > :first-child { margin-top: 0; }
 .fileview-md > :last-child { margin-bottom: 0; }

@@ -267,7 +267,7 @@ test("EVERY exit that stops short of consuming the body aborts this open's contr
 test("mdBlock takes the document's location and rewrites relative img/src and a/href AFTER DOMPurify", () => {
   assert.match(VIEW, /type MdDocLoc = \{ kind: "url"; href: string \} \| \{ kind: "file"; path: string; sid: string \| null \};/);
   assert.match(VIEW, /function mdBlock\(text: string, doc\?: MdDocLoc\): HTMLElement \{/);
-  const sanitize = MD_FN.indexOf("DOMPurify.sanitize(");
+  const sanitize = MD_FN.indexOf("sanitizeMd(");
   const rewrite = MD_FN.indexOf("resolveDocRelative(");
   assert.ok(sanitize > -1 && rewrite > sanitize, "sanitise first; the rewrite only ever sees what DOMPurify kept");
   // the ATTRIBUTE, never the property — .src/.href are already resolved against the page (the wrong base)
@@ -322,10 +322,10 @@ test("local file mode: a relative link opens the sibling in the viewer via ONE d
 
 test("every heading gets id=md-<slug> after sanitisation, in both modes (the md- prefix keeps the page's own ids and CSS out of it)", () => {
   assert.match(MD_FN, /const heads = Array\.from\(box\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
-  const sanitize = MD_FN.indexOf("DOMPurify.sanitize(");
+  const sanitize = MD_FN.indexOf("sanitizeMd(");
   const ids = MD_FN.indexOf('h.id = "md-"');
   const docGate = MD_FN.indexOf("if (doc) {");
-  assert.ok(sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate — every mode, every caller");
+  assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate — every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
   assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow getElementById\("tabs"\)/, "the prefix's reason is written down");
 });
 
@@ -399,17 +399,21 @@ test("URL mode: a 200 labelled text/html is refused as a web page, with the way 
 test("rendered markdown never carries data-* attributes into the page, in the viewer and in the chat alike", () => {
   // a document's or a message's raw HTML with data-act=\"stopRetrying\" would otherwise bubble to the
   // document-level delegate and interrupt the active session on a click
-  const sanitizes = (MD_FN.match(/DOMPurify\.sanitize\([^)]*\)/g) || []);
+  // one shared call (sanitizeMd, md-sanitize.ts; plans/markdown-viewer.md Slice 1) in the viewer and in the chat,
+  // and the profile's data-* verdict is spelled once, in the module both import
+  const sanitizes = (MD_FN.match(/sanitizeMd\([^)]*\)/g) || []);
   assert.equal(sanitizes.length, 1);
-  assert.match(sanitizes[0], /ALLOW_DATA_ATTR: false/);
-  // the chat's md() takes the sanitized DOM back to link PR references (pr-links.ts; md(src, repo) since 2026-09-06),
-  // so the profile arrives spread; chat-md.test.ts pins userMd() to the byte-identical argument
+  assert.doesNotMatch(MD_FN, /DOMPurify\.sanitize|ALLOW_DATA_ATTR|USE_PROFILES/, "no per-call profile in the viewer");
+  // the chat's md() takes the sanitized DOM back to link PR references (pr-links.ts; md(src, repo) since 2026-09-06)
   const chatMd = (RENDER.split("function md(src: string, repo: string | null = prRepoFor()): string {")[1] || "").split("\nfunction ")[0];
-  assert.match(chatMd, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.match(chatMd, /const clean = sanitizeMd\(dirty\);/);
   assert.doesNotMatch(chatMd, /ALLOW_DATA_ATTR/, "no per-call override of the shared profile's data-* verdict");
-  assert.match(RENDER, /const MD_PURIFY: Config = \{.*ALLOW_DATA_ATTR: false \};/, "the chat's shared sanitizer config forbids data-*");
+  const SAN = web("md-sanitize.ts");
+  assert.match(SAN, /export const MD_PURIFY: Config = \{[\s\S]*?ALLOW_DATA_ATTR: false,[\s\S]*?\};/, "the shared sanitizer config forbids data-*");
+  assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1, "the module holds the one DOMPurify.sanitize call");
+  assert.match(SAN, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
   // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
-  assert.ok(MD_FN.indexOf("DOMPurify.sanitize(") < MD_FN.indexOf('a.dataset.act = "fv-open"'));
+  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-open"'));
 });
 
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {

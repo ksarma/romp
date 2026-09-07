@@ -17,7 +17,7 @@
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { sanitizeMd } from "./md-sanitize";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
@@ -962,6 +962,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // an in-document `[top](#evidence)` lands on its heading (mdBlock minted the ids) — never a tab
     "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
   });
+  // A submit inside the body never navigates the pane's document. The sanitizer drops <form> and every
+  // form control (md-sanitize.ts), so this is the backstop for the one High defect it closes (a note's
+  // `<form action=…><button>` took the Files document to the action URL): one listener per open on the
+  // stable body, like the click delegate above, so it survives every Rendered ⇄ Raw swap.
+  body.addEventListener("submit", (ev) => { ev.preventDefault(); });
   // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
   // over an ssh tunnel to a phone is a real wait.
   const load = el("div", "fileview-load");
@@ -2016,6 +2021,7 @@ export function openUrlView(href: string): void {
   delegate(body, {
     "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
   });
+  body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
   box.appendChild(bar); box.appendChild(body);
   wrap.appendChild(box);
@@ -2221,14 +2227,14 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
   try {
     const dirty = marked.parse(text) as string;
-    // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
-    // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
-    // ALLOW_DATA_ATTR: false — a document's raw HTML must not carry data-* into the page: the viewer's
-    // body delegate lets an act it does not own bubble to render.ts's document-level delegate, so a
-    // `<span data-act="stopRetrying">` in a published report would interrupt the active session on a
-    // click (review find on #958, 2026-09-07). The viewer's own fv-open / fv-anchor stamps are set
-    // AFTER this sanitize, so they are unaffected.
-    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], ALLOW_DATA_ATTR: false });
+    // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (KaTeX draws stretchy glyphs
+    // as inline <svg>), no data-* (a document's `<span data-act="stopRetrying">` would otherwise bubble to
+    // render.ts's document-level delegate and interrupt the active session; review find on #958,
+    // 2026-09-07), and GitHub's rules for a note's own HTML: no <style>, no form controls, ids and names
+    // prefixed user-content-, inline style reduced to its colours (plans/markdown-viewer.md, Slice 1). The
+    // sanitized <body>'s children are adopted as they are, no re-parse. The viewer's own stamps (heading
+    // ids, fv-open / fv-anchor) are set AFTER this sanitize, so they are unaffected and never prefixed.
+    box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
   }

@@ -881,7 +881,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);/,
     "mdBlock knows the open file's path and sid (as a MdDocLoc since the 2026-09-07 fold: the URL viewer shares the renderer)");
   const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
-  const sanitizeAt = mdFn.indexOf("box.innerHTML = DOMPurify.sanitize(dirty");
+  const sanitizeAt = mdFn.indexOf("box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));");   // the shared sanitizer, md-sanitize.ts
   const fallbackAt = mdFn.indexOf("box.textContent = text;");
   const rewriteAt = mdFn.indexOf('rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);');
   assert.ok(sanitizeAt >= 0 && fallbackAt > sanitizeAt && rewriteAt > fallbackAt, "sanitize → (fallback) → rewrite, in that order, on `box`");

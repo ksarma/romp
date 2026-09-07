@@ -108,7 +108,8 @@ test("math.ts renders html-only output so md()'s DOMPurify profile passes it", (
   // DOMPurify's svg profile alongside html (the user 2026-08-19: $\sqrt{d}$ rendered as a bare
   // serif "d" — the radical was sanitized away while its radicand survived).
   assert.match(UI("math.ts"), /output: "html"/);
-  assert.match(UI("render.ts"), /USE_PROFILES: \{ html: true, svg: true \}/);
+  assert.match(UI("md-sanitize.ts"), /USE_PROFILES: \{ html: true, svg: true \}/, "the shared sanitizer (md-sanitize.ts, which render.ts's md() calls) keeps the svg profile");
+  assert.match(UI("render.ts"), /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
 });
 
 test("executed: \\sqrt really does emit inline svg — the glyph the sanitizer must keep", () => {
