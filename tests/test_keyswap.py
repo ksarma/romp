@@ -1100,7 +1100,10 @@ class KeyswapCli(_EnvFile):
         self.assertIn("MISMATCH    the kernel's key source is a credential command (ROMP_CREDENTIAL_COMMAND);\n"
                       "            this shell's is an API key line (ANTHROPIC_API_KEY).", said)
         self.assertIn("reads another service.env:", said)
-        self.assertIn("the kernel's environment carries ROMP_CREDENTIAL_COMMAND (a foreground manager started from a shell", said)
+        # this shell's key line is in its file, and a line in service.env outranks any environment in
+        # keysource.select_source: a kernel reading this file would select the key line too, so the kernel's
+        # environment can only explain the mismatch together with another service.env, which is listed
+        self.assertNotIn("the kernel's environment carries", said, "a cause that cannot stand alone is not offered")
         self.assertNotIn("this shell's environment carries", said, "this shell's source is the file's; no environment bullet for it")
         self.assertNotIn("the kernel is not reading this file's key source", said, "the mode words, not the fingerprint words")
         self.posted.clear()
@@ -1359,14 +1362,24 @@ class KeyswapCliCommandMode(unittest.TestCase):
         for gone in ("pinned", "keeps the mode it started in", "daemon-reload", "kickstart", "launchctl"):
             self.assertNotIn(gone, out, "the pinned-mode paragraphs and the restart block are gone with the pin")
         self.assertEqual(self.posted, [("/keycycle", {"sessions": []})])
-        # the reference is named by its word; and the environment bullet is not offered when this shell's
-        # command comes from the file, which every manager reads
+        # the reference is named by its word. While this shell's command rides its environment alone, the
+        # kernel's environment is a cause on its own (a foreground manager started from a shell that exported
+        # the reference, and this shell did not)
         self.kernel_view.update({"keySource": "op"})
-        self.line_in_file()
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
         self.assertIn("kernel      key source: a 1Password reference (ROMP_API_KEY_REF)", out)
         self.assertIn("the kernel's environment carries ROMP_API_KEY_REF (a foreground manager started from a shell", out)
+        self.assertIn("this shell's environment carries ROMP_CREDENTIAL_COMMAND", out)
+        # once this shell's command is in the file, neither environment bullet is offered: a line in service.env
+        # outranks any environment in keysource.select_source, so a kernel reading this file would select the
+        # command too; the kernel's environment can only explain the mismatch together with another
+        # service.env, which is listed
+        self.line_in_file()
+        rc, out, _err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("kernel      key source: a 1Password reference (ROMP_API_KEY_REF)", out)
+        self.assertNotIn("the kernel's environment carries", out)
         self.assertNotIn("this shell's environment carries", out)
         self.assertIn("reads another service.env:", out)
         # an older kernel answers without keySource: named as such, with the restart that brings it here

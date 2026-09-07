@@ -177,8 +177,10 @@ def parse_lines(text, allow_export: bool = False) -> tuple[dict, int, int]:
 
 
 def _file_config() -> dict:
-    """The env file's assignments, cached on the file's own stat identity (a rewrite invalidates by
-    construction). {} for a missing or unreadable file."""
+    """The env file's assignments of the tuning names (CONFIG_VARS) and no other, cached on the file's own
+    stat identity (a rewrite invalidates by construction). config_value reads those names only, so nothing
+    else the file carries (a key line, op's token) is kept in this module's memory. {} for a missing or
+    unreadable file."""
     global _FILE_CFG
     p = service_env_path()
     try:
@@ -194,6 +196,7 @@ def _file_config() -> dict:
             vals, _bad, _empty = parse_lines(fh.read())
     except OSError:
         vals = {}
+    vals = {k: v for k, v in vals.items() if k in CONFIG_VARS}
     _FILE_CFG = (ident, vals)
     return vals
 

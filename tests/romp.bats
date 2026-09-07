@@ -92,6 +92,10 @@ MOCK
     # (tests/tmux-private.bash has the 2026-09-06 incident).
     tmux_private_socket_dir "$TEST_DIR"
     unset TMUX            # default: outside tmux → attach-session branch
+    # The runner's shell may carry a key source of its own; the launcher's op-consumer check (like the
+    # kernel's) decides by PRESENCE, so a variable exported empty is not "absent". Each test sets the ones
+    # its scenario needs inline (tests/romp-service.bats does the same).
+    unset ROMP_CREDENTIAL_COMMAND ROMP_API_KEY_REF ROMP_CREDENTIAL_NAMES ROMP_CREDENTIAL_SELECTOR_FILE ROMP_CREDENTIAL_TIMEOUT_S
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
     # names map under XDG_STATE_HOME (was polluting the REAL state dir).
@@ -590,6 +594,20 @@ _stale_server_globals() {
     export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
     rm -f "$ROMP_SERVICE_ENV_FILE"
     ROMP_API_KEY_REF="op://test-vault/test-item/credential" ROMP_CREDENTIAL_COMMAND='my-credentials "$1"' \
+        run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    ! grep -q 'set-environment -gu' "$MOCK_LOG"
+}
+
+@test "new -t: an EMPTY credential command in the client env beside a reference is still the command kind: nothing scrubbed" {
+    # keysource.op_consumer decides by PRESENCE (CMD_VAR in os.environ), not by a value: ROMP_CREDENTIAL_COMMAND=
+    # beside a reference selects an (invalid) command source and the kernel claims nothing, so the launcher must
+    # not scrub what was never claimed. A non-empty test here scrubbed the server while the kernel kept its hands
+    # off (review find, 2026-09-07); bin/romp-service's _svc_source_kind reads presence the same way.
+    _stale_server_globals
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    rm -f "$ROMP_SERVICE_ENV_FILE"
+    ROMP_API_KEY_REF="op://test-vault/test-item/credential" ROMP_CREDENTIAL_COMMAND= \
         run run_romp new -t myproject
     [ "$status" -eq 0 ]
     ! grep -q 'set-environment -gu' "$MOCK_LOG"

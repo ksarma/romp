@@ -215,6 +215,19 @@ class Config(_Lab):
         for gone in ("command", "configured", "pin_mode", "_MODE_PIN"):
             self.assertFalse(hasattr(es, gone), "%s decides the mode; the module must not" % gone)
 
+    def test_the_file_cache_holds_the_tuning_names_only(self):
+        # config_value reads CONFIG_VARS and nothing else, so nothing else from the file is kept in this module's
+        # memory: a credential value the file carries (a key line, op's token) is never in a dict here
+        p = os.path.join(self.d, "service.env")
+        with open(p, "w") as fh:
+            fh.write("ANTHROPIC_API_KEY=fixture-not-a-key\nOP_SERVICE_ACCOUNT_TOKEN=fixture-not-a-token\n"
+                     "ROMP_CREDENTIAL_NAMES=hp\nROMP_PERF=1\n")
+        os.environ["ROMP_SERVICE_ENV_FILE"] = p
+        self.assertEqual(es.names(), ["hp"])
+        self.assertEqual(set(es._file_config()), {"ROMP_CREDENTIAL_NAMES"})
+        self.assertEqual(set(es._FILE_CFG[1]), {"ROMP_CREDENTIAL_NAMES"}, "the cached dict itself, not a view of it")
+        self.assertEqual(es.config_value("ANTHROPIC_API_KEY"), "", "not a tuning name: nothing is read for it")
+
     def test_names_split_strip_and_dedupe(self):
         os.environ["ROMP_CREDENTIAL_NAMES"] = " hp ,lp,,hp, batch "
         self.assertEqual(es.names(), ["hp", "lp", "batch"])

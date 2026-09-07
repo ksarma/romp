@@ -534,7 +534,9 @@ The line is remembered the way the reference is. Removing it is an error until
 another source is configured, and the memory survives restarts in
 `service.env.source` (the word `command`). A `service.env.<name>` profile may
 carry a single `ROMP_CREDENTIAL_COMMAND=` line, and `romp keyswap <name>`
-selects it like a reference profile.
+selects it like a reference profile from the reference or a key line; under a
+command, `<name>` is a selector (see [Rotation by name](#rotation-by-name)),
+so a move from one command to another is a hand edit of `service.env`.
 
 The kernel runs the command as `/bin/sh -c <command> sh <selector>`, so the
 selector file's token (see [Rotation by name](#rotation-by-name)) is `$1`;
@@ -545,7 +547,12 @@ value outside that range holds the default and is one problem line). On the
 deadline the whole process group is killed. The command runs with the kernel's
 own environment. Nothing is claimed or scrubbed for it, so a command that
 itself runs `op` with a service-account token in `service.env` works, and so
-does an `apiKeyHelper` box whose sessions need `op`'s variables.
+does an `apiKeyHelper` box whose sessions need `op`'s variables. One case
+needs a manager restart: a manager that started under the reference claimed
+`op`'s variables out of its environment for its own `op read`, and a swap to a
+command on that running manager (`romp keyswap <name>` to a command profile)
+leaves them claimed, so a command that needs them works from the next manager
+restart.
 
 The command prints `NAME=VALUE` lines. An `export` prefix is accepted, blank
 and `#` lines are skipped, the last assignment of a name wins, one layer of
@@ -698,7 +705,8 @@ then reads the old token, runs the command in your shell, writes the new token
 command again, and confirms the credential or the set fingerprint moved. A
 switch that moves nothing (the command ignores `$1`, both names resolve to one
 credential, or the command fails for the new name) is undone: the old token is
-written back and the command exits 1 with `nothing switched`. A switch that
+written back (an empty file is left where there was none, so a linked selector
+file keeps its place) and the command exits 1 with `nothing switched`. A switch that
 moved asks the kernel to re-run and reports the kernel's fingerprint beside
 yours. A rotation behind the same name (a new value in the store) needs no
 switch: `romp keyswap --cycle-all` re-runs the command first. A hand edit of
@@ -719,14 +727,19 @@ After `installed` and `running`, `romp-service status` adds:
     unit carries credential-shaped lines: MY_SERVICE_TOKEN
     service.env carries credential-shaped lines: ANTHROPIC_API_KEY
 
-The first line reads `key source: file`, `key source: reference` or `key
-source: command (...)`, selected as the kernel selects it: a line in
-`service.env` first (command, then reference, then key), then this shell's
-environment (a foreground manager's door; a supervised manager reads the file
-only). Under a command the parenthesis is `(selector <name>)` when
-`ROMP_CREDENTIAL_NAMES` declares the token, else `(selector undeclared, N
-chars)`, `(no selector)`, or `(selector file holds something that is not a
-name)`.
+The first line reads `key source: file`, `key source: reference`, `key
+source: command (...)` or `key source: none (...)`, selected as the kernel
+selects it: a line in `service.env` first (command, then reference, then key),
+then the marker `service.env.source` beside it, then this shell's environment
+(a foreground manager's door; a supervised manager reads the file only). Under
+a command the parenthesis is `(selector <name>)` when `ROMP_CREDENTIAL_NAMES`
+declares the token, else `(selector undeclared, N chars)`, `(no selector)`, or
+`(selector file holds something that is not a name)`. The `none` form is the
+removed-source state: the marker remembers that a runtime source was once
+selected from the file and its line is gone, and the line reads `key source:
+none (the credential command was removed; configure an API key source
+explicitly)` or the same for the 1Password reference, the kernel's own words
+for the launches it refuses in that state.
 
 The `ExecStart` line reads `runs the manager through a shell (its variables
 freeze until a manager restart)` when the unit or the plist routes the manager
@@ -876,9 +889,10 @@ cycle then covers the set's other variables. The `set` line names the
 variables the command printed and fingerprints the set as a whole.
 
 A cycle under a command stops before any reconnect when this shell's own run
-failed or when the two sides disagree. Each row costs the kernel one read of
-the cached set, which on a failing command is one run each, so a hanging
-command makes a large `--cycle-all` slow.
+failed, when the kernel's latest run failed (it stands on the previous set, and
+the report says so), or when the two sides disagree. Each row costs the kernel
+one read of the cached set, which on a failing command is one run each, so a
+hanging command makes a large `--cycle-all` slow.
 
 `MISMATCH` means the kernel and your shell disagree, and the line says on
 what:

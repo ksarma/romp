@@ -35,7 +35,8 @@ key-billed judge call, and direct model-catalog refresh. Explicit cycle checks
 also resolve the key to detect rotations; a reconnect resolves it again at
 launch. Resolved provider keys are not cached or written to disk. Resolution
 failures fail closed. `cli/keyswap.py` (`romp keyswap`) shares the path and
-parser to switch commands, references or legacy keys without resolving them.
+parser to switch commands, references or legacy keys without resolving a
+reference (under a command it runs the command in the operator's shell).
 Removing a service-file source cannot restore a stale startup key. See
 `docs/reference.md` for migration and service authentication setup.
 

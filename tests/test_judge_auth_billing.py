@@ -630,9 +630,16 @@ class CommandSetInJudgeEnv(_JudgeAuthBase):
             run.tearDown()
 
     def test_the_kernel_wires_the_three_seams_beside_the_key_claimer(self):
-        import inspect
-        km = SourceFileLoader("romp_kernel_authbill_cmd", os.path.join(BIN, "romp-kernel")).load_module()
-        src = inspect.getsource(km._sdk_locked)
+        # A source pin read from the kernel's TEXT, never from an import: bin/romp-kernel loads kernel/judge.py
+        # by name at import, so importing a kernel copy inside a test re-executes the judge module into the one
+        # sys.modules["romp_judge"] object every test module shares and re-points its state root to whatever
+        # XDG_STATE_HOME is current, for every module that runs after this one.
+        import sys
+        with open(os.path.join(BIN, "romp-kernel"), encoding="utf-8") as fh:
+            text = fh.read()
+        start = text.index("\ndef _sdk_locked(")
+        src = text[start:text.index("\ndef ", start + 1)]
+        self.assertNotIn("romp_kernel_authbill_cmd", sys.modules, "no kernel copy is imported for a source pin")
         self.assertIn("jd._WORK_KEY_FN = sbmod.work_api_key", src)
         self.assertIn("jd._ENV_SET_FN = sbmod.credential_set", src)
         self.assertIn("jd._ENV_INVALIDATE_FN = sbmod.credential_invalidate", src)

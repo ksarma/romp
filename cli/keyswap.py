@@ -490,8 +490,12 @@ def _mode_mismatch(body, out, shell, where="file", path=None):
     the line rides one side's environment alone (a supervised manager reads the file only; a foreground
     one reads the shell that started it), when the kernel predates the credential command (its answer
     carries no keySource), or when the file changed between the two reads. `shell` is this shell's source
-    and `where` says whether it came from the file or the environment; the environment bullet is offered
-    only for the side whose line can be in an environment. `path` is this shell's service.env path, the
+    and `where` says whether it came from the file or the environment; an environment bullet is offered
+    only for a side whose line can be in an environment: this shell's when its line rides its environment,
+    the kernel's only when this shell's file has no source line at all, since a line in service.env
+    outranks any environment in select_source and a kernel reading this shell's file would select that
+    line too (with a line here, the kernel's environment explains nothing without another service.env,
+    which is always listed). `path` is this shell's service.env path, the
     kernel's resolution (ks.service_env_path) unless a caller has it. Names variables, kinds, places and
     this shell's file path; never a value."""
     kmode = body.get("keySource")
@@ -511,7 +515,7 @@ def _mode_mismatch(body, out, shell, where="file", path=None):
         out("            - this shell's environment carries %s and the kernel does not read it:" % ks.CMD_VAR)
         out("              a supervised manager (the login service) reads service.env only, and a foreground one reads the")
         out("              shell that started it. Put the line in service.env so every reader selects it.")
-    if kmode in ("op", "command"):
+    if kmode in ("op", "command") and (where == "environment" or shell.kind == "none"):
         var = ks.CMD_VAR if kmode == "command" else ks.REF_VAR
         out("            - the kernel's environment carries %s (a foreground manager started from a shell that" % var)
         out("              exported it) and this shell's does not. Put the line in service.env, or start the manager")
