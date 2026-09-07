@@ -1,11 +1,13 @@
 # User todos — what a session needs from you, held until you or it says otherwise
 
-**Status: built (2026-08-22)** — settled in a structured design interview (the user 2026-08-20/21)
-over three research passes; the decisions recorded here are the plan of record, and each build
-slice at the bottom carries its as-built notes. File:line references describe the design-time
-tree and are not current (see `plans/README.md`); the slices' own tests are the current map.
-Companion records: the Vocabulary section at the end of this document and the authority-tier
-decision in `docs/adr/0001-user-todos-authority-tier.md`.
+**Status: built (2026-08-22; settled with the user 2026-08-20/21).** Landed in the commits of the
+user-todos change: the store and the two postal tools, the split card with Reply and Dismiss, the
+delivery-keyed answer, the tab flag and the feed marker, the idle-escalation floor and the badge,
+the SessionStart hook, and the per-install switch. The decisions recorded here are the plan of
+record, and each build slice at the bottom carries its as-built notes. File:line references
+describe the design-time tree and are not current (see `plans/README.md`); the slices' own tests
+are the current map. Companion records: the Vocabulary section at the end of this document and
+the authority-tier decision in `docs/adr/0001-user-todos-authority-tier.md`.
 
 ## The problem
 
@@ -157,6 +159,9 @@ Exactly three events clear a user todo:
    (delivered), a refusal that outruns the stamp flips the mark and the stamp stands down at
    its own write moment — matched by the send's nonce, so a stale flag never stands down a
    later delivered answer — and `_tmux_paste_loss_boot_pass` re-offers marks a dead kernel left.
+   The Codex backend advertises neither capability (`queue_carries_todos`, `send_reports_refusal`),
+   so an answer to a Codex session takes the plain two-argument send and stamps at the truthy
+   return, with no recall or loss seam behind it.
 2. **The user dismisses** — clears it without a message; nothing is injected. For moot and
    stale items.
 3. **The agent withdraws** — via the tool, when it got what it needed some other way or the

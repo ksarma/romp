@@ -1,6 +1,6 @@
 # User todos are an authority tier the judges cannot clear
 
-Status: accepted (2026-08-21)
+Status: proposed (2026-08-21)
 
 A user todo — a need an agent registers with the user while it keeps working — is cleared by
 exactly three events: the user answers it, the user dismisses it, or the agent withdraws it.
