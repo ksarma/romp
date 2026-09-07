@@ -183,11 +183,14 @@ across every session and every attached machine: a decision it needs, a
 credential, a pick between two designs. Each row names its session and shows
 how long the todo has waited. Reply sends your answer straight into that
 session, waking it if it has gone quiet; Dismiss clears the todo without a
-reply. A file path in a todo's detail is a link: click it and the file opens in
-the Files pane, which comes forward if it was closed. The pane is off by
-default, like the outline; turn it on from the bottom bar. Sessions flag todos
-only where the gear's **User todos** switch is on, and the switch is per
-machine: while it is off on this one, the pane says so and still lists the
+reply. A file path in a todo's text or its detail is a link: click it and the
+file opens in the Files pane, which comes forward if it was closed. Absolute
+paths, `~/`, `./` and `../` paths and `file://` URIs link as they are; any other
+relative path links only when its last segment has a file extension
+(`notes/plan.md`, not `notes/plan`). The pane is off by default,
+like the outline; turn it on from the bottom bar. Sessions flag todos only where
+the gear's **User todos** switch is on, and the switch is per machine: while it
+is off on this one, the pane says so and still lists the
 other machines' todos. A todo you expected can be missing for two reasons. A
 session that has ended keeps its todos out of the list until you revive it
 (click **+**; closed sessions are listed under **Recent**). A session you have
@@ -228,8 +231,9 @@ hover it. One click does one thing: a plain click acts in the dashboard, and a
 Cmd-click (Ctrl on Windows and Linux) or a middle-click opens the link in a
 browser tab of its own. Where a comment highlight or a change mark covers a
 link, a plain click opens the comment or the change and leaves the link alone.
-A path links only when it has a slash and a file extension, starts on its own
-after a space, a quote or a bracket (so `$HOME/docs/a.md`,
+Inside a file the test for a path is stricter than the one a todo or a chat
+message gets: a path links only when it has a slash and a file extension, starts
+on its own after a space, a quote or a bracket (so `$HOME/docs/a.md`,
 `@scope/pkg/index.js` and `C:/Users/x.txt` stay text), does not start with a
 site name (`www.example.org/docs/index.html`), and is not the package an
 `import` or `require` names (a relative import such as `./app.css` still

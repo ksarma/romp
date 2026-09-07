@@ -1033,7 +1033,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // (a highlight, a change mark) is the card's opening and only that, so a plain one is cancelled here when
   // the link is an anchor (the anchor's own open would follow the card's otherwise) and left to the panel's
   // delegate on the row, as render.ts yields to panelMark (the 2026-09-06 precedent); a modified click on a
-  // mark is the link's and only the link's, so it stops before the row. A click that ends a drag which
+  // mark is the link's and only the link's, so it stops before the row. A path link's click stops at this
+  // body whatever the gesture: the span's data-act="openpath" is the one the chat's body delegate routes
+  // for the todo card's links (render.ts), and a click that bubbled on to it would open the file a second
+  // time, as the transcript's own per-span binder guards against (render.ts bindPathLink). A plain open tears
+  // this viewer down before the click reaches the delegate, which then refuses the detached span; an open the
+  // close guard DECLINES (an unsaved comment) leaves the span in place, and the delegate would open the file the
+  // person just kept away from (file-view-links-browser.test.ts, the chat page). A click that ends a drag which
   // selected text (the selection is still open at click time; a press on text collapses it first, so a plain
   // click never sees one) selects and navigates nowhere. Enter on a focused path link is its click
   // (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
@@ -1061,13 +1067,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       openUrlTab(x.getAttribute("href") || "");
       return;
     }
-    ev.preventDefault();
+    ev.preventDefault(); ev.stopPropagation();                   // this viewer's click alone: the span's data-act is the chat's body delegate's too (render.ts openpath), which would open the file a second time
     const p = x.dataset.path;
     if (!p) return;
-    if (own) {
-      ev.stopPropagation();
-      if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
-    }
+    if (own && openFileTab(p, sid || null)) return;              // its own tab; a blocked popup falls through to the viewer
     const ln = Number(x.dataset.line);
     openLinkedFile(p, sid || null, ln > 0 ? ln : null);
   };

@@ -20,6 +20,7 @@ const LINKS = read("path-links.ts");
 const MOD = read("file-view-links.ts");
 const FILES = read("files.ts");
 const FC = read("file-comments.ts");
+const RENDER = read("render.ts");
 const CHAT_CSS = read("styles.css");
 const FEED_CSS = read("feed.css");
 
@@ -505,7 +506,7 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "the anchors' sorting moved to the module");
 });
 
-test("source: the body's delegate and its gesture: a plain click on a panel mark is the card's alone (an anchor's own open cancelled), a drag-select opens nothing, a plain path click opens through the host's opener, a modified click or a middle-click opens the link's own tab and stops before the row, a section link never moves the document", () => {
+test("source: the body's delegate and its gesture: a plain click on a panel mark is the card's alone (an anchor's own open cancelled), a drag-select opens nothing, a path click stops before the row and the chat's body delegate (its openpath would open the file again) and opens through the host's opener, a modified click or a middle-click opens the link's own tab, a section link never moves the document", () => {
   const d = VIEW.split('body.addEventListener("click", (ev) => {')[1].split("\n  });\n")[0];
   assert.match(d, /const x = linkOf\(t\);\n\s*if \(!x\) return;/);
   assert.match(d, /if \(panelMark\(t\) && !wantsOwnTab\(ev\)\) \{[^\n]*\n\s*if \(x\.dataset\.act !== "openpath"\) ev\.preventDefault\(\);\n\s*return;/, "the card's click, and the anchor under the mark does not open too");
@@ -516,7 +517,8 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(o, /const own = wantsOwnTab\(ev\);/);
   assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n\s*const id = x\.dataset\.frag;\n\s*const hit = id \? Array\.from\(box\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\) : undefined;\n\s*if \(hit\) hit\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "a section link: this document's scroll or nothing, never the page's location");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
-  assert.match(o, /if \(own\) \{\n\s*ev\.stopPropagation\(\);\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null\);/, "a path link: its own tab on the gesture, the viewer otherwise or when the popup was blocked");
+  assert.match(o, /ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own && openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null\);/, "a path link: the click stops here on every gesture (render.ts's body delegate has an openpath of its own), then its own tab on the gesture, the viewer otherwise or when the popup was blocked");
+  assert.match(RENDER, /\n    openpath: \(elx\) => openLinkedPath\(elx\),\n/, "the reason the viewer stops the click: the chat's body delegate routes the same data-act");
   assert.match(VIEW, /const openUrlTab = \(href: string\) => \{\n\s*if \(!href\) return;\n\s*if \(canPreview\(\)\) window\.open\(href, "_blank", "noopener,noreferrer"\);[^\n]*\n\s*else post\(\{ type: "openLink", href \}\);/, "render.ts's two openers, by host");
   assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "the middle press on a path link starts no autoscroll");
   assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && x\.dataset\.act === "openpath"\) openLink\(x, ev\);\n\s*\}\);/, "the middle-click on a path link is its own tab; an anchor's is the browser's");

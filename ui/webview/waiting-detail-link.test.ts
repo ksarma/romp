@@ -95,7 +95,7 @@ function listHandler(opened: Opened[]): Handler {
   return fn((p: string, sid: string, tid: string) => opened.push([p, sid, tid])) as Handler;
 }
 function modalHandler(opened: Opened[], sid: string, todoId: string): Handler {
-  const line = WAITING.split("\n").find((l) => l.includes("delegate(dd, { openpath: "));
+  const line = WAITING.split("\n").find((l) => l.includes("delegate(box, { openpath: "));
   assert.ok(line, "anchor not found — the Reply modal's delegate moved; re-anchor");
   const src = line!.slice(line!.indexOf("openpath: ") + "openpath: ".length, line!.lastIndexOf(" });"));
   const fn = new Function("openTodoPath", "sid", "todoId", transpile("const h = " + src + ";") + "\nreturn h;");

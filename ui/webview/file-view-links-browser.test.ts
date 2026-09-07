@@ -100,6 +100,18 @@ function hostScript(kind: "chat" | "feed"): string {
     const end = RENDER.indexOf("}, true);", start) + "}, true);".length;
     assert.ok(start > 0 && end > start, "render.ts's document-level anchor opener");
     ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\n" + RENDER.slice(start, end);
+    // …and the chat's BODY delegate (actions.ts delegate, the real one, on document.body as render.ts installs it), whose
+    // openpath opens the todo card's path links. A path link inside the viewer carries the same data-act, so a click the
+    // viewer let bubble would open the file there a second time; the handler here records the path, and the chat-page
+    // test asserts the record stays empty. render.ts's own handler is pinned by user-todo-title-links.test.ts.
+    const ACTIONS = fs.readFileSync(path.join(UI, "actions.ts"), "utf8");
+    const fStart = ACTIONS.indexOf("export function flash(el: HTMLElement): void {");
+    const dStart = ACTIONS.indexOf("export function delegate(root: HTMLElement | Document, handlers: Record<string, ActionHandler>): void {");
+    const dEnd = ACTIONS.indexOf("\n}\n", dStart) + 3;
+    assert.ok(fStart > 0 && dStart > fStart && dEnd > dStart, "actions.ts's flash and delegate");
+    assert.match(RENDER, /\n    openpath: \(elx\) => openLinkedPath\(elx\),\n/, "render.ts's body delegate routes openpath");
+    ts += "\ntype ActionHandler = (el: HTMLElement, ev: Event) => void;\n" + ACTIONS.slice(fStart, dEnd).replace(/^export /gm, "")
+      + "\n(window as any).__bodyOpens = [];\ndelegate(document.body, { openpath: (elx) => { (window as any).__bodyOpens.push(elx.dataset.path); } });\n";
   } else {
     const FEED = fs.readFileSync(path.join(UI, "feed.ts"), "utf8");
     const start = FEED.indexOf("function feedWantsKeys(t: EventTarget | null): boolean {");
@@ -497,7 +509,7 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
   });
 });
 
-test("in a browser, under the chat's own document-level opener: a plain URL click is one tab, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link opens in place", async (t) => {
+test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE, never reaching the delegate's openpath", async (t) => {
   await inBrowser(t, "chat", async (h) => {
     const { page, served, open, status, settle, base, openCards } = h;
     await open(APP);
@@ -519,6 +531,46 @@ test("in a browser, under the chat's own document-level opener: a plain URL clic
     await page.locator("#romp-fileview .file-uri-link", { hasText: "../docs/guide.md:30" }).click();
     await page.locator("#romp-fileview .fileview-base", { hasText: "guide.md" }).waitFor({ timeout: 10000 });
     assert.deepEqual(served[served.length - 1], { path: GUIDE, sid: SID }, "a path link (no href) is the viewer's, not the opener's");
+    const bodyOpens = () => page.evaluate(() => (window as any).__bodyOpens as string[]);
+    assert.deepEqual(await bodyOpens(), [], "the viewer stopped the click: the body delegate's openpath (the todo card's route) never saw it, so the file opened once");
+    await open(GUIDE);
+    await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "the app" }).click();
+    await page.locator("#romp-fileview .fileview-base", { hasText: "app.py" }).waitFor({ timeout: 10000 });
+    assert.deepEqual(served[served.length - 1], { path: APP, sid: SID });
+    assert.deepEqual(await bodyOpens(), [], "a Markdown anchor marked as a path link: the same, one open");
+    await page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" }).click({ modifiers: ["Control"] });
+    await settle();
+    assert.deepEqual(await bodyOpens(), [], "a modified click on a path link: its own tab or the viewer, and the delegate saw nothing");
+    // The reachable double: an open the viewer's guard DECLINES (an unsaved comment) leaves the viewer, and the span, in
+    // the document, so a click that bubbled on would reach the delegate and open the very file the person just kept
+    // away from (a second ask on the web, the editor in VS Code). A plain open tears the old viewer down synchronously,
+    // which detaches the span before the delegate's contains() check; this is the case the stop is for.
+    await status("empty"); await open(APP);
+    await page.locator("#romp-fileview .fileview-fc:not([hidden]) button").click();
+    await page.locator("#romp-fileview .fc-panel").waitFor({ timeout: 10000 });
+    const row3 = page.locator("#romp-fileview code.hljs .fv-cl").nth(2);
+    const link = page.locator("#romp-fileview .file-uri-link", { hasText: "data/config.json" });
+    const rb = (await row3.boundingBox())!, lb = (await link.boundingBox())!;
+    await page.mouse.move(rb.x + 2, rb.y + rb.height / 2); await page.mouse.down();
+    await page.mouse.move(lb.x + lb.width + 20, lb.y + lb.height / 2, { steps: 10 }); await page.mouse.up();
+    const float = page.locator("button.fc-float");
+    await float.waitFor({ state: "visible", timeout: 10000 });
+    await float.click();
+    await page.locator("#romp-fileview .fc-input").waitFor({ timeout: 10000 });
+    await page.keyboard.type("keep this one");
+    const asked: string[] = [];
+    page.once("dialog", (d: any) => { asked.push(d.message()); void d.dismiss(); });
+    const n1 = served.length;
+    await link.click(); await settle();
+    assert.equal(asked.length, 1, "the viewer asked"); assert.equal(await base(), "app.py", "declined: the file stays"); assert.equal(served.length, n1, "nothing fetched");
+    assert.deepEqual(await bodyOpens(), [], "declined, with the span still in the document: the delegate saw nothing, so the click stopped at the viewer and the declined file was not opened behind the person's back");
+    // the recorder is live, so the empties above mean something: a span outside the viewer reaches the delegate
+    assert.deepEqual(await page.evaluate(() => {
+      const s = document.createElement("span"); s.dataset.act = "openpath"; s.dataset.path = "/tmp/TESTHOST/elsewhere.md";
+      document.body.appendChild(s); s.click(); s.remove();
+      return ((window as any).__bodyOpens as string[]).splice(0);
+    }), ["/tmp/TESTHOST/elsewhere.md"], "the body delegate is installed and live");
   });
 });
 
