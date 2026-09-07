@@ -19,7 +19,10 @@ The test derives the three sets from build_session's source by AST and requires 
 table's keys, so a helper added to build_session without a classification fails the suite, and so
 does a stale entry for one removed. A second test requires every `sig` label to exist in the
 signature's label tuple. Names, not lines: the tables say what each read is, the signature module
-says how it is keyed.
+says how it is keyed. The census enforces ONE level: the helpers build_session calls directly. What
+each helper reads in turn is the classification's claim (the note), verified by the differential
+tests below that move one input at a time, not derived; a helper that gains a new read keeps its
+entry and is caught only if a differential test covers the input.
 
 Synthetic fixtures only.
 """
@@ -138,7 +141,7 @@ CENSUS = {
     "_session_meta": ("pure", "over the transcript's records, memoized by record identity (transcript)"),
     "_session_retry_suppressed": ("sig", "retry"),
     "_session_working": ("sig", "downtime", "over the turns, and the host suspensions recorded since boot"),
-    "_sessions": ("sig", "names", "the cycle's discovery rows: the transcript path (transcript) and the display name (names)"),
+    "_sessions": ("sig", "names", "the cycle's discovery rows: the transcript path (transcript), the display name (names), and the 48 h discovery window (clock: a session that ages out leaves the roster and the tab list, so no signature is taken for it)"),
     "_space_paths": ("memo", "the first resolution of a message's spaced spans latches for the process's life"),
     "_split_followup": ("pure", "over a text"),
     "_split_reminders": ("pure", "over a text"),
