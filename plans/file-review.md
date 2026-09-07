@@ -794,8 +794,11 @@ Acceptance criteria:
 - Every text format: a comment from the Raw view of an HTML, SVG, CSS, CSV, and code fixture
   stores the exact source slice.
 - Both: with the author label held equal, the comment object written from either view
-  deep-equals the one `addComment` writes for the same quote and note, apart from id and `ts`;
-  the sidecar's changes, fingerprint, and version are unchanged.
+  deep-equals the one `addComment` writes for the same quote and note, apart from id, `ts`, and
+  the romp-only `anchorAt` stored beside the anchor; the anchor is the one `addComment` writes
+  when its 24 characters of context locate the passage uniquely, and wider only when they tie
+  with another copy's (the anchors follow-on, 2026-09-07); the sidecar's changes, fingerprint,
+  and version are unchanged.
 - Both: after an agent edit moves the passage, the highlight follows the engine's relocation in
   both views; when only the context survives, the text-changed style appears in both views; when
   neither survives, the card shows detached in both views and the comment remains in the sidecar.
@@ -1411,7 +1414,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   through `store-io`. `tools/file-review-plan.test.mjs` pins what this plan
   states for the target's shape, the anchor rule, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other
-  fails a test.
+  fails a test. `tools/file-review-plan-acceptance.test.mjs` pins the Both acceptance criterion
+  on the comment `addComment` writes: its wording, the host test whose title makes the same
+  `anchorAt` exception, and on the fixture the anchor kept at 24 characters for a unique passage
+  and widened for a tied one.
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).

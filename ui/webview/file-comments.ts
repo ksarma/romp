@@ -471,17 +471,21 @@ function shrinkable(b: HTMLElement): void {
   b.style.flex = "0 1 auto"; b.style.minWidth = "0"; b.style.textAlign = "left";
 }
 // A passage comment's `range` indexes `text` — the source the selection was made over, or the reload the
-// passage was re-found in (retargetComposer) — so the anchor is always built over the text the offsets
+// passage was followed into (retargetComposer) — so the anchor is always built over the text the offsets
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
+// `tied` is set when the pair is stale because the current text holds the passage intact in more than one
+// place its anchor cannot tell apart (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save sends the anchor with NO offset, since the range's start indexes other text and would settle
+// the tie by coincidence; the host refuses a tie it cannot settle (anchor-ambiguous) and the note stays.
 type Composer =
-  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
+  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; refusal: (MapRefusal & { selText: string }) | null }
   | { kind: "reply"; commentId: string; ref: string }
   | { kind: "change"; changeId: string; ref: string }   // a comment bound to a change (comment {suggestionId, note})
   // a region drawn on a picture (Slice 3): `img` is the picture (re-found after a repaint), `src` and `range` the
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
   // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to);
   // `page` the 1-based page when the picture is a PDF page's canvas (Slice 4), null otherwise
-  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; refusal: string | null }
+  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; tied?: boolean; refusal: string | null }
   // Re-place: the next region drawn on the comment's picture becomes its target (retarget, E3); no words. `page`
   // is the comment's current page for a PDF region (the new place may be on any page)
   | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
@@ -490,6 +494,36 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
 /** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
+/** The composer's tag titles once the file changed under a pending passage and it now recurs where the anchor cannot tell
+ *  the copies apart (`tied`): the person picks the copy again; Save meanwhile carries no offset and the host refuses a tie. */
+const PASSAGE_TIED = "The file changed and this passage now occurs in it more than once with the same surroundings, so the copy you selected cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Select the passage again to pick the copy.";
+const EMBED_TIED = "The file changed and the line embedding this figure now occurs in it more than once with the same surroundings, so the one you drew on cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Draw the region again to pick the figure.";
+/** Where a passage composer's pair — `range` into `oldText` — stands once the view shows `newText` (retargetComposer).
+ *  The two texts' common prefix and suffix bound the span the edit changed: a passage wholly before that span keeps its
+ *  offsets and one wholly after it moves by the span's growth, both exact — the same characters, however many copies of
+ *  the passage the text holds, so a paragraph the session inserts above a recurring passage moves the note with ITS
+ *  copy. Only a passage the span reaches is re-found through its anchor (the engine's 24 characters of context, built
+ *  over the text the offsets index): `moved` when the quote sits intact at one best hit; `tied` when it sits intact at
+ *  several the anchor cannot tell apart — the engine's earliest and latest tied hits (hint 0, hint length) differ — a
+ *  choice the old offset must not make, since nearest-to-an-offset-into-other-text picks by coincidence (the re-find
+ *  did exactly that until 2026-09-07: an insertion above longer than half the gap between two copies moved the note to
+ *  the other copy, and the host, now settling a hinted tie, saved it there); `gone` when the quote is intact nowhere. */
+export type Followed = { state: "moved"; range: SourceRange } | { state: "tied" } | { state: "gone" };
+export function followPassage(oldText: string, range: SourceRange, newText: string): Followed {
+  const oldLen = oldText.length, newLen = newText.length, min = Math.min(oldLen, newLen);
+  let p = 0;
+  while (p < min && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
+  let s = 0;
+  while (s < min - p && oldText.charCodeAt(oldLen - 1 - s) === newText.charCodeAt(newLen - 1 - s)) s++;
+  if (range.end <= p) return { state: "moved", range: { start: range.start, end: range.end } };
+  if (range.start >= oldLen - s) { const d = newLen - oldLen; return { state: "moved", range: { start: range.start + d, end: range.end + d } }; }
+  const anchor = makeAnchor(oldText, range);
+  const first = locateComment(newText, anchor, 0);
+  if (first.state !== "located" || !first.range) return { state: "gone" };
+  const last = locateComment(newText, anchor, newLen);
+  if (last.state === "located" && last.range && last.range.start === first.range.start) return { state: "moved", range: first.range };
+  return { state: "tied" };
+}
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
  *  sanitizer keeps a rendered figure's data-* attributes (owns() relies on that for data-act), so a raw
@@ -1776,6 +1810,7 @@ class Panel {
       // also carries the embed line's anchor, built over the text its range indexes as for a passage comment
       const args: Record<string, unknown> = { note, target: regionTarget(c.region, c.src, c.page) };
       if (c.range && c.text !== undefined) { args.anchor = makeAnchor(c.text, c.range); args.hintOffset = c.range.start; }
+      if (c.tied) delete args.hintOffset;                // a tied pair (retargetComposer): the start indexes other text; the passage path below says why
       r = await this.mutate("comment", args, "composer");
     } else {
       const args: Record<string, unknown> = { note };
@@ -1784,6 +1819,10 @@ class Panel {
       // relocates by this anchor and hint, or refuses — a note aimed at one passage never lands on another
       const src = c.text === undefined ? null : c.text;
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
+      // a tied pair (retargetComposer): the start indexes other text, and the host would settle the tie by it — nearest
+      // wins, by coincidence — and save the note on a copy the person never selected. With no offset it refuses a tie
+      // still standing (anchor-ambiguous), the note stays, and the passage is selected again.
+      if (c.tied) delete args.hintOffset;
       r = await this.mutate("comment", args, "composer");
     }
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
@@ -1985,16 +2024,23 @@ class Panel {
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
-   *  a refresh): a pending passage is re-found through the anchor of its own text, so the presel, the
-   *  chip and the hint follow the passage rather than its old offsets — a note typed while the session
-   *  inserts a paragraph above still lands where it was aimed. Not re-found (the passage changed or went):
-   *  the selection-time pair is kept, the chip says so, nothing is painted, and Save hands the host that
-   *  anchor to rule on — it relocates, or refuses and the note stays. */
+   *  a refresh; a save through the editor): a pending passage follows its passage into that text
+   *  (followPassage), so the presel, the chip and the hint move with it — a note typed while the session
+   *  inserts a paragraph above still lands where it was aimed, on the copy that was selected even where
+   *  the passage recurs, since an edit that does not reach the passage moves its offsets exactly. Not
+   *  followed, the selection-time pair is kept, nothing is painted, and the chip says which: the passage
+   *  changed or went (Save hands the host that anchor and offset to rule on — it relocates, or refuses
+   *  and the note stays), or it now recurs where the anchor cannot tell the copies apart (`tied`: Save
+   *  sends the anchor with no offset, so the host refuses a tie rather than settle it by an offset into
+   *  other text; selecting the passage again pins the copy). Text that is the pair's own again — a
+   *  repaint, a reverted edit — is exact, so a tie noted meanwhile is dropped. */
   private retargetComposer(): void {
     const c = this.composer; const src = this.indexedText();
-    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null || src === c.text) return;
-    const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
-    if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
+    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null) return;
+    if (src === c.text) { c.tied = false; return; }
+    const f = followPassage(c.text, c.range, src);
+    if (f.state === "moved") { c.range = f.range; c.text = src; c.tied = false; }
+    else c.tied = f.state === "tied";
   }
   // ── region comments (Slice 3): the overlays ─────────────────────────────────────────────────────
   /** The pictures that take an overlay in the current view: the media body's <img>, or each page's canvas while the
@@ -2732,9 +2778,9 @@ class Panel {
         ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region, c.page)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
-        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not re-found (retargetComposer)
-          const t = el("span", "fc-tag", "passage changed");
-          t.title = "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not followed into it (retargetComposer)
+          const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+          t.title = c.tied ? EMBED_TIED : "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
           ref.appendChild(t);
         }
       }
@@ -2749,9 +2795,9 @@ class Panel {
       q.title = c.quote;
       ref.appendChild(el("span", "fc-note", "On "));
       ref.appendChild(q);
-      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not re-found in it (retargetComposer)
-        const t = el("span", "fc-tag", "passage changed");
-        t.title = "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not followed into it (retargetComposer)
+        const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+        t.title = c.tied ? PASSAGE_TIED : "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
         ref.appendChild(t);
       }
     } else ref.appendChild(el("span", "fc-note", "On this file"));

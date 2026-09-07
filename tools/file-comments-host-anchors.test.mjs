@@ -7,9 +7,11 @@
 // more of its surroundings, in the three fields every host reads. Past the cap the anchor is saved at
 // the cap, never refused. (2) The comment carries `anchorAt`, the offset the anchor located at, the
 // second romp-only field after `target`: set at creation, refreshed on every sidecar write the host
-// makes for each comment whose anchor still locates uniquely, never added to a comment without an
-// anchor, and written back whole by the vendored CLIs. A tie the client's hint settles is placed;
-// only a tie with no hint refuses `anchor-ambiguous`.
+// makes for each comment whose anchor locates, with the stored position itself as the tie-break where
+// copies tie (so a comment on one of several identical paragraphs follows that copy through edits
+// above, however many host writes apart), left as it was where the anchor is gone or ties with no
+// stored position, never added to a comment without an anchor, and written back whole by the vendored
+// CLIs. A tie the client's hint settles is placed; only a tie with no hint refuses `anchor-ambiguous`.
 // Hermetic, the file-comments-host.test.mjs way: the synthetic notes-api world under a scratch
 // directory, the host as a child process with one JSON request on stdin, and the REAL vendored CLIs
 // as child processes where a test says the session did something. Synthetic fixtures only.
@@ -298,18 +300,75 @@ test('a track-edit above the passage leaves anchorAt stale until the next host w
   assert.equal(engine.locateAnchor(moved, after.anchor, after.anchorAt).from, after.anchorAt);
 });
 
-test('a tied anchor (past the cap) keeps its anchorAt on a later write: nothing in the text says which copy moved where', () => {
+test('a tied anchor (past the cap) has its anchorAt refreshed with the stored position as the tie-break, so the comment follows its copy through edits above', () => {
   const w = world();
   const m = fromBrowser(REPEAT, MARKER, 1);
   const r = comment(w, w.repeat, { anchor: m.anchor, note: 'Say it once.', hintOffset: m.hintOffset });
   const c = readSidecar(r.storePath).comments[0];
-  cliOk(w, 'edit', ['--file', w.repeat, '--old', '# Repeats\n', '--new', '# Repeats\nAdded.\n']);
-  const st = status(w, w.repeat);
-  const r2 = ok(w, { verb: 'reply', path: w.repeat, args: { commentId: c.id, note: 'Still once.' }, fence: fenceFor(st) });
-  const after = readSidecar(r2.storePath).comments[0];
-  assert.equal(after.anchorAt, m.idx, 'not refreshed: the anchor does not locate uniquely');
-  assert.deepEqual(after.anchor, c.anchor);
-  assert.equal(after.replies.length, 1);
+  assert.equal(locatesOnlyAt(REPEAT, c.anchor, m.idx), false, 'the fixture: the anchor alone ties at the cap');
+  // The copies sit one paragraph apart. Each line the session adds above moves every copy down by
+  // less than half that spacing, so a position refreshed at every host write stays nearest the chosen
+  // copy, while the position the comment was made with is nearest the FIRST copy once two lines are
+  // in: a refresh that skipped tied anchors let the highlight drift to the wrong paragraph.
+  const spacing = nth(REPEAT, MARKER, 2) - nth(REPEAT, MARKER, 1);
+  const line = `${'Added above. '.repeat(23).trimEnd()}\n`;
+  assert.ok(line.length < spacing / 2 && 2 * line.length > spacing / 2,
+    `the fixture: a ${line.length}-character line, one short of half the spacing (${spacing}), two past it`);
+  let at = m.idx;
+  for (const step of [1, 2]) {
+    cliOk(w, 'edit', ['--file', w.repeat, '--old', '# Repeats\n', '--new', `# Repeats\n${line}`]);
+    at += line.length;
+    const text = fs.readFileSync(w.repeat, 'utf8');
+    assert.equal(nth(text, MARKER, 1), at, 'the chosen copy moved down by the line');
+    assert.equal(readSidecar(r.storePath).comments[0].anchorAt, at - line.length, 'the CLI wrote the object back as it was');
+    // the person replies: a host write, whose refresh locates with the stored position as the hint
+    const r2 = ok(w, { verb: 'reply', path: w.repeat, args: { commentId: c.id, note: `Still once (${step}).` }, fence: fenceFor(status(w, w.repeat)) });
+    const after = readSidecar(r2.storePath).comments[0];
+    assert.equal(after.anchorAt, at, `refreshed on the write after insertion ${step}`);
+    assert.deepEqual(after.anchor, c.anchor, 'the anchor itself is untouched');
+    assert.equal(after.replies.length, step);
+    assert.equal(r2.store.comments[0].anchorAt, at, 'the reply carries the refreshed position');
+    assert.equal(engine.locateAnchor(text, after.anchor, after.anchorAt).from, at, 'the painter, hinted by it, lands on the chosen copy');
+  }
+  // the drift the refresh prevents: the position the comment was made with now picks the first copy
+  const text = fs.readFileSync(w.repeat, 'utf8');
+  assert.equal(engine.locateAnchor(text, c.anchor, m.idx).from, nth(text, MARKER, 0), 'left as made, the position would paint the first copy');
+});
+
+test('the refresh leaves a position it cannot better: a passage the session rewrote keeps its last known anchorAt, and a tied anchor with no stored position (a comment track-comment wrote) gains none, where one on a unique passage does', () => {
+  const w = world();
+  // the session comments through the vendored CLI: 24 characters at the first occurrence, no anchorAt
+  cliOk(w, 'comment', ['--file', w.report, '--anchor', 'Cold starts remain slow', '--note', 'Still?']);
+  cliOk(w, 'comment', ['--file', w.repeat, '--anchor', MARKER, '--note', 'Which copy?']);
+  const cold = nth(w.text, 'Cold starts remain slow', 0);
+  const st1 = status(w, w.report);
+  const st2 = status(w, w.repeat);
+  assert.equal('anchorAt' in st1.store.comments[0], false, 'the CLI writes no anchorAt');
+  assert.equal('anchorAt' in st2.store.comments[0], false);
+  assert.deepEqual(ctxOf(st2.store.comments[0].anchor), [24, 24]);
+  assert.equal(locatesOnlyAt(REPEAT, st2.store.comments[0].anchor, nth(REPEAT, MARKER, 0)), false, 'the fixture: the CLI anchor ties across the copies');
+  // the person comments on the report passage the session is about to rewrite; this host write also
+  // gives the CLI comment on a unique passage its position
+  const gone = fromBrowser(w.text, 'cut p95 latency by 40%', 0);
+  const r = ok(w, { verb: 'comment', path: w.report, args: { anchor: gone.anchor, note: 'Source?', hintOffset: gone.hintOffset }, fence: fenceFor(st1) });
+  const [cliCold, mine] = readSidecar(r.storePath).comments;
+  assert.equal(cliCold.anchorAt, cold, 'a unique anchor with no stored position is placed');
+  assert.equal(mine.anchorAt, gone.idx);
+  // the session rewrites the passage: the next host write finds the quote gone and keeps the position
+  cliOk(w, 'edit', ['--file', w.report, '--old', 'cut p95 latency by 40%', '--new', 'cut p95 latency by 35%']);
+  const edited = fs.readFileSync(w.report, 'utf8');
+  assert.deepEqual(locateExact(edited, mine.anchor, mine.anchorAt), { error: 'anchor-not-found' }, 'the fixture: the quote is gone');
+  const r2 = ok(w, { verb: 'resolve', path: w.report, args: { commentId: mine.id, on: true }, fence: fenceFor(status(w, w.report)) });
+  const after = readSidecar(r2.storePath).comments[1];
+  assert.equal(after.anchorAt, gone.idx, 'kept: the last known position');
+  assert.deepEqual(after.anchor, mine.anchor);
+  assert.equal(after.resolved, true);
+  // a host write on repeat.md: the CLI comment's tie has no stored position to settle it, so none is added
+  const r3 = ok(w, { verb: 'comment', path: w.repeat, args: { note: 'Say it once, anywhere.' }, fence: fenceFor(st2) });
+  const cs = readSidecar(r3.storePath).comments;
+  assert.equal(cs.length, 2);
+  assert.equal('anchorAt' in cs[0], false, 'a tie with no stored position is not placed by the refresh');
+  assert.equal('anchorAt' in cs[1], false, 'the whole-file comment has no anchor');
 });
 
 test('comments without an anchor never gain anchorAt: whole-file, change, and standalone region comments, across later writes', () => {

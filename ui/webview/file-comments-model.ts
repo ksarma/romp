@@ -188,7 +188,42 @@ export function changeDesc(h: { kind: HunkKind; oldText: string; newText: string
  *  (`Status.logTruncated`), in which case a decision the tail lacks may sit in the part not sent. */
 export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean; decided?: Decided | null };
 
-/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
+/** The engine's default anchor context, and what `track-comment` and the other editors write: 24 characters either
+ *  side of the quote (engine.js makeAnchor; the host's ANCHOR_CTX, which file-comments-model-recurring.test.ts pins
+ *  this to). A stored anchor with MORE on either side was widened by the host (uniqueAnchor) because the passage
+ *  recurs with the same 24 characters around another copy, and the extra context is what tells the copies apart. */
+export const ANCHOR_CTX = 24;
+
+/** Whether the host widened `a`'s context past the engine's default: the fact, read off the anchor the host stored,
+ *  that the passage recurs and that its surroundings name this copy. A side at the file's bound stays short while the
+ *  other widens, so either side past the default counts. The sidecar is JSON anyone can edit, so read defensively. */
+export function anchorWidened(a: Anchor): boolean {
+  return (typeof a.prefix === "string" && a.prefix.length > ANCHOR_CTX)
+    || (typeof a.suffix === "string" && a.suffix.length > ANCHOR_CTX);
+}
+
+/** The parenthetical for a passage comment. The plan's form is `on "<the first 40 characters of the quote>"`, and for
+ *  a passage unique at the engine's default context that is all of it. When the host widened the anchor
+ *  (anchorWidened) the passage recurs, and the quote alone does not say which copy the person meant: the session
+ *  reading the message would run `track-edit --old "<quote>"`, which refuses text that is not unique, and the id's
+ *  offset suffix and the sidecar's `anchorAt` are nothing the message tells it to read (the anchors follow-on review,
+ *  2026-09-07). So the desc names the copy by its surroundings — the widened prefix and suffix, whole, the text the
+ *  host verified unique around this copy and so an --old the session can build: `on "Ship it.", the one after "…"
+ *  and before "…"`. Both are JSON-quoted, since a context can hold line breaks and quotation marks and the message's
+ *  `Comment <id> (…):` line must stay one line; the quote keeps its plain form. A side the file's bound left empty is
+ *  not named. An anchor still tied at the host's cap prints the cap's worth, the most the message can say; the
+ *  painter's tie-break, `anchorAt`, is an offset the session has no tool for and one that moves with the text. A
+ *  24-character anchor on text that came to recur AFTER the comment was made is not widened (the host never rewrites
+ *  an anchor's fields) and keeps the plan's form: this module has no text to tell. */
+export function passageDesc(a: Anchor): string {
+  const head = 'on "' + a.quote.slice(0, 40) + '"';
+  if (!anchorWidened(a)) return head;
+  const sides: string[] = [];
+  if (typeof a.prefix === "string" && a.prefix) sides.push("after " + JSON.stringify(a.prefix));
+  if (typeof a.suffix === "string" && a.suffix) sides.push("before " + JSON.stringify(a.suffix));
+  return head + ", the one " + sides.join(" and ");
+}
+
 /** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
  *  change describes the change while it is pending or detached, and from the accept or reject entry after a
  *  decision (a manual Accept before the send would otherwise describe it as "on this file") — the log's own when
@@ -204,7 +239,8 @@ export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean
  *  the sidecar to learn which one, and the message is what it reads. A person would name the picture, and by the
  *  name it has on disk (CLAUDE.md, the injected voice): the encoded spelling is a path that does not exist, and a
  *  session that ran `ls` on it got ENOENT while the host had hashed the decoded file (the review of 2026-09-06).
- *  The standalone forms are the plan's own; the figure's name is this module's addition to them. */
+ *  The standalone forms are the plan's own; the figure's name is this module's addition to them, and so is the
+ *  surroundings clause a passage comment gains when its anchor was widened for text that recurs (passageDesc). */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
   if (c.suggestionId) {
     const b = boundChange(c.suggestionId, hunks, opts.detached, log, opts.decided);
@@ -214,7 +250,7 @@ export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] 
     const at = regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
     return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + decodeSrc(c.target.src) : at);
   }
-  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return 'on "' + c.anchor.quote.slice(0, 40) + '"';
+  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return passageDesc(c.anchor);
   if (c.suggestionId && opts.logTruncated) return "on your change " + c.suggestionId;
   return "on this file";
 }

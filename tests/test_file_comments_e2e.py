@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""File comments (plans/file-review.md, Slices 1 to 5) — end to end, with nothing stubbed below the wire.
+"""File comments (plans/file-review.md, Slices 1 to 5 and the anchors follow-on) — end to end, with nothing
+stubbed below the wire.
 
 tests/test_file_comments.py proves the kernel's half against a STUB host script; the host's own node
 tests prove its half against the vendored CLIs. This module joins the pieces the way the dashboard
@@ -89,13 +90,14 @@ def store_io(file):
     return json.loads(r.stdout)
 
 
-def make_anchor(text, start, end):
-    """The engine's own anchor for text[start:end] — what the browser's anchor-map builds."""
+def make_anchor(text, start, end, ctx=None):
+    """The engine's own anchor for text[start:end] — what the browser's anchor-map builds at the engine's
+    default 24 characters of context; `ctx` asks for a wider one, the anchor the host stores when 24 ties."""
     src = ("const fs = (await import('fs')).default; const m = await import(process.argv[1]); const e = m.default || m;"
-           " const [t, a, b] = JSON.parse(fs.readFileSync(0, 'utf8'));"
-           " console.log(JSON.stringify(e.makeAnchor(t, a, b)));")
+           " const [t, a, b, c] = JSON.parse(fs.readFileSync(0, 'utf8'));"
+           " console.log(JSON.stringify(c == null ? e.makeAnchor(t, a, b) : e.makeAnchor(t, a, b, c)));")
     r = _node(["--input-type=module", "-e", src, "--", Path(os.path.join(VENDOR, "engine.js")).as_uri()],
-              stdin=json.dumps([text, start, end]))
+              stdin=json.dumps([text, start, end, ctx]))
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
@@ -348,32 +350,68 @@ def test_a_passage_comment_in_a_project_lands_in_the_root_sidecar(world):
     assert len(json.loads(Path(r["storePath"]).read_text())["comments"]) == 2
 
 
-TWICE = "# Findings\n\nShip it.\nShip it.\n\nWe recommend shipping the cache in v1.2.\n"
+# Two copies of a sentence with the same 24 characters either side (the engine's default context, the
+# browser's anchor): the "## Day 1" / "## Day 2" headings that tell them apart lie 48 characters back.
+# The shape of tests/fixtures/file_comments/report.md, which the host's node tests use for the same tie.
+TWICE = ("# Findings\n\n## Day 1\n\nThe tests pass on every supported platform. Ship it.\n"
+         "No regressions were seen in the nightly run.\n\n## Day 2\n\n"
+         "The tests pass on every supported platform. Ship it.\nNo regressions were seen in the nightly run.\n")
+
+
+def nth(text, quote, n):
+    """The offset of the nth (0-based) occurrence of `quote` in `text`; the fixture must have it."""
+    i = -1
+    for _ in range(n + 1):
+        i = text.index(quote, i + 1)
+    return i
+
+
+def ties(text, anchor):
+    """Whether `anchor` has more than one best hit in `text`: the engine's earliest and latest tied hits
+    (the hint pinned to each end) differ — the host's own test for a tie, asked of the engine directly."""
+    return locate_anchor(text, anchor, 0)["from"] != locate_anchor(text, anchor, len(text))["from"]
 
 
 def test_a_comment_on_the_second_of_two_identical_lines_keeps_its_place_and_its_position_follows_an_edit_above(world):
-    """The anchors follow-on (2026-09-07): a passage comment carries `anchorAt`, the offset its anchor
-    located at, beside the anchor. The vendored track-edit writes the sidecar back with the position as it
-    was, a read never rewrites the sidecar, and the next write the host makes refreshes it; the webview
-    paints with that position as the engine's tie-break, so the highlight stays on the line that was
-    chosen."""
+    """The anchors follow-on (2026-09-07), over the kernel wire on a REAL tie: the browser's 24-character
+    anchor for the second "Ship it." has two best hits, so the request is refused `anchor-ambiguous` when
+    it carries no position and placed on the chosen copy when it carries the selection's offset; the
+    stored anchor is widened one step (48 characters, where the headings differ) so a reader with no hint
+    lands on that copy too, and the comment carries `anchorAt`, the offset it located at. The vendored
+    track-edit writes the sidecar back with the position as it was, a read never rewrites the sidecar, the
+    next write the host makes refreshes it, and the webview paints with that position as the engine's
+    tie-break, so the highlight stays on the line that was chosen."""
     world.fp.write_text(TWICE)
-    first = TWICE.index("Ship it.")
-    second = TWICE.index("Ship it.", first + 1)
+    first, second = nth(TWICE, "Ship it.", 0), nth(TWICE, "Ship it.", 1)
     anchor = make_anchor(TWICE, second, second + len("Ship it."))
+    assert anchor == make_anchor(TWICE, first, first + len("Ship it.")), "the fixture: the browser's anchors for the two copies are the same"
+    assert ties(TWICE, anchor), "the fixture: the engine alone cannot tell the copies apart"
+    # no position sent: refused over the wire, and nothing is written
+    bad = world.op("comment", world.fp, {"note": "Not yet.", "anchor": anchor}, NO_STORE)
+    assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "anchor-ambiguous")
+    assert "occurs more than once" in bad["error"] and "position was not sent" in bad["error"]
+    assert not (world.root / ".trackchanges").exists(), "a refusal writes nothing"
+    # the selection's offset settles it
     r = world.comment(world.fp, "Not yet.", anchor=anchor, hint=second)
     c = r["store"]["comments"][0]
     assert c["anchorAt"] == second
     assert c["id"] == "%d-%d" % (c["ts"], second)
     assert set(c) == set(KEEP) | {"anchor", "anchorAt"}
-    assert json.loads(Path(r["storePath"]).read_text())["comments"][0]["anchorAt"] == second
+    assert c["anchor"] != anchor, "not the browser's anchor: 24 characters tied"
+    assert c["anchor"] == make_anchor(TWICE, second, second + len("Ship it."), 48), "widened one step, no more"
+    assert "2\n\nThe tests" in c["anchor"]["prefix"], "the prefix now reaches into the heading that differs"
+    assert not ties(TWICE, c["anchor"]), "the stored anchor has one best hit"
+    assert locate_anchor(TWICE, c["anchor"])["from"] == second, "a reader with no hint (the other hosts) lands on the chosen copy"
+    disk = json.loads(Path(r["storePath"]).read_text())["comments"][0]
+    assert (disk["anchor"], disk["anchorAt"]) == (c["anchor"], second)
     assert locate_anchor(TWICE, c["anchor"], c["anchorAt"])["from"] == second
+    assert world.fp.read_text() == TWICE, "the file is untouched"
     # the session inserts two lines above with the vendored CLI: the file moves, and the CLI writes the sidecar
     # back with the position as it was
     inserted = "Added one.\nAdded two.\n"
     world.track_edit("# Findings\n", "# Findings\n" + inserted)
     moved = world.fp.read_text()
-    assert moved.index("Ship it.", moved.index("Ship it.") + 1) == second + len(inserted)
+    assert nth(moved, "Ship it.", 1) == second + len(inserted)
     s = world.ok("status", world.fp)
     assert s["store"]["comments"][0]["anchorAt"] == second, "a read never rewrites the sidecar: the position is the CLI's"
     assert len(s["hunks"]) == 1, "the insertion is a pending change"
@@ -388,7 +426,79 @@ def test_a_comment_on_the_second_of_two_identical_lines_keeps_its_place_and_its_
     # what the webview paints: the engine with the stored position as the hint lands on the second line
     loc = locate_anchor(moved, c2["anchor"], c2["anchorAt"])
     assert loc == {"from": second + len(inserted), "to": second + len(inserted) + len("Ship it.")}
-    assert loc["from"] != moved.index("Ship it."), "the second line, not the first"
+    assert loc["from"] != nth(moved, "Ship it.", 0), "the second line, not the first"
+
+
+# One paragraph over a thousand characters long, three times: a phrase in its middle has identical
+# surroundings for more than the host's ANCHOR_CTX_CAP (480) characters on both sides of every copy, so no
+# width of context tells the copies apart. The host's node tests generate the same file.
+PARA = ("The quick brown fox jumps over the lazy dog. " * 12 + "Here is the marker phrase to comment on. "
+        + "Pack my box with five dozen liquor jugs. " * 12).strip()
+REPEAT = "# Repeats\n\n%s\n\n%s\n\n%s\n" % (PARA, PARA, PARA)
+MARKER = "the marker phrase"
+
+
+def anchor_ctx_cap():
+    """The host's own ANCHOR_CTX_CAP, read from its export rather than copied here."""
+    r = _node(["--input-type=module", "-e", "const m = await import(process.argv[1]); console.log(m.ANCHOR_CTX_CAP);",
+               "--", Path(HOST).as_uri()])
+    assert r.returncode == 0, r.stderr
+    return int(r.stdout)
+
+
+def test_the_repeat_fixture_puts_the_marker_more_than_the_cap_from_both_ends_of_its_paragraph():
+    cap = anchor_ctx_cap()
+    assert cap == 480, "the plan's number; the fixture below is sized for it"
+    at = PARA.index(MARKER)
+    assert at > cap and len(PARA) - at - len(MARKER) > cap
+    assert PARA.count(MARKER) == 1 and REPEAT.count(MARKER) == 3
+
+
+def test_a_comment_on_a_passage_tied_past_the_cap_is_saved_at_the_cap_with_its_position_which_a_later_write_keeps(world):
+    """The anchors follow-on (2026-09-07), over the kernel wire on a tie the widening cannot break: with no
+    position the request is refused `anchor-ambiguous`; with the selection's offset the comment is saved with
+    its anchor at the cap and `anchorAt` beside it, the one thing that tells the copies apart. After an edit
+    above, a host write leaves that position as it is (nothing in the text says which copy moved where), and
+    the webview, painting with it as the engine's tie-break, still lands on the chosen copy because the
+    engine picks the nearest tied hit."""
+    fp = world.root / "docs" / "repeat.md"
+    fp.write_text(REPEAT)
+    m = nth(REPEAT, MARKER, 1)
+    anchor = make_anchor(REPEAT, m, m + len(MARKER))
+    assert ties(REPEAT, anchor)
+    bad = world.op("comment", fp, {"note": "Which copy?", "anchor": anchor}, NO_STORE)
+    assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "anchor-ambiguous")
+    assert "docs/repeat.md" in bad["error"] and "position was not sent" in bad["error"]
+    assert not (world.root / ".trackchanges").exists(), "a refusal writes nothing"
+    r = world.comment(fp, "Say it once.", anchor=anchor, hint=m)
+    c = r["store"]["comments"][0]
+    assert (c["anchorAt"], c["id"]) == (m, "%d-%d" % (c["ts"], m))
+    cap = anchor_ctx_cap()
+    assert c["anchor"] == make_anchor(REPEAT, m, m + len(MARKER), cap), "saved at the cap"
+    assert (len(c["anchor"]["prefix"]), len(c["anchor"]["suffix"])) == (cap, cap)
+    assert ties(REPEAT, c["anchor"]), "the anchor alone still ties"
+    assert locate_anchor(REPEAT, c["anchor"], c["anchorAt"])["from"] == m, "the stored position picks the copy"
+    assert json.loads(Path(r["storePath"]).read_text())["comments"][0]["anchorAt"] == m
+    # the third copy too, with its own position
+    third = nth(REPEAT, MARKER, 2)
+    r2 = world.comment(fp, "And here.", fence=world.fence_of(r), anchor=make_anchor(REPEAT, third, third + len(MARKER)), hint=third)
+    assert [x["anchorAt"] for x in r2["store"]["comments"]] == [m, third]
+    # a line lands above through the vendored CLI; the next host write keeps both positions
+    inserted = "Added.\n"
+    world.track_edit("# Repeats\n", "# Repeats\n" + inserted, path=fp)
+    moved = fp.read_text()
+    assert nth(moved, MARKER, 1) == m + len(inserted)
+    s = world.ok("status", fp)
+    assert [x["anchorAt"] for x in s["store"]["comments"]] == [m, third], "a read never rewrites the sidecar"
+    r3 = world.ok("reply", fp, {"commentId": c["id"], "note": "Still once."}, world.fence_of(s))
+    after = r3["store"]["comments"]
+    assert [x["anchorAt"] for x in after] == [m, third], "not refreshed: neither anchor locates uniquely"
+    assert after[0]["anchor"] == c["anchor"] and len(after[0]["replies"]) == 1
+    assert json.loads(Path(r3["storePath"]).read_text())["comments"][0]["anchorAt"] == m
+    # what the webview paints: the stale position is nearest the chosen copy, a paragraph from the others
+    loc = locate_anchor(moved, after[0]["anchor"], after[0]["anchorAt"])
+    assert loc == {"from": m + len(inserted), "to": m + len(inserted) + len(MARKER)}
+    assert locate_anchor(moved, after[1]["anchor"], after[1]["anchorAt"])["from"] == third + len(inserted)
 
 
 def test_track_reply_answers_into_the_comment_and_status_derives_unsent(world):
