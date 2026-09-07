@@ -1,4 +1,4 @@
-// The decorations module's behavior beyond the marks (editor-track.test.ts covers those and the ledger): which
+// The decorations module's behavior beyond the marks (editor-track.test.ts covers those and the decisions): which
 // pointer may decide a change, where focus goes after a decision, and the hover cue's life across a destroy —
 // departures 6, 7 and 8 in track-decorations.ts (plans/file-review.md, Slice 5; the 2026-09-06 review).
 //
@@ -352,13 +352,13 @@ const PAGE_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8>
 <script>
 window.__mount = function (text, records) {
   var host = document.getElementById('host'); host.replaceChildren();
-  window.__ledger = null;
+  window.__decisions = null;
   window.__h = window.__rompEditor.mount(host, { text: text, ext: 'md', onChange: function () {}, onSave: function () {},
-    track: { suggestions: records, onLedger: function (l) { window.__ledger = l; } } });
+    track: { suggestions: records, onDecisions: function (l) { window.__decisions = l; } } });
 };
 window.__state = function () {
   var a = document.activeElement;
-  return { ids: window.__h.track.suggestions().map(function (s) { return s.id; }), ledger: window.__ledger,
+  return { ids: window.__h.track.suggestions().map(function (s) { return s.id; }), decisions: window.__decisions,
     active: a ? (a.className || a.tagName) : '', lit: document.querySelectorAll('.tc-diff-hover').length };
 };
 </script></body></html>`;
@@ -375,14 +375,14 @@ async function boot(context: any, js: string) {
   });
   await page.goto("http://romp.test/page");
   const mount = (text: string, records: unknown[]) => page.evaluate(([t, r]: [string, unknown[]]) => (window as any).__mount(t, r), [text, records] as [string, unknown[]]);
-  const state = () => page.evaluate(() => (window as any).__state()) as Promise<{ ids: string[]; ledger: any; active: string; lit: number }>;
+  const state = () => page.evaluate(() => (window as any).__state()) as Promise<{ ids: string[]; decisions: any; active: string; lit: number }>;
   const centre = async (sel: string) => {
     const b = await page.locator(sel).first().boundingBox();
     assert.ok(b, sel + " has a box");
     return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
   };
   // a bounded wait on an event-driven outcome (the pointer events settle in the page's next frames)
-  const until = async (pred: (s: { ids: string[]; ledger: any; active: string; lit: number }) => boolean, what: string) => {
+  const until = async (pred: (s: { ids: string[]; decisions: any; active: string; lit: number }) => boolean, what: string) => {
     for (let i = 0; i < 60; i++) { const s = await state(); if (pred(s)) return s; await page.waitForTimeout(50); }
     const s = await state();
     assert.fail(what + " — last state " + JSON.stringify(s));
@@ -412,19 +412,19 @@ test("in Chromium with touch: a tap on a mark or a struck widget decides nothing
     await page.waitForTimeout(150);                                          // the compat mouse events follow the tap
     let s = await state();
     assert.deepEqual(s.ids, ["a1", "d1"], "the tap placed the caret; the insertion is still pending");
-    assert.equal(s.ledger, null, "no decision reached the ledger");
+    assert.equal(s.decisions, null, "no decision was reported");
     const del = await centre(".tc-diff-del[data-hk-from='15']");
     await page.touchscreen.tap(del.x, del.y);
     await page.waitForTimeout(150);
     s = await state();
     assert.deepEqual(s.ids, ["a1", "d1"], "a tap on the struck widget decides nothing either");
-    assert.equal(s.ledger, null);
+    assert.equal(s.decisions, null);
     // the same device with a mouse attached: the press is judged per pointer, not per device class
     await page.mouse.click(ins.x, ins.y);
     await page.waitForTimeout(100);
     s = await state();
     assert.deepEqual(s.ids, ["d1"], "a mouse click accepts");
-    assert.deepEqual(s.ledger.accepted.map((e: { id: string }) => e.id), ["a1"]);
+    assert.deepEqual(s.decisions.accepted.map((e: { id: string }) => e.id), ["a1"]);
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); }
@@ -444,12 +444,12 @@ test("in Chromium: a click from outside the editor accepts AND focuses it, so Co
       await page.mouse.click(c.x, c.y);
       let s = await until((x) => x.ids.length === 1, "the click on " + sel + " accepts");
       assert.deepEqual(s.ids, rest);
-      assert.deepEqual(s.ledger.accepted.map((e: { id: string }) => e.id), [id]);
+      assert.deepEqual(s.decisions.accepted.map((e: { id: string }) => e.id), [id]);
       assert.match(s.active, /cm-content/, "the editor took focus with the decision");
       await page.keyboard.press("Control+z");
       s = await until((x) => x.ids.length === 2, "undo reaches the editor");
       assert.deepEqual(s.ids, ["a1", "d1"], "the accept is undone, the change is pending again");
-      assert.deepEqual(s.ledger, { accepted: [], rejected: [] }, "the ledger is net of undo");
+      assert.deepEqual(s.decisions, { accepted: [], rejected: [] }, "the decisions are net of undo");
     }
     assert.deepEqual(errors, []);
     await context.close();

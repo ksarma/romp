@@ -4,7 +4,7 @@
 // REAL vendored field (vendor/track-changents/obsidian/src/track-cm.js, bundled unchanged) and the real engine
 // through a live EditorState + @codemirror/commands history — the same @codemirror/state the chunk bundles
 // (esbuild.js's oneCodeMirror alias gives the test bundle one copy, as the chunk gets). Every case here is
-// upstream's; romp's own additions (the ledger, the click policy, the marks) are tested in
+// upstream's; romp's own additions (the decisions, the click policy, the marks) are tested in
 // editor-track.test.ts. Fixtures are upstream's synthetic ones: author 'FRO', docs about cats.
 //
 // upstream loaded `../src/track-cm.js`, `track-changents/engine`, `@codemirror/state` and `@codemirror/commands`

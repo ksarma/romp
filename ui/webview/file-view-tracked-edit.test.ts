@@ -221,21 +221,21 @@ const store = new Map<string, string>();
 // ── the editor chunk: a buffer, the two callbacks, and the track option's handle — or none, for an older bundle ──
 type Entry = { id: string; oldText: string; newText: string };
 type Decided = { accepted: Entry[]; rejected: Entry[] };
-type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: Decided) => void };
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onDecisions: (l: Decided) => void };
 const ed = {
   buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
   tracks: true,                                        // false: the bundle predates the option and returns a handle without `track`
-  trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+  trackOpts: null as TrackStub | null, records: [] as unknown[], decisions: { accepted: [], rejected: [] } as Decided,
 };
 win.__rompEditor = {
   mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
     ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): Decided } } =
       { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
     if (opts.track && ed.tracks) {
-      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
-      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+      ed.records = opts.track.suggestions.slice(); ed.decisions = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, decisions: () => ed.decisions };
     }
     return h;
   },
@@ -314,7 +314,7 @@ async function open(t: TestContext, bytes = DOC): Promise<Open> {
   disk[REPORT] = { bytes, type: "text/plain; charset=utf-8", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; seam = null; versionGate = null;
   store.delete("romp:fileviewFmt");
-  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
+  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   assert.equal(fv.openFileView(REPORT, SID), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();

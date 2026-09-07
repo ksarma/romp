@@ -114,21 +114,17 @@ function rompTheme(): Extension {
 // ── the track option: pending changes as marks, the decisions kept net of undo ───────────────────
 //
 // Naming (the 2026-09-06 review): what the person accepted or rejected in the editor is its `decisions`, the
-// plan's word for the save verb's two lists and file-view.ts's EditDecisions. The slice's first name for it, the
-// old spelling below (a ledger), is a word CONTEXT.md lists under Avoid for the comments log, and the host writes
-// these same decisions into that log — so a reader of a save trace had to work out which of the two records was meant.
-// Each line marked "old spelling" below is an alias for a caller that has not moved (file-view.ts passes and reads
-// the old spelling, onLedger and ledger(); the chunk's tests import the old names). Every alias goes with its
-// last caller: editor-chunk-aliases.test.ts fails on an alias no file outside this one still uses (the one that
-// stood in for TrackDecision had no importer and is gone), and on any module beyond file-view.ts adopting one;
-// editor-chunk-decisions.test.ts confines the word to these lines.
+// plan's word for the save verb's two lists and file-view.ts's EditDecisions. The slice's first name for it was a
+// word CONTEXT.md lists under Avoid for the comments log, and the host writes these same decisions into that log —
+// so a reader of a save trace had to work out which of the two records was meant. The chunk, the viewer and every
+// test say `decisions` now; editor-chunk-decisions.test.ts pins that the old word appears in none of them, so the
+// precedent cannot creep back in through a new caller.
 
 /** One decision on one record: its id and the two texts as the record held them at that moment. */
 export interface TrackDecision { id: string; oldText: string; newText: string }
 /** The decisions taken inside the editor since the mount, NET of undo: an undone accept or reject leaves no
  *  entry, a redone one puts it back. A later save sends this beside the remapped records. */
 export interface TrackDecisions { accepted: TrackDecision[]; rejected: TrackDecision[] }
-export type TrackLedger = TrackDecisions;   // old spelling of TrackDecisions; editor-chunk-split-ids.test.ts still imports it
 
 export interface TrackOpts {
   /** The file's pending changes, as the sidecar's status returned them (the storage format's records). */
@@ -137,7 +133,6 @@ export interface TrackOpts {
   authorColor?: (author: string) => string | null;
   /** Called with the decisions whenever one lands, is undone, or is redone. */
   onDecisions?: (decisions: TrackDecisions) => void;
-  onLedger?: TrackOpts["onDecisions"];   // old spelling of onDecisions; file-view.ts still passes it
 }
 
 /** What the mount handle exposes when `track` was given. Both read the LIVE state: the records as the field
@@ -147,7 +142,6 @@ export interface TrackOpts {
 export interface TrackHandle {
   suggestions(): unknown[];
   decisions(): TrackDecisions;
-  ledger: TrackHandle["decisions"];   // old spelling of decisions; file-view.ts still reads it
 }
 
 export interface EditorHandle {
@@ -167,7 +161,6 @@ export interface MountOpts {
 }
 
 export const EMPTY_DECISIONS: TrackDecisions = { accepted: [], rejected: [] };
-export const EMPTY_LEDGER = EMPTY_DECISIONS;   // old spelling of EMPTY_DECISIONS (the same object, so identity checks hold)
 
 /** One gesture's worth, as the decide/undecide effects carry it: the side, and the TrackDecision rows it put there
  *  (one per record the clicked display item stood for). */
@@ -203,7 +196,6 @@ export interface TrackSetup {
   seed: TransactionSpec;
   suggestions(state: EditorState): TrackRecord[];
   decisions(state: EditorState): TrackDecisions;
-  ledger: TrackSetup["decisions"];   // old spelling of decisions; the chunk's tests still read it
   /** The transaction that accepts (or, with `reject`, rejects) the change whose display item starts at `from`:
    *  the engine's remapped records, the buffer edits of a reject, and the decision entries, in ONE transaction
    *  isolated in history, so one undo reverses the whole decision. null when nothing starts at `from`. */
@@ -280,7 +272,6 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
     },
     suggestions: (state) => state.field(field),
     decisions: (state) => state.field(decisionsField),
-    ledger: (state) => state.field(decisionsField),   // old spelling of decisions
     resolve(state, from, reject) {
       const ops = state.field(field);
       const ids = idsAtPosition(ops, state.doc.toString(), from);
@@ -320,7 +311,6 @@ export function trackSetup(opts: TrackOpts): TrackSetup {
       const next = u.state.field(decisionsField);
       if (u.startState.field(decisionsField) === next) return;
       if (opts.onDecisions) opts.onDecisions(next);
-      if (opts.onLedger) opts.onLedger(next);   // old spelling of onDecisions
     }),
   ];
   return setup;
@@ -370,7 +360,6 @@ export function mount(host: HTMLElement, opts: MountOpts): EditorHandle {
   if (track) handle.track = {
     suggestions: () => track.suggestions(view.state),
     decisions: () => track.decisions(view.state),
-    ledger: () => track.decisions(view.state),   // old spelling of decisions
   };
   return handle;
 }

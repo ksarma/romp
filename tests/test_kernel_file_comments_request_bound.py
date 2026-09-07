@@ -4,13 +4,13 @@
 
 Round 1 bounded a save's `content` before the request is serialized. Its three record arrays —
 `suggestions`, `accepted`, `rejected` — and every other verb's arguments (a comment's note, a reply's
-turn) had no kernel-side bound short of the frame reader's 80 MB: a save carrying a million fake ledger
+turn) had no kernel-side bound short of the frame reader's 80 MB: a save carrying a million fake decision
 entries (43 MB) was json.dumps'ed, piped to node, parsed and walked entry by entry at half a gigabyte, and
 refused only by the host's own reply estimate after all of that, on the kernel that self-hosts the
 sessions. Now the serialized request is measured once (json.dumps with ensure_ascii, so the string's
 length is the byte count _run_bounded would pipe) and refused `too-large` past _FILE_COMMENTS_REPLY_MAX
 before the spawn. The reply cap is the right number: what a request puts on disk comes back in the reply
-(the sidecar as `store` and again as `hunks`, the ledger in the log's newest rows), so a request past it
+(the sidecar as `store` and again as `hunks`, the decisions in the log's newest rows), so a request past it
 asks for an answer the host refuses anyway (its checkReplyFits); the kernel's refusal is that verdict,
 taken before the pipe.
 
@@ -20,7 +20,7 @@ the wire, not characters; every verb is bounded and the 2 MB text cap is not thi
 own probe never spawns node, through the stub host and through the real one, with the disk untouched.
 The stub-host world is tests/test_kernel_file_comments_save.py's and the real-host world is
 tests/test_file_comments_e2e.py's, imported rather than copied. Synthetic only: the notes-api demo
-world, a placeholder sid, temp dirs, invented ledger ids.
+world, a placeholder sid, temp dirs, invented decision ids.
 """
 import json
 import os
@@ -41,8 +41,8 @@ REAL_CAP = km._FILE_COMMENTS_REPLY_MAX
 PROBE_ENTRIES = 420_000
 
 
-def ledger(n, prefix="k"):
-    """`n` decision entries in the ledger's shape, ids invented — the finding's probe."""
+def decisions(n, prefix="k"):
+    """`n` decision entries in the decisions' shape, ids invented — the finding's probe."""
     return [{"id": "%s%d" % (prefix, i), "oldText": "", "newText": ""} for i in range(n)]
 
 
@@ -108,7 +108,7 @@ class EachRecordArrayIsBoundedAlone(_BoundWorld):
         for field in ("suggestions", "accepted", "rejected"):
             with self.subTest(field=field):
                 args = dict(PLAIN, suggestions=[])
-                args[field] = ledger(3000)
+                args[field] = decisions(3000)
                 size = request_bytes(self.real, "save", args, FENCE)
                 self.assertGreater(size, self.SMALL)
                 r = self.save(self.fp, args=args)
@@ -117,7 +117,7 @@ class EachRecordArrayIsBoundedAlone(_BoundWorld):
     def test_the_content_bound_still_comes_first_and_needs_no_serialization(self):
         # both over: the text cap's refusal, with its own phrase, and still no node
         big = "x" * (km._TEXT_MAX_BYTES + 1)
-        r = self.save(self.fp, args=dict(PLAIN, content=big, rejected=ledger(3000)))
+        r = self.save(self.fp, args=dict(PLAIN, content=big, rejected=decisions(3000)))
         self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "too-large"))
         self.assertIn("past the 2.0 MB text cap the viewer edits", r["error"])
         self.assertNotIn("as one request", r["error"])
@@ -129,15 +129,15 @@ class TheBoundaryIsTheSerializedRequest(_BoundWorld):
     byte over is refused before the spawn."""
 
     def test_at_the_cap_the_request_reaches_the_host_one_byte_over_does_not(self):
-        at = self.sized(dict(PLAIN, rejected=ledger(2)), self.SMALL)
+        at = self.sized(dict(PLAIN, rejected=decisions(2)), self.SMALL)
         r = self.save(self.fp, args=at)
         self.assertEqual(r["type"], "fileCommentsResult", r)
         seen = self.seen()["request"]
-        self.assertEqual(seen["args"]["rejected"], at["rejected"], "the whole ledger reached node")
+        self.assertEqual(seen["args"]["rejected"], at["rejected"], "all the decisions reached node")
         self.assertEqual(len(json.dumps(seen)), self.SMALL, "what node read is what the kernel measured")
-        self.assertEqual([sid for sid, _ in self.reached], [SID], "that save landed, so its ledger's count was told")
+        self.assertEqual([sid for sid, _ in self.reached], [SID], "that save landed, so its decisions' count was told")
         self.reached.clear(), self.traced.clear()
-        over = self.sized(dict(PLAIN, rejected=ledger(2)), self.SMALL + 1)
+        over = self.sized(dict(PLAIN, rejected=decisions(2)), self.SMALL + 1)
         r = self.save(self.fp, args=over)
         self.assert_refused_at_the_kernel(r, self.SMALL + 1)
 
@@ -173,15 +173,15 @@ class EveryVerbIsBoundedAndTheTextCapIsNotThisBound(_BoundWorld):
 
 class TheFindingsProbeNeverSpawnsNode(tks._SaveWorld):
     """The finding's own frame at the REAL cap, through the real dispatcher: a small text, a real record,
-    and a ledger of hundreds of thousands of fake decisions. Refused by the kernel with no spawn attempted
+    and hundreds of thousands of fake decisions. Refused by the kernel with no spawn attempted
     — _run_bounded is swapped for a recorder, so a spawn would be counted even if the stub never wrote."""
 
-    def test_a_save_with_a_ledger_past_the_cap_is_refused_without_a_spawn(self):
+    def test_a_save_with_decisions_past_the_cap_is_refused_without_a_spawn(self):
         spawn = _NoSpawn()
         saved = km._run_bounded
         km._run_bounded = spawn
         try:
-            args = dict(PLAIN, rejected=ledger(PROBE_ENTRIES))
+            args = dict(PLAIN, rejected=decisions(PROBE_ENTRIES))
             real = os.path.realpath(self.fp)
             size = request_bytes(real, "save", args, FENCE)
             self.assertGreater(size, REAL_CAP)
@@ -192,7 +192,7 @@ class TheFindingsProbeNeverSpawnsNode(tks._SaveWorld):
                           "16.0 MB the dashboard can carry back" % (km._tilde(real), km._human_bytes(size)), r["error"])
             self.assertEqual(self.reached, [])
             self.assertEqual(self.traced, [])
-            # the same save with the editor's ledger goes through, and what is piped is what was measured
+            # the same save with the editor's decisions goes through, and what is piped is what was measured
             r = self.save(self.fp, args=tks.REJECT_TWO)
             self.assertEqual(r["type"], "fileCommentsResult", r)
             self.assertEqual(len(spawn.calls), 1)
@@ -208,7 +208,7 @@ class TheFindingsProbeNeverSpawnsNode(tks._SaveWorld):
         saved = km._run_bounded
         km._run_bounded = spawn
         try:
-            out, err = km._file_comments_call(self.fp, "save", dict(PLAIN, accepted=ledger(PROBE_ENTRIES)), FENCE)
+            out, err = km._file_comments_call(self.fp, "save", dict(PLAIN, accepted=decisions(PROBE_ENTRIES)), FENCE)
             self.assertIsNone(out)
             self.assertEqual(err[0], "too-large")
             self.assertEqual(spawn.calls, [])
@@ -227,10 +227,10 @@ pytestmark_e2e = pytest.mark.skipif(not e2e.NODE, reason="node not installed on 
 @pytestmark_e2e
 def test_the_findings_save_is_refused_by_the_kernel_before_the_host_runs_and_the_disk_is_untouched(world):
     """End to end, the scenario the review verified against the host alone: a tracked file with a sidecar
-    holding one pending change, the editor's text, its record, and a ledger of hundreds of thousands of
+    holding one pending change, the editor's text, its record, and hundreds of thousands of
     invented decisions. Before the fix the kernel piped it whole and the HOST refused from its reply
     estimate after parsing and walking every entry; now the kernel refuses before any spawn, in its own
-    words, and the file, the sidecar and the log are as they were. The same save with an empty ledger
+    words, and the file, the sidecar and the log are as they were. The same save with no decisions
     then goes through the real host, so the bound admits the request the editor sends."""
     s0 = world.ok("status", world.fp)
     world.ok("set-tracked", world.fp, {"on": True, "scope": "file"}, world.fence_of(s0))
@@ -244,7 +244,7 @@ def test_the_findings_save_is_refused_by_the_kernel_before_the_host_runs_and_the
     saved = km._run_bounded
     km._run_bounded = spawn
     try:
-        args = {"content": e2e.EDITED, "suggestions": [rec], "accepted": [], "rejected": ledger(PROBE_ENTRIES)}
+        args = {"content": e2e.EDITED, "suggestions": [rec], "accepted": [], "rejected": decisions(PROBE_ENTRIES)}
         size = request_bytes(os.path.realpath(str(world.fp)), "save", args, world.fence_of(s, file=True))
         assert size > REAL_CAP
         r = world.op("save", world.fp, args, world.fence_of(s, file=True))

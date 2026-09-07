@@ -120,7 +120,7 @@ function recordFor(st, id) {
   assert.ok(s, `no record ${id}`);
   return s;
 }
-// The editor's Save: the buffer's text, the field's records, the ledger.
+// The editor's Save: the buffer's text, the field's records, the decisions.
 function save(w, file, st, content, suggestions, accepted, rejected) {
   return ok(w, { verb: 'save', path: file, args: { content, suggestions, accepted: accepted || [], rejected: rejected || [] }, fence: fileFenceFor(st) });
 }

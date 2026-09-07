@@ -108,30 +108,31 @@ test("track-decorations.ts is imported by editor-chunk.ts and by no other bundle
 
 test("the chunk exports the track mount option and handle (decision 14), typed, consumed through mount() only", () => {
   // the option and the handle, as file-view.ts passes and reads them. The contract's word is `decisions` (the
-  // 2026-09-06 review: the plan's word for the save verb's two lists; the slice's first word, ledger, is one
-  // CONTEXT.md avoids for the comments log) — the old spelling survives only as aliases beside their last caller,
-  // and editor-chunk-decisions.test.ts confines it to those lines
+  // 2026-09-06 review: the plan's word for the save verb's two lists; the slice's first word is one CONTEXT.md
+  // avoids for the comments log, and editor-chunk-decisions.test.ts pins that it appears nowhere in the webview)
   assert.match(CHUNK, /export interface TrackOpts \{\n\s*\/\*\*[^\n]*\*\/\n\s*suggestions: unknown\[\];/);
   assert.match(CHUNK, /authorColor\?: \(author: string\) => string \| null;/);
   assert.match(CHUNK, /onDecisions\?: \(decisions: TrackDecisions\) => void;/);
   assert.match(CHUNK, /export interface TrackDecision \{ id: string; oldText: string; newText: string \}/);
   assert.match(CHUNK, /export interface TrackDecisions \{ accepted: TrackDecision\[\]; rejected: TrackDecision\[\] \}/);
-  assert.match(CHUNK, /export interface TrackHandle \{\n\s*suggestions\(\): unknown\[\];\n\s*decisions\(\): TrackDecisions;\n(?:\s*ledger: TrackHandle\["decisions"\];[^\n]*\n)?\}/,
-    "the handle: the records and the decisions, plus at most the old-spelling alias");
+  assert.match(CHUNK, /export interface TrackHandle \{\n\s*suggestions\(\): unknown\[\];\n\s*decisions\(\): TrackDecisions;\n\}/,
+    "the handle: the records and the decisions, nothing else");
   assert.match(CHUNK, /export interface EditorHandle \{\n\s*value\(\): string;\n\s*focus\(\): void;\n\s*destroy\(\): void;\n\s*track\?: TrackHandle;\n\}/);
   assert.match(CHUNK, /track\?: TrackOpts;/);
   // the handle reads the LIVE state, so a save gets the records as remapped by every keystroke since the mount
   assert.match(CHUNK, /if \(track\) handle\.track = \{\n\s*suggestions: \(\) => track\.suggestions\(view\.state\),\n\s*decisions: \(\) => track\.decisions\(view\.state\),/);
-  // the caller's spelling, whichever it is today, is one the chunk declares — a rename on one side alone (round 2
-  // renamed the chunk and left this file's pins behind) fails HERE, by name, not on a stale literal. file-view.ts
-  // imports nothing from the chunk (lazy discipline), so the two files agree only by this check.
-  const passed = VIEW.match(/\btrack: \{[^\n]*\b(onLedger|onDecisions): /);
-  assert.ok(passed, "file-view.ts passes the decisions callback inside the track option");
-  assert.match(CHUNK, new RegExp(`^\\s*${passed![1]}\\?: (?:\\(decisions: TrackDecisions\\) => void|TrackOpts\\["onDecisions"\\]);`, "m"),
+  // the caller's spelling is one the chunk declares — a rename on one side alone (round 2 renamed the chunk and left
+  // this file's pins behind) fails HERE, by name, not on a stale literal. file-view.ts imports nothing from the chunk
+  // (lazy discipline), so the two files agree only by this check.
+  const passed = VIEW.match(/\btrack: \{[^\n]*\b(on[A-Z]\w*): /);
+  assert.ok(passed, "file-view.ts passes a callback inside the track option");
+  assert.equal(passed![1], "onDecisions", "the one spelling: the aliases went with the consolidation pass");
+  assert.match(CHUNK, new RegExp(`^\\s*${passed![1]}\\?: \\(decisions: TrackDecisions\\) => void;`, "m"),
     `TrackOpts declares ${passed![1]}, the spelling file-view.ts passes`);
-  const read = VIEW.match(/cm\.track \? cm\.track\.(ledger|decisions)\(\)/);
+  const read = VIEW.match(/cm\.track \? cm\.track\.(\w+)\(\)/);
   assert.ok(read, "file-view.ts reads the handle's decisions for the save");
-  assert.match(CHUNK, new RegExp(`^\\s*${read![1]}(?:\\(\\): TrackDecisions|: TrackHandle\\["decisions"\\]);`, "m"),
+  assert.equal(read![1], "decisions");
+  assert.match(CHUNK, new RegExp(`^\\s*${read![1]}\\(\\): TrackDecisions;`, "m"),
     `TrackHandle declares ${read![1]}, the spelling file-view.ts reads`);
   assert.match(CHUNK, new RegExp(`^\\s*${read![1]}: \\(\\) => track\\.decisions\\(view\\.state\\),`, "m"),
     `mount() serves ${read![1]} from the live decisions field`);

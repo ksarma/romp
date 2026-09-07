@@ -77,7 +77,7 @@ const PAGE_HTML = `<!DOCTYPE html><html><head><meta charset=utf-8><link rel=styl
 window.__mount = function (text, records) {
   var host = document.getElementById('host'); host.replaceChildren();
   window.__h = window.__rompEditor.mount(host, { text: text, ext: 'md', onChange: function () {}, onSave: function () {},
-    track: { suggestions: records, onLedger: function () {} } });
+    track: { suggestions: records, onDecisions: function () {} } });
 };
 window.__chain = function () {
   var kept = document.querySelector('.tc-diff-del-kept-embed');

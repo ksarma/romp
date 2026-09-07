@@ -14,7 +14,7 @@ pinned here, all in kernel/kernel.py:
   file, and the host would have minted a .trackchanges/ holding a log for a file with nothing tracked;
 - a save whose `content` is past _TEXT_MAX_BYTES is refused `too-large` before the request is
   serialized or node spawned — the host enforces the same cap, but last, after every byte was piped;
-- a save whose ledger rejected N of the session's changes tells the owning session the count and that
+- a save whose decisions rejected N of the session's changes tells the owning session the count and that
   the sidecar changed (_save_trace_body); one that rejected none sends the direct-edit body, as before.
 
 The stub-host worlds are tests/test_file_comments.py's and the real-host world is
@@ -40,7 +40,7 @@ SID = tfc.SID
 CAP = km._TEXT_MAX_BYTES
 
 # The editor's Save request as file-comments.ts builds it (saveArgs): the whole new text, the records as
-# the editor's field holds them, and the ledger of what was decided there.
+# the editor's field holds them, and the decisions taken there.
 CONTENT = "# Findings\n\nThe api session cut p95 latency by 45%.\n"
 RECORD = {"id": "1781100000000-1", "author": "api", "ts": 1781100000000, "kind": "sub",
           "from": 30, "to": 33, "oldText": "40%", "newText": "45%"}
@@ -243,7 +243,7 @@ class TheSaveContentIsBoundedBeforeNodeRuns(_SaveWorld):
 class TheSaveTraceNamesTheRejectedCount(_SaveWorld):
     """Consent, trace, routing: a verb that changes the file's bytes tells the owning session what
     changed. A save that rejected none of the session's changes is a direct edit and keeps
-    _edit_trace_body (pinned by tests/test_file_comments.py's SaveTellsTheSession); a save whose ledger
+    _edit_trace_body (pinned by tests/test_file_comments.py's SaveTellsTheSession); a save whose decisions
     rejected N of them says so, in _save_trace_body — the count the panel's Reject would have said,
     without which the session could not tell a rejection from an overwrite."""
 
@@ -264,7 +264,7 @@ class TheSaveTraceNamesTheRejectedCount(_SaveWorld):
         self.assertEqual(self.order, ["reply", "trace"], "the fileCommentsResult is on the wire before the trace goes")
         self.assertEqual(self.parked, [], "straight to the backend, never through the todo-reply helper")
 
-    def test_the_count_is_the_ledgers_length_one_included(self):
+    def test_the_count_is_the_decisions_length_one_included(self):
         one = dict(REJECT_TWO, rejected=REJECT_TWO["rejected"][:1])
         self.save(self.fp, args=one)
         self.assertEqual(self.reached[0][1], km._save_trace_body(os.path.realpath(self.fp), 1))
@@ -272,20 +272,20 @@ class TheSaveTraceNamesTheRejectedCount(_SaveWorld):
 
     def test_a_save_that_rejected_nothing_keeps_the_direct_edit_body(self):
         real = os.path.realpath(self.fp)
-        self.save(self.fp, args=PLAIN)                                          # an empty ledger
+        self.save(self.fp, args=PLAIN)                                          # no decisions
         self.save(self.fp, args=dict(PLAIN, accepted=[{"id": "1781100000000-2", "oldText": "reduced", "newText": "cut"}]))
         self.assertEqual(self.traced, [(real, SID), (real, SID)], "both through _edit_trace")
         self.assertEqual([b for _, b in self.reached], [km._edit_trace_body(real)] * 2,
                          "an accept in the editor is sidecar-only news, as the panel's Accept is: the Send carries it")
 
-    def test_a_refused_save_with_a_ledger_tells_nothing(self):
+    def test_a_refused_save_with_decisions_tells_nothing(self):
         for code in ("store-moved", "file-moved", "desync", "too-large", "not-text"):
             r = self.save(self.fp, args=REJECT_TWO, reply={"ok": False, "code": code, "error": "cannot save: " + code})
             self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", code))
         self.stub(exit=2, stderr="file-comments-host: BadRequest: change 1781100000000-1 is decided twice")
         r = self.send({"type": "fileComments", "reqId": 25, "sid": SID, "path": self.fp, "verb": "save",
                        "args": REJECT_TWO, "fence": FENCE})
-        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"), "a ledger the host would not apply")
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"), "decisions the host would not apply")
         self.assertEqual(self.reached, [])
         self.assertEqual(self.traced, [])
 
@@ -339,8 +339,8 @@ def test_a_save_that_rejected_the_sessions_changes_in_the_editor_tells_it_the_co
     world.track_edit("shipping the cache in v1.2", "shipping the response cache in v1.2")
     s = world.ok("status", world.fp)
     assert len(s["hunks"]) == 2 and world.fp.read_text() == e2e.EDITED_TWICE
-    ledger = [{"id": r["id"], "oldText": r["oldText"], "newText": r["newText"]} for r in s["store"]["suggestions"]]
-    args = {"content": e2e.TEXT, "suggestions": [], "accepted": [], "rejected": ledger}
+    decisions = [{"id": r["id"], "oldText": r["oldText"], "newText": r["newText"]} for r in s["store"]["suggestions"]]
+    args = {"content": e2e.TEXT, "suggestions": [], "accepted": [], "rejected": decisions}
     r = world.ok("save", world.fp, args, world.fence_of(s, file=True))
     assert world.fp.read_text() == e2e.TEXT, "the reverted text the editor held"
     assert r["logged"] is True
@@ -353,7 +353,7 @@ def test_a_save_that_rejected_the_sessions_changes_in_the_editor_tells_it_the_co
     assert world.injected == [], "a trace is a direct backend send: nothing parked, no todo stamped"
     entries = world.log_lines(s)
     assert [e["kind"] for e in entries] == ["set-tracked", "edit", "reject"]
-    assert sorted(c["id"] for c in entries[2]["changes"]) == sorted(d["id"] for d in ledger), "the host's reject entry is the ledger"
+    assert sorted(c["id"] for c in entries[2]["changes"]) == sorted(d["id"] for d in decisions), "the host's reject entry is the decisions"
     assert s["unsent"]["rejected"] == 0
     s2 = world.ok("status", world.fp)
     assert s2["unsent"]["rejected"] == 2, "and the next Send to session will count them"

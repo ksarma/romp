@@ -1,9 +1,9 @@
 // Two races inside edit mode at the REAL openFileView (plans/file-review.md Slice 5; the review of that slice):
 //
-// 1. A save whose ack lands over in-flight typing keeps the editor, and with it the chunk's ledger of decisions,
-//    which has no reset. The next Save used to read the same ledger and re-send the same accept/reject entries; the
+// 1. A save whose ack lands over in-flight typing keeps the editor, and with it the chunk's decisions,
+//    which has no reset. The next Save used to read the same decisions and re-send the same accept/reject entries; the
 //    host applied them again, logged them twice, and the Send confirm counted two accepted changes for one. The viewer
-//    now keeps the decisions each landed save carried (`applied`) and sends only what the ledger holds beyond them.
+//    now keeps the decisions each landed save carried (`applied`) and sends only what the decisions hold beyond them.
 // 2. A file fetch in flight when Edit is clicked (the poll saw the file move, then the person clicked) used to land
 //    inside edit mode: the mtime moved to the newer file while the editor's buffer came from the older bytes, so both
 //    save doors passed their fence and overwrote a session's write silently — the case the fence exists to refuse.
@@ -210,38 +210,38 @@ const store = new Map<string, string>();
   removeItem: (k: string) => { store.delete(k); },
 };
 
-// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + a ledger with no reset) ──
+// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + decisions with no reset) ──
 type Entry = { id: string; oldText: string; newText: string };
 type Decided = { accepted: Entry[]; rejected: Entry[] };
-type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: Decided) => void };
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onDecisions: (l: Decided) => void };
 const ed = {
   buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
-  trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+  trackOpts: null as TrackStub | null, records: [] as unknown[], decisions: { accepted: [], rejected: [] } as Decided,
 };
 win.__rompEditor = {
   mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
     ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): Decided } } =
       { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
     if (opts.track) {
-      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
-      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+      ed.records = opts.track.suggestions.slice(); ed.decisions = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, decisions: () => ed.decisions };
     }
     return h;
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
-/** An in-editor decision: the chunk drops the record from its field and reports the ledger (no text change on an accept). */
+/** An in-editor decision: the chunk drops the record from its field and reports the decisions (no text change on an accept). */
 const decideInEditor = (side: "accepted" | "rejected", id: string) => {
   ed.records = ed.records.filter((r) => (r as { id: string }).id !== id);
-  ed.ledger = { ...ed.ledger, [side]: [...ed.ledger[side], entry(id)] };
-  ed.trackOpts!.onLedger(ed.ledger);
+  ed.decisions = { ...ed.decisions, [side]: [...ed.decisions[side], entry(id)] };
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
-/** The chunk's ledger after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
-const reledger = (ledger: Decided, pending: string[]) => {
-  ed.ledger = ledger; ed.records = pending.map(record);
-  ed.trackOpts!.onLedger(ed.ledger);
+/** The chunk's decisions after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
+const redecide = (decisions: Decided, pending: string[]) => {
+  ed.decisions = decisions; ed.records = pending.map(record);
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them — with a gate ──────────────
@@ -320,7 +320,7 @@ async function open(p: string, t: TestContext): Promise<Open> {
   disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; seam = null; gate = null;
   store.delete("romp:fileviewFmt");
-  ed.mounted = 0; ed.destroyed = 0; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
+  ed.mounted = 0; ed.destroyed = 0; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   assert.equal(fv.openFileView(p, SID), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();
@@ -369,9 +369,9 @@ const saveRefused = async (reqId: number, code: string, error: string) => {
 const errBar = (body: El) => body.querySelector(".fileview-err");
 const fileGets = () => fetches.filter((f) => f.startsWith("GET /file")).length;
 
-// ── 1. the ledger across saves ──────────────────────────────────────────────────────────────────────
+// ── 1. the decisions across saves ──────────────────────────────────────────────────────────────────────
 
-test("a save acked over in-flight typing keeps the editor and its ledger; the next Save sends only the decisions taken since, and a fresh Edit starts a fresh ledger", async (t) => {
+test("a save acked over in-flight typing keeps the editor and its decisions; the next Save sends only the decisions taken since, and a fresh Edit starts fresh decisions", async (t) => {
   const o = await open(REPORT, t);
   const { ctx, b } = o;
   await answerStatus(status([hunk("h1"), hunk("h2")]));
@@ -384,7 +384,7 @@ test("a save acked over in-flight typing keeps the editor and its ledger; the ne
   assert.equal(ctx.editing(), true, "the in-flight keystrokes keep edit mode");
   assert.equal(ed.destroyed, 0); assert.equal(b.save.disabled, false); assert.equal(b.save.textContent, "Save", "re-armed");
   assert.equal(ctx.mtimeNs(), NS(9), "the fence moved to the saved file");
-  assert.deepEqual(ed.ledger, { accepted: [entry("h1")], rejected: [] }, "the chunk's ledger still holds h1: it has no reset");
+  assert.deepEqual(ed.decisions, { accepted: [entry("h1")], rejected: [] }, "the chunk's decisions still hold h1: they have no reset");
   const m2 = saveTracked(o, DOC + "one\ntwo\n");
   assert.deepEqual(m2.args, { content: DOC + "one\ntwo\n", suggestions: [record("h2")], accepted: [], rejected: [] },
     "the host applied and logged h1 with the first save: it is not sent again");
@@ -393,7 +393,7 @@ test("a save acked over in-flight typing keeps the editor and its ledger; the ne
   assert.equal(ctx.editing(), false, "nothing typed and nothing undecided during this round-trip: edit mode ends");
   assert.equal(ed.destroyed, 1);
   assert.deepEqual(savedInfos.map((i) => i.mtimeNs), [NS(9), NS(11)]);
-  // a new editor is a new ledger (the mount's), and what it decides goes out once
+  // a new editor starts new decisions (the mount's), and what it decides goes out once
   await enterEdit(o);
   decideInEditor("accepted", "h2");
   const m3 = saveTracked(o, DOC + "one\ntwo\n");
@@ -429,7 +429,7 @@ test("a decision clicked during the round-trip (no keystroke) is not lost with t
   assert.deepEqual(m1.args.accepted, []);
   decideInEditor("accepted", "h1");                    // an accept moves no text: the buffer still equals the saved snapshot
   await saveReply(m1.reqId, status([hunk("h1"), hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
-  assert.equal(ctx.editing(), true, "the ledger holds a decision no save carried");
+  assert.equal(ctx.editing(), true, "the decisions hold a decision no save carried");
   assert.equal(ed.destroyed, 0); assert.equal(b.save.disabled, false);
   const m2 = saveTracked(o, DOC + "a");
   assert.deepEqual(m2.args, { content: DOC + "a", suggestions: [record("h2")], accepted: [entry("h1")], rejected: [] });
@@ -443,21 +443,21 @@ test("an id decided again after its save: undone and redone sends nothing; undon
   const m1 = saveTracked(o, DOC);
   typeInto(DOC + "x");
   await saveReply(m1.reqId, status([], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
-  // undo the accept (the record is back in the field), redo it: the ledger reads as it did when the save landed
-  reledger({ accepted: [], rejected: [] }, ["h1"]);
-  reledger({ accepted: [entry("h1")], rejected: [] }, []);
+  // undo the accept (the record is back in the field), redo it: the decisions read as they did when the save landed
+  redecide({ accepted: [], rejected: [] }, ["h1"]);
+  redecide({ accepted: [entry("h1")], rejected: [] }, []);
   const m2 = saveTracked(o, DOC + "x\n");
   assert.deepEqual([m2.args.accepted, m2.args.rejected], [[], []], "the same decision is not a new one");
   typeInto(DOC + "x\ny");
   await saveReply(m2.reqId, status([], { fileMtimeNs: NS(11), storeMtimeNs: NS(12) }));
   // undo the accept and reject instead: the reject is new, and the log will read accept, reject — what happened
-  reledger({ accepted: [], rejected: [entry("h1")] }, []);
+  redecide({ accepted: [], rejected: [entry("h1")] }, []);
   const m3 = saveTracked(o, DOC + "x\ny\n");
   assert.deepEqual([m3.args.accepted, m3.args.rejected], [[], [entry("h1")]]);
   typeInto(DOC + "x\ny\nz");
   await saveReply(m3.reqId, status([], { fileMtimeNs: NS(13), storeMtimeNs: NS(14) }));
   // back to accept: the landed save moved h1 to the rejected side, so an accept is a new decision again
-  reledger({ accepted: [entry("h1")], rejected: [] }, []);
+  redecide({ accepted: [entry("h1")], rejected: [] }, []);
   const m4 = saveTracked(o, DOC + "x\ny\nz\n");
   assert.deepEqual([m4.args.accepted, m4.args.rejected], [[entry("h1")], []]);
   // a refused save applied nothing: the next Save carries the same decision again

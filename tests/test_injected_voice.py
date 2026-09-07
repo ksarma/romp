@@ -166,7 +166,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             "reject trace": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
             "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
             # the save trace (plans/file-review.md, Slice 5; the review round, 2026-09-06): the editor's
-            # Save wrote the file AND its ledger rejected some of the session's tracked changes, so the
+            # Save wrote the file AND its decisions rejected some of the session's tracked changes, so the
             # session hears the direct edit and the count in one body — told as the edit trace alone it
             # read as an overwrite. A save that rejected nothing sends the edit trace above. The same
             # voice, tail and neutralized path as its two siblings, rendered for several and for one

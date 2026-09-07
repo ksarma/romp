@@ -1,6 +1,6 @@
 // Pins for tools/file-comments-host.mjs from the Slice 5 review (plans/file-review.md, Slice 5;
 // Consent, trace, routing): the guards on the `save` verb's request and its target.
-//   * The ledger of decisions is checked against the disk, not only its shape: an accepted or
+//   * The decisions are checked against the disk, not only their shape: an accepted or
 //     rejected id must be rooted in a change the sidecar holds or the comments log already records
 //     as decided (the id, or a `<id>~n` fragment of it); a ghost id refuses `no-change` by id and
 //     nothing is written. Before this the host logged a client's ghost as a `reject` entry, counted
@@ -127,9 +127,9 @@ function untouched(before) {
 }
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// ── the ledger is checked against the disk ──────────────────────────
+// ── the decisions are checked against the disk ──────────────────────────
 
-test('a save whose ledger names a change the sidecar never held refuses no-change by id and writes nothing: no log entry, no count for the session or the Send', () => {
+test('a save whose decisions name a change the sidecar never held refuses no-change by id and writes nothing: no log entry, no count for the session or the Send', () => {
   const w = world();
   writeTrackedPaths(w.root, ['docs/report.md']);
   const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
@@ -216,7 +216,7 @@ test('the decisions a real editor produces still land: a split fragment, a re-de
   assert.equal(r3.unsent.accepted, 2);
   assert.equal(r3.unsent.rejected, 1);
   // (c) Undo the reject (the text and X come back), type inside X again and reject the fragment.
-  // The editor's ledger already holds X~1, so its id rule re-mints the new fragment as X~2
+  // The editor's decisions already hold X~1, so its id rule re-mints the new fragment as X~2
   // (editor-chunk.ts freshIds): an id neither the sidecar nor the log has ever seen, rooted in X —
   // which only the log remembers now — by the `<id>~n` prefix rule alone.
   const again = typed(cur, [rec], at, at, 'the ');

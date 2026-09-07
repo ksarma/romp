@@ -163,10 +163,10 @@ test("accept: the record leaves the field, the text stays, the decisions gain th
 
 // file-view.ts derives `dirty` from the text in onChange and marks an accept dirty ONLY through the decisions
 // callback, since an accept changes no text (an accept-then-Save with no decisions callback takes doSave's
-// nothing-changed branch and drops the acceptance silently). file-view.ts still passes that callback by its old
-// spelling, onLedger; editor-chunk-decisions.test.ts proves the alias reaches this same listener. This runs the
-// listener facet the chunk's state actually carries — the regex pin below reads the listener's body, not its
-// membership in the extension set — so that wiring is executed, not just pinned.
+// nothing-changed branch and drops the acceptance silently). file-view.ts passes that callback as onDecisions
+// (file-view-decisions.test.ts pins the mount line). This runs the listener facet the chunk's state actually
+// carries — the regex pin below reads the listener's body, not its membership in the extension set — so that wiring
+// is executed, not just pinned.
 test("the onDecisions listener rides in the chunk's extension set: an accept alone reaches it and not onChange; typing reaches onChange and not onDecisions; a reject reaches both", () => {
   const seen: TrackDecisions[] = [];
   const h = editor("I like cats a lot.", [sub("s1", 2, "like", "love"), ins("a1", 11, " a lot")], (l) => seen.push(l));

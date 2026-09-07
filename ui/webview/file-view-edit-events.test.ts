@@ -216,39 +216,39 @@ const store = new Map<string, string>();
   removeItem: (k: string) => { store.delete(k); },
 };
 
-// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + a ledger with no reset) ──
+// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + decisions with no reset) ──
 type Entry = { id: string; oldText: string; newText: string };
 type Decided = { accepted: Entry[]; rejected: Entry[] };
-type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: Decided) => void };
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onDecisions: (l: Decided) => void };
 const ed = {
   buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
   tracks: true,                                        // false: the bundle predates the option and returns a handle without `track`
-  trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+  trackOpts: null as TrackStub | null, records: [] as unknown[], decisions: { accepted: [], rejected: [] } as Decided,
 };
 win.__rompEditor = {
   mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
     ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): Decided } } =
       { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
     if (opts.track && ed.tracks) {
-      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
-      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+      ed.records = opts.track.suggestions.slice(); ed.decisions = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, decisions: () => ed.decisions };
     }
     return h;
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
-/** An in-editor decision: the chunk drops the record from its field and reports the ledger (no text change on an accept). */
+/** An in-editor decision: the chunk drops the record from its field and reports the decisions (no text change on an accept). */
 const decideInEditor = (side: "accepted" | "rejected", id: string) => {
   ed.records = ed.records.filter((r) => (r as { id: string }).id !== id);
-  ed.ledger = { ...ed.ledger, [side]: [...ed.ledger[side], entry(id)] };
-  ed.trackOpts!.onLedger(ed.ledger);
+  ed.decisions = { ...ed.decisions, [side]: [...ed.decisions[side], entry(id)] };
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
-/** The chunk's ledger after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
-const reledger = (ledger: Decided, pending: string[]) => {
-  ed.ledger = ledger; ed.records = pending.map(record);
-  ed.trackOpts!.onLedger(ed.ledger);
+/** The chunk's decisions after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
+const redecide = (decisions: Decided, pending: string[]) => {
+  ed.decisions = decisions; ed.records = pending.map(record);
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them — with a gate ──────────────
@@ -331,7 +331,7 @@ async function open(p: string, t: TestContext): Promise<Open> {
   disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; seam = null; gate = null;
   store.delete("romp:fileviewFmt");
-  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
+  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   assert.equal(fv.openFileView(p, SID), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();

@@ -45,16 +45,16 @@ for (const t of ['pointerdown', 'touchstart', 'touchend', 'mousedown', 'mouseup'
   document.addEventListener(t, function (e) { window.__order.push(t + (e.pointerType ? ':' + e.pointerType : '')); }, true);
 window.__mount = function (text, records) {
   var host = document.getElementById('host'); host.replaceChildren();
-  window.__ledger = null;
+  window.__decisions = null;
   window.__h = window.__rompEditor.mount(host, { text: text, ext: 'md', onChange: function () {}, onSave: function () {},
-    track: { suggestions: records, onLedger: function (l) { window.__ledger = l; } } });
+    track: { suggestions: records, onDecisions: function (l) { window.__decisions = l; } } });
 };
 window.__state = function () {
-  return { ids: window.__h.track.suggestions().map(function (s) { return s.id; }), ledger: window.__ledger, order: window.__order.splice(0) };
+  return { ids: window.__h.track.suggestions().map(function (s) { return s.id; }), decisions: window.__decisions, order: window.__order.splice(0) };
 };
 </script></body></html>`;
 
-type State = { ids: string[]; ledger: any; order: string[] };
+type State = { ids: string[]; decisions: any; order: string[] };
 
 test("in Firefox with touch: the pointerdown names the touch before the compat mousedown; a tap on a mark or a struck widget decides nothing; a mouse click accepts", async (t) => {
   if (!pw) { t.skip("playwright is not installed under vscode-extension — the browser leg needs it (CI installs no browsers)"); return; }
@@ -106,7 +106,7 @@ test("in Firefox with touch: the pointerdown names the touch before the compat m
     let s = await state();
     tapOrder(s.order, "tap on the mark");
     assert.deepEqual(s.ids, ["a1", "d1"], "the tap placed the caret; the insertion is still pending");
-    assert.equal(s.ledger, null, "no decision reached the ledger");
+    assert.equal(s.decisions, null, "no decision was reported");
 
     const del = await centre(".tc-diff-del[data-hk-from='15']");
     await page.touchscreen.tap(del.x, del.y);
@@ -114,7 +114,7 @@ test("in Firefox with touch: the pointerdown names the touch before the compat m
     s = await state();
     tapOrder(s.order, "tap on the struck widget");
     assert.deepEqual(s.ids, ["a1", "d1"], "a tap on the struck widget (its own listener, outside CodeMirror's chain) decides nothing either");
-    assert.equal(s.ledger, null);
+    assert.equal(s.decisions, null);
 
     // the same page with a mouse: judged per pointer, so the click accepts
     await page.mouse.click(ins.x, ins.y);
@@ -122,7 +122,7 @@ test("in Firefox with touch: the pointerdown names the touch before the compat m
     s = await state();
     assert.ok(s.order.indexOf("pointerdown:mouse") >= 0 && s.order.indexOf("pointerdown:mouse") < s.order.indexOf("mousedown"), JSON.stringify(s.order));
     assert.deepEqual(s.ids, ["d1"], "a mouse click accepts");
-    assert.deepEqual(s.ledger.accepted.map((e: { id: string }) => e.id), ["a1"]);
+    assert.deepEqual(s.decisions.accepted.map((e: { id: string }) => e.id), ["a1"]);
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); }

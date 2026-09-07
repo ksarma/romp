@@ -216,33 +216,33 @@ const store = new Map<string, string>();
 // The editing substrate: the lazily-loaded CodeMirror chunk registers a window global the viewer's
 // editorChunk() resolves from; this one is a buffer with the two callbacks the viewer wires.
 // Slice 5: the stub carries the mount's `track` option the way the real chunk does — the handle grows `track` with the
-// records (as seeded; a test may remap them) and the ledger of decisions, and `onLedger` is the callback the viewer wired.
+// records (as seeded; a test may remap them) and the decisions, and `onDecisions` is the callback the viewer wired.
 // `tracks: false` plays an older bundle that ignores the option (no `track` on the handle).
-type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: { accepted: unknown[]; rejected: unknown[] }) => void };
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onDecisions: (l: { accepted: unknown[]; rejected: unknown[] }) => void };
 type Decided = { accepted: Array<{ id: string; oldText: string; newText: string }>; rejected: Array<{ id: string; oldText: string; newText: string }> };
 const ed = {
   buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
-  tracks: true, trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+  tracks: true, trackOpts: null as TrackStub | null, records: [] as unknown[], decisions: { accepted: [], rejected: [] } as Decided,
 };
 win.__rompEditor = {
   mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
     ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): Decided } } =
       { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
     if (opts.track && ed.tracks) {
-      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
-      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+      ed.records = opts.track.suggestions.slice(); ed.decisions = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, decisions: () => ed.decisions };
     }
     return h;
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
-/** An in-editor decision: the chunk drops the record from its field and reports the ledger (no text changes on an accept). */
+/** An in-editor decision: the chunk drops the record from its field and reports the decisions (no text changes on an accept). */
 const decideInEditor = (side: "accepted" | "rejected", id: string, oldText: string, newText: string) => {
   ed.records = ed.records.filter((r) => (r as { id: string }).id !== id);
-  ed.ledger = { ...ed.ledger, [side]: [...ed.ledger[side], { id, oldText, newText }] };
-  ed.trackOpts!.onLedger(ed.ledger);
+  ed.decisions = { ...ed.decisions, [side]: [...ed.decisions[side], { id, oldText, newText }] };
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
 // The PDF renderer chunk (Slice 4) the viewer's pdfChunkLoad resolves from: two page shells in the chunk's own DOM
 // shape (div.fileview-pdf > div.fileview-pdf-page[data-page] > canvas.fileview-pdf-canvas), page 1 "drawn" before the
@@ -341,7 +341,7 @@ async function open(p: string, t: TestContext, sid: string | null = SID): Promis
   disk[DECK] = { bytes: "%PDF-1.4\n", type: "application/pdf", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; paints = 0; seam = null;
   store.delete("romp:fileviewFmt");                     // every open starts from the default: markdown Rendered
-  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
+  ed.mounted = 0; ed.destroyed = 0; ed.tracks = true; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   pdf.renders = 0; pdf.disposed = 0; pdf.bytes = 0; pdf.opts = null; pdf.refuse = null; pdf.roots.length = 0;
   assert.equal(fv.openFileView(p, sid), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
@@ -1148,7 +1148,7 @@ test("the chunk failing to load over pending changes: no fallback textarea (it c
 test("source: the Slice 5 seam — text() answers the buffer in edit mode, the mount spreads the track option only when something is pending, Save routes by routesSave(), and the saveFile frame is byte for byte the pinned one", () => {
   assert.match(VIEW, /text: \(\) => \(editing && bufValue\(\) !== null \? bufValue\(\) : viewText\(\)\),/);
   assert.match(VIEW, /editing: \(\) => editing,\n\s*setTrackedEdit: \(t\) => \{ trackedEdit = t; \},/);
-  assert.match(VIEW, /\.\.\.\(pending \? \{ track: \{ suggestions: pending\.records, authorColor: pending\.authorColor, onLedger: \(\) => \{ dirty = cm!\.value\(\) !== norm\(text!\) \|\| decided\(\); \} \} \} : \{\}\),/,
+  assert.match(VIEW, /\.\.\.\(pending \? \{ track: \{ suggestions: pending\.records, authorColor: pending\.authorColor, onDecisions: \(\) => \{ dirty = cm!\.value\(\) !== norm\(text!\) \|\| decided\(\); \} \} \} : \{\}\),/,
     "the option's shape is the chunk's TrackOpts, data only");
   assert.match(VIEW, /onChange: \(\) => \{ dirty = cm!\.value\(\) !== norm\(text!\); if \(!dirty\) dirty = decided\(\); \},/, "a keystroke that restores the text leaves the decisions dirty");
   assert.match(VIEW, /if \(pending && !cm\.track\) \{/, "an older bundle is detected by the handle it returns, not by a flag");

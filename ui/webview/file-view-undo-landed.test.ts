@@ -2,7 +2,7 @@
 // of that slice's round-1 fixes):
 //
 // 1. The editor's history has no boundary at a save, and undoing a decision puts the record back in the field and takes
-//    the ledger entry with it (editor-chunk.ts). A landed save has applied and logged that decision, and the host has no
+//    the decision entry with it (editor-chunk.ts). A landed save has applied and logged that decision, and the host has no
 //    verb that takes one back. Before this, an accept undone DURING the round-trip exited edit mode at the ack with the
 //    accept standing on disk and not a word (the undo moved no text and left nothing beyond `applied`), and an undo
 //    reaching past a landed save followed by Save sent the restored record among the suggestions: the host wrote it
@@ -212,38 +212,38 @@ const store = new Map<string, string>();
   removeItem: (k: string) => { store.delete(k); },
 };
 
-// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + a ledger with no reset) ──
+// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + decisions with no reset) ──
 type Entry = { id: string; oldText: string; newText: string };
 type Decided = { accepted: Entry[]; rejected: Entry[] };
-type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: Decided) => void };
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onDecisions: (l: Decided) => void };
 const ed = {
   buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
-  trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+  trackOpts: null as TrackStub | null, records: [] as unknown[], decisions: { accepted: [], rejected: [] } as Decided,
 };
 win.__rompEditor = {
   mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
     ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): Decided } } =
       { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
     if (opts.track) {
-      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
-      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+      ed.records = opts.track.suggestions.slice(); ed.decisions = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, decisions: () => ed.decisions };
     }
     return h;
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
-/** An in-editor decision: the chunk drops the record from its field and reports the ledger (no text change on an accept). */
+/** An in-editor decision: the chunk drops the record from its field and reports the decisions (no text change on an accept). */
 const decideInEditor = (side: "accepted" | "rejected", id: string) => {
   ed.records = ed.records.filter((r) => (r as { id: string }).id !== id);
-  ed.ledger = { ...ed.ledger, [side]: [...ed.ledger[side], entry(id)] };
-  ed.trackOpts!.onLedger(ed.ledger);
+  ed.decisions = { ...ed.decisions, [side]: [...ed.decisions[side], entry(id)] };
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
-/** The chunk's ledger after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
-const reledger = (ledger: Decided, pending: string[]) => {
-  ed.ledger = ledger; ed.records = pending.map(record);
-  ed.trackOpts!.onLedger(ed.ledger);
+/** The chunk's decisions after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
+const redecide = (decisions: Decided, pending: string[]) => {
+  ed.decisions = decisions; ed.records = pending.map(record);
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them — with a gate ──────────────
@@ -322,7 +322,7 @@ async function open(p: string, t: TestContext): Promise<Open> {
   disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; seam = null; gate = null;
   store.delete("romp:fileviewFmt");
-  ed.mounted = 0; ed.destroyed = 0; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
+  ed.mounted = 0; ed.destroyed = 0; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   assert.equal(fv.openFileView(p, SID), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();
@@ -404,7 +404,7 @@ test("an accept undone during the round-trip is not dropped with the editor: the
   decideInEditor("accepted", "h1");
   const m1 = saveAsIs(o);                              // no keystroke: the save carries the accept alone
   assert.deepEqual(m1.args, { content: DOC, suggestions: [record("h2")], accepted: [entry("h1")], rejected: [] });
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2"]);   // Ctrl-Z before the ack: h1 is pending in the field again
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2"]);   // Ctrl-Z before the ack: h1 is pending in the field again
   await saveReply(m1.reqId, status([hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
   assert.equal(ctx.editing(), true, "the ack keeps the editor: leaving would drop the undo without a word");
   assert.equal(ed.destroyed, 0);
@@ -413,8 +413,8 @@ test("an accept undone during the round-trip is not dropped with the editor: the
   assert.match(errBar(body)!.textContent, ACK_UNDONE, "the bar says the accept stands on disk and names the ways out");
   // Save while the undone accept still stands: refused in place, nothing sent (the host has no verb that takes it back)
   await saveRefusedInPlace(o, SAVE_UNDONE);
-  // redo (the chunk's ledger holds h1 again, its field does not): the editor agrees with the disk, and Save leaves
-  reledger({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
+  // redo (the chunk's decisions hold h1 again, its field does not): the editor agrees with the disk, and Save leaves
+  redecide({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
   const saves = countOf("fileComments", "save");
   b.save.click();
   await settle();
@@ -430,10 +430,10 @@ test("the undone accept turned into a reject after the ack: the reversal goes ou
   await enterEdit(o);
   decideInEditor("accepted", "h1");
   const m1 = saveAsIs(o);
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2"]);
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2"]);
   await saveReply(m1.reqId, status([hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
   assert.equal(o.ctx.editing(), true);
-  reledger({ accepted: [], rejected: [entry("h1")] }, ["h2"]);   // modifier-click: h1 leaves the field for the rejected side
+  redecide({ accepted: [], rejected: [entry("h1")] }, ["h2"]);   // modifier-click: h1 leaves the field for the rejected side
   typeInto(DOC.replace("p95", "p90"));                 // …and a reject moves text
   const m2 = saveAsIs(o);
   assert.deepEqual(m2.args, { content: DOC.replace("p95", "p90"), suggestions: [record("h2")], accepted: [], rejected: [entry("h1")] });
@@ -450,7 +450,7 @@ test("typing undone by hand and the accept undone after it: the buffer is the sa
   assert.equal(o.ctx.editing(), true);
   assert.equal(errBar(o.body), null, "nothing undone yet: no bar");
   typeInto(DOC);                                       // Ctrl-Z: the keystroke goes…
-  reledger({ accepted: [], rejected: [] }, ["h1"]);    // …and Ctrl-Z again: the accept goes, h1 is back in the field
+  redecide({ accepted: [], rejected: [] }, ["h1"]);    // …and Ctrl-Z again: the accept goes, h1 is back in the field
   await saveRefusedInPlace(o, SAVE_UNDONE);            // before: dirty read false and Save exited, the undo lost silently
   assert.equal(o.ctx.text(), DOC, "text() is still the buffer");
 });
@@ -467,12 +467,12 @@ test("undo past a landed save with a sidecar left (two changes): Save refuses in
   await saveReply(m1.reqId, status([hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
   assert.equal(ctx.editing(), true);
   assert.equal(errBar(o.body), null, "the ack shows no bar: nothing undone at that point");
-  // Ctrl-Z past the typing and the accept: h1 is back in the field with h2, the ledger is empty
+  // Ctrl-Z past the typing and the accept: h1 is back in the field with h2, the decisions are empty
   typeInto(DOC);
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2"]);
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2"]);
   await saveRefusedInPlace(o, SAVE_UNDONE);            // before: suggestions [h1, h2], accepted [] went out and the host re-pended h1
   // redo the accept: the field holds h2 alone again, and the text change is what the next Save carries
-  reledger({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
+  redecide({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
   b.save.click();
   const m2 = lastOf("fileComments", "save");
   assert.notEqual(m2.reqId, m1.reqId, "a second save went out");
@@ -492,7 +492,7 @@ test("undo past a landed save that pruned the sidecar (the only change accepted)
   await saveReply(m1.reqId, status([], { fileMtimeNs: NS(9), storeMtimeNs: null, store: null }));
   assert.equal(o.ctx.editing(), true);
   typeInto(DOC);
-  reledger({ accepted: [], rejected: [] }, ["h1"]);
+  redecide({ accepted: [], rejected: [] }, ["h1"]);
   await saveRefusedInPlace(o, SAVE_UNDONE);            // before: the host answered BadRequest, a programmer-facing error
   // Cancel is one of the named ways out: the view shows the file as it was saved
   o.b.cancel.click();
@@ -509,12 +509,12 @@ test("several decisions undone past a save: the bar counts them and offers decid
   decideInEditor("rejected", "h2");
   const m1 = saveTracked(o, DOC + "one\n");
   assert.deepEqual([m1.args.accepted, m1.args.rejected], [[entry("h1")], [entry("h2")]]);
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2", "h3"]);   // both undone before the ack
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2", "h3"]);   // both undone before the ack
   await saveReply(m1.reqId, status([hunk("h3")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
   assert.equal(o.ctx.editing(), true);
   assert.match(errBar(o.body)!.textContent, /^Saved, but the 2 decisions you undid had already landed with this save and cannot be taken back: redo them \(Ctrl\/Cmd\+Shift\+Z\), decide the changes again here, or Cancel to see the file as it was saved\.$/);
   // one redone, one still undone: the bar names the one
-  reledger({ accepted: [entry("h1")], rejected: [] }, ["h2", "h3"]);
+  redecide({ accepted: [entry("h1")], rejected: [] }, ["h2", "h3"]);
   await saveRefusedInPlace(o, /^Not saved: the reject you undid had already landed with an earlier save and cannot be taken back\. Redo it \(Ctrl\/Cmd\+Shift\+Z\), accept the change here instead, or Cancel to see the file as it was saved\.$/);
 });
 

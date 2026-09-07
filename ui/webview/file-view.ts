@@ -579,12 +579,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let eolCRLF = false;                        // the file's dominant line ending — textareas normalize
   //   CRLF→LF on assignment, so an untouched CRLF file would otherwise save with every ending rewritten
   let ta: HTMLTextAreaElement | null = null;   // the FALLBACK surface (and the buffer pre-CodeMirror)
-  // the CodeMirror handle when mounted; `track` is on it only when the chunk carried the mount's track option (Slice 5).
-  // The handle's decisions reader and the mount's callback below are read and passed by the chunk's old spelling
-  // (`ledger`, `onLedger`: editor-chunk.ts keeps both as aliases of `decisions`/`onDecisions`, each marked "old spelling"),
-  // because the viewer's test harnesses stub the handle by those names and file-view-seam.test.ts pins the mount line's
-  // text; the two identifiers move with those tests, and file-view-decisions.test.ts confines the old word to them.
-  let cm: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): EditDecisions } } | null = null;   // old spelling: ledger() reads the chunk's decisions
+  // the CodeMirror handle when mounted; `track` is on it only when the chunk carried the mount's track option (Slice 5):
+  // the records as the field holds them now and the decisions taken since the mount (editor-chunk.ts TrackHandle)
+  let cm: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): EditDecisions } } | null = null;
   const bufValue = (): string | null => (cm ? cm.value() : ta ? ta.value : null);   // whichever surface owns the buffer
   // ── editing over pending changes (plans/file-review.md Slice 5) ── the comments panel registers its half through the
   // seam (setTrackedEdit); the viewer reads it at Edit and at Save and caches nothing. `chunkTracks` remembers what the
@@ -605,7 +602,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let applied: EditDecisions = { accepted: [], rejected: [] };
   const beyond = (all: EditDecision[], done: EditDecision[]): EditDecision[] => all.filter((e) => !done.some((d) => d.id === e.id));
   const unsent = (): EditDecisions => {
-    const l = cm && cm.track ? cm.track.ledger() : null;   // old spelling of decisions(): the chunk's alias, see `cm` above
+    const l = cm && cm.track ? cm.track.decisions() : null;
     return l ? { accepted: beyond(l.accepted, applied.accepted), rejected: beyond(l.rejected, applied.rejected) } : { accepted: [], rejected: [] };
   };
   const mergeApplied = (sent: EditDecisions): void => {
@@ -1098,7 +1095,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         text: norm(text!), ext: path.slice(path.lastIndexOf(".") + 1),
         onChange: () => { dirty = cm!.value() !== norm(text!); if (!dirty) dirty = decided(); },
         onSave: () => doSave(),
-        ...(pending ? { track: { suggestions: pending.records, authorColor: pending.authorColor, onLedger: () => { dirty = cm!.value() !== norm(text!) || decided(); } } } : {}),   // old spelling of onDecisions: the chunk's alias, see `cm` above
+        ...(pending ? { track: { suggestions: pending.records, authorColor: pending.authorColor, onDecisions: () => { dirty = cm!.value() !== norm(text!) || decided(); } } } : {}),
       });
       if (pending && !cm.track) {
         // an older editor bundle ignored the option: the buffer shows the text with no marks, and a save from it would

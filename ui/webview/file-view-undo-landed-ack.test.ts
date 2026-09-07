@@ -208,38 +208,38 @@ const store = new Map<string, string>();
   removeItem: (k: string) => { store.delete(k); },
 };
 
-// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + a ledger with no reset) ──
+// ── the editor chunk: a buffer, the two callbacks, and the track option's handle (records + decisions with no reset) ──
 type Entry = { id: string; oldText: string; newText: string };
 type Decided = { accepted: Entry[]; rejected: Entry[] };
-type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onLedger: (l: Decided) => void };
+type TrackStub = { suggestions: unknown[]; authorColor: (a: string) => string | null; onDecisions: (l: Decided) => void };
 const ed = {
   buf: "", onChange: null as (() => void) | null, mounted: 0, destroyed: 0,
-  trackOpts: null as TrackStub | null, records: [] as unknown[], ledger: { accepted: [], rejected: [] } as Decided,
+  trackOpts: null as TrackStub | null, records: [] as unknown[], decisions: { accepted: [], rejected: [] } as Decided,
 };
 win.__rompEditor = {
   mount(host: El, opts: { text: string; onChange: () => void; onSave: () => void; track?: TrackStub }) {
     ed.buf = opts.text; ed.onChange = opts.onChange; ed.mounted++; ed.trackOpts = opts.track || null;
     host.appendChild(new Txt(opts.text));
-    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; ledger(): Decided } } =
+    const h: { value(): string; focus(): void; destroy(): void; track?: { suggestions(): unknown[]; decisions(): Decided } } =
       { value: () => ed.buf, focus() { /* inert */ }, destroy() { ed.destroyed++; } };
     if (opts.track) {
-      ed.records = opts.track.suggestions.slice(); ed.ledger = { accepted: [], rejected: [] };
-      h.track = { suggestions: () => ed.records, ledger: () => ed.ledger };
+      ed.records = opts.track.suggestions.slice(); ed.decisions = { accepted: [], rejected: [] };
+      h.track = { suggestions: () => ed.records, decisions: () => ed.decisions };
     }
     return h;
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
-/** An in-editor decision: the chunk drops the record from its field and reports the ledger (no text change on an accept). */
+/** An in-editor decision: the chunk drops the record from its field and reports the decisions (no text change on an accept). */
 const decideInEditor = (side: "accepted" | "rejected", id: string) => {
   ed.records = ed.records.filter((r) => (r as { id: string }).id !== id);
-  ed.ledger = { ...ed.ledger, [side]: [...ed.ledger[side], entry(id)] };
-  ed.trackOpts!.onLedger(ed.ledger);
+  ed.decisions = { ...ed.decisions, [side]: [...ed.decisions[side], entry(id)] };
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
-/** The chunk's ledger after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
-const reledger = (ledger: Decided, pending: string[]) => {
-  ed.ledger = ledger; ed.records = pending.map(record);
-  ed.trackOpts!.onLedger(ed.ledger);
+/** The chunk's decisions after an undo or a redo: what the field now holds, reported as the real chunk reports it. */
+const redecide = (decisions: Decided, pending: string[]) => {
+  ed.decisions = decisions; ed.records = pending.map(record);
+  ed.trackOpts!.onDecisions(ed.decisions);
 };
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them — with a gate ──────────────
@@ -318,7 +318,7 @@ async function open(p: string, t: TestContext): Promise<Open> {
   disk[APP] = { bytes: PY, type: "text/plain; charset=utf-8", mtimeNs: MT };
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; seam = null; gate = null;
   store.delete("romp:fileviewFmt");
-  ed.mounted = 0; ed.destroyed = 0; ed.trackOpts = null; ed.records = []; ed.ledger = { accepted: [], rejected: [] };
+  ed.mounted = 0; ed.destroyed = 0; ed.trackOpts = null; ed.records = []; ed.decisions = { accepted: [], rejected: [] };
   assert.equal(fv.openFileView(p, SID), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();
@@ -410,7 +410,7 @@ test("an accept undone during the round-trip of a save that also carried typing,
   const m1 = saveTracked(o, DOC + "q");                // …then a keystroke, and the save carries both
   assert.deepEqual(m1.args, { content: DOC + "q", suggestions: [record("h2")], accepted: [entry("h1")], rejected: [] });
   typeInto(DOC);                                       // Ctrl-Z before the ack: the keystroke goes…
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2"]);   // …and Ctrl-Z again: the accept goes, h1 is pending in the field
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2"]);   // …and Ctrl-Z again: the accept goes, h1 is pending in the field
   await saveReply(m1.reqId, status([hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
   assert.equal(ctx.editing(), true, "the ack keeps the editor");
   assert.equal(ed.destroyed, 0);
@@ -420,7 +420,7 @@ test("an accept undone during the round-trip of a save that also carried typing,
   assert.match(errBar(body)!.textContent, ACK_UNDONE, "the bar says so at the ack: before, the moved buffer kept the editor with no word until the next Save");
   await saveRefusedInPlace(o, SAVE_UNDONE);
   // redo the accept alone: the field holds h2, and the buffer still lacks the keystroke the save carried — a text change
-  reledger({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
+  redecide({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
   const m2 = saveAsIs(o);
   assert.notEqual(m2.reqId, m1.reqId, "a second save went out");
   assert.deepEqual(m2.args, { content: DOC, suggestions: [record("h2")], accepted: [], rejected: [] }, "the text as it stands; h1 landed with the first save and is not sent again");
@@ -453,7 +453,7 @@ test("a reject undone during the round-trip: the undo moves text, so the editor 
   const m1 = saveAsIs(o);
   assert.deepEqual(m1.args, { content: DOC.replace("p95", "p90"), suggestions: [record("h2")], accepted: [], rejected: [entry("h1")] });
   typeInto(DOC);                                       // Ctrl-Z before the ack: the text comes back…
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2"]);   // …with h1 pending in the field
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2"]);   // …with h1 pending in the field
   await saveReply(m1.reqId, status([hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }));
   assert.equal(ctx.editing(), true);
   assert.equal(ed.destroyed, 0);
@@ -462,7 +462,7 @@ test("a reject undone during the round-trip: the undo moves text, so the editor 
   assert.match(errBar(body)!.textContent, ACK_UNDONE_REJECT, "the reject's wording: redo, or accept the change here instead");
   await saveRefusedInPlace(o, SAVE_UNDONE_REJECT);
   // accept it here instead: the reversal goes out alone (the log will read reject, accept), the record never as pending
-  reledger({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
+  redecide({ accepted: [entry("h1")], rejected: [] }, ["h2"]);
   const m2 = saveAsIs(o);
   assert.notEqual(m2.reqId, m1.reqId);
   assert.deepEqual(m2.args, { content: DOC, suggestions: [record("h2")], accepted: [entry("h1")], rejected: [] });
@@ -475,7 +475,7 @@ test("the undone-landed note and a comments-log warning on the same ack share th
   await enterEdit(o);
   decideInEditor("accepted", "h1");
   const m1 = saveAsIs(o);
-  reledger({ accepted: [], rejected: [] }, ["h1", "h2"]);
+  redecide({ accepted: [], rejected: [] }, ["h1", "h2"]);
   await saveReplyLogged(m1.reqId, status([hunk("h2")], { fileMtimeNs: NS(9), storeMtimeNs: NS(10) }), { logged: false, logWarning: WARN });
   assert.equal(ctx.editing(), true);
   const bars = body.querySelectorAll(".fileview-err");
