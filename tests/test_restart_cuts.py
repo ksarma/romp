@@ -264,6 +264,23 @@ class UnrequestedSignal(unittest.TestCase):
                          "a request on record is the cause; no signal row is added on top of it")
         self.assertIn("self-update", self._rows(km.RESTART_CUTS_FILE)[0]["reason"])
 
+    def test_the_managers_note_alone_is_consumed_like_a_request_row(self):
+        # Design pick (upmerge 2026-09-07): with no request row on record the manager's own sigterm note
+        # answers, and the cut row CONSUMES it as it would a request row (auditT = the note's t). A note is
+        # not a deploy request, so _last_deploy_restart_t reads such a cut as attributed elsewhere with or
+        # without the stamp; this pins the stamp so a change on either side is a visible decision.
+        t = int(__import__("time").time())
+        self.AUDIT.write_text(json.dumps({"t": t, "action": "manager-sigterm", "kernel": "main",
+                                          "trigger": "restart", "reason": "restart"}) + "\n")
+        self._fire()
+        self.assertEqual([r["action"] for r in self._rows(self.AUDIT)], ["manager-sigterm"],
+                         "the note is the request on record; no signal row is added on top of it")
+        cuts = self._rows(km.RESTART_CUTS_FILE)
+        self.assertEqual(len(cuts), 1)
+        self.assertEqual(cuts[0]["reason"], "manager-sigterm: restart", "the note's trigger is the label")
+        self.assertEqual(cuts[0]["auditT"], t, "the cut row records the note's t as the audit row it consumed")
+        self.assertEqual(km._consumed_audit_t(), t)
+
     def test_a_second_sigterm_mid_drain_does_not_write_a_second_row(self):
         # a service stop signals the kernel, then the manager's shutdownAll signals it again while the
         # first handler drains; the second invocation returns and the first finishes: ONE cut row

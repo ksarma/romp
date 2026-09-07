@@ -221,7 +221,7 @@ class HeadlessRoutes(unittest.TestCase):
 
 class CodexRuntimeSelection(unittest.TestCase):
     # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept
-    # over upstream's SourceFileLoader.load_module() in the 2026-09-07 fold (flags.md kernel): patch that.
+    # over upstream's SourceFileLoader.load_module() in the 2026-09-07 fold (a standing fork ruling): patch that.
     def test_path_codex_does_not_override_managed_runtime(self):
         fake_mod = mock.Mock()
         with mock.patch.object(km, "_codex_backend", None), \
@@ -266,6 +266,12 @@ class SdkSingleFlight(unittest.TestCase):
         fake_mod = mock.Mock()
         fake_mod.SdkBackend = lambda *a, **k: FakeBackend()
         prev = km._sdk_backend
+        # _sdk_locked wires the loaded module's readers into the SHARED romp_judge module (jd._WORK_KEY_FN
+        # and its siblings, jd._LOGIN_AUTH_ENV_FN included); with the module a Mock those wires would outlive
+        # this test and hand a later module in the same process (test_judge's JudgeEnv) a Mock where it
+        # expects an environment. Saved here, restored below, and checked afterwards so a new wire added to
+        # _sdk_locked without a `_FN` name still shows up here.
+        wires = {n: getattr(km.jd, n) for n in dir(km.jd) if n.endswith("_FN")}
         try:
             km._sdk_backend = None
             results = [None] * 6
@@ -283,6 +289,10 @@ class SdkSingleFlight(unittest.TestCase):
                             "every caller gets the same singleton")
         finally:
             km._sdk_backend = prev
+            for n, fn in wires.items():
+                setattr(km.jd, n, fn)
+        for n in dir(km.jd):
+            self.assertNotIsInstance(getattr(km.jd, n), mock.Mock, "%s still wired to the Mock module" % n)
 
 
 class WiringPins(unittest.TestCase):
