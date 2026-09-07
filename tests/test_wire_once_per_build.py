@@ -75,6 +75,18 @@ def _client(app, caps=(), delta=True):
     return c
 
 
+class _RaisingLock:
+    """A client slot lock whose acquire raises, so the send path fails inside its `with _client_lock(c)` and
+    the test asserts on THIS message. An `object()` in the slot raises there too, but as AttributeError
+    on 3.10 and TypeError from 3.11 (bpo-12022), so the interpreter's wording is not a stable marker."""
+
+    def __enter__(self):
+        raise RuntimeError("synthetic send failure")
+
+    def __exit__(self, *exc):
+        return False
+
+
 def _delta(after, before):
     return {k: after[k] - before[k] for k in after if after[k] != before[k]}
 
@@ -372,11 +384,11 @@ class ARaisingSerializerLeavesThePusherAlive(unittest.TestCase):
     def test_a_send_that_raises_skips_that_client_and_the_next_is_served(self):
         _World(self, feed=_feed())
         c1, c2 = _client("feed", caps=(km.FEED_DELTA_CAP,)), _client("feed", caps=(km.FEED_DELTA_CAP,))
-        c1["dlock"] = object()                                   # a synthetic raise inside this client's send path
+        c1["dlock"] = _RaisingLock()                             # a synthetic raise inside this client's send path
         err = io.StringIO()
         with redirect_stderr(err):
             km._push([c1, c2])
-        self.assertIn("push send feed (feed)", err.getvalue()); self.assertIn("TypeError", err.getvalue())
+        self.assertIn("push send feed (feed)", err.getvalue()); self.assertIn("synthetic send failure", err.getvalue())
         self.assertEqual(c1["frames"], [])
         self.assertEqual([f["type"] for f in c2["frames"]], ["feed"], "the next client is served")
         self.assertIsNotNone(km._feed_wire, "the fill stood: only the send failed")
