@@ -1,9 +1,9 @@
 ---
 title: A file path in a user todo's one-line text is a link, as a path in its detail already is: the same matcher and span (path-links.ts), applied by each host's todo linker to the row's text and the Reply modal's quoted line, in the Waiting-on-you pane and on the chat's todo card; the postal tool schema says so
 status: candidate
-where: fork branch `todolinks`: `ui/webview/waiting.ts` (linkTodoPaths, one delegate on the Reply modal's box), `ui/webview/render.ts` (linkTodoLinePaths: the chat's binder without the figure pass), `postal/postal_service.py` (add_user_todo's text/detail descriptions), `docs/guide.md`, `docs/reference.md`; tests `ui/webview/user-todo-title-links.test.ts` (new), `ui/webview/user-todo-links.test.ts`, `ui/webview/waiting-detail-link.test.ts`, `ui/webview/pr-links.test.ts`
+where: fork PR #346 (`todolinks`): `ui/webview/waiting.ts` (linkTodoPaths, one delegate on the Reply modal's box), `ui/webview/render.ts` (linkTodoLinePaths: the chat's binder without the figure pass), `postal/postal_service.py` (add_user_todo's text/detail descriptions), `docs/guide.md`, `docs/reference.md`; tests `ui/webview/user-todo-title-links.test.ts` (new), `ui/webview/user-todo-links.test.ts`, `ui/webview/waiting-detail-link.test.ts`, `ui/webview/pr-links.test.ts`
 added: 2026-09-07
-pr:
+pr: 346
 tier: feature
 offered:
 closed:
