@@ -5,6 +5,7 @@ judge-errors.jsonl lines from legacy-flag fixtures made that visible). conftest.
 test module, so this is a suite-wide floor; per-class _rebind_state/tempdir isolation still layers on
 top exactly as before."""
 import atexit
+import importlib.util
 import os
 import shutil
 import sys
@@ -259,4 +260,196 @@ def _stub_place_llm(monkeypatch):
             if j is not None and id(j) not in seen and getattr(j, "_card_route_subs", None) is not None:
                 seen.add(id(j))
                 monkeypatch.setattr(j, "place_llm", lambda *a, **k: "")
+    yield
+
+
+# No test report may carry a process-environment VALUE, or a credential-shaped token (2026-09-05). A
+# test that renders an env mapping in an assertion (assertNotIn on os.environ, on a _judge_env() copy
+# of it, on a launch env) prints the whole mapping when it fails, and on a developer's box that
+# mapping holds live credentials. Assertions that test membership and name the key are the fix; this
+# hook is the safety net for an assertion still written the other way. Two nets, applied to every
+# report's text (the longrepr and the captured-output sections) whatever the outcome, and to
+# collection reports:
+#   * every value seen in this process's environment, 16 characters or longer, is replaced with one
+#     marker, and so is each whitespace-separated chunk of such a value that is 16 characters or
+#     longer (pprint renders a value with spaces as adjacent literals on separate lines, so a
+#     whole-value replace misses the pieces). Values are noted the moment they are WRITTEN into
+#     os.environ (the mutation path is wrapped below: a plain assignment, update, setdefault,
+#     os.putenv, os.environb, mock.patch.dict), and sampled at import, around each test and at
+#     report time as well, for values that entered by another route (inherited from the parent
+#     process, written by a C extension). Path-valued shell variables a traceback quotes
+#     legitimately (the cwd, the state root) are exempt by NAME, and never when the name is
+#     credential-shaped.
+#   * credential-shaped tokens by PATTERN (tests/credential_patterns.py: the public key prefixes, and
+#     a long token in a value position), whatever their provenance: a token that never touched the
+#     environment (read from a file, printed by a child) is caught by this one.
+# A report the hook changes becomes plain text (no colour); one it leaves alone keeps pytest's own
+# rendering.
+ENV_VALUE_MIN_LEN = 16
+ENV_VALUE_REDACTED = "[REDACTED-ENV-VALUE]"
+_ENV_VALUE_PATH_NAMES = frozenset((
+    "PWD", "OLDPWD", "HOME", "PATH", "TMPDIR", "SHELL", "VIRTUAL_ENV", "PYTHONPATH", "LS_COLORS",
+    "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+    "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ROMP_DIR", "ROMP_STATE_DIR", "ROMP_CLAUDE_BIN",
+    "ROMP_SYSTEMD_DIR", "ROMP_LAUNCHD_DIR", "CLAUDE_CONFIG_DIR", "TMUX_TMPDIR", "ROMP_TESTS_SYSTEM_TMPDIR"))
+_ENV_VALUES_SEEN: set = set()
+
+
+def _load_credential_patterns():
+    """tests/credential_patterns.py, by path beside this file (a subprocess run against a copy of the
+    conftest carries a copy of it too). A missing module is an error, never a silent net less."""
+    p = os.path.join(os.path.dirname(os.path.realpath(__file__)), "credential_patterns.py")
+    spec = importlib.util.spec_from_file_location("romp_tests_credential_patterns", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_credpat = _load_credential_patterns()
+CREDENTIAL_REDACTED = _credpat.REDACTED
+
+
+def _credential_shaped(name: str) -> bool:
+    n = name.upper()
+    return (n == "ANTHROPIC_API_KEY" or n.endswith("_API_KEY") or n.endswith("_TOKEN") or n.startswith("ANTHROPIC_")
+            or "SECRET" in n or "PASSWORD" in n or "APIKEY" in n)
+
+
+def env_value_qualifies(name: str, value: str) -> bool:
+    """Whether one environment entry's value is one a report must not show: ENV_VALUE_MIN_LEN
+    characters or more, unless the name is a path-valued shell variable that is not credential-shaped.
+    The one rule, for the sampler and for the write hook."""
+    if len(value) < ENV_VALUE_MIN_LEN:
+        return False
+    return not (name in _ENV_VALUE_PATH_NAMES and not _credential_shaped(name))
+
+
+def env_values_to_redact(environ=None) -> set:
+    """The values of `environ` (the process environment by default) a report must not show."""
+    env = os.environ if environ is None else environ
+    return {value for name, value in env.items() if env_value_qualifies(name, value)}
+
+
+def note_env_value(name, value) -> bool:
+    """Note one value at the moment it is written into the environment (the hook below). Bytes
+    (os.environb, os.putenv) are decoded the way os.environ decodes them. Returns whether the value
+    qualified; anything that is not a name and a string value does not."""
+    if isinstance(name, bytes):
+        name = os.fsdecode(name)
+    if isinstance(value, bytes):
+        value = os.fsdecode(value)
+    if not isinstance(name, str) or not isinstance(value, str):
+        return False
+    if not env_value_qualifies(name, value):
+        return False
+    _ENV_VALUES_SEEN.add(value)
+    return True
+
+
+def _install_env_write_hook() -> None:
+    """Wrap the one method every os.environ write goes through and os.putenv beside it. A plain
+    assignment, update, setdefault, mock.patch.dict (an update) and os.environb all reach
+    _Environ.__setitem__; os.putenv is the module global that method calls and the path that writes
+    to the process without touching the mapping. Idempotent: a second import stacks no wrapper."""
+    if getattr(os._Environ.__setitem__, "_romp_notes_values", False):
+        return
+    orig_setitem = os._Environ.__setitem__
+    orig_putenv = os.putenv
+
+    def setitem(self, key, value):
+        note_env_value(key, value)
+        return orig_setitem(self, key, value)
+
+    def putenv(key, value):
+        note_env_value(key, value)
+        return orig_putenv(key, value)
+
+    setitem._romp_notes_values = putenv._romp_notes_values = True
+    os._Environ.__setitem__ = setitem
+    os.putenv = putenv
+
+
+_install_env_write_hook()
+
+
+def redact_env_values(text: str, values) -> str:
+    """`text` with every occurrence of every value replaced by ENV_VALUE_REDACTED, longest first (a
+    value that contains another is replaced whole), and then every whitespace-separated chunk of a
+    value that is ENV_VALUE_MIN_LEN characters or more: pprint renders a long value with spaces as
+    adjacent string literals on separate lines, so the token half of `Authorization: Bearer <token>`
+    survived a whole-value replace, and unittest's shortened repr shows a differing tail on its own."""
+    parts = set()
+    for v in values:
+        if not v:
+            continue
+        parts.add(v)
+        chunks = v.split()
+        if len(chunks) > 1:
+            parts.update(c for c in chunks if len(c) >= ENV_VALUE_MIN_LEN)
+    for v in sorted(parts, key=len, reverse=True):
+        text = text.replace(v, ENV_VALUE_REDACTED)
+    return text
+
+
+def redact_credential_tokens(text):
+    """The pattern net: credential-shaped tokens, whatever their provenance (tests/credential_patterns.py)."""
+    return _credpat.scrub(text)
+
+
+def redact_report_text(text: str, values=None) -> str:
+    """Both nets over one report string: the environment's values (and their chunks), then the
+    credential-shaped tokens. `values` defaults to everything noted so far."""
+    return redact_credential_tokens(redact_env_values(text, _ENV_VALUES_SEEN if values is None else values))
+
+
+def _note_env_values():
+    _ENV_VALUES_SEEN.update(env_values_to_redact())
+
+
+_note_env_values()
+
+
+@pytest.fixture(autouse=True)
+def _remember_env_values():
+    """The sampling half. A value a test writes itself is noted at the write (note_env_value), so one
+    present only between these samples is redacted too; the samples at every test's setup and
+    teardown, and at report time, are for values that entered the environment by a route the write
+    hook does not see (inherited from the parent process before this file loaded, written by a C
+    extension)."""
+    _note_env_values()
+    yield
+    _note_env_values()
+
+
+def _redact_report(rep) -> None:
+    """Every text a report carries, whatever its outcome: the longrepr (a failure's text; a skip's is
+    a (path, line, reason) tuple, whose reason is the text) and the captured-output sections (which
+    -rA and -rP print for passed tests too). A longrepr the nets leave unchanged keeps pytest's own
+    object and rendering."""
+    _note_env_values()
+    lr = getattr(rep, "longrepr", None)
+    if isinstance(lr, tuple) and len(lr) == 3 and isinstance(lr[2], str):
+        red = redact_report_text(lr[2])
+        if red != lr[2]:
+            rep.longrepr = (lr[0], lr[1], red)
+    elif lr is not None:
+        text = str(lr)
+        red = redact_report_text(text)
+        if red != text:
+            rep.longrepr = red
+    if getattr(rep, "sections", None):
+        rep.sections = [(name, redact_report_text(content)) for name, content in rep.sections]
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    _redact_report(outcome.get_result())
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_collectreport(report):
+    """A collection error (an import-time exception whose message names a value) is a report too.
+    Redacted BEFORE the other implementations see it: the terminal reporter files it from here."""
+    _redact_report(report)
     yield
