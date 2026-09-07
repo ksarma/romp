@@ -3374,7 +3374,8 @@ def _guard_nodes(store):
 # judge stage, the feed build and the nudge tick load stores, so the load rate says whether a change
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
 _GOAL_IO = {"loads": 0, "loads_shared": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
-            "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0, "absent_hits": 0, "absent_misses": 0}
+            "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0, "absent_hits": 0, "absent_misses": 0,
+            "noop_hash_ms": 0.0}    # ms spent in save_goals' own-content hash for the no-op check (see save_goals)
 _GOAL_IO_LOCK = threading.Lock()
 
 
@@ -3388,7 +3389,9 @@ def goal_io_stats():
     shared cache answered — a hit, or a version parsed there (`loads_shared`; the calls it hands to
     load_goals — no store file, an unreadable journal, the cache off — count under `loads`, so loads +
     loads_shared is every store read), save_goals calls (`saves`), and the saves that wrote a file
-    (`writes`; save_goals skips a byte-identical republish), plus two memos' counters. The give-up scan's (judge_failure_scan): calls (`scans`), stores served from the memo
+    (`writes`; save_goals skips a byte-identical republish), the milliseconds save_goals spent serializing
+    a held store for that no-op check (`noop_hash_ms`: the cost a conditional tail save would remove, so
+    that item is judged from a measurement), plus two memos' counters. The give-up scan's (judge_failure_scan): calls (`scans`), stores served from the memo
     (`scan_hits`) and stores read and parsed, or attempted, because they were new, changed, or failed
     to parse on the previous call (`scan_parses`). The no-op save check's disk side (save_goals): the
     file's identity matched and no parse ran (`disk_hits`), the file was read and parsed, or attempted
@@ -4498,7 +4501,11 @@ def save_goals(fsid, store):
                                "writer's copy with load_goals")
     _goal_io_bump("saves")
     GOALDIR.mkdir(parents=True, exist_ok=True)
+    _h0 = time.perf_counter()
     mine = _own_hash(store) if "_baseRev" in store else None
+    _goal_io_bump("noop_hash_ms", (time.perf_counter() - _h0) * 1000.0)   # the no-op check's serialization,
+    #                                               measured so a conditional tail save (P3 of the judge perf
+    #                                               plan) is judged from `romp perf`, not estimated
     if mine is not None and _matches_disk(fsid, store, mine):
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized

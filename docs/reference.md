@@ -1615,7 +1615,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the publish's own write. `absent_hits` and `absent_misses` count the memo
   behind the two triage sweeps over stores no discovered session owns:
   answered from the memo, or loaded and evaluated because the store, its
-  override journal or its archive changed or was new.
+  override journal or its archive changed or was new. `noop_hash_ms` is the
+  time `save_goals` spent serializing a held store for its no-op check (the
+  cost a conditional tail save would remove); `romp perf` prints it as a rate
+  on the `goals` line so that item can be judged from a measurement.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the

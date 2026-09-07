@@ -1353,13 +1353,14 @@ seen = dl("goals", "scan_hits") + dl("goals", "scan_parses")
 checks = dl("goals", "disk_hits") + dl("goals", "disk_misses")
 absent = dl("goals", "absent_hits") + dl("goals", "absent_misses")
 print("goals     %.1f loads/s   %.1f shared loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/s (%s memo hits)   "
-      "save memo %s hits (%d hits, %d misses, %d seeds)   absent memo %s hits (%d hits, %d misses)"
+      "save memo %s hits (%d hits, %d misses, %d seeds)   absent memo %s hits (%d hits, %d misses)   no-op hash %.1f ms/s"
       % (dl("goals", "loads") / dt, dl("goals", "loads_shared") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt,
          dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no",
          ("%.0f%%" % (100.0 * dl("goals", "disk_hits") / checks)) if checks else "no",
          dl("goals", "disk_hits"), dl("goals", "disk_misses"), dl("goals", "disk_seeds"),
          ("%.0f%%" % (100.0 * dl("goals", "absent_hits") / absent)) if absent else "no",
-         dl("goals", "absent_hits"), dl("goals", "absent_misses")))
+         dl("goals", "absent_hits"), dl("goals", "absent_misses"),
+         dl("goals", "noop_hash_ms") / dt))      # the tails' serialization for the no-op check (P3's measurement)
 jp = dl("judge", "passes")
 jw, jev, jbs = dl("judge", "wakes"), dl("judge", "wakes_event"), dl("judge", "wakes_backstop")
 # cpu/pass is tier-thread plus pool-worker CPU over the window's passes (the producer thread's own

@@ -123,7 +123,7 @@ class Collector(unittest.TestCase):
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
-                                              "absent_hits", "absent_misses"},
+                                              "absent_hits", "absent_misses", "noop_hash_ms"},
                          "read through jd.goal_io_stats")
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},
@@ -400,6 +400,8 @@ class GoalIoCounters(unittest.TestCase):
         after2 = self.jd.goal_io_stats()
         self.assertEqual(after2["saves"], after["saves"] + 1)
         self.assertEqual(after2["writes"], after["writes"], "the no-op republish skip is visible as saves without writes")
+        self.assertGreater(after2["noop_hash_ms"], after["noop_hash_ms"],
+                           "the no-op check's serialization is timed (the cost a conditional tail save would remove)")
         self.assertEqual(km._PERF_STATS.snapshot()["goals"], after2, "the kernel's snapshot carries the judge counters")
         # the no-op check's disk-side memo: the first publish seeded it from its own temp, so the check
         # above was a hit; a foreign rewrite of the file is a miss
