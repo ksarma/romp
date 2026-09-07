@@ -15,9 +15,16 @@ below the largest t before it (the writer's pool threads can land two same-secon
 order), and no row's run end (recv, else sent, else t) exceeds t + 1. With the bisect backed off by
 S, every row it leaves behind ended before t0. The result is the `monotone` flag on the snapshot
 _judge_usage_rows returns; a file that breaks any of the three takes today's full scan exactly, and
-the reader says so once on stderr. Reference for every equivalence check below: a private copy of
-the pre-bisect function. Synthetic rows only (placeholder ids); the fsids here are private to this
-module."""
+the reader says so once on stderr.
+
+Three classes: ReaderOrderFlag pins the flag the reader derives (ordered, within-slack and past-slack
+disorder, NaN and non-numeric t, a run end past t + 1, empty and missing files, growth and rewrites,
+the flag travelling with its snapshot); RunJudgingBisect pins the kernel's answer against a private
+copy of the pre-bisect function on both paths (a mixed file with live runs, the horizon edges,
+disorder at the horizon, a non-monotone file, growth between calls, more than the row cap, the
+access-count proof that the walk starts at the horizon and that a bare list walks from the head, the
+gloss rule and its NaN case); SourcePins pins the shared reader call and the two bisects at source.
+Synthetic rows only (placeholder ids); the fsids here are private to this module."""
 import contextlib
 import io
 import json
