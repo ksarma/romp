@@ -74,6 +74,7 @@ import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
+import { loadSettings, saveSettings, onExternalSettingsChange } from "./settings";   // Show changes inline: the shared, persisted webview settings (the inline-display follow-on, 2026-09-07)
 import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
@@ -615,6 +616,11 @@ function ensureListener(): void {
     else if (m.type === "warn") live.failAll(droppedRequestText(m.text));
   });
   window.addEventListener("romp:wsdown", () => { if (live) live.failAll("the connection dropped; try again once it returns"); });
+  // Show changes inline is one preference for every viewer (settings.ts): a flip in another pane or tab — the
+  // `storage` event, or the gear's same-document signal — repaints this one's marks so its header and its body
+  // agree. Installed once here, with the message listener, and routed to the live panel: a listener per panel
+  // would outlive the panels (onExternalSettingsChange has no remove).
+  onExternalSettingsChange((s) => { if (live && live.inline !== s.changesInline) { live.inline = s.changesInline; live.paintAll(); } });
 }
 
 // The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
@@ -674,6 +680,11 @@ class Panel {
   moreChangesOpen = false;                  // the "… N more changes" fold past GROUP_LIMIT groups — the same rule
   rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
   paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
+  // Show changes inline (the inline-display follow-on, 2026-09-07): whether the read view marks the session's changes
+  // in the text — insertions tinted, deletions struck — in both views. Off, the file reads as it is and every change
+  // is its card alone (no "not shown" tag: nothing is shown by choice). The shared settings store keeps it across
+  // opens and pages (settings.ts changesInline, ON by default); comment highlights are not governed by it.
+  inline = loadSettings().changesInline;
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
@@ -835,6 +846,7 @@ class Panel {
         fctrackfolder: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "folder" }, "track"); },
         fctrackcancel: () => { this.trackChoice = false; this.trackStop = false; this.render(); },
         fctrackstop: () => { this.trackStop = false; void this.mutate("set-tracked", { on: false, scope: "folder" }, "track"); },
+        fcinline: () => this.toggleInline(),
         fcfile: () => this.startFileComment(),
         fcsave: () => { void this.saveComposer(); },
         fccancel: () => this.closeComposer(),
@@ -1787,11 +1799,20 @@ class Panel {
   private indexedText(): string | null {
     return this.ctx.editing() && this.editText !== null ? this.editText : this.ctx.text();
   }
+  /** Show changes inline, flipped: the preference goes to the shared store (saveSettings; every other viewer reads
+   *  it on its next paint or through the settings signal) and the body is repainted at once from the status already
+   *  here — no status ask, the hunks have not changed — which also re-renders the header's button. */
+  private toggleInline(): void {
+    this.inline = !this.inline;
+    saveSettings({ changesInline: this.inline });
+    this.paintAll();
+  }
   /** Paint every open comment's anchor over the current view: located → the ring; quote gone but its
    *  context found → the text-changed ring; neither → card only, marked detached. Detached is a
    *  rendering state, never a stored flag. Then the changes (D4/D5): insertions and substitutions tinted
-   *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
-   *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
+   *  over the new text, deletions struck at their point in both views (Rendered through the index map; a
+   *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
+   *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
     if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
@@ -1874,6 +1895,7 @@ class Panel {
    *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
   private paintChanges(root: Element, src: string, rendered: boolean): void {
     const s = this.status;
+    if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
     // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
@@ -2577,6 +2599,16 @@ class Panel {
     t.title = tb ? (tb.kind === "inherited" ? "Tracked through " + tb.entry + "; turn it off there" : "Tracked by the entry " + tb.entry + "; click to stop")
       : "Record this session's edits to the file as changes you accept or reject";
     row.appendChild(t);
+    // Show changes inline, beside Track changes, only while the file has changes to show (progressive disclosure: a
+    // control over marks that do not exist is noise) and the read view is up (the editor draws every change itself)
+    if (s && (s.hunks || []).length && !this.ctx.editing()) {
+      const i = btn("Show changes inline", "fcinline", "fileview-btn fc-toggle");
+      i.dataset.on = this.inline ? "1" : "0";
+      i.setAttribute("aria-pressed", this.inline ? "true" : "false");
+      i.title = this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
+        : "The marks are off and the file reads as it is; click to mark the session's changes in the text";
+      row.appendChild(i);
+    }
     row.appendChild(btn("Comment on this file", "fcfile"));
     head.appendChild(row);
     if (this.trackChoice && s) {
@@ -2894,8 +2926,9 @@ class Panel {
   /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark
    *  when the view shows one), and the buttons — Accept and Reject are the card's reason to exist, so they
    *  never hide behind the expand. Open: the old and new text, and the comments bound to the change with
-   *  their turns and their own Reply and Resolve. Reveal on a deletion (never painted in Rendered; a point in
-   *  Raw) and on any change whose mark the view does not show, so the compact card never dead-ends. While the
+   *  their turns and their own Reply and Resolve. Reveal on a deletion (a point in both views, which a scroll can
+   *  miss) and on any change whose mark the view does not show — a refused block, or Show changes inline off — so
+   *  the compact card never dead-ends. While the
    *  editor is up (Slice 5) the editor's own marks show every change, deletions included, and the read view Reveal
    *  and the link would scroll is gone, so neither is offered; Accept and Reject stay, and answer with where to
    *  decide (DECIDES).
@@ -2933,9 +2966,10 @@ class Panel {
       const t = el("span", "fc-tag", "detached");
       t.title = "The file no longer holds this text, so the change cannot be accepted or rejected; its record stays with the file's comments";
       head.appendChild(t);
-    } else if (!painted && !editing && !inFlux && src !== null && this.ctx.mode() !== "media") {
+    } else if (!painted && this.inline && !editing && !inFlux && src !== null && this.ctx.mode() !== "media") {
+      // with the marks off (inline) the view shows no change by choice, and the tag would claim a failing that is none
       const t = el("span", "fc-tag", "not shown");
-      t.title = this.ctx.mode() === "rendered" && c.kind === "del" ? "The Rendered view cannot show a deletion; Reveal opens it in Raw" : "This view does not show the change; Reveal opens it in Raw";
+      t.title = "This view does not show the change; Reveal opens it in Raw";
       head.appendChild(t);
     }
     if (c.comments.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.comments.length)));

@@ -633,8 +633,13 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
 - **Raw view is exact, Rendered view is best effort.** Changes are offsets into the source. In
   Raw, insertions tint, deletions render struck at their point, substitutions show both, each with
   the author's session chip in the session's color. In Rendered, insertions and substitutions are
-  re-found by their text and highlighted; a deletion cannot be placed in rendered prose and
-  appears only as a card, whose **Reveal** switches to Raw and scrolls there. An unpainted change
+  re-found by their text and highlighted, and deletions are struck at their point in both views:
+  the Rendered point is placed through the same index map the comment highlights use, so a
+  deletion inside a block the map refuses (a table, a code fence) appears only as a card, whose
+  **Reveal** switches to Raw and scrolls there (the inline-display follow-on, 2026-09-07; before
+  it every Rendered deletion was card-only). **Show changes inline** in the panel header turns
+  every change mark off in both views and back on, at once and without a status round trip, and
+  the choice is kept in the shared webview settings across opens and pages. An unpainted change
   always has a card, so the compact view never dead-ends. Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
@@ -944,6 +949,26 @@ sees a move a status already reported (the consolidation, 2026-09-06; before it,
 and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
 elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
 beside their own and need no rule of their own to be usable; the sheets are the painter's.
+
+The inline-display follow-on (2026-09-07): after walking the loop, the user asked for two things the
+Slice 2 build left out: tracked changes must read inline in the Rendered view too, not only in Raw,
+and the person must be able to turn the inline marks off. In the Rendered view, `paintChangesRendered`
+now paints a deletion as the same zero-width `span.fc-del` point Raw paints (one element constructor
+for both views, `makePoint`), placed in the rendered text at its `curFrom` through the index map
+(`paintRenderedPoint`). The point goes before the first emitted character at or past the offset, or
+right after the last character before it when the offset follows that character directly, so a
+deletion at a word's end sits against the word. A refused block, a hole, or a blank line between
+blocks leaves the change unpainted, with its card's "not shown" tag and Reveal. A substitution's point
+sits immediately before its tint, wherever the tint was found. The point adds no text node, so
+`mapRenderedSelection` and `unpaintChanges` are unaffected. The **Show changes inline** toggle sits
+beside Track changes in the panel header, a two-state `fc-toggle` button offered while the file has
+changes and the read view is up. It is ON by default and kept as `changesInline` in the shared webview
+settings (`settings.ts`, the store the gear writes; toggled from the panel as `subgoals` is from the
+feed footer). Off, no change mark is painted in either view, comment highlights are untouched, and
+every change card is plain (no "not shown" tag, since nothing is shown by choice) and offers Reveal. A
+flip repaints from the status already held, with no request; a flip in another pane or tab reaches an
+open panel through the settings signal. The sheets gained no rule: the point is the same inline span,
+and the label takes the block's font and white-space.
 
 ### Slice 3: region comments on images
 
@@ -1393,9 +1418,10 @@ HTML files (the viewer serves them as source by design); text-quote anchors insi
 cannot read a PDF's text, so PDF comments are whole-file or region); region drawing by touch on
 the phone; changes authored by the person (their edits are direct edits, decision 23); the
 Obsidian host's embed trees, explorer badges, status bar, multi-pane sync, and vault rename
-re-keying; a scheduler for overnight work; changes to the Obsidian and VS Code hosts; inline
-deletions in the Rendered view; undo of accept and reject before Slice 5; multi-file sends (one
-send per file, decision 28).
+re-keying; a scheduler for overnight work; changes to the Obsidian and VS Code hosts; undo of
+accept and reject before Slice 5; multi-file sends (one send per file, decision 28). Inline
+deletions in the Rendered view were on this list until the inline-display follow-on (2026-09-07,
+under Slice 2's build note) built them.
 
 ## Dependencies
 
