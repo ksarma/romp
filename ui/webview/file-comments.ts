@@ -2574,9 +2574,12 @@ class Panel {
     // a control an earlier render rebuilt disabled is wanted back only while the keyboard is still where that render put it
     const want = this.wanted && document.activeElement === this.wanted.at ? this.wanted.key : null;
     this.wanted = null;
-    // the box holding the keyboard: a reply's box stands in its card, and when the fresh list shows no card for it the
-    // rebuild below moves it to the slot (placeComposer) — a moved node drops its focus to the body, so the keyboard is
-    // put back afterwards, and the words' scroll offset with it (a moved textarea scrolls back to its first line)
+    // the box holding the keyboard: a reply's box stands in its card, and when the fresh list shows no card for it, or shows
+    // its comment in another card, the rebuild below moves it — to the slot, or into that card (placeComposer) — and a moved
+    // node drops its focus to the body, so the keyboard is put back afterwards, and the words' scroll offset with it (a
+    // moved textarea scrolls back to its first line). `home` is the node the box stands in before the rebuild, for the
+    // scroll below: swapCards keeps that node whenever the box stays, so a different node afterwards is a move
+    const home = this.composerBox.parentElement;
     const typing = document.activeElement === this.input;
     const inCard = cards.contains(this.composerBox), scroll = this.input.scrollTop;
     this.latchReplyCard();                             // the reply's card stays open by key, whatever key the status gave it
@@ -2591,6 +2594,11 @@ class Panel {
     // off-screen when the list is long, or the card came back and it returned — so it is brought into view, the row saying
     // why with it; a keyboard elsewhere leaves the view where the person put it
     if (typing && inCard !== cards.contains(this.composerBox)) this.composerBox.scrollIntoView({ block: "nearest" });
+    // …or it moved from one card to another, and the other card may be off-screen as well: its comment bound to a change
+    // under the reply (the session's track-edit answering it) moves it onto the change's card, among the change cards at the
+    // top of the list; that change accepted (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the
+    // comment's own card, among the comment cards below. In a card before and after, but not the same node
+    else if (typing && inCard && this.composerBox.parentElement !== home) this.composerBox.scrollIntoView({ block: "nearest" });
     if (keep) this.refocus(keep, want);
   }
   /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
@@ -2598,7 +2606,14 @@ class Panel {
    *  the change card — stay in the document and take their fresh counterparts' children instead (graft): a textarea that
    *  leaves the document, even to come straight back, loses its undo history, its scroll offset, an IME composition in
    *  flight and (until render puts it back) the keyboard; only the value, the caret and the height survive a detach. The
-   *  box leaves a card only when the fresh list shows no card for its comment, and placeComposer moves it to the slot then. */
+   *  box leaves a card when the fresh list shows no card for its comment (placeComposer moves it to the slot), and when the
+   *  list shows the comment in ANOTHER card: a passage comment the session answers with a track-edit bound to it moves onto
+   *  the change's card, and a hosted comment whose change was accepted moves to its own card. That move costs the detach:
+   *  the chain from the section to the box changes depth, so no node of it can stand in for a counterpart, and a node
+   *  cannot change parents without leaving the document — the engines' state-preserving move (moveBefore) keeps the focus
+   *  and the scroll offset, both of which render restores anyway, and drops the undo history all the same (Chromium 151
+   *  and Firefox 153, measured 2026-09-07). placeComposer stands the box in the card the fresh list shows, and render
+   *  brings it into view there while the person is typing. */
   private swapCards(fresh: HTMLElement): void {
     const cards = this.sections.cards, box = this.composerBox;
     if (!cards.contains(box) || !this.graft(cards, [fresh], box)) cards.replaceChildren(fresh);
@@ -2608,7 +2623,7 @@ class Panel {
    *  the same tag and data-id — wearing the counterpart's class and action, and takes the counterpart's children the same
    *  way; at `keep`'s own parent the fresh children go around `keep`, those from the `.fc-actions` on after it (where
    *  placeComposer stands the box: before the card's buttons). False, and nothing changed, when a level has no
-   *  counterpart — the card is gone from the fresh list. */
+   *  counterpart — the card is gone from the fresh list, or the comment stands in another card there (swapCards). */
   private graft(live: HTMLElement, fresh: Node[], keep: HTMLElement): boolean {
     const chain: HTMLElement[] = [];                   // the live nodes between `live` and `keep`, top down
     for (let n = keep.parentElement; n && n !== live; n = n.parentElement) chain.unshift(n);
@@ -2884,8 +2899,9 @@ class Panel {
    *  gone from the sidecar, its change card behind the "… N more changes" row, a status not yet in) stand in the panel's
    *  own slot between the head and the cards, the reply's row saying why (replyAway). One box, moved between the two: the
    *  words, the caret and the height ride with the node. Moved only when it is not already where it belongs — moving a
-   *  focused node, even onto its own place, drops the keyboard to the body, and a rebuilt list never makes it move: the
-   *  card it stands in is kept around it (swapCards). Returns whether the box is in a card. */
+   *  focused node, even onto its own place, drops the keyboard to the body, and a rebuilt list makes it move only when the
+   *  list stops showing its card or shows its comment in another card: otherwise the card it stands in is kept around it
+   *  (swapCards). Returns whether the box is in a card. */
   private placeComposer(): boolean {
     const box = this.composerBox, root = this.root;
     if (!root || !root.contains(this.sections.cards)) return false;   // the sections are the root's children from its first render

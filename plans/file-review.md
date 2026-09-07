@@ -944,7 +944,9 @@ over the cards until the paint shows that text: every reply re-baselines the pol
 sees a move a status already reported (the consolidation, 2026-09-06; before it, only a reject's reply
 and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
 elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
-beside their own and need no rule of their own to be usable; the sheets are the painter's.
+beside their own and need no rule of their own to be usable, all but `.fc-hosted`, which the reply-place
+follow-on below gave a flex-column rule at the turns' gap (the review of 2026-09-07); the sheets are the
+painter's.
 
 The composer follow-on (2026-09-07): after walking the loop, the user found the one-line box too
 small for the comments the loop needs. Every composer the panel offers (a passage, the whole file, a
@@ -966,7 +968,10 @@ reply's box now stands inside the card it answers, below the comment's turns and
 stays in that card across the poll's re-render with its words, caret and height; when the list stops
 showing the card (the comment resolved into the closed fold, or gone from the sidecar) the box returns to
 the panel's slot with the words and a line saying why, and Escape or Cancel hands the keyboard back to
-the card's Reply (`file-comments-reply-place.test.ts`).
+the card's Reply (`file-comments-reply-place.test.ts`). A comment on a change card (`.fc-hosted`) had no
+rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
+below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
+gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
 
 ### Slice 3: region comments on images
 
