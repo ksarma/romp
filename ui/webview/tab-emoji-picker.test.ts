@@ -10,6 +10,8 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EMOJI_GRID_COLS } from "./emoji-picker";
+import { viewTagUnion } from "./session-views";
+import { parseTabGroups, planStrip, setSectionCollapsed, homeSectionOf } from "./tab-groups";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -24,6 +26,22 @@ function slice(from: string, to: string): string {
   return RENDER.slice(i, j);
 }
 const DIALOG = slice("function showEmojiPrompt(sid: string): void {", "\nfunction emojiLanded(");
+// a slice INSIDE the dialog (the move and fork dialogs define a `close` of their own before it)
+function dialogSlice(from: string, to: string): string {
+  const i = DIALOG.indexOf(from);
+  assert.ok(i > 0, `the dialog has ${JSON.stringify(from)}`);
+  const j = DIALOG.indexOf(to, i);
+  assert.ok(j > i, `the dialog has ${JSON.stringify(to)} after ${JSON.stringify(from)}`);
+  return DIALOG.slice(i, j);
+}
+// the notes-api demo world (tab-groups.test.ts): qa holds tests and api, infra holds web and api
+const V = {
+  active: "all",
+  tags: [
+    { id: "g1", name: "qa", color: "#DD42FF", members: ["tests", "api"] },
+    { id: "g2", name: "infra", color: "#4EC9B0", members: ["web", "api"] },
+  ],
+};
 
 test("the same Emoji… row opens it, its icon still the current emoji or the smiley; the dialog is a menu-vocabulary card, not a modal", () => {
   const i = RENDER.indexOf('l.textContent = "Emoji…"');
@@ -134,8 +152,8 @@ test("keyboard: roving tabindex (one stop for the Recent row, one for the grid),
 });
 
 test("a pick and a typed value go through the SAME door (setSessionEmoji, the kernel validates); the Set button acknowledges either; the reason lands inline", () => {
-  assert.match(DIALOG, /const pick = \(emoji: string\) => \{ if \(emoji\) submit\(emoji, go, "Setting…"\); \};/);
-  assert.match(DIALOG, /submit\(v, go, "Setting…"\)/);
+  assert.match(DIALOG, /const pick = \(emoji: string\) => \{ if \(emoji\) submit\(emoji, go, "Setting…", false\); \};/);
+  assert.match(DIALOG, /submit\(v, go, "Setting…", true\)/);
   assert.match(DIALOG, /setSessionEmoji\(sid, value\);/);
   const submits = DIALOG.match(/setSessionEmoji\(/g) || [];
   assert.equal(submits.length, 1, "one post site for cells and typed values alike");
@@ -150,13 +168,13 @@ test("a pick and a typed value go through the SAME door (setSessionEmoji, the ke
   assert.match(refused, /p\.card\.classList\.remove\("waiting"\);/);
   assert.match(refused, /\.emoji-cell\.busy"\)\.forEach\(\(c\) => c\.classList\.remove\("busy"\)\);/);
   assert.match(refused, /p\.hint\.textContent = text; p\.hint\.title = text; p\.hint\.className = "emoji-hint bad";/);
-  assert.match(DIALOG, /p\.typed = value === input\.value\.trim\(\);/);   // noted at submit time: the refusal must not read the field (tab-emoji.test.ts)
+  assert.match(DIALOG, /p\.typed = fromField;/);   // noted at submit time, by the caller: the refusal must not read the field (tab-emoji.test.ts)
   assert.match(refused, /if \(p\.typed\) \{ p\.input\.classList\.add\("bad"\); p\.input\.focus\(\); \}/);
 });
 
 test("Clear: present in the footer, disabled and dressed as disabled with nothing to clear, posts \"\" (the inherited contract)", () => {
   assert.match(DIALOG, /clear\.disabled = !cur;/);
-  assert.match(DIALOG, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…"\)\);/);
+  assert.match(DIALOG, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…", false\)\);/);
   assert.match(DIALOG, /foot\.appendChild\(input\); foot\.appendChild\(clear\); foot\.appendChild\(go\);/);
   assert.match(CSS, /\.picker-action:disabled \{ opacity: 0\.55; cursor: default; \}/);
 });
@@ -206,7 +224,7 @@ test("while a pick waits, the search box locks with the field and the buttons (a
 
 test("focus never falls to <body>: a submit parks it on the card before disabling its holder, a refusal hands it back, a close returns it to the tab", () => {
   assert.match(DIALOG, /card\.tabIndex = -1;/);   // focusable by script, never a Tab stop
-  const submit = slice("const submit = (value: string, btn: HTMLButtonElement, busy: string) => {", "const pick =");
+  const submit = dialogSlice("const submit = (value: string, btn: HTMLButtonElement, busy: string, fromField: boolean) => {", "const pick =");
   // parked BEFORE the disabling line, and only when a control about to be disabled holds it (a cell keeps its own)
   const park = submit.indexOf("if (a === search || a === input || a === go || a === clear) card.focus({ preventScroll: true });");
   const lock = submit.indexOf("go.disabled = true; clear.disabled = true; input.disabled = true; search.disabled = true;");
@@ -217,12 +235,68 @@ test("focus never falls to <body>: a submit parks it on the card before disablin
   const refused = slice("function emojiRefusedLocal(text: string): void {", "\n}");
   assert.match(refused, /if \(p\.typed\) \{ p\.input\.classList\.add\("bad"\); p\.input\.focus\(\); \}\n\s*else if \(document\.activeElement === p\.card\) \(p\.asked === "" \? p\.clear : p\.go\)\.focus\(\);/);
   // the close: back to this session's tab, but only when the card held focus (a right-click reopening the menu
-  // has already focused ITS tab, which may be another session's)
-  assert.match(DIALOG, /const close = \(\) => \{\n[^]*?const held = card\.contains\(document\.activeElement\);\n\s*card\.remove\(\);\n\s*if \(held\) \(document\.querySelector\(`#tabs \.tab\[data-id="\$\{sid\}"\]`\) as HTMLElement \| null\)\?\.focus\(\);\n\s*\};/);
-  // (the tab bar's refocus falls back to the section header when the active tab is folded away, tab-groups.ts;
-  // the picker's tab is on screen, it was right-clicked to open the menu, so the close addresses the tab alone)
+  // has already focused ITS tab, which may be another session's); the tab gone meanwhile: the next test
+  const close = dialogSlice("const close = () => {", "\n  };");
+  assert.match(close, /const held = card\.contains\(document\.activeElement\);\n\s*card\.remove\(\);\n\s*if \(!held\) return;/,
+               "read before the removal (removing the focused card would already have dropped focus); nothing moves when the card did not hold it");
+  assert.match(close, /const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{sid\}"\]`\) as HTMLElement \| null;\n\s*if \(tab\) \{ tab\.focus\(\); return; \}/);
+  // the tab bar's own refocus addresses a tab by #tabs .tab[data-id] and falls back to the section header when
+  // the active tab is folded away (tab-groups.ts): the ladder the close borrows
   assert.match(RENDER, /function focusActiveTab\(\) \{\n\s*const bar = document\.getElementById\("tabs"\);\n\s*const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{activeId\}"\]`\) as HTMLElement \| null;\n\s*if \(tab\) \{ tab\.focus\(\); return; \}/,
                "the premise: the tab bar's own refocus addresses a tab by #tabs .tab[data-id]");
+});
+
+test("a refusal marks the field only when IT sent the value: the caller says so (fromField); a pick of the current emoji's cell and Clear on an emptied field are not typed (review round 2)", () => {
+  // the field is prefilled with the tab's emoji (input.value = cur), so `p.typed = value === input.value.trim()`
+  // read a pick of that emoji's cell as typed, and Clear too once the field was emptied; on a refusal or the
+  // 30 s backstop the field then turned red and took focus with nothing wrong in it, and the pressed control
+  // never got focus back. The flag is the caller's, never inferred from the value.
+  assert.match(DIALOG, /const submit = \(value: string, btn: HTMLButtonElement, busy: string, fromField: boolean\) => \{/);
+  assert.match(DIALOG, /p\.pending = true; p\.asked = value;\n\s*p\.typed = fromField;/);
+  assert.doesNotMatch(DIALOG, /typed = value ===|typed = [^\n]*input\.value/, "no comparison of the value with the field");
+  // the three doors: the field's Enter and the Set button both run start, which says yes; a cell (the grid, the
+  // Recent row, Enter in the search box) and Clear say no
+  assert.match(DIALOG, /const start = \(\) => \{\n\s*const v = input\.value\.trim\(\);[^]*?submit\(v, go, "Setting…", true\);\n\s*\};/);
+  assert.match(DIALOG, /input\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Enter"\) \{ e\.preventDefault\(\); start\(\); \} \}\);/);
+  assert.match(DIALOG, /go\.addEventListener\("click", start\);/);
+  assert.match(DIALOG, /const pick = \(emoji: string\) => \{ if \(emoji\) submit\(emoji, go, "Setting…", false\); \};/);
+  assert.match(DIALOG, /if \(top\) pick\(top\[0\]\);/);   // the search box's Enter is a pick
+  assert.match(DIALOG, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…", false\)\);/);
+  const calls = DIALOG.match(/\bsubmit\([^)]*\)/g) || [];
+  assert.equal(calls.length, 3, "three call sites: start, pick, Clear");
+  assert.deepEqual(calls.filter((c) => !/, (true|false)\)$/.test(c)), [], "every call names the flag as a literal");
+  // the refusal reads the flag, never the field: the field when it sent the value, else the pressed control
+  const refused = slice("function emojiRefusedLocal(text: string): void {", "\n}");
+  assert.match(refused, /if \(p\.typed\) \{ p\.input\.classList\.add\("bad"\); p\.input\.focus\(\); \}\n\s*else if \(document\.activeElement === p\.card\) \(p\.asked === "" \? p\.clear : p\.go\)\.focus\(\);/);
+  assert.doesNotMatch(refused, /input\.value/);
+});
+
+test("a close with the tab gone from the strip (closed from another client, or re-homed into a folded section while the picker sat open) still hands focus on: the section head, else the active tab (review round 2)", () => {
+  // the card lives on document.body and outlives every strip rebuild; the tab was on screen when the menu
+  // opened on it, not necessarily at close time. Focusing the missing tab with `?.focus()` did nothing and
+  // the removed card's focus fell to <body>, against the module's own rule.
+  const close = dialogSlice("const close = () => {", "\n  };");
+  assert.match(close, /const home = homeSectionOf\(lastStripItems, sid\);/, "the rendered plan's answer for THIS sid, not the active id");
+  assert.match(close, /const head = home && home\.name !== null && bar\n\s*\? Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\) : undefined;/);
+  assert.match(close, /if \(head\) head\.focus\(\); else focusActiveTab\(\);/, "the head, else the active tab");
+  assert.doesNotMatch(close, /\?\.focus\(\)/, "no optional-chained focus that silently does nothing");
+  // the same two fallbacks the tab bar uses: focusActiveTab lands on the header when the active tab is folded
+  // away, and renderTabs lands on the active tab when the header a focused node sat in is gone
+  assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(\);/);
+  assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) [^\n]*\.focus\(\); else focusActiveTab\(\);/);
+  assert.match(RENDER, /head\.dataset\.group = name;[^]*?head\.tabIndex = 0;/, "a section head is focusable and carries its name in data-group");
+  // executed, on the real planner: the two ways the tab leaves the strip while the card stays up
+  const unions = viewTagUnion(V);
+  const st = parseTabGroups(null);
+  const onTab = (items: ReturnType<typeof planStrip>["items"], id: string) => items.some((i) => "id" in i && i.id === id);
+  const open = planStrip(["web", "api", "tests"], unions, st, "api", false);
+  assert.ok(onTab(open.items, "web"), "the tab is on the strip when the menu opens on it");
+  const folded = planStrip(["web", "api", "tests"], unions, setSectionCollapsed(st, "infra", true), "api", false);
+  assert.ok(!onTab(folded.items, "web"), "re-homed under a fold: no tab node to focus");
+  assert.equal(homeSectionOf(folded.items, "web")?.name, "infra", "its section head is the stand-in");
+  const gone = planStrip(["api", "tests"], unions, st, "api", false);
+  assert.ok(!onTab(gone.items, "web"));
+  assert.equal(homeSectionOf(gone.items, "web"), null, "closed from another client: no home either, so the active tab takes it");
 });
 
 test("assistive semantics: the hint is a live region; the scroll box is a listbox of one group per section whose options are the cells, named and selected", () => {

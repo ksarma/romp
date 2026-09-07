@@ -7572,11 +7572,12 @@ function onMoveDirCompletions(m: any): void {
 // the typed value; Escape closes throughout. The category strip is mouse-only (tabIndex -1): the arrows
 // already walk every category, and a Tab stop between the search box and the grid cost more than it gave.
 // Focus never falls to <body>: a submit parks it on the card (tabIndex -1) before disabling the control
-// that held it, and a close hands it back to the session's tab when the card held it (the way the tab bar
-// refocuses its tab after a rebuild); the hint line is a live region (role=status), so a refusal or the
-// backstop is announced wherever focus sits. The scroll box is a listbox of groups (one per section) whose
-// options are the cells; its two Tab stops (the Recent row, the categories) are a deliberate departure from
-// the one-stop listbox, kept because the row is the row people reach for.
+// that held it, and a close hands it back when the card held it, by focusActiveTab's ladder: the session's
+// tab, else its section head when a push folded it away meanwhile, else the active tab when a push closed
+// the session (the way the tab bar refocuses after a rebuild); the hint line is a live region (role=status),
+// so a refusal or the backstop is announced wherever focus sits. The scroll box is a listbox of groups (one
+// per section) whose options are the cells; its two Tab stops (the Recent row, the categories) are a
+// deliberate departure from the one-stop listbox, kept because the row is the row people reach for.
 let emojiPrompt: { sid: string; card: HTMLElement; search: HTMLInputElement; scroll: HTMLElement;
                    input: HTMLInputElement; hint: HTMLElement; go: HTMLButtonElement; clear: HTMLButtonElement;
                    pending: boolean; typed: boolean; close: () => void;
@@ -7654,10 +7655,23 @@ function showEmojiPrompt(sid: string): void {
   const close = () => {
     // focus goes back to this session's tab when the card held it (Escape, the kernel's confirm, an outside
     // mousedown: the click's own focus move follows this one); when it did not (the tab menu reopening on
-    // a right-click that has already focused ITS tab), nothing here moves it
+    // a right-click that has already focused ITS tab), nothing here moves it. The tab was on screen when
+    // the menu opened on it, not necessarily now: the card lives on document.body and outlives every strip
+    // rebuild, and a push meanwhile can close the session from another client or re-home it into a folded
+    // section, whose members render as the section head alone; focusing the missing tab left focus on
+    // <body> (review round 2). So focusActiveTab's ladder, for THIS sid: the tab, else its section head
+    // (homeSectionOf on the rendered plan), else the active tab (renderTabs's own rule when a focused
+    // header is gone).
     const held = card.contains(document.activeElement);
     card.remove();
-    if (held) (document.querySelector(`#tabs .tab[data-id="${sid}"]`) as HTMLElement | null)?.focus();
+    if (!held) return;
+    const bar = document.getElementById("tabs");
+    const tab = bar?.querySelector(`.tab[data-id="${sid}"]`) as HTMLElement | null;
+    if (tab) { tab.focus(); return; }
+    const home = homeSectionOf(lastStripItems, sid);
+    const head = home && home.name !== null && bar
+      ? Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name) : undefined;
+    if (head) head.focus(); else focusActiveTab();
   };
   emojiPrompt = { sid, card, search, scroll, input, hint, go, clear, pending: false, typed: false, close };
 
@@ -7736,13 +7750,18 @@ function showEmojiPrompt(sid: string): void {
     const sec = scroll.querySelector(`.emoji-sec[data-sec="${id}"]`) as HTMLElement | null;
     if (sec) scroll.scrollTop = sec.offsetTop;
   };
-  const submit = (value: string, btn: HTMLButtonElement, busy: string) => {
+  // `fromField`: the field holds what is being sent (its Enter, the Set button), so a refusal marks and
+  // refocuses it; a cell pick and Clear say no, and a refusal hands focus back to the pressed control. The
+  // CALLER says which, never a comparison of the value with the field: the field is prefilled with the tab's
+  // emoji, so a pick of that emoji's cell compared equal, and so did Clear once the field was emptied, and
+  // the refusal (or the 30 s backstop) then reddened and focused a field holding nothing wrong (review round 2).
+  const submit = (value: string, btn: HTMLButtonElement, busy: string, fromField: boolean) => {
     const p = emojiPrompt;
     if (!p || p.pending) return;   // one answer per press
     // acknowledge the click before the round trip (the repo's button rule); the kernel's answer, its
     // emojiSet for this session or a warn with the reason, is what changes this dialog next
     p.pending = true; p.asked = value;
-    p.typed = value === input.value.trim();   // the field holds what is being sent: a refusal marks and refocuses it
+    p.typed = fromField;
     // a disabled control drops its focus to <body>, where the next Tab leaves the dialog: park it on the card
     // first (a cell keeps its own focus; the cells lock by pointer-events, not disabled)
     const a = document.activeElement;
@@ -7755,7 +7774,7 @@ function showEmojiPrompt(sid: string): void {
     p.backstop = window.setTimeout(
       () => emojiRefusedLocal("still waiting — the kernel has not answered; check the kernel log"), 30000);
   };
-  const pick = (emoji: string) => { if (emoji) submit(emoji, go, "Setting…"); };
+  const pick = (emoji: string) => { if (emoji) submit(emoji, go, "Setting…", false); };
   const start = () => {
     const v = input.value.trim();
     if (!v) {   // an empty Set is not a clear: that is the Clear button; the field is marked and the hint says so
@@ -7763,10 +7782,10 @@ function showEmojiPrompt(sid: string): void {
       hint.textContent = EMPTY_SET; hint.title = EMPTY_SET; hint.className = "emoji-hint bad";
       return;
     }
-    submit(v, go, "Setting…");
+    submit(v, go, "Setting…", true);
   };
   delegate(card, { pick: (b) => pick(b.dataset.emoji || ""), cat: (b) => jumpTo(b.dataset.cat || "") });
-  clear.addEventListener("click", () => submit("", clear, "Clearing…"));
+  clear.addEventListener("click", () => submit("", clear, "Clearing…", false));
   go.addEventListener("click", start);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));

@@ -89,8 +89,10 @@ test("the dialog: Set posts the typed value, Clear posts \"\", an empty Set is r
   assert.match(body, /input\.value = cur;/);   // prefilled with the current emoji
   // the empty Set: marked, focused and SAID (the hint; the mark alone was invisible on this field, review round 1)
   assert.match(body, /if \(!v\) \{[^\n]*\n\s*input\.classList\.add\("bad"\); input\.focus\(\);\n\s*hint\.textContent = EMPTY_SET;[^\n]*\n\s*return;/);
-  assert.match(body, /submit\(v, go, "Setting…"\)/);
-  assert.match(body, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…"\)\);/);
+  // the fourth argument (2026-09-07, the picker): whether the FIELD holds the value, said by the caller; the
+  // two cases and the refusal's reading of it are pinned in ui/webview/tab-emoji-picker.test.ts
+  assert.match(body, /submit\(v, go, "Setting…", true\)/);
+  assert.match(body, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…", false\)\);/);
   // the click-safe rule: acknowledge first (label + disabled + locked input), then the round trip; the dialog
   // is NOT closed on the click any more — the kernel's answer is what changes it next
   const ack = body.indexOf("btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;");
