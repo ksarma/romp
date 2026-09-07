@@ -116,6 +116,9 @@ pick_python() {
 PY="$(pick_python)"
 
 pyver() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?"; }
+# The tag venv names a lib directory with (X.Y, plus `t` for a free-threaded build); the rebuild compare
+# is on it, as in romp-sdk-setup and the kernel's own venv match (_running_python_tag).
+pytag() { "$1" -c 'import sys; print("%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else ""))' 2>/dev/null || echo "?"; }
 if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
   echo "romp-codex-setup: best python found is $PY ($(pyver "$PY")) but openai-codex needs >= 3.10." >&2
   echo "romp-codex-setup: install one (e.g. 'uv python install 3.12') and re-run. Other backends are unaffected." >&2
@@ -130,9 +133,30 @@ make_venv() {
 }
 
 mkdir -p "$STATE"
-if [ -x "$VENV/bin/python" ] && [ "$(pyver "$VENV/bin/python")" != "$(pyver "$PY")" ]; then
-  echo "romp-codex-setup: venv python $(pyver "$VENV/bin/python") != kernel python $(pyver "$PY") — rebuilding"
-  rm -rf "$VENV"
+# The tag the venv was built for, from its record (pyvenv.cfg's X.Y plus the lib/python3.X{t} directory),
+# never its live bin/python: that symlink follows an unversioned base interpreter to whatever a distro
+# upgrade repointed it at, and read that way the compare below saw no mismatch (romp-sdk-setup has the
+# same function and the full note).
+venv_built_for() {
+  local v="" lib tag
+  if [ -r "$VENV/pyvenv.cfg" ]; then
+    v="$(sed -n 's/^version[_a-z]* *= *\([0-9]*\.[0-9]*\).*/\1/p' "$VENV/pyvenv.cfg" | head -1)"
+  fi
+  for lib in "$VENV"/lib/python3.*; do
+    [ -d "$lib" ] || continue
+    tag="${lib##*/python}"
+    if [ -z "$v" ] || [ "${tag%t}" = "$v" ]; then echo "$tag"; return; fi
+  done
+  echo "${v:-?}"
+}
+# The kernel imports this venv in-process (ensure_codex_sdk adds only the site-packages built for its
+# own tag), so a venv for another python is worse than none. Rebuild on mismatch, and say from what.
+if [ -e "$VENV/pyvenv.cfg" ] || [ -d "$VENV/lib" ] || [ -x "$VENV/bin/python" ]; then
+  _built="$(venv_built_for)"; _want="$(pytag "$PY")"
+  if [ "$_built" != "$_want" ]; then
+    echo "romp-codex-setup: REBUILDING the Codex venv for python $_want ($PY): it was built for python $_built." >&2
+    rm -rf "$VENV"
+  fi
 fi
 if [ ! -x "$VENV/bin/python" ] || [ ! -x "$VENV/bin/pip" ]; then
   echo "romp-codex-setup: creating venv at $VENV (python: $PY)"

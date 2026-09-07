@@ -115,6 +115,10 @@ pick_python() {
 PY="$(pick_python)"
 
 pyver() { "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || echo "?"; }
+# The tag venv names a lib directory with: X.Y, plus `t` for a free-threaded build (lib/python3.14t). The
+# rebuild compare below is on this tag, not on X.Y, so a move between a free-threaded build and a default
+# one of the same minor rebuilds: the kernel keys its venv match on the same tag (_running_python_tag).
+pytag() { "$1" -c 'import sys; print("%d.%d%s" % (sys.version_info[0], sys.version_info[1], "t" if "t" in getattr(sys, "abiflags", "") else ""))' 2>/dev/null || echo "?"; }
 if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
   echo "romp-sdk-setup: best python found is $PY ($(pyver "$PY")) but claude-agent-sdk needs >= 3.10." >&2
   echo "romp-sdk-setup: install one (e.g. 'uv python install 3.12') and re-run. tmux sessions are unaffected." >&2
@@ -157,19 +161,25 @@ make_venv() {
 }
 
 mkdir -p "$STATE"
-# The python X.Y an existing venv was built for: its own python when that still runs, else the
-# version pyvenv.cfg recorded (the interpreter may be gone, and "?" would hide what is being replaced).
+# The python tag an existing venv was built for, from the venv's own RECORD: the X.Y pyvenv.cfg wrote
+# down, plus the abi tag its lib/python3.X{t} directory carries (venv appends `t` for a free-threaded
+# build; the cfg does not say). Never the venv's live bin/python. That is a symlink to the base
+# interpreter, unversioned when the venv was built under a pin like ROMP_PYTHON=/usr/bin/python3 (the
+# form the docs' move recipe invites), and after a distro upgrade repoints python3 it answers the NEW
+# version while lib/ is still the old one: the compare saw a match, no REBUILDING line fired, pip ran a
+# 3.14 inside a 3.12 venv, and the session card's remedy (re-run this script) changed nothing (review
+# round 2). "?" when there is no record at all.
 venv_built_for() {
-  local v
-  if [ -x "$VENV/bin/python" ]; then
-    v="$(pyver "$VENV/bin/python")"
-    [ "$v" != "?" ] && { echo "$v"; return; }
-  fi
+  local v="" lib tag
   if [ -r "$VENV/pyvenv.cfg" ]; then
     v="$(sed -n 's/^version[_a-z]* *= *\([0-9]*\.[0-9]*\).*/\1/p' "$VENV/pyvenv.cfg" | head -1)"
-    [ -n "$v" ] && { echo "$v"; return; }
   fi
-  echo "?"
+  for lib in "$VENV"/lib/python3.*; do
+    [ -d "$lib" ] || continue
+    tag="${lib##*/python}"
+    if [ -z "$v" ] || [ "${tag%t}" = "$v" ]; then echo "$tag"; return; fi
+  done
+  echo "${v:-?}"
 }
 # A venv built with a DIFFERENT python than the kernel will run is worse than none: the kernel imports
 # its site-packages in-process, and 3.X-compiled extensions fail to import under 3.Y. Rebuild on
@@ -178,8 +188,8 @@ venv_built_for() {
 # is gone), and a kernel already running on the old python keeps working only until it restarts, so
 # say what is happening and what has to follow (2026-09-06: a silent mismatch took every SDK session
 # down for two hours, with a message that blamed a missing install).
-if [ -e "$VENV/pyvenv.cfg" ] || [ -x "$VENV/bin/python" ]; then
-  _built="$(venv_built_for)"; _want="$(pyver "$PY")"
+if [ -e "$VENV/pyvenv.cfg" ] || [ -d "$VENV/lib" ] || [ -x "$VENV/bin/python" ]; then
+  _built="$(venv_built_for)"; _want="$(pytag "$PY")"
   if [ "$_built" != "$_want" ]; then
     echo "romp-sdk-setup: REBUILDING the SDK venv for python $_want ($PY): it was built for python $_built." >&2
     echo "romp-sdk-setup:   The kernel must run python $_want from its next start. If ROMP_PYTHON chose this interpreter, set it where the service reads its environment too (otherwise romp-serve follows the rebuilt venv on its own); then restart romp (romp refresh) once this finishes." >&2
