@@ -6,7 +6,7 @@ chat composer's WS sendMessage uses), so the plugin never touches tmux itself.
 import os
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -16,7 +16,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_send", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_send", os.path.join(BIN, "romp-kernel"))
 
 
 class ParseSendBody(unittest.TestCase):
@@ -83,11 +83,12 @@ class SessionList(unittest.TestCase):
         # lastSid = the session's CURRENT transcript fsid (self-identity join, the user 2026-07-27);
         # with no diverged SDK registry it is the sid itself.
         self.assertEqual(rows["sid-t"], {"id": "sid-t", "name": "alpha", "state": "working", "dir": "/work/a",
-                                         "bg": "#112233", "fg": "#ffffff", "lastSid": "sid-t",
+                                         "bg": "#112233", "fg": "#ffffff", "emoji": "",   # the tab emoji rides every row, empty when unset
+                                         "lastSid": "sid-t",
                                          "compacting": False,          # romp compact --wait polls this
                                          "working": "owns feed.ts", "backend": "tmux"})
         self.assertEqual(rows["sid-s"], {"id": "sid-s", "name": "beta", "state": "waiting", "dir": "/work/b",
-                                         "bg": "blue", "fg": "white", "lastSid": "sid-s",
+                                         "bg": "blue", "fg": "white", "emoji": "", "lastSid": "sid-s",
                                          "compacting": False,
                                          "working": "", "backend": "sdk"})
 

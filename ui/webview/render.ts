@@ -1,6 +1,8 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
+import { highlightHtml } from "./highlight-cache";
+import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
 import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -16,9 +18,10 @@ import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./ta
 import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
 import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
+import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, announcedAfter, createInFlight, rederivePending, lensBlob, applyLensFields, type InflightWrite, type LensFields, type TagEditOp, type ViewsAck } from "./views-writes";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
-import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, PendingTabMeta } from "./tab-meta";
+import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
 import { markerLabel, dayContext } from "./time-marker";
 import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind } from "./sender-identity";
@@ -30,13 +33,16 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
-         reorderTagOrder, applyTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
-import { tabStateClass, sectionPip, SECTION_PIP_TITLE } from "./tab-state";
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
+         followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
+import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
+import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
+import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
 import { StagedStack } from "./staged-messages";
+import { type PendingSend, type TailEvent, OPT_PREFIX, isOptimisticUuid, newPending, reconcilePending, dropPending, cueAnchor, bareGroupLabel } from "./send-pending";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
@@ -58,7 +64,9 @@ import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
+import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
+import { listenForFrames } from "./frame-listener";
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -132,6 +140,12 @@ type ChatEvent = (
       kind: "postal-service";
       direction: "in" | "out";
       peer: string;
+      // incoming: the sender's host as the CARD'S kernel's message log stamped it ("" = that kernel's own,
+      // a peer's name for mail from that host — relative to the kernel the card's session lives on) —
+      // with `peer`, names the ONE session whose repo the body's PR references link against
+      // (postalRepoFor); absent on cards from a kernel that predates the field, and on cards whose log
+      // row predates the stamp (the kernel omits it rather than read absence as its own)
+      peerHost?: string;
       color: { bg: string; fg: string } | null;
       body: string;
       summary?: string;  // incoming Haiku caption (≤9 words) — shown instead of the verbose body; body on hover
@@ -163,7 +177,7 @@ type ChatEvent = (
   // `held` DOES come from the kernel (_limit_hold): the queue is stuck on the ACCOUNT rather than on this
   // session — a usage limit or a monthly spend cap holds every send — so the head names what it is waiting
   // for, and how long is left when the API reported a reset (the user 2026-07-24).
-  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; imgPaths?: string[] }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25)
+  | { kind: "queued"; texts: { md: string; followUp?: boolean; goal?: string; fuCtx?: string; idx?: number; park?: number; cancelable?: boolean; optimistic?: boolean; imgPaths?: string[]; lost?: string; qts?: number }[]; ts?: string; uuid?: string; bare?: boolean; held?: { reason: string; resetsAt?: number | null; what: string; detail?: string } }   // imgPaths: an optimistic echo's dragged-image attachments → thumbnails, the landed form's own renderer (the user 2026-08-25); lost: client-only, the connection dropped after this unconfirmed send; qts: client-only, the pending entry's identity (its press time) so the ✕ removes ITS entry (send-pending.ts)
   // The turn stopped on an API error (event-based: transcript isApiErrorMessage). The session is BLOCKED
   // until retried — a red-dot card at the bottom with a Retry button (the user 2026-06-16).
   | { kind: "apiError"; text: string; status?: number; ts?: string; uuid?: string }
@@ -257,7 +271,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
+interface Session { id: string; name: string; color: Color | null; emoji?: string; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; githubRepo?: string | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -294,17 +308,28 @@ const order: string[] = [];           // positional tab order (for cycling)
 // only ever moves provisional→settled: dashed→solid when it lands, dashed→dashed (invisible) when it really
 // was queued. It first shipped as a 0.6-opacity solid bubble, which invented a THIRD look and made a queued
 // send flip solid→dashed — backwards, as if it had un-landed.
-const OPT_PREFIX = "optimistic:";
-const OPT_TTL_MS = 20_000;    // backstop: a real send always echoes within this; past it we stop asserting
-const OPT_TAIL_SCAN = 30;     // the kernel's version (user atom / queued bubble) always lands at the tail
-// sid → in-flight optimistic sends. `base` is how many LANDED user atoms carrying this text the tail
-// already held at send time (stamped on the first reconcile, -1 until then): only a count BEYOND base
-// means THIS send landed. The old retire test was a bare substring scan with no notion of which event
-// carried the text, so a resend — or any short message that substrings an older bubble ("continue",
-// "test") — retired its own entry in the very call that created it, and the send showed nothing at
-// all (the user 2026-08-09, who watched sends vanish for a beat before appearing).
-const pendingSent = new Map<string, { text: string; ts: number; base: number; imgPaths?: string[] }[]>();
-const isOptimistic = (e: ChatEvent): boolean => !!e.uuid && e.uuid.startsWith(OPT_PREFIX);
+// NO LIFETIME (2026-09-06): the 20 s TTL that used to sit here ("a real send always echoes within this")
+// made an unconfirmed send look delivered at exactly the moment the user most needed to see it was not —
+// the audited case had the kernel's echo pruned early and nothing showing the message for 30 s. An entry
+// now ends on events only: a landing, the kernel's never-delivered verdict, or the user's ✕. The decisions
+// live in send-pending.ts (pure, executed by its test); this file owns the DOM and the per-session maps.
+// sid → in-flight pending sends. Each entry is ANCHORED (`at`, stamped on the first reconcile after the
+// press) to the last stable kernel event at the time of the send, plus the uuids of the user events
+// that already carried its text: only an exact-text landing AFTER that anchor, beyond that set, is
+// THIS send's. The old retire test was a bare substring scan with no notion of which event carried the
+// text, so a resend — or any short message that substrings an older bubble ("continue", "test") —
+// retired its own entry in the very call that created it, and the send showed nothing at all (the user
+// 2026-08-09, who watched sends vanish for a beat before appearing); and its successor read only the
+// last 30 events, so an absorbed landing placed above them never ended the bubble (2026-09-06 review).
+const pendingSent = new Map<string, PendingSend[]>();
+const isOptimistic = (e: ChatEvent): boolean => isOptimisticUuid(e.uuid);
+// sid → MID-TURN CUES: where a pending bubble sat when its message landed ABOVE the tail. A send fed
+// into a running turn is taken by the CLI at a later tool boundary and placed at its SEND time (kernel
+// ev.absorbed), so the bubble the user was watching at the bottom vanishes and the message is somewhere
+// higher up. The cue stays under the event the bubble sat under — "delivered into the running turn at
+// HH:MM · jump" — until jump or ✕ (the user 2026-09-05). Keyed on the landing, never on a timer.
+type AbsorbedCue = { after: string; target: string; landedAt: number | null };
+const absorbedCues = new Map<string, AbsorbedCue[]>();
 
 // The kernel's own queued group, if one is at the tail. Ours merges INTO it when present: the session is
 // provably holding messages, so this send will queue behind them — no reason to show it as a separate lone
@@ -345,34 +370,27 @@ function reconcileOptimistic(s: Session): void {
   }
   const list = pendingSent.get(s.id);
   if (!list || !list.length) { settle([]); return; }
-  const now = Date.now();
-  const tail = s.events.slice(-OPT_TAIL_SCAN);
-  // A LANDED copy of the text is a real user atom — never the kernel's own provisional echo, whose
-  // uuid keeps the backend's "echo:" prefix all the way into the payload. Retiring on the echo was
-  // the flash-out: the echo deleted our entry for good, then blinked in its own echo→landed handoff
-  // with nothing left to cover the gap (the user 2026-08-09). The header above always said "until
-  // the payload DEMONSTRABLY carries the message" — an unlanded echo demonstrates nothing yet.
-  const landedCount = (t: string) => tail.filter((e) =>
-    e.kind === "user" && typeof e.md === "string" && e.md.includes(t)
-    && !String((e as any).uuid || "").startsWith("echo:")).length;
-  // The kernel's own PROVISIONAL copy — its queued bubble, or its echo atom — SUPPRESSES our bubble
-  // for this push (injecting beside it would show the send twice) but never retires the entry: if
-  // the provisional blinks out on the next push, ours steps straight back in.
-  const shownProvisional = (t: string) => tail.some((e) =>
-    (e.kind === "queued" && Array.isArray(e.texts) && e.texts.some((x) => typeof x.md === "string" && x.md.includes(t))) ||
-    (e.kind === "user" && typeof e.md === "string" && String((e as any).uuid || "").startsWith("echo:") && e.md.includes(t)));
-  // First reconcile after the send (registerOptimistic calls this synchronously): whatever matching
-  // atoms the tail ALREADY holds are background — an older identical message, a bubble this text
-  // substrings — not this send. Only growth past this count is a landing.
-  for (const p of list) if (p.base < 0) p.base = landedCount(p.text);
-  const keep = list.filter((p) => now - p.ts < OPT_TTL_MS && landedCount(p.text) <= p.base);
-  if (keep.length) pendingSent.set(s.id, keep); else pendingSent.delete(s.id);
-  const inject = keep.filter((p) => !shownProvisional(p.text));
+  // The decision reads KERNEL truth only (our injections are stripped above) — send-pending.ts: a
+  // LANDED user atom after the send's anchor retires the entry (never the kernel's own echo, whose uuid
+  // keeps the backend's "echo:" prefix into the payload — retiring on it was the 2026-08-09 flash-out:
+  // the echo deleted our entry, then blinked in its own echo→landed handoff with nothing left to cover
+  // the gap); the kernel's NEVER-DELIVERED verdict after the anchor retires it (that bubble now carries
+  // the text and the resend); its PROVISIONAL — echo atom or queued bubble — suppresses ours for this
+  // push and nothing more, so if it blinks, ours steps straight back in, and proves the kernel has the
+  // send (a "not confirmed" label is cleared). A landing that retired an ABSORBED atom's bubble may owe
+  // a mid-turn cue (noteAbsorbedLanding).
+  const r = reconcilePending(s.events as TailEvent[], list);
+  if (r.keep.length) pendingSent.set(s.id, r.keep); else pendingSent.delete(s.id);
+  for (const { idx } of r.landed) noteAbsorbedLanding(s, idx);
+  const inject = r.inject;
   if (!inject.length) { settle([]); return; }
   // cancelable from the PRESS (the user 2026-08-30, who sent mid-compaction and sat in an unlabeled,
   // uncancellable beat until the kernel's park round-tripped): the ✕ on an optimistic bubble drops our
   // re-injection and asks the kernel to cancel by body wherever the send landed (see the qx handler).
-  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths });
+  // `lost` rides along so the bubble can say "not confirmed" after a connection drop (markPendingLost).
+  // `qts` is the entry's identity: the ✕ removes THAT entry, never the first with the same text (two
+  // identical sends can sit in different states — one lost, one received).
+  const mk = (p: PendingSend) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths, lost: p.lost, qts: p.ts });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
@@ -388,10 +406,15 @@ function reconcileOptimistic(s: Session): void {
 // Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push).
 function registerOptimistic(id: string, text: string, imgPaths?: string[]): void {
   const arr = pendingSent.get(id) || [];
-  arr.push({ text, ts: Date.now(), base: -1, imgPaths });   // base is stamped by the reconcile just below
+  const p = newPending(text, imgPaths);
+  arr.push(p);   // the anchor (`at`) is stamped by the reconcile just below
   pendingSent.set(id, arr);
   const s = sessions.get(id);
-  if (!s) return;
+  // No resident frame to stamp against: the active tab is a PLACEHOLDER (its meta arrived, its payload
+  // is pending — selectable, composer live). The first upsert stamps the entry, against a frame that may
+  // already hold this send's own echo or landing; `late` tells stampBase to read the events' own stamps,
+  // so only what the kernel stamped before the press is background (send-pending.ts).
+  if (!s) { p.late = true; return; }
   reconcileOptimistic(s);
   // The reconcile can mutate the tail IN PLACE — merging into an existing queued group, or pop+push
   // on a repeat send — which leaves s.events.length unchanged, and syncView's no-op fast path
@@ -415,6 +438,57 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
   }
 }
 
+// A landing just retired a pending bubble. When the landed atom is ABSORBED (kernel ev.absorbed: a
+// mid-turn splice, placed at its send time) and it landed ABOVE the tail, the bubble the user was
+// watching at the bottom is gone and the message is somewhere higher up — leave a cue under the event
+// the bubble sat under (cueAnchor). It landed AT the tail → the swap was in place, no cue owed. Keyed
+// on the landing itself; dismissed by the user's jump or ✕, never by a timer. The anchor is an event
+// the chat DRAWS in its current mode: compact mode (the default) hides thinking, and a cue hung on a
+// hidden event never rendered and could never be dismissed (2026-09-06 review).
+const cueRendered = (e: TailEvent): boolean => !(settings.compact && e.kind === "thinking");
+function noteAbsorbedLanding(s: Session, idx: number): void {
+  const ev = s.events[idx] as (ChatEvent & { absorbed?: boolean; landedAt?: number }) | undefined;
+  if (!ev || !ev.absorbed || !ev.uuid) return;
+  const after = cueAnchor(s.events as TailEvent[], idx, cueRendered);
+  if (!after) return;
+  const cues = absorbedCues.get(s.id) || [];
+  if (cues.some((c) => c.target === ev.uuid)) return;
+  cues.push({ after, target: ev.uuid, landedAt: typeof ev.landedAt === "number" ? ev.landedAt : null });
+  absorbedCues.set(s.id, cues);
+  const v = views.get(s.id);
+  if (v) v.stale = true;
+}
+
+function dismissAbsorbedCue(sid: string, target: string): void {
+  const cues = (absorbedCues.get(sid) || []).filter((c) => c.target !== target);
+  if (cues.length) absorbedCues.set(sid, cues); else absorbedCues.delete(sid);
+}
+
+// The socket (or the VS Code pipe) went DOWN: every send still unconfirmed may never have reached the
+// kernel. The bubble says "not confirmed" — with the ✕ as the way back to the composer — instead of
+// "sending…" for as long as the entry lives. Keyed on the down edge, an event; the kernel's own copy of
+// the send seen afterwards (its echo, its queued bubble) clears the label (send-pending.ts `received`),
+// and the landing retires the entry exactly as before. A send the kernel has already shown it holds is
+// never marked: the drop cannot have lost it.
+// Only a CHANGED entry repaints. The browser shim fires romp:wsdown on every redial while the kernel is
+// down (one per ~1.5 s), and the VS Code pipe posts a down frame per attempt; rebuilding the active chat
+// on each destroyed the reader's selection hundreds of times for a label that changed once
+// (2026-09-06 review).
+function markPendingLost(why: string): void {
+  let activeChanged = false;
+  for (const [sid, list] of pendingSent) {
+    let changed = false;
+    for (const p of list) if (!p.lost && !p.received) { p.lost = why; changed = true; }
+    if (!changed) continue;
+    const s = sessions.get(sid);
+    if (s) reconcileOptimistic(s);        // re-inject the bubbles with the new label
+    const v = views.get(sid);
+    if (v) v.stale = true;                 // same texts, new label: the sig alone would not repaint
+    if (sid === activeId) activeChanged = true;
+  }
+  if (activeChanged) appendActive();
+}
+
 // ── conversation rewind (edit a past message, SDK sessions) ──────────────────────────────────────
 // Editing a user bubble rewinds the conversation to just before it and sends the edited text as the
 // branch's next turn (the kernel's rewindSend op → the SDK backend's --resume-session-at reconnect).
@@ -434,7 +508,17 @@ const pendingRewind = new Map<string, { uuid: string; text: string; ts: number; 
 // the CLI only addresses post-boundary records, so older bubbles get no edit affordance (the kernel
 // re-validates regardless). Runs beside reconcileOptimistic on every ingest path; the rewound flags
 // are stripped first because a chatTail delta REUSES prefix event objects across pushes.
-function reconcileRewind(s: Session): void {
+function reconcileRewind(s: Session, bound?: number): void {
+  // What the two outputs looked like BEFORE this pass — the editable set, and the overlay (which events dim,
+  // the pending edit) — so a change in either marks the view stale below. The tail path re-renders exactly
+  // the events the kernel's `from` names (syncViewInner, 2026-09-06), so a prefix bubble whose edit buttons or
+  // dim depend on these is repainted by THIS signal: a compaction landing at `from` strips the affordance
+  // from every earlier bubble; a failed rewind's TTL expiry lifts a dim no later `from` reaches back to.
+  // (A trailing window re-rendered on every tail used to cover the last 25 of them by accident.) `bound` is the
+  // tail path's re-render start (chatTail's `from`): events at or past it are re-rendered anyway, so only the
+  // prefix below it counts as a change — unbounded, every human prompt landing (a new editable bubble) marked
+  // the view stale and rebuilt the whole window instead of taking the exact tail.
+  const before = rewindSig(s, bound);
   for (const e of s.events) if ((e as any).rewound) delete (e as any).rewound;
   let lastCompact = -1;
   for (let i = 0; i < s.events.length; i++) if (s.events[i].kind === "compact") lastCompact = i;
@@ -448,33 +532,49 @@ function reconcileRewind(s: Session): void {
   }
   (s as any)._editable = editable;
   const pr = pendingRewind.get(s.id);
-  if (!pr) return;
-  const idx = s.events.findIndex((e) => e.kind === "user" && (e as any).uuid === pr.uuid);
-  if (idx < 0 || Date.now() - pr.ts > REWIND_TTL_MS) {
-    pendingRewind.delete(s.id);          // the branch landed (old uuid gone) — or the backstop expired
-    return;
-  }
-  if (pr.bare) {
-    // DELETE rollback: the deleted bubble goes too — dim from it onward. No text replacement and no
-    // queued-chip suppression (nothing was sent; the kernel's cut payload retires this in a beat).
-    for (let j = idx; j < s.events.length; j++) (s.events[j] as any).rewound = true;
-  } else {
-    s.events[idx] = { ...(s.events[idx] as any), md: pr.text, pending: true, images: undefined };
-    for (let j = idx + 1; j < s.events.length; j++) (s.events[j] as any).rewound = true;
-    for (let j = s.events.length - 1; j > idx; j--) {
-      const e = s.events[j] as any;
-      if (e.kind === "queued" && Array.isArray(e.texts)) {
-        e.texts = e.texts.filter((t: any) => t.md !== pr.text);
-        if (!e.texts.length) s.events.splice(j, 1);
+  if (pr) {
+    const idx = s.events.findIndex((e) => e.kind === "user" && (e as any).uuid === pr.uuid);
+    if (idx < 0 || Date.now() - pr.ts > REWIND_TTL_MS) {
+      pendingRewind.delete(s.id);          // the branch landed (old uuid gone) — or the backstop expired
+    } else if (pr.bare) {
+      // DELETE rollback: the deleted bubble goes too — dim from it onward. No text replacement and no
+      // queued-chip suppression (nothing was sent; the kernel's cut payload retires this in a beat).
+      for (let j = idx; j < s.events.length; j++) (s.events[j] as any).rewound = true;
+    } else {
+      s.events[idx] = { ...(s.events[idx] as any), md: pr.text, pending: true, images: undefined };
+      for (let j = idx + 1; j < s.events.length; j++) (s.events[j] as any).rewound = true;
+      for (let j = s.events.length - 1; j > idx; j--) {
+        const e = s.events[j] as any;
+        if (e.kind === "queued" && Array.isArray(e.texts)) {
+          e.texts = e.texts.filter((t: any) => t.md !== pr.text);
+          if (!e.texts.length) s.events.splice(j, 1);
+        }
       }
     }
   }
   const v = views.get(s.id);
-  if (v) v.stale = true;                 // the overlay touches MID-window turns — the append fast path won't repaint them
+  if (v && rewindSig(s, bound) !== before) v.stale = true;   // the overlay or the editable set changed: MID-window turns repaint (the tail path never reaches them)
+}
+/** The editable set and the rewind overlay as one string: which bubbles may be edited, which events are
+ *  dimmed, and the pending edit (its uuid; its text, or "b" for a delete). "?" before the first pass. The
+ *  editable and dimmed parts read events below `bound` only (the whole transcript by default): the tail path
+ *  re-renders from there anyway. The pending edit stays unbounded — its retirement or TTL expiry lifts a dim
+ *  that no `from` reaches back to. */
+function rewindSig(s: Session, bound: number = s.events.length): string {
+  const ed = (s as any)._editable as Set<string> | undefined;
+  const eds: string[] = [], dim: number[] = [];
+  const n = Math.min(bound, s.events.length);
+  for (let i = 0; i < n; i++) {
+    const e = s.events[i] as any;
+    if (ed && e.uuid && ed.has(e.uuid)) eds.push(e.uuid);
+    if (e.rewound) dim.push(i);
+  }
+  const pr = pendingRewind.get(s.id);
+  return (ed ? eds.join(",") : "?") + "|" + dim.join(",") + "|" + (pr ? pr.uuid + ":" + (pr.bare ? "b" : pr.text) : "");
 }
 // Tab name+color from the kernel's tabOrder push (the user 2026-06-26): lets renderTabs paint the WHOLE
 // strip as placeholders BEFORE each session's build_session arrives, so tabs don't pop in one-by-one.
-const tabMeta = new Map<string, { name: string; color: Color | null }>();
+const tabMeta = new Map<string, { name: string; color: Color | null; emoji?: string }>();
 // Tabs the user has just ✕'d, suppressed until the kernel's own tab set agrees. Declared up here beside
 // tabMeta because renderTabs reads it, and renderTabs can run before the module finishes evaluating.
 // The close was ALREADY optimistic (dismissSession runs on click) but nothing recorded that locally — so the
@@ -500,20 +600,87 @@ const pendingTabMeta = new Map<string, PendingTabMeta>();
 // A hidden session is a BACKGROUND session — still running, judged and carded; the + picker lists it
 // under "Hidden" and the timeline's corner panel counts it, so it is always one glance away.
 // Captured from every tabOrder push; a local gesture (hide from the tab menu, reveal from the
-// picker) applies optimistically and holds sticky until a push echoes it — yielding to the kernel
-// after three silent pushes, the same machinery the timeline's copy runs.
+// picker) applies optimistically and holds until the kernel ANSWERS the write (viewsAck /
+// tagEditAck → onViewsAck below) or echoes it exactly — never yielding on a frame count (the user
+// 2026-09-05: the three-frame yield dropped good edits and kept refused ones alike). The same
+// machinery the timeline's copy runs (views-writes.ts is the shared decision).
 let sessionViews: SessionViews | null = null;
 let pendingSessionViews: SessionViews | null = null;
-let pendingViewsAge = 0;
+let viewsWrites: InflightWrite[] = [];   // this page's views writes in flight, oldest first: {id, edit?|blob?, newId?} — what each did, so a refusal reverts only its own change
+let viewsWriteSeq = 0;
+let legacyViewsAge = 0;           // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (captureViews)
+let kernelCaps = new Set<string>();   // what the LOCAL kernel announced at `ready` ({type:"caps"}); "tagEdit" = targeted ops, acks, seq
 let allHiddenBlanked = false;   // the active transcript was blanked because EVERY session is view-hidden
+let staleViewsDiagSent = false; // one breadcrumb per page load for an out-of-order views blob (below)
+let rejectedViews: SessionViews | null = null;   // the last blob the gate turned away since it last adopted one — what the caps frame adopts (onKernelCaps)
+let announcedViewsSeq: number | null = null;   // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (takeViews); cleared by the next adoption that changes the held blob (announcedAfter) — a re-arrival of the blob already held leaves it
 function effViews(): SessionViews | null { return pendingSessionViews ?? sessionViews; }
+// an arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
+// least the held one — a frame the pusher built from its warmed cache before a write, delivered
+// after that write's ack, must not put the older blob back (2026-09-05). Ignored blobs leave one
+// breadcrumb per page load (the kernel's client-diag log), so a kernel serving stale frames is a
+// visible fact rather than a flicker nobody can explain. The last ignored blob is KEPT (and let go
+// by the next adoption): a kernel restarted over a store restored from an older copy serves it under
+// the old seq, so its connect push is turned away here — and the caps frame that follows it, naming
+// that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
+// When that push carried no blob to keep (a sentinel cycle sends no tabOrder), the caps frame's
+// viewsSeq is instead REMEMBERED as the kernel's announced store (announcedViewsSeq), and the later
+// blob carrying exactly that seq — the pusher's next frame — is adopted below the held one (round 8 of
+// the review; announcedSeq). The slot clears when an adoption CHANGES the held blob, never on a
+// re-arrival of the blob already held: in the browser this pane sees the local blob only through the
+// federation router, which replays its stored blob on every merged re-emit (a remote host's push, a
+// `closed` frame, a view-order storage event, a host drop), and a slot spent on one of those missed
+// the restored store the router adopted and re-emitted next (round 9; announcedAfter).
+function takeViews(v: SessionViews | null | undefined): boolean {
+  if (!v) return false;
+  if (adoptViews(sessionViews, v, announcedViewsSeq)) { announcedViewsSeq = announcedAfter(sessionViews, v, announcedViewsSeq); adoptBase(v); rejectedViews = null; return true; }
+  rejectedViews = v;
+  if (!staleViewsDiagSent) {
+    staleViewsDiagSent = true;
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "chat", what: "views-stale-blob",
+      data: { held: seqOf(sessionViews), got: seqOf(v) } });
+  }
+  return false;
+}
+// The base moves to `v` — the ONE assignment of sessionViews, reached from the gate above and from
+// the caps frame's adoption below; a caller that reads the held blob (the gate's announcedAfter) does
+// so before this call — and the tab strip's pins follow any tag `v` renames relative to
+// the blob it replaces (tab-groups.ts tagRenames / followTagRenames): a tag that keeps its id under a
+// new name carries its pinned members' entries to that name, so a pinned tab stays pinned to its group
+// through the rename. The store (romp:tabgroups) is rewritten only when an entry changed, and after
+// the base has moved, so the write's TABGROUPS_EVENT render reads the new blob. Renames follow the
+// ADOPTED blob, never the optimistic copy: the kernel's answer is the event, and a refused rename then
+// has nothing to undo here. The follow runs on EVERY adoption, renames or none: its memory of the name
+// each renamed tag's pins were last carried to is checked against the blob each time, so a tag the blob
+// names otherwise — renamed while no pane of this browser watched — has the pins under the remembered
+// name carried to the blob's, the rename this browser owes, and the memory re-stamped (rounds 7 and 8
+// of the 2026-09-06 review: kept, that memory read the tag's next rename to the name as followed;
+// dropped without the carry, a pane two renames stale stamped the last name over a pin the watching
+// pane had left under the middle one). Through followAdoption (round 9): a blob that names every tag as
+// the held one does is no news about names and moves nothing — a pane whose local socket is dead
+// re-adopts its stale blob on every router re-emit, and the check run on it carried a fresher pane's
+// follow back — and the memory is stamped with each tag's store's write seq, a blob older than the
+// stamp standing down on that tag.
+function adoptBase(v: SessionViews): void {
+  const prev = sessionViews;
+  sessionViews = v;
+  const unions = viewTagUnion(v);
+  const st = readTabGroups(unions);
+  const next = followAdoption(st, prev, v, unions);
+  if (next !== st) writeTabGroups(next);
+}
 function captureViews(v: SessionViews | null) {
-  if (v) sessionViews = v;
-  // v null = a tabOrder frame WITHOUT the blob (an older kernel in a mixed-version mesh): it still
-  // ages a pending edit, or the optimistic state would fake success forever against a kernel that
-  // will never confirm it
-  if (pendingSessionViews && ((v && viewsKey(v) === viewsKey(pendingSessionViews)) || ++pendingViewsAge >= 3)) {
-    pendingSessionViews = null; pendingViewsAge = 0;
+  takeViews(v);
+  // LEGACY kernels only (a blob without a write sequence comes from a kernel that acks nothing): the
+  // PRE-2026-09-05 reconciliation stays for that path alone — the write's exact echo clears the copy,
+  // and three silent frames yield it (with no ack ever coming, an unechoed copy would otherwise pin
+  // forever). A kernel that stamps `seq` answers every write, and the ack is the event that settles
+  // the copy — a frame, matching or not, says nothing about a write it cannot name (a net-zero
+  // burst's frames match the copy while its writes are still in flight), and no count of frames is
+  // information. (v null = a tabOrder frame without the blob, an older kernel: nothing to compare.)
+  if (pendingSessionViews && v && seqOf(v) === null
+      && (viewsKey(v) === viewsKey(pendingSessionViews) || ++legacyViewsAge >= 3)) {
+    pendingSessionViews = null; viewsWrites = []; legacyViewsAge = 0;
   }
   // A VIEW CHANGE that excludes the ACTIVE session converts it into the peek instead of bouncing
   // (the user 2026-08-24: open All, pick a session, re-apply the tag filter — keep reading it in
@@ -523,13 +690,136 @@ function captureViews(v: SessionViews | null) {
   // the deferred first-tab bounce never fires (its fire-time revalidation re-checks tabInView).
   if (activeId) assertPeekFor(activeId);
 }
-// (postViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
-// paths keep the active session's peek state current.)
-function postViews(v: SessionViews) {
-  pendingSessionViews = v; pendingViewsAge = 0;
+// (holdViews below runs the same re-derivation for the LOCAL optimistic edit — both views-arrival
+// paths keep the active session's peek state current.) The shared half of postViews / postTagEdit:
+// show the optimistic copy, mint and track the write — with what it did (`rec`: the op, or the
+// blob), so a refusal of some OTHER write can rebuild the copy without it.
+function holdViews(v: SessionViews, rec: Omit<InflightWrite, "id">): string {
+  pendingSessionViews = v; legacyViewsAge = 0;
   if (activeId) assertPeekFor(activeId);   // the optimistic edit re-derives the active session's peek too
-  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v });
+  const writeId = mintWriteId(++viewsWriteSeq);
+  viewsWrites.push({ id: writeId, ...rec });
+  return writeId;
+}
+// a WHOLE-BLOB write — the lens and order edits, which have no targeted op; the kernel's viewsAck
+// reports the stale-writer guard's refusals, if any
+function postViews(v: SessionViews, edited: string[] = []) {
+  const writeId = holdViews(v, { blob: v });
+  // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
+  // refusal on a tag this page never touched (a stale copy of it) as ok, with the refusal listed, and
+  // no toast follows: nothing the user did was refused, and the ack's blob carries the newer tag
+  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId, edited });
   renderTabs();
+}
+// a LENS or ORDER write — the whole blob, built from the STORE's blob (sessionViews, the last one
+// adopted) plus the fields set, never from the pending copy: a copy carrying targeted edits still
+// in flight posted them as this page's claim on those tags, and a rename the kernel had refused as
+// a duplicate landed through the next lens toggle (round 4 of the 2026-09-05 review). The pending
+// copy the page SHOWS is the current one with the same fields applied, so in-flight edits stay
+// visible; the in-flight record keeps the fields, so a re-derivation re-applies exactly them.
+function postLens(fields: LensFields) {
+  const v = lensBlob(sessionViews, fields);
+  const writeId = holdViews(applyLensFields(effViews(), fields), { lens: fields });
+  if (vscodeApi) vscodeApi.postMessage({ type: "setTimelineViews", views: v, writeId, edited: [] });
+  renderTabs();
+}
+// the union display order (a group drag on the sectioned strip) — a lens write of tagOrder alone
+function postTagOrder(order: readonly string[]) { postLens({ tagOrder: order.slice() }); }
+// a TARGETED tag edit (the tab menu's Tags flyout): `nv` is the optimistic copy with the gesture
+// applied, `edit` the op the kernel applies by the tag's stored id through its /tag merge — never
+// judged stale against this page's own earlier writes (the 2026-09-05 loss: a New tag… then a Move
+// to, posted as whole blobs from the un-echoed copy, had the second refused). The op rides NESTED
+// under `edit`: the federation router sends the message to the local kernel, and no top-level field
+// of it can read as a session's address. Answered by tagEditAck. `newId` is a create's optimistic
+// row id (the `pending-…` placeholder the ack's blob replaces).
+function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
+  // no `tagEdit` capability announced (a kernel from before it): the PRE-2026-09-05 path — the whole
+  // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
+  // ack will come. The copy already carries the gesture, so nothing else changes — except a create's
+  // row: the whole blob IS the store write on this path, so the placeholder id would be persisted
+  // as-is (round 3 of the 2026-09-05 review); the row takes a client-minted `g…` id, the scheme the
+  // dialog's own pre-2026-09-05 create used, and the write names it as edited, which a kernel that
+  // reads `edited` needs in order to tell a create from a stale copy re-creating a deleted tag.
+  if (!kernelCaps.has("tagEdit")) {
+    const edited = [edit.tid, edit.tid_from, edit.tid_to].filter((t): t is string => !!t);
+    const row = newId ? viewTags(nv).find((t) => t.id === newId) : undefined;
+    if (row) { if (/^pending-/.test(row.id)) row.id = "g" + Date.now().toString(36); edited.push(row.id); }
+    postViews(nv, edited);
+    return;
+  }
+  const writeId = holdViews(nv, { edit, newId });
+  if (vscodeApi) vscodeApi.postMessage({ type: "tagEdit", writeId, edit });
+  renderTabs();
+}
+// the LOCAL kernel's capabilities, sent on every `ready` — the page's own at load, and the shim's
+// re-send on a reconnected socket. A reconnect is the one event that can lose an ack (the socket died
+// between the write and its answer), so writes still in flight when this frame arrives are unknowable:
+// they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
+// pinned copy faking success, never a silent revert. It is also the event that adopts the blob the
+// gate last turned away, when the frame names it (rounds 6 and 7 of the 2026-09-05 review;
+// capsAdopts): the kernel sends its connect push before this frame and `viewsSeq` is the seq of the
+// views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
+// restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at its
+// seq; a healthy reconnect's push was adopted, nothing is kept, and the gate stands; a pusher frame
+// built before a concurrent write, kept because it arrived between the push and this frame, carries a
+// seq the frame does not name and is discarded. When nothing kept matches, `viewsSeq` (a number: the
+// served blob's seq, or the store's current seq when the push carried no views frame — a sentinel
+// cycle) is remembered as the kernel's announced store, and takeViews adopts the later blob that
+// carries it even below the held seq (round 8 of the review; announcedSeq) — the slot is one per
+// store, overwritten by each caps frame, cleared by the next adoption that changes the held blob
+// (announcedAfter); null (no store at all) and a
+// missing field announce nothing. A write in flight is dropped whatever the base became: its ack
+// cannot reach this socket, and one that somehow did would be an ack for a write this page no longer
+// tracks — its blob meets the gate like any other arrival, and nothing is re-pinned (onViewsAck).
+function onKernelCaps(m: { caps?: unknown; viewsSeq?: unknown }) {
+  kernelCaps = new Set(Array.isArray(m.caps) ? m.caps.filter((c): c is string => typeof c === "string") : []);
+  const adopted = capsAdopts(rejectedViews, m.viewsSeq);
+  if (adopted && rejectedViews) adoptBase(rejectedViews);
+  announcedViewsSeq = adopted ? null : announcedSeq(m.viewsSeq);
+  rejectedViews = null;
+  if (viewsWrites.length) {
+    viewsWrites = []; pendingSessionViews = null;
+    warnToast("The connection to romp was re-established; a tag edit made just before it may not have landed. Check the tag.");
+    syncNewTagInput();                     // a dropped create no longer gates the flyout's input
+  } else if (!adopted) return;             // nothing in flight, nothing adopted: the caps changed, nothing shown did
+  if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
+  renderTabs();
+}
+// the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
+// refused — the copy reverts and the toast says why — and the capability is withdrawn, so the next
+// gesture takes the path that kernel does know
+function onUnknownOp(m: { op?: unknown; writeId?: unknown }) {
+  if (typeof m.op === "string") kernelCaps.delete(m.op);
+  if (typeof m.writeId === "string" && viewsWrites.some((w) => w.id === m.writeId))
+    onViewsAck({ type: "unknownOp", writeId: m.writeId, ok: false,
+                 error: "the kernel does not know the " + String(m.op) + " operation, so the edit was not applied — try again; this dashboard now uses the older path" });
+}
+// the kernel's answer to one of this page's writes: the returned blob is the base whatever the
+// verdict; the pending copy settles once nothing is in flight; a refusal reverts ITS change at once
+// — the copy is rebuilt from the base plus the writes still in flight, so a later gesture never
+// flaps off and back on — and says why: the warn toast, since the flyout has no error surface of
+// its own
+function onViewsAck(m: ViewsAck) {
+  const out = ackOutcome(viewsWrites, m);
+  viewsWrites = out.inflight;
+  takeViews(m.views);   // the ack's blob is the base unless a newer frame already overtook it (the seq decides)
+  if (out.clearPending) pendingSessionViews = null;
+  else if (out.rederive) pendingSessionViews = rederivePending(sessionViews, viewsWrites);
+  // the reason already names the tag once and says what was kept (the kernel composes it); no second prefix naming it
+  if (out.refusal) warnToast("Tag edit not applied — " + out.refusal);
+  if (activeId) assertPeekFor(activeId);   // a views arrival like any other: re-derive the active session's peek
+  syncNewTagInput();                       // a create's ack re-arms the flyout's New tag… input in place
+  renderTabs();
+}
+// The Tags flyout's New tag… input, while the flyout is open: DISABLED while a create is in flight
+// (round 3 of the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
+// place by the ack — never by rebuilding the flyout, which would throw away text typed meanwhile.
+let tagsFlyNewInput: HTMLInputElement | null = null;
+function syncNewTagInput() {
+  if (!tagsFlyNewInput) return;
+  const busy = createInFlight(viewsWrites);
+  tagsFlyNewInput.disabled = busy;
+  tagsFlyNewInput.placeholder = busy ? "creating…" : "New tag…";
 }
 // ── EPHEMERAL PEEK TAB (the user 2026-08-24, superseding the kernel's reveal-rule view mutation):
 // activating a session the current view HIDES opens it as a TEMPORARY tab — real and scrollable,
@@ -554,9 +844,27 @@ function assertPeekFor(id: string): void {
 }
 function tabInView(id: string): boolean { return id === peekId || chatVisible(id); }
 // TAB SECTIONS (tab-groups.ts): the ids the last render folded away under a collapsed section
-// header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible — the active
-// tab's section never renders folded, so the active id is always in it.
+// header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible. The ACTIVE tab
+// can be among them (the user 2026-09-06: its section folds like any other): its header is then its
+// stand-in — focusActiveTab lands there, ←/→ step from its position (neighborOfFolded over the last
+// plan's items, kept here for both), and the pane shows the section's snapshot (renderSnapshot).
 let collapsedTabIds = new Set<string>();
+let lastStripItems: StripItem[] = [];
+/** Every tab the strip knows — the kernel's order plus any pushed tab not yet in it (a placeholder):
+ *  the "does this session still exist" of the pin prune (tab-groups.ts prunePinned). */
+function knownTabIds(): Set<string> { return new Set<string>([...order, ...tabMeta.keys()]); }
+/** The remote hosts whose sessions the strip CAN know right now — attached, tunnel up, and their tab list
+ *  already in this pane — from the federation router's published lists (tab-groups.ts reachableFrom states
+ *  the rule): the prune's "this entry can be judged" (prunePinned). A detached host's sessions left `order`
+ *  with it (closeRemote's hostDrop dismissals), a down host's never arrived on a page loaded during the
+ *  outage, and a pending host's are a relay hop away; none is a session's end, so their pins stand until
+ *  the host's tabs are here. Empty where no router runs (a single-kernel page): every sid is local there,
+ *  and local sids are always judged. */
+function reachableHosts(): Set<string> { return reachableFrom((window as any).__rompFed); }
+/** The tab-groups store as a WRITE reads it: with the current unions, so an entry in the store's earlier
+ *  shape is migrated faithfully before it is written back (tab-groups.ts parseTabGroups). A read that
+ *  only looks at `.on` needs none. */
+function tabGroups() { return readTabGroups(viewTagUnion(effViews())); }
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
 // the tags a create in flight named (openProvisional): the provisional tab sections under its future
 // home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
@@ -571,7 +879,7 @@ const PHONE_LAYOUT_MEDIA = "(pointer:coarse) and (max-width:1024px)";
 function phoneLayout(): boolean {
   try { return window.matchMedia(PHONE_LAYOUT_MEDIA).matches; } catch { return false; }
 }
-function revealSession(id: string) { postViews(revealIn(effViews(), id)); }
+function revealSession(id: string) { const r = revealIn(effViews(), id); postLens({ active: r.active, actives: r.actives }); }
 
 let paletteColors: string[] = [];
 fetch(kernelUrl("/palette"), { cache: "no-store" }).then((r) => r.json())
@@ -718,7 +1026,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; }
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; working?: boolean; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -750,7 +1058,7 @@ const draftStartedAt = new Map<string, number>();
 // 2026-06-16). Empty/false → explicit done (full disc).
 interface LedgerTreeNode { id: string; text: string; depth: number; done: boolean; blocked: boolean; t?: number; mt?: number; current: boolean; derived?: boolean; cleared?: boolean; onpath?: boolean; promptAnchorUuid?: string | null; anchorUuid?: string | null; children?: string[]; summary?: string | null; blockSummary?: string | null; _rec?: number; }   // summary/blockSummary = the distiller's takeaway / decision brief, revealed by the row's ⊕ expander; _rec = render-stamped subtree-rolled-up recency
 interface LedgerRecent { text: string; t: number; }   // tab-hover "Recent": up-to-5 most-recent TOP tasks across live + archive, any status (the user 2026-06-30)
-interface Ledger { summary: string; tree?: LedgerTreeNode[]; current?: { t?: number } | null; recent?: LedgerRecent[]; }
+interface Ledger { summary: string; tree?: LedgerTreeNode[]; current?: { t?: number } | null; recent?: LedgerRecent[]; workingNote?: string; needsInput?: boolean | null; }   // two fields the kernel's build_session puts on the ledger for the section snapshot (tab-snapshot.ts, 2026-09-06): workingNote: the session's postal working note, the snapshot row's second line; needsInput: the feed's needs-you verdict for the session from the kernel's last feed build (null before the first). Both optional on the wire, since a remote host's older kernel sends neither
 const ledgers = new Map<string, Ledger | null>();
 
 function el(tag: string, cls?: string): HTMLElement {
@@ -759,7 +1067,7 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
-function md(src: string): string {
+function md(src: string, repo: string | null = prRepoFor()): string {
   // Transcript text (user prompts, assistant output, subagent reports, postal
   // bodies) is UNTRUSTED and `marked` emits raw HTML verbatim, so its output
   // must be sanitized before it ever reaches .innerHTML — otherwise a payload
@@ -773,8 +1081,43 @@ function md(src: string): string {
     // \sqrt radicals, wide accents, extensible arrows — as inline <svg><path>, and the html-only
     // profile silently ate them: $\sqrt{d}$ rendered as a bare serif "d", the radical gone.
     // DOMPurify's svg profile is still sanitized (no scripts, handlers, or foreignObject).
-    return DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });
+    // RETURN_DOM hands back the sanitized <body> instead of its innerHTML — the same nodes, ours to
+    // walk once before the serialization DOMPurify would otherwise have done itself: PR references
+    // in the prose (`#123`, `PR #123`, `owner/repo#123`) become links to the session's repository
+    // (pr-links.ts; the user 2026-09-06). Text inside code, pre or an existing anchor is skipped, so
+    // the sanitizer's verdicts stand and a marked-autolinked GitHub URL is never wrapped twice.
+    const clean = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], RETURN_DOM: true }) as HTMLElement;   // the sanitized <body>
+    linkifyPrRefs(clean, repo);
+    return clean.innerHTML;
   } catch { const d = document.createElement("div"); d.textContent = src; return d.innerHTML; }
+}
+
+// The GitHub repository (owner/repo, or null) whose pull requests a `#123` in the text being rendered
+// refers to: the OWNING session's — the same rule relative paths follow (renderingOwnerSid), then the
+// session being built, then the active tab. A session the kernel gave no repo links nothing.
+function prRepoFor(sid?: string | null): string | null {
+  const id = sid ?? renderingOwnerSid ?? renderingSid ?? activeId;
+  return (id && sessions.get(id)?.githubRepo) || null;
+}
+
+// A postal body was written by its SENDER, so its `#123` means the sender's repository — and only a
+// repository the frame actually names for that sender is used; nothing is guessed (a wrong link is worse
+// than none). An OUTBOUND message was written by the reading session: its own repo, as the frame ships
+// it. An INBOUND message names its sender by host AND name (`peerHost` + `peer`, the host as the CARD'S
+// kernel's message log stamped it — relative to that kernel, so it is read against the host of the
+// session the card sits in, postalSenderHost), so the sender is exactly the session in the frame that
+// answers to that pair — a local row for this dashboard's own kernel, a host's federated row otherwise —
+// and the link uses ITS githubRepo. A sender on a host this dashboard has not attached, or one the kernel
+// gave no repo: the text stays plain (the name alone once resolved it, and a remote homonym borrowed a
+// local session's repo; then a remote session's card was read as if its kernel were this one, and its own
+// kernel's sender resolved against the LOCAL rows; review finds, 2026-09-06). Only a card from a kernel
+// that predates the field falls back to the name — the one session, local or federated by its bare name,
+// answering to it; a homonym leaves it plain. The reading session's repo is never substituted for the
+// sender's.
+function postalRepoFor(ev: { direction: "in" | "out"; peer: string; peerHost?: string }): string | null {
+  if (ev.direction === "out") return prRepoFor();
+  const cardHost = hostOf(renderingOwnerSid ?? renderingSid ?? activeId ?? "");   // the card's own kernel, as prRepoFor picks the session
+  return senderPrRepo(Array.from(sessions.values(), (s) => ({ sid: s.id, name: s.name, githubRepo: s.githubRepo })), ev.peer, postalSenderHost(ev.peerHost, localSelfHost, cardHost));
 }
 
 function highlight(container: HTMLElement, lineNos = true) {
@@ -783,9 +1126,7 @@ function highlight(container: HTMLElement, lineNos = true) {
     const raw = code.textContent || "";   // capture BEFORE we rewrite innerHTML: line-wrapping drops the \n joins, so the on-screen markup's textContent is NOT copy-safe
     const lang = (code.className.match(/language-([\w-]+)/) || [])[1];
     try {
-      code.innerHTML = lang && hljs.getLanguage(lang)
-        ? hljs.highlight(raw, { language: lang }).value
-        : hljs.highlightAuto(raw).value;
+      code.innerHTML = highlightHtml(hljs, lang, raw);   // by (language, source): a fence re-rendered by a tail, a tab switch or a scroll-back tokenizes once (highlight-cache.ts)
       code.classList.add("hljs");
       if (lineNos) wrapCodeLines(code);   // per-line gutter so a soft-wrap reads distinctly from a real newline
     } catch { /* leave as-is */ }
@@ -1047,8 +1388,8 @@ function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content
 }
 
 // Expand/collapse state must SURVIVE the incremental re-render that every send/turn triggers (the user
-// 2026-06-19): a short transcript rebuilds from index 0, a long one re-renders the trailing TAIL_RECHECK
-// turns — either way a DOM-only `.open` silently resets whatever the user had opened (e.g. they expand
+// 2026-06-19): a short transcript rebuilds from index 0, a long one re-renders from the first changed
+// event — either way a DOM-only `.open` silently resets whatever the user had opened (e.g. they expand
 // the system-context card, type a message, hit ⏎, and it snaps shut). So we persist open-state in a Set
 // keyed by a stable id (the turn uuid, or the session id for the pinned system card) and reapply it on
 // rebuild — the same trick `expandedGroups` uses for collapsed tool runs. A keyless fold (no stable id)
@@ -2315,6 +2656,11 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
     // a TYPED follow-up (resumed a goal) → a compact "↩ Follow-up · <goal>" header, the romp goal-context
     // quote + markers already stripped server-side. Same header the pending queued render uses (consistency).
     if (ev.followUp && !romp) turn.appendChild(followUpHeader(ev.goal, ev.fuCtx, ev.uuid ? "u:" + ev.uuid : undefined));
+    // "joined mid-turn" (kernel ev.absorbed): the CLI queued this send behind a running turn and took it
+    // at a later tool boundary; the transcript places it at its SEND time, so it reads above steps that
+    // were already running. The header says why; when the session took it (ev.landedAt) is one level
+    // deeper, on hover. Human bubbles only — a romp nudge's own tag row already says what it is.
+    if ((ev as any).absorbed && !romp && !injected && !tagged) turn.appendChild(absorbedHeader((ev as any).landedAt));
     const hasImgs = !!(ev.images && ev.images.length);
     if (ev.md || hasImgs) {
       if (romp) {
@@ -2954,6 +3300,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const line = el("div", "ut-line");
       const txt = el("span", "ut-text");
       txt.textContent = t.text;
+      linkifyPrRefs(txt, prRepoFor(renderingSid));   // a `#123` in the ask links to the session's PR (pr-links.ts)
       // progressive disclosure: the one-line version by default, detail one click away — and the row
       // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
       // exists, nothing when it doesn't, so a bare ask and one with context read differently at a
@@ -2993,6 +3340,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
         // linkifier, with the todo's OWN session resolving relative paths — the note was written
         // from that session's working directory, whichever tab the card is read in
         linkifyFileUris(d, undefined, undefined, undefined, undefined, renderingSid || null);
+        linkifyPrRefs(d, prRepoFor(renderingSid));
         row.appendChild(d);
       }
       card.appendChild(row);
@@ -3406,6 +3754,46 @@ function compactTokens(n: number): string {
 // strip is display-only, and this is where the hidden part can be audited. Expansion survives the chat's
 // re-renders via fuExpanded (keyed by the turn's uuid / queue slot), NOT DOM state that a rebuild would lose.
 const fuExpanded = new Set<string>();
+const hhmm = (epoch: number): string => markerLabel(epoch, null, Date.now()).hm;
+
+function absorbedHeader(landedAt?: number | null): HTMLElement {
+  const h = el("div", "absorbed-tag");
+  h.textContent = "joined mid-turn";
+  h.title = "Sent while the session was working; it waited behind the steps in progress"
+    + (typeof landedAt === "number" ? ", and the session took it at " + hhmm(landedAt) : "") + ".";
+  return h;
+}
+
+// The mid-turn cue (absorbedCues): where a pending bubble sat when its message landed higher up. The
+// interrupt marker's chrome — a rail ring and one dim line — plus jump/✕ in the small-button rest.
+// Buttons ride the body delegate (data-act): the tail rebuilds every push.
+function renderAbsorbedCue(c: AbsorbedCue): HTMLElement {
+  const turn = el("div", "turn turn-absorbed-cue");
+  turn.dataset.cueTarget = c.target;
+  turn.appendChild(dot("ring"));
+  const line = el("div", "absorbed-cue-line");
+  line.title = "The session took your message at a tool boundary while it was working, so it appears above the steps that were already running.";
+  line.appendChild(document.createTextNode("delivered into the running turn"
+    + (c.landedAt != null ? " at " + hhmm(c.landedAt) : "")));
+  const jump = el("button", "absorbed-cue-act") as HTMLButtonElement;
+  jump.type = "button"; jump.textContent = "jump"; jump.title = "Scroll to the message";
+  jump.dataset.act = "abjump"; jump.dataset.target = c.target;
+  const x = el("button", "absorbed-cue-act") as HTMLButtonElement;
+  x.type = "button"; x.textContent = "✕"; x.title = "Dismiss this note";
+  x.dataset.act = "abdismiss"; x.dataset.target = c.target;
+  line.appendChild(jump); line.appendChild(x);
+  turn.appendChild(line);
+  return turn;
+}
+
+// The mid-turn cue(s) hung under this item's event(s) — rendered with the item, so the note keeps its
+// place as the tail grows past it.
+function appendAbsorbedCues(v: View, s: Session, uuids: (string | undefined)[], tag: (n: HTMLElement) => HTMLElement): void {
+  const cues = absorbedCues.get(s.id);
+  if (!cues || !cues.length) return;
+  for (const c of cues) if (uuids.includes(c.after)) v.el.appendChild(tag(renderAbsorbedCue(c)));
+}
+
 function followUpHeader(goal?: string, ctx?: string, key?: string): HTMLElement {
   const h = el("div", "followup-tag");
   const k = key || "";
@@ -3485,11 +3873,29 @@ function reflowQueuedGroup(turn: HTMLElement): void {
   const label = turn.querySelector(".queued-count") as HTMLElement | null;
   if (!label) return;
   if (label.dataset.bare === "1") {                       // the pre-confirmation group recounts in its own words
-    label.textContent = bubbles.length === 1 ? "sending…" : `sending ${bubbles.length}…`;
+    // …from the SURVIVING bubbles' own states (data-lost), so a ✕ on the lost bubble leaves the rest
+    // reading "sending…" — the label used to keep "not confirmed" for whoever remained
+    const nLost = bubbles.filter((b) => (b as HTMLElement).dataset.lost === "1").length;
+    fillBareLabel(label, nLost, bubbles.length - nLost);
     return;
   }
   const nCmd = bubbles.filter((b) => b.querySelector(".slash-cmd-chip")).length;
   label.textContent = queuedCountText(bubbles.length, nCmd) + (label.dataset.why || "");
+}
+
+// The bare group's label from its bubbles' states (send-pending.ts bareGroupLabel): the lost part wears
+// the warn color, the sending part stays dim. Shared by the render and the ✕'s recount so the two can
+// never disagree.
+function fillBareLabel(label: HTMLElement, nLost: number, nSending: number): void {
+  const { parts, title } = bareGroupLabel(nLost, nSending);
+  label.replaceChildren();
+  parts.forEach((part, i) => {
+    if (i) label.appendChild(document.createTextNode(" · "));
+    const span = el("span", part.lost ? "lost" : "");
+    span.textContent = part.text;
+    label.appendChild(span);
+  });
+  label.title = title;
 }
 
 function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
@@ -3505,8 +3911,12 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     head.appendChild(hourglassIcon());
     const label = el("span", "queued-count");
     label.dataset.bare = "1";     // reflow rewrites this label in its own vocabulary, never "N queued"
-    label.textContent = ev.texts.length === 1 ? "sending…" : `sending ${ev.texts.length}…`;
-    label.title = "on its way to the session — cancellable until the session takes it";
+    // Per BUBBLE state (send-pending.ts `lost`): a send whose connection dropped after the press, with
+    // nothing confirming it since, reads "not confirmed" in warn amber — "sending…" would claim a
+    // progress romp cannot see — and the ✕ is its way back to the composer; the others in the same
+    // group still read "sending…". One label, both counts when both states are present.
+    const nLost = ev.texts.filter((t) => t.lost).length;
+    fillBareLabel(label, nLost, ev.texts.length - nLost);
     head.appendChild(label);
     turn.appendChild(head);
   }
@@ -3541,9 +3951,11 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   for (const t of ev.texts) {
     if (t.followUp) turn.appendChild(followUpHeader(t.goal, t.fuCtx, t.idx !== undefined ? "q:" + t.idx : undefined));
     const bubble = el("div", "queued-bubble md" + (t.cancelable ? " cancelable" : ""));
+    if (t.optimistic && t.lost) bubble.dataset.lost = "1";   // the bare label recounts from this after a ✕
     // one phrase separating OUR unconfirmed echo from a real queued message, which the session has accepted
     // and is holding (the user 2026-07-16)
-    if (t.optimistic) bubble.title = "sent just now — romp hasn't confirmed the session has it yet";
+    if (t.optimistic && t.lost) bubble.title = "not confirmed — the connection dropped after this was sent; ✕ moves it back to the composer to send again";
+    else if (t.optimistic) bubble.title = "sent just now — romp hasn't confirmed the session has it yet";
     // a queued entry with NO ✕ (the user 2026-07-20): the queue lives inside the session's own CLI —
     // there is no recall — so instead of a cancel that would only ever say "too late", the tooltip says
     // where the message actually is. (SDK mid-turn forwards and every tmux queued message land here.)
@@ -3573,6 +3985,7 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
       if (t.idx !== undefined) x.dataset.qidx = String(t.idx);
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
       if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
+      if (t.qts !== undefined) x.dataset.qts = String(t.qts);   // OUR entry's identity: the ✕ removes this bubble's entry, not the first with its text
       if (isCmd) x.dataset.qcmd = "1";
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       bubble.appendChild(x);
@@ -4048,7 +4461,7 @@ function renderPostalService(ev: Extract<ChatEvent, { kind: "postal-service" }>)
     const sum = el("div", "postal-service-summary");
     const caret = el("span", "postal-service-expand-caret"); caret.textContent = "▸"; sum.appendChild(caret);
     const sumText = el("span", "postal-service-summary-text"); sumText.textContent = summaryText; sum.appendChild(sumText);
-    const full = el("div", "postal-service-full md"); full.innerHTML = md(ev.body); highlight(full);
+    const full = el("div", "postal-service-full md"); full.innerHTML = md(ev.body, postalRepoFor(ev)); highlight(full);
     // KEYED expand (the user 2026-07-25: "it expands for like a second and then collapses again") —
     // the old hand-rolled classList.toggle lived only on this DOM node, and the next kernel push
     // rebuilds the card, silently closing it. Same openFolds mechanism as every other keyed fold;
@@ -4066,7 +4479,7 @@ function renderPostalService(ev: Extract<ChatEvent, { kind: "postal-service" }>)
     body.appendChild(sum);
     body.appendChild(full);
   } else {
-    body.innerHTML = md(ev.body);
+    body.innerHTML = md(ev.body, postalRepoFor(ev));
     highlight(body);
   }
   card.appendChild(body);
@@ -4237,7 +4650,8 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport) {
     for (const t of tabs) {
       if (t && typeof t.id === "string") {
         tabMeta.set(t.id, { name: typeof t.name === "string" ? t.name : "",
-                            color: (t.color && typeof t.color.bg === "string") ? t.color : null });
+                            color: (t.color && typeof t.color.bg === "string") ? t.color : null,
+                            emoji: typeof t.emoji === "string" ? t.emoji : undefined });   // absent = an older kernel
       }
     }
     // …and apply the same blob to EXISTING sessions (the user 2026-08-24): the label/color used to
@@ -4524,6 +4938,13 @@ let renderPendingAfterRename = false;
 // unreleased hold defers the strip's rebuilds until the next press.
 let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
+// The strip's last rendered SIGNATURE (renderTabs, 2026-09-06): every input the strip paints, as one string.
+// renderTabs runs on every kernel push — on a 33-tab dashboard about 1500 of 2554 tails in an hour went to
+// tabs that were not active, and rebuilding 33 tab nodes with their listeners and then reading each one's
+// offsetTop (paintTabRowLines forces a layout) was those tails' whole 2-4 ms floor. An unchanged signature
+// returns before the rebuild. Reset ("") wherever the strip's DOM is changed outside renderTabs — a drag's
+// live reorder — so the next render rebuilds whatever the inputs say.
+let tabStripSig = "";
 // Release the press-hold and flush any deferred rebuild. Hoisted so the DRAG handlers can call it
 // too: a native drag swallows the pointerup, so without this a finished drag would leave the strip
 // frozen against pushes until the next unrelated press (see the dragend handler).
@@ -4533,14 +4954,29 @@ function releaseTabStrip(): void {
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
 }
 
-// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04): the tag's dot and
-// name at the tab's own type size; folded, the count and one pip for the gist. It carries
-// data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip rebuilds on every
-// push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
-// order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
-// trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
-// never read as one run.
-function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false): HTMLElement {
+// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04). It reads as a LABEL,
+// not a session (the user 2026-09-06): a disclosure chevron that flips with the fold, the tag's color
+// as a short bar, the name in the strip's small letter-spaced label style, and the member count — the
+// folded-away count while folded. None of a tab's own affordances: no close, no state class, no dot of
+// its own. Folded, it carries two MEMBER-derived marks after the count, small, so a fold hides no
+// "needs you": the summary pip (tab-state.ts's rule, the tab's own colors) and the user-todo flag. It
+// carries data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip
+// rebuilds on every push), is a button to the keyboard too (Enter or Space fold and open; the chevron
+// says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted
+// union order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The
+// untagged trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the
+// loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
+// the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
+// member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
+// To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
+// the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
+// name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
+// flag's when it wears them), so nothing runs into it unplanned; the flag's phrase rides it on purpose —
+// the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit
+// does), so the count and the names have a spoken carrier there too; and the header holding the active
+// tab is a labeled group, not a button — it takes no action and no focus, and "button, expanded"
+// promised both.
+function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string[]): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
     sep.title = "sessions in no tag";
@@ -4549,40 +4985,120 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false)
   const name = sec.name;
   const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : "") + (holdsActive ? " holds-active" : ""));
   head.dataset.group = name;
-  // The section holding the ACTIVE tab is UNFOLDABLE while it is active — planStrip renders it open
-  // whatever the store says (keyboard focus must never land on a hidden node) — so its header carries
-  // NO fold action: a click there used to store folded=true that could not render, so "click to fold
-  // this group" did nothing visible on every click and then bit when the user switched tabs.
-  // group-active is a no-op the delegate still flashes (the click is acknowledged); the header still
-  // drags to reorder the groups. Every other header derives the click from the state it RENDERED
-  // (data-folded), never from the store.
-  head.dataset.act = holdsActive ? "group-active" : "toggle-group";
+  // Every header folds — the one holding the ACTIVE tab too (the user 2026-09-06; it used to be forced
+  // open, with a no-op click, so keyboard focus never landed on a hidden node — now the header IS the
+  // hidden tab's stand-in: focusActiveTab lands on it, ←/→ step from it, and the pane shows the
+  // section's snapshot). The click derives the next state from the one it RENDERED (data-folded),
+  // never from the store, and the delegate ("toggle-group") also shows the section in the pane.
+  head.dataset.act = "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
-  head.title = holdsActive
-    ? `${name} — this group holds the active tab; drag to reorder the groups`
-    : collapsed
-      ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
-      : `${name} — click to fold this group; drag to reorder the groups`;
-  const dot = el("span", "tab-group-dot");
-  if (sec.color) dot.style.background = sec.color;
-  head.appendChild(dot);
+  if (snapView === name) head.classList.add("snap-shown");   // the pane is showing this section
+  // THE WAY BACK (the 2026-09-06 review: a header click swapped the pane and only a session pick swapped it
+  // back). The header whose snapshot the pane shows, OPEN, holding the tab being read, is the click that put
+  // the section in the pane: a second click puts the transcript back (show-transcript, leaveSnapshot) instead
+  // of folding the section under its reader. The act is derived from the rendered state, as the fold is
+  // (data-folded), and the title says which click this is. Escape does the same from anywhere.
+  const back = snapView === name && !collapsed && holdsActive;
+  if (back) head.dataset.act = "show-transcript";
+  const total = sec.ids.length;
+  const words = headWords(name, total, hidden.length, collapsed, holdsActive, back);
+  head.title = words.title;
+  let spoken = words.label;
+  // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
+  // pointer. NOT when they land on the flag button inside the header: a native button activates
+  // itself (its own click → open-group), and cancelling its keydown here clicked the header instead.
+  head.setAttribute("role", "button");
+  // not a disclosure while its press puts the transcript back (`back`): "expanded" promised a fold that press
+  // never does (the round-2 review), so the state is left off and the label (headWords) names the action instead
+  if (!back) head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  // the header holding the tab being read says so to assistive tech as well as by its mark (the
+  // name in the prose tone, accent-underlined) — the tab itself may be folded out of the tree
+  if (holdsActive) head.setAttribute("aria-current", "true");
+  head.tabIndex = 0;
+  head.addEventListener("keydown", (e) => {
+    if ((e.target as HTMLElement | null)?.closest(".tab-group-flag")) return;
+    // THE STAND-IN's keys (the active tab folded away under THIS header; tab-groups.ts): what a focused tab
+    // answers. ←/→ step to the neighbouring tab on the strip from the header's place, focus following
+    // (onTabKey's rule; the window's ←/→ do the same when focus is elsewhere). Enter drops back into the
+    // message box while the transcript shows and the box takes input (the mirror of the box's Escape,
+    // which lands here); with the box disabled (the snapshot up, a closed session) Enter presses the header
+    // as Space does. Space always presses: fold or open, the pane showing the section (toggle-group), or the
+    // transcript back (show-transcript). Any other header: arrows bubble to the window's ←/→ (they step the
+    // ACTIVE tab, focus staying put) and Enter presses, as on any button.
+    const aid = activeId;
+    const standIn = !!aid && collapsedTabIds.has(aid) && sec.ids.includes(aid);
+    if (aid && standIn && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      const nb = neighborOfFolded(lastStripItems, aid, e.key === "ArrowRight" ? 1 : -1);
+      if (nb) { setActive(nb); focusActiveTab(); }
+      return;
+    }
+    if (e.key === "Enter" && standIn && !snapView && focusComposerOrAsk()) { e.preventDefault(); return; }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); head.click(); }
+  });
+  const caret = el("span", "tab-group-caret");
+  caret.textContent = "▸";                       // turned down by CSS while open (.tab-group-head:not(.collapsed))
+  caret.setAttribute("aria-hidden", "true");
+  head.appendChild(caret);
+  const swatch = el("span", "tab-group-swatch");  // the tag's color as a short bar — a dot beside a name is a session pip
+  if (sec.color) swatch.style.background = sec.color;
+  swatch.setAttribute("aria-hidden", "true");
+  head.appendChild(swatch);
   const label = el("span", "tab-group-name");
   label.textContent = name;
   head.appendChild(label);
+  const n = el("span", "tab-group-count");
+  n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
+  head.appendChild(n);
   if (collapsed) {
-    const n = el("span", "tab-group-count");
-    n.textContent = String(sec.ids.length);
-    head.appendChild(n);
-    // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
-    // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
-    // tab strip renders that amber too; a red pip there was a false interrupt)
-    const kind = sectionPip(sec.ids.map((id) => sessions.get(id)?.status));
+    // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a
+    // hidden member blocked on you or waiting for you, gold for working, amber for an API error
+    // retrying on its own (the tab renders that amber too; a red pip there was a false interrupt).
+    // After the count and small, so the header still reads as a label; the tooltip names the sessions.
+    // Over the HIDDEN members only: a pinned member's own tab shows its state. Not the header's own
+    // pip — it wears no state class — and never a tab pip class (the kernel's mobile scrape keys on those).
+    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
     if (kind) {
       const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
-      pip.title = SECTION_PIP_TITLE[kind];
+      pip.title = sectionPipTitle(kind, sectionPipMembers(kind, hidden.map((id) => sessions.get(id))));
+      pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the header's label
+      spoken += "; " + pip.title;
       head.appendChild(pip);
     }
+    // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
+    // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
+    // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
+    // resolves the todo clears both. Only a FOLDED header carries it: open, every member tab wears
+    // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
+    // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
+    // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
+    // so Enter and Space are the button's own click too) and its own dragstart guard, so a press that
+    // wanders never starts the header's group drag (tab-state.ts owns the count and the title). Over
+    // the HIDDEN members only: a pinned member's own tab shows its glyph.
+    const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
+    if (flag) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "tab-group-flag";
+      b.dataset.act = "open-group";
+      b.dataset.group = name;
+      b.title = sectionTodoTitle(flag);
+      b.setAttribute("aria-label", b.title);
+      spoken += "; " + b.title;   // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and names
+      const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
+      glyph.textContent = "⚑";
+      b.appendChild(glyph);
+      if (flag.count > 1) {
+        const c = el("span", "tab-group-count");   // the header's text size (font: inherit)
+        c.textContent = String(flag.count);
+        b.appendChild(c);
+      }
+      b.draggable = true;
+      b.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
+      head.appendChild(b);
+    }
   }
+  head.setAttribute("aria-label", spoken);
   head.draggable = true;
   head.addEventListener("dragstart", (e) => {
     draggedGroup = name;
@@ -4645,6 +5161,8 @@ function makePlaceholderTab(id: string): HTMLElement {
   const swirl = el("img", "tab-ph-swirl") as HTMLImageElement;
   swirl.src = mediaSrc("romp-swirl-glyph.svg"); swirl.alt = ""; swirl.onerror = () => swirl.remove();
   tab.appendChild(swirl);
+  const phEmoji = tabEmojiNode(meta?.emoji);
+  if (phEmoji) tab.appendChild(phEmoji);
   const label = el("span", "tab-label");
   if (meta?.name) label.replaceChildren(...hostNameNodes(meta.name, id));
   else label.textContent = "…";
@@ -4737,18 +5255,31 @@ function ensureTabRowObserver(bar: HTMLElement): void {
   tabRowObserver.observe(bar);
 }
 
+// The tab's emoji label (the user 2026-09-06): one glyph before the name, set from the tab menu, by the
+// session itself (its set_emoji tool) or by `romp emoji`; the kernel stores it beside the name and color
+// and every dashboard reads the same one. EXPOSED to assistive technology — NOT aria-hidden (review,
+// 2026-09-06; it shipped hidden as "an ornament ahead of the identity"). The glyph is a label someone put
+// there on purpose, and session names are not unique on a host: when two live tabs both say "web" and one
+// wears a moon, the moon is the only thing besides color that tells them apart, and hidden it left a screen
+// reader announcing "web", "web". Exposed, a reader speaks the character's own name — "crescent moon web" —
+// which is what the sighted user sees, a word or two ahead of the name. The alternative, an aria-label on
+// the tab, was weighed and passed over: it would replace the tab's whole computed name (the host prefix,
+// the ⚑, the ✕'s text) with a synthetic phrase, and ARIA prohibits aria-label on a role-less div — the
+// strip would have to become a real tablist first, which is its own change. The tab menu's copy of the
+// glyph stays hidden (below): there the row's text "Emoji…" is the label and the icon only repeats it.
+// Null when none, so callers append nothing rather than an empty span.
+function tabEmojiNode(emoji: string | undefined): HTMLElement | null {
+  if (!emoji) return null;
+  const e = el("span", "tab-emoji");
+  e.textContent = emoji;
+  return e;
+}
+
 function renderTabs() {
   if (renameActive) { renderPendingAfterRename = true; return; }
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
   const bar = document.getElementById("tabs");
   if (!bar) return;
-  // Preserve TAB-MODE keyboard focus across the rebuild (the user 2026-06-29). renderTabs runs on EVERY kernel
-  // push (0.5–3s), and replaceChildren() destroys the focused tab — dropping focus out of the strip (often out
-  // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
-  // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
-  // the active tab after the rebuild so "tab mode" survives the repaint.
-  const refocusTab = bar.contains(document.activeElement);
-  bar.replaceChildren();
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
   // verbatim (applyTabOrder), plus any just-arrived tab not yet pushed. An id whose session hasn't landed yet
   // draws as a placeholder (name+color, non-interactive) that fills in when build_session arrives — so tabs
@@ -4788,16 +5319,64 @@ function renderTabs() {
   // reveal agree — then that section's tabs, and the untagged trail behind a plain separator
   // (tab-groups.ts owns the rule). A folded section renders its header alone, with the count and
   // a pip when a member is working or blocked, so the gist survives the fold (progressive
-  // disclosure). The ACTIVE tab's section never renders folded — keyboard focus must never land
-  // on a hidden node — and visibleOrder() drops the folded ids so ←/→ skip them. DESKTOP ONLY: on
+  // disclosure). The ACTIVE tab's section folds like any other (the user 2026-09-06): its header
+  // stands in for the hidden tab (focus, ←/→, the pane's snapshot), and visibleOrder() drops the
+  // folded ids so ←/→ skip them. DESKTOP ONLY: on
   // the phone layout (phoneLayout — the kernel page's own media rule) the plan is the flat strip,
   // since the phone's session list is scraped from every rendered tab and has no header to unfold.
   // A create in flight (the provisional tab) sections under the tags its request named.
-  const plan = planStrip(visibleIds, viewTagUnion(effViews()), readTabGroups(), activeId, phoneLayout(),
+  const unions = viewTagUnion(effViews());
+  const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
+  lastStripItems = plan.items;   // before the skip below: the snapshot (stripAftermath → renderSnapshot) and the folded stand-in read the plan from here on either path
+  // AN UNCHANGED STRIP IS NOT REBUILT (2026-09-06). The signature is every input the loop below and the
+  // controls after it paint — the plan (ids in order, section headers with their folds and hidden members),
+  // the active and peek tabs, the section the pane shows (snapView: a header's snap-shown mark, its way-back
+  // act and its words derive from it, and leaveSnapshot changes it with no fold change), and per visible
+  // session (rendered or folded away, since a folded header's pip and flag derive from its members) the
+  // name, color, emoji, state and its tab class, faded, context and
+  // its tint, todo flag, host-down mark and note, or a placeholder's meta; plus the layout mode, the tag lens
+  // and unions the filter chips render, the context-gauge setting, the theme and the colormap (the gauge's tone
+  // and the compacting sweep's gradient read them, so a settings change repaints through this signature), and
+  // the + tab's key hint. Equal string,
+  // same DOM: the guards above (a rename in flight, a pressed tab) still stand, the placeholder and the
+  // all-hidden blank still reconcile (stripAftermath), and the mobile slot's once-only mount still happens.
+  // Anything that mutates the strip's DOM outside this function resets tabStripSig (the tab dragstart).
+  const stripSig = JSON.stringify([
+    activeId, peekId, phoneLayout(), plan.sectioned, ids, visibleIds, activeId ? tabInView(activeId) : null,
+    settings.tabCtx, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
+    surfaceLens(effViews(), "chat"), viewTagUnion(effViews()),
+    plan.items.map((it) => ("head" in it ? ["h", it.head.name, it.head.localId, it.head.color, it.head.ids, it.folded, it.active, it.hidden] : it.id)),
+    snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
+    visibleIds.map((id) => {
+      const s = sessions.get(id);
+      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji]; }
+      const st = s.status, down = hostIsDown(id);
+      return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), !!st.faded,
+              st.ctx, st.ctxColor, st.ctxTone, !!(s.userTodos && s.userTodos.length), down, down ? hostDownNote(id) : ""];
+    }),
+  ]);
+  const mslotEl = document.getElementById("mtag-slot");
+  if (stripSig === tabStripSig && !(mslotEl && !mslotEl.firstChild)) { stripAftermath(visibleIds, ids); return; }
+  tabStripSig = stripSig;
+  // Preserve TAB-MODE keyboard focus across the rebuild (the user 2026-06-29). renderTabs runs on EVERY kernel
+  // push (0.5–3s), and replaceChildren() destroys the focused tab — dropping focus out of the strip (often out
+  // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
+  // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
+  // the active tab after the rebuild so "tab mode" survives the repaint.
+  // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
+  // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
+  // the active tab. The header's ⚑ flag is a button INSIDE it, and closest() names the header from
+  // there too: remember which of the two held focus, so a push does not walk the user from the flag
+  // back onto the header. Captured before the tab rule below, which keeps its pinned two-line shape.
+  const focusedEl = document.activeElement as HTMLElement | null;
+  const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
+  const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
+  const refocusTab = bar.contains(document.activeElement);
+  bar.replaceChildren();
   for (const item of plan.items) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active)); continue; }
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden)); continue; }
     const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
@@ -4816,6 +5395,7 @@ function renderTabs() {
     // snapshots it), hence the fixed off-viewport 1px div installed once below.
     tab.addEventListener("dragstart", (e) => {
       draggedId = id; tabDragCommitted = false;
+      tabStripSig = "";   // the drag live-reorders the strip's DOM: whatever the order ends up, the next render rebuilds
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
       tab.classList.add("dragging");
       hideTabTip();                        // defect 2 (2026-08-28): the hover popover pinned open through the gesture
@@ -4902,6 +5482,8 @@ function renderTabs() {
       tab.addEventListener("mouseenter", () => { label.style.color = full; label.classList.remove("name-faded"); });
       tab.addEventListener("mouseleave", () => { label.style.color = fadedColor(full); label.classList.add("name-faded"); });
     }
+    const emojiEl = tabEmojiNode(s.emoji ?? tabMeta.get(id)?.emoji);   // before the name; the pushed meta fills a frame that predates the field
+    if (emojiEl) tab.appendChild(emojiEl);
     tab.appendChild(label);
     // USER-TODO glyph (plans/user-todos.md, slice 2): this session has flagged something it needs
     // from you — a small NON-NUMERIC mark right of the name (tabs deliberately carry no counts);
@@ -4928,7 +5510,7 @@ function renderTabs() {
     }
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.
-    tab.addEventListener("mouseenter", () => showTabTip(tab, s));
+    tab.addEventListener("mouseenter", () => showTabTip(tab, sessions.get(id) ?? s));   // fresh: the node outlives a frame that replaced the session object (the unchanged-strip skip)
     tab.addEventListener("mouseleave", hideTabTip);
     const close = el("span", "tab-close");
     close.textContent = "×";
@@ -4965,18 +5547,14 @@ function renderTabs() {
     openTagMenu(btn, {
       lens: () => surfaceLens(effViews(), "chat"),
       unions: () => viewTagUnion(effViews()),
-      onApply: (l) => {
-        const v = JSON.parse(JSON.stringify(effViews() || { active: "all", tags: [] }));
-        v.actives = Object.assign({}, v.actives, { chat: l });
-        postViews(v);
-      },
+      onApply: (l) => { postLens({ actives: Object.assign({}, (effViews() || {}).actives, { chat: l }) }); },
       // "Group tabs by tag" (tab groups, the user 2026-09-04): the per-browser sectioned-strip
       // switch, at the foot beside Configure tags… — the write notifies and the strip re-renders.
       // Desktop only: the phone layout renders the flat strip (planStrip), so it offers no switch —
       // neither here nor on the phone mount below.
       ...(phoneLayout() ? {} : {
         groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
-                       toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
+                       toggle: () => { const st = tabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -4996,9 +5574,7 @@ function renderTabs() {
   {
     const v = effViews();
     syncTagFilter(tagBtn, tagChipsHost, surfaceLens(v, "chat"), viewTagUnion(v), (l) => {
-      const nv = JSON.parse(JSON.stringify(v || { active: "all", tags: [] }));
-      nv.actives = Object.assign({}, nv.actives, { chat: l });
-      postViews(nv);
+      postLens({ actives: Object.assign({}, (v || {}).actives, { chat: l }) });
     });
   }
   // T161 (the user 2026-08-28, Android: no tag control on mobile): the phone chat page hides the whole
@@ -5015,11 +5591,7 @@ function renderTabs() {
         openTagMenu(btn, {
           lens: () => surfaceLens(effViews(), "chat"),
           unions: () => viewTagUnion(effViews()),
-          onApply: (l) => {
-            const mv = JSON.parse(JSON.stringify(effViews() || { active: "all", tags: [] }));
-            mv.actives = Object.assign({}, mv.actives, { chat: l });
-            postViews(mv);
-          },
+          onApply: (l) => { postLens({ actives: Object.assign({}, (effViews() || {}).actives, { chat: l }) }); },
           onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
         });
       });
@@ -5032,20 +5604,44 @@ function renderTabs() {
     const mv2 = effViews();
     syncTagFilter(mslot.children[0] as HTMLElement, mslot.children[1] as HTMLElement,
       surfaceLens(mv2, "chat"), viewTagUnion(mv2), (l) => {
-        const nv = JSON.parse(JSON.stringify(mv2 || { active: "all", tags: [] }));
-        nv.actives = Object.assign({}, nv.actives, { chat: l });
-        postViews(nv);
+        postLens({ actives: Object.assign({}, (mv2 || {}).actives, { chat: l }) });
       });
   }
   paintTabRowLines(bar);
   ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
-  if (refocusTab) focusActiveTab();
+  if (focusedGroup !== undefined) {
+    const h = Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((x) => x.dataset.group === focusedGroup);
+    // back onto the flag when the flag held it — unless this very push resolved the todo and the rebuilt
+    // header has none, when the header takes it; the group gone: the old rule (and focusActiveTab itself
+    // lands on the header when the active tab is folded away under it)
+    if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || h).focus(); else focusActiveTab();
+  } else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
   // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
   if (tabTipOwner && !tabTipOwner.isConnected) rehoverTabTip();
+  stripAftermath(visibleIds, ids);
+}
+/** What follows a strip render whether or not the strip was rebuilt: the no-sessions placeholder, the section
+ *  snapshot's refresh (its rows read session state the strip's signature does not carry: a member's last
+ *  event, its working note), and the all-hidden blank (all idempotent, all read live state a skipped rebuild
+ *  must not leave behind). */
+function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): void {
   syncNoSessionsPlaceholder(visibleIds.length, ids.length);
+  // the section snapshot follows the push (renderTabs runs on every one): a no-op when nothing a row
+  // shows has changed (snapshotModel's same-object return). The section GONE from the plan (its tag
+  // deleted or renamed, its last member hidden or moved out, sectioning turned off) is the event that
+  // ends the view: renderSnapshot clears snapView and hides the host, and the pane goes back to the
+  // active session's transcript HERE (showActive, which re-enables the composer), because no other
+  // caller follows a push with showActive (the 2026-09-06 review: the pane stayed blank, the box disabled).
+  // A row that held focus is hidden with the host, so focus goes to the active tab, as after the user's own
+  // Escape (snapshotHoldsFocus, read before renderSnapshot hides it); the event is the push whose plan dropped
+  // the section.
+  const shown = snapView;
+  const held = shown ? snapshotHoldsFocus() : false;
+  if (snapView) renderSnapshot();
+  if (shown && !snapView) { showActive(); if (held) focusActiveTab(); }
   // Hiding the LAST visible session must also blank its transcript: a strip with no tabs cannot sit
   // over a hidden session's live chat (the ghost would show exactly what the hide asked to put away).
   // Restored the moment anything is visible again — the placeholder owns the empty state meanwhile.
@@ -5068,6 +5664,7 @@ let ctxMenuEl: HTMLElement | null = null;
 function dismissTabMenu() {
   ctxMenuEl?.remove();
   ctxMenuEl = null;
+  tagsFlyNewInput = null;
 }
 
 // Right-clicking a SELECTION in the transcript pops a small menu with Reply (quote
@@ -5142,9 +5739,17 @@ function setSessionColor(id: string, bg: string) {
   if (vscodeApi) vscodeApi.postMessage({ type: "setSessionColor", id, bg });
 }
 
+// Set or clear a session's tab emoji ("" clears). NOT optimistic, unlike the color swatch: the kernel is
+// the validator (exactly one emoji, nothing textual — its one-line reason comes back as a warn), so the
+// strip changes on its {emojiSet} confirm, the way a rename changes on {renamed}. The dialog that called
+// this has already acknowledged the click (its button reads "Setting…") and waits for that answer.
+function setSessionEmoji(id: string, emoji: string) {
+  if (vscodeApi) vscodeApi.postMessage({ type: "setSessionEmoji", id, emoji });
+}
+
 // Small inline-SVG icon for the tab menu's toggle items (trusted constant markup; `off` slashes + dims it,
 // matching the timeline lane toggles). 16-unit viewBox; currentColor so .ctx-icon/.off set the tint.
-function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil", off: boolean): HTMLElement {
+function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "pencil" | "smile", off: boolean): HTMLElement {
   const span = el("span", "ctx-icon" + (off ? " off" : ""));
   const slash = off ? '<line x1="1.6" y1="14.4" x2="14.4" y2="1.6"/>' : "";
   const body = kind === "feed"
@@ -5159,6 +5764,8 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
           ? '<path d="M2 3.4 A1.4 1.4 0 0 1 3.4 2 L7.6 2 A1.4 1.4 0 0 1 8.6 2.4 L13.6 7.4 A1.4 1.4 0 0 1 13.6 9.4 L9.4 13.6 A1.4 1.4 0 0 1 7.4 13.6 L2.4 8.6 A1.4 1.4 0 0 1 2 7.6 Z"/><circle cx="5.4" cy="5.4" r="1.1"/>'  // luggage tag (session tags)
         : kind === "pencil"
           ? '<path d="M3 13 L3.6 10.4 L10.8 3.2 A1.3 1.3 0 0 1 12.8 5.2 L5.6 12.4 Z"/><line x1="9.8" y1="4.2" x2="11.8" y2="6.2"/>'  // pencil (rename)
+        : kind === "smile"
+          ? '<circle cx="8" cy="8" r="6"/><path d="M5.4 9.6 C6.2 11 9.8 11 10.6 9.6"/><circle cx="6" cy="6.6" r="0.7" fill="currentColor"/><circle cx="10" cy="6.6" r="0.7" fill="currentColor"/>'  // smiley (tab emoji)
           : '<path d="M8 2 C5.9 2.2 4.7 3.8 4.7 5.8 L4.7 8 L3.4 9.9 L12.6 9.9 L11.3 8 L11.3 5.8 C11.3 3.8 10.1 2.2 8 2 Z"/><path d="M6.6 11.6 A1.5 1.5 0 0 0 9.4 11.6"/>';  // bell (system notifications)
   span.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
     + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + slash + "</svg>";
@@ -5203,6 +5810,26 @@ function showTabMenu(e: MouseEvent, id: string) {
     mv.appendChild(bodyEl);
     if (!isTmux) mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
     menu.appendChild(mv);
+  }
+  // Emoji… sits with Rename too (the user 2026-09-06): one glyph before the name on the tab, the same
+  // dress as its siblings. The icon IS the current emoji when there is one (so the menu shows what the
+  // tab wears), the smiley otherwise; the dialog does the rest (showEmojiPrompt) and the kernel
+  // confirms with {emojiSet} the way a rename confirms with {renamed}.
+  {
+    const curEmoji = sessions.get(id)?.emoji || tabMeta.get(id)?.emoji || "";
+    const em = el("div", "ctx-item ctx-item-toggle");
+    if (curEmoji) {
+      const ic = el("span", "ctx-icon glyph"); ic.textContent = curEmoji; ic.setAttribute("aria-hidden", "true");
+      em.appendChild(ic);
+    } else em.appendChild(ctxIcon("smile", false));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Emoji…"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = "one glyph before the name on the tab — the session can set its own too";
+    bodyEl.appendChild(sb);
+    em.appendChild(bodyEl);
+    em.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showEmojiPrompt(id); });
+    menu.appendChild(em);
   }
   // Colors join Rename in the AESTHETIC section (the user 2026-08-24, the final by-kind grouping:
   // [Rename + colors] / [feed, mail, bell, billing, Tags] / [Browse]). The swatch row itself is
@@ -5316,9 +5943,11 @@ function showTabMenu(e: MouseEvent, id: string) {
   // no host prefixes): an ADD lands on the local store when the name exists locally, else the
   // tag's single home over the editTag wire; a REMOVE removes the (name, member) pair from EVERY
   // store holding it; New tag… creates locally with the next unused palette colour. Local writes
-  // post the whole blob (postViews — pendingSessionViews echoes instantly); remote writes ride the
-  // editTag op and settle on the next push (a refused edit re-appears — the kernel's loud
-  // tagEditFailed lands on the timeline dialog, 628's surface).
+  // are TARGETED tagEdit ops on one optimistic blob (postTagEdit — pendingSessionViews shows it
+  // instantly, the kernel's ack settles it; the user 2026-09-05, whose whole-blob burst was
+  // refused as stale against itself); remote writes ride the editTag op and settle on the next
+  // push (a refused edit re-appears — the kernel's loud tagEditFailed lands on the timeline
+  // dialog, 628's surface).
   {
     const unionFor = () => viewTagUnion(effViews());
     const holding = () => unionFor().filter((g) => g.members.includes(id));
@@ -5332,54 +5961,78 @@ function showTabMenu(e: MouseEvent, id: string) {
     bodyEl.appendChild(sb);
     tagsItem.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; tagsItem.appendChild(caret);
+    // what one union edit did to the copy: the TARGETED ops to post for the local store, and whether
+    // a remote entry's mirror changed (presentation only — the remote's own next push is the truth)
+    type UnionEdit = { ops: TagEditOp[]; mirrored: boolean };
     const editUnion = (g: TagUnion, edit: { add?: string[]; remove?: string[] }) => {
       // ONE optimistic blob per gesture: the local store's edit AND the remote entries' mirror both
       // land in pendingSessionViews so the flyout reads true instantly. Echoed remoteTags are
       // DERIVED — the kernel drops them from the echo — so mutating the copy is presentation-only;
       // the remote's own next push is the durable truth (a refused edit re-appears there).
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-      const dirty = applyUnionEdit(nv, g, edit);
-      if (dirty) postViews(nv);
+      postUnionEdits(nv, applyUnionEdit(nv, g, edit));
     };
     // the edit itself, applied to a blob the caller posts — so a MOVE between groups (below) is two
-    // edits on ONE blob, posted once
-    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): boolean => {
-      let dirty = false;
+    // edits on ONE blob, shown once
+    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): UnionEdit => {
+      const ops: TagEditOp[] = [];
+      let mirrored = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
+      // a union whose local tag is a create still in flight (`pending`) takes no op: its id is the
+      // placeholder the ack replaces, and the kernel would refuse it as a tag that does not exist
+      // (round 4 of the 2026-09-05 review). The rows below offer no gesture on it either.
       if (edit.add?.length) {
-        if (g.localId) {
+        if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
-          if (t) { t.members = Array.from(new Set((t.members || []).concat(edit.add))); dirty = true; }
+          if (t) {
+            t.members = Array.from(new Set((t.members || []).concat(edit.add)));
+            ops.push({ op: "addMember", tid: g.localId, sids: edit.add.slice() });
+          }
         } else if (g.remotes.length) {
           vscodeApi?.postMessage({ type: "editTag", edit: { host: g.remotes[0].host || "", name: g.name, add: edit.add.slice() } });
           const mine = nvRemote(g.remotes[0]);
-          if (mine) { mine.members = Array.from(new Set((mine.members || []).concat(edit.add))); dirty = true; }
+          if (mine) { mine.members = Array.from(new Set((mine.members || []).concat(edit.add))); mirrored = true; }
         }
       }
       if (edit.remove?.length) {
-        if (g.localId) {
+        if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
           if (t && (t.members || []).some((m) => edit.remove!.includes(m))) {
             t.members = (t.members || []).filter((m) => !edit.remove!.includes(m));
-            dirty = true;
+            ops.push({ op: "removeMember", tid: g.localId, sids: edit.remove.slice() });
           }
         }
         for (const rt of g.remotes) {
           if (!(rt.members || []).some((m) => edit.remove!.includes(m))) continue;
           vscodeApi?.postMessage({ type: "editTag", edit: { host: rt.host || "", name: g.name, remove: edit.remove!.slice() } });
           const mine = nvRemote(rt);
-          if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); dirty = true; }
+          if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); mirrored = true; }
         }
       }
-      return dirty;
+      return { ops, mirrored };
+    };
+    // the writes for one gesture: N targeted ops, the ONE optimistic copy shown for all of them (the
+    // kernel applies them in order on this socket, so the strip never shows a half-moved state). A
+    // remote-only edit has no local op: its mirror shows until the next frame — remoteTags are not
+    // in the echo key, so that frame clears it — exactly the lifetime it had before.
+    const postUnionEdits = (nv: SessionViews, ...edits: UnionEdit[]) => {
+      const ops = edits.flatMap((e) => e.ops);
+      if (ops.length) { for (const op of ops) postTagEdit(nv, op); }
+      else if (edits.some((e) => e.mirrored)) { pendingSessionViews = nv; renderTabs(); }
     };
     // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
-    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state
+    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state.
+    // With both tags local it is ONE `move` op the kernel applies under its lock, both halves or
+    // neither (the 2026-09-05 review: as two ops, a refused second half left the session in no
+    // group). A half with no local home rides its own wire (editTag) as before.
     const moveUnion = (from: TagUnion, to: TagUnion) => {
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
-      const added = applyUnionEdit(nv, to, { add: [id] });
-      const removed = applyUnionEdit(nv, from, { remove: [id] });
-      if (added || removed) postViews(nv);
+      const a = applyUnionEdit(nv, to, { add: [id] });
+      const r = applyUnionEdit(nv, from, { remove: [id] });
+      const add = a.ops.find((o) => o.op === "addMember"), rem = r.ops.find((o) => o.op === "removeMember");
+      if (add && rem && a.ops.length === 1 && r.ops.length === 1)
+        postUnionEdits(nv, { ops: [{ op: "move", tid_from: rem.tid, tid_to: add.tid, sid: id }], mirrored: a.mirrored || r.mirrored });
+      else postUnionEdits(nv, a, r);
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
@@ -5407,20 +6060,31 @@ function showTabMenu(e: MouseEvent, id: string) {
           const bodyE = el("span", "ctx-item-body");
           const lb = el("span", "ctx-item-label"); lb.textContent = g.name; bodyE.appendChild(lb);
           row.appendChild(bodyE);
+          if (g.pending) {
+            // a create still in flight: the row shows, and takes no gesture until the ack names the
+            // tag (round 4 of the 2026-09-05 review: a ✕ here posted the placeholder id and was
+            // refused as a tag that does not exist) — the same "creating…" the input reads
+            const busy = el("span", "ctx-item-sub"); busy.textContent = "creating…"; row.appendChild(busy);
+            sub.appendChild(row);
+            continue;
+          }
           const x = el("button", "ctx-tag-x") as HTMLButtonElement;
           x.type = "button"; x.textContent = "✕"; x.title = "remove this tag from the session — everywhere it holds it";
           x.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { remove: [id] }); build(); sb.textContent = subText(); });
           row.appendChild(x);
           sub.appendChild(row);
         }
-        const others = unionFor().filter((g) => !g.members.includes(id));
+        const others = unionFor().filter((g) => !g.members.includes(id) && !g.pending);   // a tag being created is not joinable yet
         if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
         // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): a session's section is its HOME
         // tag — the first holder in tagOrder — so while the strip is sectioned and the session has
         // one, each other tag's row reads "Move to <name>": one click adds that tag and drops the
         // home tag, leaving any other tag alone (they filter, they do not section). The row's "+"
-        // adds without moving. With no home tag, "+ <name>" IS the move.
-        const home = readTabGroups().on ? holding()[0] : undefined;
+        // adds without moving. With no home tag, "+ <name>" IS the move. A home tag whose create is
+        // still in flight cannot be moved out of (no id to address); the rows read "+ <name>" until
+        // the ack.
+        const home0 = readTabGroups().on ? holding()[0] : undefined;
+        const home = home0 && !home0.pending ? home0 : undefined;
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
@@ -5441,6 +6105,36 @@ function showTabMenu(e: MouseEvent, id: string) {
           }
           sub.appendChild(row);
         }
+        // SHOW WHEN FOLDED (the user 2026-09-06): keep this tab visible under its folded group. A
+        // per-browser view preference like the fold itself (romp:tabgroups), PER SECTION: one entry per
+        // tab and section, storing the section's name and its local tag's id (tab-groups.ts PinnedRef),
+        // matched under either, so the pin follows the section through a host attaching or detaching,
+        // a same-named tag appearing on the other side, and the local tag's rename (adoptBase carries
+        // the name across). A move to another group starts unpinned there; on and off act on the home
+        // section's entry alone, so the row's copy — "while <home> is folded" — is the whole truth.
+        // Only while the strip is sectioned and the session has a home tag — there is no fold to show
+        // through otherwise. The row wears the home tag's chip and the menus' ✓ when on; the write
+        // prunes the pins of tags and sessions that are gone — judging only entries whose session this
+        // page can know about: a known tab, a local sid, or one on a host that is attached and up with
+        // its tabs in this pane (reachableHosts); a detached, down or still-arriving host's pins wait
+        // for it — (this is the one write path,
+        // and a prune here moves nothing on screen), notifies (TABGROUPS_EVENT), and the strip
+        // re-renders, the fold's own path.
+        if (home) {
+          const sec = sectionRef(home);
+          const on = isPinned(tabGroups(), sec, id);
+          sub.appendChild(el("div", "ctx-sep"));
+          const row = el("div", "ctx-item ctx-item-toggle ctx-item-pin" + (on ? " current" : ""));
+          const chip = el("span", "ctx-tag-dot"); chip.style.background = home.color || "var(--dim)"; row.appendChild(chip);
+          const bodyE = el("span", "ctx-item-body");
+          const lb = el("span", "ctx-item-label"); lb.textContent = "Show when folded"; bodyE.appendChild(lb);
+          const sb2 = el("span", "ctx-item-sub");
+          sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
+          bodyE.appendChild(sb2);
+          row.appendChild(bodyE);
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds(), reachableHosts())); build(); });
+          sub.appendChild(row);
+        }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
         // New tag… — an inline input, never a native prompt (the menus vocabulary)
         const nrow = el("div", "ctx-item ctx-item-newtag");
@@ -5449,6 +6143,7 @@ function showTabMenu(e: MouseEvent, id: string) {
         inp.addEventListener("click", (e2) => e2.stopPropagation());
         inp.addEventListener("keydown", (e2) => {
           if (e2.key !== "Enter") return;
+          if (createInFlight(viewsWrites)) return;   // one create at a time: the ack re-arms the input (syncNewTagInput)
           const name = inp.value.trim();
           if (!name) return;
           const existing = unionFor().find((g) => g.name === name);
@@ -5456,12 +6151,18 @@ function showTabMenu(e: MouseEvent, id: string) {
           const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
           const used = new Set(viewTags(nv).map((t) => t.color));
           const color = paletteColors.find((c) => !used.has(c)) || paletteColors[0] || "#1EA1EB";
-          nv.tags = viewTags(nv).concat([{ id: "g" + Date.now().toString(36), name, color, members: [id] }]);
+          // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id and the ack's
+          // blob (which carries it) replaces this copy — no client-minted id can collide with a
+          // store it has not read (the legacy path re-ids it: postTagEdit)
+          const tg = { id: "pending-" + Date.now().toString(36), name, color, members: [id] };
+          nv.tags = viewTags(nv).concat([tg]);
           delete nv.groups;
-          postViews(nv);
+          // ONE targeted create carrying the session — the tag and its first member land together
+          postTagEdit(nv, { op: "create", name, color, sids: [id] }, tg.id);
           build(); sb.textContent = subText();
         });
         nrow.appendChild(inp);
+        tagsFlyNewInput = inp; syncNewTagInput();
         sub.appendChild(nrow);
       };
       build();
@@ -5543,7 +6244,9 @@ function showTabMenu(e: MouseEvent, id: string) {
 // repaint per connect/drop, not per poll (the user 2026-07-29).
 window.addEventListener("romp-hosts", () => { renderTabs(); });
 window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target as Node)) dismissTabMenu(); }, true);
-window.addEventListener("keydown", (e) => { if (e.key === "Escape") dismissTabMenu(); }, true);
+// …and says so on the event (preventDefault) when it did close a menu: the snapshot's Escape (leaveSnapshot),
+// a later capture listener on this window, yields to a consumed Escape instead of also leaving the view
+window.addEventListener("keydown", (e) => { if (e.key === "Escape" && ctxMenuEl) { dismissTabMenu(); e.preventDefault(); } }, true);
 window.addEventListener("scroll", dismissTabMenu, true);
 window.addEventListener("blur", () => dismissTabMenu());
 
@@ -5617,10 +6320,14 @@ function onTabKey(e: KeyboardEvent) {
   if (!activeId || !order.length) return;
   if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
     e.preventDefault();
+    const dir = e.key === "ArrowRight" ? 1 : -1;
     const ord = visibleOrder();                 // never cycle onto a view-hidden session
     const i = ord.indexOf(activeId);
-    if (i < 0) return;
-    const dir = e.key === "ArrowRight" ? 1 : -1;
+    if (i < 0) {                                // the active tab is folded away: step from its header
+      const nb = neighborOfFolded(lastStripItems, activeId, dir);
+      if (nb) { setActive(nb); focusActiveTab(); }
+      return;
+    }
     setActive(ord[(i + dir + ord.length) % ord.length]);
     focusActiveTab();
   } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -5638,7 +6345,18 @@ function onTabKey(e: KeyboardEvent) {
 }
 function focusActiveTab() {
   const bar = document.getElementById("tabs");
-  (bar?.querySelector(`.tab[data-id="${activeId}"]`) as HTMLElement | null)?.focus();
+  const tab = bar?.querySelector(`.tab[data-id="${activeId}"]`) as HTMLElement | null;
+  if (tab) { tab.focus(); return; }
+  // the active tab is folded away under its section: the header is its stand-in (tab-groups.ts)
+  const home = activeId ? homeSectionOf(lastStripItems, activeId) : null;
+  if (!home || home.name === null || !bar) return;
+  Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name)?.focus();
+}
+/** Open the section a folded-away tab is homed in (a session pick names the tab, so its tab must be on
+ *  screen). The store write notifies (TABGROUPS_EVENT) and the listener re-renders the strip. */
+function unfoldSectionOf(id: string): void {
+  const home = homeSectionOf(lastStripItems, id);
+  if (home && home.name !== null) writeTabGroups(setSectionCollapsed(tabGroups(), home.name, false));
 }
 // "Enter to start typing" lands on whatever's actually showing below the transcript: when a live
 // AskUserQuestion picker is up the PICKER CARD owns the keyboard (↑/↓ step the options, Enter confirms), so
@@ -5678,11 +6396,19 @@ window.addEventListener("keydown", (e) => {
   if (document.querySelector(".picker-overlay")) return;   // #picker / #confirm open
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     if (!activeId || order.length < 2) return;
+    const dir = e.key === "ArrowRight" ? 1 : -1;
     const ord = visibleOrder();                 // never cycle onto a view-hidden session
     const i = ord.indexOf(activeId);
-    if (i < 0) return;
+    if (i < 0) {
+      // the active tab folded away under its section header (tab-groups.ts): the header is its stand-in,
+      // so the step starts from the header's place on the strip: onTabKey's and cycleTab's rule (the
+      // 2026-09-06 review: this returned, and the documented stand-in could not step). A view-hidden
+      // active id is not on the strip at all: nothing to step from, as before.
+      const nb = collapsedTabIds.has(activeId) ? neighborOfFolded(lastStripItems, activeId, dir) : null;
+      if (nb) { e.preventDefault(); setActive(nb); }
+      return;
+    }
     e.preventDefault();
-    const dir = e.key === "ArrowRight" ? 1 : -1;
     setActive(ord[(i + dir + ord.length) % ord.length]);
   } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
     const content = document.getElementById("content");
@@ -5872,6 +6598,7 @@ function dropProvisional(): { queued: string[]; draft: string } {
     const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
     draft = (activeId === id && ta) ? ta.value : (drafts.get(id) ?? "");
     pendingSent.delete(id);                // the optimistic bubbles belong to a tab that is going away
+    absorbedCues.delete(id);
     dismissSession(id, "close");           // drops it from sessions/order/views and reselects
   }
   return { queued, draft };
@@ -5931,6 +6658,7 @@ function failProvisional(why: string): void {
   const draft = (activeId === id && ta0) ? ta0.value : (drafts.get(id) ?? "");
   const held = [...queued, draft].filter(Boolean).join("\n\n");
   pendingSent.delete(id);            // the dashed "received" bubbles fold into the held text instead
+  absorbedCues.delete(id);
   failedProvisionals.add(id);
   const s = sessions.get(id);
   // "closed" gives the tab the dead treatment (struck label, plain ✕) — but the composer stays LIVE
@@ -6877,6 +7605,112 @@ function onMoveDirCompletions(m: any): void {
   movePrompt.input.classList.toggle("bad", said.cls === "bad");
 }
 
+// Emoji… (tab context menu): one input for one emoji, prefilled with the current one. Set posts it, Clear
+// posts "", and the pressed button acknowledges at once — it reads "Setting…" / "Clearing…" and the input
+// locks (the repo's button rule) — while the dialog STAYS OPEN for the kernel's verdict, the move dialog's
+// shape (review, 2026-09-06; it shipped closing on the click, so a refusal arrived as a toast after the
+// input was gone and retrying meant reopening and finding the value again). The kernel's {emojiSet} for
+// this session closes it; a refusal (letters, two emoji, a bare text symbol) paints the kernel's one-line
+// reason under the input with the typed value still there to fix. The kernel's refusal is a bare warn
+// with no id (the rename precedent), so while a Set is pending the warn router hands warns to THIS dialog
+// first (emojiRefusedLocal), ahead of the create-failure branch that used to claim every warn during a
+// provisional create and so struck the opening tab for a refused emoji; what remains ambiguous — a
+// create's own failure landing in the moment between a Set and its answer — is bounded by that window.
+// Pane-local like the move dialog. The backstop covers a kernel that never answers (the loading rule: a
+// wait never traps); Cancel and Escape work throughout.
+let emojiPrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
+                   go: HTMLButtonElement; clear: HTMLButtonElement; pending: boolean; close: () => void;
+                   backstop?: number; asked?: string } | null = null;   // asked: the value the last Set/Clear posted
+function closeEmojiPrompt(): void {
+  if (!emojiPrompt) return;
+  if (emojiPrompt.backstop !== undefined) clearTimeout(emojiPrompt.backstop);
+  const p = emojiPrompt; emojiPrompt = null;
+  p.close();
+}
+
+function showEmojiPrompt(sid: string): void {
+  closeEmojiPrompt();
+  const sess = sessions.get(sid);
+  const cur = sess?.emoji || tabMeta.get(sid)?.emoji || "";
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "emoji-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = `Emoji for “${sess?.name || tabMeta.get(sid)?.name || "session"}”`;
+  const d = el("div", "confirm-detail");
+  d.textContent = "One emoji, shown before the name on the tab. The session can change it too.";
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "fork-name emoji-pick"; input.value = cur;
+  input.placeholder = "one emoji";
+  input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
+  const hint = el("div", "emoji-hint");   // the kernel's one-line reason for a refused value; empty until then
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const clear = el("button", "picker-action confirm-btn") as HTMLButtonElement; clear.textContent = "Clear";
+  // nothing to clear → disabled, and DRESSED as disabled (.picker-action:disabled): with the live button's
+  // pointer cursor and hover wash it read as one whose click did nothing (review, 2026-09-06)
+  clear.disabled = !cur;
+  if (!cur) clear.title = "nothing to clear — this session has no emoji";
+  const go = el("button", "picker-action confirm-btn") as HTMLButtonElement; go.textContent = "Set";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeEmojiPrompt(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  emojiPrompt = { sid, overlay, input, hint, go, clear, pending: false, close };
+  const submit = (value: string, btn: HTMLButtonElement, busy: string) => {
+    const p = emojiPrompt;
+    if (!p || p.pending) return;   // one answer per press
+    // acknowledge the click before the round trip (the repo's button rule); the kernel's answer — its
+    // emojiSet for this session, or a warn with the reason — is what changes this dialog next
+    p.pending = true; p.asked = value;
+    btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;
+    hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint";
+    setSessionEmoji(sid, value);
+    p.backstop = window.setTimeout(
+      () => emojiRefusedLocal("still waiting — the kernel has not answered; check the kernel log"), 30000);
+  };
+  const start = () => {
+    const v = input.value.trim();
+    if (!v) { input.classList.add("bad"); input.focus(); return; }   // an empty Set is not a clear — that is the Clear button
+    submit(v, go, "Setting…");
+  };
+  cancel.addEventListener("click", closeEmojiPrompt);
+  clear.addEventListener("click", () => submit("", clear, "Clearing…"));
+  go.addEventListener("click", start);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
+  input.addEventListener("input", () => input.classList.remove("bad"));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeEmojiPrompt(); });
+  actions.appendChild(cancel); actions.appendChild(clear); actions.appendChild(go);
+  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(hint); box.appendChild(actions);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus(); input.select();
+}
+
+// the kernel's answer to the dialog's Set/Clear. `emojiLanded`: its {emojiSet} for this session — the
+// handler has already put it on the strip — closes the dialog, while it is pending OR when the value is
+// the one this dialog asked for: the kernel answers only the client that asked, so a confirm for that sid
+// after the 30 s backstop (or an unrelated warn) has already un-pended the dialog is this dialog's own
+// answer arriving late, and leaving it open put a red "still waiting" under a value the tab already wore
+// (review round 3, 2026-09-06). The decision is emojiConfirmClosesDialog (tab-meta.ts, tested there): a
+// confirm for another session, or one landing on a dialog that has asked nothing yet, leaves it alone.
+// `emojiRefusedLocal`: a warn while a Set is pending is the refusal — the reason goes under the input, the
+// buttons come back, the typed value stays to fix. A warn while NOT pending is not this dialog's business
+// (it returns before touching anything; the router sends it on to the create branch or a toast).
+function emojiLanded(sid: string, emoji: string): void {
+  if (emojiConfirmClosesDialog(emojiPrompt, sid, emoji)) closeEmojiPrompt();
+}
+
+function emojiRefusedLocal(text: string): void {
+  const p = emojiPrompt;
+  if (!p || !p.pending) return;
+  if (p.backstop !== undefined) { clearTimeout(p.backstop); p.backstop = undefined; }
+  p.pending = false;
+  p.go.disabled = false; p.go.textContent = "Set";
+  p.clear.disabled = !(sessions.get(p.sid)?.emoji || tabMeta.get(p.sid)?.emoji); p.clear.textContent = "Clear";
+  p.input.disabled = false;
+  p.hint.textContent = text; p.hint.title = text; p.hint.className = "emoji-hint bad";
+  p.input.classList.add("bad"); p.input.focus();
+}
+
 // the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a
 // toast, since the dialog may be long gone); `moveFailed` puts the reason where the path is
 function moveLanded(sid: string, name: string, cwd: string): void {
@@ -6955,11 +7789,12 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  linkifyPrRefs(d, prRepoFor(sid));
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
   // whole need stays in view while the answer is typed, without opening the fold first; a bare
   // ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
-  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd, undefined, undefined, undefined, undefined, sid); }
+  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd, undefined, undefined, undefined, undefined, sid); linkifyPrRefs(dd, prRepoFor(sid)); }
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -8423,9 +9258,23 @@ function pickerKey(e: KeyboardEvent) {
 // prefilled into the dir field when there's no gear default, so "the default path is written in there".
 let kernelDefaultDir = "";
 // This machine's name as the kernel's peers know it (_self_host — short hostname, ROMP_HOST_NAME
-// override), from the same payload. The + picker's Host row labels its first option with it, so the
-// row reads as a list of machines by name rather than named hosts plus a "local" (the user 2026-08-12).
+// override). The + picker's Host row labels its first option with it, so the row reads as a list of
+// machines by name rather than named hosts plus a "local" (the user 2026-08-12); postalRepoFor reads a
+// postal card's sender host against it. Three sources, one adopter (adoptSelfHost): every tabOrder frame
+// — the one every chat receives, first of all on connect, and the only one a dashboard whose kernel runs
+// no local session gets — every LOCAL session frame (upsert), and the picker's sessionList reply.
 let localSelfHost = "";
+// Adopt the name. A postal card rendered BEFORE the name was known read its own kernel's name for this
+// host as a peer's — it matched no `host:` row and stayed plain — and was rebuilt only on its session's
+// next push (review find, 2026-09-06): so a name that CHANGES re-renders every built view, and each card's
+// body is read against the name once it is known. In practice nothing is built when the name arrives (the
+// tabOrder frame lands before any session frame); a late arrival — a remote kernel's frame ahead of the
+// local strip, or the name learned from the picker alone against an older kernel — is what this covers.
+function adoptSelfHost(name: string): void {
+  if (name === localSelfHost) return;
+  localSelfHost = name;
+  if (views.size) rerenderAll();
+}
 // Is this session already an open tab in THIS dashboard? (loaded session, or a not-yet-loaded placeholder tab
 // the kernel's order carries.) The + picker uses it to hide sessions you can already reach by a tab-click.
 function isOpenTab(id: string): boolean {
@@ -8837,15 +9686,13 @@ function warnToast(msg: string) {
   setTimeout(() => t.remove(), 12000);
 }
 
-// Trailing events to re-render on each sync, in case they mutated in place
-// (e.g. a tool's output arriving after its tool_use was first shown). Earlier
-// events are immutable in an append-only transcript, so they stay cached.
-const TAIL_RECHECK = 25;
+// (TAIL_RECHECK, the 25 trailing events every sync re-rendered "in case they mutated in place", is gone
+// (2026-09-06): the kernel's chatTail names the first changed event exactly, and the client passes that
+// touch a prefix event mark the view stale — see syncViewInner's tail path and reconcileRewind.)
 
 // Tail-windowing (see the View comment): a fresh/rewound view renders only the
 // last WINDOW_TAIL events; scrolling within EXPAND_TRIGGER_PX of the top reveals
-// the next EXPAND_CHUNK older ones. WINDOW_TAIL > TAIL_RECHECK so the trailing
-// re-check window is always fully rendered.
+// the next EXPAND_CHUNK older ones.
 const WINDOW_TAIL = 80;
 const EXPAND_CHUNK = 80;
 const EXPAND_TRIGGER_PX = 600;
@@ -8933,6 +9780,11 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     return v;
   }
   const working = s.status.state === "working" || s.status.state === "compacting";
+  // The footer on the current turn's last reply reads the session's working state (on once idle, off while
+  // it works), and a status-only tail changes that with no event change — the no-op fast path below would
+  // leave the footer as it was. So the state is remembered per view, and a flip patches the footer there.
+  const workFlip = v.working != null && v.working !== working;
+  v.working = working;
   const items = displayItems(s);   // units: one per event (normal) or one folded compactDisplay item (compact)
   const total = items.length;
   const len = s.events.length;
@@ -8950,6 +9802,12 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
   // an append grows len past it) or sets v.stale, so this never skips an actual update.
+  // …except the "worked …" footer on a status-only tail: nothing re-rendered, and the footer follows the flip.
+  // (The patch marks the view stale when the reply's unit is not addressable — a folded run — so the fast
+  // path stands down and the window path below re-renders it.)
+  if (workFlip && v.rendered === len && !v.stale && v.el.childNodes.length > 0) {
+    patchWorkedFooters(v, s, len, working, settings.compact ? items : null);
+  }
   if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;
   const wasAtTail = (v.winEnd ?? total) >= (v.unitTotal ?? total);   // window was covering the OLD end
   // An in-place change (tool-group toggle, off-screen update) OR compact mode → re-render the CURRENT window
@@ -8970,9 +9828,15 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;
   }
   // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —
-  // append the new turns + re-check a trailing window, tagging data-unit so the scroll↔unit map stays valid.
-  let from = Math.min(v.rendered, Math.max(0, len - TAIL_RECHECK));
-  from = Math.max(from, v.winStart ?? 0);
+  // re-render EXACTLY from the first changed event, tagging data-unit so the scroll↔unit map stays valid.
+  // v.rendered is exact: the kernel's chatTail names the first changed index (its _chat_diff is identity-
+  // first and the fold never writes an event in place), and every client pass that touches a prefix event
+  // marks the view stale instead — reconcileRewind (the editable set, the rewind dim), reconcileOptimistic
+  // (the echo set), a full session frame (upsert) — which takes the window rebuild above. A trailing window
+  // of 25 events re-rendered on every tail used to stand in for those signals, and was most of a tail's
+  // render (2026-09-06). The one render that depends on LATER events, the "worked …" footer of a turn's
+  // last reply, is patched by unit after the loop (patchWorkedFooters).
+  const from = Math.max(v.rendered, v.winStart ?? 0);
   // Drop every node from unit `from` onward, then re-render that span. Trim by DATA-UNIT, never by
   // child COUNT: a unit can put more than one node in the thread (a day divider precedes the turn
   // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the
@@ -8993,8 +9857,43 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     node.dataset.unit = String(i);   // unit === event in normal mode
     v.el.appendChild(node);
   }
+  patchWorkedFooters(v, s, from, working);
   v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;
   return v;
+}
+
+// The "worked …" footer is the one render on a turn that depends on LATER events and on the session's state:
+// it appears once the turn is complete (a genuine prompt landed after its last reply) or the session is idle.
+// With the tail rendered exactly from `from`, the events that change a reply's footer leave that reply BEFORE
+// `from` — a human prompt landing completes its turn, a later reply in the same turn demotes it — and a
+// status-only tail (empty suffix: the session went idle, or back to work on the same turn after a nudge or a
+// postal push) changes it with no event at all, which syncViewInner's fast path hands here with from = len.
+// worked-footer.ts names the reply and the seconds; the footer goes on or comes off by unit. applyForkSpots
+// homes a turn's fork spot inside its elapsed row when the turn has one, so the spot moves with the footer
+// either way. `items` is compact mode's unit list: there a unit is a display item (a folded run, or one event),
+// so the window's start maps to its first event and the reply's event index back to the unit whose node carries
+// it; a reply folded into a run has no node of its own, and the view goes stale for the window path instead.
+function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[] | null = null): void {
+  const winStart = v.winStart ?? 0;
+  const winEv = items ? (items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length) : winStart;
+  const unitOfEvent = (i: number): number => items ? items.findIndex((it) => it.kind === "event" && it.index === i) : i;
+  for (const { unit: ev, secs } of workedFooterPlan(s.events, from, winEv, working, eventEpoch)) {
+    const unit = unitOfEvent(ev);
+    if (unit < 0) { v.stale = true; continue; }
+    const node = v.el.querySelector(`:scope > [data-unit="${unit}"]:not(.day-divider)`) as HTMLElement | null;
+    if (!node) continue;
+    const have = node.querySelector(":scope > .turn-elapsed") as HTMLElement | null;
+    if (secs != null && !have) {
+      const f = elapsedFooter(secs);
+      const spot = node.querySelector(":scope > .fork-spot");
+      node.appendChild(f);
+      if (spot) f.appendChild(spot);
+    } else if (secs == null && have) {
+      const spot = have.querySelector(":scope > .fork-spot");
+      if (spot) node.appendChild(spot);
+      have.remove();
+    }
+  }
 }
 
 // prevEpoch for event i = the most recent EARLIER timed event's epoch (untimed todo/queued skipped so the
@@ -9068,6 +9967,7 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
         v.el.appendChild(tag(child)); adv(i);
       });
     }
+    appendAbsorbedCues(v, s, it.indices.map((i) => s.events[i]?.uuid), tag);
   } else if (it.kind === "retrygroup") {
     const notes = it.indices.map((i) => s.events[i]) as Extract<ChatEvent, { kind: "retried" }>[];
     const key = retryGroupKey(notes[0]);
@@ -9081,9 +9981,11 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
         v.el.appendChild(tag(child)); adv(i);
       });
     }
+    appendAbsorbedCues(v, s, it.indices.map((i) => s.events[i]?.uuid), tag);
   } else {
     v.el.appendChild(tag(renderEvent(s.events[it.index], prevEpoch, turnWorkedSecs(s.events, it.index, working))));
     adv(it.index);
+    appendAbsorbedCues(v, s, [s.events[it.index]?.uuid], tag);
   }
   return prevEpoch;
 }
@@ -9254,23 +10156,7 @@ function lastTurnStart(events: ChatEvent[]): number {
 // 2-min-old nudge — the clock had run from a much older human prompt). Drives the
 // "worked …" rail footer.
 function turnWorkedSecs(events: ChatEvent[], i: number, working: boolean): number | null {
-  const ev = events[i];
-  if (ev.kind === "user") return null;                 // a prompt, not a reply
-  let completed = false;
-  for (let j = i + 1; j < events.length; j++) {
-    const e = events[j];
-    if (e.kind !== "user") return null;                // another reply in this turn → i isn't its last
-    if (e.human) { completed = true; break; }          // next genuine prompt → the turn ended at i
-    // injected user line (postal push, /command stdout, …) → same turn, keep scanning
-  }
-  if (!completed && working) return null;              // final turn still in progress → spinner owns it
-  const end = eventEpoch(ev);
-  if (end == null) return null;
-  let start: number | null = null;                     // the IMMEDIATE trigger: the most recent user line, ANY
-  for (let j = i; j >= 0; j--) { const e = events[j]; if (e.kind === "user") { start = eventEpoch(e); break; } }   // author (human / nudge / postal) — not the older human prompt
-  if (start == null) return null;
-  const secs = end - start;
-  return secs > 0 ? secs : null;
+  return workedSecsOf(events, i, working, eventEpoch);   // the rule lives in worked-footer.ts (pure, node-tested); the tail path's footer patch reads the same one
 }
 
 // Show only the active session's (lazily built) view and set its scroll: a
@@ -9359,6 +10245,210 @@ function runPrebuild(deadline: IdleDeadline): void {
   renderingOwnerSid = savedOwnerSid;
 }
 
+// THE SECTION SNAPSHOT (tab-snapshot.ts owns the model; the user 2026-09-06). `snapView` is the section
+// the pane is showing — page state like the peek, never stored: a header click sets it (toggle-group),
+// any session pick clears it (setActive). The host is ONE stable node in #content, made once with its
+// delegate installed once (the click-safe rule: the rows are rebuilt from every push that changes one),
+// and `snapModel` is the last model painted — snapshotModel hands it back unchanged when no row differs,
+// and then only the "ago" texts are refreshed in place: no rebuild, nothing moves.
+let snapView: string | null = null;
+let snapModel: SnapModel | null = null;
+function snapshotHost(): HTMLElement | null {
+  let host = document.getElementById("tab-snapshot");
+  if (host) return host;
+  const content = document.getElementById("content");
+  if (!content) return null;
+  host = el("div", "tab-snapshot");
+  host.id = "tab-snapshot";
+  host.setAttribute("role", "region");
+  host.style.display = "none";
+  content.appendChild(host);
+  // a row opens its session: setActive unfolds the section when the tab is folded away and clears
+  // snapView; focus follows onto the tab (the strip's own select does the same)
+  delegate(host, { open: (node) => {
+    const id = node.dataset.id;
+    if (!id) return;
+    // A ROW WHOSE SESSION LEFT MID-PRESS (the round-2 review): click safety keeps the pressed row until the
+    // release, so a session dismissed between mousedown and mouseup is still under the click, and setActive
+    // on its id put up an "opening…" loader, composer enabled, for a session that never arrives (the strip's
+    // meta lingers until the next tabOrder frame). The row's session must still be on the strip
+    // (tab-snapshot-view.ts rowStillOpen); otherwise nothing moves. The removal is that frame's event, and
+    // the release's flush (releaseTabStrip → renderTabs → renderSnapshot) repaints the rows without it.
+    if (!rowStillOpen(snapModel?.rows.find((r) => r.id === id), sessions.has(id), tabMeta.has(id), closingTabs.has(id))) return;
+    setActive(id); focusActiveTab();
+  } });
+  // CLICK-SAFE (ui/CLAUDE.md; the 2026-09-06 review): the rows are rebuilt by renderTabs on every push that
+  // changes one, and a rebuild between mousedown and mouseup leaves the click with no row under it. A press
+  // on the snapshot latches the STRIP's hold (tabPointerHeld): renderTabs, and renderSnapshot's own rebuild,
+  // wait for the release (pointerup / pointercancel / blur on the window, releaseTabStrip's one path), and
+  // the deferred flush repaints the strip and the snapshot together. One latch for two surfaces one gesture
+  // can span (a press on a row that ends over the strip).
+  host.addEventListener("pointerdown", () => { tabPointerHeld = true; });
+  return host;
+}
+function hideSnapshot(): void {
+  const host = document.getElementById("tab-snapshot");
+  if (host) host.style.display = "none";
+  snapModel = null;
+}
+/** Whether keyboard focus is on the snapshot (a row a keyboard user Tabbed or arrowed onto). THE EXIT HANDS
+ *  FOCUS ON (the round-3 review): leaving the view hides the host (hideSnapshot, display none), and hiding the
+ *  focused element drops focus to body (the browser's focus fixup); nothing put it anywhere, so the user's
+ *  Escape left them on body, arrows and Enter dead until a click. The round-2 rule keeps focus across rows
+ *  that change INSIDE the list, not across the view going away, and renderTabs' own refocus reads the strip,
+ *  which the host (under #content) is not in. So each exit reads this BEFORE its hide, since after it
+ *  activeElement is already body, and when it was on the snapshot hands focus to the active tab once the
+ *  transcript is back: where the composer's own Escape puts it, and a row pick (tab mode: arrows switch
+ *  sessions, Enter drops into the message box). Focus anywhere else is left alone. */
+function snapshotHoldsFocus(): boolean {
+  const host = document.getElementById("tab-snapshot");
+  return !!host && !!document.activeElement && host.contains(document.activeElement);
+}
+/** Back to the active session's transcript without picking a session (the 2026-09-06 review: a header click
+ *  swapped the pane, and only a pick swapped it back). Two gestures land here: Escape while the snapshot
+ *  shows (below), and a click on the header whose snapshot the pane shows when the section is open and holds
+ *  the tab being read (show-transcript: the click that put the section in the pane, undone). Nothing about
+ *  "active" moves: renderTabs drops the header's snap-shown mark, showActive puts the transcript back and
+ *  re-enables the composer. A row that held focus is hidden with the host, so focus goes to the active tab
+ *  (snapshotHoldsFocus, read before the hide); the event is the user's Escape, or the header's second click. */
+function leaveSnapshot(): void {
+  if (!snapView) return;
+  const held = snapshotHoldsFocus();
+  snapView = null;
+  renderTabs();
+  showActive();
+  if (held) focusActiveTab();
+}
+// ESCAPE LEAVES THE SNAPSHOT, and yields to every layer that owns its own Escape: two phases on the window
+// (tab-snapshot-view.ts installSnapshotEscape). Armed at capture, while this page's layers are still on the
+// page to be seen: the menus (the tab menu's closer, registered before this one, runs first and marks the
+// Escape it consumed), the picker and confirm overlays, the pane's own panels, the full-pane surfaces, a
+// comment thread, a citation preview; a typing target keeps its Escape (a rename box, a dialog's field; the
+// composer is disabled under the snapshot). Decided at bubble, after the SHELL's Escape chain (on this frame's
+// document at capture, kernel.py _LANDING_ESC_JS) has closed, marked and stopped an Escape aimed at one of its
+// panels, which live in the shell document, out of this page's sight (the log, usage and network panels; the
+// shortcuts dialog holds focus in the shell, so its Escape never reaches this frame). Nothing else claims
+// Escape while the snapshot shows: the transcript is hidden.
+installSnapshotEscape(window, {
+  showing: () => !!snapView,
+  typing: isTypingTarget,
+  layerOpen: () => !!(ctxMenuEl || metaMenuEl || citePreviewEl || openCommentKey || document.querySelector(".picker-overlay"))
+    || !!document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden])")
+    || !!(document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse") || document.getElementById("romp-lightbox")),
+  leave: leaveSnapshot,
+});
+/** Paint (or refresh) the snapshot of `snapView`. False when that section is not on the strip any more —
+ *  snapView is cleared and the caller shows the transcript; the section's absence is the event. */
+function renderSnapshot(): boolean {
+  if (!snapView) return false;
+  const head = lastStripItems.find((it): it is { head: TabSection; folded: boolean; active: boolean; hidden: string[] } => "head" in it && it.head.name === snapView);
+  if (!head) { snapView = null; hideSnapshot(); return false; }
+  const host = snapshotHost();
+  if (!host) return false;
+  const now = Date.now() / 1000;
+  const next = snapshotModel(head.head, (id) => sessions.get(id) ?? null, (id) => ledgers.get(id) ?? null, snapModel);
+  if (next === snapModel && host.childElementCount) {
+    // nothing a row shows changed: the times tick in place, the DOM stands
+    for (const w of host.querySelectorAll<HTMLElement>(".snap-when[data-t]")) {
+      const t = Number(w.dataset.t); if (!t) continue;
+      w.textContent = agehms(now - t) + " ago"; w.style.color = ageColorReadable(now - t);
+    }
+    host.style.display = "";
+    return true;
+  }
+  // a rebuild while a row is pressed would drop the click (the strip's rule, tabPointerHeld): showActive can
+  // land here mid-press (the active tab's payload arriving), so the rebuild waits for the release: the flush
+  // renders the strip, and the strip renders this. The times above still ticked in place: no node was lost.
+  if (tabPointerHeld && host.childElementCount) { renderPendingWhilePressed = true; return true; }
+  snapModel = next;
+  const words = snapshotHeading(next.name, next.rows.length);
+  host.setAttribute("aria-label", words.label);
+  // THE ROWS UPDATE IN PLACE, KEYED BY SESSION ID (the round-2 review; tab-snapshot-view.ts reconcileRows). The
+  // heading and the list are made once, with the host's first paint; from then on the heading's parts are
+  // patched and the rows reconciled: a standing row keeps its node (fillSnapshotRow rewrites its parts), a row
+  // that came is made, one that went is removed, a reordered one moved. The strip keeps focus across its
+  // rebuild by re-focusing the active tab; the rows keep it by keeping their nodes: sameRow folds lastT and
+  // lastMsg, so the model changes on nearly every push while a member works, and the wholesale replaceChildren
+  // destroyed the button the user had Tabbed onto (focus to body, Enter dead) and dismissed a hover's title
+  // within seconds. The event is the push that changed the model; the same-object path above moves nothing.
+  let list = host.querySelector<HTMLElement>(".snap-list");
+  if (!list) {
+    const h = document.createElement("h2"); h.className = "snap-head";
+    const sw = el("span", "tab-group-swatch"); sw.setAttribute("aria-hidden", "true");
+    h.append(sw, el("span", "snap-name"), el("span", "snap-count"));
+    list = el("div", "snap-list"); list.setAttribute("role", "list");
+    host.replaceChildren(h, list);
+  }
+  const part = (cls: string) => host.querySelector<HTMLElement>(".snap-head > ." + cls)!;
+  part("tab-group-swatch").style.background = next.color || "";
+  part("snap-name").textContent = next.name;
+  part("snap-count").textContent = words.count;
+  // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the
+  // same event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under
+  // focus (its session left the section): the row now in its place takes it, the last when it was last, so a
+  // removal does not drop the keyboard user to body either.
+  const focused = document.activeElement as HTMLElement | null;
+  const focusedAt = focused && list.contains(focused) ? Array.from(list.children).indexOf(focused.closest(".snap-item")!) : -1;
+  reconcileRows<SnapRow, Element>(list, next.rows, (n) => n.getAttribute("data-id"), (r) => snapshotRowNode(r, now), (n, r) => fillSnapshotRow(n.firstElementChild as HTMLElement, r, now));
+  if (focused && list.contains(focused)) { if (document.activeElement !== focused) focused.focus(); }
+  else if (focusedAt >= 0 && list.children.length) list.children[Math.min(focusedAt, list.children.length - 1)].querySelector<HTMLElement>(".snap-row")?.focus();
+  host.style.display = "";
+  return true;
+}
+// One row: a real button (Tab reaches it, Enter opens) carrying data-act="open" for the host's delegate, in
+// an item that carries the row's key (the session id) for the keyed update. The button is the node that
+// stands across rebuilds (focus and the title are its), so a made row and a patched row take their parts
+// from the one fillSnapshotRow.
+function snapshotRowNode(r: SnapRow, now: number): HTMLElement {
+  const item = el("div", "snap-item"); item.setAttribute("role", "listitem");
+  item.dataset.id = r.id;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  fillSnapshotRow(btn, r, now);
+  item.appendChild(btn);
+  return item;
+}
+// The row's attributes and parts, written onto its button: on a made row once, on a standing row at every
+// model change (the classes rewritten whole, the parts emptied and appended in order). The parts reuse the
+// strip's vocabulary: the tab's emoji glyph, the tab's ⚑, the tab's state colors on the pip (tab-state.ts's
+// rule, tab-snapshot.ts rowState), the session's identity color on its name (the Outline's session label),
+// and the age color the tab tip and the Outline give their times.
+function fillSnapshotRow(btn: HTMLElement, r: SnapRow, now: number): void {
+  btn.className = "snap-row" + (r.closed ? " closed" : "") + (r.loading ? " loading" : "");
+  btn.dataset.act = "open"; btn.dataset.id = r.id;
+  const words = rowWords(r);
+  btn.setAttribute("aria-label", words.label);
+  btn.title = words.title;
+  btn.replaceChildren();
+  const pip = el("span", "snap-pip" + (r.pip ? " " + r.pip : "")); pip.setAttribute("aria-hidden", "true");
+  btn.appendChild(pip);
+  const em = tabEmojiNode(r.emoji); if (em) btn.appendChild(em);
+  const name = el("span", "snap-sess"); name.replaceChildren(...hostNameNodes(r.name, r.id));   // a remote "host:" prefix as quiet metadata, the tab's rule (host-prefix.ts), not part of the bold name
+  if (r.color) name.style.color = r.color.bg;
+  btn.appendChild(name);
+  if (r.needsYou) { const f = el("span", "snap-flag needs"); f.textContent = "needs you"; btn.appendChild(f); }
+  else if (r.waiting) { const f = el("span", "snap-flag"); f.textContent = "waiting"; btn.appendChild(f); }
+  if (r.todos) {
+    const td = el("span", "snap-todo"); td.setAttribute("aria-hidden", "true");   // spoken by the label
+    const g = el("span", "tab-usertodo"); g.textContent = "⚑"; td.appendChild(g);
+    if (r.todos > 1) td.appendChild(document.createTextNode(String(r.todos)));
+    btn.appendChild(td);
+  }
+  const nowEl = el("span", "snap-now"); nowEl.textContent = r.loading ? "opening…" : r.now; btn.appendChild(nowEl);
+  if (r.lastT) {
+    const when = el("span", "snap-when"); when.dataset.t = String(r.lastT);
+    when.textContent = agehms(now - r.lastT) + " ago"; when.style.color = ageColorReadable(now - r.lastT);
+    btn.appendChild(when);
+  }
+  if (r.note) {
+    // the session's own note (the postal working note, its claim to a branch and files; tab-snapshot.ts
+    // noteLine): a quieter second line under the now line, never in its place. Appended last, so the
+    // wrapping row puts it under the first line's parts; spoken by the label (rowWords), like the flag
+    const note = el("span", "snap-note"); note.textContent = r.note; note.setAttribute("aria-hidden", "true");
+    btn.appendChild(note);
+  }
+}
+
 function showActive() {
   const content = document.getElementById("content");
   if (!content) return;
@@ -9368,6 +10458,24 @@ function showActive() {
   renderLiveAsk(); // swap in the active session's pending picker (or hide if none)
   renderBgTasks(); // swap in the active session's background-task box (or hide if none)
   let empty = document.getElementById("empty-state");
+  // THE SECTION SNAPSHOT (the user 2026-09-06): while snapView names a section, the pane shows its
+  // sessions instead of any transcript — every view hidden, the composer disabled with a placeholder
+  // that says what to do (a message typed here has no session to go to), the statusline blank
+  // (updateStatusline). activeId is untouched: the kernel's active hint, the MRU and the drafts still
+  // point at the session being read, and its header wears the mark. renderSnapshot answers false when
+  // the section is gone from the strip (a tag deleted, its last member hidden) — then the transcript.
+  if (snapView && renderSnapshot()) {
+    for (const v of views.values()) v.el.style.display = "none";
+    document.getElementById("tab-loading")?.remove();
+    if (empty) empty.style.display = "none";
+    const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+    if (ta) { ta.disabled = true; ta.placeholder = "Pick a session above to write to it"; }
+    const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
+    if (sendBtn) sendBtn.disabled = true;
+    updateStatusline();
+    return;
+  }
+  hideSnapshot();
   const s = activeId ? sessions.get(activeId) : null;
   if (!s) {
     for (const v of views.values()) v.el.style.display = "none";
@@ -9381,6 +10489,14 @@ function showActive() {
       wait.appendChild(rompLoaderInner("opening “" + (tabMeta.get(activeId)?.name || "session") + "”…"));
       content.appendChild(wait);
       if (empty) empty.style.display = "none";
+      // the composer follows the pick (the 2026-09-06 review): a snapshot row's "opening…" session, or a
+      // loading tab picked from a closed one, must not keep the last state's disabled box and its placeholder:
+      // the pick named THIS session. The box takes input for it now (a send carries the id the kernel
+      // already knows), and the first frame's showActive sets its closed/live state.
+      const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+      if (ta) { ta.disabled = false; ta.placeholder = composerRestingPlaceholder(); }
+      const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
+      if (sendBtn) sendBtn.disabled = false;
     } else if (!empty) {
       empty = el("div", "empty-state"); empty.id = "empty-state";
       empty.textContent = "No session open — click + to add one.";
@@ -10059,7 +11175,7 @@ function renderBgTasks() {
   const host = document.getElementById("bg-tasks");
   if (!host) return;
   host.replaceChildren();
-  const s = activeId ? sessions.get(activeId) : null;
+  const s = activeId && !snapView ? sessions.get(activeId) : null;   // (snapView: the pane shows a section's snapshot, not this session)
   const box = s && s.bgTasks;
   const tasks = (box && box.tasks) || [];
   const count = box ? box.count : 0;
@@ -10287,7 +11403,7 @@ function renderLiveAsk() {
   // inline "add your own" field, and the NORMAL composer becomes that field (see composerAnswersAsk /
   // sendComposer). So you keep every control in view and can still type a free-text answer.
   if (footer) footer.style.display = "";
-  if (!activeId || !liveAsks.has(activeId)) {
+  if (!activeId || !liveAsks.has(activeId) || snapView) {   // (snapView: the pane shows a section's snapshot, not this session)
     host.style.display = "none";
     liveTextValue = "";
     setComposerAskMode();   // no picker → the composer's normal placeholder + behavior
@@ -11286,6 +12402,7 @@ function updateStatusline() {
   const sl = document.getElementById("statusline");
   const s = activeId ? sessions.get(activeId) : null;
   if (!sl) return;
+  if (snapView) { sl.replaceChildren(); return; }   // the pane shows a section, not a session: no session's chip
   if (activeId && !s) {
     // the tab is a loading placeholder (its session payload hasn't arrived) — the statusline said
     // whatever the PREVIOUS tab said, or a spawn stub's "Working" over a broken clock (the user
@@ -11656,6 +12773,11 @@ function routeUserMessage(sid: string, text: string, cites: Citation[] | undefin
   if (goalCite?.itemId) { vscodeApi.postMessage({ type: "askFollowUp", itemId: goalCite.itemId, text, sid }); registerOptimistic(sid, text, imgPaths); }
   else if (quoteCites.length) { const body = quoteReplyBody(quoteCites, text); vscodeApi.postMessage({ type: "sendMessage", id: sid, text: body }); registerOptimistic(sid, body, imgPaths); }
   else { vscodeApi.postMessage({ type: "sendMessage", id: sid, text }); registerOptimistic(sid, text, imgPaths); }
+  // One breadcrumb per composer send (client-diag.jsonl): sid, when, how long, which route — never the
+  // text. A send that "vanished" can then be traced from the press through the kernel's own logs
+  // instead of reconstructed from memory (the 2026-09-05/06 audits had to).
+  vscodeApi.postMessage({ type: "clientDiag", surface: "chat", what: "send",
+    data: { sid, ts: Date.now(), len: text.length, route: goalCite?.itemId ? "followup" : quoteCites.length ? "quote" : "plain" } });
 }
 
 /** Release the tab's staged stack (deliver's guards — host down, provisional — run before this in the
@@ -12262,7 +13384,16 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   // drops it. Before the already-active early-return, so a re-focus of a hidden session re-asserts
   // its peek even when nothing else changes.
   assertPeekFor(id);
-  if (activeId === id && anchor == null && anchorT == null) return; // already active, nothing to do
+  // A session pick ends the section snapshot (the user 2026-09-06), and brings the picked tab on
+  // screen: a tab folded away under its section header (a snapshot card, a feed deep link, ←/→ from
+  // the header) opens its section — the gesture named that session, so the strip follows it.
+  const leavingSnap = snapView !== null;
+  snapView = null;
+  if (collapsedTabIds.has(id)) unfoldSectionOf(id);
+  if (activeId === id && anchor == null && anchorT == null) {   // already active, nothing to do…
+    if (leavingSnap) { renderTabs(); showActive(); }             // …except put its transcript back
+    return;
+  }
   navHist.record();   // every real navigation records the spot being LEFT (the user 2026-08-14: Ctrl+M / Ctrl+, walk the trail)
   closeMetaMenu(); // an open model/effort menu targets the tab we're leaving
   // the hover tip belongs to the tab the pointer was on — switching sessions closes it (the user
@@ -12311,9 +13442,14 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
 
 function cycleTab(dir: number) {
   const ord = visibleOrder();                   // never cycle onto a view-hidden session
-  if (ord.length < 2 || !activeId) return;
+  if (!ord.length || !activeId) return;
   const i = ord.indexOf(activeId);
-  if (i < 0) return;
+  if (i < 0) {                                  // folded away under its header: step from the header's position
+    const nb = neighborOfFolded(lastStripItems, activeId, dir > 0 ? 1 : -1);
+    if (nb) setActive(nb);
+    return;
+  }
+  if (ord.length < 2) return;
   setActive(ord[(i + dir + ord.length) % ord.length]);
 }
 
@@ -12336,6 +13472,12 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 
 function upsert(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
+  // The LOCAL kernel's own machine name rides its session frames (the kernel's _self_host, as the tabOrder
+  // and feed frames carry it): the chat reads a postal card's sender host against it (postalSenderHost). It
+  // was learned only from the + picker's sessionList reply before, so that reading was inert in any chat
+  // whose picker had not been opened (review find, 2026-09-06). A remote kernel's frame names ITSELF — the
+  // id's host prefix says whose frame this is, and only the local kernel's is this dashboard's own name.
+  if (typeof msg.selfHost === "string" && msg.selfHost && !hostOf(msg.id)) adoptSelfHost(msg.selfHost);
   const existed = sessions.has(msg.id);
   const prev = sessions.get(msg.id);
   awaitingFull.delete(msg.id);   // a full session landed → this session is re-based; a later gap may ask again
@@ -12343,6 +13485,7 @@ function upsert(msg: any) {
     id: msg.id,
     name: msg.name,
     color: msg.color || null,
+    emoji: ("emoji" in msg) ? String(msg.emoji || "") : (prev ? prev.emoji : undefined),   // the tab's glyph (2026-09-06); "" = none
     events: msg.events || (prev ? prev.events : []),
     status: msg.status || (prev ? prev.status : { state: "idle", sinceEpoch: null }),
     firstSeen: msg.firstSeen ?? (prev ? prev.firstSeen : undefined),
@@ -12352,6 +13495,11 @@ function upsert(msg: any) {
     // so the branch used to vanish there. A chatTail delta omits it → keep the last-known via prev.
     gitBranch: msg.gitBranch ?? (prev ? prev.gitBranch : ""),
     workTree: msg.workTree ?? (prev ? prev.workTree : null),
+    // the GitHub repository the session works in (owner/repo, or null) — what its `#123` mentions link
+    // to (pr-links.ts). The "in msg" form, like bgTasks: a null from the kernel is a real value (the
+    // tree lost its origin, or never had one) and must not fall back to a stale prev; a chatTail delta
+    // omits the key and keeps the last-known.
+    githubRepo: ("githubRepo" in msg) ? (msg.githubRepo ?? null) : (prev ? prev.githubRepo : null),
     // A trimmed full send carries headFrom/headTotal; a whole-transcript send omits them (headFrom 0).
     headFrom: msg.headFrom ?? 0,
     headTotal: msg.headTotal ?? ((msg.events || (prev ? prev.events : [])).length),
@@ -12405,6 +13553,13 @@ function upsert(msg: any) {
   if (forked) {
     const v = views.get(msg.id);
     if (v) { v.el.remove(); views.delete(msg.id); }
+  } else if (existed) {
+    // A full frame replaces every event object and can differ from what this view rendered ANYWHERE (it is
+    // what the kernel sends a client it believes is behind): the tail path trusts v.rendered as the exact
+    // first changed index (2026-09-06), so the whole window rebuilds here instead. Full frames for a held
+    // session are the reconnect and the repair, not the steady state; deltas (chatTail) are.
+    const v = views.get(msg.id);
+    if (v) v.stale = true;
   }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   if (!existed) order.push(msg.id);
@@ -12453,6 +13608,7 @@ function update(msg: any) {
   s.events = msg.events || s.events;
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
+  if (msg.events) { const v0 = views.get(msg.id); if (v0) v0.stale = true; }   // events replaced wholesale: the window rebuilds (the tail path trusts v.rendered)
   reconcileRewind(s);                    // pending-rewind overlay + the editable-bubble set, from the fresh payload
   reconcileOptimistic(s);                // re-assert (or retire) any in-flight optimistic sends on this push
   renderTabs();                          // status/chip change only — repaint, never re-order (the user 2026-06-27)
@@ -12516,6 +13672,8 @@ function requestFullSession(id: string): void {
 // nothing, its reconnect is a brand-new client whose connect push heals by itself.)
 window.addEventListener("romp:wsdown", () => awaitingFull.clear());
 window.addEventListener("romp:wsup", () => awaitingFull.clear());
+// …and a send still unconfirmed at the down edge may never have reached the kernel: say so on its bubble
+window.addEventListener("romp:wsdown", () => markPendingLost("connection"));
 
 function chatTail(msg: any) {
   const s = sessions.get(msg.id);
@@ -12559,7 +13717,7 @@ function chatTail(msg: any) {
   const wasLen = s.events.length;
   s.events.length = from;                          // drop the (now superseded) tail...
   for (const e of (msg.events || [])) s.events.push(e);   // ...and append the freshly-changed suffix
-  reconcileRewind(s);                              // pending-rewind overlay + the editable-bubble set
+  reconcileRewind(s, from);                        // pending-rewind overlay + the editable-bubble set, judged below the tail's start (see there)
   reconcileOptimistic(s);                          // re-assert (or retire) any in-flight optimistic sends
   // A delta that SHRINKS the tail (an event retired with nothing replacing it — cancelling the last queued
   // message is the everyday case) lands on `from === new length`, so lowering v.rendered to `from` leaves it
@@ -12914,7 +14072,8 @@ function pipeBanner(up: boolean, queued: number): void {
 
 // every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
 // minute, read by `romp perf client`); the handler itself is unchanged
-window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
+// …and handed the merged frames by direct call from federation.js when this page has it (frame-listener.ts)
+listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   // the shell's palette: "Fork this session…" → the fork modal for the ACTIVE session, from the tip
@@ -12937,7 +14096,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   }
   // the pipe's down edge also clears awaitingFull (the VS Code twin of the shim's romp:wsdown — an ask
   // lost with the pipe must not suppress the re-ask after the reconnect's resync; see requestFullSession)
-  if (m.type === "pipeState") { if (!m.up) awaitingFull.clear(); pipeBanner(!!m.up, Number(m.queued) || 0); return; }
+  if (m.type === "pipeState") { if (!m.up) awaitingFull.clear(); if (!m.up) markPendingLost("connection"); pipeBanner(!!m.up, Number(m.queued) || 0); return; }
   // any kernel message proves the kernel is reachable again — heal previews whose fetch died in a
   // restart window (preview.ts retryFailedPreviews; a no-op when nothing failed). federation's
   // tunnel poll rides this same path: it dispatches {type:"hostUp"} on a host's down→up transition,
@@ -13017,10 +14176,16 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   else if (m.type === "nextTab") cycleTab(1);
   else if (m.type === "prevTab") cycleTab(-1);
   else if (m.type === "warn" && typeof m.text === "string" && m.text) {
-    // A warn arriving while a create is in flight IS that create's verdict (a name the kernel won't take,
-    // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
-    // provisional tab down with it; a toast would slide past the one moment it needed to be read.
-    if (provisionalId) failProvisional(m.text); else warnToast(m.text);
+    // A warn while the emoji dialog awaits its answer is the kernel refusing THAT value (the setSessionEmoji
+    // op answers with emojiSet or a bare warn, nothing else), so it goes under the dialog's input — checked
+    // FIRST, because the branch below used to claim every warn during a provisional create and so struck
+    // the opening tab as failed for a refused emoji (review, 2026-09-06). Otherwise a warn arriving while a
+    // create is in flight IS that create's verdict (a name the kernel won't take, an unreadable parent, the
+    // SDK setup hint). It gets a dialog naming the reason and takes the provisional tab down with it; a
+    // toast would slide past the one moment it needed to be read.
+    if (emojiPrompt?.pending) emojiRefusedLocal(m.text);
+    else if (provisionalId) failProvisional(m.text);
+    else warnToast(m.text);
     // A warn is also the kernel REFUSING a gesture this client may have already painted — the
     // user-todo Reply/Dismiss remove their row optimistically before any verdict. Re-sync the
     // active view from its events so a refused row returns NOW: the kernel's state didn't change
@@ -13084,6 +14249,12 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
+  // the kernel's answer to one of THIS page's views writes (a targeted tag edit, or a whole-blob
+  // lens/order write) — the optimistic copy settles or reverts on it, never on a frame count
+  else if (m.type === "viewsAck" || m.type === "tagEditAck") onViewsAck(m);
+  // what the local kernel can do for this page (every `ready`, reconnects included); an op it does not know
+  else if (m.type === "caps") onKernelCaps(m);
+  else if (m.type === "unknownOp") onUnknownOp(m);
   // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
   // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
   else if (m.type === "models") loadModelChoices();
@@ -13099,7 +14270,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     // this-machine button in place — the row's first-ever open is the only one that shows the
     // "local" placeholder.
     if (typeof m.selfHost === "string" && m.selfHost && !from) {
-      localSelfHost = m.selfHost;
+      adoptSelfHost(m.selfHost);
       const lb = document.querySelector('#picker .picker-host .picker-be-opt[data-host=""]') as HTMLElement | null;
       if (lb) lb.textContent = localSelfHost;
     }
@@ -13190,6 +14361,7 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
   else if (m.type === "working") { workingSet = new Set(Array.isArray(m.names) ? m.names : []); refreshPostalDots(); }
   else if (m.type === "imgData" && typeof m.path === "string") onImgData(m.path, typeof m.url === "string" ? m.url : null, typeof m.sid === "string" ? m.sid : null);
   else if (m.type === "tabOrder") {
+    if (typeof m.selfHost === "string" && m.selfHost) adoptSelfHost(m.selfHost);   // the LOCAL kernel's own name: federation puts only its own on the merged frame
     captureViews(m.views || null);
     applyTabOrder(m.order, m.tabs, { reemit: m.reemit === true, freshHost: typeof m.freshHost === "string" ? m.freshHost : undefined });
   }
@@ -13197,6 +14369,17 @@ window.addEventListener("message", perfFrameHandler("chat", (m) => vscodeApi?.po
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
     const s = sessions.get(m.id);
     if (s && s.name !== m.name) { s.name = m.name; renderTabs(); }
+  }
+  else if (m.type === "emojiSet" && m.id && typeof m.emoji === "string") {
+    // the kernel's confirm for setSessionEmoji (the renamed shape): "" = cleared. Held against a push
+    // built before the store had it, like a rename; the pushed tab meta then echoes it every cycle.
+    notePendingMeta(pendingTabMeta, m.id, { emoji: m.emoji });
+    const meta = tabMeta.get(m.id);
+    if (meta) meta.emoji = m.emoji;
+    const s = sessions.get(m.id);
+    if (s && (s.emoji || "") !== m.emoji) { s.emoji = m.emoji; renderTabs(); }
+    else if (!s) renderTabs();   // a placeholder tab reads the meta directly
+    emojiLanded(String(m.id), m.emoji);   // the dialog that asked, if it is still open, closes on the confirm
   }
   else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
     const ackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;
@@ -14308,9 +15491,11 @@ setupSettings();
         // PARKED/backend ✕ it is just as load-bearing: the kernel bubble had been SUPPRESSING our
         // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
         // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
+        // OUR bubble's ✕ names its entry (data-qts, the press time); a kernel bubble's ✕ names none, and
+        // drops the first pending send with the text — the one the kernel's first copy covers.
         const list = pendingSent.get(sidQ) || [];
-        const i = list.findIndex((p) => p.text === qmd);
-        if (i >= 0) { list.splice(i, 1); if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+        const qts = el.dataset.qts !== undefined ? Number(el.dataset.qts) : undefined;
+        if (dropPending(list, qmd, qts)) { if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
         echoShownSig.delete(sidQ);
       }
       const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
@@ -14424,6 +15609,21 @@ setupSettings();
       const cut = (elx.closest(".fork-spot") as HTMLElement | null)?.dataset.cut || "";
       if (activeId && !isProvisionalId(activeId) && sessions.get(activeId)) showForkPrompt(activeId, cut);
     },
+    // the mid-turn cue (absorbedCues): "jump" scrolls to the absorbed message and retires the note — its
+    // job, explaining the vanished bubble, is done; ✕ retires it in place. Delegated like qx: the tail
+    // rebuilds every push. The node goes NOW (the acknowledgement); the map keeps it gone.
+    abjump: (elx) => {
+      const target = elx.dataset.target || "";
+      const sidC = owningSidOf(elx) || activeId;
+      if (sidC) dismissAbsorbedCue(sidC, target);
+      (elx.closest(".turn-absorbed-cue") as HTMLElement | null)?.remove();
+      if (target) scrollToAnchor(target);
+    },
+    abdismiss: (elx) => {
+      const sidC = owningSidOf(elx) || activeId;
+      if (sidC) dismissAbsorbedCue(sidC, elx.dataset.target || "");
+      (elx.closest(".turn-absorbed-cue") as HTMLElement | null)?.remove();
+    },
     // "copy to composer" on a never-delivered bubble: the echo is the only surviving copy of the text —
     // hand it back for review-and-resend (the same restore the queued ✕ uses). Delegated like qx: the
     // tail rebuilds every push, and a per-render listener eats a mid-press click.
@@ -14520,13 +15720,27 @@ setupSettings();
     // section renders open whatever the store says, so a stored toggle there inverted the click. The
     // write notifies (TABGROUPS_EVENT) and the listener re-renders — one render path for a local
     // toggle and a sibling pane's alike.
+    // …and shows the section in the pane (the user 2026-09-06): the snapshot of its sessions, whether
+    // the click folded or opened it — "look at this group", one rule for both states. snapView is set
+    // BEFORE the write so the write's own render paints it; showActive swaps the pane.
     "toggle-group": (el) => {
       const name = el.dataset.group;
-      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
+      if (!name) return;
+      snapView = name;
+      writeTabGroups(setSectionCollapsed(tabGroups(), name, el.dataset.folded !== "1"));
+      showActive();
     },
-    // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
-    // the click stores nothing — the delegate's flash is the whole acknowledgement
-    "group-active": () => { /* acknowledged by the flash; nothing to store */ },
+    // the header whose snapshot the pane shows, open, holding the tab being read (makeGroupHead derives this
+    // act from that rendered state): the click that swapped the pane, undone. The transcript comes back and
+    // the fold stays as it is. Escape from anywhere while the snapshot shows does the same (leaveSnapshot).
+    "show-transcript": () => leaveSnapshot(),
+    // the folded header's user-todo flag (makeGroupHead): OPEN that group — explicit, never a toggle.
+    // The flag exists only on a folded header, so a press that lands after a sibling pane already
+    // opened the group must still read as "open", not fold it back. Same render path as toggle-group.
+    "open-group": (el) => {
+      const name = el.dataset.group;
+      if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, false));
+    },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;
@@ -14647,13 +15861,12 @@ setupSettings();
     if (draggedGroup) {
       // a GROUP drop (tab groups): the dragged tag takes the target section's slot in tagOrder —
       // the FULL union order, written through the same views path the timeline's pill drag uses
-      // (postViews → setTimelineViews), so both surfaces read one order. pendingSessionViews
-      // shows it instantly; the kernel's echo settles it.
+      // (postTagOrder → setTimelineViews; the kernel orders the stored tags array by it), so both
+      // surfaces read one order. pendingSessionViews shows it instantly; the kernel's ack settles it.
       e.preventDefault();
       const to = tabs.querySelector<HTMLElement>(".tab-group-head.drop-target")?.dataset.group;
       if (to && to !== draggedGroup) {
-        const v = effViews();
-        postViews(applyTagOrder(v, reorderTagOrder(viewTagUnion(v).map((u) => u.name), draggedGroup, to)));
+        postTagOrder(reorderTagOrder(viewTagUnion(effViews()).map((u) => u.name), draggedGroup, to));
       }
       return;
     }

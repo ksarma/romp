@@ -15,17 +15,17 @@ import tempfile
 import time
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-em = SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-km = SourceFileLoader("romp_kernel_bgfold", os.path.join(BIN, "romp-kernel")).load_module()
-sb = SourceFileLoader("romp_sdk_backend_bgfold", os.path.join(BIN, "..", "kernel", "sdk_backend.py")).load_module()
+km = load_source("romp_kernel_bgfold", os.path.join(BIN, "romp-kernel"))
+sb = load_source("romp_sdk_backend_bgfold", os.path.join(BIN, "..", "kernel", "sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-555555555555"
 PEER = "11111111-2222-3333-4444-666666666666"
@@ -226,7 +226,7 @@ class TimelineReaders(unittest.TestCase):
         p = jd.STATE / "states" / (SID + ".jsonl")
         _append(str(p), {"t": now - 300, "state": "working"}, {"t": now - 200, "state": "permission"})
         self.assertEqual(km._state_intervals(SID, "permission", now), [[now - 200, now]],
-                         "an open awaiting interval runs to now")
+                         "an open awaiting interval runs to now (the build clock the renderer reads as open)")
         _append(str(p), {"t": now - 100, "state": "working"}, {"awaiting": False})
         self.assertEqual(km._state_intervals(SID, "permission", now), [[now - 200, now - 100]])
         self.assertEqual(km._state_intervals(SID, "compacting", now), [])

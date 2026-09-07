@@ -64,11 +64,14 @@ This repo may go public; assume every commit is permanent and world-readable.
   `notes-api` with `web`/`api`/`tests` sessions) rather than inventing per-test
   worlds.
 - Two machine-local backstops enforce this, neither a substitute for the rule:
-  the `.githooks/pre-push` hook greps every PUSHED commit's tree for the strings
-  in `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
-  are unaffected; it scans pushed shas, not the working tree, so it arms every
+  the `.githooks/pre-push` hook greps each pushed ref's TIP tree, plus the lines
+  every commit new to the remote ADDS, for the strings in
+  `~/.config/romp/private-strings.txt` (absent file → no-op, so contributors
+  are unaffected; it reads pushed shas, not the working tree, so it arms every
   worktree — a working-tree scan missed a leak pushed from a peer worktree on
-  2026-07-25); and the maintainer's clone carries an UNTRACKED
+  2026-07-25; and added lines rather than every commit's tree, so a branch that
+  only INHERITED a string main has since redacted pushes once it merges main —
+  2026-09-06); and the maintainer's clone carries an UNTRACKED
   `tests/test_no_personal_identifiers.py` that scans the working tree for the
   same strings plus that machine's hostname and home path. The pytest file is
   deliberately not in the repo: one machine's identifiers mean nothing on anyone
@@ -122,9 +125,14 @@ repos are in play and only ONE of them is ours to write to:
   upstream maintainer extended to the user's PRs was earned by that pipeline's
   rigor, not a reason to relax it. Offering stays as before (a PR opened from a
   fork branch); who merges it is the user's call, PR by PR.
-- **`UPSTREAM.md` is the queue for those decisions** (user ask, 2026-08-07).
-  When you land something upstream-worthy — a fix in code upstream ships too,
-  not fork-only infrastructure — add a row there; the user prunes or promotes.
+- **The ledger under `upstream/` is the queue for those decisions** (user ask,
+  2026-08-07; one file per candidate since 2026-09-06). When you land something
+  upstream-worthy — a fix in code upstream ships too, not fork-only
+  infrastructure — add an entry with `scripts/upstream-ledger.py new <slug>
+  --title '...' --where '...'` and commit it with the change. Never edit
+  `UPSTREAM.md` per change: it is prose only, and a table row there fails the
+  test. The user prunes (`declined`, `keep-private`) or promotes (`approved`)
+  by editing the entry's `status:` line.
 - **The guard is configuration, not care.** `scripts/fork-remotes.sh` sets
   `upstream`'s push URL to a dead sentinel, so a stray `git push upstream` fails
   loudly instead of landing on someone else's project, and points
@@ -163,9 +171,10 @@ broad `git add` will sweep up your work). Conventions:
   1. `git push -u origin <branch>`. `origin` is the fork; `remote.pushDefault` points
      there too, so a bare `git push` does the same. Never `git push upstream` — see
      the fork section above, and `scripts/fork-remotes.sh` makes it fail if tried.
-  2. Land it on the fork's `main` the way the user prefers for that change — a PR
-     within the fork when it wants a read-through, a merge when it does not. Opening
-     a PR against the upstream project is a separate decision only the user makes.
+  2. Open a PR within the fork against `main`. PRs land through a batch
+     (`scripts/batch.py`; see `docs/batching.md`): do not click merge. A change that
+     must land alone is merged on the user's word. Opening a PR against the upstream
+     project is a separate decision only the user makes.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.

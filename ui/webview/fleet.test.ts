@@ -19,7 +19,8 @@ test("fleet.ts applies no delta itself: the Outline page announces feedDelta (20
   // feed-delta.test.ts pins what the pane then sees through the real manager; the kernel tests pin the page's
   // caps and its script order (federation.js before fleet.js)
   assert.doesNotMatch(SRC, /applyFeedDelta|from "\.\/feed-delta"/);
-  assert.match(SRC, /window\.addEventListener\("message"/);
+  // the frame handler is installed through frame-listener.ts: on window, and in federation's registry for direct delivery
+  assert.match(SRC, /listenForFrames\(perfFrameHandler\("fleet"/);
   // …but never silent about a delta it was handed anyway (federation.js absent → the shim dispatches the raw
   // frame): the feed pane's guard — console.error, a clientDiag breadcrumb, a needFullFeed re-base — and no
   // attempt to read the delta's slices. Run for real in fleet-live-clock.test.ts.
@@ -350,4 +351,18 @@ test("the strip's styles live in the fleet's own sheet, mirroring feed.css — t
   assert.match(CSS, /@keyframes fask-swirl-spin\{to\{transform:rotate\(-360deg\)\}\}/, "reverse spin, like every romp loader");
   assert.match(FEEDCSS, /\.hostload-line \{ display: flex; align-items: center; gap: 7px; color: var\(--dim\); font-size: 0\.82em; \}/,
     "the feed's rule this mirrors is still the reference");
+});
+
+test("the outline's lens write carries a writeId and `edited: []`, so the kernel applies the lens only (round 5 of the 2026-09-05 review)", () => {
+  // until round 5 this was the one views write posted without either: the kernel judged its tag set as a
+  // whole blob, and a targeted edit that landed in the same second as the pane's frame copy was reverted
+  // by the next lens change. The empty list is the kernel's word that the write changes no tag.
+  assert.match(SRC, /import \{ mintWriteId \} from "\.\/views-writes";/);
+  assert.match(SRC, /function postOutlineLens\(v: SessionViews\) \{\s*\n\s*vscodeApi\?\.postMessage\(\{ type: "setTimelineViews", views: v, writeId: mintWriteId\(\+\+outlineViewsWriteSeq\), edited: \[\] \}\);/);
+  // both lens paths (the tag menu's apply, the chips' remove) post through it, from the frame copy the pane
+  // holds with only the outline lens changed
+  const sites = SRC.match(/const v = JSON\.parse\(JSON\.stringify\(fleetViews \|\| \{ active: "all", tags: \[\] \}\)\);\s*\n\s*v\.actives = Object\.assign\(\{\}, v\.actives, \{ outline: l \}\);\s*\n\s*fleetViews = v;[^\n]*\n\s*postOutlineLens\(v\);/g) || [];
+  assert.equal(sites.length, 2, "the two lens gestures post the same shape");
+  assert.equal((SRC.match(/type: "setTimelineViews"/g) || []).length, 1, "one post site: no views write leaves this pane without the two fields");
+  assert.doesNotMatch(SRC, /type: "setTimelineViews", views: v \}/);
 });

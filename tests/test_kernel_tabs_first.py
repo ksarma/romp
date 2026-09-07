@@ -8,7 +8,7 @@ teardown on the client), so a fresh chat client's strip comes from the connect p
 import inspect
 import os
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -20,16 +20,36 @@ KPATH = os.path.join(BIN, "romp-kernel")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel", KPATH).load_module()
+km = load_source("romp_kernel", KPATH)
 
 
 class TabsFirst(unittest.TestCase):
     def test_push_taborder_carries_name_and_color_per_tab(self):
         src = inspect.getsource(km._push)
-        self.assertIn('tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}', src,
-                      "the periodic push builds a name+color list per tab")
-        self.assertIn('{"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()}', src,
-                      "and ships it as the tabs field alongside the sid order")
+        self.assertIn('tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),\n'
+                      '                             "emoji": _name_emoji(s["sid"])} for s in chat_list]', src,
+                      "the periodic push builds a name+color+emoji list per tab")
+        self.assertIn('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))', src,
+                      "and ships it as the tabs field alongside the sid order, in the frame's one spelling")
+
+    def test_every_tab_order_frame_names_this_kernels_own_host(self):
+        # the chat reads a postal card's sender host against the viewing kernel's own name (its
+        # postalSenderHost); the session frame carries the name, but only a LOCAL session's frame teaches
+        # it, so a dashboard whose kernel runs no sessions of its own never learned it until the + picker
+        # opened, and a remote card stamped with this kernel's name stayed plain text (review find,
+        # 2026-09-06). The tabOrder frame is the one every chat receives, first of all on connect.
+        frame = km._tab_order_frame(["11111111-2222-3333-4444-555555555555"], [{"id": "11111111-2222-3333-4444-555555555555", "name": "web", "color": None}])
+        self.assertEqual(frame["type"], "tabOrder")
+        self.assertEqual(frame["selfHost"], km._self_host())
+        self.assertEqual(sorted(frame), ["order", "selfHost", "tabs", "type", "views"])
+        # the three senders share the one spelling: the pusher's tabs-first send, the off-cycle session push,
+        # and the close confirmation — a fourth inline dict would drop the field again
+        text = open(KPATH).read()
+        self.assertEqual(text.count('_send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))'), 2)
+        self.assertEqual(text.count("frame = _tab_order_frame(tab_order, tab_meta)"), 1)
+        self.assertEqual(text.count('{"type": "tabOrder"'), 1, "the literal lives in _tab_order_frame alone")
+        self.assertIn("_tab_order_frame(tab_order, tab_meta)", inspect.getsource(km._push_session_now))
+        self.assertIn("_tab_order_frame(tab_order, tab_meta)", inspect.getsource(km._confirm_close_now))
 
     def test_connect_ready_handler_sends_no_tab_order_of_its_own(self):
         # the connect push (_push_one → _push, guarded) is the ONLY tabOrder source; the handler's own,

@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -23,12 +23,12 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
-km = SourceFileLoader("romp_kernel_freshfed", os.path.join(BIN, "romp-kernel")).load_module()
-sb = SourceFileLoader("romp_sdk_backend_freshfed",
-                      os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")).load_module()
-ps = SourceFileLoader("romp_postal_freshfed", os.path.join(BIN, "romp-postal-service")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
+km = load_source("romp_kernel_freshfed", os.path.join(BIN, "romp-kernel"))
+sb = load_source("romp_sdk_backend_freshfed",
+                      os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py"))
+ps = load_source("romp_postal_freshfed", os.path.join(BIN, "romp-postal-service"))
 
 
 class KernelEnsuresBus(unittest.TestCase):
@@ -86,11 +86,11 @@ class SpawnedSessionPath(unittest.TestCase):
 class CliSendEchoesRouting(unittest.TestCase):
     def _send(self, resp):
         saved_http, saved_ensure = ps._http, ps.ensure
-        saved_name, saved_id = ps.my_name, ps.my_id
+        saved_identity = ps._self_identity
         # the sender must be IDENTIFIED (2026-08-18: an anonymous send is refused before _http —
         # the guard these routing tests would otherwise trip in CI, where no session env exists);
         # this class tests echo ROUTING, and its scenario always implied an identified sender
-        ps.my_name, ps.my_id = (lambda: "alpha"), (lambda: "uuid-a")
+        ps._self_identity = lambda: ("uuid-a", "alpha")     # cli_send resolves both halves in one call (2026-09-06)
         ps.ensure = lambda: True
         ps._http = lambda method, path, payload=None: resp
         out = io.StringIO()
@@ -101,7 +101,7 @@ class CliSendEchoesRouting(unittest.TestCase):
         finally:
             ps.sys.stdout = saved_out
             ps._http, ps.ensure = saved_http, saved_ensure
-            ps.my_name, ps.my_id = saved_name, saved_id
+            ps._self_identity = saved_identity
         return rc, out.getvalue()
 
     def test_local_delivery_still_reads_delivered(self):

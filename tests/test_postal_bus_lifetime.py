@@ -14,12 +14,13 @@ while the kernel runs. Two guards land here:
 Synthetic everything: hermetic state dir, stub HTTP server for the kernel, dead ports, no ssh.
 """
 import http.server
+import json
 import os
 import socket
 import tempfile
 import threading
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -27,8 +28,8 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-pm = SourceFileLoader("romp_postal_buslife", os.path.join(BIN, "romp-postal-service")).load_module()
-km = SourceFileLoader("romp_kernel_buslife", os.path.join(BIN, "romp-kernel")).load_module()
+pm = load_source("romp_postal_buslife", os.path.join(BIN, "romp-postal-service"))
+km = load_source("romp_kernel_buslife", os.path.join(BIN, "romp-kernel"))
 
 
 def _dead_port():
@@ -92,12 +93,25 @@ class KernelUp(unittest.TestCase):
             self.assertFalse(pm._kernel_up())
 
 
+ALPHA = "11111111-2222-3333-4444-555555555555"
+GAMMA = "99999999-8888-7777-6666-555555555555"
+
+
+def _forget_presence():
+    """A bus that has never seen an answered listing: no in-memory rows, no disk twin."""
+    pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False
+    pm._PRESENCE_GOOD_FILE.unlink(missing_ok=True)
+
+
 class IdleGate(unittest.TestCase):
     def setUp(self):
         self._ku = pm._kernel_up
+        pm.STATE.mkdir(parents=True, exist_ok=True)
+        _forget_presence()
 
     def tearDown(self):
         pm._kernel_up = self._ku
+        _forget_presence()
 
     def test_local_clients_keep_the_bus_no_kernel_probe_needed(self):
         pm._kernel_up = lambda: (_ for _ in ()).throw(AssertionError("must not probe with clients present"))
@@ -118,6 +132,120 @@ class IdleGate(unittest.TestCase):
             self.assertFalse(stop)
         idle, stop = pm._idle_tick(0, idle)
         self.assertTrue(stop, "a machine with no kernel and no sessions keeps the old autostop")
+
+    def test_never_answered_keeps_the_autostop(self):
+        # a kernel-less bus (a CLI `romp mail` spawned it; the kernel never came): an unanswered listing
+        # with no evidence that sessions ever existed is an absence, not an outage — it stops as on main,
+        # so a later kernel does not adopt a stale process with the old token and state root
+        pm._kernel_up = lambda: False
+        idle, stop = 0, False
+        for _ in range(pm.IDLE_GRACE):
+            self.assertFalse(stop)
+            idle, stop = pm._idle_tick(0, idle, answered=False)
+        self.assertTrue(stop)
+
+    def test_an_outage_after_listed_sessions_holds_the_count(self):
+        # the last answered listing held sessions; the kernel then stops answering (mid-restart): the
+        # count holds where it was, for as long as the outage lasts — those sessions outlive the kernel
+        pm._kernel_up = lambda: False
+        pm._remember_presence([{"id": ALPHA, "name": "web"}])
+        for start in (0, pm.IDLE_GRACE - 1):
+            idle = start
+            for _ in range(10):
+                idle, stop = pm._idle_tick(0, idle, answered=False)
+                self.assertEqual((idle, stop), (start, False))
+
+    def test_a_fresh_bus_primes_the_evidence_from_the_twin(self):
+        # a bus restarted during the kernel's blink has empty memory; the disk twin the last process
+        # wrote carries the evidence across (the review find of 2026-09-01 made the twin for this)
+        pm._kernel_up = lambda: False
+        pm._PRESENCE_GOOD_FILE.write_text(json.dumps([{"id": ALPHA, "name": "web"}]))
+        self.assertEqual(pm._idle_tick(0, 0, answered=False), (0, False))
+        self.assertTrue(pm._LOCAL_PRESENCE_GOOD[1], "primed")
+
+    def test_an_empty_twin_is_no_evidence(self):
+        pm._kernel_up = lambda: False
+        pm._PRESENCE_GOOD_FILE.write_text("[]")
+        idle, stop = 0, False
+        for _ in range(pm.IDLE_GRACE):
+            idle, stop = pm._idle_tick(0, idle, answered=False)
+        self.assertTrue(stop, "the last answered listing was empty: nothing to protect")
+
+    def test_an_answered_empty_listing_advances_the_count(self):
+        # reachable only through the ROMP_SESSIONS_FILE seam in practice (an answered listing implies
+        # a live kernel, which resets the count first); pinned so the seam-driven bats autostop holds
+        pm._kernel_up = lambda: False
+        idle, stop = 0, False
+        for _ in range(pm.IDLE_GRACE):
+            idle, stop = pm._idle_tick(0, idle, answered=True)
+        self.assertTrue(stop)
+
+
+class MonitorTick(unittest.TestCase):
+    """One _monitor poll, end to end: an answered listing is remembered as evidence, an unanswered one
+    holds the count only on that evidence, and the deadness mirror (STATE/remote-sids) is rewritten
+    every poll so an expired heartbeat leaves it within one tick (2026-09-06)."""
+
+    def setUp(self):
+        self._saved = (pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans, pm._warn_stuck_mail)
+        pm._kernel_up = lambda: False
+        pm._sweep_orphans = pm._warn_stuck_mail = lambda: None
+        pm.HEARTBEATS.clear()
+        pm.STATE.mkdir(parents=True, exist_ok=True)
+        _forget_presence()
+
+    def tearDown(self):
+        pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans, pm._warn_stuck_mail = self._saved
+        pm.HEARTBEATS.clear()
+        _forget_presence()
+
+    def test_a_never_answered_bus_stops_at_the_grace(self):
+        pm._kernel_sessions_checked = lambda threads=False: ([], False)
+        idle, stop = 0, False
+        for _ in range(pm.IDLE_GRACE):
+            self.assertFalse(stop)
+            idle, stop = pm._monitor_tick(idle)
+        self.assertTrue(stop, "no kernel ever answered: main's autostop")
+
+    def test_an_outage_after_sessions_never_reaches_stop(self):
+        listing = [([{"id": ALPHA, "name": "web"}], True)]
+        pm._kernel_sessions_checked = lambda threads=False: listing[0]
+        self.assertEqual(pm._monitor_tick(0), (0, False))                # sessions listed: the evidence
+        self.assertEqual(json.loads(pm._PRESENCE_GOOD_FILE.read_text())[0]["id"], ALPHA,
+                         "the evidence reached the disk twin for a bus restarted during the outage")
+        listing[0] = ([], False)                                          # the kernel stops answering
+        idle = 0
+        for _ in range(pm.IDLE_GRACE * 5):
+            idle, stop = pm._monitor_tick(idle)
+            self.assertEqual((idle, stop), (0, False))
+
+    def test_an_answered_empty_listing_clears_the_evidence(self):
+        listing = [([{"id": ALPHA, "name": "web"}], True)]
+        pm._kernel_sessions_checked = lambda threads=False: listing[0]
+        pm._monitor_tick(0)
+        listing[0] = ([], True)                                           # the sessions are gone, says the kernel
+        idle, stop = pm._monitor_tick(0)
+        self.assertEqual((idle, stop), (1, False))
+        listing[0] = ([], False)                                          # and then the kernel goes too
+        for _ in range(pm.IDLE_GRACE):
+            idle, stop = pm._monitor_tick(idle)
+        self.assertTrue(stop, "no sessions were listed when the kernel last answered: stop")
+
+    def test_a_beat_within_ttl_keeps_the_bus_even_unanswered(self):
+        pm._kernel_sessions_checked = lambda threads=False: ([], False)
+        pm.HEARTBEATS[GAMMA] = ("gamma", pm.time.time())
+        self.assertEqual(pm._monitor_tick(pm.IDLE_GRACE - 1), (0, False))
+
+    def test_an_expired_heartbeat_leaves_the_mirror_after_one_tick(self):
+        pm._kernel_sessions_checked = lambda threads=False: ([], True)
+        old, fresh = GAMMA, "99999999-8888-7777-6666-555555555556"
+        now = pm.time.time()
+        pm.HEARTBEATS[old] = ("gamma", now - pm.HEARTBEAT_TTL - 1)
+        pm.HEARTBEATS[fresh] = ("delta", now)
+        (pm.STATE / "remote-sids").write_text(old + "\n" + fresh + "\n")   # what the last beat wrote
+        pm._monitor_tick(0)
+        self.assertEqual((pm.STATE / "remote-sids").read_text(), fresh + "\n",
+                         "the expired sid is pruned by the poll's write, not by the next beat")
 
 
 class RefusedNotifyRevives(unittest.TestCase):

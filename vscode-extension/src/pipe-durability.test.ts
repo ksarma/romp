@@ -40,10 +40,11 @@ test("chat and feed panels both post pipeState into their webviews", () => {
 
 test("both webviews render the pipe-down banner with the held count", () => {
   // render.ts's handler also clears awaitingFull on the down edge (the tab re-ask's reconnect
-  // re-arm, 2026-08-18 — pinned in chat-delta-resync.test.ts); the banner wiring is identical.
+  // re-arm, 2026-08-18 — pinned in chat-delta-resync.test.ts) and marks unconfirmed sends lost
+  // (send-pending.test.ts, 2026-09-06); the banner wiring is identical.
   for (const [name, src] of [["render.ts", RENDER], ["feed.ts", FEED]] as const) {
     assert.match(src,
-      /if \(m\.type === "pipeState"\) \{ (?:if \(!m\.up\) awaitingFull\.clear\(\); )?pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/,
+      /if \(m\.type === "pipeState"\) \{ (?:if \(!m\.up\) awaitingFull\.clear\(\); )?(?:if \(!m\.up\) markPendingLost\("connection"\); )?pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/,
       `${name} must handle pipeState`);
     assert.ok(src.includes("held, sending when it's back"), `${name} must count held messages`);
   }

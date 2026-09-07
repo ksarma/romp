@@ -2,17 +2,21 @@
 """tools/perf-bench.py against a SYNTHETIC state directory (invented sessions in the notes-api demo
 domain, placeholder uuids, no real data): it runs end to end and emits the JSON shape, its cold
 build_session row is a real cold parse, it refuses the live default state directory without the flag
-and mirrors it with the flag, and --compare prints deltas. The tool is driven as a subprocess with the
-same env recipe a person would use, so nothing here loads romp code in-process; the tool module itself
-is loaded once, for a direct check of its fake client's frame labelling (its import pulls in only the
-standard library)."""
+and mirrors it with the flag, and --compare prints deltas. The sessions' directory is a real git
+checkout with a fabricated GitHub origin, as every real state's is: the chat build's git queries —
+the path-link ones and the session-repo `remote get-url` — reach the tripwire's allow list, which a
+plain directory never exercised (the tripwire refused the repo query and a real run aborted at its
+first chat build while this suite stayed green, 2026-09-06). The tool is driven as a subprocess with
+the same env recipe a person would use, so nothing here loads romp code in-process; the tool module
+itself is loaded for direct checks of its fake client's frame labelling and of the tripwire's allow
+rule (its import pulls in only the standard library)."""
 import atexit
 import copy
 import json
 import os
 import re
 import shutil
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from types import SimpleNamespace
 import subprocess
 import sys
@@ -105,15 +109,32 @@ def _transcript(path, sid, cwd, n_turns, t0):
                 f.write(json.dumps(r) + "\n")
 
 
+ORIGIN = "https://github.com/example-org/notes-api.git"   # fabricated; `remote get-url` reads config, no network
+
+
+def _git(*args, cwd):
+    """A fixture git call that reads no global or system config (a developer's commit signing or
+    url.insteadOf must not bend the fixture) and commits as a synthetic author."""
+    env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    subprocess.run(["git", "-c", "user.email=t@TESTHOST", "-c", "user.name=t", "-c", "commit.gpgsign=false"] + list(args),
+                   cwd=str(cwd), check=True, capture_output=True, env=env)
+
+
 def build_synthetic(root, web_turns=WEB_TURNS):
     """A state directory at root/romp (named `romp` so XDG_STATE_HOME=root resolves it as the default)
     plus a Claude config dir at root/claude holding the transcripts. Returns (state, claude_dir). The
     state carries the two credential-shaped files a real one has (synthetic contents), which the mirror
-    must leave behind."""
+    must leave behind. The sessions' cwd is a one-commit checkout with a GitHub origin, so the kernel's
+    read-only git queries run for real and the tripwire's allow list is exercised."""
     root = Path(root)
     state = root / "romp"
     cwd = root / "notes-api"
     cwd.mkdir(parents=True)
+    _git("init", "-q", "-b", "main", cwd=cwd)
+    (cwd / "README.md").write_text("# notes-api\n")
+    _git("add", "README.md", cwd=cwd)
+    _git("commit", "-q", "-m", "seed", cwd=cwd)
+    _git("remote", "add", "origin", ORIGIN, cwd=cwd)
     for d in ("names", "sdk", "states", "goals"):
         (state / d).mkdir(parents=True)
     (state / "serve-token").write_text("synthetic-serve-token-not-real\n")
@@ -230,6 +251,18 @@ class PerfBench(unittest.TestCase):
         self.assertGreaterEqual(out["nss_lookups"].get("getpwnam", 0), 1,
                                 "the `~someone/...` token reached pwd.getpwnam through os.path.expanduser")
 
+    def test_the_session_repo_query_passes_the_tripwire_and_is_counted(self):
+        # the sessions' cwd is a checkout, so the chat build asks `git remote get-url origin` for the
+        # session's GitHub repo; the tripwire admits exactly that pair and counts it (a refusal would
+        # have aborted the run — spawn_attempts stays empty and every row is present)
+        out = self._out()
+        g = out["git_queries"]
+        self.assertFalse(g["answered_as_failure"])
+        self.assertGreaterEqual(g["calls"].get("remote get-url", 0), 1, g)
+        self.assertGreaterEqual(g["calls"].get("rev-parse", 0), 1, "the toplevel query ran in the checkout too")
+        self.assertEqual(out["spawn_attempts"], [])
+        self.assertIn("remote get-url=", self.main.stdout, "the report names the query by its pair")
+
     def test_push_rows_report_bytes_and_rebuild_flags(self):
         b = self._out()["benchmarks"]
         chat = b["push_cold_cycle"]["bytes"]["chat"]["slots"]
@@ -254,7 +287,7 @@ class PerfBench(unittest.TestCase):
     def test_fake_client_labels_direct_delta_frames_by_their_slot(self):
         # the static fixture never changes between pushes, so no delta frame reaches a fake client in the
         # run above; this drives the client's send() directly with the three frame shapes it can see
-        pb = SourceFileLoader("perf_bench_under_test", TOOL).load_module()
+        pb = load_source("perf_bench_under_test", TOOL)
         c = pb.fake_client(SimpleNamespace(), "timeline")      # no _perf_slot: a keyed label is str(key)
         delta = '{"type": "delta", "slot": "bars", "base": 3, "rev": 4, "coll": {}}'
         c["send"](delta)                                        # _send_slot_delta: send() directly, no curSlot
@@ -342,6 +375,73 @@ class PerfBench(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         r = run_tool(["--state", os.path.join(self.root, "not-a-state-dir")])
         self.assertEqual(r.returncode, 2)
+
+
+class Tripwire(unittest.TestCase):
+    """The tripwire's allow rule, in-process: exactly the kernel's read-only git queries pass —
+    `rev-parse`, `ls-files`, and the pair `remote get-url` — and everything else raises. `git remote`
+    is not read-only as a whole (add / set-url / remove rewrite config), so only the get-url pair is
+    admitted, by both words."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.pb = load_source("perf_bench_tripwire_under_test", TOOL)
+        cls.root = tempfile.mkdtemp(prefix="perf-bench-tripwire-")
+        cls.repo = os.path.join(cls.root, "notes-api")
+        os.makedirs(cls.repo)
+        _git("init", "-q", "-b", "main", cwd=cls.repo)
+        _git("remote", "add", "origin", ORIGIN, cwd=cls.repo)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def _tw(self, no_git=False):
+        log = []
+        return self.pb.SubprocessTripwire(subprocess, log, no_git=no_git), log
+
+    def test_the_allow_rule_names_exactly_three_queries(self):
+        q = self.pb.SubprocessTripwire._git_query
+        self.assertEqual(q(["git", "-C", "/x", "rev-parse", "--show-toplevel"]), "rev-parse")
+        self.assertEqual(q(["git", "ls-files", "-co", "--exclude-standard"]), "ls-files")
+        self.assertEqual(q(["git", "-C", "/x", "remote", "get-url", "origin"]), "remote get-url")
+        for argv in (["git", "-C", "/x", "remote", "set-url", "origin", "u"],
+                     ["git", "-C", "/x", "remote", "add", "origin", "u"],
+                     ["git", "-C", "/x", "remote", "remove", "origin"],
+                     ["git", "-C", "/x", "remote"],
+                     ["git", "-C", "/x", "fetch", "origin"],
+                     ["git", "-C", "/x", "push"],
+                     ["git"], ["gh", "pr", "view", "1"], "git rev-parse HEAD", None):
+            self.assertIsNone(q(argv), argv)
+
+    def test_the_repo_query_runs_and_is_counted_by_its_pair(self):
+        tw, log = self._tw()
+        r = tw.run(["git", "-C", self.repo, "remote", "get-url", "origin"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stdout.strip(), ORIGIN)
+        self.assertEqual(tw.git_calls, {"remote get-url": 1})
+        self.assertEqual(log, [])
+
+    def test_a_writing_remote_form_trips(self):
+        tw, log = self._tw()
+        with self.assertRaises(self.pb.BenchError):
+            tw.run(["git", "-C", self.repo, "remote", "set-url", "origin", "https://github.com/other-org/x.git"],
+                   capture_output=True, text=True)
+        self.assertEqual(len(log), 1)
+        self.assertIn("remote', 'set-url'", log[0])
+        self.assertEqual(tw.git_calls, {})
+        with self.assertRaises(self.pb.BenchError):
+            tw.run(["git", "-C", self.repo, "remote"], capture_output=True, text=True)
+        r = subprocess.run(["git", "-C", self.repo, "remote", "get-url", "origin"], capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), ORIGIN, "the refused set-url never ran")
+
+    def test_no_git_answers_the_repo_query_as_a_failure(self):
+        tw, log = self._tw(no_git=True)
+        r = tw.run(["git", "-C", self.repo, "remote", "get-url", "origin"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout, "")
+        self.assertEqual(tw.git_calls, {"remote get-url": 1}, "counted even when answered as a failure")
+        self.assertEqual(log, [])
 
 
 if __name__ == "__main__":

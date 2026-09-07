@@ -25,7 +25,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -35,7 +35,7 @@ os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_pausedmx", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_pausedmx", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-666666666666"   # the session under test
@@ -76,6 +76,7 @@ class _Base(unittest.TestCase):
         jd._PEER_ASK_CACHE[:] = [None, ({}, {})]
         km._POSTAL_WAIT_CACHE[:] = [None, None]
         km._SESSION_STAMP_CACHE.clear()
+        km._LIFT_GATE.clear()
         km._autonudge_cache.clear()
         km._bgall_cache.clear()
         km._bgtasks_cache.clear()

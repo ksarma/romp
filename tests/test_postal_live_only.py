@@ -9,7 +9,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -18,10 +18,11 @@ SKILL = os.path.join(ROOT, "claude", "skills", "romp-postal", "SKILL.md")
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()      # hermetic; constants resolve under here at import
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-pm = SourceFileLoader("romp_postal", os.path.join(BIN, "romp-postal-service")).load_module()
+pm = load_source("romp_postal", os.path.join(BIN, "romp-postal-service"))
 
 ALPHA = "11111111-2222-3333-4444-555555555555"
 GHOST = "99999999-8888-7777-6666-555555555555"
+THREAD = "11111111-2222-3333-4444-777777777777"
 
 
 def _tool_names():
@@ -54,6 +55,15 @@ class LiveOnlyAddressing(unittest.TestCase):
         # live-only: a bare UUID that isn't live and has no in-flight mailbox does not resolve
         _set_live([{"id": ALPHA, "name": "alpha"}])
         self.assertIsNone(pm._recip_id_for(GHOST))
+
+    def test_a_live_thread_row_resolves_by_its_own_name(self):
+        # a comment thread is hidden from the default listing; recipient resolution asks for thread
+        # rows (the 2026-08-22 rule), so recall by the thread's name still finds it now that its
+        # heartbeat no longer leaves a phantom remote row (2026-09-06)
+        _set_live([{"id": ALPHA, "name": "alpha"},
+                   {"id": THREAD, "name": "alpha-t1", "thread": True, "parent": ALPHA}])
+        self.assertEqual(pm._recip_id_for("alpha-t1"), THREAD)
+        self.assertEqual(pm._name_for_id(THREAD), "alpha-t1", "the thread's name lives only on its row")
 
     def test_heartbeat_remote_resolves(self):
         # a heartbeating remote peer is LIVE for addressing purposes
@@ -103,6 +113,21 @@ class RecallReachesParkedMailForTheDead(unittest.TestCase):
     def test_only_the_senders_own_mail_comes_back(self):
         self._park(GHOST, "ghost")
         self.assertEqual(pm._recall("00000000-0000-0000-0000-000000000001", "ghost", None), [])
+
+    def test_recall_by_a_live_thread_name(self):
+        # a comment thread withholds its names entry, so only its live row can carry the name
+        _set_live([{"id": ALPHA, "name": "alpha"},
+                   {"id": THREAD, "name": "alpha-t1", "thread": True, "parent": ALPHA}])
+        box = pm.MAILROOT / THREAD / "new"
+        box.mkdir(parents=True, exist_ok=True)
+        (box / "m7").write_text("From: alpha\nFrom-Id: %s\n\nthe reply body" % ALPHA)
+        try:
+            removed = pm._recall(ALPHA, "alpha-t1", None)
+            self.assertEqual([(r["id"], r["to"]) for r in removed], [("m7", "alpha-t1")])
+            self.assertEqual(list(box.iterdir()), [])
+        finally:
+            for f in box.iterdir():
+                f.unlink()
 
 
 class KernelSilenceIsNotDeadness(unittest.TestCase):

@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -19,7 +19,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
 
 class _R:
@@ -326,6 +326,56 @@ class UpdateRemote(unittest.TestCase):
         self.assertIn('if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve"', apply, "bare romp-serve only as a last resort")
         self.assertNotIn("--refresh", apply, "does NOT rely on `romp --refresh` (needs a manager) — the stuck bug")
 
+    def test_a_host_stopped_by_romp_down_is_synced_but_not_restarted(self):
+        # review find (2026-09-06): with the down-by-romp marker on the host, `romp-manager ensure`
+        # refuses (that is the marker's job), the port poll fails and the bare fallback booted an
+        # UNSUPERVISED kernel while `romp status` there kept saying down. The apply now checks the
+        # marker after the owning-manager branch and before the immediate path touches anything
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        calls = self._wire(apply_out="SYNCED:abcdef0:DOWN")
+        ok, detail = km._update_remote("TESTHOST")
+        self.assertTrue(ok, detail)
+        self.assertIn("synced to abcdef0", detail)
+        self.assertIn("stopped by romp down", detail)
+        self.assertIn("nothing was restarted", detail)
+        self.assertIn("romp up on it starts the new code", detail, "the way to start it is named for the user")
+        self.assertNotIn("restartExpected", km._remotes["TESTHOST"], "no restart is coming: the gap is not expected")
+        apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
+        marker = 'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi'
+        self.assertIn(marker, apply)
+        self.assertLess(apply.index("restart-all --quiet"), apply.index(marker),
+                        "a manager that owns the kernel still gets the quiet restart (its start cleared any marker)")
+        self.assertLess(apply.index(marker), apply.index("immediate: no owning manager"),
+                        "no audit row for a restart that does not happen")
+        self.assertLess(apply.index(marker), apply.index('pkill -f "bin/romp-kern[e]l"'), "nothing killed")
+        self.assertLess(apply.index(marker), apply.index('"$R/bin/romp-manager" ensure'), "nothing ensured")
+        self.assertLess(apply.index(marker), apply.index('nohup "$R/bin/romp-serve"'), "no bare kernel")
+
+    def test_a_same_build_restart_of_a_romp_down_host_says_not_restarting(self):
+        km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855}
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        calls = []
+        def fake(argv, **kw):
+            calls.append(argv)
+            if argv[0] == "git":
+                return _R(out=self.LFULL)
+            cmd = argv[-1]
+            if "for d in" in cmd:
+                return _R(out="DIR:/home/u/romp\nHEAD:%s\nDIRTY:" % self.RHEAD)
+            return _R(out="DOWN")
+        km.subprocess.run = fake
+        ok, detail = km._restart_remote_kernel("TESTHOST")
+        self.assertFalse(ok, "the restart asked for did not run")
+        self.assertIn("TESTHOST is stopped by romp down; not restarting it", detail)
+        self.assertIn("romp up there starts it", detail)
+        self.assertNotIn("restartExpected", km._remotes["TESTHOST"])
+        apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "RESTARTED" in a[-1])
+        marker = 'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi'
+        self.assertIn(marker, apply)
+        self.assertLess(apply.index(marker), apply.index("restart-audit.jsonl"), "no audit row, no kill, no boot")
+        self.assertLess(apply.index(marker), apply.index('pkill -f "bin/romp-kern[e]l"'))
+
     def test_apply_is_detached_from_the_ssh_session(self):
         # the user 2026-07-11 (TESTHOST): the apply kills the running kernel before booting its
         # replacement, so an ssh drop between the two halves left the host kernel-LESS — and every
@@ -407,7 +457,7 @@ class UpdateUI(unittest.TestCase):
         self.assertIn("data-u=", km._LANDING_REMOTES_JS)
 
 
-ru = SourceFileLoader("romp_update", os.path.join(BIN, "romp-update")).load_module()
+ru = load_source("romp_update", os.path.join(BIN, "romp-update"))
 
 
 class RompUpdateCLI(unittest.TestCase):
