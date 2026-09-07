@@ -232,6 +232,22 @@ class ReaderOrderFlag(_Base):
             self._write([_row(T0 - 100), bad, _row(T0 + 5)])
             self.assertIs(km._judge_usage_rows().monotone, False, bad)
 
+    def test_a_nan_t_or_a_nan_run_end_clears_the_flag_and_names_it(self):
+        # NaN compares False against everything: a NaN t would pass `t < hi - S` and a NaN end would
+        # fail `end <= t + 1` only incidentally. Both are named, and the line says which
+        for bad, reason in (({"t": float("nan"), "judge": "captioner", "fsid": SID_A,
+                              "sent": T0 + 1.0, "recv": T0 + 2.0}, "t is not a number"),
+                            (_row(T0 + 5, recv=float("nan")), "run end is not a number"),
+                            (_row(T0 + 5, recv=None, sent=float("nan")), "run end is not a number")):
+            km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
+            self._write([_row(T0 - 100), bad, _row(T0 + 9)])
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                snap = km._judge_usage_rows()
+            self.assertIs(snap.monotone, False, bad)
+            self.assertEqual(len(snap), 3, "the row itself stays in the list")
+            self.assertIn("row 2 of the log breaks the time-order fact (%s)" % reason, err.getvalue())
+
     def test_a_run_end_more_than_one_second_past_t_clears_the_flag(self):
         # the fact that lets the bisect skip rows with t < t0 - 1: their run ended before t0. A row that
         # breaks it (t stamped BEFORE its recv) is exactly the row the bisect would lose, so it costs the
@@ -389,10 +405,15 @@ class RunJudgingBisect(_Base):
         rows, marks = self._mixed_world()
         rows.insert(6, _row(T0 + 5, judge="planner"))                # a late-landing row: t 5 s below the maximum
         rows.append(_row(T0 + 9, sid=SID_B))                         # and again at the tail
+        rows.append({"t": float("nan"), "judge": "captioner", "fsid": SID_A,     # a NaN t: the span is
+                     "sent": T0 + 700.0, "recv": T0 + 702.0, "ms": 5})           # its sent/recv as before
+        rows.append(_row(T0 + 800, sid=SID_B, sent=T0 + 797.0, recv=float("nan")))   # a NaN recv: kept, NaN t1
         self._write(rows)
         got = self._check(T0, marks, expect_monotone=False)
         self.assertIn(("planner", T0 + 5 + 0.5 - 3.25), {(m["judge"], m["sent"]) for m in got},
                       "a late row inside the horizon is kept: the fallback is today's scan")
+        tail = [(m["t"], m["t1"] != m["t1"], m["text"]) for m in got[-2:]]
+        self.assertEqual(tail, [(T0 + 700.0, False, "caption before the point row"), (T0 + 797.0, True, "")])
         # the file a bisect would get wrong: an in-horizon row at the head, older rows after it.
         # bisect_left on t at t0 - 1 over [T0+5, T0-100, T0-50, T0+6] lands at index 3 and would lose
         # the first row; the flag is clear for this list, so the walk starts at the head

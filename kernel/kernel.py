@@ -31888,12 +31888,14 @@ def _judge_usage_row_fault(o, hi):
     writer stamps t = int(time.time()) after recv, so real rows satisfy the third by construction
     (measured max recv - t 0.9998 over 43k rows); the reader verifies it rather than trusting it."""
     t = o.get("t")
-    if not isinstance(t, (int, float)):
-        return "t is not a number"
-    if hi is not None and t < hi - _JUDGE_USAGE_SLACK:
+    if not isinstance(t, (int, float)) or t != t:       # absent, a non-number, or NaN: NaN compares False
+        return "t is not a number"                       # against everything, so it is named here rather
+    if hi is not None and t < hi - _JUDGE_USAGE_SLACK:   # than left to the comparisons below
         return "t is %.1f s below the running maximum" % (hi - t)
     sent, recv = o.get("sent"), o.get("recv")
     end = recv if isinstance(recv, (int, float)) else (sent if isinstance(sent, (int, float)) else t)
+    if end != end:
+        return "run end is not a number"
     if not end <= t + 1:
         return "run end is %.2f s past t + 1" % (end - t - 1)
     return None
