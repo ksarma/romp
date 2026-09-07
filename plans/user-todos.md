@@ -370,10 +370,13 @@ an "…and N more from earlier" tail, todo text marker-neutralized. The compact 
 VERIFIED at build time, not assumed: the CLI then shipped (2.1.224, SDK-bundled) fires
 SessionStart with source ∈ startup/resume/clear/compact/fork and delivers every source's
 additionalContext (only session_title is source-filtered), and SDK sessions load user-settings
-hooks (the SDK's `setting_sources=None` default = CLI defaults). startup stays silent (a fresh
-sid has an empty ledger) and so do clear/fork (the user's own reset or rewind of the
-conversation — the plan's chosen sources are resume and compact, and widening to clear is a
-separate call). One refinement of this slice's "dormant/ended gating" test line: the read leg
+hooks (the SDK's `setting_sources=None` default = CLI defaults). Re-verified 2026-09-07 against
+CLI 2.1.263 in a hermetic config dir with a logging SessionStart hook: the hook fired with
+source startup, resume and compact; its additionalContext reached the model's reply on startup
+and resume, and the compact-source context landed in the transcript as a SessionStart
+hook_additional_context attachment. startup stays silent (a fresh sid has an empty store) and
+so do clear/fork (the user's own reset or rewind of the conversation — the plan's chosen sources
+are resume and compact, and widening to clear is a separate call). One refinement of this slice's "dormant/ended gating" test line: the read leg
 has NO liveness re-check, deliberately — an ended session fires no SessionStart, and
 re-checking the death marker at the route would race the revival's own states row (written
 from the same SessionStart) and eat the exact block the revival came for. `ContextBlock` pins
