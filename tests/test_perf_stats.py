@@ -112,11 +112,11 @@ class Collector(unittest.TestCase):
         self.assertIn("cpu_ms_workers", snap["judge"])
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
-        self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses",
+        self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
                                               "absent_hits", "absent_misses"},
                          "read through jd.goal_io_stats")
-        self.assertEqual(set(snap["memos"]), {"goals_snap", "lift_gate"},
+        self.assertEqual(set(snap["memos"]), {"goals_snap", "lift_gate", "goals_shared"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
@@ -126,6 +126,12 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "entries"},
                          "the awaiting-lift gate: session-cycles skipped vs loaded, plus its occupancy")
         for k, v in snap["memos"]["lift_gate"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["goals_shared"]),
+                         {"hit", "miss", "compare_miss", "refuse", "dup", "absent", "corrupt", "unreadable_journal",
+                          "evict", "fallback", "poisoned", "entries", "bytes", "off"},
+                         "the shared read-only goal-store cache: counters plus its occupancy (jd.shared_store_stats)")
+        for k, v in snap["memos"]["goals_shared"].items():
             self.assertIsInstance(v, int, k)
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])
