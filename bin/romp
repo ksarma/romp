@@ -864,9 +864,12 @@ _romp_restart_audit() {   # <action> [reason] [flag]   (flag --quiet: a PARKED r
             && _ra_name="$(cut -f1 "$_ra_dir/names/$_ra_sid" 2>/dev/null | head -1)"
         # a quiet restart is parked at the manager: the kernel's drift check reads when + sha off this row
         # to stand down for it (T240d), where before an immediate converge pre-empted the quiet window the
-        # flag asked for. The sha is the checkout this romp runs from, best-effort: no sha, no stand-down
+        # flag asked for. The sha is the checkout this romp runs from, best-effort: no sha, no stand-down.
+        # From the script's REAL path (readlink -f, as the uninstall arm spells it): invoked through a symlink,
+        # the link's directory is not the repo, and the row carried when=quiet with no sha, so the stand-down
+        # matched nothing and the converge pre-empted the window just the same (fold review, 2026-09-07)
         [[ "${3:-}" == "--quiet" ]] \
-            && _ra_sha="$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
+            && _ra_sha="$(git -C "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
         RA_ACTION="$1" RA_REASON="${2:-}" RA_WHEN="${3:-}" RA_SHA="$_ra_sha" \
         RA_PPID="$PPID" \
         RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" \

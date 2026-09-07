@@ -42,3 +42,20 @@ row = [json.loads(l) for l in open(sys.argv[1]) if l.strip()][-1]
 assert "when" not in row and "sha" not in row, row
 EOF
 }
+
+@test "romp refresh --quiet through a symlink to bin/romp: the sha is the checkout's, not the link's directory" {
+    # a `~/.local/bin/romp -> <clone>/bin/romp` link is not the documented install (bin/ goes on PATH), but the
+    # sha must not depend on how romp was invoked: the LINK's directory is not the repo, and a row with
+    # when=quiet and no sha parks nothing, so the drift check converged over the very window the flag asked for
+    ln -s "$ROMP" "$TEST_DIR/bin/romp"
+    run "$TEST_DIR/bin/romp" refresh --quiet
+    [ "$status" -eq 0 ]
+    grep -qx 'restart-all --quiet' "$TEST_DIR/manager-calls"
+    expected="$(git -C "$BATS_TEST_DIRNAME/.." rev-parse --short=8 HEAD)"
+    python3 - "$ROMP_STATE_DIR/restart-audit.jsonl" "$expected" <<'PYEOF'
+import json, sys
+row = [json.loads(l) for l in open(sys.argv[1]) if l.strip()][-1]
+assert row.get("when") == "quiet", row
+assert row.get("sha") == sys.argv[2], (row, sys.argv[2])
+PYEOF
+}
