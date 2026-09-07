@@ -1306,8 +1306,11 @@ document.addEventListener("click", (e) => {
   // The click that ends a press-drag-release inside an anchor that is not draggable (the viewer's URL anchors, which
   // select like the text around them; file-view-links.ts): the drag selected text, and the selection is what the person
   // gets, not the link. The viewer's delegate rules the same for its links; running first, this opener opened the tab as
-  // well (the 2026-09-07 review, round 3). The chat's own anchors are draggable and send no such click.
-  if (selectionOpenIn(a)) { e.preventDefault(); return; }
+  // well (the 2026-09-07 review, round 3). Read for a non-draggable anchor ONLY: a press on a draggable anchor (the chat's
+  // own, and a rendered document's web links) starts no selection and collapses none, so a selection left open around one
+  // by a triple-click on its paragraph is not a drag on it, and reading it made every click on that link dead until a click
+  // elsewhere (the 2026-09-07 review, round 4).
+  if (!a.draggable && selectionOpenIn(a)) { e.preventDefault(); return; }
   const href = a.getAttribute("href") || "";
   if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // fragment/relative — leave alone
   e.preventDefault();

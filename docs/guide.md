@@ -249,7 +249,10 @@ Markdown file opens in its Raw view for that one open, since the Rendered view
 has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
 file lands on the last line, with a notice saying so. In a Markdown file, a
 `[link](target)` follows the same two rules: a web target opens a tab, a file
-target opens the file. A link to a section of the same document scrolls to it
+target opens the file (a host with a port, `127.0.0.1:3000` or
+`api.example.com:8443`, is neither, and says so). A link to a section of
+another file (`report.md#results`) opens that file at the section. A link to a
+section of the same document scrolls to it
 when the document has a heading or an anchor by that name (`<a name="install">`
 included), and otherwise says so when you hover it; it scrolls under every
 click, since a section of the shown file has no tab of its own. One click does
@@ -259,8 +262,9 @@ link, a plain click opens the comment or the change and leaves the link alone.
 Inside a file the test for a path is stricter than the one a todo or a chat
 message gets: a path links only when it has a slash and a file extension, starts
 on its own, at the start of a line or after a space, a quote, a bracket or
-Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and `C:/Users/x.txt` stay
-text), is not part of a web address, does not start with a site name
+Markdown's `*` with a closing `*` after the path (so `$HOME/docs/a.md`,
+`@scope/pkg/index.js`, `C:/Users/x.txt`, a glob's `**/docs/a.md` and
+`w*h/img.size` stay text), is not part of a web address, does not start with a site name
 (`www.example.org/docs/index.html`), and is not the package an `import`
 statement or a `require()` call names (a relative import such as `./app.css`
 still links, and so does a path after the English word "from" in a note). Web

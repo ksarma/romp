@@ -23,7 +23,7 @@
 // same in the user's words): a token links when it has a slash and its last segment has a letter-led extension of
 // one to eight letters or digits (a dotfile only under an anchored start: `/`, `./`, `../`, `~/`); it is not glued
 // to the character before it (the line's start, whitespace or an opener must precede it: a quote, a bracket, `=`,
-// `,`, `;`, `|`, Markdown's `*` or `_`), which is what cuts `$HOME/docs/a.md`, `${dir}/out.json`, `$(ROOT)/src/x.c`,
+// `,`, `;`, `|`, or Markdown's `*` with a closing `*` after the path), which is what cuts `$HOME/docs/a.md`, `${dir}/out.json`, `$(ROOT)/src/x.c`,
 // `@scope/pkg/index.js`, `C:/Users/x/file.txt` and `git@host:user/repo.git` down to prose; it is not inside a web
 // address on its line; an unanchored token's first segment does not read as a hostname (`www.` or dotted labels
 // ending in two or more letters: `www.example.org/docs/index.html`, `example.com/index.html`); an unanchored token is
@@ -39,7 +39,7 @@
 // What a click does is the viewer's (file-view.ts binds the body's delegate: the path act opens the file through
 // the host's opener, a URL anchor opens itself, a modified click opens either in a tab of its own). This module
 // marks; it binds no action.
-import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, BARE_FILE_EXTS, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
+import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
 import { headingSlug } from "./md-links";   // the slug the viewer mints heading ids from (`md-` + slug), so a section link finds its heading
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
@@ -56,6 +56,9 @@ export const DEAD_LINK_TITLE = "Not a link the viewer can follow: its target is 
  *  (`README.md`, as a chat-relayed relative path opens it) it is `./`, `.` or `docs/../`: the folder the file is in, which
  *  the name does not carry. The title says which; one title claimed "above" for both (the 2026-09-07 review, round 3). A
  *  target that climbs out of a relative name (`../` from `README.md`) keeps its `..` and is a live link the kernel resolves. */
+/** A `name:port` target whose name reads as a host (an IPv4 address, `localhost`, a hostname by shape): a host with a port, which is
+ *  neither a web address nor a file, said so in place of a file named after the host at a line numbered after the port. */
+export const HOST_PORT_TITLE = "Not a link the viewer can follow: the target is a host with a port, not a file on the session's machine";
 export const EMPTY_TARGET_TITLE = "Not a link the viewer can follow: the target points above the folder this file is named in, so there is no path to open";
 export const SELF_TARGET_TITLE = "Not a link the viewer can follow: the target is the folder this file is in, and the file's name carries no folder, so there is no path to open";
 export const emptyTargetTitle = (filePath: string): string => (filePath.includes("/") ? EMPTY_TARGET_TITLE : SELF_TARGET_TITLE);
@@ -116,10 +119,16 @@ export function urlRanges(text: string): Array<[number, number]> {
 // cut through. Whitespace is every character \s names, a line break and a no-break space among them (a rendered
 // paragraph, list item or fenced block is one unit of text with its line breaks inside it, and a path that starts a
 // soft-broken line or any line of a fence but the first was read as glued to the break before it; the 2026-09-07
-// review), plus the zero-width space, which text pasted from a chat tool carries and \s leaves out. An asterisk or
-// an underscore is Markdown emphasis in the Raw view (`**docs/a.md**`), the view a `:line` link lands in (the
-// review's round 3). Not `)`, `]`, `:` or `#`: `$(ROOT)/src/x.c`, `git@host:user/repo.git` and `x#/docs/a.md` are glue.
-const OPENER_RE = /[\s\u200b"'`(<[{=,;|*_\u201c\u2018\u00ab]/u;
+// review), plus the zero-width space, which text pasted from a chat tool carries and \s leaves out. An asterisk is
+// Markdown emphasis in the Raw view (`**docs/a.md**`), the view a `:line` link lands in (the review's round 3), and it
+// opens a token only when a closing asterisk follows the token (viewerPathGate, STAR_CLOSE_RE: a glob's `**/docs/a.md`
+// and an operand's `w*h/img.size` have none; the review's round 4). Not `_`: the matcher's path arm takes an underscore
+// into the token, so `_docs/a.md_` is one token the extension test refuses and `_docs/a.md` names a folder called
+// `_docs`; the gate never sees `_` before a token. Not `)`, `]`, `:` or `#`: `$(ROOT)/src/x.c`, `git@host:user/repo.git`
+// and `x#/docs/a.md` are glue.
+const OPENER_RE = /[\s\u200b"'`(<[{=,;|*\u201c\u2018\u00ab]/u;
+// The closing star emphasis puts after its path, read in place at the token's end (sticky); a `:12` or `#L12` may sit between.
+const STAR_CLOSE_RE = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)?\*/y;
 const ANCHORED_RE = /^(?:~\/|\.{1,2}\/|\/)/;
 // a first segment that reads as a hostname
 const WWW_RE = /^www\./i;
@@ -133,16 +142,17 @@ const HOST_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
 // longer read as an import, which no formatter writes. The word alone is not the verdict: `from` and `export` are
 // English, and `Copied from "docs/a.md"` in a note names a file (the review's round 3). The word counts when the
 // statement around it is code: a call (`require("…")`, `import("…")`), a keyword that starts its line (`import
-// "pkg/x.css"`), or a `from` whose line began with `import` or `export` (`import x from "…"`, `export * from "…"`) or
-// holds nothing but the `}` that closes a multi-line import. Only then is the line read back to its start, so a
-// quote with no keyword before it still costs the quote, the spaces and one word.
+// "pkg/x.css"`), or a `from` whose line began with `import` or `export` (`import x from "…"`, `export * from "…"`),
+// holds nothing but the `}` that closes a multi-line import, or continues an import opened on a line above
+// (openedImportAbove, below). Only then is the line read back to its start, so a quote with no keyword before it
+// still costs the quote, the spaces and one word.
 const IMPORT_WORDS = ["import", "export", "from", "require"];
 const KEYWORD_MAX = 7;                                   // `require`
 const STATEMENT_HEAD_RE = /^\s*(?:import|export)\b/;    // the line began an import or export statement
 const CLOSING_HEAD_RE = /^\s*\}\s*$/;                    // `} from "…"`: the last line of a multi-line import
 const isWordCh = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
 const isLineSpace = (c: string): boolean => c === " " || c === "\t";
-function importLookBehind(text: string, at: number): { start: number; isImport: boolean } {
+function importLookBehind(text: string, at: number, above?: (n: number) => string | null): { start: number; isImport: boolean } {
   let i = at - 1;
   if (i < 0 || !"\"'`".includes(text[i])) return { start: at, isImport: false };   // no quote before the token: nothing to read
   i--;
@@ -157,16 +167,41 @@ function importLookBehind(text: string, at: number): { start: number; isImport: 
   if (call) return { start: s, isImport: word === "require" || word === "import" };                          // a call: code wherever it stands
   const lineStart = text.lastIndexOf("\n", s - 1) + 1;
   const head = text.slice(lineStart, s);                 // what the line holds before the keyword: an import clause, or prose
-  const isImport = word === "from" ? STATEMENT_HEAD_RE.test(head) || CLOSING_HEAD_RE.test(head) : /^\s*$/.test(head);
+  const isImport = word === "from" ? STATEMENT_HEAD_RE.test(head) || CLOSING_HEAD_RE.test(head) || openedImportAbove(text, lineStart, head, above) : /^\s*$/.test(head);
   return { start: lineStart, isImport };
+}
+// A `from` on a continuation line of a multi-line import: `import {\n  a, b } from "pkg/x.js"` (the closing line carries
+// names, so it is not the bare `}` CLOSING_HEAD_RE reads) or `import { a }\n  from "pkg/x.js"` (the `from` starts a line
+// of its own). The lines above are read back one at a time to the one that began the statement: an `import` or `export`
+// line that names no specifier yet (no quote on it). The lines are the unit's own first (a fenced block, a rendered
+// paragraph), then, past the unit's first line, the units before it through `above(n)` (a code view's rows: each row is
+// a unit of its own, and the statement's opener sits in the row above). A line between must read as a list member (no
+// quote, no `;`, not blank), and the walk is bounded (a formatter puts one name per line; IMPORT_LINES_MAX is more than any import). Only a
+// `from` whose own line holds no specifier and ends no statement asks, so the walk runs once per such `from` over at most
+// IMPORT_LINES_MAX lines, and the pass stays linear in the text. Round 3 read the `from` line's head alone, and these two
+// hand-formatted shapes linked the specifier (the 2026-09-07 review, round 4).
+const IMPORT_LINES_MAX = 32;
+function openedImportAbove(text: string, lineStart: number, head: string, above?: (n: number) => string | null): boolean {
+  if (/["'`;]/.test(head)) return false;
+  let end = lineStart, up = 0;                            // just past the previous line's break; the units read above this one
+  for (let i = 0; i < IMPORT_LINES_MAX; i++) {
+    let line: string | null;
+    if (end > 0) { const start = text.lastIndexOf("\n", end - 2) + 1; line = text.slice(start, end - 1); end = start; }
+    else line = above ? above(++up) : null;                          // past the unit's first line: the row above (a code view)
+    if (line === null) return false;
+    if (STATEMENT_HEAD_RE.test(line)) return !/["'`]/.test(line);   // the opener: an import that names no specifier yet
+    if (!line.trim() || /["'`;]/.test(line)) return false;          // a blank line, a quoted specifier or a statement's end: nothing open above
+  }
+  return false;
 }
 /** Where the gate's look-behind for the token at `at` begins: the earliest index whose character it reads as text
  *  (one more before it is looked at only as the keyword's word boundary). Never before the line's start. */
 export function lookBehindStart(text: string, at: number): number { return importLookBehind(text, at).start; }
 
 /** The viewer's gate over a token the shared shape gates passed; `ctx` is the line's text and the token's offset in
- *  it (the walk hands both over), without which only the token's own shape is judged. */
-export function viewerPathGate(tok: string, ctx?: { text: string; at: number }): boolean {
+ *  it (the walk hands both over, and `above(n)`, the text of the nth unit before this one, for the import rule to read
+ *  the row that opened a multi-line statement), without which only the token's own shape is judged. */
+export function viewerPathGate(tok: string, ctx?: { text: string; at: number; above?: (n: number) => string | null }): boolean {
   if (isFileUri(tok)) return true;
   if (!tok.includes("/")) return false;
   if (tok.startsWith("~") && !tok.startsWith("~/")) return false;      // `~user/x.md`: a home the kernel does not expand
@@ -182,7 +217,16 @@ export function viewerPathGate(tok: string, ctx?: { text: string; at: number }):
   if (ctx) {
     const before = ctx.at > 0 ? ctx.text[ctx.at - 1] : "";
     if (before && !OPENER_RE.test(before)) return false;               // glued to a substitution, a scope, a drive, a host
-    if (!anchored && importLookBehind(ctx.text, ctx.at).isImport) return false;   // a package specifier
+    if (before === "*") {
+      // Emphasis wraps its path in stars on both sides (`*docs/a.md*`, `**docs/a.md**`, a `:line` inside them too). A
+      // `/`-led token after a star is a glob's tail (`**/docs/a.md`, `src/*/index.ts`, `packages/*/package.json`), and a
+      // token with no closing star is an operand (`w*h/img.size`, `2*docs/times.md`); the round-3 opener linked both as
+      // paths that were never written, the round-1 class (the 2026-09-07 review, round 4).
+      if (anchored) return false;
+      STAR_CLOSE_RE.lastIndex = ctx.at + tok.length;
+      if (!STAR_CLOSE_RE.test(ctx.text)) return false;
+    }
+    if (!anchored && importLookBehind(ctx.text, ctx.at, ctx.above).isImport) return false;   // a package specifier
   }
   return true;
 }
@@ -294,17 +338,29 @@ export function linkifyFileText(root: HTMLElement, filePath: string): void {
  *  module can no longer sort. So a same-directory `name.ext:12` becomes `./name.ext:12`, and a local file:// URI
  *  becomes its path. Anything else is left as written: a real scheme is the browser's, and a URI on another host
  *  is not a path (path-links.ts isFileUri); those the sanitizer still removes render as dead links that say why. */
-// `api.example.com:8443` has the `name.ext:N` shape and is a host with a port: `www.`, or three or more dotted labels
-// that read as a hostname (HOST_RE, the gate's own test) with a last label that is not a file extension the chat's
-// bare-name gate knows (`app.test.ts:12` and `archive.tar.gz:3` are files). A two-label name is a file (`notes.md`,
-// `x.py`): its second label is its extension, whatever else it could be. Left as written, the target is one the
-// sanitizer removes, and the anchor renders dead with the reason; rewritten, it was a link to a file that does not
-// exist (the 2026-09-07 review, round 3).
+// `api.example.com:8443` has the `name.ext:N` shape and is a host with a port. Which names read as a host, by shape
+// alone (whether the file exists is unknowable here): `www.` first; or dotted labels that read as a hostname (HOST_RE,
+// the gate's own test) whose last label is a top-level domain, whatever the label count: one of the generic and reserved
+// TLDs below (`example.com`, `docs.example.io`, `x.internal`), or a two-letter country code under a second-level label
+// the registries use (`co.uk`, `com.au`, `ac.jp`: `sub.example.co.uk`). Everything else is a file, whether or not the
+// chat's bare-name gate knows its extension: `notes.md`, `app.test.ts`, `archive.tar.gz`, `app.component.vue`,
+// `styles.module.less`, `report.final.docx`, `init.el`. Round 3 read the chat's extension list the other way, so a
+// three-label name with an extension it did not know was a host, which left `[x](app.component.vue:3)` dead beside the
+// file it named, while a two-label `example.com:8443` was a file (the 2026-09-07 review, round 4). A host is left as
+// written: the sanitizer removes the target, and the anchor renders dead with the reason.
 const SAME_DIR_LINE_RE = /^([^/:?#]*\.[A-Za-z][A-Za-z0-9]{0,7}):\d+(?::\d+)?(?:[?#].*)?$/;
+const TLD_LIKE = new Set(["com", "net", "org", "edu", "gov", "mil", "int", "io", "dev", "app", "ai", "co", "info", "biz", "xyz", "cloud", "online", "site", "tech",
+                          "invalid", "test", "example", "local", "localhost", "internal", "arpa", "onion"]);
+const SECOND_LEVEL = new Set(["co", "com", "org", "net", "ac", "gov", "edu", "or", "ne", "go"]);
 export function isHostName(name: string): boolean {
   if (WWW_RE.test(name)) return true;
-  return HOST_RE.test(name) && name.split(".").length > 2 && !BARE_FILE_EXTS.has(name.slice(name.lastIndexOf(".") + 1).toLowerCase());
+  if (!HOST_RE.test(name)) return false;
+  const labels = name.toLowerCase().split(".");
+  const last = labels[labels.length - 1];
+  return TLD_LIKE.has(last) || (last.length === 2 && labels.length >= 3 && SECOND_LEVEL.has(labels[labels.length - 2]));
 }
+const IPV4_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const isHostWithPort = (name: string): boolean => IPV4_RE.test(name) || name.toLowerCase() === "localhost" || isHostName(name);
 export function viewerLinkTarget(href: string): string {
   if (isFileUri(href)) return fileUriToPath(href);
   const m = SAME_DIR_LINE_RE.exec(href);
@@ -367,6 +423,17 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
       else { withClass(a, DEAD_LINK_CLASS); a.setAttribute("title", noSectionTitle(id)); }
       return;
     }
+    // `127.0.0.1:3000`, `localhost:8080`, `example.com:8443`: a host with a port, which reads as a scheme to the test below
+    // (and to the sanitizer, which removes all but the digit-led one; the IPv4 address reached the path arm and linked a
+    // file named 127.0.0.1 at line 3000, the 2026-09-07 review, round 4). A hostname by shape, an IPv4 address or
+    // `localhost` before a port is a dead link that says so.
+    const hostPort = /^([^/?#:]+):\d+(?:[/?#]|$)/.exec(href);
+    if (hostPort && isHostWithPort(hostPort[1])) {
+      a.removeAttribute("href");
+      withClass(a, DEAD_LINK_CLASS);
+      a.setAttribute("title", HOST_PORT_TITLE);
+      return;
+    }
     if (href.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(href)) {
       a.setAttribute("target", "_blank");
       a.setAttribute("rel", "noopener");
@@ -377,15 +444,14 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
     const cut = dest.search(/[?#]/);
     const tail = cut >= 0 ? dest.slice(cut) : "";
     let pathPart = cut >= 0 ? dest.slice(0, cut) : dest;
-    // a line on the path itself (`a.md:12`) or in the fragment (`a.md#L12`); any other fragment is the section to land on
+    // a line on the path itself (`a.md:12`) or in the fragment (`a.md#L12`); any other fragment (`report.md#results`,
+    // after a `?query` or not) is the section to land on once the file is open
+    const hashAt = tail.indexOf("#");
+    const hash = hashAt >= 0 ? tail.slice(hashAt) : "";
     let line: string | null = null, frag: string | null = null;
     const colon = /:(\d+)(?::\d+)?$/.exec(pathPart);
     if (colon) { line = colon[1]; pathPart = pathPart.slice(0, colon.index); }
-    else if (tail.startsWith("#")) {
-      const m = LINE_SUFFIX_RE.exec(tail);
-      if (m && m[2]) line = m[2];
-      else { const f = tail.slice(1).split("?")[0]; if (f) frag = f; }
-    }
+    else if (hash) { const m = LINE_SUFFIX_RE.exec(hash); if (m && m[2]) line = m[2]; else if (hash.length > 1) frag = hash.slice(1); }
     if (!pathPart) {
       a.setAttribute("target", "_blank");
       a.setAttribute("rel", "noopener noreferrer");

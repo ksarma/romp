@@ -17,7 +17,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { makeAnchor } from "./anchor-map";
-import { DEAD_LINK_TITLE, noSectionTitle } from "./file-view-links";
+import { DEAD_LINK_TITLE, HOST_PORT_TITLE, noSectionTitle } from "./file-view-links";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -49,7 +49,8 @@ const GUIDE_TEXT = [
   "Bare ../src/app.py:3 links too, and https://example.invalid/prose is a URL.",
   "docs/first.md starts a soft-broken line of the same paragraph, and a hard break follows  ",   // two trailing spaces: marked's <br>
   "docs/second.md starts the line after the break.", "",
-  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err), [install](#install), [api](api.example.com:8443), [spec](app.test.ts:12), [results](#results), [self](guide.md#install).", "",
+  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err), [install](#install), [api](api.example.com:8443), [spec](app.test.ts:12), [results](#results), [self](guide.md#install), [vue](app.component.vue:3), [el](init.el:12), [ip](127.0.0.1:3000), [two](example.com:8443).", "",
+  "A glob `**/docs/glob.md` or `src/**/x.md` links nothing, nor does an operand 2*docs/times.md or 3*w/h.px.", "",   // a star opens a path only when unanchored and closed by a star (round 4); two lone stars, so hljs's emphasis mode closes on the line (an unclosed one runs to the end of the file and its closing tag makes a phantom row)
   'Copied from "docs/from.md", and the export "out/data.json" is stale.', "",   // the English from and export: prose that names files (round 3)
   "**docs/strong.md** and *docs/em.md*, then \u200bdocs/zwsp.md after a zero-width space.", "",   // Markdown emphasis and a zero-width space before a path: openers in the Raw view (round 3)
   '<svg width="200" height="30"><a href="https://example.invalid/s"><text y="11">svgweb</text></a><a href="x.md"><text x="60" y="11">svgfile</text></a><text y="26">label docs/label.md in the figure</text></svg>', "",   // a bare path only: marked autolinks a URL inside inline HTML itself
@@ -63,8 +64,11 @@ const GUIDE_TEXT = [
 const NOTES_TEXT = Array.from({ length: 12 }, (_, i) => "note " + (i + 1)).join("\n") + "\n";
 // what a highlighter cuts: bash puts `$HOME` and `${ROOT}` in spans of their own; typescript does the same to a template's `${x}`
 // …and a URL a substitution cuts, with an absolute path as a query value: the URL stays text, and the path inside it is the URL's (round 3)
-const RUN_TEXT = ["#!/bin/bash", 'cp "$HOME/docs/a.md" ./out/', "cat ${ROOT}/src/x.py", 'echo "see ./docs/b.md"', "curl https://example.invalid/q?x=/docs/a.md/$V", ""].join("\n");
-const XTS_TEXT = ['import b from "lodash/fp.js";', 'import c from "@scope/pkg/dist/index.js";', 'import d from "./util.ts";', "const s = `tmpl/${x}/file.ts`;", "const u = `https://example.invalid/q?x=/docs/a.md/${v}`;", ""].join("\n");
+// …and the shapes round 4 refused: a glob's tail after a star, an operand after one, a multi-line import's specifier
+const RUN_TEXT = ["#!/bin/bash", 'cp "$HOME/docs/a.md" ./out/', "cat ${ROOT}/src/x.py", 'echo "see ./docs/b.md"', "curl https://example.invalid/q?x=/docs/a.md/$V",
+  "find . -path '**/docs/a.md'", "cp src/**/index.ts out/", "ls packages/*/package.json", ""].join("\n");
+const XTS_TEXT = ['import b from "lodash/fp.js";', 'import c from "@scope/pkg/dist/index.js";', 'import d from "./util.ts";', "const s = `tmpl/${x}/file.ts`;", "const u = `https://example.invalid/q?x=/docs/a.md/${v}`;",
+  "const area = w*h/img.size;", "import {", '  e, f } from "pkg/multi.js";', "import { g }", '  from "pkg/cont.js";', ""].join("\n");
 const FILES: Record<string, string> = { [APP]: APP_TEXT, [GUIDE]: GUIDE_TEXT, [NOTES]: NOTES_TEXT, [README]: "# notes-api\n", [CONFIG]: '{"a": 1}\n', [RUN]: RUN_TEXT, [XTS]: XTS_TEXT };
 
 // ── the fake comments host: what the kernel answers a status ask with ─────────────────────────────
@@ -146,7 +150,7 @@ function hostScript(kind: "chat" | "feed"): string {
 const PAGE = (host: "files" | "chat" | "feed") => `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 ${fs.readFileSync(path.join(UI, "styles.css"), "utf8")}
 ${fs.readFileSync(path.join(UI, "files-pane.css"), "utf8")}
-</style></head><body class=fileview-pane><div id=files-empty></div>
+</style></head><body class=fileview-pane>${host === "chat" ? '<p id=chat-para><a href="https://example.invalid/pr">alpha beta gamma delta</a> is ready, and the prose after it runs on.</p>' : ""}<div id=files-empty></div>
 <script>
 // the pane's poster, as the kernel page's shim provides it: the panel's status asks are answered by the test's status function
 window.__posts = []; window.__status = null;
@@ -298,6 +302,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     // zero-width space are openers (the 2026-09-07 review, round 3), and the rows read as the file's lines
     const rawLinks = (await linkInfo("#romp-fileview .file-uri-link")).map((l) => l.text);
     for (const t of ["docs/from.md", "out/data.json", "docs/strong.md", "docs/em.md", "docs/zwsp.md"]) assert.ok(rawLinks.includes(t), "Raw links " + t + ": " + JSON.stringify(rawLinks));
+    for (const t of ["/docs/glob.md", "docs/glob.md", "/x.md", "docs/times.md", "w/h.px"]) assert.ok(!rawLinks.includes(t), "no link for a glob's tail or an operand after a star (round 4): " + t);
     assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-strong, #romp-fileview code.hljs .hljs-emphasis").length >= 2), "hljs marked the emphasis, so the ** and * stand in the row's text");
     assert.deepEqual(await rowTexts(page), GUIDE_TEXT.split("\n").slice(0, -1), "every row reads as the file's line");
 
@@ -306,6 +311,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
     const mdLinks = await linkInfo("#romp-fileview .fileview-md a, #romp-fileview .fileview-md .file-uri-link");
     const byText = (t: string) => mdLinks.find((l) => l.text === t)!;
+    for (const t of ["/docs/glob.md", "docs/glob.md", "/x.md", "docs/times.md", "w/h.px"]) assert.equal(byText(t), undefined, "rendered: no link for a glob's tail or an operand after a star (round 4): " + t);
     assert.deepEqual([byText("the app").href, byText("the app").path, byText("the app").act, /file-uri-link/.test(byText("the app").cls)], [null, APP, "openpath", true], "resolved and normalized");
     assert.deepEqual([byText("the web").href, byText("the web").target, byText("the web").act], ["https://example.invalid/doc", "_blank", null]);
     assert.deepEqual([byText("../src/app.py:3").path, byText("../src/app.py:3").line], [APP, "3"], "a bare path in the prose, with its line");
@@ -405,6 +411,11 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     // a host with a port in the `name.ext:N` shape is left as written, so the sanitizer removes it and the anchor says why; a three-label file is a file (round 3)
     assert.deepEqual([byText("api").href, byText("api").act, /fv-dead/.test(byText("api").cls), byText("api").title], [null, null, true, DEAD_LINK_TITLE], "api.example.com:8443 is not a same-directory file");
     assert.deepEqual([byText("spec").href, byText("spec").path, byText("spec").line, byText("spec").act], [null, ROOT + "/docs/app.test.ts", "12", "openpath"], "app.test.ts:12 is");
+    // round 4: a `name.ext:N` whose extension the chat does not know is a file too; a host by shape, an IPv4 address with a port, is not
+    assert.deepEqual([byText("vue").path, byText("vue").line, byText("vue").act], [ROOT + "/docs/app.component.vue", "3", "openpath"], "app.component.vue:3 is a file beside the README");
+    assert.deepEqual([byText("el").path, byText("el").line, byText("el").act], [ROOT + "/docs/init.el", "12", "openpath"], "init.el:12 is a file (a two-letter label is a country code only under a registry's second-level label)");
+    assert.deepEqual([byText("ip").href, byText("ip").act, /fv-dead/.test(byText("ip").cls), byText("ip").title], [null, null, true, HOST_PORT_TITLE], "127.0.0.1:3000 passed the sanitizer and is a host with a port, said so");
+    assert.deepEqual([byText("two").href, byText("two").act, /fv-dead/.test(byText("two").cls), byText("two").title], [null, null, true, DEAD_LINK_TITLE], "example.com:8443 is a host by its top-level domain: left as written, removed by the sanitizer, dead with the reason");
     const svg = await linkInfo("#romp-fileview .fileview-md svg a");
     assert.deepEqual(svg.map((a) => [a.text, a.href, a.target, a.rel, /file-uri-link/.test(a.cls), a.act, a.path, a.title]), [
       ["svgweb", "https://example.invalid/s", "_blank", "noopener", false, null, null, null],
@@ -506,12 +517,12 @@ test("in a browser, over the real highlighter: a substitution span cannot turn a
     const { page, open, linkInfo } = h;
     await open(RUN);
     assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-variable").length) >= 3, "bash's grammar put $HOME, ${ROOT} and $V in spans of their own");
-    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./docs/b.md", ROOT + "/scripts/docs/b.md"]], "no /docs/a.md (neither the one after $HOME nor the one inside the cut URL's query), no /src/x.py");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./docs/b.md", ROOT + "/scripts/docs/b.md"]], "no /docs/a.md (neither the one after $HOME nor the one inside the cut URL's query), no /src/x.py; no /docs/a.md, /index.ts or /package.json off a glob's star (round 4)");
     assert.deepEqual(await linkInfo("#romp-fileview a.fv-url"), [], "the URL $V cuts is left as text, not wrapped in part");
     assert.deepEqual(await rowTexts(page), RUN_TEXT.split("\n").slice(0, -1));
     await open(XTS);
     assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-subst").length) >= 2, "typescript's grammar put ${x} and ${v} in spans of their own");
-    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./util.ts", ROOT + "/ui/util.ts"]], "the relative import links; lodash/fp.js, @scope/pkg/dist/index.js, the template's /file.ts and the cut URL's /docs/a.md do not");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./util.ts", ROOT + "/ui/util.ts"]], "the relative import links; lodash/fp.js, @scope/pkg/dist/index.js, the template's /file.ts and the cut URL's /docs/a.md do not; nor h/img.size after the operator's star, nor the multi-line imports' pkg/multi.js and pkg/cont.js (round 4)");
     assert.deepEqual(await linkInfo("#romp-fileview a.fv-url"), [], "the template's URL ${v} cuts is left as text");
     assert.deepEqual(await rowTexts(page), XTS_TEXT.split("\n").slice(0, -1));
   });
@@ -620,6 +631,21 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
 test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a drag inside the URL anchor selects and opens none, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window", async (t) => {
   await inBrowser(t, "chat", async (h) => {
     const { page, served, open, status, settle, base, openCards } = h;
+    // The chat's OWN anchor (draggable, as every anchor with an href is), first in its paragraph: a triple-click on the prose
+    // after it selects the whole paragraph, and the browser anchors that selection at the paragraph's first text, inside the
+    // link. A press on a draggable anchor starts no selection and collapses none, so the selection stays open around the link
+    // and the plain click after it must still open the link: the opener reads the selection for a non-draggable anchor only
+    // (round 4, the regression: it read it for every anchor, and every click on the link was dead until a click elsewhere)
+    const chatA = page.locator("#chat-para a");
+    assert.equal(await chatA.evaluate((a: HTMLAnchorElement) => a.draggable), true, "the chat's anchor is draggable");
+    const prose = await page.evaluate(() => { const p = document.getElementById("chat-para")!; const r = document.createRange(); r.selectNodeContents(p.lastChild!); const b = r.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+    const tabsTriple = h.newPages();
+    await page.mouse.click(prose.x, prose.y, { clickCount: 3 }); await settle();
+    const sel = await page.evaluate(() => { const s = getSelection()!; const a = document.querySelector("#chat-para a")!; return { open: !s.isCollapsed, inLink: a.contains(s.anchorNode), text: s.toString() }; });
+    assert.ok(sel.open && sel.inLink && sel.text.includes("alpha beta gamma delta") && sel.text.includes("runs on"), "the triple-click on the prose left the paragraph selected, anchored inside the link's text: " + JSON.stringify(sel));
+    assert.equal(h.newPages(), tabsTriple, "a triple-click on the prose opened nothing");
+    assert.equal(await nextTab(h, () => chatA.click()), "https://example.invalid/pr", "the click on the link after it opens the link: one tab");
+    await page.evaluate(() => getSelection()!.removeAllRanges());
     await open(APP);
     const n0 = served.length;
     assert.equal(await nextTab(h, () => page.locator("#romp-fileview a.fv-url").click()), URL_SETUP, "the chat's capture-phase opener: one tab");
