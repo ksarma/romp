@@ -7504,7 +7504,8 @@ def _set_retry_paused(paused, reason=""):
     # Record WHEN a pause began: the auto-resume floor. Only a successful response AFTER this instant proves
     # the API recovered (an old success from before the outage doesn't). No `t` when un-pausing.
     # `reason` (the user 2026-07-14): "spend" when a monthly spend cap auto-engaged the pause, so the card
-    # shows "raise your cap" instead of a reset countdown; "" for a manual Stop or a rate-window pause.
+    # shows "raise your cap" instead of a reset countdown; "limit" (2026-09-07) when an account-wide usage
+    # window did, so the rail can name it without a clock comparison; "" for a manual Stop.
     d = {"paused": bool(paused)}
     if paused:
         d["t"] = time.time()
@@ -7514,8 +7515,9 @@ def _set_retry_paused(paused, reason=""):
 
 
 def _retry_pause_reason():
-    """Why the current global pause engaged ("spend" for a monthly spend cap), or "" (manual / rate
-    window). Rides the globalRetryPaused push so the card can name the cause."""
+    """Why the current global pause engaged ("spend" for a monthly spend cap, "limit" for a usage window),
+    or "" (manual). Rides the globalRetryPaused push so the card can name the cause; the API health frame
+    reads it too. A pause file written by an older kernel for a limit carries no reason and reads manual."""
     try:
         return str(json.loads((jd.STATE / "retry-paused.json").read_text()).get("reason") or "")
     except Exception:
@@ -7595,7 +7597,8 @@ def _auto_pause_on_limit():
     lim = (u or {}).get("limited") or {}
     account = [k for k, v in lim.items() if v and k != "fable"]     # 5h / 7d only — fable is model-scoped
     if account and not _retry_paused_on():
-        _set_retry_paused(True)
+        _set_retry_paused(True, reason="limit")     # latched at the event: the rail's 'paused · usage limit'
+        #                                               (not re-derived from _retry_resume_at's clock compare)
         sys.stderr.write("retry-pause: auto-engaged — usage limit reached (%s) → auto-retry + judges paused until reset\n"
                          % ",".join(account))
         _push_soon()                                     # the flag rides the next push's globalRetryPaused frame
@@ -20617,6 +20620,7 @@ def _undelivered_wake_tail(path):
 
 
 _api_err_cache = {}           # path -> ((mtime, size), err|None)
+_api_last_failed_cache = {}   # path -> ((mtime, size), err|None) — _api_last_failed's own (the latch)
 
 
 _SESSION_STAMP_CACHE = {}    # sid -> ((goals mtime,size, overrides mtime,size), ((gid, at, why, kind), stamped tops)) — see _session_stamp_read
@@ -21752,7 +21756,7 @@ def _spend_dialog_showing(pane):
 _API_ERR_TAIL_WINDOW = int(os.environ.get("ROMP_API_ERR_TAIL_WINDOW", "262144"))
 
 
-def _api_error_scan(path, start):
+def _api_error_scan(path, start, user_clears=True):
     """One pass of _api_error's classification from byte `start` to EOF → (err, decided).
 
     The loop is _api_error's original whole-file scan, UNCHANGED (one dedent) except that each of its
@@ -21764,7 +21768,12 @@ def _api_error_scan(path, start):
 
     A non-zero `start` lands mid-line, so the first partial line is dropped. model_refusal_* records
     land a few records AFTER the error they annotate and only mutate an err already set, so they need no
-    special handling: with their error out of window nothing is assigned, and the caller widens."""
+    special handling: with their error out of window nothing is assigned, and the caller widens.
+
+    `user_clears=False` (the API health cell, 2026-09-07): a genuine user prompt neither clears `err`
+    nor decides, so the verdict is the newest ASSISTANT record's — an error record holds until fresh
+    assistant output, through romp's own injected RETRY_MSG and through a human prompt alike (neither is
+    information about the API; the API's answer is). _api_error keeps the default and its verdicts."""
     err = None
     decided = False
     with open(path, errors="replace") as f:
@@ -21795,6 +21804,9 @@ def _api_error_scan(path, start):
                            # the error RECORD's identity — a new failed attempt writes a new record,
                            # so this uuid IS the error episode (one auto-retry per episode, apiRetry)
                            "uuid": o.get("uuid"),
+                           # the record's own time — the event stamp the API health frame's `since`
+                           # carries (never the clock, so an unchanged world serializes identically)
+                           "t": int(em.parse_z(o.get("timestamp")) or 0),
                            "tooLong": "too long" in text.lower(),
                            # a spend cap is on YOU (raise it), like tooLong — but ALSO stops the
                            # auto-retry entirely (no reset to wait out); see _auto_pause_on_spend_limit
@@ -21823,8 +21835,8 @@ def _api_error_scan(path, start):
                 c = (o.get("message") or {}).get("content")
                 is_tool_result = isinstance(c, list) and any(
                     isinstance(b, dict) and b.get("type") == "tool_result" for b in c)
-                if not is_tool_result:                    # a genuine prompt (e.g. a retry) clears it
-                    decided = True
+                if not is_tool_result and user_clears:    # a genuine prompt (e.g. a retry) clears it —
+                    decided = True                        # unless the caller wants the latch (docstring)
                     err = None
             elif t == "system" and o.get("subtype") in ("model_refusal_no_fallback",
                                                         "model_refusal_fallback"):
@@ -21879,6 +21891,43 @@ def _api_error(path):
         if len(_api_err_cache) > 256:
             _api_err_cache.clear()
         _api_err_cache[path] = (key, err)
+    return err
+
+
+def _api_last_failed(path):
+    """The session's newest API error record if no ASSISTANT OUTPUT has followed it, else None — _api_error's
+    latched sibling (the API health cell, 2026-09-07). Same tail-first 4x widening, its own (mtime, size)
+    cache, one difference: the scan runs with user_clears=False, so a user prompt does not clear the record.
+    _api_error answers 'is this session blocked right now', and a retry prompt rightly un-blocks it; but
+    romp's own auto-retry IS a user prompt (RETRY_MSG), so a count keyed on _api_error read '1 waiting' →
+    'ok' → '1 waiting' on every rung of RETRY_BACKOFF during an outage. The API's own answer — output, or
+    a new error record — is the only event that moves this. Returns the scan's err dict (with `t`, the
+    record's time) or None."""
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime, st.st_size)
+        size = st.st_size
+    except OSError:
+        key = None
+        size = 0
+    hit = _api_last_failed_cache.get(path)
+    if hit is not None and key is not None and hit[0] == key:
+        return hit[1]
+    err = None
+    try:
+        win = max(1, _API_ERR_TAIL_WINDOW)
+        while True:
+            start = size - win if win < size else 0
+            err, decided = _api_error_scan(path, start, user_clears=False)
+            if decided or start <= 0:
+                break
+            win *= 4
+    except OSError:
+        return None
+    if key is not None:
+        if len(_api_last_failed_cache) > 256:
+            _api_last_failed_cache.clear()
+        _api_last_failed_cache[path] = (key, err)
     return err
 
 
@@ -36980,6 +37029,161 @@ def _badge_push(n):
     _send_to_app("shell", {"type": "badge", "n": n})
 
 
+# ── The bottom bar's API health cell (the user 2026-09-07): one glance answers 'is the API serving my
+# sessions', beside the spend cell. Built from what the kernel already owns — the merged live map's
+# retrying state (the SDK api_retry storm), each alive transcript's LATCHED newest API error
+# (_api_last_failed) and the global retry-pause file — never from the /api-health ratio machine
+# (threshold-and-hold transitions evaluated at read time) and never from a clock: every field moves on
+# one named event (a retry frame, an isApiErrorMessage record, fresh assistant output, a pause set or
+# lifted, a session leaving the roster), so an unchanged world serializes identically and sends nothing.
+#
+# States: ok; degraded, with a class word by plurality over the affected sessions — 429 rate limited /
+# 529 overloaded / offline (this machine cannot reach the API) / errors — and the count waiting
+# (retrying + stopped on an error record); paused, red, with the pause's latched reason (limit / spend /
+# manual), outranking every degraded reading since nothing retries and the judges are gated too.
+# On-you failures (tooLong / modelLimit / authErr / refusal) do NOT count: they already wear red on that
+# session's tab and card, and the cell answers for the API, not for the session. A spend cap counts,
+# and engages the spend pause in the same cycle anyway. Web rail only in v1; the VS Code strip twin
+# (strip.ts apiCell's sibling, with a --st-retrying token) and the phone's Usage-modal section (no rail
+# on the phone) are named follow-ups.
+_APIH_TEXT = {                 # the ONE table of rail words: the rail, the detail header and the tests read `text`
+    "ok": "ok",
+    "429": "rate limited",
+    "529": "overloaded",
+    "offline": "offline",
+    "errors": "errors",
+    "limit": "paused \u00b7 usage limit",
+    "spend": "paused \u00b7 spend cap",
+    "manual": "paused by you",
+}
+_APIH_ORDER = ("429", "529", "offline", "errors")   # the fixed tie order for the plurality class
+
+
+def _apih_status(status):
+    """The wire's status as a positive int, or None (bools, blanks, zeros and non-digits are no status)."""
+    if isinstance(status, bool):
+        return None
+    if isinstance(status, (int, float)):
+        return int(status) if int(status) > 0 else None
+    if isinstance(status, str) and status.strip().isdigit():
+        return int(status.strip()) or None
+    return None
+
+
+def _apih_class(status, category="", network_down=None):
+    """One affected session's class for the rail: "429" | "529" | "offline" | "errors". A kernel-local
+    twin of sdk_backend.api_health_status_class collapsed to the four rail words (tests pin agreement on the
+    shared statuses): its 5xx / other / none all read "errors" here, except a no-status attempt the CLI
+    flagged is_network_down, which is this box's connectivity, not the API — "offline". Only a retrying row
+    can say offline: a transcript error record carries no network flag."""
+    st = _apih_status(status)
+    if st is not None:
+        if st == 429:
+            return "429"
+        if st == 529:
+            return "529"
+        return "errors"
+    cat = str(category or "").strip().lower()
+    if cat == "rate_limit":
+        return "429"
+    if cat == "overloaded":
+        return "529"
+    if cat in ("server_error", "authentication_failed", "billing_error", "invalid_request"):
+        return "errors"
+    return "offline" if network_down is True else "errors"
+
+
+def _api_health_frame(now, tmux):
+    """The apiHealth shell frame for this cycle (the block comment above says what it reads). `tmux` is
+    the cycle's merged live map (Sessions.live()). Every timestamp is an event stamp — a record's time, the
+    storm turn's start (SdkSession.since moves once per fresh turn, not per attempt), the pause's t — never
+    the clock, so two cycles over the same world return equal dicts and _api_health_push sends nothing.
+    Rows sort by (since, sid) so the roster's mtime order cannot reshuffle an unchanged world into a send.
+    Nothing from retryInfo but status and networkDown: attempt / retryAt tick per attempt."""
+    paused = _retry_paused_on()
+    reason = ""
+    pause_t = 0
+    if paused:
+        r = _retry_pause_reason()
+        reason = r if r in ("limit", "spend") else "manual"
+        pause_t = int(_retry_pause_ts() or 0)
+    rows = []
+    n_tmux = 0
+    live = tmux if isinstance(tmux, dict) else {}
+    for s in _alive_sessions(now, tmux):
+        sid = str(s.get("sid") or "")
+        if not sid:
+            continue
+        if Sessions.backend_for(sid) is _TMUX:
+            n_tmux += 1                                # transcript-only coverage: the detail says so
+        tm = live.get(sid) or {}
+        if tm.get("state") == "retrying":              # the SDK api_retry storm: set per frame, cleared
+            info = tm.get("retryInfo") if isinstance(tm.get("retryInfo"), dict) else {}   # when output resumes
+            status = info.get("status")
+            row = {"kind": "retrying", "cls": _apih_class(status, "", info.get("networkDown")),
+                   "since": int(tm.get("since") or 0)}
+        else:
+            path = s.get("path")
+            e = _api_last_failed(path) if path else None
+            if not e or e.get("tooLong") or e.get("modelLimit") or e.get("authErr") or e.get("refusal"):
+                continue                               # nothing latched, or an on-you failure (the session's own)
+            status = e.get("status")
+            row = {"kind": "blocked", "cls": _apih_class(status, e.get("category"), None),
+                   "since": int(e.get("t") or 0)}
+        row.update({"sid": sid, "name": s.get("name") or sid[:8], "color": _name_color(sid),
+                    "status": _apih_status(status), "suppressed": _session_retry_suppressed(sid)})
+        rows.append(row)
+    rows.sort(key=lambda r: (r["since"], r["sid"]))
+    cls = ""
+    if rows:
+        counts = {}
+        for r in rows:
+            counts[r["cls"]] = counts.get(r["cls"], 0) + 1
+        cls = max(_APIH_ORDER, key=lambda c: (counts.get(c, 0), -_APIH_ORDER.index(c)))
+    n = len(rows)
+    if paused:
+        state = "paused"
+        text = _APIH_TEXT[reason] + (" \u00b7 %d waiting" % n if n else "")
+        since = pause_t
+    elif rows:
+        state = "degraded"
+        text = "%s \u00b7 %d waiting" % (_APIH_TEXT[cls], n)
+        since = min((r["since"] for r in rows if r["since"]), default=0)
+    else:
+        state, text, since = "ok", _APIH_TEXT["ok"], 0
+    return {"type": "apiHealth", "state": state, "cls": cls, "reason": reason, "text": text,
+            "waiting": n, "retrying": sum(1 for r in rows if r["kind"] == "retrying"),
+            "blocked": sum(1 for r in rows if r["kind"] == "blocked"),
+            "since": since, "tmux": n_tmux, "sessions": rows}
+
+
+# The last apiHealth frame the shells heard, as its sorted serialization (None = nothing since boot): the
+# _BADGE_LAST pattern. The frame holds no clock, so the whole string is the change key.
+_APIH_LAST = [None]
+
+
+def _api_health_push(frame):
+    """Send the frame to every connected shell when it CHANGED, else nothing. No per-client repost (the
+    _send_client 60 s re-send would repeat an identical frame): a shell that connects gets the last frame
+    from the ready handler (_apih_resend)."""
+    s = json.dumps(frame, sort_keys=True)
+    if s == _APIH_LAST[0]:
+        return
+    _APIH_LAST[0] = s
+    _send_to_app("shell", frame)
+
+
+def _apih_resend(client):
+    """A shell that just sent `ready` paints its API cell from the last frame — verbatim, so an identical
+    frame cannot pulse the cell (the client diffs state and text before touching the DOM). Chat and pane
+    clients get nothing: only the shell owns the rail."""
+    if client.get("app") == "shell" and _APIH_LAST[0] is not None:
+        try:
+            client["send"](_APIH_LAST[0])
+        except Exception:
+            pass
+
+
 # ── Web Push: the same bell events, delivered to the phone (plans/ios-app.md proposal 2; the user
 # 2026-08-07, who wants "needs you" to reach them wherever they are, not just the kernel box's
 # desktop). A device opts in from the shell's bell (mobile tab bar → _LANDING_PUSH_JS): it
@@ -37542,6 +37746,10 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         _auto_resume_retry(now, tmux)
     except Exception:
         sys.stderr.write("auto-resume-retry: %s\n" % traceback.format_exc())
+    try:                                  # the bottom bar's API health cell: built AFTER this cycle's pause
+        _api_health_push(_api_health_frame(now, tmux))   # decisions, every cycle (a connecting shell gets a
+    except Exception:                     # current frame), sent only when it changed
+        sys.stderr.write("api-health-frame: %s\n" % traceback.format_exc())
     try:                                  # a per-session interrupt-suppressed retry re-arms once that thread lands a clean turn
         _auto_resume_session_retry(now, tmux)
     except Exception:
@@ -38703,7 +38911,8 @@ function onEsc(e){if(e.key!=='Escape')return;
 var closed=false;
 if(window.__rompKeysClose&&window.__rompKeysClose()){closed=true;}
 else{var ru=document.getElementById('ru-back');
-if(ru&&ru.classList.contains('on')&&window.__rompUsageClose){window.__rompUsageClose();closed=true;}
+if(ru&&ru.classList.contains('on')&&window.__rompApiClose){window.__rompApiClose();closed=true;}
+else if(ru&&ru.classList.contains('on')&&window.__rompUsageClose){window.__rompUsageClose();closed=true;}
 else{var er=document.getElementById('rerr-back');
 if(er&&!er.hidden&&window.__rompCloseErrs){window.__rompCloseErrs();closed=true;}
 else{var nt=document.getElementById('rnet-back');
@@ -39128,6 +39337,93 @@ pull(false);                                     // fill on load, independent of
 // VERTICAL bars when the left rail ran out of height. The bars are HORIZONTAL in the bottom bar now and only
 // ~text-height tall, so they always fit — nothing to degrade.)
 window.addEventListener('message',function(e){var m=e.data;if(m&&m.romp==='usage')render(m.usage);});})();
+"""
+
+
+# The bottom bar's API health cell (the user 2026-09-07): one dot and one word beside the spend cell,
+# painted from the kernel's apiHealth shell push (_api_health_frame), the detail on hover, pinned on
+# click. It renders ONLY from the last pushed frame — no fetch, no timer: the frame moves on events, and
+# the cell repaints only when its state or text changed, so the ready re-send of an identical frame
+# cannot pulse it. The detail card is built in the usage tip's grammar and shares its skin (#ah-tip sits
+# beside #ru-tip in every selector) and its backdrop (#ru-back). Web rail only in v1; the VS Code strip
+# twin (strip.ts apiCell's sibling, with a --st-retrying token) and the phone's Usage-modal section (no
+# rail on the phone) are named follow-ups.
+_LANDING_APIH_JS = """
+(function(){var el=document.getElementById('rail-api');if(!el)return;
+var txt=el.querySelector('.ah-text');
+var tip=document.createElement('div');tip.id='ah-tip';tip.style.display='none';document.body.appendChild(tip);
+var back=document.getElementById('ru-back');
+if(!back){back=document.createElement('div');back.id='ru-back';document.body.appendChild(back);}
+var LAST=null,pinned=false;
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function hm(ep){return new Date(ep*1000).toTimeString().slice(0,5);}
+// The plain-words pause reasons and the ok line: the kernel's `text` is the headline, these say what it means.
+var PAUSE={limit:'Auto-retry and the judges are paused until your usage limit resets.',
+spend:'Auto-retry and the judges are paused: you have reached the monthly spend limit. Raise it at claude.ai/settings/usage.',
+manual:'Auto-retry and the judges are paused: you stopped them.'};
+var OK='No session is waiting on the API. Auto-retry and the judges are running.';
+var RESUME='Resume all auto-retries',STOP='Stop all auto-retries';   // the chat card's own words
+function clsWords(r){if(r.cls==='429')return '429 rate limited';if(r.cls==='529')return '529 overloaded';
+if(r.cls==='offline')return 'offline';return 'error'+(r.status?' '+r.status:'');}
+function html(m){var h='<div class=ru-tip-win><div class=ru-tip-name><span>API · this machine</span></div>'
++'<div class="ru-tip-row ah-head"><i class=ah-dot data-state='+esc(m.state)+'></i><span class=ah-word>'+esc(m.text)+'</span>'
++(m.since?'<span class=ah-since>since '+hm(m.since)+'</span>':'')+'</div>';
+if(m.state==='paused')h+='<div class=ah-line>'+(PAUSE[m.reason]||PAUSE.manual)+'</div>';
+else if(m.state==='ok')h+='<div class=ah-line>'+OK+'</div>';
+if(m.state==='paused')h+='<button class=ah-btn data-act=pause data-val=0>'+RESUME+'</button>';
+else if(m.waiting>0)h+='<button class=ah-btn data-act=pause data-val=1>'+STOP+'</button>';
+h+='</div>';
+var rows=m.sessions||[];
+if(rows.length){h+='<div class=ru-tip-win><div class=ru-tip-name><span>Sessions waiting</span></div>';
+rows.forEach(function(r){var bg=r.color&&r.color.bg?esc(r.color.bg):'';
+h+='<div class="ru-tip-row ah-row" data-act=reveal data-sid="'+esc(r.sid)+'">'
++(bg?'<i class=ah-sw style="background:'+bg+'"></i><span class=ah-nm style="color:'+bg+'">':'<i class=ah-sw></i><span class=ah-nm>')+esc(r.name)+'</span>'
++'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
++(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';});
+h+='</div>';}
+if(m.tmux>0)h+='<div class="ru-tip-win ah-line">'+(m.tmux===1?'1 tmux session is seen through its transcript only':m.tmux+' tmux sessions are seen through their transcripts only')
++', so a retry in progress there shows only when it fails or recovers.</div>';
+h+='<div class="ru-tip-row ah-foot"><span class=ah-link data-act=usage>Usage and spend</span><span class=ah-link data-act=log>Log</span></div>';
+return h;}
+// The hover anchors above the rail, centered on the cursor, exactly as the usage tip's showTip does.
+function place(ev){var r=el.getBoundingClientRect();tip.style.display='block';
+var x=(ev&&typeof ev.clientX==='number')?ev.clientX:(r.left+r.width/2);
+tip.style.left=Math.max(6,Math.min(window.innerWidth-tip.offsetWidth-6,x-tip.offsetWidth/2))+'px';
+tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
+function show(ev){if(!LAST)return;tip.classList.remove('ru-modal');tip.innerHTML=html(LAST);place(ev);}
+function close(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
+window.__rompApiClose=null;if(back.onclick===close)back.onclick=null;}
+// A click PINS the detail as a centered modal over the dimmed dashboard (the usage modal's own backdrop and
+// pattern); Escape lands via _LANDING_ESC_JS (shell AND pane documents), the backdrop tap closes too.
+function open(){if(!LAST)return;tip.innerHTML=html(LAST);tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';
+tip.style.display='block';back.classList.add('on');pinned=true;
+window.__rompApiClose=close;back.onclick=close;}
+// The listeners sit on the STABLE #rail-api cell; __rompApiHealth writes its children, never the cell.
+el.addEventListener('mouseenter',function(ev){if(!pinned)show(ev);});
+el.addEventListener('mouseleave',function(){if(!pinned)tip.style.display='none';});
+el.addEventListener('click',function(){if(pinned)close();else open();});
+// The detail's actions are DELEGATED on the stable #ah-tip node via data-act (click-safe: a re-render
+// swaps children only, so a press that straddles a new frame still lands).
+tip.addEventListener('click',function(ev){var t=ev.target;
+while(t&&t!==tip&&!(t.getAttribute&&t.getAttribute('data-act')))t=t.parentNode;
+if(!t||t===tip)return;var act=t.getAttribute('data-act');
+if(act==='pause'){var v=t.getAttribute('data-val')==='1';
+t.disabled=true;t.textContent=v?RESUME:STOP;t.classList.add('romp-acted');   // acknowledged before any round trip
+// the shell socket carries the same op the chat card sends; the handler marks the views dirty, and the
+// next cycle's frame confirms. A dead socket says so instead of a silent no-op (fail loudly).
+if(!(window.__rompShellSend&&window.__rompShellSend({type:'setGlobalRetryPaused',value:v}))){
+t.disabled=false;t.textContent='Not sent: the dashboard is disconnected. Try again.';}}
+else if(act==='reveal'){var sid=t.getAttribute('data-sid')||'';close();   // the Log's own jump to the card
+try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}
+var f=document.getElementById('f-feed');
+try{f&&f.contentWindow&&f.contentWindow.postMessage({romp:'revealCard',itemId:'',sid:sid},'*');}catch(e){}}
+else if(act==='usage'){close();try{window.__rompUsagePanel&&window.__rompUsagePanel();}catch(e){}}
+else if(act==='log'){close();try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}});
+window.__rompApiHealth=function(m){if(!m||!m.state)return;LAST=m;
+if(el.hidden)el.hidden=false;   // the first frame reveals the cell (an older kernel never sends one: nothing shows)
+if(el.getAttribute('data-state')!==m.state||txt.textContent!==m.text){el.setAttribute('data-state',m.state);txt.textContent=m.text;}
+if(tip.style.display==='block')tip.innerHTML=html(m);};   // an open detail re-renders from the new frame, nothing else does
+})();
 """
 
 
@@ -39995,6 +40291,9 @@ window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.rom
 if(m.romp==='toggleFleet')show(m.to==='chat'?'chat':'fleet');});
 function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
 var ws=new WebSocket(proto+location.host+'/ws?app=shell');
+// the API health detail's pause button sends on THIS socket (the setGlobalRetryPaused handler is
+// app-agnostic); false when the socket is not open, so the button can say so instead of dropping the op
+window.__rompShellSend=function(o){try{if(ws.readyState===1){ws.send(JSON.stringify(o));return true;}}catch(e){}return false;};
 // ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
 // its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
 ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}};
@@ -40006,6 +40305,8 @@ else if(m&&m.type==='badge'&&'setAppBadge' in navigator){
 try{(m.n?navigator.setAppBadge(m.n):navigator.clearAppBadge())['catch'](function(e){});}catch(e){}}
 // the master bell toggled somewhere (this tab included) — repaint ours from the kernel's word
 else if(m&&m.type==='notifyAll'&&window.__rompNotifyAllPaint)window.__rompNotifyAllPaint(!!m.on);
+// the bottom bar's API health cell: one frame, painted by _LANDING_APIH_JS (sent on change + on ready)
+else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);
 // the boot check found a newer romp release — raise the update banner on every open dashboard
 else if(m&&m.type==='updateAvail'&&window.__rompUpdateOffer)window.__rompUpdateOffer(m.cur||'',m.tag||'',m.drift||'',m.boot||'',m.state||'');};
 ws.onclose=function(){setTimeout(shellWS,2000);};}catch(e){}}
@@ -40840,6 +41141,28 @@ def _landing():
             # the tooltip, labelled "last known" and faded, which is honest because it says what it is.
             ".ru-tip-row.ru-unk i{opacity:.3}.ru-tip-row.ru-unk .ru-tip-k,.ru-tip-row.ru-unk .ru-tip-v{color:#8a97a6}"
             ".ru-pct{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
+            # the API health cell (the user 2026-09-07). The dot wears STATUS hexes, never var(--accent): the
+            # label gray at .55 for ok (a healthy API costs no attention), the tab-retrying amber for degraded,
+            # the API-error red (--st-blocked-bg) for paused. The word is .ru-pct's declaration byte for byte
+            # (no new font size), in the label gray when ok and the bright value color otherwise. The same
+            # dot, keyed by its own data-state, heads the detail card.
+            ".ah-dot{width:7px;height:7px;border-radius:50%;background:#9aa4ad;opacity:.55;flex:0 0 auto}"
+            "#rail-api[data-state=degraded] .ah-dot,.ah-dot[data-state=degraded]{background:#e67e22;opacity:1}"
+            "#rail-api[data-state=paused] .ah-dot,.ah-dot[data-state=paused]{background:#e5484d;opacity:1}"
+            ".ah-text{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
+            "#rail-api[data-state=ok] .ah-text{color:#9aa4ad}"
+            "#rail-api{cursor:pointer;margin-left:4px}"
+            # the detail card's own rows, in the tip's font and palette (#ah-tip shares #ru-tip's skin below)
+            ".ah-head{gap:7px}.ah-word{font-weight:700;color:#e8eef5}.ah-since{opacity:.55;margin-left:auto}"
+            ".ah-line{margin-top:4px;max-width:340px}"
+            ".ah-btn{margin-top:6px;font:inherit;padding:3px 9px;border-radius:5px;border:1px solid #3a3a3a;background:#2a2a2a;color:#cfd6dd;cursor:pointer}"
+            ".ah-btn[disabled]{opacity:.55;cursor:default}#ah-tip .romp-acted{opacity:.6}"
+            ".ah-row{cursor:pointer;border-radius:4px;margin:2px -4px 0;padding:1px 4px}"
+            ".ah-row:hover{background:rgba(255,255,255,0.06)}"
+            ".ah-sw{width:8px;height:8px;border-radius:2px;background:#6b7a8c;flex:0 0 auto}"
+            ".ah-nm{font-weight:600}.ah-desc{opacity:.75}"
+            ".ah-foot{margin-top:7px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.08);gap:12px}"
+            ".ah-link{cursor:pointer;color:var(--accent)}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/
             # elapsed bars that used to sit under the timeline — per window, a "used" bar (selected colormap)
             # over an "elapsed" bar (slate) with the % + reset countdown, and nothing else (no prose).
@@ -40851,17 +41174,17 @@ def _landing():
             # #ru-tip is a hover tooltip, pointer-events:none) so the pane can actually scroll — which also
             # stops a tap on the panel itself falling through to the dismiss backdrop; only backdrop taps
             # (and Escape) close it now, the modal contract everywhere else on the dashboard.
-            "#ru-tip.ru-modal{left:50%!important;top:44%!important;transform:translate(-50%,-50%);max-width:92vw;"
+            "#ah-tip.ru-modal,#ru-tip.ru-modal{left:50%!important;top:44%!important;transform:translate(-50%,-50%);max-width:92vw;"
             "max-height:84vh;max-height:84dvh;overflow-y:auto;pointer-events:auto;"
             "box-shadow:0 12px 36px #000000aa}"
             # the dismiss backdrop for the mobile Usage modal: below the tip (z 300), above the panes; a tap
             # anywhere over it closes the modal (see _LANDING_USAGE_JS). Faint dim so it reads as tap-to-close.
             "#ru-back{position:fixed;inset:0;z-index:290;display:none;background:rgba(0,0,0,0.4)}"
             "#ru-back.on{display:block}"
-            "#ru-tip{position:fixed;z-index:300;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:7px;"
+            "#ah-tip,#ru-tip{position:fixed;z-index:300;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:7px;"
             "padding:8px 10px;font:500 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfd6dd;"
             "box-shadow:0 5px 18px rgba(0,0,0,0.45);pointer-events:none;line-height:1.4}"
-            ".ru-tip-win{margin-bottom:8px}#ru-tip .ru-tip-win:last-child{margin-bottom:0}"
+            ".ru-tip-win{margin-bottom:8px}#ah-tip .ru-tip-win:last-child,#ru-tip .ru-tip-win:last-child{margin-bottom:0}"
             # Multi-host breakdown: one COLUMN per host, side by side (the user 2026-08-08 — not one
             # tall stack). flex-wrap lets the mobile modal (92vw cap) fold back to a stack on its own.
             ".ru-tip-cols{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}"
@@ -41142,11 +41465,17 @@ def _landing():
             "body.theme-light #rnet-x{color:#5D574E}body.theme-light #rnet-x:hover{color:#1F1E1D}"
             "body.theme-light #rfleet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
             "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
-            "body.theme-light #ru-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "body.theme-light #ah-tip,body.theme-light #ru-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
             "box-shadow:0 5px 18px rgba(31,26,20,0.18)}"
             "body.theme-light .ru-tip-name{color:#1F1E1D}"
             "body.theme-light .ru-name{color:#5D574E}"
             "body.theme-light .ru-pct{color:#1F1E1D}"
+            "body.theme-light .ah-text{color:#1F1E1D}"
+            "body.theme-light #rail-api[data-state=ok] .ah-text{color:#5D574E}"
+            "body.theme-light .ah-word{color:#1F1E1D}"
+            "body.theme-light .ah-btn{background:#F1EAE2;border-color:rgba(0,0,0,0.12);color:#1F1E1D}"
+            "body.theme-light .ah-row:hover{background:rgba(0,0,0,0.05)}"
+            "body.theme-light .ah-foot{border-top-color:rgba(0,0,0,0.10)}"
             "body.theme-light .ru-track{background:rgba(0,0,0,0.10)}"
             "body.theme-light #mtabs{background:#E7DED2;border-top-color:#DCD2C4}"
             "body.theme-light #mtabs button{color:#5D574E}"
@@ -41197,6 +41526,13 @@ def _landing():
             # the Claude /usage rate-limit bars (Pro/Max): three compact vertical bar-pairs (used % colored +
             # elapsed % slate), %-label, full detail on hover — side-by-side in the bottom bar.
             "<div id=rail-usage data-keycmd=usage.open></div>"
+            # the API health cell (the user 2026-09-07): its own label, a 7px dot, one word — painted by
+            # _LANDING_APIH_JS from the kernel's apiHealth push. Ships HIDDEN: it shows on its first frame,
+            # so an older kernel that never sends one shows nothing rather than a false ok. Its own element,
+            # not a child of #rail-usage (renderRows empties that one when there are no bars and no spend).
+            # No title (the rail's no-title rule); no data-keycmd in v1.
+            "<div id=rail-api class=\"ru-w ru-ah\" hidden data-state=ok><span class=ru-name>API</span>"
+            "<i class=ah-dot></i><span class=ah-text>ok</span></div>"
             "</div>"   # /.rail-scroll
             # refresh + network + settings, pinned to the far RIGHT (settings last), always visible:
             "<div class=rail-acts>"
@@ -41361,6 +41697,7 @@ def _landing():
             + ("<script src=/dist/age-color-global.js?v=%d></script>" % v) +
             "<script>" + _LANDING_ERRS_JS + "</script>"
             "<script>" + _LANDING_USAGE_JS + "</script>"
+            "<script>" + _LANDING_APIH_JS + "</script>"
             "<script>" + _LANDING_JS + "</script>"
             "<script>" + _LANDING_FOCUS_JS + "</script>"
             "<script>" + _LANDING_ESC_JS + "</script>"
@@ -43849,6 +44186,7 @@ class Handler(BaseHTTPRequestHandler):
                     client["send"](json.dumps({"type": "badge", "n": _BADGE_LAST[0]}))
                 except Exception:
                     pass
+            _apih_resend(client)          # …and the bottom bar's API cell, from the last frame (same reason)
         elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately. The notify

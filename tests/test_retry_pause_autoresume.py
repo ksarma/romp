@@ -147,5 +147,27 @@ class RetryPauseAutoResume(unittest.TestCase):
         self.assertEqual(km._views_dirty[0], floor)
 
 
+    # --- the bottom bar's API health cell (2026-09-07) reads the pause and its lift off this same file ---
+    def test_the_api_health_frame_reads_paused_limit_then_ok_after_the_clear(self):
+        km._set_retry_paused(True, reason="limit")
+        floor = km._retry_pause_ts()
+        path = self._transcript("healthy.jsonl", floor + 5)
+        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "name": "web", "path": path}]
+        km._api_error = lambda p: None
+        saved = (km._api_last_failed, km.Sessions.__dict__["backend_for"])
+        km._api_last_failed = lambda p: None                  # no latched record either
+        km.Sessions.backend_for = staticmethod(lambda sid: object())
+        try:
+            f = km._api_health_frame(int(time.time()), {})
+            self.assertEqual((f["state"], f["reason"], f["text"]), ("paused", "limit", "paused \u00b7 usage limit"))
+            self.assertEqual(f["since"], int(floor), "the pause's own t, not the clock")
+            km._auto_resume_retry(int(time.time()), {})
+            self.assertFalse(km._retry_paused_on())
+            f = km._api_health_frame(int(time.time()), {})
+            self.assertEqual((f["state"], f["reason"], f["text"], f["since"]), ("ok", "", "ok", 0))
+        finally:
+            km._api_last_failed, km.Sessions.backend_for = saved
+
+
 if __name__ == "__main__":
     unittest.main()

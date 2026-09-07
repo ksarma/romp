@@ -55,3 +55,18 @@ test("the feed card badges a spent model allowance and HIDES Retry too", () => {
   assert.match(F, /modelLimit \? "⚠ Model limit"/);
   assert.match(F, /modelLimit\?: boolean/);
 });
+
+// The bottom bar's API health cell (2026-09-07) latches a usage-limit pause as reason "limit" in the pause
+// file (kernel _auto_pause_on_limit). The chat card's paused line is unchanged by it: retryPausedText
+// branches on === "spend" first and otherwise falls to the resumeAt countdown, so a "limit" reason renders
+// the countdown exactly as before; the globalRetryPaused frame keeps its shape and still carries reason.
+test("retryPausedText: spend first, then the resumeAt countdown (a 'limit' reason renders the countdown)", () => {
+  const fn = R.slice(R.indexOf("function retryPausedText()"), R.indexOf("function apiRetryTick()"));
+  assert.match(fn, /if \(globalRetryReason === "spend"\) return/);
+  assert.match(fn, /if \(globalRetryResumeAt\) \{/);
+  assert.ok(fn.indexOf('=== "spend"') < fn.indexOf("if (globalRetryResumeAt)"), "spend is checked before the countdown");
+  assert.doesNotMatch(fn, /"limit"/, "no reason-specific branch: the countdown IS the limit's rendering");
+  const K = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(K, /"reason": _retry_pause_reason\(\)\}\)/);
+  assert.match(K, /_set_retry_paused\(True, reason="limit"\)/);
+});

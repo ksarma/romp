@@ -114,3 +114,24 @@ test("the .romp-acted press pulse exists in BOTH stylesheets (feed page loads on
     assert.match(css, /\.romp-acted \{ animation: romp-acted-pulse/);
   }
 });
+
+// The bottom bar's API health cell (2026-09-07) lives in the kernel-served shell page, not a bundle, so it
+// is pinned at the kernel source the way the shell's other controls are. Its listeners sit on the STABLE
+// #rail-api cell (the frame handler writes the cell's children, never the cell) and the detail's actions
+// are delegated on the stable #ah-tip node via data-act; the pause button acknowledges before the round trip.
+test("shell: the API health cell's listeners sit on the stable #rail-api and the detail delegates on #ah-tip", () => {
+  const K = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  const start = K.indexOf('_LANDING_APIH_JS = """');
+  assert.ok(start > 0, "_LANDING_APIH_JS exists");
+  const js = K.slice(start, K.indexOf('"""', start + 24));
+  assert.match(js, /var el=document\.getElementById\('rail-api'\);/);
+  assert.match(js, /el\.addEventListener\('click',function\(\)\{if\(pinned\)close\(\);else open\(\);\}\);/);
+  assert.match(js, /txt\.textContent=m\.text;/);            // children written, never the container
+  assert.doesNotMatch(js, /el\.innerHTML/);
+  assert.match(js, /tip\.addEventListener\('click',function\(ev\)\{/);
+  assert.match(js, /getAttribute\('data-act'\)/);
+  assert.match(js, /t\.disabled=true;/);
+  assert.match(js, /t\.classList\.add\('romp-acted'\)/);      // acknowledged before the round trip
+  assert.doesNotMatch(js, /\.onclick=function/, "no per-row inline handlers");
+  assert.equal((js.match(/addEventListener\('click'/g) || []).length, 2, "one on the cell, one on the tip; none per row");
+});

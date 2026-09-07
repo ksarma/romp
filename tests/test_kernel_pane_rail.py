@@ -8,6 +8,7 @@ Fleet/Outline is its OWN pane (no longer an overlay swapped inside the chat pane
 Source-level pin against km._landing().
 """
 import os
+import re
 import unittest
 from importlib.machinery import SourceFileLoader
 import tempfile
@@ -217,6 +218,61 @@ class PaneRailTest(unittest.TestCase):
         # the Outline (fleet) is a mobile TAB now, no longer desktop-only (the user 2026-07-11)
         self.assertNotIn("#fleet-pane{display:none!important}", self.html)
         self.assertIn("body[data-tab=timeline] .row{display:none}", self.html)   # timeline tab → band fills
+
+
+class ApiHealthCell(unittest.TestCase):
+    """The bottom bar's API health cell (the user 2026-09-07): a sibling of #rail-usage, painted from the
+    kernel's apiHealth push by _LANDING_APIH_JS (tests/test_api_health_rail.py covers the frame and the
+    detail's content). Source-level placement and styling pins against km._landing()."""
+
+    def setUp(self):
+        self.html = km._landing()
+
+    def test_the_cell_follows_the_usage_cell_inside_the_scroll_group(self):
+        i_usage, i_api, i_acts = (self.html.index(k) for k in ("id=rail-usage", "id=rail-api", "class=rail-acts"))
+        self.assertLess(i_usage, i_api, "right of the spend cell")
+        self.assertLess(i_api, i_acts, "inside .rail-scroll, before the pinned actions")
+        self.assertGreater(i_api, self.html.index("<div class=rail-scroll>"))
+
+    def test_the_cell_ships_hidden_with_its_own_label_a_dot_and_the_word(self):
+        self.assertIn('<div id=rail-api class="ru-w ru-ah" hidden data-state=ok><span class=ru-name>API</span>'
+                      '<i class=ah-dot></i><span class=ah-text>ok</span></div>', self.html)
+        tag = re.search(r"<div id=rail-api[^>]*>", self.html).group(0)
+        self.assertNotIn("title", tag, "the rail's no-title rule: the detail is the one hover surface")
+        self.assertNotIn("data-keycmd", tag, "no palette command in v1")
+
+    def test_the_word_wears_the_spend_cell_s_exact_font(self):
+        pct = re.search(r"\.ru-pct\{([^}]*)\}", self.html).group(1)
+        txt = re.search(r"\.ah-text\{([^}]*)\}", self.html).group(1)
+        self.assertEqual(pct, txt, "byte for byte: no new font size on the rail")
+        self.assertIn("#rail-api[data-state=ok] .ah-text{color:#9aa4ad}", self.html, "ok in the label gray")
+        self.assertIn("body.theme-light .ah-text{color:#1F1E1D}", self.html)
+        self.assertIn("body.theme-light #rail-api[data-state=ok] .ah-text{color:#5D574E}", self.html)
+        self.assertIn("#rail-api{cursor:pointer;margin-left:4px}", self.html)
+
+    def test_the_dot_wears_status_hexes_never_the_accent(self):
+        self.assertIn(".ah-dot{width:7px;height:7px;border-radius:50%;background:#9aa4ad;opacity:.55;flex:0 0 auto}", self.html)
+        self.assertIn("#rail-api[data-state=degraded] .ah-dot,.ah-dot[data-state=degraded]{background:#e67e22;opacity:1}", self.html)
+        self.assertIn("#rail-api[data-state=paused] .ah-dot,.ah-dot[data-state=paused]{background:#e5484d;opacity:1}", self.html)
+        for rule in re.findall(r"[^{}]*\.ah-dot[^{}]*\{[^}]*\}", self.html):
+            self.assertNotIn("var(--accent)", rule, "status colors keep their own meaning")
+
+    def test_the_detail_shares_the_usage_tip_s_skin_and_backdrop(self):
+        self.assertIn("#ah-tip,#ru-tip{position:fixed", self.html)
+        self.assertIn("#ah-tip.ru-modal,#ru-tip.ru-modal{", self.html)
+        self.assertIn("body.theme-light #ah-tip,body.theme-light #ru-tip{", self.html)
+        self.assertIn("tip.id='ah-tip'", self.html)
+        self.assertIn("document.getElementById('ru-back')", km._LANDING_APIH_JS)
+
+    def test_the_shell_socket_routes_the_frame_and_escape_closes_the_detail_first(self):
+        self.assertIn("else if(m&&m.type==='apiHealth'&&window.__rompApiHealth)window.__rompApiHealth(m);", self.html)
+        self.assertIn("window.__rompShellSend=function(o)", self.html)
+        esc = km._LANDING_ESC_JS
+        self.assertLess(esc.index("__rompApiClose"), esc.index("__rompUsageClose"), "both ride #ru-back; the detail's hook is checked first")
+        self.assertIn("if(ru&&ru.classList.contains('on')&&window.__rompApiClose){window.__rompApiClose();closed=true;}", esc)
+
+    def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
+        self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))
 
 
 if __name__ == "__main__":

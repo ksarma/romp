@@ -1562,6 +1562,40 @@ kernel that boots without a state file seeds one from that ledger's last 64 KB,
 once, and leaves the ledger alone; once the state file exists the ledger is
 never read again and can be deleted.
 
+### The bottom bar's indicator
+
+The dashboard's bottom bar carries an API cell (a dot and a word beside the
+spend figures) that is computed independently of this signal, from two things
+the kernel owns directly:
+
+- Each alive session's newest transcript API-error record, latched until the
+  session produces assistant output again (a user prompt does not clear it,
+  romp's own retry included), plus the live retrying state of SDK sessions.
+- The retry-pause file, whose reason is recorded when the pause engages:
+  `limit`, `spend`, or none for a manual stop.
+
+The kernel pushes the cell's frame to shell clients only when it changed, and
+again to a shell that sends `ready`:
+
+```json
+{"type": "apiHealth", "state": "ok | degraded | paused",
+ "cls": "429 | 529 | offline | errors | ''", "reason": "'' | limit | spend | manual",
+ "text": "<the rail's words>", "waiting": 0, "retrying": 0, "blocked": 0,
+ "since": 0, "tmux": 0,
+ "sessions": [{"sid": "", "name": "", "color": null, "kind": "retrying | blocked",
+               "cls": "", "status": null, "since": 0, "suppressed": false}]}
+```
+
+`waiting` is `retrying` plus `blocked`. `cls` is the plurality class over the
+affected sessions, ties resolved 429, then 529, then offline, then errors.
+`since` is the pause's time when paused, else the earliest affected session's
+event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
+counts alive tmux-backed sessions, which the cell sees through their
+transcripts only. Every timestamp is an event's time, never the clock, so an
+unchanged world sends nothing. On-you failures (a too-long prompt, a spent
+model allowance, a dead credential, a refusal) are not counted; a spend cap is,
+and engages the `spend` pause in the same cycle.
+
 ## Kernel performance counters
 
 `GET /perf` returns one JSON document of counters the kernel keeps at all
