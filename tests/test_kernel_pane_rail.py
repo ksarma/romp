@@ -241,6 +241,13 @@ class ApiHealthCell(unittest.TestCase):
         self.assertNotIn("title", tag, "the rail's no-title rule: the detail is the one hover surface")
         self.assertNotIn("data-keycmd", tag, "no palette command in v1")
 
+    def test_the_hidden_attribute_beats_the_rail_s_own_display_rule(self):
+        # The UA's [hidden]{display:none} loses to ANY author display rule, and .ru-w{display:flex} is one, so
+        # without this author rule the cell showed a gray 'API ok' from page load and forever on an older
+        # kernel that never sends a frame (the #mtabs button[hidden] idiom in the same stylesheet).
+        self.assertTrue(".ru-w{display:flex;" in self.html, "the author display rule the attribute must beat")
+        self.assertTrue("#rail-api[hidden]{display:none}" in self.html, "no author [hidden] rule for #rail-api")
+
     def test_the_word_wears_the_spend_cell_s_exact_font(self):
         pct = re.search(r"\.ru-pct\{([^}]*)\}", self.html).group(1)
         txt = re.search(r"\.ah-text\{([^}]*)\}", self.html).group(1)

@@ -41448,6 +41448,11 @@ def _landing():
             # the API-error red (--st-blocked-bg) for paused. The word is .ru-pct's declaration byte for byte
             # (no new font size), in the label gray when ok and the bright value color otherwise. The same
             # dot, keyed by its own data-state, heads the detail card.
+            # The cell ships with the hidden attribute and shows on its first frame (the markup below). The UA's
+            # [hidden]{display:none} loses to ANY author display rule, and .ru-w{display:flex} above is one, so
+            # without this author rule the rail showed a gray 'API ok' from page load, and forever on an older
+            # kernel that never sends a frame (review round 1, 2026-09-07; the #mtabs button[hidden] idiom).
+            "#rail-api[hidden]{display:none}"
             ".ah-dot{width:7px;height:7px;border-radius:50%;background:#9aa4ad;opacity:.55;flex:0 0 auto}"
             "#rail-api[data-state=degraded] .ah-dot,.ah-dot[data-state=degraded]{background:#e67e22;opacity:1}"
             "#rail-api[data-state=paused] .ah-dot,.ah-dot[data-state=paused]{background:#e5484d;opacity:1}"
