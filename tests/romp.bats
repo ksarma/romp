@@ -109,6 +109,10 @@ MOCK
     # names map under XDG_STATE_HOME (was polluting the REAL state dir).
     export HOME="$TEST_DIR/home"
     export XDG_STATE_HOME="$HOME/.local/state"
+    # ROMP_STATE_DIR outranks that floor and a session of a profiled kernel inherits it: the two real
+    # managers below write their SIGTERM notes to STATE_ROOT/restart-audit.jsonl on every stop, so an
+    # inherited value would send the suite's rows to a LIVE ledger (tests/bats-state-isolation.bats).
+    unset ROMP_STATE_DIR
     mkdir -p "$HOME"
     cd "$WORK_DIR"
 }
