@@ -1726,12 +1726,15 @@ MOCK
 # `romp down` in a test must never reach a port that could be the machine's own kernel.
 
 start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exit-after-down | refuse-401 | no-pid
+                        #      | exit-before-confirm (leaves before answering the second POST /down)
+                        #      | exit-before-version (answers every POST /down, leaves before answering GET /version)
     printf '%s' "$1" > "$TEST_DIR/down-reply"
     export ROMP_SERVE_TOKEN="test-token-DO-NOT-USE"
     rm -f "$TEST_DIR/kport" "$TEST_DIR/kpid"
     python3 - "$TEST_DIR" "$ROMP_SERVE_TOKEN" "${2:-}" <<'PY' &
 import http.server, json, os, signal, sys
 tdir, tok, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+ndown = 0     # POST /down requests so far: the quiesce is the first, the probe's confirmation the second
 def note(line):
     with open(tdir + "/kget", "a") as f:
         f.write(line + "\n")
@@ -1750,6 +1753,11 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/healthz":
             body, ctype = b"ok", "text/plain"
         elif self.path == "/version":
+            if mode == "exit-before-version":
+                # a kernel gone between the confirmation and the pid check (its own exit, or the end of
+                # a drain a stop above began): curl gets no reply, and the CLI must not die with its code
+                note("exiting before answering /version")
+                os._exit(0)
             # this process, or the pid $TEST_DIR/version-pid names: a kernel whose auth-exempt word
             # disagrees with what it said under the token
             pid = os.getpid()
@@ -1771,6 +1779,12 @@ class H(http.server.BaseHTTPRequestHandler):
         ok = self.headers.get("X-Romp-Token") == tok
         with open(tdir + "/kreq", "a") as f:
             f.write("%s token=%s %s\n" % (self.path, "ok" if ok else "BAD", body))
+        if self.path == "/down":
+            global ndown
+            ndown += 1
+            if mode == "exit-before-confirm" and ndown == 2:
+                note("exiting before answering POST /down #2")   # gone between the quiesce and the probe
+                os._exit(0)
         if mode == "refuse-401" and self.path == "/down":
             self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
         if not ok:
@@ -2340,6 +2354,48 @@ STUB
     [[ "$output" == *"[romp] down: the kernel on :$ROMP_KERNEL_PORT answered the quiesce but has since gone (no login service installed or running, no manager on :7432); \`romp up\` starts it again"* ]]
     KERNEL_PID=""
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
+}
+
+@test "romp down: a kernel that leaves after the confirmation and before its pid is checked is the documented refusal, not a bare exit 7" {
+    # review round 3, finding 1: bin/romp runs under set -euo pipefail, and the probe's GET /version
+    # pipeline had no `|| true`. A kernel gone by then (its own exit, or the end of the drain a stop
+    # above began) made curl exit non-zero, and the command died with that code: no line, exit 7,
+    # the marker left in place, no down-failed row. Now the not-confirmed refusal the docs promise.
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}' exit-before-version
+    mock_service 3
+    mock_manager 1
+    local kpid; kpid="$(cat "$TEST_DIR/kpid")"
+    run run_romp down
+    [ "$status" -eq 1 ]
+    grep -q '^exiting before answering /version$' "$TEST_DIR/kget"
+    grep -q '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq"           # the confirmation was answered, with the pid
+    [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT was not confirmed as the one this romp manages (it named pid $kpid on POST /down but GET /version names no pid); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    [[ "$output" != *"[romp] down"* ]]
+    kernel_port_closed; KERNEL_PID=""
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]                       # a kernel nobody confirmed stopped must not read as down on purpose
+    local last; last="$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")"
+    [[ "$last" == *'"action": "down-failed"'* ]]
+    [[ "$last" == *"GET /version names no pid"* ]]
+    grep -q '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"   # the attempt stays on the record
+}
+
+@test "romp down: a kernel that leaves before answering the confirmation is 'no answer': exit 1, the line, marker taken back" {
+    # the same hole one request earlier: the confirmation's curl already had its `|| true`, but the
+    # GET /version right after it did not, so this case too died with curl's code instead of the line
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}' exit-before-confirm
+    mock_service 3
+    mock_manager 1
+    run run_romp down
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"quiet: no turn in flight (waited 0s)"* ]]        # the quiesce itself was answered
+    grep -q '^exiting before answering POST /down #2$' "$TEST_DIR/kget"
+    [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT was not confirmed as the one this romp manages (POST /down got no answer); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    [[ "$output" != *"[romp] down"* ]]
+    kernel_port_closed; KERNEL_PID=""
+    [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]
+    local last; last="$(tail -1 "$XDG_STATE_HOME/romp/restart-audit.jsonl")"
+    [[ "$last" == *'"action": "down-failed"'* ]]
+    [[ "$last" == *"POST /down got no answer"* ]]
 }
 
 @test "romp up: clears the marker and starts through the login service when one is installed" {

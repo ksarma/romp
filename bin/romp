@@ -2521,12 +2521,19 @@ PYEOF
             # A 401/403 is another romp's kernel. A 200 without a pid is a kernel from before the
             # field; a /version pid that differs is a kernel other than the one that answered. None
             # of these is signaled: the hold is released, the marker taken back, the reason named.
+            # Every curl here ends in `|| true`: under `set -euo pipefail` a kernel that leaves between
+            # the /healthz poll above and these lines (its own exit, or the end of the drain a stop
+            # above began) makes curl exit non-zero, and the GET /version pipeline once carried that
+            # code straight to errexit: `romp down` died with curl's exit 7, no line, the marker left
+            # in place, no down-failed row (review round 3, finding 1). A kernel that is gone by now
+            # is "no answer" or "names no pid" below, and takes the documented refusal.
             _dn_cout="$(_romp_token_cfg | curl -s -m 10 --config - -H 'Content-Type: application/json' \
                         -d '{"wait": 0}' -w '\n%{http_code}' "http://127.0.0.1:$_dn_kport/down" 2>/dev/null)" || true
             _dn_ccode="${_dn_cout##*$'\n'}"
             _dn_cpid="" _dn_why=""
             [[ "$_dn_ccode" == 200 ]] && _dn_cpid="$(printf '%s' "${_dn_cout%$'\n'*}" | _dn_pid_of)"
-            _dn_vpid="$(curl -s -m 2 "http://127.0.0.1:$_dn_kport/version" 2>/dev/null | _dn_pid_of)"
+            _dn_vout="$(curl -s -m 2 "http://127.0.0.1:$_dn_kport/version" 2>/dev/null)" || true
+            _dn_vpid="$(printf '%s' "$_dn_vout" | _dn_pid_of)"
             case "$_dn_ccode" in
                 401|403)
                     _romp_down_release "$_dn_state" "$_dn_kport" 1 "the kernel on :$_dn_kport rejected the serve token"
