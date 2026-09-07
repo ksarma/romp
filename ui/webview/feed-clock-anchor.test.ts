@@ -96,5 +96,8 @@ test("federation stamps the arrival beside the frame on the wire path, drops it 
   assert.match(FED, /this\.perHostFeed\[host\] = m;\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a frame's arrival");
   assert.match(FED, /delete this\.perHostFeed\[host\];\n\s*delete this\.perHostFeedAt\[host\];/, "a detach forgets both");
   assert.match(FED, /mergeHostFeeds\(this\.perHostFeed, this\.hostSeq, this\.view\(\), dead, this\.perHostFeedAt\)/, "every emit carries the arrivals");
-  assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 1, "stamped where the frame comes off the wire and nowhere else — never on an emit");
+  // two wire arrivals, two stamps: the full frame, and the fork's feedDelta applied onto the held frame (the
+  // delta protocol kept beside upstream's slot deltas, upstream/2026-09-05-two-delta-protocols.md; 2026-09-07 fold)
+  assert.match(FED, /this\.perHostFeed\[host\] = applyFeedDelta\(base, m\);\n\s*this\.perHostFeedAt\[host\] = Date\.now\(\);/, "a delta's arrival: it carries the kernel's `now` too");
+  assert.equal((FED.match(/perHostFeedAt\[host\] = Date\.now\(\)/g) || []).length, 2, "stamped where a frame or a delta comes off the wire and nowhere else, never on an emit");
 });

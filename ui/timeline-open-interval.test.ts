@@ -5,8 +5,9 @@
 // rebuild (2026-09-06; the lanes frame is deduped per rebuild, so the build clock can trail the edge by up
 // to a bucket). The end stays numeric on the wire: a null end was a wire break for every already-loaded
 // renderer (Math.min(null, t1) = 0 dropped the stripe). Headless draw() over a minimal DOM shim (the
-// timeline-render.test.ts pattern), with the live edge pushed 30 s past data.now so "to the live edge"
-// and "to the payload's end" land on different pixels.
+// timeline-render.test.ts pattern), with the live edge pushed MAX_INTERP_AHEAD seconds past data.now (read
+// from the source: the cap moved 30 -> 150 in the 2026-09-07 upstream fold) so "to the live edge" and "to
+// the payload's end" land on different pixels.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -54,7 +55,10 @@ const { TimelinePanel } = createRequire(__filename)(viewPath);
 const SRC = fs.readFileSync(viewPath, "utf8");
 
 const NOW = 1_781_000_000;
-const AHEAD = 30;   // the view's MAX_INTERP_AHEAD: how far the live edge is pushed past data.now below
+// the view's MAX_INTERP_AHEAD: how far the live edge is pushed past data.now below. Read from the source
+// rather than restated: the cap is upstream's to set (30 -> 150, uirender DECISION 1, 2026-09-07 fold) and
+// this test's claim is about the clamp, not the figure.
+const AHEAD = Number(/^const MAX_INTERP_AHEAD = (\d+);/m.exec(SRC)![1]);
 function lane(id: string, name: string, extra: any) {
   return {
     id, name, color: "#7aa2f7", state: "working", live: true, model: "m", effort: "high",
@@ -74,7 +78,7 @@ const hatch = (fill: string) => (n: any) => n.tag === "rect" && n.getAttribute("
 const right = (r: any) => Number(r.getAttribute("x")) + Number(r.getAttribute("width"));
 const width = (r: any) => Number(r.getAttribute("width"));
 
-// A panel live-following with its edge 30 s past data.now (the glide the view does between kernel
+// A panel live-following with its edge AHEAD seconds past data.now (the glide the view does between kernel
 // frames), gaps uncollapsed so x is linear in time.
 function livePanel(data: any) {
   const panel: any = new TimelinePanel(makeNode("div"));
@@ -110,7 +114,7 @@ test("an open interval (end at the payload clock) draws to the live edge; a clos
   assert.ok(pps > 0.05, "the window resolves seconds to pixels: " + pps);
   assert.ok(Math.abs(right(closed30) - (xNow - 30 * pps)) < 1, "a closed span stops at its own end");
   assert.ok(Math.abs(right(open) - (xNow + AHEAD * pps)) < 1,
-    "the open span reaches the live edge, 30 s past the payload's now (it used to stop at x(now), the build clock)");
+    "the open span reaches the live edge, AHEAD seconds past the payload's now (it used to stop at x(now), the build clock)");
   assert.ok(Math.abs(right(openNull) - right(open)) < 0.01, "a null end lands on the same live edge");
   assert.equal(open.getAttribute("x"), openNull.getAttribute("x"), "…starting where the payload says");
 });

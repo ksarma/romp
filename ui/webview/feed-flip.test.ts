@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { flipNeeded } from "./feed-flip";
+import { cardNeedsUpdate } from "./feed-card-gate";
 
 const M = (o: Record<string, string>) => new Map(Object.entries(o));
 
@@ -26,14 +27,21 @@ test("the first paint never flies", () => {
 });
 
 const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
+// The 2026-09-07 upstream fold kept the fork's PER-COLUMN gate over this module's board-level one (uirender
+// DECISION 2): feed.ts never imports flipNeeded. flipNeeded stays a pure module with the unit tests above;
+// the pins below name the shipped shape (vscode-extension/src/feed-fly.test.ts carries the fuller set).
 test("render() gates both forced layouts on the flip decision, and remembers the columns it painted", () => {
-  assert.match(SRC, /const nextCols = columnsOf\(buckets\);\n\s*const needFlip = flipNeeded\(prevCols, nextCols\);\n\s*prevCols = nextCols;\n\s*const flipFirst = needFlip \? captureCardRects\(cols\) : new Map<string, FlipState>\(\);/);
-  assert.match(SRC, /if \(needFlip\) flyColumnChanges\(flipFirst, cols\);/);
-  // columnsOf keys every entry kind (a header per column, so one that changes column counts as moved) and
-  // records column AND position, so the gate sees reorders; the keys only need to be consistent with
-  // themselves across renders — they are never looked up against reconcileCol's DOM keys
-  assert.match(SRC, /const key = e\.kind === "ask" \? "a:" \+ e\.ask\.itemId : e\.kind === "group" \? "g:" \+ e\.group\.turnId : "s:" \+ col \+ ":" \+ e\.sid;/);
-  assert.match(SRC, /m\.set\(key, col \+ ":" \+ i\);/);
+  // the decision is per column, read off the DOM itself: a column whose current key sequence equals the
+  // planned one moved nothing, so neither its rects nor its fly are read or written; the stacked layout
+  // (where a change in one section shifts the sections below it) widens a hit to every column
+  assert.match(SRC, /const differing = FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);/);
+  assert.match(SRC, /flyColumnChanges\(flipFirst, cols, flipCols\);/);
+  // what it remembers is the painted DOM: the keys reconcileCol wrote are what the next render compares the
+  // plan against (childKeys/entryKey), so no prevCols/columnsOf ledger exists beside them
+  assert.match(SRC, /import \{ cardInputsKey, cardNeedsUpdate, sameKeySeq, type GateEnv \} from "\.\/feed-card-gate";/);
+  assert.match(SRC, /function entryKey\(e: Entry, listEl: HTMLElement\): string \{/);
+  assert.match(SRC, /function childKeys\(listEl: HTMLElement\): string\[\] \{/);
+  assert.ok(!/flipNeeded|columnsOf\(|prevCols/.test(SRC), "the board-level gate is not the shipped one");
 });
 test("the fly reads every rect before it writes any transform", () => {
   const body = /function flyColumnChanges\([\s\S]*?\n\}/.exec(SRC)![0];
@@ -44,16 +52,21 @@ test("the fly reads every rect before it writes any transform", () => {
 });
 
 test("a card whose data and display state did not change is not repainted", () => {
-  assert.match(SRC, /function cardPaintKey\(it: AskItem\): string \{\n\s*return JSON\.stringify\(it\) \+ "\|"/);
-  assert.match(SRC, /const pk = cardPaintKey\(it\);[\s\S]*?if \(a\._paintKey === pk && !card\.querySelector\("button\[disabled\]"\)\) return;/,
-    "a latched (disabled) button always repaints: the next paint is what re-enables it");
-  // the inputs every card reads that live outside its item: prefs, the status sets + self host, the clock
-  assert.match(SRC, /\+ "\|" \+ paintEpoch \+ "\|" \+ Math\.floor\(Date\.now\(\) \/ 15000\);/);
-  assert.match(SRC, /function onSettingsChanged\(\): void \{\n\s*paintEpoch\+\+;/);
-  assert.match(SRC, /function noteStatusInputs\(\): void \{\n\s*const sig = \[\.\.\.workingSet\]\.sort\(\)\.join\(","\) \+ "\|" \+ \[\.\.\.awaitingSet\][\s\S]*?\[\.\.\.unknownSet\][\s\S]*?feedSelfHost;\n\s*if \(sig !== statusSig\) \{ statusSig = sig; paintEpoch\+\+; \}/);
-  assert.match(SRC, /unknownSet = new Set\([\s\S]*?\n\s*noteStatusInputs\(\);/, "the payload handler notes the sets right after setting them");
-  // the display-side inputs the paint reads are part of the key (a hover, a pin, a pending bell, a done tick)
-  assert.match(SRC, /hoverAskId \?\? pinnedAskId/);
-  assert.match(SRC, /pendingNotify\.has\(it\.itemId\)/);
-  assert.match(SRC, /\[\.\.\.pendingDone\]\.join\(","\)/, "an optimistic done tick anywhere repaints every card: the set is usually empty");
+  // the fold kept the fork's gate (feed-card-gate.ts, at the reconcile call site) over this module's
+  // cardPaintKey/paintEpoch (uirender flags, 2026-09-07): a kept card repaints only when the kernel re-sent it
+  // (a new object; the delta path keeps an unchanged card's object by reference) or a board-level input it
+  // reads changed (the key). Placement stays unconditional, so a column or sort change still moves it.
+  // feed-render-incremental.test.ts drives the contract (frames C and D, the Retry latch); this pins the seam.
+  assert.match(SRC, /const ik = cardInputsKey\(e\.ask, gate\);\n\s*if \(cardNeedsUpdate\(card as any, e\.ask, ik\)\) \{ updateAskCard\(card, e\.ask\); \(card as any\)\._ik = ik; \}/);
+  // the inputs every card reads that live outside its item, resolved once per render: the status sets and
+  // self host, the hover/pin, the bell, the prefs, the host-down mark, the user-todo count. The clock is
+  // NOT among them: the 15 s live pass moves the stamped ages in place instead of repainting cards.
+  assert.match(SRC, /const gate: GateEnv = \{\n\s*dot: dotFor, working: \(n\) => workingSet\.has\(n\), userTodos: userTodosMap,\n\s*focusId: hoverAskId \?\? pinnedAskId, pinnedId: pinnedAskId, notifyOn: cardNotifyOn,\n\s*prefs: \{ grouped: gprefs\.grouped, collapsed: gprefs\.collapsed, colormap: gprefs\.colormap \},\n\s*hostDown: hostIsDown, selfHost: feedSelfHost, seq: \+\+renderSeq,/);
+  // executed: the same object under the same key is skipped; a re-sent object or a moved input repaints
+  const it = { itemId: "a:1" };
+  const card = { _it: it, _ik: "k" };
+  assert.equal(cardNeedsUpdate(card, it, "k"), false);
+  assert.equal(cardNeedsUpdate(card, { ...it }, "k"), true, "a new object is the kernel re-sending the card");
+  assert.equal(cardNeedsUpdate(card, it, "k2"), true, "a board-level input moved");
+  assert.ok(!/cardPaintKey|paintEpoch|noteStatusInputs/.test(SRC), "the JSON-plus-clock gate is not the shipped one");
 });
