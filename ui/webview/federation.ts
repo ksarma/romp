@@ -28,6 +28,8 @@ export function perfCollectorFor(app: string): RompPerf | null {
 
 export const SEP = ":";
 export const LOCAL = ""; // the local kernel's host key — no prefix, so the single-kernel path is untouched
+/** The merged emits a hidden pane can owe: the feed frame; the timeline's lanes skeleton and its bars. */
+export type HoldSlot = "feed" | "data" | "bars";
 
 /** `host:id` for a remote host; the bare id unchanged for the local host. */
 export function prefixId(host: string, id: string): string {
@@ -772,6 +774,7 @@ export class FederationManager {
       pending: () => this.pendingFor(),
       lastSeen: (h: string) => this.lastSeen[h] || 0,
     };
+    this.installPaneHold(w);   // the shell's on-screen word + the first-show resize (the hidden-pane hold below)
     // A drag in ANY pane rewrites the arrangement; every other pane hears it through `storage` (which fires
     // only in other same-origin contexts) and this one through the writer's own CustomEvent. Both land here,
     // and re-emitting all three merged payloads is what moves the tabs, lanes and feed groups together.
@@ -992,6 +995,72 @@ export class FederationManager {
 
   private lastFeedCounts = "";   // last per-host ask-count signature — breadcrumb only on change
 
+  // ── the hidden-pane hold (2026-09-06) ──────────────────────────────────────────────────────────
+  // The shell hides a pane with display:none on its iframe — the Outline and Waiting panes by default, the
+  // timeline band when toggled off, every pane but the current tab on the phone — and this layer went on
+  // merging and dispatching every frame to it, so the pane rendered a board nobody could see. In the live
+  // minute rows about 58% of all recorded handler time was spent this way (the dispatch and the pane's own
+  // handler together). The hold lives HERE, above the panes: the per-host state this class keeps
+  // (perHostFeed, perHostTl, perHostTlBars) must keep updating while hidden — a delta applies onto it and
+  // nothing ever has to ask for a full frame — and one emit on show hands the pane the newest merge, the
+  // very frame it would have built last. Only the newest matters: the intermediate states were never on
+  // screen (the feed pane's hover-freeze queue is the precedent).
+  //   HIDDEN is the shell's word, not a viewport probe. The shell posts {romp:'panes', on:{key:bool}} to every
+  // pane iframe on each toggle, on the iframe's load and on a mobile tab switch (kernel.py
+  // _LANDING_COLLAPSE_JS), and on[app] is the same state that drives display:none. The zero-viewport probe
+  // (innerWidth 0) is right only for a pane hidden since load: once shown and hidden again the iframe KEEPS
+  // its last size, and a same-size re-show fires no resize (Chromium 151, measured 2026-09-06) — so the
+  // probe is the boot-time default, until the shell's first word arrives. The show event is the panes
+  // message turning on[app] true, plus the resize a first show fires (0 → size) under a shell that never
+  // posts the message.
+  //   Not held: the chat (its frames do not pass through these emits) and the feed pane — never hidden in
+  // the recorded minutes, and its message handlers read the board's DOM (a bell jump reveals the pane and
+  // posts revealCard in one gesture) while its render animates column moves, which a catch-up render after
+  // an hour hidden would replay as flights. The FIRST frame of each slot always goes through while hidden:
+  // the timeline posts {romp:'ready'} from its first lanes, and the panes' loaders resolve on it.
+  private paneOn: boolean | null = null;   // on[app] from the shell's last panes message; null until one arrives
+  private slotEmitted: Record<HoldSlot, boolean> = { feed: false, data: false, bars: false };
+  private slotOwed: Record<HoldSlot, boolean> = { feed: false, data: false, bars: false };
+
+  /** Is this pane off screen right now? The shell's word once it has spoken; the zero-viewport probe before. */
+  paneHidden(): boolean {
+    if (this.paneOn !== null) return !this.paneOn;
+    try { const w = window as any; return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch (e) { return false; }
+  }
+  /** Which panes the hold applies to (see the block comment: not the chat, not the feed). */
+  private holdEligible(): boolean { return this.app !== "chat" && this.app !== "feed"; }
+  /** Hold this slot's emit while the pane is hidden (after its first frame): records the debt and says so. */
+  private holdWhileHidden(slot: HoldSlot): boolean {
+    if (this.slotEmitted[slot] && this.holdEligible() && this.paneHidden()) { this.slotOwed[slot] = true; return true; }
+    this.slotEmitted[slot] = true;
+    return false;
+  }
+  /** The show event: emit each owed slot once — the feed; the lanes, then the bars. Nothing owed → nothing. */
+  private flushOwed(): void {
+    if (this.paneHidden()) return;
+    if (this.slotOwed.feed) { this.slotOwed.feed = false; this.emitMergedFeed(); }
+    if (this.slotOwed.data) { this.slotOwed.data = false; this.emitMergedTimeline(false); }
+    if (this.slotOwed.bars) { this.slotOwed.bars = false; this.emitMergedTimeline(true); }
+  }
+  /** The shell's word for this pane, on[app] of its panes message (a test drives this directly). */
+  setPaneOn(on: boolean): void {
+    const was = this.paneHidden();
+    this.paneOn = on;
+    if (was && !this.paneHidden()) this.flushOwed();
+  }
+  /** Wire the hold's inputs on a window: the shell's panes message and the resize a first show fires.
+   *  Publishes the answer as window.__rompPaneHidden, which perf-telemetry's hidden_pane row and the
+   *  shim's paneHidden read, so the telemetry stops under-reporting a pane hidden after its first show. */
+  installPaneHold(w: any): void {
+    if (!w || typeof w.addEventListener !== "function") return;
+    w.addEventListener("message", (e: any) => {
+      const m = e && e.data;
+      if (m && m.romp === "panes" && m.on && typeof m.on === "object") this.setPaneOn(m.on[this.app] === true);
+    });
+    w.addEventListener("resize", () => this.flushOwed());
+    w.__rompPaneHidden = () => this.paneHidden();
+  }
+
   private emitMergedFeed(): void {
     // MERGE-INPUT TRIPWIRE (the user 2026-07-31): one breadcrumb whenever any host's contribution to
     // the merged feed CHANGES SIZE — so a card blinking out is attributable to the host snapshot that
@@ -1007,6 +1076,7 @@ export class FederationManager {
       this.diag("feedmerge", { counts });
     }
     this.publishPending();
+    if (this.holdWhileHidden("feed")) return;   // a hidden pane owes one emit on show (the hold above)
     const dead = this.deadHosts();
     this.emit(mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt));
   }
@@ -1059,6 +1129,7 @@ export class FederationManager {
     // discipline as the lanes hold above: the local kernel pushes bars on connect, so the hold is
     // momentary, and the local arrival itself emits.
     if (bars && !(LOCAL in this.perHostTlBars)) return;
+    if (this.holdWhileHidden(bars ? "bars" : "data")) return;   // a hidden pane owes one emit on show (the hold above)
     const data = bars
       // the bars message carries no lanes — hand the merged lane list in for the connector stitch
       ? mergeHostBars(this.perHostTlBars, this.hostSeq, mergeHostTimelines(this.perHostTl, this.hostSeq, this.view()).sessions)
