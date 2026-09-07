@@ -41,6 +41,11 @@ case "$1" in
     echo "${MOCK_TMUX_CURRENT:-mysession}"
     exit 0
     ;;
+  show-environment)
+    # the server's globals, one NAME=value per line, from the fixture (empty file = a clean server)
+    cat "${MOCK_TMUX_GLOBALS_FILE:-/dev/null}" 2>/dev/null
+    exit 0
+    ;;
   list-sessions)
     # Reformat each session line per the requested -F format ($3).
     # @romp defaults to 1; a "name|0" line is a non-romp session.
@@ -524,6 +529,56 @@ MOCK
     # external tools attribute authors env-first (ROMP_SESSION_NAME) instead of asking tmux.
     grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=[0-9a-f-]{36} ROMP_SESSION_NAME="myproject" claude --name "myproject" --session-id [0-9a-f-]{36}' "$MOCK_LOG"
     grep -q 'tmux attach-session -t myproject' "$MOCK_LOG"
+}
+
+# The tmux SERVER's globals are what a new pane inherits; when romp itself runs `op` (a reference is
+# configured) the launcher unsets op's credential names AND the manager's startup ANTHROPIC_API_KEY
+# there before `new-session` — a pane on a reference-governed box never bills a stale key (2026-09-06).
+_stale_server_globals() {
+    export MOCK_TMUX_GLOBALS_FILE="$TEST_DIR/mock_globals.txt"
+    printf '%s\n' "OP_SERVICE_ACCOUNT_TOKEN=synthetic-op-token" "OP_SESSION_acct=synthetic-session" \
+        "ANTHROPIC_API_KEY=synthetic-stale-key" "PATH=/usr/bin" "HOME=/nonexistent" > "$MOCK_TMUX_GLOBALS_FILE"
+}
+
+@test "new -t: a reference in the CLIENT env scrubs op's names and ANTHROPIC_API_KEY from the tmux server" {
+    _stale_server_globals
+    ROMP_API_KEY_REF="op://test-vault/test-item/credential" run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu OP_SESSION_acct' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
+    ! grep -q 'tmux set-environment -gu PATH' "$MOCK_LOG"
+    ! grep -q 'tmux set-environment -gu HOME' "$MOCK_LOG"
+    # the scrub comes BEFORE the pane exists
+    [ "$(grep -n 'set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG" | cut -d: -f1)" -lt \
+      "$(grep -n 'tmux new-session' "$MOCK_LOG" | cut -d: -f1)" ]
+}
+
+@test "new -t: a reference in the env FILE alone (a keyswap with no restart) scrubs the tmux server too" {
+    # Regression (2026-09-06): the guard read only the client's ROMP_API_KEY_REF, which a kernel-spawned
+    # `romp new` lacks when the reference was swapped into service.env after the manager started.
+    _stale_server_globals
+    unset ROMP_API_KEY_REF
+    # Name the file explicitly: CI runners export XDG_CONFIG_HOME, so "$HOME/.config" is not where the
+    # launcher would look (the keyswap tests pin the path the same way).
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "# the service env" "ROMP_PERF=1" "  ROMP_API_KEY_REF=op://test-vault/test-item/credential" \
+        > "$ROMP_SERVICE_ENV_FILE"
+    run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
+}
+
+@test "new -t: no reference anywhere leaves the tmux server's environment alone (static-key and helper boxes)" {
+    _stale_server_globals
+    unset ROMP_API_KEY_REF
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "ANTHROPIC_API_KEY=synthetic-static-key" > "$ROMP_SERVICE_ENV_FILE"
+    run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    ! grep -q 'set-environment -gu' "$MOCK_LOG"
+    ! grep -q 'show-environment' "$MOCK_LOG"
 }
 
 @test "new -t on a 2.1.224+ claude: inbound-accept setting + @romp-inbound-accept tag" {

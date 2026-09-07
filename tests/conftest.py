@@ -48,6 +48,28 @@ os.environ["ROMP_MANAGER_PORT"] = "1"
 _NO_SERVICE_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
+# A runtime provider can also be selected directly from the manager's environment. Remove its
+# inherited reference before module loading, so an auth test cannot resolve a developer's vault
+# merely because the isolated service.env is absent. Tests set synthetic references explicitly.
+os.environ.pop("ROMP_API_KEY_REF", None)
+# Every shell under a romp-managed session inherits ROMP_SUPERVISED=1 from the kernel (the service
+# unit exports it), and keysource gives that variable authority: a supervised manager reads the env
+# file only and ignores a startup key. Twenty-five tests that stage a startup key went red when the
+# suite ran from inside a romp session while CI stayed green (review find, 2026-09-05). The floor is
+# the unsupervised case; a test that wants supervision sets the variable itself.
+os.environ.pop("ROMP_SUPERVISED", None)
+
+
+def _reset_keysource_state():
+    """keysource remembers which path selected which source for the PROCESS (that is the resurrection
+    guard); under one pytest process that memory would leak between test modules. Every loaded copy of
+    the module (each SourceFileLoader name is its own module object) is reset."""
+    import sys
+    for name, m in list(sys.modules.items()):
+        if "keysource" in name and hasattr(m, "_AUTHORITATIVE_PATHS"):
+            m._AUTHORITATIVE_PATHS.clear()
+            getattr(m, "_ENV_PROVIDER_PATHS", set()).clear()
+            m._CACHE = ((), "")
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +80,9 @@ def _no_real_service_env():
     phase, before TestCase.run calls setUp) — so per-test intent still wins."""
     for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
         os.environ[var] = _NO_SERVICE_ENV
+    os.environ.pop("ROMP_API_KEY_REF", None)
+    os.environ.pop("ROMP_SUPERVISED", None)
+    _reset_keysource_state()
     yield
 
 
@@ -125,6 +150,27 @@ os.environ["ROMP_CLI_SCOPE"] = "0"
 def _no_cli_scope():
     os.environ["ROMP_CLI_SCOPE"] = "0"
     yield
+
+
+# No test may reach the machine's REAL tmux server (2026-09-06): keysource.claim_op_env scrubs the tmux
+# server's globals the moment romp becomes the op consumer, which any test that configures a reference
+# and constructs the SDK backend (or resolves a key) does — and on a developer's box that `tmux
+# set-environment -gu` would land on the live server every session runs in. The same private socket
+# directory the bats suites use (tests/tmux-private.bash): tmux puts every socket, `-L` ones included,
+# under $TMUX_TMPDIR/tmux-<uid>/, and the directory must exist or tmux 3.4 silently falls back to the
+# default. No server ever exists there, so a scrub from a test exits with "no server running".
+os.environ["TMUX_TMPDIR"] = tempfile.mkdtemp(prefix="romp-tests-tmux-")
+os.environ.pop("TMUX", None)
+os.environ.pop("ROMP_TMUX_SOCKET", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_tmux_server():
+    os.environ["TMUX_TMPDIR"] = _TMUX_PRIVATE
+    yield
+
+
+_TMUX_PRIVATE = os.environ["TMUX_TMPDIR"]
 
 
 @pytest.fixture(autouse=True)
