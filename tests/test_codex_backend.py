@@ -17,7 +17,7 @@ import threading
 import time
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,8 +26,8 @@ ROOT = os.path.dirname(HERE)
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-cb = SourceFileLoader("romp_codex_backend", os.path.join(ROOT, "kernel", "codex_backend.py")).load_module()
-sb = SourceFileLoader("romp_session_backend", os.path.join(ROOT, "kernel", "session_backend.py")).load_module()
+cb = load_source("romp_codex_backend", os.path.join(ROOT, "kernel", "codex_backend.py"))
+sb = load_source("romp_session_backend", os.path.join(ROOT, "kernel", "session_backend.py"))
 
 
 def until(fn, timeout=5.0, step=0.01):
