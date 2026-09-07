@@ -487,6 +487,33 @@ class RunJudgingBisect(_Base):
         self.assertEqual([(m["text"], m["kind"]) for m in got], [("a caption", "segment"), ("", "run")])
         self.assertNotEqual(got[1]["t1"], got[1]["t1"], "the span carries its NaN end, as before")
 
+    def test_a_bare_list_or_an_unflagged_snapshot_walks_from_the_head(self):
+        # the reader's test doubles (test_timeline_bars_resilience hands _run_judging plain lists) and a
+        # snapshot whose flag was never assigned carry no order fact, so the walk starts at the head even
+        # when the rows are in order and a bisect WOULD have skipped the ones before the horizon
+        box = []
+        before = [_CountingRow(box, _row(T0 - 5000 + i)) for i in range(300)]
+        inside = [_row(T0 + i) for i in range(3)]
+        marks = [_mark(T0 + 1, text="g")]
+        ref = _reference_run_judging(T0, ALIVE, marks, before + inside, [], km.time.time())
+        unflagged = km._JudgeUsageSnapshot(before + inside)          # the slot exists; nothing assigned it
+        with self.assertRaises(AttributeError):
+            unflagged.monotone
+        saved = (km._judge_usage_rows, jd.active_runs)
+        jd.active_runs = lambda: []
+        try:
+            for label, rows in (("plain list", list(before + inside)), ("unflagged snapshot", unflagged)):
+                km._judge_usage_rows = lambda rows=rows: rows
+                del box[:]
+                got = km._run_judging(T0, ALIVE, marks)
+                reads = len(box)
+                self.assertEqual(got, ref, label)
+                self.assertEqual(len(got), 3, label)
+                self.assertGreaterEqual(reads, 2 * len(before),
+                                        "%s: every row before the horizon was examined (%d field reads)" % (label, reads))
+        finally:
+            km._judge_usage_rows, jd.active_runs = saved
+
     def test_gloss_bisect_answers_the_prefix_scan(self):
         # the gloss rule in isolation: the most recent same-judge mark with t <= end + 1, ties resolved
         # to the LAST of the tied marks in the stable sort (what cands[-1] returned)
