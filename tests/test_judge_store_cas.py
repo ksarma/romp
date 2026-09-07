@@ -10,6 +10,8 @@ save_goals now compares the revision it loaded at against the one on disk and RE
 logs) instead of clobbering. The store is an append-only event log, so two writers appending different
 events never really conflicted: the right answer is both sets. All fixtures SYNTHETIC.
 """
+import contextlib
+import errno
 import json
 import os
 import tempfile
@@ -69,6 +71,51 @@ class StoreCas(unittest.TestCase):
         jd.save_goals(SID, s)
         self.assertNotIn("_baseRev", json.loads((jd.GOALDIR / (SID + ".json")).read_text()),
                          "the transient base revision is never written to disk")
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _reads_raise(target):
+        """Inside the block, every Path.read_text of `target` raises OSError (the EMFILE/EIO shape a
+        busy kernel meets); other paths read normally."""
+        real = Path.read_text
+        def boom(p, *a, **k):
+            if p == target:
+                raise OSError(errno.EMFILE, "synthetic: too many open files")
+            return real(p, *a, **k)
+        Path.read_text = boom
+        try:
+            yield
+        finally:
+            Path.read_text = real
+
+    def test_a_fallback_load_is_marked_unread_and_the_mark_is_never_serialized(self):
+        # load_goals swallows a read failure and answers an EMPTY store. Readers that cache "what the
+        # file holds" by its identity (the kernel's awaiting-lift gate) must be able to tell that answer
+        # from a parsed one, so the fallback carries a transient `_unread` mark — beside `_baseRev`,
+        # popped before a publish and outside the content hash. An ABSENT file is not marked: empty is
+        # its content, and a fresh session's store is born that way.
+        self.assertNotIn("_unread", jd.load_goals(SID), "no file: an empty store IS the truth")
+        self._seed()
+        self.assertNotIn("_unread", jd.load_goals(SID), "a parsed store is what the file says")
+        gp = jd.GOALDIR / (SID + ".json")
+        with self._reads_raise(gp):
+            s = jd.load_goals(SID)
+        self.assertTrue(s.get("_unread"), "the file exists and was not read: a fallback, marked")
+        self.assertEqual(s["nodes"], {})
+        self.assertNotIn("_unread", json.loads(jd._store_content(s)), "not store content")
+        jd.save_goals(SID, s)                       # base 0 vs disk 1: rebases onto the file, then publishes
+        raw = json.loads(gp.read_text())
+        self.assertNotIn("_unread", raw, "the mark is never written to disk")
+        self.assertIn(self._nid(1), raw["nodes"], "…and the rebase kept the file's node")
+
+    def test_an_unreadable_journal_marks_the_store_unread(self):
+        self._seed()
+        jd.append_override(SID, self._nid(1), "resolve", T0 + 60)
+        with self._reads_raise(jd._overrides_dir() / (SID + ".jsonl")):
+            s = jd.load_goals(SID)
+        self.assertIn(self._nid(1), s["nodes"], "the store itself was read")
+        self.assertTrue(s.get("_unread"), "…but the journal was not: the store is not what its files say")
+        self.assertEqual(s["_baseRev"], jd._disk_rev(SID), "the CAS base is the parsed store's, as before")
 
     def test_a_stale_pass_no_longer_erases_a_concurrent_block(self):
         # THE BUG: pass A loads, goes off to its model call; the nudge tick blocks the card and publishes;

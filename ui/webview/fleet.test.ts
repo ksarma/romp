@@ -19,7 +19,8 @@ test("fleet.ts applies no delta itself: the Outline page announces feedDelta (20
   // feed-delta.test.ts pins what the pane then sees through the real manager; the kernel tests pin the page's
   // caps and its script order (federation.js before fleet.js)
   assert.doesNotMatch(SRC, /applyFeedDelta|from "\.\/feed-delta"/);
-  assert.match(SRC, /window\.addEventListener\("message"/);
+  // the frame handler is installed through frame-listener.ts: on window, and in federation's registry for direct delivery
+  assert.match(SRC, /listenForFrames\(perfFrameHandler\("fleet"/);
   // …but never silent about a delta it was handed anyway (federation.js absent → the shim dispatches the raw
   // frame): the feed pane's guard — console.error, a clientDiag breadcrumb, a needFullFeed re-base — and no
   // attempt to read the delta's slices. Run for real in fleet-live-clock.test.ts.

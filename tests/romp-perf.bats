@@ -31,7 +31,7 @@ setup() {
     # A and B: the same kernel process ten seconds apart. Over the window: 20 cycles, 60 wakes, 6 s of
     # cycle time (4 s of it in push, 3 s of that in the chat block), 300 ms of pusher CPU and 50 ms of
     # judge CPU inside 500 ms of process CPU, 2 chat rebuilds against 18 cache hits, 1 MB sent as chat
-    # full frames, 100 goal loads, 2 judge passes totalling 2400 ms, 5 /tick requests and 3 WebSocket
+    # full frames, 100 goal loads and 50 shared loads, 2 judge passes totalling 2400 ms, 5 /tick requests and 3 WebSocket
     # connects. B's lifetime figures (cycle_ms_max 900, ms_mean 1012.5) differ from the window's
     # (ring max 700, mean 1200) so a line printing the wrong one is caught.
     cat > "$SNAP_A" <<'JSON'
@@ -43,8 +43,8 @@ setup() {
  "stages_ms": {"jobs": 5000.0, "push": 20000.0, "push.chat": 15000.0, "push.feed": 3000.0, "push.timeline": 1000.0, "push.send": 500.0},
  "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0}, "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0}},
  "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}, "delta": {"chat": {"count": 100, "bytes": 50000}}, "deduped": {"feed": {"count": 90, "bytes": 9000000}}},
- "goals": {"loads": 1000, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
-           "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10},
+ "goals": {"loads": 1000, "loads_shared": 500, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
+           "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10, "absent_hits": 100, "absent_misses": 10},
  "judge": {"passes": 30, "ms_sum": 30000.0, "ms_last": 1000.0, "ms_mean": 1000.0, "cpu_ms_sum": 2000.0, "cpu_ms_workers": 1500.0,
            "chain_memo": {"hit": 400, "miss": 40, "populate": 40, "bypass": 0}},
  "http": {"GET /tick": {"count": 50, "ms": 25.0}, "GET /sessions": {"count": 5, "ms": 10.0}}}
@@ -58,8 +58,8 @@ JSON
  "stages_ms": {"jobs": 6000.0, "push": 24000.0, "push.chat": 18000.0, "push.feed": 3600.0, "push.timeline": 1200.0, "push.send": 600.0},
  "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0}, "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0}},
  "sends": {"full": {"chat": {"count": 12, "bytes": 2048576}}, "delta": {"chat": {"count": 120, "bytes": 60000}}, "deduped": {"feed": {"count": 108, "bytes": 10800000}}},
- "goals": {"loads": 1100, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
-           "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15},
+ "goals": {"loads": 1100, "loads_shared": 550, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
+           "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15, "absent_hits": 190, "absent_misses": 15},
  "judge": {"passes": 32, "ms_sum": 32400.0, "ms_last": 1200.0, "ms_mean": 1012.5, "cpu_ms_sum": 2050.0, "cpu_ms_workers": 1540.0,
            "chain_memo": {"hit": 490, "miss": 43, "populate": 43, "bypass": 0}},
  "http": {"GET /tick": {"count": 55, "ms": 27.5}, "GET /sessions": {"count": 5, "ms": 10.0}, "GET /ws": {"count": 3, "ms": 0.0}}}
@@ -132,8 +132,9 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"chat 2 built / 18 cached (40 ms avg)"* ]]
     [[ "$output" == *"full 102 KB/s (chat 2 frames 102 KB/s)"* ]]        # 1048576 bytes over 10 s, bytes beside the count
     [[ "$output" == *"deduped 176 KB/s (feed 18 frames 176 KB/s)"* ]]
-    [[ "$output" == *"10.0 loads/s   2.0 saves/s   0.5 writes/s   scan 1.0 parses/s (90% memo hits)"* ]]   # 90 hits, 10 parses
+    [[ "$output" == *"10.0 loads/s   5.0 shared loads/s   2.0 saves/s   0.5 writes/s   scan 1.0 parses/s (90% memo hits)"* ]]   # 90 hits, 10 parses
     [[ "$output" == *"save memo 95% hits (19 hits, 1 misses, 5 seeds)"* ]]                                 # 19 hits, 1 miss, 5 seeds
+    [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)"* ]]                                        # the absent-store predicate memo's window deltas
     [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   chain memo 90 hits / 3 misses"* ]]   # the WINDOW mean: 2400 ms over 2 passes; the chain memo's window deltas
     [[ "$output" != *"1012"* ]]                          # not the lifetime ms_mean
     [[ "$output" == *"GET /tick 5 (0.5 ms avg)"* ]]

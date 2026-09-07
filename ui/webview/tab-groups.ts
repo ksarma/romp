@@ -184,10 +184,10 @@ export function isSectionCollapsed(st: TabGroupsState, name: string): boolean {
 }
 
 /** Set a section's fold state EXPLICITLY. The header's click passes the state it RENDERED, not the
- *  stored one: the active tab's section renders open whatever the store says, and toggling the
- *  stored bit there inverted the click — "fold" on a stored-folded, rendered-open `archived` stored
- *  it OPEN for good, with nothing visible changing. Minimal storage: a name is listed only where it
- *  differs from the default set. */
+ *  stored one (a toggle of the stored bit inverted the click while the active tab's section rendered
+ *  open whatever the store said — "fold" on a stored-folded, rendered-open `archived` stored it OPEN
+ *  for good, with nothing visible changing; the section folds now, and the rendered state is still the
+ *  one the user acted on). Minimal storage: a name is listed only where it differs from the default set. */
 export function setSectionCollapsed(st: TabGroupsState, name: string, folded: boolean): TabGroupsState {
   const collapsed = st.collapsed.filter((n) => n !== name);
   const expanded = st.expanded.filter((n) => n !== name);
@@ -566,25 +566,33 @@ export function followAdoption(st: TabGroupsState, prev: SessionViews | null | u
  *  stands in for; a pinned member's own tab is on screen and is not counted. When EVERY member is pinned
  *  the fold hides nothing, and a "0" beside two visible tabs read as a broken number (the 2026-09-06
  *  review): the count is then the total, and the title says why nothing is hidden. The chevron stays
- *  truthful either way — the section IS folded, and the click opens it. */
+ *  truthful either way — the section IS folded, and the click opens it. A click also shows the section
+ *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so. `holdsActive`
+ *  — the section holds the tab being read — is a phrase in the words, not a different action: the
+ *  section folds like any other (the user 2026-09-06), and folded, its header is the tab's stand-in. */
 export interface HeadWords { count: string; title: string; label: string }
 
-export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean): HeadWords {
+export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean, back = false): HeadWords {
   const n = (k: number) => `${k} session${k === 1 ? "" : "s"}`;
-  if (holdsActive) {
-    return { count: String(total), label: `${name}, ${n(total)}`,
-             title: `${name} — ${n(total)}; holds the active tab, so it stays open; drag to reorder the groups` };
-  }
+  const reading = holdsActive ? "; holds the tab you are reading" : "";
+  const here = holdsActive ? ", holds the tab you are reading" : "";
   if (!folded) {
-    return { count: String(total), label: `${name}, ${n(total)}`,
-             title: `${name} — ${n(total)}; click to fold this group; drag to reorder the groups` };
+    // `back`: the pane is showing this section's snapshot, the section is open and holds the tab being read
+    // (the click puts that transcript back, render.ts show-transcript), so the title says so, not "fold",
+    // and the spoken label names the action too: render.ts drops the header's aria-expanded in that state
+    // (the press folds nothing), so without the phrase a screen reader had a plain button with no word
+    // about what it does (the round-2 review)
+    const click = back ? "click to go back to the transcript" : "click to fold this group and see its sessions at a glance";
+    return { count: String(total), label: `${name}, ${n(total)}${here}${back ? "; back to the transcript" : ""}`,
+             title: `${name} — ${n(total)}${reading}; ${click}; drag to reorder the groups` };
   }
   if (hidden === 0) {
     const all = total === 1 ? "its one session is" : `all ${total} sessions are`;
-    return { count: String(total), label: `${name}, ${n(total)}, folded, all shown`,
-             title: `${name} — folded, but ${all} set to show when folded, so none is hidden; click to open` };
+    return { count: String(total), label: `${name}, ${n(total)}, folded, all shown${here}`,
+             title: `${name} — folded, but ${all} set to show when folded, so none is hidden${reading}; click to open and see its sessions at a glance` };
   }
-  return { count: String(hidden), label: `${name}, ${n(hidden)} folded`, title: `${name} — ${n(hidden)} folded; click to open` };
+  return { count: String(hidden), label: `${name}, ${n(hidden)} folded${here}`,
+           title: `${name} — ${n(hidden)} folded${reading}; click to open and see its sessions at a glance` };
 }
 
 /** One strip item: a section header (folded or open; `active` = it holds the active tab; `hidden` =
@@ -608,10 +616,11 @@ export interface StripPlan {
  *  - A folded section hides its members EXCEPT the pinned ones (the tab menu's "Show when folded"),
  *    which keep their place under the header in strip order; the header stands in for `hidden` alone
  *    (its count and its flag read those), and only those ids join the `folded` set.
- *  - The ACTIVE tab's section never renders folded: keyboard focus must never land on a hidden node.
- *    Its header is marked `active`, and render.ts gives that header no fold action: a fold stored
- *    there could not render (nothing changed on screen, on every click) and then bit when the user
- *    switched tabs. The section is unfoldable while it holds the active tab. */
+ *  - The ACTIVE tab's section folds like any other (the user 2026-09-06; until then it was forced open
+ *    so keyboard focus never landed on a hidden node). Its header is marked `active` whether open or
+ *    folded: folded, the header is the hidden tab's stand-in — render.ts focuses it where it would
+ *    focus the tab, ←/→ step from its position (neighborOfFolded), and the pane shows the section's
+ *    snapshot (tab-snapshot.ts) instead of a transcript whose tab is nowhere on screen. */
 export function planStrip(visibleIds: readonly string[], unions: readonly TagUnion[], st: TabGroupsState,
                           activeId: string | null, phone: boolean,
                           pending?: { id: string; tags: readonly string[] } | null): StripPlan {
@@ -629,12 +638,34 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
   }
   for (const sec of sectionTabs(visibleIds, u)) {
     const active = activeId !== null && sec.ids.includes(activeId);
-    const f = sec.name !== null && !active && isSectionCollapsed(st, sec.name);
+    const f = sec.name !== null && isSectionCollapsed(st, sec.name);
     const hidden = f ? sec.ids.filter((id) => !isPinned(st, sec, id)) : [];
     items.push({ head: sec, folded: f, active, hidden });
     for (const id of sec.ids) { if (hidden.includes(id)) folded.add(id); else items.push({ id }); }
   }
   return { items, folded, sectioned };
+}
+
+/** The section a tab is homed in, from a rendered plan's items: the header whose ids include it, or
+ *  null (a flat strip, or an id the plan does not know). */
+export function homeSectionOf(items: readonly StripItem[], id: string): TabSection | null {
+  for (const it of items) if ("head" in it && it.head.ids.includes(id)) return it.head;
+  return null;
+}
+
+/** Where ←/→ land when the active tab is folded away: the header holding it is its stand-in, so the
+ *  step starts THERE — `dir` +1 the first tab rendered after that header, −1 the last one before it,
+ *  wrapping round the strip. Folded ids are not items, so the walk sees only tabs on screen. Null when
+ *  no header holds the id or no tab is on screen at all. */
+export function neighborOfFolded(items: readonly StripItem[], id: string, dir: 1 | -1): string | null {
+  const at = items.findIndex((it) => "head" in it && it.head.ids.includes(id));
+  if (at < 0) return null;
+  const n = items.length;
+  for (let k = 1; k <= n; k++) {
+    const it = items[(at + dir * k + n * k) % n];
+    if ("id" in it) return it.id;
+  }
+  return null;
 }
 
 /** The header drag: `from` takes `to`'s slot in the FULL union order (every name, not only the

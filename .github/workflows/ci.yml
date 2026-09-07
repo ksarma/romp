@@ -143,6 +143,13 @@ jobs:
           node-version: '22'
       - name: Manager handshake tests (node --test)
         run: node --test tests/manager-*.test.js
+      # The node-side tests of the file-comments loop (plans/file-review.md, Slice 1): the vendored
+      # track-changents copy's drift test (pin plus patch series, tools/vendor-drift.test.mjs), the
+      # behaviour tests for its patches, the file-comments host script, and the vendored guard's own
+      # suite (which now spawns the guard as a process). Same pinned node as the step above; nothing
+      # else under tools/ or vendor/ runs anywhere in CI, so this is their only runner.
+      - name: Vendored tooling and host-script tests (node --test)
+        run: node --test tools/*.test.mjs vendor/track-changents/hooks/*.test.mjs
 
   secrets:
     name: Secret scan (gitleaks)

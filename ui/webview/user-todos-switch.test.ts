@@ -77,8 +77,16 @@ test("each OFF surface refuses loudly, never a silent no-op", () => {
   assert.match(KERNEL, /_USER_TODOS_OFF_ERR = "user todos are turned off on this machine"/);
   assert.ok((KERNEL.match(/self\._send\(409, json\.dumps\(\{"ok": False, "error": _USER_TODOS_OFF_ERR\}\)/g) || []).length >= 2,
     "both POST /usertodo and /usertodo/withdraw answer 409");
-  assert.ok((KERNEL.match(/"type": "warn", "text": _USER_TODOS_OFF_WARN/g) || []).length >= 2,
-    "both userTodoAnswer and userTodoDismiss warn");
+  // userTodoDismiss warns inline; userTodoAnswer goes through _deliver_todo_reply (the delivery path it
+  // shares with the file viewer's Send to session, plans/file-review.md), whose strict mode hands the
+  // switch's own text back as the reason the handler puts in its warn frame
+  assert.match(KERNEL, /elif t == "userTodoDismiss"[\s\S]*?"type": "warn", "text": _USER_TODOS_OFF_WARN/,
+    "userTodoDismiss warns");
+  assert.match(KERNEL, /return None, \(_USER_TODOS_OFF_WARN if block == "off" else _USER_TODO_SETTLED_WARN\)/,
+    "the shared delivery helper refuses with the switch's text when it must stamp");
+  assert.match(KERNEL,
+    /got, warning = _deliver_todo_reply\(be, sid, body, tid, must_stamp=True\)\n\s+if got is None:\n\s+client\["send"\]\(json\.dumps\(\{"type": "warn", "text": warning\}\)\)/,
+    "userTodoAnswer warns with the helper's reason");
   // the postal bus: the pair leaves tools/list, and a call anyway is refused before any post
   assert.match(BUS, /USER_TODOS_SWITCH = STATE\.parent \/ "user-todos-enabled\.json"/);
   assert.match(BUS, /"tools": _tools_offered\(\)/);
