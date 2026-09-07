@@ -10101,6 +10101,28 @@ def _sdk_ready():
         return False
 
 
+def _judge_work_key_configured(sbmod):
+    """The judges' default-billing answer (judge._judge_auth: a session without an explicit Billing pick
+    bills the key when one exists, else the login), decided on the facts the launch decides on. `sbmod`
+    is the loaded SDK backend module.
+
+    Under the command kind the answer is whether the SET carries ANTHROPIC_API_KEY, read the way
+    _options reads it: work_api_key is envsource's resolver, a cached read of the last good set that
+    runs the command only when the set is stale and never raises for a failed run. A set without a key
+    is a helper- or login-billed installation; its unpicked sessions launch on the login, and their
+    judges bill the login beside them. The descriptor's `configured` is True for any selected command
+    and was the wrong question here: it sent every judge call for such a session down the key path,
+    which refused "No API key source is configured for this judge call" while the session ran.
+
+    Under the reference, the file kind and a removed source the descriptor answers as before, without
+    resolving: a reference yields a key or raises at the call boundary, a removed source stays an
+    explicit choice rather than permission to bill the login, and no billing decision runs op."""
+    source = sbmod.work_api_key_source()
+    if source.kind == "command":
+        return bool(sbmod.work_api_key())
+    return source.configured
+
+
 def _sdk_locked():
     global _sdk_backend
     if _sdk_backend is None:
@@ -10123,7 +10145,7 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
-            jd._WORK_KEY_CONFIGURED_FN = lambda: sbmod.work_api_key_source().configured
+            jd._WORK_KEY_CONFIGURED_FN = lambda: _judge_work_key_configured(sbmod)
             jd._LOGIN_AUTH_ENV_FN = sbmod.startup_auth_env
             # The command source's set (kernel/envsource.py) reaches the judges and the catalog fetch
             # through the same kind of wire: the set for a call's environment (minus the key, which rides

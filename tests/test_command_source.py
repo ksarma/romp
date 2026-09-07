@@ -20,6 +20,10 @@ What these pin, in the order a launch meets them:
   ModuleReaders: keysource.COMMAND_RESOLVER is wired at import; credential_set, credential_invalidate
     and credential_auth_ok are the seams the judges and the catalog wire to, and no-ops outside the
     command kind.
+  JudgesDefaultBilling: the judges' default-billing answer the kernel wires (judge._WORK_KEY_CONFIGURED_FN)
+    follows the launch decision under the command kind: a set with a key bills an unpicked session's
+    judges on it, a set without one bills them on the login the session launched on, never a refusal;
+    the reference, the file kind and a removed source answer from the descriptor without resolving.
   ByteIdenticalOutsideTheCommandKind: with no command selected the file-mode launch is the base's
     (the key injected for a keyed launch, the login environment for a login launch, the command
     source never run, nothing about a credential command in the log).
@@ -52,6 +56,7 @@ import unittest
 import uuid
 from importlib.machinery import SourceFileLoader
 from types import SimpleNamespace
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -750,6 +755,106 @@ class ModuleReaders(_Lab):
         self.be._credential_auth_ok(s)
         self.assertEqual(es._runs, 0, "the command never ran under the file kind")
         self.assertEqual([m for m in self.logged if m.startswith("credential command")], [])
+
+
+class JudgesDefaultBilling(_Lab):
+    """The judges' default-billing question (judge._judge_auth for a session without an explicit Billing
+    pick: the key when one exists, else the login) is answered by the kernel through _judge_work_key_configured,
+    the function _sdk_locked wires as judge._WORK_KEY_CONFIGURED_FN. Under the command kind the answer is
+    whether the SET carries ANTHROPIC_API_KEY, the same fact _options launches on: a set without one is a
+    helper- or login-billed installation, its unpicked sessions launch on the login, and their judges bill
+    the login beside them. The descriptor's `configured` is True for any selected command and is the wrong
+    question there. Under the reference, the file kind and a removed source the descriptor answers as
+    before, and no billing decision resolves the reference."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.km = SourceFileLoader("romp_kernel_cmdsrc", os.path.join(BIN, "romp-kernel")).load_module()
+
+    def setUp(self):
+        super().setUp()
+        self.jd = self.km.jd
+        self._wires = (self.jd._WORK_KEY_FN, self.jd._WORK_KEY_CONFIGURED_FN, self.jd._ENV_SET_FN)
+        # the three wires _sdk_locked lands, on this lab's backend module
+        self.jd._WORK_KEY_FN = sb.work_api_key
+        self.jd._WORK_KEY_CONFIGURED_FN = lambda: self.km._judge_work_key_configured(sb)
+        self.jd._ENV_SET_FN = sb.credential_set
+
+    def tearDown(self):
+        self.jd._WORK_KEY_FN, self.jd._WORK_KEY_CONFIGURED_FN, self.jd._ENV_SET_FN = self._wires
+        super().tearDown()
+
+    def test_a_set_without_a_key_bills_the_judges_on_the_login_the_session_launched_on(self):
+        source = self.source()
+        self.assertEqual(source.kind, "command")
+        self.assertTrue(source.configured, "the descriptor alone says configured: not the launch's question")
+        self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(1, ""), "the launch injects no key: the login bills")
+        self.assertFalse(self.km._judge_work_key_configured(sb))
+        self.assertEqual(self.jd._judge_auth(""), "login")
+        env = self.jd._judge_env("triage", self.jd._judge_auth(""))      # never a refusal on a keyless set
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present in a login-billed judge call")
+        self.assertEqual(env.get("A_TOKEN"), self.values["A_TOKEN"], "the role variables still ride the call")
+
+    def test_a_set_that_carries_a_key_bills_the_judges_on_it_and_follows_a_rotation(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.rerun()
+        self.assertEqual(self._env_for(1, "").get("ANTHROPIC_API_KEY"), k, "the launch is keyed")
+        self.assertTrue(self.km._judge_work_key_configured(sb))
+        self.assertEqual(self.jd._judge_auth(""), "key")
+        self.assertEqual(self.jd._judge_env("triage", "key").get("ANTHROPIC_API_KEY"), k)
+        # the set loses its key: the judges follow the launch, with nothing restarted
+        del self.values["ANTHROPIC_API_KEY"]
+        self.print_set(self.values)
+        self.rerun()
+        self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(2, ""), "the launch injects no key now")
+        self.assertEqual(self.jd._judge_auth(""), "login")
+
+    def test_a_failed_run_answers_from_the_last_good_set(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.rerun()
+        self.assertEqual(self.jd._judge_auth(""), "key")
+        self.fail_command()
+        self.rerun()
+        self.assertEqual(self.jd._judge_auth(""), "key", "the last good set's key stands")
+        self.assertEqual(self.jd._judge_env("triage", "key").get("ANTHROPIC_API_KEY"), k)
+        self.assertFalse(any(k in m for m in self.logged), "no value reaches the log")
+
+    def test_the_other_kinds_answer_from_the_descriptor_without_resolving(self):
+        with patch.object(ks.KeySource, "resolve", side_effect=AssertionError("a billing decision resolved the source")):
+            self.write_command_env(command=False, lines=["%s=op://vault/item/field" % ks.REF_VAR])
+            self.reset_sources()
+            self.assertEqual(self.source().kind, "op")
+            self.assertTrue(self.km._judge_work_key_configured(sb), "a reference is a key source until it fails")
+            self.assertEqual(self.jd._judge_auth(""), "key")
+            self.write_command_env(command=False, key=OLD_KEY)
+            self.reset_sources()
+            self.assertEqual(self.source().kind, "file")
+            self.assertTrue(self.km._judge_work_key_configured(sb))
+            self.assertEqual(self.jd._judge_auth(""), "key")
+            # the reference removed with nothing in its place: an explicit choice, never permission to
+            # bill the login; the call boundary raises the removed-source error, as the base does
+            self.write_command_env(command=False, lines=["%s=op://vault/item/field" % ks.REF_VAR])
+            self.reset_sources()
+            self.source()
+            self.write_command_env(command=False)
+            self.reset_sources()
+            self.assertEqual(self.source().kind, "error")
+            self.assertTrue(self.km._judge_work_key_configured(sb))
+            self.assertEqual(self.jd._judge_auth(""), "key")
+        with self.assertRaises(ks.KeySourceError) as cm:
+            self.jd._judge_env("triage", "key")
+        self.assertIn("was removed", str(cm.exception))
+
+    def test_the_kernel_wires_the_answer_beside_the_key_claimer(self):
+        import inspect
+        src = inspect.getsource(self.km._sdk_locked)
+        self.assertIn("jd._WORK_KEY_FN = sbmod.work_api_key\n", src)
+        self.assertIn("jd._WORK_KEY_CONFIGURED_FN = lambda: _judge_work_key_configured(sbmod)", src)
+        self.assertNotIn("work_api_key_source().configured", src, "the descriptor is not the judges' question")
 
 
 class ByteIdenticalOutsideTheCommandKind(_Lab):
