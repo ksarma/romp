@@ -23093,7 +23093,10 @@ def _bg_placed_tops(sid, path, tids, store=None):
     it reads and the stamps it rules on come from one object); None reads through load_goals_shared. A
     store that is not the shared cache's FrozenStore (no file, the cache off, an unreadable journal, a
     writer's private copy) is computed on and never published as an entry. _PLACEMENT_IDX[sid] = (store,
-    index) is keyed on the store object alone, so the writer's copy misses it harmlessly.
+    index) is keyed on the store object alone, so the writer's copy misses it harmlessly. While the shared
+    cache is off (_SHARED_OFF: a reader wrote to a shared view, a judge-errors row names the site, off until
+    the kernel restarts) every store=None call is a full load_goals and nothing is memoized; acceptable
+    because that state is a loud error, not a mode the kernel runs in.
 
     Threads: the pusher and the handler threads (build_session, _session_awaiting) both run this. An entry
     is read into locals once, a fill builds a NEW dict from it and publishes a NEW tuple; nothing writes
