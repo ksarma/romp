@@ -654,13 +654,15 @@ def unmerged_paths(wt):
 
 
 def staged_paths(wt, paths):
-    """Among `paths`, those the index holds at stage 0: staged whole, neither unmerged nor absent."""
+    """Among `paths`, those the index holds at stage 0: staged whole, neither unmerged nor absent. The
+    paths are given to git literally, not as pathspecs (`a[1].txt` would also match `a1.txt`), and
+    only the entries named in `paths` count."""
     if not paths:
         return []
-    out = []
-    for entry in _run(["git", "ls-files", "--stage", "-z", "--", *paths], cwd=wt).stdout.split("\0"):
+    wanted, out = set(paths), []
+    for entry in _run(["git", "--literal-pathspecs", "ls-files", "--stage", "-z", "--", *paths], cwd=wt).stdout.split("\0"):
         meta, _, path = entry.partition("\t")
-        if path and meta.split()[2] == "0":
+        if path in wanted and meta.split()[2] == "0":
             out.append(path)
     return out
 

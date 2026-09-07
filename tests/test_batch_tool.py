@@ -783,6 +783,46 @@ class Assemble(_Base):
         self.assertIn("two-a-g", body)
         self.assertIn("main's line", body)
 
+    def test_a_conflicted_path_with_glob_characters_is_matched_literally(self):
+        """`git ls-files -- <path>` reads the path as a pathspec, so `a[1].txt` also matched `a1.txt`,
+        and the stop, cursor, record and digest said rerere had replayed a file it never touched."""
+        fx = self.fx
+        fx.branch("a", {"a[1].txt": "two-a\n", "a1.txt": "plain\n"})
+        fx.branch("g", {"a[1].txt": "two-g\n", "README.md": "# notes-api\n\ng's line\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertEqual(fx.state("b1")["assembly"]["cursor"], {"n": 108, "files": ["a[1].txt"], "replayed": []})
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "a[1].txt"), "w") as f:
+            f.write("two-a-g\n")
+        fx._git("add", "--", "a[1].txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round one")
+        fx.commit_main({"README.md": "# notes-api\n\nmain's line\n"}, "main moved on")
+        p = fx.run("assemble", "b1", "--resolve", "108")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        # The index now holds a1.txt and the replayed a[1].txt at stage 0 and README.md unmerged.
+        self.assertEqual(batch.staged_paths(wt, ["a[1].txt"]), ["a[1].txt"])
+        self.assertEqual(batch.staged_paths(wt, ["README.md", "a[1].txt"]), ["a[1].txt"])
+        self.assertEqual(batch.staged_paths(wt, ["a1.txt", "a[1].txt"]), ["a1.txt", "a[1].txt"])
+        cur = fx.state("b1")["assembly"]["cursor"]
+        self.assertEqual(cur["files"], ["README.md", "a[1].txt"])
+        self.assertEqual(cur["replayed"], ["a[1].txt"], "a1.txt did not conflict")
+        self.assertIn("rerere replayed a[1].txt from the earlier assembly", p.stdout)
+        self.assertNotIn("a1.txt", p.stdout)
+        with open(os.path.join(wt, "README.md"), "w") as f:
+            f.write("# notes-api\n\nmain's line\ng's line\n")
+        fx._git("add", "--", "README.md", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round two")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(rec["replayed_files"], ["a[1].txt"])
+        self.assertNotIn("a1.txt", rec["how"])
+        self.assertEqual(rec["review"], "round two")
+        self.assertEqual(fx.dev_git("show", "batch/b1:a[1].txt"), "two-a-g")
+        self.assertEqual(fx.dev_git("show", "batch/b1:a1.txt"), "plain")
+
     def test_a_rerere_replay_of_part_of_an_earlier_resolution_keeps_its_review(self):
         """After a two-file resolution was reviewed, main takes one of the files as resolved, so the
         next assembly conflicts in the other file alone and rerere replays it with the bytes that
