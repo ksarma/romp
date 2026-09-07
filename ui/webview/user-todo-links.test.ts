@@ -221,8 +221,9 @@ test("the shell forwards todoId into the Files pane; files.ts hands it to the vi
   assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;/);
   assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null \}\): boolean \{/);
-  assert.match(VIEW, /export interface FileViewActionCtx \{ path: string; sid: string \| null; todoId\?: string \| null; \}/);
-  assert.match(VIEW, /const n = a\.mount\(\{ path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null \}\);/);
+  assert.match(VIEW, /export interface FileViewActionCtx \{\n  path: string; sid: string \| null; todoId\?: string \| null;/);
+  assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);   // the seam ctx every action mounts with (Slice 1)
+  assert.match(VIEW, /const n = a\.mount\(ctx\);/);
   assert.match(VIEW, /openFileView\(path, sid, opts\);/, "the conflict Reload keeps the provenance");
   assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void\): void \{/);
 });

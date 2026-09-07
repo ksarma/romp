@@ -55,6 +55,12 @@ EXPECTED_BARE = {
     # halves (_user_todo_answer_body — this repo's user-todos feature, which the standalone
     # neutralizer suite doesn't exercise): the same assembled comment-form string, one bare hit.
     "test_user_todos.py": 1,
+    # test_file_comments.py pins the Send-to-session text against the webview's preview builder
+    # (ui/webview/file-comments.test.ts holds the same literal). The two hits are the neutralizer's
+    # OUTPUT — "<!- -romp-msg-id: 4-->", the visible escape _neutralize_romp_markers writes for a
+    # marker found in a comment body — not markers a fixture writes: the sent text must carry exactly
+    # that form, so the assertion spells it.
+    "test_file_comments.py": 2,
 }
 
 

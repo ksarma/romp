@@ -53,9 +53,21 @@ class BuildGating(unittest.TestCase):
         # (2026-09-06); without a collector the plain listener is registered.
         boot = km._TIMELINE_BOOT
         self.assertIn("var onFrame=function(ev){var m=ev.data;if(!m||!panel)return;", boot)
-        self.assertIn('window.addEventListener("message",(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)'
-                      "?window.__rompPerf.wrapFrameHandler(onFrame):onFrame);", boot)
+        self.assertIn('var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)'
+                      "?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;", boot)
+        self.assertIn('window.addEventListener("message",frameListener);', boot)
         self.assertEqual(boot.count('addEventListener("message"'), 1, "one listener, the wrapped one")
+
+    def test_the_host_shim_registers_the_same_listener_with_federation_for_direct_delivery(self):
+        # federation.js hands its merged data/bars frames to the handlers registered through window.__rompFed.onFrame
+        # by direct call, and dispatches them on window only when nothing registered (ui/webview/federation.ts
+        # emit): a "message" listener in another JavaScript world that reads event.data forces a structured clone of
+        # the frame on every window dispatch. The boot registers the SAME wrapped listener it puts on window, so a
+        # frame reaches it once, timed the same way; a page without the slot (an older federation.js) is unchanged.
+        boot = km._TIMELINE_BOOT
+        self.assertIn("if(window.__rompFed&&window.__rompFed.onFrame)window.__rompFed.onFrame(frameListener);", boot)
+        self.assertLess(boot.index('window.addEventListener("message",frameListener);'),
+                        boot.index("window.__rompFed.onFrame(frameListener)"), "window first, the registry after it")
 
     def test_the_lanes_skeleton_does_not_parse_any_transcript(self):
         # cold-start speed (the user 2026-06-26): a fresh kernel (the refresh button = POST /restart) re-parses
@@ -373,12 +385,12 @@ class SkeletonFromCache(unittest.TestCase):
         # it: a DEAD lane's blocked badge. A live lane's load was never read; the full build still loads for
         # every lane (its seams and judging marks read the store).
         loads = []
-        o_ts, o_lg = km._timeline_sessions, km.jd.load_goals
+        o_ts, o_lg = km._timeline_sessions, km.jd.load_goals_shared
         km.build_timeline = self.saved[0]
         km._timeline_sessions = lambda now, tmux, live_only=False: [
             {"sid": "D", "name": "d", "path": "/no/such/transcript-d"},
             {"sid": "L", "name": "l", "path": "/no/such/transcript-l"}]
-        km.jd.load_goals = lambda sid: (loads.append(sid), {"status": {"g1": "blocked"}} if sid == "D" else {"status": {}})[1]
+        km.jd.load_goals_shared = lambda sid: (loads.append(sid), {"status": {"g1": "blocked"}} if sid == "D" else {"status": {}})[1]
         live = {"L": {"state": "waiting", "since": 0, "model": "", "effort": "", "context": None,
                       "compactPct": None, "color": None, "mode": ""}}
         try:
@@ -389,7 +401,7 @@ class SkeletonFromCache(unittest.TestCase):
             km.build_timeline(1000, live, with_bars=True)
             self.assertEqual(sorted(loads), ["D", "L"], "the full build keeps its load for every lane")
         finally:
-            km._timeline_sessions, km.jd.load_goals = o_ts, o_lg
+            km._timeline_sessions, km.jd.load_goals_shared = o_ts, o_lg
 
     def test_a_steady_push_of_an_unchanged_timeline_sends_no_bars_and_a_rebuilt_one_sends_a_slotted_delta(self):
         """The pusher hands _send_slot the same bars object while the cached timeline's identity holds (_bars_wire),

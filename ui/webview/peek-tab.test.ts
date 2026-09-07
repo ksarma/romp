@@ -16,7 +16,7 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 test("peek OPEN: every activation routes the peek decision — setActive derives peek-vs-normal from the CURRENT views", () => {
   // the single entry: setActive (tab clicks, the focus handler, jumpSession, cycleTab and
   // nav-history's apply all land here), before its already-active early-return
-  assert.match(RENDER, /function setActive\(id: string[\s\S]{0,500}?assertPeekFor\(id\);[\s\S]{0,400}?if \(activeId === id && anchor == null && anchorT == null\) return;/);
+  assert.match(RENDER, /function setActive\(id: string[\s\S]{0,500}?assertPeekFor\(id\);[\s\S]{0,900}?if \(activeId === id && anchor == null && anchorT == null\) \{/);
   // the derivation: in-view → no peek; out-of-view → THIS session is the peek
   assert.match(RENDER, /const next = chatVisible\(id\) \? null : id;\s*\n\s*if \(next !== peekId\) \{ peekId = next; renderTabs\(\); \}/);
 });

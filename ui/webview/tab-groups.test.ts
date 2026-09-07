@@ -12,7 +12,7 @@ import { viewTagUnion, type TagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
          DEFAULT_COLLAPSED, sectionRef, isPinned, setPinned, togglePinned, prunePinned, reachableFrom, tagRenames, followTagRenames, followAdoption,
-         sameTagNames, headWords, type TabSection, type SectionRef, type TabGroupsState } from "./tab-groups";
+         sameTagNames, headWords, type TabSection, type SectionRef, type TabGroupsState, neighborOfFolded, homeSectionOf } from "./tab-groups";
 import { sectionTodoFlag, sectionTodoTitle, sectionPipTitle } from "./tab-state";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
@@ -121,7 +121,7 @@ test("the strip renders sections when the switch is on and some tag holds a visi
   assert.match(RENDER, /if \("head" in item\) \{ bar\.appendChild\(makeGroupHead\(item\.head, item\.folded, item\.active, item\.hidden\)\); continue; \}/);
 });
 
-test("executed: planStrip — sections + folds; the flat strip when off or untagged; the ACTIVE tab's section never folds", () => {
+test("executed: planStrip — sections + folds; the flat strip when off or untagged; the ACTIVE tab's section folds like any other, marked", () => {
   const unions = viewTagUnion({ ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2"] }] });
   const st = parseTabGroups(null);
   const p = planStrip(["web", "old1", "loose", "old2"], unions, st, "web", false);
@@ -133,9 +133,10 @@ test("executed: planStrip — sections + folds; the flat strip when off or untag
   ], "archived starts folded: its header alone stands in for old1/old2; infra holds the active tab");
   assert.deepEqual([...p.folded], ["old1", "old2"], "the ids keyboard cycling skips");
   const active = planStrip(["web", "old1", "loose"], unions, st, "old1", false);
-  assert.deepEqual(active.items[2], { head: { name: "archived", localId: "g4", color: "#6b7280", ids: ["old1"] }, folded: false, active: true, hidden: [] },
-    "the active tab's section renders open whatever the store says, and is marked as holding it");
-  assert.deepEqual([...active.folded], []);
+  assert.deepEqual(active.items[2], { head: { name: "archived", localId: "g4", color: "#6b7280", ids: ["old1"] }, folded: true, active: true, hidden: ["old1"] },
+    "the active tab's section folds as the store says (the user 2026-09-06) and is marked as holding it — the header is the hidden tab's stand-in");
+  assert.deepEqual([...active.folded], ["old1"], "the active id is folded away too: visibleOrder drops it, the header takes its place");
+  assert.equal(active.items.some((i) => "id" in i && i.id === "old1"), false, "no tab node for it — nothing hidden takes focus");
   assert.ok(!planStrip(["web", "old1"], unions, st, null, false).items.some((i) => "head" in i && i.active), "no active tab: no section holds it");
   const off = planStrip(["web", "old1"], unions, { ...st, on: false }, null, false);
   assert.deepEqual(off.items, [{ id: "web" }, { id: "old1" }], "switch off: the flat strip");
@@ -171,10 +172,9 @@ test("executed: the PHONE layout renders the flat strip — every visible id, no
     "installed once at module scope with the other strip listeners, never inside a render");
 });
 
-test("executed + pinned: the section holding the ACTIVE tab is unfoldable while active — no fold action on its header, a title that says so, a click that stores nothing", () => {
-  // planStrip renders the active tab's section open whatever the store says, so a fold click there
-  // used to store folded=true that could not render: "click to fold this group" did nothing visible
-  // on every click, and the stored fold bit when the user switched to another section
+test("executed + pinned: the section holding the ACTIVE tab folds like any other (the user 2026-09-06) — marked, its header the hidden tab's stand-in, the pane its snapshot", () => {
+  // until then planStrip forced it open and render.ts gave its header a no-op click: "click to fold this
+  // group" did nothing visible, on every click, and the section could not be put away while it was read
   const unions = viewTagUnion(V);
   const st = parseTabGroups(null);
   const marks = (activeId: string | null) => planStrip(["web", "api", "tests", "loose"], unions, st, activeId, false).items
@@ -182,24 +182,53 @@ test("executed + pinned: the section holding the ACTIVE tab is unfoldable while 
   assert.deepEqual(marks("web"), [["qa", false], ["infra", true], [null, false]], "exactly the section holding the active tab");
   assert.deepEqual(marks("tests"), [["qa", true], ["infra", false], [null, false]]);
   assert.deepEqual(marks(null), [["qa", false], ["infra", false], [null, false]]);
-  // a user-folded section holding the active tab: open AND marked (the fold stays stored for later)
+  // a user-folded section holding the active tab: FOLDED and marked; its hidden set holds the active id
   const folded = setSectionCollapsed(st, "infra", true);
-  const inf = planStrip(["web", "tests"], unions, folded, "web", false).items
-    .find((i) => "head" in i && i.head.name === "infra") as { head: TabSection; folded: boolean; active: boolean };
-  assert.deepEqual([inf.folded, inf.active], [false, true]);
-  // render.ts: that header carries NO fold action (a distinct data-act the delegate flashes and
-  // otherwise ignores), a title that says why, and no pointer cursor promising a click
+  const plan = planStrip(["web", "api", "tests"], unions, folded, "web", false);   // qa: api, tests (api's home is its first holder) | infra(folded): web
+  const inf = plan.items.find((i) => "head" in i && i.head.name === "infra") as { head: TabSection; folded: boolean; active: boolean; hidden: string[] };
+  assert.deepEqual([inf.folded, inf.active, inf.hidden], [true, true, ["web"]]);
+  assert.deepEqual([...plan.folded], ["web"]);
+  // a pinned active tab shows through the fold like any pinned member — then it is on screen and no stand-in is needed
+  const pinnedActive = planStrip(["web", "api", "tests"], unions, { ...folded, pinned: [{ sid: "web", name: "infra", id: "g2" }] }, "web", false);
+  assert.ok(pinnedActive.items.some((i) => "id" in i && i.id === "web"), "the pinned active tab renders");
+  assert.deepEqual([...pinnedActive.folded], []);
+  // the stand-in rules, pure: the header a folded id is homed in, and where ←/→ land from it
+  assert.deepEqual(homeSectionOf(plan.items, "web")?.name, "infra");
+  assert.deepEqual(homeSectionOf(plan.items, "tests")?.name, "qa", "an id on screen has a home too — the same lookup");
+  assert.equal(homeSectionOf(plan.items, "nope"), null);
+  assert.deepEqual(plan.items.map((i) => ("head" in i ? "#" + i.head.name : i.id)), ["#qa", "api", "tests", "#infra"]);
+  assert.equal(neighborOfFolded(plan.items, "web", 1), "api", "→ from the folded infra header (last on the strip): wraps round to the first tab");
+  assert.equal(neighborOfFolded(plan.items, "web", -1), "tests", "← from it: the last tab before it");
+  const two = planStrip(["tests", "web", "api", "loose"], unions, folded, "web", false).items;   // qa: tests, api | infra(folded): web | sep | loose
+  assert.equal(neighborOfFolded(two, "web", 1), "loose", "the untagged separator is a head too: skipped, like any header");
+  assert.equal(neighborOfFolded(two, "web", -1), "api");
+  assert.equal(neighborOfFolded(two, "nope", 1), null, "no header holds it");
+  assert.equal(neighborOfFolded(planStrip(["web"], unions, folded, "web", false).items, "web", 1), null, "no tab on screen at all");
+  assert.equal(neighborOfFolded(planStrip(["web", "api"], unions, { ...st, on: false }, "web", false).items, "web", 1), null, "the flat strip: no headers");
+  // render.ts: EVERY named header is the fold button (one data-act, one role, the fold state on it); the
+  // one holding the active tab adds aria-current and the CSS mark, and keeps its pointer cursor — it folds
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(head, /function makeGroupHead\(sec: TabSection, collapsed: boolean, holdsActive: boolean, hidden: readonly string\[\]\): HTMLElement \{/);
-  assert.match(head, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/);
-  assert.equal(headWords("infra", 1, 0, false, true).title, "infra — 1 session; holds the active tab, so it stays open; drag to reorder the groups");
-  assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
+  assert.match(head, /head\.dataset\.act = "toggle-group";/);
+  assert.ok(!head.includes("group-active"), "the no-op action is gone");
+  assert.match(head, /if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);/);
   assert.match(head, /\+ \(holdsActive \? " holds-active" : ""\)\);/);
   assert.match(head, /head\.draggable = true;/, "it still drags to reorder the groups");
-  const del = RENDER.slice(RENDER.indexOf('"group-active": () => {'), RENDER.indexOf('"group-active": () => {') + 120);
-  assert.match(del, /^"group-active": \(\) => \{ \/\* [^*]*\*\/ \},/, "a no-op: the delegate's flash is the whole acknowledgement");
-  assert.ok(!del.includes("writeTabGroups"), "…and nothing is stored");
-  assert.match(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/);
+  assert.equal(headWords("infra", 1, 0, false, true).title, "infra — 1 session; holds the tab you are reading; click to fold this group and see its sessions at a glance; drag to reorder the groups");
+  assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
+  assert.ok(!RENDER.includes('"group-active"'), "no delegate handler for a no-op either");
+  assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/, "the header folds, so its cursor promises the click");
+  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-name \{ color: var\(--fg\); text-decoration: underline; text-decoration-color: var\(--accent\);/, "the mark: the name in the prose tone, accent-underlined");
+  // the hidden active tab's stand-in in render.ts: focus lands on the header, ←/→ step from it, and a
+  // pick of a folded-away session opens its section (the strip follows the gesture)
+  assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\s*\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\s*\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(\);/,
+    "focusActiveTab falls back to the header");
+  assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir > 0 \? 1 : -1\);\s*\n\s*if \(nb\) setActive\(nb\);/,
+    "cycleTab (the host's nextTab/prevTab commands, not the window's keys, which the test below pins)");
+  assert.match(RENDER, /const nb = neighborOfFolded\(lastStripItems, activeId, dir\);\s*\n\s*if \(nb\) \{ setActive\(nb\); focusActiveTab\(\); \}/, "onTabKey (a focused tab's ←/→)");
+  assert.match(RENDER, /if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);\s*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{/, "setActive opens the picked tab's section before its early return");
+  assert.match(RENDER, /function unfoldSectionOf\(id: string\): void \{\s*\n\s*const home = homeSectionOf\(lastStripItems, id\);\s*\n\s*if \(home && home\.name !== null\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), home\.name, false\)\);/);
+  assert.match(RENDER, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan the stand-in rules read is the one the strip rendered");
 });
 
 test("executed: a create in flight sections under the FIRST requested tag in tagOrder — its future home — from the first paint", () => {
@@ -238,7 +267,7 @@ test("executed: the header click sets the fold state from what it RENDERED — n
   // the header carries its rendered state; the delegate reads it
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(head, /head\.dataset\.folded = collapsed \? "1" : "0";/);
-  assert.match(RENDER, /if \(name\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);/,
+  assert.match(RENDER, /if \(!name\) return;\s*\n\s*snapView = name;\s*\n\s*writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);/,
     "rendered open → fold; rendered folded → open");
 });
 
@@ -302,8 +331,9 @@ test("the picker's Tags row is for SDK and Codex sessions: disabled behind a not
 });
 
 test("headers are click-safe: data-act on the node, the action on the stable #tabs delegate, one render path via the event", () => {
-  assert.match(RENDER, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/);
-  assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);/);
+  assert.match(RENDER, /head\.dataset\.act = "toggle-group";/);
+  assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(!name\) return;\s*\n\s*snapView = name;\s*\n\s*writeTabGroups\(setSectionCollapsed\(tabGroups\(\), name, el\.dataset\.folded !== "1"\)\);\s*\n\s*showActive\(\);/,
+    "the fold from the rendered state, and the pane shows the section (tab-snapshot.test.ts)");
   assert.match(RENDER, /window\.addEventListener\(TABGROUPS_EVENT, \(\) => renderTabs\(\)\);/, "the same-window delivery");
   assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) renderTabs\(\); \}\);/, "…and a sibling pane's");
   assert.match(RENDER, /if \(name\) writeTabGroups\(setSectionCollapsed/);
@@ -373,10 +403,13 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   // none of a tab's affordances
   assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
     "no close, no state class of its own, no tab pip, no gauge");
-  // keyboard: a button to the keyboard, through the same click → delegate path as the pointer; the active
-  // tab's header (no fold action) is not a tab stop and not a button (the accessibility test below)
-  assert.match(head, /\} else \{[^]*?head\.setAttribute\("role", "button"\);\s*\n\s*head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);\s*\n\s*\}/,
+  // keyboard: a button to the keyboard, through the same click → delegate path as the pointer — every
+  // named header, the one holding the tab being read too (it folds; aria-current marks it — the
+  // accessibility test below)
+  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n/,
     "role, expanded state, tab stop and key handler together, the handler standing down for the flag button inside it (tab-group-flags.test)");
+  assert.match(head, /if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
+    "Enter and Space press the header (the stand-in's own keys come first; the test below)");
   // a push mid-read must not kick focus off the header: renderTabs re-focuses the same group after the rebuild
   assert.match(RENDER, /const focusedGroup = \(focusedEl\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);\s*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
     "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape)");
@@ -388,7 +421,7 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   for (const m of CSS.matchAll(/\n\.tab-group-head:hover[^{\n]*\{([^}]*)\}/g)) assert.doesNotMatch(m[1], /background/, "no wash on hover");
   assert.match(CSS, /\.tab-group-head:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: -1px; \}/);
   assert.match(head, /head\.draggable = true;/, "still drags to reorder the groups");
-  assert.match(head, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/, "…and still folds through the delegate");
+  assert.match(head, /head\.dataset\.act = "toggle-group";/, "…and still folds through the delegate");
   // theme: every section rule resolves through tokens — no raw hex or rgba — so the light theme needs no
   // override, and the tokens are ones the strip already wears (theme-parity.test.ts checks --fg/--dim/
   // --accent against --bg in both themes)
@@ -451,7 +484,8 @@ test("executed: a folded section with one PINNED member renders the header, then
   assert.deepEqual(setPinned(two, ARCH, "old3", false).pinned, [{ sid: "old2", name: "archived", id: "g4" }]);
   assert.deepEqual(setPinned(two, ARCH, "old2", true).pinned, [{ sid: "old3", name: "archived", id: "g4" }, { sid: "old2", name: "archived", id: "g4" }], "set on again: one entry, moved to the end");
   // an open section: nothing hidden, pins irrelevant
-  assert.deepEqual(headsOf(planStrip(["old1", "old2"], unions, st, "old1", false))[0].hidden, []);
+  assert.deepEqual(headsOf(planStrip(["old1", "old2"], unions, st, "old1", false))[0].hidden, ["old1"],
+    "the active tab folds with the rest now (the user 2026-09-06); the pinned old2 shows itself, so it is not hidden");
   // the untagged trail has no fold: nothing pins there
   assert.deepEqual(setPinned(st, { name: null, localId: null }, "loose", true), st);
 });
@@ -1486,7 +1520,7 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   assert.match(RENDER, /function tabGroups\(\) \{ return readTabGroups\(viewTagUnion\(effViews\(\)\)\); \}/);
   assert.match(RENDER, /const unions = viewTagUnion\(effViews\(\)\);\s*\n\s*const plan = planStrip\(visibleIds, unions, readTabGroups\(unions\), activeId, phoneLayout\(\),/);
   assert.match(RENDER, /toggle: \(\) => \{ const st = tabGroups\(\); writeTabGroups\(\{ \.\.\.st, on: !st\.on \}\); \}/);
-  assert.equal((RENDER.match(/writeTabGroups\(setSectionCollapsed\(tabGroups\(\)/g) || []).length, 2, "both fold writes (toggle-group, open-group)");
+  assert.equal((RENDER.match(/writeTabGroups\(setSectionCollapsed\(tabGroups\(\)/g) || []).length, 3, "the three fold writes (toggle-group, open-group, unfoldSectionOf — a pick of a folded-away tab)");
   assert.equal((RENDER.match(/readTabGroups\(/g) || []).length, 5, "five reads in all…");
   assert.equal((RENDER.match(/readTabGroups\(unions\)/g) || []).length, 2, "…the adoption's and the plan's, with the unions in hand…");
   assert.equal((RENDER.match(/readTabGroups\(viewTagUnion\(effViews\(\)\)\)/g) || []).length, 1, "…tabGroups() for every write path…");
@@ -1522,26 +1556,29 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   // the words render.ts paints for that header
   assert.deepEqual(headWords("infra", 2, 0, true, false), {
     count: "2", label: "infra, 2 sessions, folded, all shown",
-    title: "infra — folded, but all 2 sessions are set to show when folded, so none is hidden; click to open",
+    title: "infra — folded, but all 2 sessions are set to show when folded, so none is hidden; click to open and see its sessions at a glance",
   }, "the total, never a 0 beside two visible tabs; the title names the menu row that did it");
-  assert.equal(headWords("infra", 1, 0, true, false).title, "infra — folded, but its one session is set to show when folded, so none is hidden; click to open");
+  assert.equal(headWords("infra", 1, 0, true, false).title, "infra — folded, but its one session is set to show when folded, so none is hidden; click to open and see its sessions at a glance");
   // …and for the ordinary folded, part-pinned, open and active headers
-  assert.deepEqual(headWords("infra", 2, 2, true, false), { count: "2", label: "infra, 2 sessions folded", title: "infra — 2 sessions folded; click to open" });
-  assert.deepEqual(headWords("infra", 2, 1, true, false), { count: "1", label: "infra, 1 session folded", title: "infra — 1 session folded; click to open" },
+  assert.deepEqual(headWords("infra", 2, 2, true, false), { count: "2", label: "infra, 2 sessions folded", title: "infra — 2 sessions folded; click to open and see its sessions at a glance" });
+  assert.deepEqual(headWords("infra", 2, 1, true, false), { count: "1", label: "infra, 1 session folded", title: "infra — 1 session folded; click to open and see its sessions at a glance" },
     "one pinned: the hidden count, the pinned tab shows itself");
-  assert.deepEqual(headWords("infra", 2, 0, false, false), { count: "2", label: "infra, 2 sessions", title: "infra — 2 sessions; click to fold this group; drag to reorder the groups" });
-  assert.deepEqual(headWords("infra", 3, 0, false, true), { count: "3", label: "infra, 3 sessions", title: "infra — 3 sessions; holds the active tab, so it stays open; drag to reorder the groups" });
-  assert.match(MAKE_HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive\);\s*\n\s*head\.title = words\.title;/);
+  assert.deepEqual(headWords("infra", 2, 0, false, false), { count: "2", label: "infra, 2 sessions", title: "infra — 2 sessions; click to fold this group and see its sessions at a glance; drag to reorder the groups" });
+  // the section holding the tab being read: a phrase, not a different action (the user 2026-09-06) — open or folded
+  assert.deepEqual(headWords("infra", 3, 0, false, true), { count: "3", label: "infra, 3 sessions, holds the tab you are reading", title: "infra — 3 sessions; holds the tab you are reading; click to fold this group and see its sessions at a glance; drag to reorder the groups" });
+  assert.deepEqual(headWords("infra", 3, 3, true, true), { count: "3", label: "infra, 3 sessions folded, holds the tab you are reading", title: "infra — 3 sessions folded; holds the tab you are reading; click to open and see its sessions at a glance" });
+  assert.equal(headWords("infra", 1, 0, true, true).label, "infra, 1 session, folded, all shown, holds the tab you are reading");
+  assert.match(MAKE_HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);\s*\n\s*head\.title = words\.title;/);
   assert.match(MAKE_HEAD, /n\.textContent = words\.count;/);
   assert.ok(!MAKE_HEAD.includes("hidden.length : total"), "no second count rule beside the pure one");
   assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
 });
 
-test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's and the flag's phrases), and the active section's header is a labeled group — never a button it cannot be", () => {
+test("assistive tech hears a label: decoration is aria-hidden, the header's name is words (name, count, the pip's and the flag's phrases), and the active section's header is the same button, marked current", () => {
   // a real accessibility tree (the 2026-09-06 review) read the folded header as a button named "▸ archived 2
   // waiting on you — tests flagged … click to open this group" — the caret glyph and the nested flag's
-  // label folded into the name — and the active section's header as "button, expanded" with no focus
-  // and a no-op click
+  // label folded into the name. (The active section's header was a no-op "labeled group" then; since the
+  // section folds like any other it is the same button as the rest, with aria-current on it.)
   assert.match(MAKE_HEAD, /caret\.setAttribute\("aria-hidden", "true"\);/, "the chevron is decoration");
   assert.match(MAKE_HEAD, /swatch\.setAttribute\("aria-hidden", "true"\);/, "so is the color bar");
   assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ pip\.title;/, "the pip too — its phrase rides the label instead");
@@ -1555,9 +1592,47 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
     "archived, 2 sessions folded; 2 sessions in this group are blocked or waiting on you: api, tests; waiting on you — 2 sessions flagged something they need from you: api, tests; click to open this group",
     "the spoken label of a folded header wearing both marks");
   assert.ok(!MAKE_HEAD.includes('b.setAttribute("aria-hidden"') && !MAKE_HEAD.includes('label.setAttribute("aria-hidden"'), "the flag is a control and the name is the name: neither hidden");
-  assert.match(MAKE_HEAD, /if \(holdsActive\) \{[^}]*head\.setAttribute\("role", "group"\);\s*\n\s*\} else \{/, "no action, no stop → a labeled group");
-  assert.equal(MAKE_HEAD.split('"aria-expanded"').length - 1, 1, "aria-expanded only where the fold is — inside the foldable branch");
+  assert.ok(!MAKE_HEAD.includes('"role", "group"'), "no header is a no-op group any more: every one folds");
+  assert.equal(MAKE_HEAD.split('"aria-expanded"').length - 1, 1, "aria-expanded once, on the one fold button every named header is");
   assert.equal(MAKE_HEAD.split('"role", "button"').length - 1, 1);
-  assert.ok(MAKE_HEAD.indexOf('"role", "group"') < MAKE_HEAD.indexOf('"role", "button"'), "the active branch first, as the source reads");
+  assert.match(MAKE_HEAD, /head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);[\s\S]{0,400}if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);/, "the header holding the tab being read says so");
+  assert.match(MAKE_HEAD, /head\.tabIndex = 0;/, "…and takes focus like the rest — it is the hidden tab's stand-in");
   assert.equal(headWords("archived", 2, 2, true, false).label, "archived, 2 sessions folded");
+});
+
+test("the folded-away active tab's header answers a tab's keys (the 2026-09-06 review): the window's ←/→ step from it, its own ←/→ step with focus following, Enter drops into the box while the transcript shows", () => {
+  // the branch documented the header as the stand-in for focus AND stepping, but the window's ←/→ returned at
+  // `if (i < 0) return;` for a folded active id, the header's keydown knew only Enter/Space, and onTabKey is
+  // bound to .tab nodes alone, so from the header (where the box's Escape lands) the arrows did nothing, and
+  // Enter folded the section and swapped the pane instead of returning to the box
+  const win = RENDER.slice(RENDER.indexOf("// Window-level arrow nav"), RENDER.indexOf("// SELECT → TYPE → ⌘⏎"));
+  assert.ok(win.length > 0 && win.length < 8000, "the window handler's block was found");
+  assert.doesNotMatch(win, /if \(i < 0\) return;/, "the dead return is gone");
+  assert.match(win, /const dir = e\.key === "ArrowRight" \? 1 : -1;\s*\n\s*const ord = visibleOrder\(\);[^\n]*\n\s*const i = ord\.indexOf\(activeId\);\s*\n\s*if \(i < 0\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const nb = collapsedTabIds\.has\(activeId\) \? neighborOfFolded\(lastStripItems, activeId, dir\) : null;\s*\n\s*if \(nb\) \{ e\.preventDefault\(\); setActive\(nb\); \}\s*\n\s*return;\s*\n\s*\}/,
+    "folded away → step from the header's place (neighborOfFolded, the rule onTabKey and cycleTab share); a view-hidden active id still steps nowhere; no focus move (the window's rule)");
+  // the header's own keys: ←/→ with focus following (onTabKey's shape), Enter into the box when it can, else the press
+  const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+  assert.match(head, /const aid = activeId;\s*\n\s*const standIn = !!aid && collapsedTabIds\.has\(aid\) && sec\.ids\.includes\(aid\);\s*\n\s*if \(aid && standIn && \(e\.key === "ArrowLeft" \|\| e\.key === "ArrowRight"\)\) \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*const nb = neighborOfFolded\(lastStripItems, aid, e\.key === "ArrowRight" \? 1 : -1\);\s*\n\s*if \(nb\) \{ setActive\(nb\); focusActiveTab\(\); \}\s*\n\s*return;\s*\n\s*\}/,
+    "the stand-in alone answers the arrows (any other header lets them bubble to the window's ←/→, which step the ACTIVE tab)");
+  assert.match(head, /if \(e\.key === "Enter" && standIn && !snapView && focusComposerOrAsk\(\)\) \{ e\.preventDefault\(\); return; \}\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}/,
+    "Enter: the box while the transcript shows and the box takes input (the mirror of the box's Escape, which lands here); otherwise the press, as Space always is");
+  // the stand-in condition, on the real plan: the active id folded away under this header; not a pinned active tab (on screen), not another section's
+  const unions = viewTagUnion(V);
+  const folded = setSectionCollapsed(parseTabGroups(null), "infra", true);
+  const plan = planStrip(["web", "api", "tests"], unions, folded, "web", false);
+  const infra = plan.items.find((i) => "head" in i && i.head.name === "infra") as { head: TabSection };
+  assert.ok(plan.folded.has("web") && infra.head.ids.includes("web"), "web is folded away under infra: infra's header is its stand-in");
+  const pinned = planStrip(["web", "api", "tests"], unions, { ...folded, pinned: [{ sid: "web", name: "infra", id: "g2" }] }, "web", false);
+  assert.ok(!pinned.folded.has("web"), "a pinned active tab is on screen: no stand-in, the header's Enter and arrows are a plain header's");
+  assert.equal(neighborOfFolded(plan.items, "web", 1), "api", "→ from the header lands on the first tab after it (wrapping)");
+});
+
+test("executed: the words of the way back: the open header whose snapshot the pane shows, holding the tab being read, offers the transcript, not a fold", () => {
+  assert.equal(headWords("infra", 3, 0, false, true, true).title, "infra — 3 sessions; holds the tab you are reading; click to go back to the transcript; drag to reorder the groups");
+  // the spoken label names the action too (round 2): a screen reader heard "button, expanded, infra, 3 sessions,
+  // holds the tab you are reading", pressed, and got no fold and no word about what happened; the title is mouse-only
+  assert.equal(headWords("infra", 3, 0, false, true, true).label, "infra, 3 sessions, holds the tab you are reading; back to the transcript", "the spoken label says what the press does");
+  assert.equal(headWords("infra", 3, 0, false, true, false).label, "infra, 3 sessions, holds the tab you are reading", "the ordinary open header's label is as before");
+  assert.deepEqual(headWords("infra", 3, 0, false, true, false), headWords("infra", 3, 0, false, true), "the default is the ordinary open header");
+  assert.equal(headWords("infra", 3, 3, true, true, true).title, headWords("infra", 3, 3, true, true).title, "a folded header never offers it: the click opens the section (render.ts derives `back` from open + shown + holds the active tab)");
 });

@@ -11,6 +11,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import type { FileViewActionCtx } from "./file-view";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -61,10 +62,20 @@ const store = new Map<string, string>();
 };
 
 const posted: any[] = [];
+// the viewer seam (plans/file-review.md Slice 1): every action mounts with the FULL ctx; the GitHub
+// link reads only path and sid, so the rest is inert here
+const noop = () => { /* inert */ };
+const stubCtx = (): FileViewActionCtx => ({
+  path: "/tmp/notes-api/src/app.py", sid: null,
+  body: () => new El("div") as unknown as HTMLElement, mode: () => "raw", text: () => null, mtimeNs: () => "",
+  media: () => null, identity: () => null, onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
+  post: noop, ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
+  scrollToOffset: noop, reload: noop,
+});
 async function mountAndAnswer(url: string, reason: string): Promise<El> {
   const fv = await import("./file-view");
   fv.initFileView((m) => posted.push(m));
-  const unit = fv.githubLinkAction.mount({ path: "/tmp/notes-api/src/app.py", sid: null }) as unknown as El;
+  const unit = fv.githubLinkAction.mount(stubCtx()) as unknown as El;
   assert.equal(unit.className, "fileview-gh");
   assert.equal(unit.hidden, true, "hidden until the kernel answers");
   assert.equal(unit.childNodes.length, 0, "no control exists before the answer — never an hrefless flash");
@@ -129,7 +140,7 @@ test("state 3 — a URL whose branch is not on origin: a dashed anchor with the 
 test("a reply for an older open lands nowhere — the newer open keeps waiting for its own", async () => {
   const fv = await import("./file-view");
   fv.initFileView((m) => posted.push(m));
-  const ctx = { path: "/tmp/notes-api/src/app.py", sid: null };
+  const ctx = stubCtx();
   const first = fv.githubLinkAction.mount(ctx) as unknown as El;
   const firstReq = posted[posted.length - 1].reqId;
   const second = fv.githubLinkAction.mount(ctx) as unknown as El;   // a replace-open: its hooks supersede
@@ -205,6 +216,8 @@ test("the GitHub link is the action REGISTRY's first entry, not another hand-wir
   assert.match(VIEW, /if \(!fileViewActions\.some\(\(x\) => x\.id === a\.id\)\) fileViewActions\.push\(a\);/, "same id registered twice mounts once");
   assert.match(VIEW, /export const githubLinkAction: FileViewAction = \{\n  id: "github-link",/);
   assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);/);
-  // openFileView renders registered actions by WALKING THE TABLE, after the built-ins
-  assert.match(VIEW, /for \(const a of fileViewActions\) \{\n    const n = a\.mount\(\{ path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null \}\);\n    if \(n\) acts\.appendChild\(n\);\n  \}/);
+  // openFileView renders registered actions by WALKING THE TABLE, after the built-ins, handing each the
+  // one per-open seam ctx (plans/file-review.md Slice 1: path, sid, todoId plus the viewer closures)
+  assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);
+  assert.match(VIEW, /for \(const a of fileViewActions\) \{\n    const n = a\.mount\(ctx\);\n    if \(n\) acts\.appendChild\(n\);\n  \}/);
 });

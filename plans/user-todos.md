@@ -418,5 +418,5 @@ The interview settled the design; the two build-time calls it left open were mad
 
 ## Upstream
 
-Pure feature, no fork-specific content: on landing, a candidate `UPSTREAM.md` row per slice.
+Pure feature, no fork-specific content: on landing, a candidate ledger entry (`scripts/upstream-ledger.py new`) per slice.
 The offer decision stays with the offer flow, not this plan.

@@ -164,6 +164,26 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # suggests a /compact at a natural boundary; /compact is a CLI feature the session
             # already knows, and the thresholds behind the timing are never mentioned
             "compaction suggestion": km._compact_suggest_body("web"),
+            # Send to session (plans/file-review.md): the person's comments on a file, handed to the
+            # owning session as one message with the reply commands — the [obsidian-diff] shape the
+            # vendored skill handles. The bodies are the person's own words; the frame around them is
+            # romp-authored and scanned here. No marker tail, like a todo answer: this IS the person
+            # writing. Rendered for one comment on a tracked text file, several on an untracked one,
+            # and one on an image, since the second bullet differs.
+            "file comments message": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md",
+                [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"',
+                  "body": "Which cache? Say which."}], 0, 0, True, True),
+            "file comments message (untracked, several)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md",
+                [{"id": "1781100000000-0", "desc": 'on "shipping the cache in v1.2"',
+                  "body": "Which cache? Say which."},
+                 {"id": "1781100000003-0", "desc": "on this file", "body": "Add a summary table at the top."}],
+                0, 0, False, True),
+            "file comments message (image)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/latency.png",
+                [{"id": "1781100000005-0", "desc": "on this file", "body": "The y axis needs units."}],
+                0, 0, True, False),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -278,11 +298,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the session) — telling, not asking; a status question bolted on would be noise
             # …and the MERGE handoff is a record handed over with direction ("account for it"),
             # never a status ask — bolting a progress question onto it would be noise
+            # …and the file-comments message is the person's own comments with instructions on how
+            # to answer them — its ask is "address these and ask me for another look", not a status
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
                         "user-todo context block", "edit trace",
-                        "comment-thread merge", "compaction suggestion"):
+                        "comment-thread merge", "compaction suggestion",
+                        "file comments message", "file comments message (untracked, several)",
+                        "file comments message (image)"):
                 #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()

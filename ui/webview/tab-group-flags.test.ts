@@ -129,8 +129,11 @@ test("click-safe and keyboard: a real button (focusable; Enter and Space click I
   // the flag is INSIDE the header, whose keydown handler took the bubbling Enter/Space, canceled the
   // button's native activation and clicked the header: toggle-group ran, not open-group (the same fold
   // opened, by luck of the flag riding folded headers only). The handler returns for a key on the flag.
-  assert.match(HEAD, /head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n\s*if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
+  const keys = HEAD.slice(HEAD.indexOf('head.addEventListener("keydown"'), HEAD.indexOf("const caret = el("));
+  assert.match(keys, /^head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n/,
     "the guard comes first, before any preventDefault");
+  assert.match(keys, /if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
+    "…and the press is the handler's last word (the stand-in's ←/→ and Enter sit between; tab-groups.test.ts)");
   assert.equal(HEAD.split('addEventListener("keydown"').length - 1, 1, "one key handler on the header, none on the button (native activation is the button's)");
   assert.match(FOLDED, /b\.draggable = true;\s*\n\s*b\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/,
     "the flag is the innermost draggable under the pointer, so ITS dragstart fires first: canceled, and never reaching the header's (draggedGroup stays null)");
