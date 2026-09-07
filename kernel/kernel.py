@@ -32520,8 +32520,8 @@ def _usage_doc():
     """usage.json parsed, or {} when it is absent or unreadable. A pure API-key host NEVER writes usage.json
     (both snapshot writers skip keyed sessions), so bailing on the missing file starved the no-login spend
     arm of _usage() of exactly the machine it was written for — the devbox answered /usage with {} and its
-    spend vanished from the fleet sum (the user 2026-08-13). An empty snapshot falls through instead; every
-    read of it tolerates absence."""
+    spend vanished from the summed spend across hosts (the user 2026-08-13). An empty snapshot falls through
+    instead; every read of it tolerates absence."""
     try:
         return json.loads((jd.STATE / "usage.json").read_text())
     except Exception:
@@ -32541,7 +32541,12 @@ def _usage_limits(doc=None):
     twice (200 KB, about 6 ms per call, once per pusher cycle for the pause alone) to attach spend figures
     those callers never read — and on a host in the spend arm, for a `limited` key that arm does not even
     produce (perf round 4 P18, 2026-09-07). `doc` is the parsed usage.json (_usage_doc); None reads it here.
-    No memo: every call reads the file as it is now, and the clock it reads is the module's.
+    No memo: every call reads the file as it is now, and the clock it reads is the module's. One decision
+    changed with the split, on purpose: a ledger the spend readers cannot use (valid JSON that is not an
+    object) used to raise inside _usage() and read as "no reading" to the three callers, so a capped window
+    never engaged the pause and an engaged pause never lifted; the limits half decides from usage.json alone,
+    so such a ledger no longer disables the pause and the hold (romp never writes that shape, and the file
+    heals on the next recorded turn; the rail's _usage() still fails on it as before).
 
     `fable` is the included-Fable-5 weekly allowance Claude Code added to /usage (the user 2026-07-02) — the
     CLI's window type is `seven_day_overage_included`, labeled 'Fable 5 limit'; the SDK backend writes it to
@@ -32610,7 +32615,7 @@ def _usage():
     """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None: _usage_limits() with the
     spend figures the rail draws beside or instead of the bars attached. File-based, like the obsidian
     timeline's readUsage. This is the reading for what is DRAWN (_usage_for_client per timeline build,
-    GET /usage, _fleet_usage); the pause and the hold read _usage_limits() directly and parse no ledger.
+    GET /usage, the per-host rows); the pause and the hold read _usage_limits() directly and parse no ledger.
     The ledger is parsed once per call here (_spend_doc) and handed to both spend readers."""
     o = _usage_doc()
     out = _usage_limits(o)
@@ -32667,7 +32672,7 @@ def _usage():
             if sa:
                 out["spendAt"] = sa               # same own-freshness stamp as the key-only arm
     # (the winSeries per-window utilization series is gone — the user 2026-08-14, who wanted the one
-    # fleet $/h graph and nothing per window. usage-history.json keeps recording — sdk_backend
+    # $/h graph summed across hosts and nothing per window. usage-history.json keeps recording — sdk_backend
     # _record_usage_history — so a future graph starts with history instead of a blank.)
     return out
 

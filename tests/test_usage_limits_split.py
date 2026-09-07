@@ -187,6 +187,36 @@ class NoLedgerParseForThePauseAndHoldCallers(_Base):
         self.assertEqual(self._spend_reads(), 0)
         self.assertEqual(self.reads.get("usage.json", 0), 1)
 
+    def test_a_ledger_the_spend_readers_cannot_use_no_longer_disables_the_pause_and_the_hold(self):
+        """The one decision the split changed, on purpose (review round 1, 2026-09-07). spend.json holding
+        valid JSON that is not an object (`[]`, `null`, `7`) made the spend readers raise inside _usage(), and
+        the three callers saw "no reading": _auto_pause_on_limit never engaged on a capped window,
+        _auto_resume_retry never lifted an engaged pause, and _limit_hold / _retry_resume_at answered None.
+        The limits half decides from usage.json alone, so the pause engages and lifts and the hold holds.
+        romp never writes that shape, and the file heals on the next recorded turn; the rail's _usage()
+        still fails on it, as it did."""
+        real = time.time()
+        reset = int(real) + 1800
+        km._claude_account = lambda: ACCT
+        km._auth_key_present = lambda: True
+        km.time = _frozen_clock(real)
+        self._windows(five=100, seven=20, five_reset=reset)
+        (jd.STATE / "spend.json").write_text("[]")
+        saved = km.jd.rearm_failed_summaries
+        km.jd.rearm_failed_summaries = lambda now, **k: 0          # the lift's re-arm walks no goals here
+        self.addCleanup(setattr, km.jd, "rearm_failed_summaries", saved)
+        with self.assertRaises(Exception):
+            km._usage()                                  # the rail's reading fails on the shape, as before
+        self.assertEqual(km._account_limited(), ["fiveHour"], "the old reading raised here and read as no limit")
+        self.assertEqual(km._limit_hold(SID)["resetsAt"], reset, "...and as no hold")
+        km._auto_pause_on_limit()
+        self.assertTrue(km._retry_paused_on(), "the engage edge: a capped window pauses despite the ledger")
+        self.assertEqual(km._retry_pause_reason(), "limit")
+        self.assertEqual(km._retry_resume_at(), reset)
+        km.time = _frozen_clock(reset + 10)              # the reset passes on the module clock
+        km._auto_resume_retry(reset + 10, {})
+        self.assertFalse(km._retry_paused_on(), "the lift edge: the report alone lifts it, as the engage read it")
+
     def test_the_callers_read_the_limits_half_by_name(self):
         for fn in (km._account_limited, km._retry_resume_at, km._limit_hold):
             body = inspect.getsource(fn).split('"""', 2)[2]      # the code after the docstring, which may name _usage() in prose
