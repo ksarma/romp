@@ -62,6 +62,8 @@ class CourierLinkRepair(unittest.TestCase):
         jd.discover = self._saved
         for f in jd.GOALDIR.glob("*"):
             f.unlink()
+        for f in jd._overrides_dir().glob("*"):   # the journal beside the stores: same placeholder sid,
+            f.unlink()                             # replayed into every later module's fresh store
 
     def test_link_attaches_to_the_placed_top_and_is_idempotent(self):
         st = jd.load_goals(RECIP)
@@ -153,6 +155,8 @@ class DormantHandoffConverts(unittest.TestCase):
             km._TMUX.__dict__.pop(nm, None)   # instance attrs shadow the class methods; drop them
         for f in jd.GOALDIR.glob("*"):
             f.unlink()
+        for f in jd._overrides_dir().glob("*"):   # the dead-wait block's append_block row; see the test below
+            f.unlink()
         for f in (jd.STATE / "states").glob("*"):
             f.unlink()
         (jd.NAMES / SENDER).unlink(missing_ok=True)
@@ -166,6 +170,20 @@ class DormantHandoffConverts(unittest.TestCase):
         km._dead_wait_sweep(set(), self.nudged, T + 990)
         km._PREV_ALIVE = None
         self.assertEqual(len([k for k in self.nudged if k == SENDER + ":g1"]), 1, "once per node")
+
+    def test_teardown_leaves_no_override_journal_for_the_shared_sid(self):
+        # The block above is journaled (append_block) beside the store, in overrides/<sid>.jsonl, and
+        # load_goals replays that journal on every load. Every module in a pytest process binds the
+        # SAME romp_judge module object, so they all share one state root at run time, and a leftover
+        # row here re-blocks the next module's freshly minted "<sid>:g1" (the deferral sweep tests
+        # read it as a needs-you block and popped every record they were checking). tearDown must
+        # remove the journal along with the stores.
+        km._dead_wait_sweep(set(), self.nudged, T + 900)
+        fp = jd._overrides_dir() / (SENDER + ".jsonl")
+        self.assertTrue(fp.is_file(), "the dead-wait block journals a row for the sender")
+        self.tearDown()
+        self.assertFalse(fp.exists(), "the journal must not outlive the class's stores")
+        self.setUp()   # the outer tearDown runs once more; keep its world consistent
 
 
 if __name__ == "__main__":
