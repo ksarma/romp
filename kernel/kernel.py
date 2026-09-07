@@ -23076,7 +23076,8 @@ def _bg_placed_tops(sid, path, tids, store=None):
     standing "a launch's segment never changes" assumption), and the memo is keyed on exactly those two
     objects: _BG_TOPS_CACHE[sid] = (ps, store, {tid: top or None}) holds every tid asked so far under one
     (parse, store) pair, a hit iff both objects in hand ARE the entry's (identity, not a stat: the awaiting
-    lift asks with every task id and the feed with the live ids, so one map serves both, and a stat taken
+    lift asks with every task id the transcript records and the feed with the live ids, a subset that is
+    often empty, so one map answers both and the feed's ask never evicts the lift's fill, and a stat taken
     after a read can describe a version the read did not see — a publish between the two recorded the new
     version under the old placements, the 2026-07-27 own-thread misattribution shape). _parse returns one
     object per transcript version and load_goals_shared one FrozenStore per store version, so identity is
@@ -23089,13 +23090,25 @@ def _bg_placed_tops(sid, path, tids, store=None):
     Threads: the pusher and the handler threads (build_session, _session_awaiting) both run this. An entry
     is read into locals once, a fill builds a NEW dict from it and publishes a NEW tuple; nothing writes
     into an entry in place, so a reader holding the old tuple keeps a consistent (ps, store, map). Entries
-    are dropped when a session's live tids are empty (below: nothing to answer, and the parse would stay
-    pinned) and when its sid leaves the alive set (the awaiting lift's end-of-tick sweep)."""
+    are dropped when a session asks with no live tids and the pinned parse is no longer the transcript's
+    current one (below: the pin the bound is for), and when its sid leaves the alive set (the awaiting
+    lift's end-of-tick sweep)."""
     sid = str(sid)
     tids = tuple(sorted(t for t in tids if t))
     if not tids or not path:
-        _BG_TOPS_CACHE.pop(sid, None)                # nothing live to answer for: release the pinned parse
-        _PLACEMENT_IDX.pop(sid, None)
+        # Nothing to answer. The feed, chat and timeline builds ask here with an EMPTY live set for a
+        # session whose tasks all returned, several times per cycle, while the lift's ask (every task id
+        # the transcript records) is what filled the entry; evicting on every empty ask made the lift miss
+        # every cycle and re-walk the transcript (review, 2026-09-07). Release the pinned parse only when it
+        # is no longer the transcript's current parse: _parse answers _parse_cache[path][1] on a hit, so an
+        # entry whose parse IS that object costs no memory beyond the parse every build holds anyway, and
+        # one whose parse is not (the transcript was re-parsed, or nothing is cached) is the stale pin the
+        # bound is for.
+        ent = _BG_TOPS_CACHE.get(sid)
+        cur = _parse_cache.get(path) if path else None
+        if ent is None or cur is None or ent[0] is not cur[1]:
+            _BG_TOPS_CACHE.pop(sid, None)
+            _PLACEMENT_IDX.pop(sid, None)
         return {}
     try:
         ps = _parse(path, sid, time.time())

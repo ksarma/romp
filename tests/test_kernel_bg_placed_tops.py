@@ -5,11 +5,13 @@ transcript segment holding the launch and the goal store's placement for it.
 The memo is keyed on OBJECT identity, not on a stat: _parse returns one object per transcript version and
 jd.load_goals_shared one FrozenStore per store version, so (parse object, store object) IS the version pair,
 and a per-sid map answers every launch id asked so far under that pair (the lift asks with every task id,
-the feed with the live ids: one map serves both). Placements are read through a per-store index
+the feed with the live ids, often none: one map answers both, and the feed's empty ask never evicts the
+lift's fill). Placements are read through a per-store index
 (_placement_index) that gives exactly what jd._placement_of's scan gives, for the four suffixes the walk
 tried. A store that is not the shared cache's FrozenStore (a writer's private copy, no file, the cache off) is
-computed on and never published. Entries are evicted when a session's live ids are empty and when its sid
-leaves the alive set. SYNTHETIC fixtures only: placeholder sids, invented goal text and prompts."""
+computed on and never published. Entries are evicted when a session with no live ids asks after its
+transcript was re-parsed (the pinned parse is stale) and when its sid leaves the alive set. SYNTHETIC
+fixtures only: placeholder sids, invented goal text and prompts."""
 import json
 import os
 import tempfile
@@ -257,12 +259,33 @@ class PlacedTops(unittest.TestCase):
         self.assertEqual(km._bg_tops_report()["entries"], 0)
 
     # ---- eviction ----
-    def test_empty_tids_evict_the_sessions_entries(self):
+    def test_an_empty_live_set_keeps_the_lifts_fill_while_the_parse_is_current(self):
+        # the lift asks with every task id; the feed's classification asks with the LIVE ids, none here
+        # (every task returned): that ask must not evict what the lift filled under the same parse
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2", "t3"]), {"t1": TOP_A, "t2": TOP_B, "t3": TOP_B})
+        self.assertEqual((self._delta("bg", "idx_build"), self._delta("bg", "walk")), (1, 1))
+        saved = km._tmux_sessions
+        km._tmux_sessions = lambda: {SID: {"state": "idle", "bgTasks": []}}   # live, no live tasks
+        try:
+            self.assertEqual(km._awaiting_task_descs(SID, self.path), [])
+        finally:
+            km._tmux_sessions = saved
+        self.assertEqual(km._bg_tops_report()["entries"], 1, "the empty ask kept the fill: the parse is current")
+        self.assertEqual(km._bg_placed_tops(SID, self.path, ["t1", "t2", "t3"]), {"t1": TOP_A, "t2": TOP_B, "t3": TOP_B})
+        self.assertEqual((self._delta("bg", "hit"), self._delta("bg", "idx_build"), self._delta("bg", "walk")), (1, 1, 1),
+                         "the lift's next ask is a hit: no index rebuilt, no transcript re-walked")
+
+    def test_empty_tids_evict_the_sessions_entries_once_the_pinned_parse_is_stale(self):
         km._bg_placed_tops(SID, self.path, ["t1"])
         self.assertEqual((km._bg_tops_report()["entries"], SID in km._PLACEMENT_IDX), (1, True))
         self.assertEqual(km._bg_placed_tops(SID, self.path, []), {})
+        self.assertEqual(km._bg_tops_report()["entries"], 1, "the pinned parse is the current one: kept")
+        with open(self.path, "a") as f:                    # the transcript grew and a build re-parsed it
+            f.write(json.dumps(_prompt("p3", T0 + 200, "one more thing")) + "\n")
+        km._parse(self.path, SID, NOW)
+        self.assertEqual(km._bg_placed_tops(SID, self.path, []), {})
         self.assertEqual((km._bg_tops_report()["entries"], SID in km._PLACEMENT_IDX), (0, False),
-                         "no live launches: the pinned parse and index are released")
+                         "no live launches and a stale pinned parse: the parse and index are released")
 
     def test_the_lifts_sweep_evicts_a_sid_that_left_the_alive_set(self):
         km._bg_placed_tops(SID, self.path, ["t1"])
