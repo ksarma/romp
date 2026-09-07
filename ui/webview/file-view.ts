@@ -118,6 +118,54 @@ function saveFmt(f: FileViewFmt): void {
   try { localStorage.setItem(FMT_KEY, JSON.stringify(f)); } catch { /* storage full */ }
 }
 
+// ── text size (the user 2026-09-07: the rendered markdown had to be zoomable) ──────────────────────
+// The viewer's text sizes, as percentages of the page's own size: a FIXED table with ends, not a free
+// multiplier, so the buttons, the wheel and the stored value all land on the same few sizes and a size can
+// never run away or go negative. 100 is the default and leaves every size exactly as before. The chosen
+// step rides the viewer root as `data-fv-text`, and the sheets turn it into the ONE property the text
+// views read (`--fv-scale`; the "text size and measure" block in styles.css / feed.css). Persisted like
+// the Rendered ⇄ Raw choice above: per browser, in localStorage, under its own key, and any malformed or
+// foreign value reads as the default (parseFmt's contract). The value stays a percentage, never a
+// multiplier, so the stored text and the readout say the same thing.
+export const TEXT_SIZES: readonly number[] = [70, 80, 90, 100, 115, 130, 150, 175, 200];
+export const TEXT_SIZE_DEFAULT = 100;
+const TEXT_SIZE_KEY = "romp:fileviewTextSize";
+/** A stored value back to a step of the table; anything else (absent, garbage, a size the table does not
+ *  hold) is the default, so a corrupt entry may cost the preference, never the viewer. */
+export function parseTextSize(raw: string | null | undefined): number {
+  if (raw === null || raw === undefined) return TEXT_SIZE_DEFAULT;
+  const n = Number(String(raw).trim());
+  return TEXT_SIZES.includes(n) ? n : TEXT_SIZE_DEFAULT;
+}
+/** The next step from `pct` in `dir`, clamped at the table's ends: at 200 a +1 answers 200. A `pct` off the
+ *  table (never stored, but the function is pure) steps from the default. */
+export function stepTextSize(pct: number, dir: 1 | -1): number {
+  const at = TEXT_SIZES.indexOf(TEXT_SIZES.includes(pct) ? pct : TEXT_SIZE_DEFAULT);
+  return TEXT_SIZES[Math.max(0, Math.min(TEXT_SIZES.length - 1, at + dir))];
+}
+function loadTextSize(): number {
+  try { return parseTextSize(localStorage.getItem(TEXT_SIZE_KEY)); } catch { return TEXT_SIZE_DEFAULT; }
+}
+function saveTextSize(pct: number): void {
+  try { localStorage.setItem(TEXT_SIZE_KEY, String(pct)); } catch { /* storage full */ }
+}
+// Ctrl/Cmd + wheel over the text is the pointer's way to the same steps. A wheel notch is one event of about
+// 100 pixels (Chrome) or a few LINES (Firefox, deltaMode 1); a trackpad pinch (which browsers report as a
+// ctrlKey wheel) is a burst of events a few pixels each. Stepping once per event would run a pinch through the
+// whole table in a moment, so the deltas are FOLDED: normalized to pixels, summed, and a step is taken each time
+// the sum passes WHEEL_STEP_PX (then cleared); a change of direction clears it too, so a reversal does not have to
+// pay off the other way's remainder first. Pure over the event's fields, so the fold is testable: `acc` is the
+// running sum the caller keeps, `dir` the step to take now (0 for none). Events without the modifier are not
+// the gesture (the caller lets them scroll) and never reach this.
+export const WHEEL_STEP_PX = 40;
+export function foldWheel(e: { deltaY: number; deltaMode: number }, acc: number): { acc: number; dir: 0 | 1 | -1 } {
+  const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  if (!px) return { acc, dir: 0 };
+  const sum = (acc === 0 || Math.sign(acc) === Math.sign(px)) ? acc + px : px;
+  if (Math.abs(sum) < WHEEL_STEP_PX) return { acc: sum, dir: 0 };
+  return { acc: 0, dir: sum < 0 ? 1 : -1 };   // wheel up (negative deltaY) is larger, as in every zooming surface
+}
+
 function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -239,7 +287,12 @@ export interface FileViewActionCtx {
    *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
    *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
    *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
-   *  repaint hands the read-mode state back */
+   *  repaint hands the read-mode state back.
+   *  Also after a text view REFLOWS with its text unchanged: a text-size step (the A− / A+ buttons, the wheel) and a
+   *  change of the body's width (the pane resized, the aside opening or closing; a ResizeObserver on the body, so the
+   *  event is the layout's own, never a timer). Every position measured from the text has moved by then, so the panel's
+   *  paint pass runs again; a media body's own observers (the figure layer's, the PDF chunk's) already cover theirs, and
+   *  the editor lays out its own text, so neither reflow fires for those */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -691,6 +744,34 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       acts.appendChild(b);
     }
   }
+  // ── text size (the user 2026-09-07) ── A− and A+ step the text views through TEXT_SIZES; between them the
+  // current size, shown only once it is not the default, is the reset (progressive disclosure: at 100% there is
+  // nothing to reset and nothing to say). Built once per open like the format toggles above, so direct listeners
+  // are click-safe; each click acknowledges in the same tick (the readout, the disabled end, the reflow itself).
+  // The three hide with the format toggles in edit mode (the editor keeps its own size) and over a media body
+  // (nothing there reads the property); the SVG Source view is a text view and keeps them. The step is applied
+  // as `data-fv-text` on the viewer root, which the sheets read (the "text size and measure" block).
+  let sizePct = loadTextSize();
+  const sizeDown = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  sizeDown.type = "button"; sizeDown.textContent = "A−"; sizeDown.title = "Smaller text (Ctrl/Cmd + wheel)";
+  sizeDown.setAttribute("aria-label", "Smaller text");
+  const sizeReset = el("button", "fileview-btn fileview-size fileview-size-reset") as HTMLButtonElement;
+  sizeReset.type = "button"; sizeReset.title = "Reset the text size";
+  const sizeUp = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
+  sizeUp.type = "button"; sizeUp.textContent = "A+"; sizeUp.title = "Larger text (Ctrl/Cmd + wheel)";
+  sizeUp.setAttribute("aria-label", "Larger text");
+  // the property on the root, and the control's own state, from sizePct
+  const applyTextSize = () => {
+    box.dataset.fvText = String(sizePct);
+    sizeReset.textContent = sizePct + "%";
+    sizeReset.setAttribute("aria-label", "Text size " + sizePct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
+    sizeDown.disabled = sizePct === TEXT_SIZES[0];
+    sizeUp.disabled = sizePct === TEXT_SIZES[TEXT_SIZES.length - 1];
+    sizeReset.hidden = sizeDown.hidden || sizePct === TEXT_SIZE_DEFAULT;   // sizeDown carries renderBody's mode gate
+  };
+  applyTextSize();
+  acts.appendChild(sizeDown); acts.appendChild(sizeReset); acts.appendChild(sizeUp);
+
   // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
   // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
   // from the SAME fetched bytes — no second request. Appears only once an image/svg+xml body landed.
@@ -828,6 +909,58 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     editing: () => editing,
     setTrackedEdit: (t) => { trackedEdit = t; },
   };
+  // A text view is showing: the editor does not hold the body, the body is not a picture or a PDF frame, and the
+  // text has landed (the SVG Source view counts, its decoded XML being the text). The gate for both reflow
+  // triggers below: a paint hook is for a body whose text has positions to re-measure.
+  const textShowing = (): boolean => !editing && ctx.mode() !== "media" && viewText() !== null;
+  // One step of the text size: store it, apply it, and let the panel re-measure over the reflowed text (the
+  // seam's onRendered, the same event every text paint fires; the highlights are re-wrapped and the floating
+  // Comment button hides, since the passage it sat by has moved). A step that changes nothing (the table's end)
+  // fires nothing: a card may move only on new information (CLAUDE.md), and no paint happened.
+  const setTextSize = (pct: number) => {
+    if (pct === sizePct) return;
+    sizePct = pct;
+    saveTextSize(pct);
+    applyTextSize();
+    if (textShowing()) fireRendered();
+  };
+  sizeDown.addEventListener("click", () => setTextSize(stepTextSize(sizePct, -1)));
+  sizeUp.addEventListener("click", () => setTextSize(stepTextSize(sizePct, 1)));
+  sizeReset.addEventListener("click", () => setTextSize(TEXT_SIZE_DEFAULT));
+  // Ctrl/Cmd + wheel over the BODY (not the bar, not the aside): the browser's page zoom is the same gesture, so it
+  // is taken over the viewer's text only, and only with the modifier held; a plain wheel scrolls as ever, and the
+  // keyboard's Ctrl+plus/minus stays the browser's. Non-passive so the page zoom can be prevented; the fold is
+  // foldWheel's (a pinch is a burst of small deltas).
+  let wheelAcc = 0;
+  body.addEventListener("wheel", (e: WheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (!textShowing()) return;
+    e.preventDefault();
+    const r = foldWheel(e, wheelAcc);
+    wheelAcc = r.acc;
+    if (r.dir) setTextSize(stepTextSize(sizePct, r.dir));
+  }, { passive: false });
+  // The body's WIDTH: the Files pane dragged narrower or wider, the aside opening or closing, the window resized.
+  // The text reflows (the prose measure follows the pane up to its cap, tables and code blocks take the room or
+  // scroll in their own box) and every position measured from it has moved, so the panel's paint pass runs again,
+  // off the layout's own report of the change (a ResizeObserver, batched per frame by the browser, never a timer).
+  // The observer's first report describes the size at observe(), not a change; a report with the same width (the
+  // body grew taller as a figure loaded) moved no text sideways and is skipped. Media bodies have their own
+  // observers (the figure layer's, the PDF chunk's), and the editor its own layout, so textShowing gates this too.
+  // Absent ResizeObserver (a stand-in, an old engine) there is no width event to key on, so nothing fires.
+  if (typeof ResizeObserver !== "undefined") {
+    let lastWidth = -1;
+    const widthObserver = new ResizeObserver((entries) => {
+      const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
+      if (lastWidth < 0) { lastWidth = w; return; }
+      if (w === lastWidth) return;
+      lastWidth = w;
+      if (textShowing()) fireRendered();
+    });
+    widthObserver.observe(body);
+    ctx.onClose(() => widthObserver.disconnect());
+  }
+
   // Registered actions render after the built-ins — the registry walk is the ONE place row
   // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
   for (const a of fileViewActions) {
@@ -915,6 +1048,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.hidden = editing;                       // format choices leave with edit mode; Save/Cancel own the bar
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
+    // the text-size control shows over a text view only (renderBody is every paint, so this follows every flip:
+    // Source on an SVG, the editor taking the body, the exit handing it back); the reset only off the default
+    const sizeHidden = editing || ((isImage || isPdf) && !(svgSource && svgText !== null));
+    sizeDown.hidden = sizeHidden; sizeUp.hidden = sizeHidden;
+    sizeReset.hidden = sizeHidden || sizePct === TEXT_SIZE_DEFAULT;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
