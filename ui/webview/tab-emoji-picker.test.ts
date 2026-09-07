@@ -50,7 +50,7 @@ test("anchoring and dismissal follow the color swatches: where the menu stood, c
   assert.match(DIALOG, /card\.style\.top = Math\.max\(0, Math\.min\(at\.y, window\.innerHeight - r\.height - 4\)\) \+ "px";/);
   // dismissal
   assert.match(RENDER, /window\.addEventListener\("mousedown", \(e\) => \{ if \(emojiPrompt && !emojiPrompt\.card\.contains\(e\.target as Node\)\) closeEmojiPrompt\(\); \}, true\);/);
-  assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && emojiPrompt\) \{ e\.stopPropagation\(\); closeEmojiPrompt\(\); \} \}, true\);/);
+  assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && emojiPrompt\) \{ e\.stopPropagation\(\); e\.preventDefault\(\); closeEmojiPrompt\(\); \} \}, true\);/);
   assert.match(RENDER, /function showTabMenu\(e: MouseEvent, id: string\) \{\n  dismissTabMenu\(\);\n  closeEmojiPrompt\(\);/);
   // the menu's scroll and blur closers do NOT reach the picker: its grid scrolls, and its field invites a paste
   assert.doesNotMatch(RENDER, /addEventListener\("scroll", closeEmojiPrompt/);
@@ -219,7 +219,9 @@ test("focus never falls to <body>: a submit parks it on the card before disablin
   // the close: back to this session's tab, but only when the card held focus (a right-click reopening the menu
   // has already focused ITS tab, which may be another session's)
   assert.match(DIALOG, /const close = \(\) => \{\n[^]*?const held = card\.contains\(document\.activeElement\);\n\s*card\.remove\(\);\n\s*if \(held\) \(document\.querySelector\(`#tabs \.tab\[data-id="\$\{sid\}"\]`\) as HTMLElement \| null\)\?\.focus\(\);\n\s*\};/);
-  assert.match(RENDER, /function focusActiveTab\(\) \{\n\s*const bar = document\.getElementById\("tabs"\);\n\s*\(bar\?\.querySelector\(`\.tab\[data-id="\$\{activeId\}"\]`\)/,
+  // (the tab bar's refocus falls back to the section header when the active tab is folded away, tab-groups.ts;
+  // the picker's tab is on screen, it was right-clicked to open the menu, so the close addresses the tab alone)
+  assert.match(RENDER, /function focusActiveTab\(\) \{\n\s*const bar = document\.getElementById\("tabs"\);\n\s*const tab = bar\?\.querySelector\(`\.tab\[data-id="\$\{activeId\}"\]`\) as HTMLElement \| null;\n\s*if \(tab\) \{ tab\.focus\(\); return; \}/,
                "the premise: the tab bar's own refocus addresses a tab by #tabs .tab[data-id]");
 });
 
