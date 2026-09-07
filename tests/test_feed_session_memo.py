@@ -564,11 +564,11 @@ class ConcurrentDeps(unittest.TestCase):
         km._node_anchor_last = Hooked(self.saved_last)
         real = km._node_anchor_uuids
 
-        def filler(nd, seg_trig, seg_work, deps=None, writes=None):
+        def filler(nd, seg_trig, seg_work, deps=None, writes=None, sid=None):   # sid: the ledger memo's revision
             first = deps is not None and not inserted.is_set()
             if first:
                 iterating.wait(10)                                     # record nothing until the reader is mid-loop
-            out = real(nd, seg_trig, seg_work, deps, writes)
+            out = real(nd, seg_trig, seg_work, deps, writes, sid=sid)
             if first:
                 inserted.set()
             return out
