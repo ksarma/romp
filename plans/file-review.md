@@ -1,11 +1,15 @@
 # Comments and tracked changes in the file viewer
 
-**Status: BUILDING** (approved by the user on 2026-09-06 after reviews on 2026-09-05 and 2026-09-06 and
-a structured design interview; every question ruled). A dedicated romp session is building all
-six slices in one push, one fork PR per slice with an adversarial review pass, in the order under
-Build slices; the ADR is accepted with Slice 1, and one user todo at the end asks for the
-end-to-end walk. File and line references describe this fork at its 2026-09-05 merge base and the
-track-changents repo as of the same day; as with every plans/ document, treat them as dated.
+**Status: BUILT — all six slices (2026-09-07), awaiting the user's end-to-end walk** (decision 29: done
+means the per-slice criteria pass and the user completes the motivating loop with no GitHub and no
+Obsidian). Approved by the user on 2026-09-06 after reviews on 2026-09-05 and 2026-09-06 and a structured
+design interview. Built by a dedicated romp session as six stacked fork PRs, each through an adversarial
+review (seven lenses, two refuters per finding with executed probes, three rounds, a consolidation pass,
+and a full test sweep); the "The Slice N build" notes in the sections below record where the code as
+built departs from this text and why. The ADR was accepted with Slice 1. Running `install.sh` on a
+machine links the vendored tooling and registers the guard; the walk needs that first. File and line
+references describe this fork at its 2026-09-05 merge base and the track-changents repo as of the same
+day; as with every plans/ document, treat them as dated.
 
 ## Summary
 
