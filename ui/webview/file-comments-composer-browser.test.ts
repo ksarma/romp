@@ -1,6 +1,6 @@
 // The comment box under a REAL renderer (plans/file-review.md, "The composer follow-on (2026-09-07)"): headless
 // Chromium and Firefox lay the worktree's textarea out under the sheet's own .fc-input rule and press its keys. This
-// is the leg no stand-in can stand in for — the stand-in tests set scrollHeight by hand and cannot cap anything:
+// is the part a DOM stand-in cannot test — the stand-in tests set scrollHeight by hand and cannot cap anything:
 // the browser decides how tall three rows are, whether autosizeNote's height lands where the sheet's max-height caps
 // it at twelve rows and scrolls past that, and what a real Enter does in a textarea whose keydown listener left it
 // alone (a newline), against a real Ctrl+Enter (no newline; the save). Skips LOUDLY without a playwright browser

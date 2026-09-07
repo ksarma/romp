@@ -217,7 +217,7 @@ Raw, and press the **Comment** button that appears next to the selection; type t
 (Enter adds a line) and save it with **Cmd+Enter** on a Mac, **Ctrl+Enter** elsewhere, or the
 **Save** button. **Comment on this file** leaves a comment on the file as a whole, which every
 file takes. When a passage cannot be mapped from the
-Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
+Rendered view (a table, a code block), the panel says so, keeps your comment, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
 folder that already holds one; a file with none gets the folder created beside it), in the

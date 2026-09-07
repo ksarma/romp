@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { marked } from "marked";
 import type { FileViewActionCtx, TrackedEdit } from "./file-view";
-import type { Status, StoreComment } from "./file-comments-model";
+import type { LogEntry, Status, StoreComment } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -576,10 +576,14 @@ test("a refused mapping offers no Save and no hint — Switch to Raw and Cancel 
 
 test("a card renders a two-line body with its break; the collapsed preview and the Log's list fold it to one line", async () => {
   const two: StoreComment = { ...passage, id: T0 + "-119", body: "Which cache?\nSay which." };
+  // the same comment after a send: the Log's entry carries the body as it went, break included
+  const log: LogEntry[] = [{ ts: "2026-09-06T08:05:00.000Z", kind: "send", author: "you", sid: SID, sessionName: "api", accepted: 0, rejected: 0, queued: false, watermark: T0,
+    comments: [{ id: two.id, desc: 'on "shipping the cache in v1.2"', body: two.body }] }];
   const h = await harness();
   const over: Partial<Status> = {
     store: { v: 3, path: "docs/report.md", suggestions: [], comments: [two] },
     unsent: { comments: [two.id], replies: [], accepted: 0, rejected: 0, watermark: null },
+    log,
   };
   await h.open(over);
   const card = h.q('.fc-card[data-id="' + two.id + '"]')!;
@@ -587,9 +591,19 @@ test("a card renders a two-line body with its break; the collapsed preview and t
   h.click('.fc-card[data-id="' + two.id + '"] .fc-card-head');
   const body = h.q('.fc-card[data-id="' + two.id + '"] .fc-body')!;
   assert.equal(body.textContent, "Which cache?\nSay which.", "the open card holds the body verbatim, break included");
-  // the sheets keep the break on screen: pre-wrap on .fc-body, in both pages' sheets
+  // the Log's list: one click down, the send's item holds the body verbatim in one span — the break is in the text,
+  // not split into lines — and the sheet's nowrap is what folds the item to one line (the desc, then the first line)
+  h.click('[data-act="fclog"]');
+  h.click('[data-act="fclogrow"]');
+  const items = h.qa(".fc-log-detail .fc-list li");
+  assert.equal(items.length, 1, "the one comment the send carried");
+  assert.equal(items[0].textContent, 'on "shipping the cache in v1.2": Which cache?\nSay which.', "the desc, then the body as it went, break included");
+  assert.deepEqual(items[0].childNodes.map((c) => (c as E).tagName + ":" + (c as E).className), ["SPAN:fc-list-desc", "SPAN:"], "two spans, no line split: the fold is the sheet's");
+  assert.equal(items[0].childNodes[1].textContent, "Which cache?\nSay which.", "the body span keeps the break");
+  // the sheets: pre-wrap on .fc-body keeps a card's break on screen; nowrap on .fc-list li folds the Log's item — both pages' sheets
   for (const [name, css] of [["styles.css", CHAT_CSS], ["feed.css", FEED_CSS]] as const) {
     assert.match(css, /\n\.fc-body \{ font-size: 0\.86em; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; \}\n/, name + ": .fc-body wraps and keeps its breaks");
+    assert.match(css, /\n\.fc-list li \{ margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}\n/, name + ": .fc-list li folds to one line with an ellipsis");
   }
   h.dispose();
 });

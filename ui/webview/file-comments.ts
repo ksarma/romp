@@ -845,6 +845,30 @@ class Panel {
     ev.preventDefault(); ev.stopPropagation();
     this.closeComposer();
   };
+  /** A key in the box. A plain Enter is the browser's own newline; the chord saves (composerKeyAction); Escape cancels.
+   *  An Escape under a composing IME is the IME's (composerKeyAction: null, and its default cancels the composition), but
+   *  it is still not the viewer's: the document-level Escape (file-view.ts onKey) reads no isComposing and closes the whole
+   *  viewer — the panel and the typed comment with it — or peels edit mode. So EVERY Escape stops at the box. */
+  boxKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") e.stopPropagation();
+    const act = composerKeyAction(e);
+    if (act === "save") { e.preventDefault(); void this.saveComposer(); }
+    else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
+  };
+  /** The save chord, claimed at the WINDOW in the capture phase while the box is the key's target: the first listener a
+   *  keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts runs
+   *  every bound chord from a capture listener on this pane's document, wired when the pane loaded (so ahead of anything
+   *  the panel hangs on the document), and a chord with a real modifier dispatches while typing (keybindings.ts
+   *  dispatchable). Ctrl+Enter and Cmd+Enter are bindable there and conflict with no shell command, so a shell command the
+   *  person bound to one stopped the event before boxKey and ran instead: nothing saved, the hint under the box false.
+   *  The chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind that): the claim stops the
+   *  event short of the shell's listener and hands it to boxKey, which saves. Nothing else is claimed: an Escape, a plain
+   *  Enter, a composing IME's Enter and a key anywhere but the box pass untouched. */
+  claimSaveChord = (ev: KeyboardEvent) => {
+    if (ev.target !== this.input || composerKeyAction(ev) !== "save") return;
+    ev.stopPropagation();
+    this.boxKey(ev);
+  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
@@ -853,16 +877,7 @@ class Panel {
     this.input.rows = NOTE_ROWS;
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
-    this.input.addEventListener("keydown", (e) => {
-      // a plain Enter is the browser's own newline in the box; the chord saves (composerKeyAction); Escape cancels.
-      // An Escape under a composing IME is the IME's (composerKeyAction: null, and its default cancels the composition),
-      // but it is still not the viewer's: the document-level Escape (file-view.ts onKey) reads no isComposing and closes
-      // the whole viewer — the panel and the typed comment with it — or peels edit mode. So EVERY Escape stops at the box.
-      if (e.key === "Escape") e.stopPropagation();
-      const act = composerKeyAction(e);
-      if (act === "save") { e.preventDefault(); void this.saveComposer(); }
-      else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
-    });
+    this.input.addEventListener("keydown", this.boxKey);   // Escape and the save chord; a plain Enter is left to the textarea
     this.input.addEventListener("input", () => this.autosize());
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
@@ -886,6 +901,7 @@ class Panel {
     document.body.appendChild(this.float);
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
     document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
+    window.addEventListener("keydown", this.claimSaveChord, true);    // the save chord, ahead of the shell's dispatcher: see claimSaveChord
     ctx.onSelection((sel) => this.onSelection(sel));
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
@@ -1208,6 +1224,7 @@ class Panel {
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     document.removeEventListener("keydown", this.escapeReplace, true);
+    window.removeEventListener("keydown", this.claimSaveChord, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;
   }

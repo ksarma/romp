@@ -4935,6 +4935,20 @@ function typingIn(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
   return !!el && (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.isContentEditable);
 }
+// A focused button or link: Enter is its native click, which the browser fires only when the keydown is NOT
+// cancelled — so a handler that cancels Enter there suppresses the activation. The Tab scope yields for the same
+// set (`button, a`); a focused input is typingIn's.
+function activatesOnEnter(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null;
+  return !!el && typeof el.matches === "function" && el.matches("button, a");
+}
+// The file viewer or the file browser is up. Both mount in THIS document, over the board (file-view.ts,
+// file-browse.ts), so the cards are behind them and not what the person is looking at: a key then belongs to
+// the surface, never to the card cursor — the yield the chat pane's typing handler makes for the same two ids
+// (render.ts). Read per key, not latched: the ids come and go with the surfaces.
+function boardCovered(): boolean {
+  return !!(document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse"));
+}
 function feedWantsKeys(t: EventTarget | null): boolean {
   if (kbMode) return true;   // keyboard-nav is active → keep focus in the feed so the arrows land here
   if (document.getElementById("feed-modal")) return true;
@@ -5015,11 +5029,26 @@ window.addEventListener("keydown", (e) => {
   if (!kbMode) return;
   if (e.altKey || e.ctrlKey || e.metaKey) return;      // Alt+Arrow is the shell's pane move; leave other combos alone
   if (document.getElementById("feed-modal")) return;   // the modal owns keys while it's open
-  // focus in a text field: the field owns the key, the same yield the Tab scope makes. The cursor stays armed
-  // through a click (the file viewer opens over the board with it still set), so without this a plain Enter
-  // in the comment box — a newline there since the multi-line box — was cancelled here and descended into the
-  // first card, and the next one clicked a control behind the viewer (review 2026-09-07)
+  // The cursor stays armed through a click — nothing but Escape or a window blur disarms it — so the file viewer
+  // opens over the board with it still set, and a key meant for the viewer reaches this handler. Four yields, each
+  // keyed on the state that makes the key someone else's (review 2026-09-07, rounds 1 and 2):
+  // - focus in a text field: the field owns every key. Before this, a plain Enter in the comment box — a newline
+  //   there since the multi-line box — was cancelled here and descended into the first card, and the next one
+  //   clicked a control behind the viewer.
   if (typingIn(document.activeElement)) return;
+  // - a handler nearer the target already took the key: the viewer's Escape (file-view.ts onKey), the browser's
+  //   arrows and Enter (file-browse.ts), the Tab scope's Enter on a card control, the comments panel's Enter on a
+  //   card head. One key, one action — never that action plus a cursor move, and the Escape that closes the
+  //   viewer leaves the cursor where it was on the board.
+  if (e.defaultPrevented) return;
+  // - the viewer or the browser is up: no key is the cards' behind it. Save hides the comment box with focus in it,
+  //   and focus falls to the body — the text-field yield alone then let Enter descend into a card the person
+  //   could not see, and the next Enter click a control behind the viewer.
+  if (boardCovered()) return;
+  // - focus on a button or link: Enter is its native click, and cancelling the keydown here suppressed it — a Tab
+  //   from the comment box to Save and Enter saved nothing and descended instead. The arrows stay the cursor's: a
+  //   button has no arrow behaviour of its own.
+  if (e.key === "Enter" && activatesOnEnter(document.activeElement)) return;
   const k = e.key, fwd = (k === "ArrowDown" || k === "ArrowRight"), back = (k === "ArrowUp" || k === "ArrowLeft");
   if (kbMode === "cards") {
     if (fwd || back) {
