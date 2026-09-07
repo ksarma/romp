@@ -664,6 +664,37 @@ class Counters(unittest.TestCase):
             em._ASM_STATS.pop("ft-test", None)
             em._ASM_STATS.pop("g:ft-test", None)
 
+    def test_wire_stats_count_exactly(self):
+        # A _LazyWire cell is made by the pusher and materialized by whichever sender thread first needs the
+        # whole frame, so its counter is bumped from many threads at once (the perf stack's serialize change,
+        # audited when this branch was rebased onto it).
+        saved = dict(km._wire_stats)
+        km._wire_stats["feed_body"] = 0
+        try:
+            total = _hammer(lambda: km._LazyWire(lambda: "{}", 2, "feed_body").text(), n=2000)
+            self.assertEqual(km._wire_stats["feed_body"], total)
+        finally:
+            km._wire_stats.clear()
+            km._wire_stats.update(saved)
+
+    def test_intr_marks_memo_stats_count_exactly(self):
+        # The interrupt-marks memo is read by the interrupt and nudge ticks on the pusher and by connect-push
+        # builds on WS threads; every call bumps hit or miss. The machine-cut read is stubbed so the test is
+        # about the counter, not the states file.
+        saved = (dict(km._intr_marks_memo_stats), km._last_machine_cut)
+        km._intr_marks_memo_stats.update(hit=0, miss=0, evict=0)
+        km._last_machine_cut = lambda sid: (0.0, "")
+        turns = []
+        try:
+            total = _hammer(lambda: km._interrupt_marks(turns, sid=SID, family="display"), n=2000)
+            st = km._intr_marks_memo_stats
+            self.assertEqual(st["hit"] + st["miss"], total)
+        finally:
+            km._intr_marks_memo.pop((SID, "display"), None)
+            km._last_machine_cut = saved[1]
+            km._intr_marks_memo_stats.clear()
+            km._intr_marks_memo_stats.update(saved[0])
+
 
 if __name__ == "__main__":
     unittest.main()

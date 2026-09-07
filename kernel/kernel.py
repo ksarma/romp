@@ -681,6 +681,18 @@ def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
 _intr_marks_memo = {}
 _INTR_MARKS_MEMO_MAX = 512
 _intr_marks_memo_stats = {"hit": 0, "miss": 0, "evict": 0}
+_INTR_MARKS_STATS_LOCK = threading.Lock()   # the counters are bumped from the ticks on the pusher and from
+#                                             connect-push builds on WS threads at once; `+= 1` is a
+#                                             read-modify-write and drifts low without the GIL (the
+#                                             free-threading review's counter rule). The memo dict itself
+#                                             needs no lock: its ops are single dict operations on
+#                                             immutable tuples keyed by the parse object, so a lost insert
+#                                             or a double clear is one extra miss, never a wrong answer.
+
+
+def _intr_marks_bump(key, n=1):
+    with _INTR_MARKS_STATS_LOCK:
+        _intr_marks_memo_stats[key] = _intr_marks_memo_stats.get(key, 0) + n
 
 
 def _interrupt_marks(turns, sid="", family=None):
@@ -717,14 +729,14 @@ def _interrupt_marks(turns, sid="", family=None):
     if key is not None:
         e = _intr_marks_memo.get(key)
         if e is not None and e[0] is turns and e[1] == cut:
-            _intr_marks_memo_stats["hit"] += 1
+            _intr_marks_bump("hit")
             return e[2]
-        _intr_marks_memo_stats["miss"] += 1
+        _intr_marks_bump("miss")
     atoms = [a for turn in turns for a in (turn.get("atoms") or [])]
     res = _interrupt_marks_atoms(atoms, cut[0], cut[1])
     if key is not None:
         if len(_intr_marks_memo) >= _INTR_MARKS_MEMO_MAX and key not in _intr_marks_memo:
-            _intr_marks_memo_stats["evict"] += len(_intr_marks_memo)   # the repo's overflow idiom: clear whole
+            _intr_marks_bump("evict", len(_intr_marks_memo))   # the repo's overflow idiom: clear whole
             _intr_marks_memo.clear()
         _intr_marks_memo[key] = (turns, cut, res)
     return res
@@ -737,12 +749,13 @@ def _intr_marks_forget(alive):
     WS thread may insert concurrently."""
     for k in list(_intr_marks_memo):
         if k[0] not in alive and _intr_marks_memo.pop(k, None) is not None:
-            _intr_marks_memo_stats["evict"] += 1
+            _intr_marks_bump("evict")
 
 
 def _intr_marks_memo_report():
     """The memo's counters plus its occupancy, for /perf (plan D4: a memo reports hit/miss/evict)."""
-    out = dict(_intr_marks_memo_stats)
+    with _INTR_MARKS_STATS_LOCK:
+        out = dict(_intr_marks_memo_stats)
     out["entries"] = len(_intr_marks_memo)
     return out
 
@@ -32989,8 +33002,18 @@ _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "feed_body": 0, "bars_
 #   /perf memos.wire (plan D4: a memo reports its hits): _feed_parts' per-card encode served from its memo vs run,
 #   whole frames serialized (a _LazyWire materialized; at most once per build each), bars builds whose payload
 #   could not be keyed and took the whole dump for their signature, and values a wire encoder shipped as str()
-#   (_wire_default, one per encode). Bare increments like _goals_memo_stats: a lost count under a thread race is
-#   a counter's business, not a frame's.
+#   (_wire_default, one per encode). Bumped through _wire_bump, under a lock: the pusher bumps the per-entry
+#   cache and the bars signature, and whichever sender thread first materializes a _LazyWire bumps its counter,
+#   so `+= 1` here is a read-modify-write across threads and drifts low without the GIL (the free-threading
+#   review's counter rule; tests assert exact counts).
+_WIRE_STATS_LOCK = threading.Lock()
+
+
+def _wire_bump(key, n=1):
+    with _WIRE_STATS_LOCK:
+        _wire_stats[key] = _wire_stats.get(key, 0) + n
+
+
 _wire_default_said = set()   # type names _wire_default has written to stderr: a type is said once, not per value
 
 
@@ -33003,7 +33026,7 @@ def _wire_default(o, enc="wire"):
     the whole frame, if one goes), and the type is written to stderr once, naming the encoder that met it first.
     A value json cannot encode (a set, a datetime, a Path) is a builder's mistake, and str() of it is not what the
     pane expects; before this the frame carried the string and nothing said so."""
-    _wire_stats["default_str"] += 1
+    _wire_bump("default_str")
     tn = type(o).__name__
     if tn not in _wire_default_said:
         _wire_default_said.add(tn)
@@ -33049,7 +33072,7 @@ class _LazyWire:
             s = self._fn()
             self._s = s
             if self._stat:
-                _wire_stats[self._stat] += 1
+                _wire_bump(self._stat)
         return s
 
     def size(self):
@@ -33782,11 +33805,11 @@ def _feed_parts(feed):
     m = _feed_cards_memo
     if m is not None and m[0] is asks:
         cards = m[1]
-        _wire_stats["feed_cards_hit"] += 1
+        _wire_bump("feed_cards_hit")
     else:
         cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=dflt) for a in asks}
         _feed_cards_memo = (asks, cards)
-        _wire_stats["feed_cards_miss"] += 1
+        _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
             seen, dup = set(), set()
             for a in asks:
@@ -36411,7 +36434,7 @@ def _push(targets, connect=False, tmux=None):
                         else:                                # unkeyable (said once by _delta_parts): whole frames, as before
                             s = json.dumps(bars, default=_wire_default_in("_push bars"))
                             bars_ms, bars_sig = _LazyWire(None, len(s), text=s), _dedup_sig(bars, s)
-                            _wire_stats["bars_sig_fallback"] += 1
+                            _wire_bump("bars_sig_fallback")
                         _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig, bars_parts)
                 _send_slot(c, "bars", bars, bars_ms, bars_sig, bars_parts)
         except Exception:
