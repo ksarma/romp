@@ -419,7 +419,7 @@ test("a view repaint over the SAME text leaves the composer where it was", async
 
 // ── a refused mapping has nothing to save to ───────────────────────────────────────────────────────
 
-test("a refused mapping shows no Save; the save chord refuses in words and keeps the note — never a silent whole-file comment", async (t: TestContext) => {
+test("a refused mapping shows no Save; the save chord refuses in words and keeps the comment — never a silent whole-file comment", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   startComment(w, "Rendered · Raw");   // a selection in the action row, outside the file text: the mapper refuses

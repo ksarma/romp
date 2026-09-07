@@ -698,7 +698,7 @@ CLI. The browser builds the anchor from the displayed text with the engine's `ma
 quote plus 24 characters of prefix and suffix) and sends it with the note and the start offset;
 the host script re-reads the file and locates the anchor with the engine's `locateAnchor`, hinted
 by that offset, and refuses when the located text differs from the quote or two candidates tie.
-The typed note is never discarded by a refusal.
+The typed comment is never discarded by a refusal.
 
 In Raw view the mapping is exact. Each logical line is one row whose text equals the source line
 (the viewer always soft-wraps, and the row number is CSS content that never enters a selection),
@@ -727,9 +727,9 @@ aligned blocks is accepted, and its quote includes the blank line and block mark
 which the composer shows before saving. A selection whose edge falls inside a mark the renderer
 consumed paints narrower in Rendered than in Raw, never wider.
 
-When the mapping refuses, the composer keeps the typed note, states the reason in one line, and
+When the mapping refuses, the composer keeps the typed comment, states the reason in one line, and
 offers a switch to Raw that preselects the same passage when its text occurs in the source (code
-fences) and otherwise opens scrolled to the block's first line with the note intact (tables and
+fences) and otherwise opens scrolled to the block's first line with the comment intact (tables and
 HTML blocks).
 
 Painting distinguishes three states after the engine locates a comment's anchor in the current
@@ -769,7 +769,7 @@ Acceptance criteria:
   painting the stored anchor in Rendered wraps exactly the originally selected text; the reply
   CLI reads the resulting comment unchanged.
 - Rendered: a selection touching code, a table, an HTML block, an entity-bearing paragraph, or
-  an escaped link label is refused, the note survives, and the Raw offer opens with the passage
+  an escaped link label is refused, the comment survives, and the Raw offer opens with the passage
   selected when its text occurs in the source, else scrolled to the block.
 - Every text format: a comment from the Raw view of an HTML, SVG, CSS, CSV, and code fixture
   stores the exact source slice.
@@ -1022,7 +1022,7 @@ and none when the status holds none (the first comment on an embedded figure no 
 has nothing to fence on, since the host hashes only the srcs the sidecar names; a fence the panel
 cannot arm is left off, never guessed). A `figure-changed` refusal is never retried; the panel
 re-reads the comments and the view, as it does when the poll sees a figure move, and shows the
-refusal with Reload, the note kept (the review consolidation, 2026-09-06; the build first sent the
+refusal with Reload, the comment kept (the review consolidation, 2026-09-06; the build first sent the
 three mtime keys only, so the host's fence stood unarmed). `retarget` is the
 same path for the same figure: a stored `src` must be named again, unchanged, and the same fence
 applies. The reply's hash fields are described under the op above. A text file's figures are

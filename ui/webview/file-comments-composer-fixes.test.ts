@@ -2,7 +2,7 @@
 // (2026-09-07)"; the 2026-09-07 review), driven through the panel itself. An Escape pressed under a composing IME (macOS
 // Chrome and Safari report key "Escape" with isComposing) is the IME's, and the box let it through to the viewer's
 // document-level Escape (file-view.ts onKey reads no isComposing), which closed the whole viewer with the draft in it;
-// every Escape stops at the box now, its default left to the IME. And autosizeNote's `height: auto` measurement collapsed
+// every Escape stops at the box now, its default left to the IME. And autosizeComposer's `height: auto` measurement collapsed
 // a grown box for one layout, in which a scrolled aside — short on the phone and in a short pane — was clamped toward its
 // top on every keystroke; the scrolled ancestors are read before the collapse and written back after the new height. The
 // drag-before-typing guard and the hint on a coarse pointer are file-comments-composer-review.test.ts's; the real layout
@@ -86,7 +86,7 @@ class E extends N {
   listeners = new Map<string, Array<(ev: Ev) => void>>();
   hidden = false; title = ""; type = ""; disabled = false; placeholder = ""; value = ""; checked = false; offsetWidth = 0; readOnly = false;
   rows = 0;
-  // the layout a test gives a box: what the browser would measure at height: auto (autosizeNote reads these)
+  // the layout a test gives a box: what the browser would measure at height: auto (autosizeComposer reads these)
   scrollHeight = 0; offsetHeight = 0; clientHeight = 0;
   selectionStart = 0; selectionEnd = 0;
   style: Record<string, string> = {};
@@ -358,28 +358,28 @@ function scrolledBox(scrollHeight: number, asideTop: number) {
   return { ta: ta as unknown as HTMLTextAreaElement, aside, main, writes };
 }
 
-test("autosizeNote holds a scrolled ancestor's scroll across its height: auto measurement, on the measured path and the unmeasurable one", async () => {
-  const { autosizeNote } = await import("./file-comments");
+test("autosizeComposer holds a scrolled ancestor's scroll across its height: auto measurement, on the measured path and the unmeasurable one", async () => {
+  const { autosizeComposer } = await import("./file-comments");
   const grown = scrolledBox(168, 142);
-  assert.equal(autosizeNote(grown.ta), "170px", "sized as before");
+  assert.equal(autosizeComposer(grown.ta), "170px", "sized as before");
   assert.equal(grown.aside.scrollTop, 142, "the aside is where the person scrolled it, not 1px from its top");
   assert.deepEqual(grown.writes, [142], "one write, after the new height is set");
   assert.equal(grown.main.scrollTop, 0, "an ancestor at its top has nothing to hold and is not written");
   // the box has no layout to measure: the height goes back, and so does the scroll
   const hidden = scrolledBox(0, 90);
   hidden.ta.style.height = "199.8px";
-  assert.equal(autosizeNote(hidden.ta), null);
+  assert.equal(autosizeComposer(hidden.ta), null);
   assert.equal(hidden.ta.style.height, "199.8px", "the inline height it had is put back");
   assert.equal(hidden.aside.scrollTop, 90, "…and the scroll with it");
   // nothing scrolled: nothing held, nothing written
   const top = scrolledBox(84, 0);
-  assert.equal(autosizeNote(top.ta), "86px");
+  assert.equal(autosizeComposer(top.ta), "86px");
   assert.deepEqual(top.writes, [], "an ancestor at scrollTop 0 cannot be clamped and is left alone");
 });
 
 // ── pinned at source ───────────────────────────────────────────────────────────────────────────────
 
-test("source: every Escape stops at the box before the key policy runs; autosizeNote holds the scrolled ancestors around the measurement", () => {
+test("source: every Escape stops at the box before the key policy runs; autosizeComposer holds the scrolled ancestors around the measurement", () => {
   assert.match(SRC, /if \(e\.key === "Escape"\) e\.stopPropagation\(\);\n\s*const act = composerKeyAction\(e\);/,
     "a composing Escape is null to composerKeyAction, so the stop comes before it, for every Escape");
   assert.match(SRC, /const held = scrolledAncestors\(ta\);\n\s*ta\.style\.height = "auto";/, "read before the collapse");

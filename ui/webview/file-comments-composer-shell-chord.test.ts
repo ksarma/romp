@@ -94,7 +94,7 @@ class E extends N {
   listeners = new Map<string, Array<(ev: Ev) => void>>();
   hidden = false; title = ""; type = ""; disabled = false; placeholder = ""; value = ""; checked = false; offsetWidth = 0; readOnly = false;
   rows = 0;
-  // the layout a test gives a box: what the browser would measure at height: auto (autosizeNote reads these)
+  // the layout a test gives a box: what the browser would measure at height: auto (autosizeComposer reads these)
   scrollHeight = 0; offsetHeight = 0; clientHeight = 0;
   selectionStart = 0; selectionEnd = 0;
   style: Record<string, string> = {};
@@ -379,7 +379,7 @@ function atWindow(target: N, init: Init): Event & Init {
   return ev;
 }
 
-test("at the window: the save chord with the box as its target saves the note and stops the event there, Ctrl or Cmd", async () => {
+test("at the window: the save chord with the box as its target saves the comment and stops the event there, Ctrl or Cmd", async () => {
   const h = await harness();
   await h.open();
   h.click('[data-act="fcfile"]');
@@ -392,7 +392,7 @@ test("at the window: the save chord with the box as its target saves the note an
   await tick();
   assert.equal(h.posted.length, before + 1, "one save, not one per listener");
   assert.equal(h.last().verb, "comment");
-  assert.equal(h.last().args.note, "Which cache?\nSay which.", "the note as boxKey saves it: the blank tail goes, the break inside stays");
+  assert.equal(h.last().args.note, "Which cache?\nSay which.", "the comment as boxKey saves it: the blank tail goes, the break inside stays");
   await h.ok();
   assert.equal(h.q(".fc-composer")!.hidden, true, "saved: the composer closes");
   h.click('[data-act="fcfile"]');
@@ -608,7 +608,7 @@ for (const name of ["chromium", "firefox"] as const) {
       const after = await posted();
       assert.equal(after.length, n0 + 1, "one save");
       assert.equal(after[after.length - 1].verb, "comment");
-      assert.deepEqual(after[after.length - 1].args, { note: "Which cache?\nSay which." }, "the whole-file comment, the typed note");
+      assert.deepEqual(after[after.length - 1].args, { note: "Which cache?\nSay which." }, "the whole-file comment, the typed text");
       assert.deepEqual(await calls(), [], "the shell command stayed quiet: the claim at the window met the event first");
       assert.equal((await box()).value, "Which cache?\nSay which.", "no line went in with the chord");
       // the same chord with nothing of ours focused is the shell's, as before

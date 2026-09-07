@@ -488,11 +488,11 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
 // ── the composer's box (the follow-on of 2026-09-07: a comment is often several lines) ──────────────
-/** The box starts at this many rows and grows with its content to the cap (autosizeNote; the sheets' min-height and
+/** The box starts at this many rows and grows with its content to the cap (autosizeComposer; the sheets' min-height and
  *  max-height say the same in em), then scrolls; the person may also drag its handle (resize: vertical). */
-export const NOTE_ROWS = 3;
-export const NOTE_MAX_ROWS = 12;
-/** Which modifier the save chord wears: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
+export const COMPOSER_ROWS = 3;
+export const COMPOSER_MAX_ROWS = 12;
+/** Which modifier the save chord uses: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
  *  marks module, the same test; that module stays in the lazy chunk, so the test is repeated here rather than imported),
  *  detected once. Only the HINT reads it: either modifier saves on every platform. */
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
@@ -521,8 +521,8 @@ export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): 
   return touch ? COMPOSER_HINT_TOUCH : saveChord(mac) + " saves; Enter adds a line";
 }
 /** Size the box to its content: height auto, then the scroll height plus the border (box-sizing: border-box). The
- *  sheet's max-height caps the result at NOTE_MAX_ROWS rows — past that the box scrolls — and its min-height floors it
- *  at NOTE_ROWS. Returns the height set, or null when the box has no layout to measure (hidden, or a document with no
+ *  sheet's max-height caps the result at COMPOSER_MAX_ROWS rows — past that the box scrolls — and its min-height floors it
+ *  at COMPOSER_ROWS. Returns the height set, or null when the box has no layout to measure (hidden, or a document with no
  *  renderer), in which case the inline height it had is put back.
  *
  *  The measurement leaves the page's scroll where it found it. `height: auto` collapses a grown box to its rows for the
@@ -531,7 +531,7 @@ export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): 
  *  the scroll back (with cards below the box the browser's anchoring over-corrects the other way instead). Every keystroke
  *  in a grown box jumped the panel toward its top, the Save row and the cards the person had scrolled to leaving the
  *  viewport. So the scrolled ancestors' positions are read first and written back last, on both paths. */
-export function autosizeNote(ta: HTMLTextAreaElement): string | null {
+export function autosizeComposer(ta: HTMLTextAreaElement): string | null {
   const prev = ta.style.height;
   const held = scrolledAncestors(ta);
   ta.style.height = "auto";
@@ -889,7 +889,7 @@ class Panel {
     ensureListener();
     live = this;
     this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
-    this.input.rows = NOTE_ROWS;
+    this.input.rows = COMPOSER_ROWS;
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
     this.input.addEventListener("keydown", this.boxKey);   // Escape here; the save chord arrives through the window's claim (claimSaveChord); a plain Enter is left to the textarea
@@ -1780,7 +1780,7 @@ class Panel {
   closeComposer(): void {
     this.composer = null;
     this.input.value = "";
-    this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at NOTE_ROWS, autosized again
+    this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at COMPOSER_ROWS, autosized again
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderComposer();
@@ -2717,7 +2717,7 @@ class Panel {
     }
     return head;
   }
-  /** The box follows its content (autosizeNote) on every input — unless the person dragged the handle, when their
+  /** The box follows its content (autosizeComposer) on every input — unless the person dragged the handle, when their
    *  height stands until the composer closes; a box with no layout to measure keeps the height it had. An inline
    *  height that is not the one autosize last set was dragged there (the sheet's resize: vertical writes it, and
    *  fires no input). Before the first keystroke autosize has set none — the box opens with no inline height, and
@@ -2728,7 +2728,7 @@ class Panel {
     const ta = this.input;
     if (this.sizedTo === null && ta.style.height) return;                    // dragged before the first keystroke
     if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;   // dragged since
-    const h = autosizeNote(ta);
+    const h = autosizeComposer(ta);
     if (h !== null) this.sizedTo = h;
   }
   private renderComposer(): void {

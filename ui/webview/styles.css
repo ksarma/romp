@@ -3761,9 +3761,9 @@ body.filebrowse-open { overflow: hidden; }
 .fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fc-refused { color: var(--warn); }
 /* the comment box is a textarea (the 2026-09-07 follow-on): three rows to start, grown to its content by the panel
-   (autosizeNote) and capped here at twelve, then it scrolls; the person may drag it taller or shorter (resize:
+   (autosizeComposer) and capped here at twelve, then it scrolls; the person may drag it taller or shorter (resize:
    vertical). One row is 1.4em of the box's own size; the 12px are its padding and border (box-sizing: border-box),
-   so the floor and the cap are exactly NOTE_ROWS and NOTE_MAX_ROWS rows (file-comments.ts). */
+   so the floor and the cap are exactly COMPOSER_ROWS and COMPOSER_MAX_ROWS rows (file-comments.ts). */
 .fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; line-height: 1.4; padding: 5px 8px; border-radius: 6px;
   border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg);
   resize: vertical; overflow-y: auto; min-height: calc(3 * 1.4em + 12px); max-height: calc(12 * 1.4em + 12px); }

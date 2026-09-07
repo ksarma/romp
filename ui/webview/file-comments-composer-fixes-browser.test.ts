@@ -1,7 +1,7 @@
 // The composer follow-on's review fixes under a REAL renderer (plans/file-review.md, "The composer follow-on
 // (2026-09-07)"; the 2026-09-07 review), the two the stand-in cannot lay out or gesture: headless Chromium and Firefox
 // under the worktree's sheet. One, the panel's aside is a scroll container (feed.css .fileview-aside, overflow: auto) and
-// short on the phone and in a short pane; autosizeNote's `height: auto` measurement collapsed a grown box for one layout,
+// short on the phone and in a short pane; autosizeComposer's `height: auto` measurement collapsed a grown box for one layout,
 // in which the browser clamped a scrolled aside toward its top, so every keystroke at the twelve-row cap jumped the panel
 // by nine rows — the leg scrolls a real 300px aside to its bottom and types. Two, the REAL panel (fileCommentsAction.mount,
 // a stubbed viewer context) takes a real mouse drag on the box's resize handle BEFORE a word is typed: the browser writes
@@ -24,7 +24,7 @@ function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
     stdin: {
-      contents: 'import { autosizeNote, fileCommentsAction, NOTE_ROWS, NOTE_MAX_ROWS } from "./file-comments";\n(window as any).__romp = { autosizeNote, fileCommentsAction, NOTE_ROWS, NOTE_MAX_ROWS };\n',
+      contents: 'import { autosizeComposer, fileCommentsAction, COMPOSER_ROWS, COMPOSER_MAX_ROWS } from "./file-comments";\n(window as any).__romp = { autosizeComposer, fileCommentsAction, COMPOSER_ROWS, COMPOSER_MAX_ROWS };\n',
       resolveDir: UI, loader: "ts", sourcefile: "composer-fixes-probe.ts",
     },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
@@ -69,10 +69,10 @@ ${COMPOSER}
 const PAGE_PANEL = HEAD + `<div id="romp-fileview"><div class="fileview-main" style="height: 600px"><div class="fileview-body"><div class="fileview-md"><p>Intro text here.</p></div></div></div></div>
 <script src="/dist/composer.js"></script></body></html>`;
 
-/** The page's side of leg one: the box wired to autosizeNote the way the panel wires its own, and the readings. */
+/** The page's side of leg one: the box wired to autosizeComposer the way the panel wires its own, and the readings. */
 const ASIDE_JS = `window.__wire = () => {
   const ta = document.querySelector("textarea.fc-input");
-  ta.addEventListener("input", () => { window.__romp.autosizeNote(ta); });
+  ta.addEventListener("input", () => { window.__romp.autosizeComposer(ta); });
   ta.focus();
 };
 window.__read = () => {
@@ -162,17 +162,17 @@ async function inBrowser(t: any, name: "chromium" | "firefox", html: string, js:
 }
 
 for (const name of ["chromium", "firefox"] as const) {
-  test("in " + name + ": a keystroke at the twelve-row cap leaves a scrolled aside where the person scrolled it — autosizeNote's measurement holds the scroll", async (t) => {
+  test("in " + name + ": a keystroke at the twelve-row cap leaves a scrolled aside where the person scrolled it — autosizeComposer's measurement holds the scroll", async (t) => {
     await inBrowser(t, name, PAGE_ASIDE, ASIDE_JS, async (page) => {
       const read = (): Promise<Read> => page.evaluate(() => (window as any).__read());
-      const { NOTE_MAX_ROWS } = await page.evaluate(() => ({ NOTE_MAX_ROWS: (window as any).__romp.NOTE_MAX_ROWS }));
+      const { COMPOSER_MAX_ROWS } = await page.evaluate(() => ({ COMPOSER_MAX_ROWS: (window as any).__romp.COMPOSER_MAX_ROWS }));
       await page.evaluate(() => (window as any).__wire());
       // fourteen lines: the box is at the cap, and the aside — 300px tall — has more content than it can show
       await page.keyboard.type(Array.from({ length: 14 }, (_, i) => "line " + (i + 1)).join("\n"));
       const cap = await read();
       assert.equal(cap.lines, 14);
       const capPx = px(cap.inline);
-      assert.ok(capPx > cap.height + 20, "autosizeNote wrote the content's height (" + cap.inline + ") and the sheet's max-height caps the box under it (" + cap.height + "px): the box is at the cap");
+      assert.ok(capPx > cap.height + 20, "autosizeComposer wrote the content's height (" + cap.inline + ") and the sheet's max-height caps the box under it (" + cap.height + "px): the box is at the cap");
       assert.ok(cap.scrollMax > 60, "the aside scrolls: its content overflows the 300px row by " + cap.scrollMax + "px");
       // the person scrolls to the bottom (the Save row, the cards) — the case the phone's short aside makes common
       const bottom: number = await page.evaluate(() => (window as any).__toBottom());
@@ -181,10 +181,10 @@ for (const name of ["chromium", "firefox"] as const) {
       const bare = await page.evaluate(() => (window as any).__bareCollapse());
       assert.ok(bare.clamped < bare.top - 30, "height: auto with no hold clamps the scrolled aside (the defect; " + bare.top + " -> " + bare.clamped + ") — the hold below is what keeps it");
       near(bare.after, bottom, "put back for the real test");
-      // the mechanism under test: an input event runs autosizeNote — the scroll must not move
+      // the mechanism under test: an input event runs autosizeComposer — the scroll must not move
       await page.evaluate(() => (window as any).__input());
       const held = await read();
-      near(held.scrollTop, bottom, "autosizeNote left the aside's scroll where it was");
+      near(held.scrollTop, bottom, "autosizeComposer left the aside's scroll where it was");
       assert.equal(held.inline, cap.inline, "…and the box at the cap");
       // a real keystroke, the caret at the end of the last line (in view at the bottom): the same
       await page.keyboard.type("x");
@@ -196,7 +196,7 @@ for (const name of ["chromium", "firefox"] as const) {
       assert.ok(mid > 0 && mid < bottom);
       await page.evaluate(() => (window as any).__input());
       near((await read()).scrollTop, mid, "held at a middle position too");
-      assert.equal(NOTE_MAX_ROWS, 12);
+      assert.equal(COMPOSER_MAX_ROWS, 12);
     });
   });
 
