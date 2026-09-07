@@ -461,9 +461,11 @@ EOF
 
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
-    # The hook hands gitleaks the same range the identifier scan walks: the pushed tip, minus the
-    # remote's old tip and every ref already on the remote (the 2026-09-06 rule; see rev_range).
-    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$new_sha --not $old_sha --remotes=origin"* ]]
+    # The hook hands gitleaks the same range the identifier scan walks: the pushed tip, minus every
+    # ref any fetched remote already has and the remote's old tip (see rev_range). The exclusion
+    # once stopped at the pushed-to remote's refs (`--remotes=origin`, fork PR #222); upstream's
+    # #968 review widened it to every remote, and the 2026-09-07 sync took that shape.
+    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$new_sha --not --remotes $old_sha"* ]]
 }
 
 @test "pre-push hook: the scan asks git to show merge-commit diffs" {

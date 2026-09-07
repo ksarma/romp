@@ -11,6 +11,14 @@ name: PR tier
 # status on the PR is always about the labels it carries now. Making it a
 # REQUIRED check on main is a branch-ruleset setting in the repository
 # settings, which is the maintainers' call, not something this file can do.
+#
+# Fork divergence (2026-09-07): this copy also counts `docs` and `batch`. `docs`
+# is upstream's coming rename of tests-only, accepted ahead of the rename so a PR
+# labeled either way passes (the fork's own PRs keep tests-only). `batch` marks a
+# batch PR (scripts/batch.py): it merges several already-tiered member PRs at
+# once and carries no tier of its own, and without it every batch PR would show
+# this check red, which batch.py's ci_of folds into "ci: failure". The rest of
+# the file is upstream's byte for byte, so the next sync merges cleanly.
 
 on:
   pull_request:
@@ -29,9 +37,9 @@ jobs:
         env:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
-          count=$(jq '[.[] | select(. == "tests-only" or . == "fix" or . == "feature" or . == "major-feature")] | length' <<<"$LABELS")
+          count=$(jq '[.[] | select(. == "tests-only" or . == "docs" or . == "fix" or . == "feature" or . == "major-feature" or . == "batch")] | length' <<<"$LABELS")
           if [ "$count" -eq 1 ]; then
             exit 0
           fi
-          echo "::error::This PR carries $count tier labels; exactly one is required: tests-only, fix, feature or major-feature."
+          echo "::error::This PR carries $count tier labels; exactly one is required: tests-only (or docs), fix, feature or major-feature; a batch PR carries batch alone."
           exit 1

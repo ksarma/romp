@@ -52,7 +52,9 @@ from pathlib import Path
 REQUIRED = ("title", "status", "where", "added")
 OPTIONAL = ("pr", "tier", "offered", "closed", "supersedes")
 KEYS = REQUIRED + OPTIONAL
-TIERS = ("fix", "tests-only", "feature", "major-feature")
+# `docs` is upstream's coming rename of tests-only, accepted ahead of the rename (scripts/batch.py
+# and the fork's .github/workflows/pr-tier.yml count the same labels); the fork's PRs keep tests-only.
+TIERS = ("fix", "tests-only", "docs", "feature", "major-feature")
 
 # The status vocabulary. `approved` is the maintainer's word: offer it. The four terminal statuses
 # collapse in the rendering; divergence and keep-private get a short table of their own.
@@ -588,7 +590,7 @@ KEYWORDS = [
 ]
 UPSTREAM_REF = re.compile(r"\b(?:their (?:PR )?#(\d+)|upstream PR #(\d+)|romp-on/romp#(\d+))")
 FORK_PR = re.compile(r"\bfork PR #(\d+)")
-TIER_WORD = re.compile(r"label `?(fix|tests-only|feature|major-feature)`?|\b(major-feature|tests-only)\b")
+TIER_WORD = re.compile(r"label `?(fix|tests-only|docs|feature|major-feature)`?|\b(major-feature|tests-only)\b")
 ANY_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
 

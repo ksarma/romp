@@ -132,7 +132,10 @@ isolation_problems() {   # $1 suite
     run manager_suites
     [ "$status" -eq 0 ]
     local expected
-    expected="$(printf '%s\n' "$TESTS/romp-manager-ensure.bats" "$TESTS/romp-manager-origin.bats" "$TESTS/romp.bats" | LC_ALL=C sort)"
+    # romp-manager-tmux-scope.bats came with the 2026-09-07 upstream sync: it starts the real manager
+    # to read where tmux lands, and floors its state root through tests/tmux-private.bash.
+    expected="$(printf '%s\n' "$TESTS/romp-manager-ensure.bats" "$TESTS/romp-manager-origin.bats" \
+        "$TESTS/romp-manager-tmux-scope.bats" "$TESTS/romp.bats" | LC_ALL=C sort)"
     [ "$(printf '%s\n' "$output" | LC_ALL=C sort)" = "$expected" ]
 }
 
