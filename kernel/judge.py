@@ -15413,6 +15413,14 @@ def _courier_scan(fsid, path, now):
                 #                                    plain work unit there instead — a '#d' nothing places
                 #                                    wedges auto-nudge's placement gate, 2026-08-16).
                 continue
+            if _placed_key(placed_ids, seg["id"]):
+                # placed under a key whose parse t has since DRIFTED (the exact check above missed it): the
+                # write loop dedups such a row through the same helper and never files it, so returning it
+                # would mark every scan of this session incomplete and defeat the gate for it forever (the
+                # review's nit 3, 2026-09-07). Checked here, after the peer filter, so the drift-tolerant
+                # walk over the placements runs only for the rows the scan would otherwise return; a drifted
+                # placement gets no link repair (the repair resolves its target by exact key), as before.
+                continue
             rows.append((seg["t"], fsid, seg["id"], _unit_text(seg["atoms"]), pm[1], pm[0],
                          _seg_peer_kind(seg), _seg_anchor(seg), path))
     if rows:

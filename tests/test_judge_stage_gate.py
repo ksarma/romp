@@ -2182,6 +2182,31 @@ class CourierGate(_Gate):
         self.assertEqual(len(notes), 1)
         self.assertTrue(notes[0].startswith("link-attach: RuntimeError"), notes[0])
 
+    def test_a_placed_row_whose_t_drifted_is_placed_for_the_scan_too(self):
+        # the review's nit 3: the write loop dedups a placed row drift-safely (_placed_key), but the scan's
+        # placed check was exact-key, so a row whose parse t drifted after its placement was returned every
+        # pass, marked the run incomplete every pass, and was then deduped by the write loop: the gate was
+        # defeated for that session forever. The scan now asks the same helper: no row, a complete run, a stamp.
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        parts = seg_id.split(":")
+        drifted = ":".join(parts[:-2] + [str(int(parts[-2]) + 7), parts[-1]])   # the same segment, its t moved
+        self.assertNotEqual(drifted, seg_id)
+        store = jd.load_goals(SID)
+        store["placements"][drifted] = "fyi"                            # as the courier filed it, under the old t
+        jd.save_goals(SID, store)
+        self.assertTrue(jd._placed_key(store["placements"], seg_id), "premise: the write loop would dedup it")
+        self.assertNotIn(seg_id, store["placements"], "premise: the exact check misses it")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self.courier_calls, [], "no row returned, no call")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the scan is complete and stamps")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "and skips")
+
     def test_counters_add_up_over_the_courier(self):
         path = self._peer_session(SID, SID2)
         self._pass(tiers=("courier",))
