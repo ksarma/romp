@@ -395,8 +395,10 @@ test('save refuses too-large before any write when a record\'s oldText or author
   const bloated = refused(w, saveReq(w.report, st, cur, [{ ...rec, oldText: 'x'.repeat(9 * MB) }]), 'too-large');
   assert.match(bloated.error, /^cannot write the comments for ~\/notes-api\/docs\/report\.md: with the change records and the decisions taken in the editor they come to 1[89]\.\d MB in one reply, past the 16\.0 MB the dashboard can carry back; nothing was changed$/);
   untouched(w, w.report, before);
-  // The author label rides in both places too.
-  refused(w, saveReq(w.report, st, cur, [{ ...rec, author: 'a'.repeat(20 * MB) }]), 'too-large');
+  // The author label rides in both places too — but a record the sidecar roots must name its root's author
+  // (recordsMisattributed, checked before the reply is measured), so a bloated label on this record refuses
+  // desync, never too-large; the oldText and decision-text cases around it pin the cap itself.
+  refused(w, saveReq(w.report, st, cur, [{ ...rec, author: 'a'.repeat(20 * MB) }]), 'desync');
   untouched(w, w.report, before);
   // A decision's texts go to the log, whose tail every reply carries: one 17 MB entry is past the cap.
   refused(w, saveReq(w.report, st, cur, [], [], [{ id: rec.id, oldText: 'x'.repeat(17 * MB), newText: rec.newText }]), 'too-large');

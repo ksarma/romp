@@ -1,5 +1,5 @@
 // Slice 5 pins for tools/file-comments-host.mjs: the `save` verb, the editor's Save over a file
-// with pending changes (plans/file-review.md, Slice 5; the Slice 5 contract, H4). The editor holds
+// with pending changes (plans/file-review.md, Slice 5). The editor holds
 // the new text and the change records it remapped as the person typed; save checks every record
 // against the text, writes the sidecar and the file together in track-edit's order, logs the edit
 // and the decisions made in the editor, and prunes an emptied sidecar. Same hermetic harness as
@@ -447,7 +447,7 @@ test('desync refuses a record whose text no longer sits at its offset, one outsi
   // fragment (`<id>~n`, the engine's split scheme) of one. Under a fresh id the same point refuses
   // `desync` and writes nothing (file-comments-host-scope.test.mjs pins that rule in full); as a
   // fragment of the change it is written and reloads in place.
-  const shape = { author: 'web', ts: 1700000000000, kind: 'del', from: rec.from + 3, newText: '', oldText: 'gone', anchor: null };
+  const shape = { author: 'web', authorId: SID, ts: 1700000000000, kind: 'del', from: rec.from + 3, newText: '', oldText: 'gone', anchor: null };   // a fragment carries its parent's author and session id, as the engine's split copies them
   r = refused(w, saveReq(w.report, st, cur, [rec, { id: 'd1', ...shape }]), 'desync');
   assert.match(r.error, /^change d1 was never pending in ~\/notes-api\/docs\/report\.md: /);
   untouched(w, before);
