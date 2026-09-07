@@ -9,6 +9,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EMOJI_CATEGORIES } from "./emoji-data";
+import { emojiKey } from "./emoji-picker";
 
 // Intl.Segmenter is Node 16+ and typed in the ES2022 lib; the extension compiles against ES2021, so it is reached untyped
 const seg: { segment(s: string): Iterable<unknown> } = new (Intl as any).Segmenter("en", { granularity: "grapheme" });
@@ -56,11 +57,13 @@ test("every entry is exactly one emoji: one grapheme, emoji code points only, fu
 });
 
 test("no duplicate emoji anywhere, no duplicate name within a category; names and keywords are plain lowercase words", () => {
+  // keyed the way the picker compares (emojiKey: every U+FE0F dropped), so a bare form a tab wears maps to
+  // ONE entry; a plain-string check would pass two entries that differ only by the selector
   const seen = new Map<string, string>();
   for (const { cat, emoji, name, keywords } of ALL) {
-    const prior = seen.get(emoji);
+    const prior = seen.get(emojiKey(emoji));
     assert.equal(prior, undefined, `${JSON.stringify(emoji)} appears twice (${prior} and ${cat}/${name})`);
-    seen.set(emoji, cat + "/" + name);
+    seen.set(emojiKey(emoji), cat + "/" + name);
     assert.match(name, /^[a-z0-9]+(?:[ -][a-z0-9]+)*$/, "a plain lowercase name: " + JSON.stringify(name));
     assert.match(keywords, /^[a-z0-9]+(?: [a-z0-9]+)*$/, "plain lowercase keywords for " + name + ": " + JSON.stringify(keywords));
   }
@@ -77,6 +80,31 @@ test("names are spelled the American way (the cell's tooltip shows the name; a B
   assert.ok(ALL.some((e) => e.name === "checkered flag"), "the flag's name");
   assert.ok(ALL.some((e) => e.name === "donut"), "the donut's name");
   assert.ok(ALL.some((e) => e.name === "checkered flag" && /\bchequered\b/.test(e.keywords)), "the British spelling still finds it");
+});
+
+test("the status set a session is likely to wear is all there, by name and code point", () => {
+  const byName = new Map(ALL.map((e) => [e.name, e.emoji]));
+  const want: Array<[string, string]> = [
+    ["red circle", "\u{1F534}"], ["orange circle", "\u{1F7E0}"], ["yellow circle", "\u{1F7E1}"], ["green circle", "\u{1F7E2}"],
+    ["blue circle", "\u{1F535}"], ["purple circle", "\u{1F7E3}"], ["brown circle", "\u{1F7E4}"], ["black circle", "\u{26AB}"],
+    ["white circle", "\u{26AA}"],
+    ["red square", "\u{1F7E5}"], ["orange square", "\u{1F7E7}"], ["yellow square", "\u{1F7E8}"], ["green square", "\u{1F7E9}"],
+    ["blue square", "\u{1F7E6}"], ["purple square", "\u{1F7EA}"], ["brown square", "\u{1F7EB}"],
+    ["black large square", "\u{2B1B}"], ["white large square", "\u{2B1C}"],
+    ["hourglass not done", "\u{23F3}"], ["hourglass done", "\u{231B}"],
+    ["locked", "\u{1F512}"], ["unlocked", "\u{1F513}"],
+    ["check mark button", "\u{2705}"], ["cross mark", "\u{274C}"], ["cross mark button", "\u{274E}"],
+    ["magnifying glass tilted left", "\u{1F50D}"], ["magnifying glass tilted right", "\u{1F50E}"],
+    ["bookmark", "\u{1F516}"], ["bomb", "\u{1F4A3}"], ["eight-spoked asterisk", "\u{2733}\u{FE0F}"],
+    ["warning", "\u{26A0}\u{FE0F}"], ["rocket", "\u{1F680}"], ["fire", "\u{1F525}"], ["sparkles", "\u{2728}"],
+  ];
+  for (const [name, emoji] of want) assert.equal(byName.get(name), emoji, name);
+  for (let i = 0; i <= 9; i++) assert.equal(byName.get("keycap " + i), String.fromCodePoint(0x30 + i) + "\u{FE0F}\u{20E3}", "keycap " + i);
+  assert.equal(byName.get("keycap 10"), "\u{1F51F}");
+  // the picker's stated use: tell sessions apart by state, so each color word finds its circle by name
+  for (const color of ["red", "orange", "yellow", "green", "blue", "purple", "brown"]) {
+    assert.ok(ALL.some((e) => e.name === color + " circle"), color + " circle");
+  }
 });
 
 test("the module is data only, ASCII only, and says skin tones are out of scope", () => {
