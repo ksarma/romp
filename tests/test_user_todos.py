@@ -1105,10 +1105,11 @@ class AnswerBody(unittest.TestCase):
         self.assertNotIn("<!-- romp-", body, "no marker-opening sequence may survive injection")
         self.assertIn("romp-goal-id", body, "the words survive — only the comment form breaks")
         self.assertIn("romp-injected", body)
-
-    def test_clean_text_is_untouched_by_the_neutralizer(self):
-        self.assertEqual(km._neutralize_romp_markers("Need the auth-scheme decision"),
-                         "Need the auth-scheme decision")
+        # the CONTROL, through the same seam: the neutralizer touches the comment form only, so
+        # the clean words on either side of each marker reach the body byte for byte
+        self.assertTrue(body.startswith("Re: Need a call on the note text "), body)
+        self.assertIn(" in the fixture — Keep it, but drop the ", body)
+        self.assertTrue(body.endswith(" part."), body)
 
 
 class DriveOps(_StoreSandbox):

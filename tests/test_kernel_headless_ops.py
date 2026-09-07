@@ -214,10 +214,13 @@ class HeadlessRoutes(unittest.TestCase):
         self.assertEqual((code, resp), (200, refusal))
 
     def test_send_route_queued_is_the_arm_not_the_send_result(self):
-        # `queued` reports WHICH ARM the send took, never the backend's own verdict: _send_or_park
-        # answers "parked" for the FIFO and the backend's send result otherwise, and a completed send
-        # is truthy too — so a truthiness read would call every delivered message queued. A refused
-        # send (falsy) is still not a park either; ok:true means accepted, as it always did here.
+        # `queued` reports WHICH ARM the send took, never the backend's own verdict. _send_or_park
+        # now returns the backend's own result on hand-over and "parked" only for the FIFO, so the
+        # route must compare against "parked", not read truthiness — a completed send is truthy
+        # too and would read as queued. A regression pin for that return shape, not a base bug:
+        # the route it replaced read a True/False shape, where truthiness was the right read. A
+        # refused send (falsy) is still not a park either; ok:true means accepted, as it always
+        # did here.
         fake = mock.Mock()
         fake.busy.return_value = None
         km._pending_ops.clear()
