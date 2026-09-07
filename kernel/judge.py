@@ -3142,7 +3142,7 @@ def tasks_for(fsid, leaf, files, now):
     turn's final caption was never queued until the transcript moved again. A pair that could not be
     computed (a stat failed) memoizes nothing. The key's shape changed with the pinning (a list of
     [mtime, size] rows plus the cut, JSON-shaped), so older entries miss once and regenerate."""
-    pair, _cut, _fr = _frame_parse_key(fsid, files)
+    pair, _cut, fr = _frame_parse_key(fsid, files)
     if pair is None:
         return []
     key = list(pair)                                   # as JSON reads it back: [[[mtime, size], ...], cut]
@@ -3183,11 +3183,22 @@ def tasks_for(fsid, leaf, files, now):
         if t.get("live"):                              # the open segment's live work caption — re-run-gate fields
             task["live"], task["natoms"] = True, t.get("natoms")
         tasks.append(task)
-    if _pending_cut(fsid) != pair[1]:
+    if fr is not None:
+        with _frame_lock:
+            served = fr["served"].get(fsid, _NO_PIN)   # the pair the RETURNED parse was made under (_frame_pin_parse)
+        moved = served is _NO_PIN or served is None or _pair_key(served) != _pair_key(pair)
+    else:
+        moved = _pending_cut(fsid) != pair[1]          # no frame: the live cut is the only record there is
+    if moved:
         # the parse ran under the LIVE cut (parsed_session) and the memo is keyed on the PINNED pair: a cut
         # that armed or cleared between the pin and the parse means these tasks describe a world the key
         # does not name, and a later pass pinning the key's cut would hit them and never caption the turns
-        # the cut hid (2026-09-07). Memoize nothing: the tasks stand for this pass, the next one re-parses.
+        # the cut hid (2026-09-07). Memoize nothing: the tasks stand for this pass, the next one re-parses;
+        # and mark the run, so no gate stamps a pass whose cache the next pass cannot read back. Under a
+        # frame the comparison is against the pair the parse was SERVED under, recorded when it was pinned,
+        # never a third read of the cut: a cut that cleared between the parse and a re-read would compare
+        # equal and memoize the cut world under the uncut key (review should-fix, 2026-09-07).
+        _judge_ctx.stage_incomplete = True
         return tasks
     try:
         PCACHE.mkdir(parents=True, exist_ok=True)

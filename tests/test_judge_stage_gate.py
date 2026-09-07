@@ -2888,7 +2888,8 @@ class IndexGate(_Gate):
         finally:
             jd.end_pass_frame(own)
         s = self._st("index")
-        self.assertEqual((s["ran"], s["bypassed"], s["stamped"]), (1, 1, 0), "served under another cut: no stamp")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                         "served under another cut: the skipped publish marks the run, no stamp")
         self.assertEqual(self._stamp("index"), before, "the old stamp stands")
         self.assertFalse(self._captioned("did C"), "the cut hid turn C from the parse")
         self.assertEqual(cf.read_text(), cached, "nothing memoized under the pinned key for a world parsed under the cut")
@@ -2896,6 +2897,42 @@ class IndexGate(_Gate):
         self._reset()
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (1, 0, 0, 1), "the cut cleared: the next pass re-parses and captions turn C")
+        self.assertTrue(self._captioned("did C"))
+
+    def test_a_cut_that_clears_between_the_parse_and_the_publish_still_memoizes_nothing(self):
+        # the review's should-fix: the moved-cut check re-read the live cut a third time, so a cut that cleared
+        # between the parse and that read compared equal to the pinned pair and the cut world's tasks were
+        # memoized under the uncut key; the next pass hit them, stamped, and the hidden turn was never captioned
+        # until the transcript moved. The check now compares the pair the parse was SERVED under (recorded when
+        # it was pinned) against the pinned pair, and reads the cut no third time.
+        path = self._session(SID)
+        self._converge(tiers=("index",))
+        self._append(path, *self.TURN_C)
+        before = self._stamp("index")
+        cf = jd.PCACHE / (SID + ".json")
+        cached = cf.read_text()
+        answers = []
+
+        def cut_once(fsid):
+            answers.append(fsid)
+            return "a2" if len(answers) == 1 else ""                     # armed for the parse, cleared for anything after
+        own = jd.begin_pass_frame()
+        try:
+            jd._frame_parse_key(SID, [str(path)])                        # the pin, under no cut
+            jd._PENDING_CUT_FN = cut_once
+            jd.run_index(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        self.assertEqual(len(answers), 1, "the cut is read once, by the parse; the publish check reads the served pair")
+        s = self._st("index")
+        self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0), "no stamp")
+        self.assertEqual(self._stamp("index"), before)
+        self.assertEqual(cf.read_text(), cached, "no memo of the cut world under the uncut key")
+        self.assertFalse(self._captioned("did C"))
+        jd._PENDING_CUT_FN = None
+        self._reset()
+        self._pass(tiers=("index",))
+        self.assertEqual(self._ran(), (1, 0, 0, 1), "the next pass re-parses and captions the turn the cut hid")
         self.assertTrue(self._captioned("did C"))
 
     def test_a_turn_ending_after_the_first_touch_is_captioned_next_pass_whole(self):
