@@ -281,6 +281,70 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 self.assertIn("from me", text, "%r no longer asks what it needs from the user" % name)
 
 
+class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
+    """The two user-todo postal tools (plans/user-todos.md) describe an obligation to the PERSON
+    THE AGENT WORKS FOR, so their descriptions ride the same veil as injected bodies: no romp
+    machinery named. (The OTHER postal tools name romp on purpose — the bus is visible tooling
+    with the product's name on it; these two must not teach the model a tracking system.)"""
+
+    def test_the_descriptions_carry_no_romp_vocabulary(self):
+        pm = SourceFileLoader("romp_postal_voice", os.path.join(BIN, "romp-postal-service")).load_module()
+        tools = {t["name"]: t for t in pm.MCP_TOOLS}
+        for name in ("add_user_todo", "withdraw_user_todo"):
+            self.assertIn(name, tools, "the tool exists to be scanned")
+            desc = tools[name]["description"]
+            self.assertIn("person you work for", desc, "%s speaks as the person the agent works for" % name)
+            for word, why in ROMP_WORDS:
+                with self.subTest(tool=name, word=word):
+                    self.assertNotIn(word, desc.lower(),
+                                     "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
+            for prop in tools[name]["inputSchema"]["properties"].values():
+                for word, why in ROMP_WORDS:
+                    with self.subTest(tool=name, word=word, field=prop):
+                        self.assertNotIn(word, str(prop.get("description") or "").lower())
+
+    def test_the_result_texts_carry_no_romp_vocabulary(self):
+        # The RESULT texts land in the agent's context exactly as the descriptions do — the
+        # tool's answer is read verbatim by the same model the veil protects — so the sweep
+        # covers them too: every user-todo branch of _mcp_call is rendered (success, each
+        # refusal, an unreachable kernel) and scanned. The shared "Not inside a romp session."
+        # identity refusal is out of scope on purpose: it is every postal tool's answer, and
+        # the bus names romp deliberately (visible tooling); identity is stubbed so no branch
+        # here can reach it.
+        pm = SourceFileLoader("romp_postal_voice_results",
+                              os.path.join(BIN, "romp-postal-service")).load_module()
+        saved = (pm._kernel_post, pm.my_id, pm.my_name, pm._heartbeat)
+        canned = {}
+        pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
+        pm.my_id = lambda: SID
+        pm.my_name = lambda: "api"
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            results = {}
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
+            results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
+            canned["res"] = None                    # unreachable kernel / non-2xx
+            results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["withdraw: unreachable"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            results["withdraw: no id"] = pm._mcp_call("withdraw_user_todo", {})[0]
+            canned["res"] = {"ok": True}
+            results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False}
+            results["withdraw: no open note"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+        finally:
+            pm._kernel_post, pm.my_id, pm.my_name, pm._heartbeat = saved
+        # the sweep rendered the real branches, not seven copies of one fallback
+        self.assertIn("Noted", results["add: noted"])
+        self.assertIn("Withdrawn", results["withdraw: withdrawn"])
+        self.assertIn("Nothing changed", results["withdraw: no open note"])
+        for name, text in results.items():
+            for word, why in ROMP_WORDS:
+                with self.subTest(result=name, word=word):
+                    self.assertNotIn(word, text.lower(),
+                                     "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
+
+
 class TheRuleIsWrittenDown(unittest.TestCase):
     def test_claude_md_carries_the_rule_and_its_exceptions(self):
         md = (Path(HERE).parent / "CLAUDE.md").read_text()
