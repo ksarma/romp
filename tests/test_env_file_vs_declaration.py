@@ -10,8 +10,12 @@ billed the wrong account. What these tests pin (sdk_backend._check_env_file_vs_d
   * =login over a key line, or over a reference line, is one problem-ring line naming the file and the
     variable — never a value — said once per process (a re-constructed backend says nothing new);
   * =key is never a contradiction: a key source in the file lands the sessions keyed, as declared;
+  * the remedy is worded per shape: a valued key line may be removed; a reference line must not be
+    (a removed reference is a durable error in keysource), so that shape is told to drop the
+    declaration or to pick Login under Billing;
   * undeclared is quiet, as is a declaration over a file that selects no source, whatever else the
-    file carries (another service's token beside a reference is the documented shape);
+    file carries (another service's token beside a reference is the documented shape), and so is a
+    file keysource reports as an error (garbled, unreadable): the launch reports that itself;
   * a remembered gear Billing pick makes the declaration inert here too (_declared_auth);
   * the sentence describes what the code does: default_auth answers "key" under the flagged shape.
 
@@ -127,6 +131,11 @@ class EnvFileVsDeclaration(_Backend):
         self.assertIn(ks.KEY_VAR, lines[0])
         self.assertIn("ROMP_EXPECTED_AUTH=login", lines[0])
         self.assertIn("Billing pick", lines[0], "the line says what happens to billing and why")
+        # the remedy for a VALUED key line: removing it is right (the file stays authoritative and the
+        # sessions land on the login), or the declaration goes
+        self.assertIn("remove the %s line" % ks.KEY_VAR, lines[0])
+        self.assertIn("drop ROMP_EXPECTED_AUTH=login", lines[0])
+        self.assertNotIn("Do not remove", lines[0])
         self.assertFalse(any(KEY in m for m in self.logged), "no log line carries the value")
         self.assertTrue(sb._ENV_FILE_AUTH_CHECKED)
         # once per process: a re-constructed backend (the WS handler's lazy build, tests) says nothing new
@@ -142,6 +151,17 @@ class EnvFileVsDeclaration(_Backend):
         self.assertIn(ks.REF_VAR, lines[0])
         self.assertNotIn(ks.KEY_VAR, lines[0])
         self.assertFalse(any(REF in m for m in self.logged), "names, never values: the reference included")
+        # The remedy for a REFERENCE line must not be "remove the line": keysource treats a removed
+        # reference as an error at every launch until a source is configured again (select_source, and
+        # the source marker remembers it across restarts), so an operator following that advice gets a
+        # launch failure on every session without a Billing pick instead of the login the declaration
+        # wants. The two fixes the code supports are dropping the declaration, or the Billing pick of
+        # Login, which outranks the declaration (_declared_auth) with the reference kept.
+        self.assertNotIn("remove the line", lines[0])
+        self.assertIn("Do not remove the %s line" % ks.REF_VAR, lines[0])
+        self.assertIn("drop ROMP_EXPECTED_AUTH=login", lines[0])
+        self.assertIn("Login under Billing", lines[0])
+        self.assertIn("error at every launch", lines[0])
 
     def test_the_direct_call_returns_the_variable_it_named_and_files_a_problem(self):
         self.write_env("%s=%s\n" % (ks.REF_VAR, REF))
@@ -186,6 +206,39 @@ class EnvFileVsDeclaration(_Backend):
         be = self.construct()
         self.assertEqual(self.flagged(be), [], be.problems())
         self.assertFalse(sb._ENV_FILE_AUTH_CHECKED)
+
+    def test_login_declared_over_a_source_keysource_reports_as_an_error_is_quiet(self):
+        """A garbled or unreadable file is an error-kind source (keysource.read_source), which the launch
+        itself reports (KeySource.validate raises there). Nothing here weighs it against the declaration:
+        the check stays silent, spends no one-shot, and never raises into the backend's constructor."""
+        os.environ["ROMP_EXPECTED_AUTH"] = "login"
+        # a reference line that is not valid UTF-8: parse_source reports it, never a source it selects
+        with open(self.path, "wb") as fh:
+            fh.write(b"ROMP_PERF=1\n" + ks.REF_VAR.encode() + b"=op://\xff\xfe/item/field\n")
+        os.chmod(self.path, 0o600)
+        ks._CACHE = ((), "")
+        self.assertEqual(ks.read_source(self.path).kind, "error", "the shape under test")
+        be = self.construct()
+        self.assertEqual(self.flagged(be), [], be.problems())
+        self.assertFalse(sb._ENV_FILE_AUTH_CHECKED, "a quiet pass does not spend the one shot")
+        said = []
+        log = lambda m, problem=None: said.append((str(m), problem))
+        self.assertEqual(sb._check_env_file_vs_declaration(log, self.state), "")
+        self.assertEqual(said, [])
+        if os.geteuid() == 0:
+            return                            # root reads a 000 file: the unreadable shape cannot be built
+        # an unreadable file: the other way read_source reports an error
+        self.write_env("%s=%s\n" % (ks.KEY_VAR, KEY))
+        os.chmod(self.path, 0)
+        try:
+            ks._CACHE = ((), "")
+            self.assertEqual(ks.read_source(self.path).kind, "error", "the shape under test")
+            self.assertEqual(sb._check_env_file_vs_declaration(log, self.state), "")
+            self.assertEqual(said, [])
+            self.assertFalse(sb._ENV_FILE_AUTH_CHECKED)
+            self.assertEqual(self.flagged(self.construct()), [])
+        finally:
+            os.chmod(self.path, 0o600)
 
     def test_a_missing_file_is_quiet(self):
         os.environ["ROMP_EXPECTED_AUTH"] = "login"

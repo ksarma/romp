@@ -278,10 +278,15 @@ source (an `ANTHROPIC_API_KEY=` line with a value, or a `ROMP_API_KEY_REF=`
 line) is a contradiction: that source is injected at launch for every session
 without an explicit Billing pick, so those sessions bill the key. One problem
 line in the Log panel says so before anything launches, naming the file and
-the variable but never a value; fix whichever side is wrong. Under `key`, a
-key source in the file agrees with the declaration and nothing is said. With
-no declaration, or once a Billing pick has made it inert, nothing is said
-either. The per-init check above still confirms each landing.
+the variable but never a value; fix whichever side is wrong. For an
+`ANTHROPIC_API_KEY=` line that means removing the line (or blanking its
+value) or dropping the declaration. For a `ROMP_API_KEY_REF=` line, removing
+the line is not a fix: a removed reference is an error at every launch until a
+source is selected again (see "Removing or emptying" under 1Password), so
+either drop the declaration or select **Login** in Billing, which outranks it.
+Under `key`, a key source in the file agrees with the declaration and nothing
+is said. With no declaration, or once a Billing pick has made it inert,
+nothing is said either. The per-init check above still confirms each landing.
 
 The usage rail reflects a mixed machine: the window bars (5 hours / 7 days /
 Fable 5) are drawn once, aggregated across every connected host's login as the
@@ -850,7 +855,8 @@ kernel never holds.
   outside the signal on both sides of the ratio). A reader that sees `inTurn >
   0` and a `lastEventAt` minutes old should treat the signal as unknown rather
   than healthy.
-- `cliScope`: the per-session scopes (see "What survives a restart" and
+- `cliScope`: scope bookkeeping carried on this payload, not part of the API
+  signal itself: the per-session scopes (see "What survives a restart" and
   "Per-session memory limits").
   - `on`, true when the kernel chose at boot to run CLIs in scopes.
   - `fallbacks`, CLI launches since boot on which the scope wrapper's pre-flight

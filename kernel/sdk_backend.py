@@ -1572,13 +1572,17 @@ def api_health_config() -> dict:
 def model_family(raw) -> str:
     """The model FAMILY a rate limit is scoped to: 'claude-fable-5-1', 'claude-fable-5' and
     'us.anthropic.claude-fable-5-…' are all `fable`. re.search, not pretty_model's anchored re.match,
-    so a Bedrock/Vertex id lands in its family rather than one 'other' bucket. The pretty badge form
-    ('Fable 5', the session's display model) is accepted too for the retry-attribution fallback.
-    '' → 'unknown' (nothing learned yet); a non-empty id matching nothing → 'other'."""
+    so a Bedrock/Vertex id lands in its family rather than one 'other' bucket. The generation-first ids
+    ('claude-3-5-sonnet-20241022', 'claude-3-opus-…') name the family AFTER the generation and file
+    under it too: a rate limit on one of those is still that family's, and `other` would pool it with
+    everything unrecognised. The pretty badge form ('Fable 5', the session's display model) is accepted
+    too for the retry-attribution fallback. '' → 'unknown' (nothing learned yet); a non-empty id
+    matching nothing → 'other'."""
     s = str(raw or "").strip()
     if not s:
         return "unknown"
-    m = re.search(r"claude-([a-z]+)-(\d+)", s.lower())
+    low = s.lower()
+    m = re.search(r"claude-([a-z]+)-\d", low) or re.search(r"claude-\d+(?:-\d+)*-([a-z]+)", low)
     if m:
         return m.group(1)
     m = re.match(r"([A-Za-z]+) \d", s)
@@ -2175,7 +2179,9 @@ class ApiHealth:
         NOT a filter of the global one — that shape let a neighbour churning through fifty transitions
         erase a quiet bucket's history from its own payload. The caller holds the lock and writes the
         state file once it has filed everything this read found. One kernel-log line per transition, in
-        the `retry-pause:` lines' style, so the log alone reconstructs an incident: bucket, move, why."""
+        the `retry-pause:` lines' style, so the log reconstructs an incident as a polling reader observed
+        it: bucket, move, why. A transition is derived, filed and logged only by a read (GET /api-health),
+        so a state entered and left between two reads leaves no line; nothing derives while nobody reads."""
         self._transitions.append(row)
         self._by_bucket.setdefault(row["bucket"], deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)).append(row)
         if self._log:
@@ -3282,8 +3288,14 @@ def _check_env_file_vs_declaration(log, state_dir, path: str | None = None) -> s
     included), so nothing is said. Undeclared, nothing is said either: a key line in service.env
     with no declaration is the ordinary shape. The file is read through keysource, so the only names
     this can ever say are its two (a token another service keeps in the file is never one of them),
-    and the line names the file and the variable, never a value. Returns the variable named ("" when
-    quiet) so the caller and the tests can see what it decided."""
+    and the line names the file and the variable, never a value. The remedy is worded PER SHAPE: a
+    valued key line can be removed (the file stays authoritative and the sessions land on the login,
+    docs/reference.md "Removing or emptying"), but a REFERENCE line must not be: keysource treats a
+    removed reference as an error at every launch until a source is configured again (select_source,
+    and the source marker remembers it across restarts), so an operator told to remove it would get a
+    launch failure on every session without a Billing pick, not the login. That shape is told to drop
+    the declaration or to pick Login under Billing (the pick outranks the declaration: _declared_auth).
+    Returns the variable named ("" when quiet) so the caller and the tests can see what it decided."""
     global _ENV_FILE_AUTH_CHECKED
     if _ENV_FILE_AUTH_CHECKED:
         return ""
@@ -3296,10 +3308,17 @@ def _check_env_file_vs_declaration(log, state_dir, path: str | None = None) -> s
         return ""                    # no source selected (a missing file, an empty key line) or a file the
     _ENV_FILE_AUTH_CHECKED = True    # launch itself will report as unreadable: nothing to weigh against the declaration
     var = _keysrc.REF_VAR if source.kind == "op" else _keysrc.KEY_VAR
+    if source.kind == "op":
+        fix = ("Fix whichever side is wrong: keep the reference and drop ROMP_EXPECTED_AUTH=login, or select "
+               "Login under Billing in a session tab's menu (that pick outranks the declaration and seeds every "
+               "new session). Do not remove the %s line to get the login: a removed reference is an error at "
+               "every launch until a key source is configured again, never a fall-back to the login." % var)
+    else:
+        fix = ("Fix whichever side is wrong: remove the %s line (or blank its value) so those sessions launch "
+               "on the login, or drop ROMP_EXPECTED_AUTH=login to match what the file selects." % var)
     log("auth: %s sets %s while ROMP_EXPECTED_AUTH=login. The declaration says the sessions bill the machine "
         "login, but the key source this file selects is injected at launch for every session without an "
-        "explicit Billing pick, so they bill the key. Fix whichever side is wrong: remove the line, or change "
-        "the declaration to match what the file selects." % (p, var), problem=True)
+        "explicit Billing pick, so they bill the key. %s" % (p, var, fix), problem=True)
     return var
 
 
