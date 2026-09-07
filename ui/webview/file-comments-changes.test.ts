@@ -616,7 +616,7 @@ test("the change cards render first, grouped by paragraph, in text order, the bu
   // Reply on the hosted comment is the reply verb into that comment
   act(hosted, "fcreply", bound.id)!.click();
   const input = aside.querySelector(".fc-input")!;
-  assert.ok(aside.querySelector(".fc-composer-ref")!.textContent.startsWith("Reply on "));
+  assert.ok(aside.querySelector('.fc-hosted[data-id="' + bound.id + '"] .fc-composer'), "the box opens inside the hosted comment (the reply follow-on)");
   input.value = "Trimmed is fine.";
   dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "reply");

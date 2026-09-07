@@ -223,7 +223,8 @@ Raw view with the passage selected. Comments are stored beside the file, in the
 folder that already holds one; a file with none gets the folder created beside it), in the
 format the session's own tools read. A comment made here and a reply the session writes are
 the same object, and the two other editors that read the format see them too. Each comment
-is a card in the panel: click it to expand, reply into it, or resolve it. The passage it
+is a card in the panel: click it to expand or resolve it, and **Reply** opens the reply box inside
+the card, under the comment and its replies. The passage it
 refers to is highlighted in the file. When the session has rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.

@@ -217,7 +217,9 @@ test("the chains above are the real DOM: the builders in file-view.ts and file-c
   assert.match(PANEL, /composerActs = el\("div", "fc-actions"\);/);
   assert.match(PANEL, /composerErr = el\("div"\);/, "the composer's error slot is a class-less div");
   assert.match(PANEL, /this\.root\.replaceChildren\(head, this\.composerBox, cards, send, log\);/);
-  assert.match(PANEL, /head\.replaceChildren\(this\.renderHead\(s\)\);[\s\S]*?cards\.replaceChildren\(this\.renderCards\(s\)\);\n\s*send\.replaceChildren\(this\.renderSend\(s\)\);/);
+  // the composer is rendered between the cards and the send section: a reply's box is placed into a card of the fresh list
+  // (the reply follow-on, 2026-09-07; file-comments-reply-place.test.ts)
+  assert.match(PANEL, /head\.replaceChildren\(this\.renderHead\(s\)\);[\s\S]*?cards\.replaceChildren\(this\.renderCards\(s\)\);\n\s*this\.renderComposer\(\);[^\n]*\n\s*send\.replaceChildren\(this\.renderSend\(s\)\);/);
   assert.match(PANEL, /const head = el\("div", "fc-head"\);\n\s*const row = el\("div", "fc-row"\);\n\s*const t = btn\("Track changes", "fctrack", "fileview-btn fc-toggle"\);/);
   assert.match(PANEL, /row\.appendChild\(btn\("Comment on this file", "fcfile"\)\);\n\s*head\.appendChild\(row\);/);
   assert.match(PANEL, /const list = el\("div", "fc-cards"\);/);

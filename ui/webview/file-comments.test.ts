@@ -769,8 +769,10 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   assert.match(SRC, /const row = ctx\.body\(\)\.parentElement \|\| ctx\.body\(\);\n\s*delegate\(row, \{/);
   assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /\.onclick\s*=/, "no per-node handlers on rebuilt nodes");
   assert.match(SRC, /openCards = new Set<string>\(\);/);
-  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\);/);
-  assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(this\.openCards\.has\(id\)\) this\.openCards\.delete\(id\); else this\.openCards\.add\(id\); this\.render\(\); \}/);
+  // …or the card is open because its reply is being written in it (the reply follow-on, 2026-09-07: file-comments-reply-place.test.ts),
+  // and the head folds every card but that one
+  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\) \|\| this\.replyTo\(\) === c\.id;/);
+  assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(!this\.openCards\.has\(id\)\) this\.openCards\.add\(id\); else if \(!this\.hostsReply\(id\)\) this\.openCards\.delete\(id\); this\.render\(\); \}/);
   assert.match(SRC, /flash\(this\.float\);/); assert.match(SRC, /flash\(this\.button\);/);
   // the composer's input is never rebuilt, and the aside's own children are placed once per open, so a
   // poll re-render swaps section CHILDREN only and cannot drop the input's focus mid-word

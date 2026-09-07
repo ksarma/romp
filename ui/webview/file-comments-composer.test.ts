@@ -371,12 +371,15 @@ test("every composer is one textarea of three rows with the reference row above 
     "the hint at the row's left in the platform's words, then Save, then Cancel");
   assert.equal(acts.querySelector('[data-act="fcsave"]')!.textContent, "Save");
   assert.equal(acts.querySelector('[data-act="fccancel"]')!.textContent, "Cancel");
-  // a reply on a card is the same box, the reference row naming the card
+  // a reply on a card is the same box, moved into the card it answers (the reply follow-on; file-comments-reply-place.test.ts):
+  // the card is the reference, so the row is hidden, and the placeholder says what the box is for
   h.click('[data-act="fccancel"]');
   h.click('.fc-card[data-id="' + passage.id + '"] .fc-card-head');
   h.click('[data-act="fcreply"][data-id="' + passage.id + '"]');
   assert.equal(h.box(), box, "one box for every composer the panel offers");
-  assert.equal(h.q(".fc-composer-ref")!.textContent, "Reply on shipping the cache in v1.2");
+  assert.ok(h.q('.fc-card[data-id="' + passage.id + '"] .fc-composer'), "the box stands in the card");
+  assert.equal(h.q(".fc-composer-ref")!.hidden, true, "no reference row inside the card");
+  assert.equal(box.placeholder, "Your reply");
   assert.ok(h.q(".fc-composer .fc-hint"), "the hint is there for a reply too");
   h.dispose();
 });

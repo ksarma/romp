@@ -961,7 +961,12 @@ pre-wrap`, both sheets), and the send message carries the body verbatim: the ker
 webview's are pinned to the same two-line text on both sides (`tests/test_file_comments.py`
 TheMessage, `ui/webview/file-comments.test.ts`). Tests: `ui/webview/file-comments-composer.test.ts`
 (driven) and `file-comments-composer-browser.test.ts` (the real cap and the real keys, Chromium and
-Firefox).
+Firefox). The same walk asked for the reply's box to open where the comment is read (2026-09-07): a
+reply's box now stands inside the card it answers, below the comment's turns and above its buttons, and
+stays in that card across the poll's re-render with its words, caret and height; when the list stops
+showing the card (the comment resolved into the closed fold, or gone from the sidecar) the box returns to
+the panel's slot with the words and a line saying why, and Escape or Cancel hands the keyboard back to
+the card's Reply (`file-comments-reply-place.test.ts`).
 
 ### Slice 3: region comments on images
 

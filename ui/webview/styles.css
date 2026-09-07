@@ -3758,6 +3758,7 @@ body.filebrowse-open { overflow: hidden; }
 .fc-composer { display: flex; flex-direction: column; gap: 6px; }
 .fc-composer[hidden] { display: none; }
 .fc-composer-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.fc-composer-ref[hidden] { display: none; }   /* hidden inside a card, where the comment itself is the reference (placeComposer) */
 .fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fc-refused { color: var(--warn); }
 /* the comment box is a textarea (the 2026-09-07 follow-on): three rows to start, grown to its content by the panel
@@ -3792,6 +3793,10 @@ body.filebrowse-open { overflow: hidden; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
+/* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
+   turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
+   reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */
+.fc-composer-in { border-radius: 6px; padding: 5px 8px; background: var(--accent-wash); border-left: 3px solid var(--accent); }
 .fc-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .fc-sec { background: none; border: 0; padding: 2px 0; color: var(--dim); font: inherit; font-size: 0.82em; font-weight: 600; cursor: pointer; text-align: left; }
 .fc-sec:hover { color: var(--accent); }
