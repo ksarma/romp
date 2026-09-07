@@ -39,7 +39,8 @@ test("membership in pathLinks gates the link, and the map's value is the OPEN ta
   assert.match(RENDER, /linkifyPathTokens\(root, sid, pathLinks\)/);
   // the fixed target is what opens (and openPathLink titles it, so hover shows where a fix points);
   // with NO pathLinks key on the event (old kernel, cached payload) the token opens as written
-  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);
+  // (a surface with its own place, the file viewer, hands the walk a `resolve` for the token or the fixed target; the chat passes none)
+  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(opts && opts\.resolve \? opts\.resolve\(fixed \?\? tok\) : \(fixed \?\? tok\)\);/);
   assert.match(LINKS, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
   assert.match(LINKS, /frag\.appendChild\(link\);/);
   assert.match(LINKS, /a\.title = "Open " \+ open;/);

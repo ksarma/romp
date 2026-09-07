@@ -77,6 +77,14 @@ function pathLinkRelease(e: Event): void {
 export function openPathLink(raw: string, open: string, relative = false, sid?: string | null): HTMLElement {
   const a = el("span", "file-uri-link");
   a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
+  return markPathLink(a, open, relative, sid);
+}
+// The link's SHAPE on an element the caller already has: the class, the title, the tab stop, the keyboard and
+// pointer handlers, and the act's data. openPathLink mints a span and marks it; the file viewer marks a Markdown
+// link's own <a> (its label keeps its nested formatting) when the link's target is a file (file-view-links.ts).
+// The class is appended as a string so an element that already wears one keeps it.
+export function markPathLink(a: HTMLElement, open: string, relative = false, sid?: string | null): HTMLElement {
+  if (!(" " + a.className + " ").includes(" file-uri-link ")) a.className = (a.className ? a.className + " " : "") + "file-uri-link";
   a.title = "Open " + open;
   a.tabIndex = 0;                            // in the tab order, like the <a> it stands in for…
   a.role = "link";                           // …and announced as one (the ARIA IDL attribute)
@@ -210,14 +218,31 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 // payload, a surface the kernel never judged — a todo's detail) keeps shape-only linking.
 // file:// URIs are explicit absolute paths — never gated on the map.
 // Returns the hits in document order, so a caller's "first mention" is the walk's first.
-export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>): PathLinkHit[] {
+// `opts` is how a surface whose text is not chat prose runs the same walk (the file viewer, file-view-links.ts):
+// `inPre` walks the text inside <pre> too (the viewer's code body IS one); `accept` narrows every non-URI
+// token that passed the shape gates (the map narrows a chat message the same way; a surface with no kernel
+// verdict brings its own gate); `resolve` names what a token opens when the surface knows its own place (the
+// viewer joins a relative token onto the shown file's directory); `lineSuffix` reads a `:12` (or GitHub's
+// `#L12`) right after a token into the link (data-line) instead of leaving it as prose. Absent, the walk is
+// exactly the chat's.
+export interface PathLinkOptions {
+  inPre?: boolean;
+  accept?: (tok: string) => boolean;
+  resolve?: (tok: string) => string;
+  lineSuffix?: boolean;
+}
+// A line reference written after a path: `path:12`, `path:12:4` (a column, dropped), `path#L12`, `path#L12-L20`
+// (a range; its first line). Not followed by a word character or a slash, so `x/a.md:12abc` keeps its prose.
+export const LINE_SUFFIX_RE = /^(?::(\d+)(?::\d+)?|#L(\d+)(?:-L?\d+)?)(?![\w/])/;
+export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>, opts?: PathLinkOptions): PathLinkHit[] {
   const hits: PathLinkHit[] = [];
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   let n: Node | null;
   while ((n = walker.nextNode())) nodes.push(n as Text);
+  const skip = opts && opts.inPre ? "a, .file-uri-link" : "a, .file-uri-link, pre";
   for (const tn of nodes) {
-    if (tn.parentElement?.closest("a, .file-uri-link, pre")) continue;   // already a link, or a fenced code block
+    if (tn.parentElement?.closest(skip)) continue;   // already a link, or (the chat) a fenced code block
     const inCode = !!tn.parentElement?.closest("code");                  // inline code — where bare filenames may link
     const text = tn.data;
     if (!text.includes("/") && !(inCode && text.includes("."))) continue;   // cheap pre-filter: no slash (and, in code, no dot) → nothing here
@@ -233,14 +258,20 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       if (!tok) continue;
       const isUri = /^file:\/\//i.test(tok);
       if (!isUri && !looksLikeFilePath(tok) && !(inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc. — leave as prose
+      if (!isUri && opts && opts.accept && !opts.accept(tok)) continue;   // the surface's own gate (the viewer's: an extension on the file)
       const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
       if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
       if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
-      const open = isUri ? fileUriToPath(tok) : (fixed ?? tok);
+      // what the link opens: a URI's own path; else the kernel's fixed target or the token, placed by the surface's
+      // resolve when it has one (a URI is absolute already and takes no resolve)
+      const open = isUri ? fileUriToPath(tok) : (opts && opts.resolve ? opts.resolve(fixed ?? tok) : (fixed ?? tok));
       const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
+      // a line written after the token rides in the link when the surface reads lines (the viewer scrolls to it)
+      const suffix = opts && opts.lineSuffix ? LINE_SUFFIX_RE.exec(text.slice(start + tok.length)) : null;
+      if (suffix) { link.textContent = tok + suffix[0]; link.dataset.line = suffix[1] || suffix[2]; link.title += ":" + link.dataset.line; }
       frag.appendChild(link);
       hits.push({ el: link, open, verified: !isUri && typeof fixed === "string" });   // the kernel stat'd a fixed one this build
-      last = start + tok.length;
+      last = start + tok.length + (suffix ? suffix[0].length : 0);
       from = last;                                  // a linked token: resume right after what was linked — its trimmed tail is prose
       any = true;
     }

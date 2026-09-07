@@ -54,7 +54,8 @@ test("the whole-span pass runs BEFORE the token walk, so the new link is skipped
   assert.ok(spanPass >= 0 && walk >= 0 && spanPass < walk,
     "code-span links land first; the token walk's closest('.file-uri-link') guard then leaves them alone");
   const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "path-links.ts"), "utf8");
-  assert.match(LINKS, /if \(tn\.parentElement\?\.closest\("a, \.file-uri-link, pre"\)\) continue;/);
+  // (the skip list is a variable since the file viewer runs the walk inside its <pre>; the chat's default still names pre)
+  assert.match(LINKS, /const skip = opts && opts\.inPre \? "a, \.file-uri-link" : "a, \.file-uri-link, pre";\n[\s\S]*?if \(tn\.parentElement\?\.closest\(skip\)\) continue;/);
 });
 
 test("every message render threads its event's spacePaths through", () => {
