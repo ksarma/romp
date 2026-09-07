@@ -42,6 +42,10 @@ never been pushed is asked of origin once and the answer kept until a push or fe
 clone writes its tracking ref; where nothing local could refresh the answer (a
 `--single-branch` clone, or a branch on origin this clone has not fetched) origin is asked on
 each open.
+A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
+`owner/repo#123`) links to that pull request on GitHub, in the repository the session's
+directory has as its `origin` remote; when that remote is not on GitHub, the number stays
+plain text.
 
 ### The feed
 
