@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -151,17 +151,60 @@ def _set_perf_log(on):
     return _PERF
 
 
+# glibc's mallinfo2 through ctypes (perf round 4, M1-lite, 2026-09-07): the large-object half of the heap.
+# The return type MUST be the struct: without `.restype` ctypes returns an int and the first field read
+# segfaults the process (the refuted M1 crashed the kernel on its first report, exit 139). Resolved once
+# at import; None where the symbol is absent (glibc before 2.33, musl, macOS), and the gauge is null then.
+try:
+    import ctypes as _ctypes
+
+    class _MallInfo2(_ctypes.Structure):
+        _fields_ = [(n, _ctypes.c_size_t) for n in ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks",
+                                                     "fsmblks", "uordblks", "fordblks", "keepcost")]
+    _MALLINFO2 = _ctypes.CDLL(None).mallinfo2
+    _MALLINFO2.restype = _MallInfo2
+    _MALLINFO2.argtypes = ()
+except Exception:
+    _MallInfo2 = None
+    _MALLINFO2 = None
+
+
+def _malloc_stats():
+    """{arena, hblkhd, uordblks, fordblks} in bytes from glibc's mallinfo2, or None where it is absent: the
+    main arena's size, the bytes in mmap'd blocks (large objects, the multi-MB frame strings), the bytes in
+    use and the free bytes held by the allocator. pymalloc's arenas are mmap'd by the interpreter itself and
+    invisible here, so this is the malloc half of the heap only."""
+    if _MALLINFO2 is None:
+        return None
+    try:
+        m = _MALLINFO2()
+    except Exception:
+        return None
+    return {"arena": int(m.arena), "hblkhd": int(m.hblkhd), "uordblks": int(m.uordblks), "fordblks": int(m.fordblks)}
+
+
 def _process_stats():
-    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot. VmRSS from /proc is the CURRENT
-    resident size; where /proc is absent (macOS) ru_maxrss is the PEAK, in bytes there, so it is scaled
-    to KB and the field is still called rss_kb."""
-    rss = 0
+    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot, plus the exact memory gauges
+    (perf round 4, M1-lite): rss_anon_kb and hwm_kb (RssAnon and VmHWM from /proc/self/status, the
+    anonymous and the peak resident size), allocated_blocks (sys.getallocatedblocks, the interpreter's
+    live allocations), gc_gen2 (generation-2 collections so far) and malloc (_malloc_stats). Two
+    snapshots an hour apart answer the RSS question: blocks flat while rss climbs points at the
+    allocator, blocks climbing at an object graph, a `caches` gauge climbing at that cache.
+
+    VmRSS from /proc is the CURRENT resident size; where /proc is absent (macOS) ru_maxrss is the PEAK,
+    in bytes there, so it is scaled to KB and the field is still called rss_kb, and the two /proc gauges
+    are null with `source` "unavailable": a peak is never passed off as an anonymous or current figure."""
+    rss, anon, hwm, source = 0, None, None, "unavailable"
     try:
         with open("/proc/self/status") as fh:
             for line in fh:
                 if line.startswith("VmRSS:"):
                     rss = int(line.split()[1])
-                    break
+                elif line.startswith("RssAnon:"):
+                    anon = int(line.split()[1])
+                elif line.startswith("VmHWM:"):
+                    hwm = int(line.split()[1])
+        source = "proc"
     except Exception:
         try:
             import resource
@@ -169,8 +212,90 @@ def _process_stats():
             rss = int(r // 1024) if sys.platform == "darwin" else int(r)
         except Exception:
             rss = 0
-    return {"rss_kb": rss, "threads": threading.active_count(), "cpu_s": time.process_time(),
-            "pid": os.getpid()}
+    try:
+        blocks = int(sys.getallocatedblocks())
+    except Exception:
+        blocks = None
+    try:
+        gen2 = int(gc.get_stats()[2]["collections"])
+    except Exception:
+        gen2 = None
+    return {"rss_kb": rss, "rss_anon_kb": anon, "hwm_kb": hwm, "source": source,
+            "allocated_blocks": blocks, "gc_gen2": gen2, "malloc": _malloc_stats(),
+            "threads": threading.active_count(), "cpu_s": time.process_time(), "pid": os.getpid()}
+
+
+def _gauge_values(d, tries=3):
+    """A snapshot of a cache dict's values for a summed gauge. Under the GIL list(d.values()) is one C-level
+    pass and cannot see a concurrent resize; without it a resize raises RuntimeError, so the snapshot is
+    retried a few times and gives up as None (the count alone is then reported), never a guess."""
+    for _ in range(tries):
+        try:
+            return list(d.values())
+        except RuntimeError:
+            continue
+    return None
+
+
+def _gauge_bytes(d, pick):
+    """The summed length of the str/bytes values `pick` selects from a cache's entries, or None when the
+    snapshot could not be taken (see _gauge_values)."""
+    vals = _gauge_values(d)
+    if vals is None:
+        return None
+    n = 0
+    for v in vals:
+        try:
+            x = pick(v)
+        except Exception:
+            continue
+        if isinstance(x, (str, bytes)):
+            n += len(x)
+    return n
+
+
+def _cache_gauges():
+    """The `caches` block of the /perf snapshot (perf round 4, M1-lite): exact occupancy for every cache the
+    kernel, the judge and the event model keep, each a len() or a sum of len()s under the cache's own lock
+    where it has one, nothing estimated, O(entries) and always on. The event model's and the judge's
+    blocks come from their own cache_gauges(); the kernel's are: parse (_parse_cache, one parsed session
+    per transcript path), built_chat (the cached chat payloads and the bytes of their materialized
+    serializations), judge_usage (the judge-usage rows held), img (the data-URL previews and their bytes),
+    path_links and space_paths (the per-message link caches), session_stamp, task_seg and session_tok
+    (entries). A block whose accessor raises is left out, so the reader sees the gap instead of a number.
+    The memos keep their own occupancy under `memos`."""
+    out = {}
+    try:
+        out.update(em.cache_gauges())
+    except Exception:
+        pass
+    try:
+        out.update(jd.cache_gauges())
+    except Exception:
+        pass
+    kernel_blocks = (
+        ("parse", lambda: {"entries": len(_parse_cache)}),
+        ("built_chat", lambda: {"entries": len(_built_chat),
+                                "ms_bytes": _gauge_bytes(_built_chat, lambda v: v[2] if isinstance(v, tuple) and len(v) > 2 else None)}),
+        ("judge_usage", _judge_usage_rows_held),
+        ("img", lambda: {"entries": len(_img_cache), "bytes": _gauge_bytes(_img_cache, lambda v: v)}),
+        ("path_links", lambda: {"entries": len(_PATH_LINK_CACHE)}),
+        ("space_paths", lambda: {"entries": len(_SPACE_PATH_CACHE)}),
+        ("session_stamp", lambda: {"entries": len(_SESSION_STAMP_CACHE)}),
+        ("task_seg", lambda: {"entries": len(_task_seg_cache)}),
+        ("session_tok", lambda: {"entries": len(_session_tok_cache)}),
+    )
+    for name, fn in kernel_blocks:
+        try:
+            out[name] = fn()
+        except Exception:
+            pass
+    return out
+
+
+def _judge_usage_rows_held():
+    with _JUDGE_USAGE_LOCK:
+        return {"rows": len(_JUDGE_USAGE_CACHE["rows"])}
 
 
 class _PerfStats:
@@ -188,7 +313,22 @@ class _PerfStats:
     milliseconds of wall time, `*_s` seconds:
       now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
                                    since the process started; whether the romp-perf stderr log is on
-      process                      rss_kb, threads, cpu_s (time.process_time), pid
+      process                      rss_kb, threads, cpu_s (time.process_time), pid, and the exact
+                                   memory gauges (perf round 4, M1-lite): rss_anon_kb / hwm_kb (RssAnon
+                                   and VmHWM from /proc; null with source "unavailable" where /proc is
+                                   absent), allocated_blocks (sys.getallocatedblocks), gc_gen2
+                                   (generation-2 collections) and malloc {arena, hblkhd, uordblks,
+                                   fordblks} (glibc mallinfo2 in bytes, the malloc half of the heap;
+                                   null where glibc 2.33+ is absent)
+      caches                       one block per cache the kernel, the judge and the event model keep,
+                                   each an EXACT occupancy (a len() or a sum of len()s under the
+                                   cache's lock, nothing estimated): jsonl {entries, file_bytes,
+                                   records}, asm / asm_keylocks / trailing {entries} (event_model),
+                                   judge_parse / judge_recon / judge_chain {entries} (judge), parse
+                                   {entries}, built_chat {entries, ms_bytes}, judge_usage {rows}, img
+                                   {entries, bytes}, path_links / space_paths / session_stamp /
+                                   task_seg / session_tok {entries}; see _cache_gauges. The memos'
+                                   own occupancy stays under `memos`
       pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
                                    call; a burst coalesces into one cycle), wakes_event /
                                    wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
@@ -458,7 +598,7 @@ class _PerfStats:
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
                 "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
-                "memos": memos}
+                "memos": memos, "caches": _cache_gauges()}
 
 
 _PERF_STATS = _PerfStats()

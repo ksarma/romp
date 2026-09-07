@@ -2657,6 +2657,18 @@ def chain_memo_stats():
     with _CHAIN_LOCK:
         return dict(_CHAIN_STATS)
 
+
+def cache_gauges():
+    """Exact occupancy of the judge's per-session caches for the kernel's /perf `caches` block (perf round
+    4, M1-lite, 2026-09-07): judge_parse (_PARSE_CACHE, one parsed session per fsid the tiers have read),
+    judge_recon (_RECON_MEMO, the reconciliation's per-fsid event gate) and judge_chain (_CHAIN_MEMO, the
+    write-moment chain memo, under its lock). A len() each; nothing estimated. The two unlocked dicts are
+    read by len() alone, which is a single operation."""
+    with _CHAIN_LOCK:
+        chain = len(_CHAIN_MEMO)
+    return {"judge_parse": {"entries": len(_PARSE_CACHE)}, "judge_recon": {"entries": len(_RECON_MEMO)},
+            "judge_chain": {"entries": chain}}
+
 # ── the pending-cut wire (the rewind goal-cleanup fix, 2026-08-17) ──
 # A PENDING bare rollback (chat delete) writes NOTHING to the transcript, so for its whole armed
 # window — unbounded; the user's next message may never come — the file leaf IS the abandoned tail.

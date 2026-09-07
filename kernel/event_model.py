@@ -686,6 +686,23 @@ _TRAILING_LOCK = threading.Lock()   # the memo is shared by the pusher, the hand
 #                                     KeyError under two inserters at the cap, reproduced 2026-09-04)
 
 
+def cache_gauges():
+    """Exact occupancy of the parse-layer caches for the kernel's /perf `caches` block (perf round 4,
+    M1-lite, 2026-09-07): jsonl {entries, file_bytes (the cached files' sizes, summed), records (the parsed
+    records held, summed)}, asm {entries}, asm_keylocks {entries} (never pruned, so this is the number of
+    distinct assembly keys ever seen), trailing {entries}. Every figure is a len() or a sum of len()s under
+    the cache's own lock; nothing is estimated."""
+    with _JSONL_CACHE_LOCK:
+        ents = list(_JSONL_CACHE.values())
+    jsonl = {"entries": len(ents), "file_bytes": sum(int(e[1]) for e in ents), "records": sum(len(e[4]) for e in ents)}
+    with _ASM_LOCK:
+        asm = {"entries": len(_ASM_CACHE)}
+        keylocks = {"entries": len(_ASM_KEYLOCKS)}
+    with _TRAILING_LOCK:
+        trailing = {"entries": len(_TRAILING_CACHE)}
+    return {"jsonl": jsonl, "asm": asm, "asm_keylocks": keylocks, "trailing": trailing}
+
+
 def _trailing_record(path, ent):
     """The complete JSON record sitting past _read_jsonl_incremental's consumed offset WITHOUT its newline
     yet, or None. `ent` is the reader's cache entry for the read being folded (mtime, size, offset, tail,
