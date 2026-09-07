@@ -40,6 +40,7 @@
 // the host's opener, a URL anchor opens itself, a modified click opens either in a tab of its own). This module
 // marks; it binds no action.
 import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, BARE_FILE_EXTS, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
+import { headingSlug } from "./md-links";   // the slug the viewer mints heading ids from (`md-` + slug), so a section link finds its heading
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
 export const URL_LINK_CLASS = "fv-url";
@@ -58,7 +59,7 @@ export const DEAD_LINK_TITLE = "Not a link the viewer can follow: its target is 
 export const EMPTY_TARGET_TITLE = "Not a link the viewer can follow: the target points above the folder this file is named in, so there is no path to open";
 export const SELF_TARGET_TITLE = "Not a link the viewer can follow: the target is the folder this file is in, and the file's name carries no folder, so there is no path to open";
 export const emptyTargetTitle = (filePath: string): string => (filePath.includes("/") ? EMPTY_TARGET_TITLE : SELF_TARGET_TITLE);
-export const noSectionTitle = (id: string): string => "No anchor named \u201c" + id + "\u201d in this document (headings carry none here)";
+export const noSectionTitle = (id: string): string => "No heading or anchor named \u201c" + id + "\u201d in this document";
 
 /** The elements whose text is one unit to the pass: a code view's row, a rendered block (a paragraph, a list item,
  *  a cell, a heading, a fenced block, a quote). Text under none of these is a unit of its own. */
@@ -317,10 +318,14 @@ export function viewerWalkTokens(token: { type: string; href?: string | null }):
 /** The element a section link's `id` names in `root`: the first with that id, else the first `<a name>` of that name,
  *  the README idiom for a stable anchor (`<a name="install"></a>` above a heading), which marked passes through and the
  *  sanitizer keeps; a browser's own fragment rule reads both, and a lookup by id alone left such links dead (the
- *  2026-09-07 review, round 3). Headings carry no ids here: marked gives none. Mark time and click time both ask here. */
+ *  2026-09-07 review, round 3). Else the heading whose slug it is: marked gives headings no ids, and the viewer mints
+ *  one per heading as `md-` + its GitHub slug (mdBlock), so `#Evidence Results`, `#evidence-results` and the
+ *  percent-encoded spelling all name md-evidence-results. Mark time and click time both ask here (file-view.ts
+ *  scrollToFragment). */
 export function fragmentTarget(root: ParentNode, id: string): Element | undefined {
   return Array.from(root.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id)
-    || Array.from(root.querySelectorAll("a[name]")).find((e) => e.getAttribute("name") === id);
+    || Array.from(root.querySelectorAll("a[name]")).find((e) => e.getAttribute("name") === id)
+    || root.querySelector('[id="md-' + headingSlug(id) + '"]') || undefined;   // the slug's alphabet needs no escaping
 }
 
 const withClass = (a: Element, cls: string): void => {
@@ -336,8 +341,9 @@ const withClass = (a: Element, cls: string): void => {
  *  headings no ids); anything else names
  *  a file, relative to the shown one, and the anchor becomes a path link (the shared shape on its own <a>, so
  *  `[**bold** text](docs/x.md)` keeps its label). marked percent-encodes a destination (`my%20notes.md`), so it is
- *  decoded first; a `#L12` or `:12` on the target is the line; a `?query` or other fragment is dropped from the
- *  path. The href comes off a path link: a browser must not follow it, and the chat's document-level opener reads
+ *  decoded first; a `#L12` or `:12` on the target is the line; any other `#fragment` (`report.md#results`) rides
+ *  as the section to land on once the file is open (data-frag); a `?query` is dropped from the path. The href comes
+ *  off a path link: a browser must not follow it, and the chat's document-level opener reads
  *  only anchors with one. An anchor the sanitizer left without an href (a scheme it refuses, a file on another
  *  host) is dressed dead with the reason in its title, unless it is a named target and never was a link; so is a
  *  file target that resolves to no path (`[up](../)` from a file named without a directory). Every attribute is set
@@ -371,11 +377,15 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
     const cut = dest.search(/[?#]/);
     const tail = cut >= 0 ? dest.slice(cut) : "";
     let pathPart = cut >= 0 ? dest.slice(0, cut) : dest;
-    // a line on the path itself (`a.md:12`) or in the fragment (`a.md#L12`)
-    let line: string | null = null;
+    // a line on the path itself (`a.md:12`) or in the fragment (`a.md#L12`); any other fragment is the section to land on
+    let line: string | null = null, frag: string | null = null;
     const colon = /:(\d+)(?::\d+)?$/.exec(pathPart);
     if (colon) { line = colon[1]; pathPart = pathPart.slice(0, colon.index); }
-    else if (tail.startsWith("#")) { const m = LINE_SUFFIX_RE.exec(tail); if (m && m[2]) line = m[2]; }
+    else if (tail.startsWith("#")) {
+      const m = LINE_SUFFIX_RE.exec(tail);
+      if (m && m[2]) line = m[2];
+      else { const f = tail.slice(1).split("?")[0]; if (f) frag = f; }
+    }
     if (!pathPart) {
       a.setAttribute("target", "_blank");
       a.setAttribute("rel", "noopener noreferrer");
@@ -390,5 +400,6 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
     }
     markPathLink(a, open, true);
     if (line) { a.dataset.line = line; a.setAttribute("title", a.getAttribute("title") + ":" + line); }
+    else if (frag) { a.dataset.frag = frag; a.setAttribute("title", a.getAttribute("title") + "#" + frag); }
   });
 }

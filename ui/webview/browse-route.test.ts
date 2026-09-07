@@ -90,7 +90,12 @@ test("render.ts: every folder surface goes through openBrowse, click-safe by del
   // the folder link's act rides a data-act caught by the BODY delegate (a stable root across every per-push
   // rebuild), and the act names the intent; where it lands is decided at the click
   assert.match(RENDER, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);
-  assert.match(RENDER, /delegate\(document\.body, \{\n\s*openFolder: \(el\) => \{/);
+  // the ONE body delegate; upstream's subagent actions (openSubagent, subParent, pinSubagent) precede openFolder in its
+  // block since the 2026-09-07 fold, so the pin is membership of that block, not its first key
+  assert.equal((RENDER.match(/delegate\(document\.body, \{/g) || []).length, 1, "one delegate on the body");
+  const bodyActs = RENDER.split("delegate(document.body, {")[1].split("\n  });")[0];
+  assert.match(bodyActs, /\n\s*openFolder: \(el\) => \{/);
+  assert.match(bodyActs, /\n\s*browseFiles: \(el\) => \{/);
   assert.match(RENDER, /browseFiles: \(el\) => \{\n\s*const cwd = el\.dataset\.cwd; if \(!cwd\) return;\n\s*openBrowse\(cwd, el\.dataset\.id\);/);
   // the tab menu's Browse files: same call, and its sub-line tells the person where the listing will open
   assert.match(RENDER, /openBrowse\(s\?\.cwd \|\| "\.", id\);/);
@@ -126,8 +131,12 @@ test("file-browse.ts: each hosting document states its contract; only the feed's
   // stays the shared viewer, so the feed and the chat change nothing
   assert.match(BROWSE, /openFile\?: \(path: string, sid: string \| null\) => void;/);
   assert.match(BROWSE, /openPick = host\.openFile \?\? null;/);
-  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ if \(openPick\) openPick\(p, curSid\); else openFileView\(p, curSid\); return; \}/);
-  assert.equal((BROWSE.match(/openPick\(/g) || []).length, 1, "one pick site: the row click (Enter on the active row goes through the same onAct)");
+  // the row hands the host's opener to the gesture reader (file-view.ts openFileClick; the 2026-09-07 fold of upstream's
+  // PDF own-tab gesture): a modified click on a PDF is the tab whichever document hosts the browser, a plain click the
+  // host's own open, else the viewer (pdf-new-tab.test.ts pins the reader's body)
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \|\| undefined\); return; \}/);
+  assert.equal((BROWSE.match(/openPick \|\| undefined/g) || []).length, 1, "one pick site: the row click (Enter on the active row goes through the same onAct)");
+  assert.equal((BROWSE.match(/openPick\(/g) || []).length, 0, "the browser never calls the opener itself: the gesture is read first");
 });
 
 test("file-browse.ts: a viewer's dirty-edit veto stands the browse down whole, in every host", () => {
@@ -173,9 +182,15 @@ test("files.ts: the Files pane hosts the listing as a column: identity cached, t
   assert.match(FILES, /const open = surfaceUp\(\);\n\s*empty\.hidden = open;/);
   assert.match(FILES, /let viewerUp = surfaceUp\(\);/);
   assert.match(FILES, /const up = surfaceUp\(\);\n\s*if \(viewerUp && !up && window\.parent !== window\) window\.parent\.postMessage\(\{ romp: "filesViewerClosed" \}, "\*"\);/);
-  // the listing fills the pane: the files page loads the chat sheet, whose .filebrowse is a fixed inset-0 box
+  // the listing fills the pane: the files page loads the chat sheet, whose #romp-filebrowse is the fixed inset-0 backdrop
+  // (the chat has dressed .filebrowse as the viewer's centered card over it since 2026-09-04, taken in the 2026-09-07
+  // fold), and files-pane.css un-dresses that card for the column exactly as it does the viewer's
   assert.match(KERNEL, /<link href=\/dist\/styles\.css\?v=%d rel=stylesheet>/);
-  assert.match(CHAT_CSS, /\.filebrowse \{ position: fixed; inset: 0; z-index: 890;/);
+  assert.match(CHAT_CSS, /#romp-filebrowse \{ position: fixed; inset: 0; z-index: 890;/);
+  const PANE = read("files-pane.css");
+  assert.match(PANE, /body\.fileview-pane #romp-filebrowse\{background:none\}/, "no dim behind a listing that is the pane");
+  assert.match(PANE, /body\.fileview-pane \.filebrowse\{width:100%;height:100%;border:0;border-radius:0;box-shadow:none\}/, "the card takes the whole box");
+  assert.match(PANE, /body\.fileview-pane \.fileview\{width:100%;height:100%;border:0;border-radius:0;box-shadow:none\}/, "the same un-dress the viewer gets");
 });
 
 test("the guide names the folder link and where its listing opens", () => {
@@ -457,6 +472,10 @@ for (const name of ["firefox", "chromium"]) {
           posted: ((f as any).__posted as Array<Record<string, unknown>>).filter((m) => m.type === "listDir"),   // past the boot's ready handshake
           browser: !!box, viewer: !!f.document.getElementById("romp-fileview"),
           fills: r ? r.left === 0 && r.top === 0 && r.width === f.innerWidth && r.height === f.innerHeight : null,
+          // the CARD inside the backdrop too: the chat sheet centers it at min(720px,95%) since 2026-09-04, and the pane's
+          // sheet must undo that (files-pane.css), else the listing floats in a dim pane while the backdrop still "fills"
+          cardFills: (() => { const c = box && box.querySelector(".filebrowse"); if (!c) return null; const q = c.getBoundingClientRect(); return q.left === 0 && q.top === 0 && q.width === f.innerWidth && q.height === f.innerHeight; })(),
+          dim: box ? getComputedStyle(box).backgroundColor : null,
           emptyHidden: (f.document.getElementById("files-empty") as HTMLElement).hidden,
           crumbs: Array.from(f.document.querySelectorAll("#fb-crumbs .fb-crumb")).map((c) => c.textContent),
           rows: Array.from(f.document.querySelectorAll(".fb-row")).map((c) => (c as HTMLElement).dataset.act + ":" + c.querySelector(".fb-name")!.textContent),
@@ -480,6 +499,8 @@ for (const name of ["firefox", "chromium"]) {
       assert.equal(s.filesOn, true, "the shell brought the pane forward through its own state (po.files)");
       assert.equal(s.filesShown, true);
       assert.equal(s.fills, true, "the listing fills the pane: the fixed inset-0 box, in " + name);
+      assert.equal(s.cardFills, true, "and the listing card fills that box: no centered-card inset in a column, in " + name);
+      assert.ok(s.dim === "rgba(0, 0, 0, 0)" || s.dim === "transparent", "no dimmed backdrop behind a listing that is the pane: " + s.dim);
       assert.equal(s.emptyHidden, true, "the empty state stands down while the listing is up");
       assert.deepEqual(s.feedGot, [], "nothing reached the feed");
       assert.equal(s.posted.length, 1, "one listDir ask");

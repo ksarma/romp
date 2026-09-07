@@ -51,7 +51,9 @@ fi
 # API keys never go in it (docs/reference.md, "API keys on disk: the file mode"):
 # they reach the manager through the environment of whatever starts it, or
 # through ROMP_CREDENTIAL_COMMAND set HERE ("Installing without keys on disk"),
-# and the sessions' own key through apiKeyHelper. Parsed line-by-line, never sourced: a
+# and the sessions' own key through apiKeyHelper. A ROMP_API_KEY_REF line stays a
+# reference here; the kernel resolves it through op when needed, never this
+# script. Parsed line-by-line, never sourced: a
 # malformed line is skipped instead of executing code or (under set -eu)
 # taking the manager — and the whole kernel — down with it. One layer of
 # matching quotes around the value is removed, as systemd's EnvironmentFile=

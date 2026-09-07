@@ -13,3 +13,5 @@ OFFERED 2026-09-06 (branch `tmpclean`, `e95ce457` off tip `2b9db2be`): cleanup p
 Status detail (migrated from the table): **offered** — their PR #944 (2026-09-06), label `tests-only`
 
 MERGED 2026-09-06T19:49Z as their PR #944 (merge `223883cb`; head `e95ce457`), as offered. The review's `@pytest.hookimpl(trylast=True)` follow-up rides the child-process hygiene entry (`tmp-hygiene-child-processes`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #944 is in the folded range).

@@ -20,6 +20,7 @@
 // Model/effort <option>s come from GET /models at open (they were server-baked
 // into the HTML before — /models was already the single source of truth).
 
+var gclock = require('./gesture-clock.js');   // every `gt` below is minted here (see that file)
 function kb() { return (typeof window !== 'undefined' && window.__rompKernelBase) || ''; }
 function ku(path) {
   var tok = (typeof window !== 'undefined' && window.__rompKernelToken) || '';
@@ -499,31 +500,35 @@ function initGear(post) {
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
   if (ao) ao.addEventListener('change', function () { var s = load(); s.activeOnly = ao.checked; save(s); });
   if (fc) fc.addEventListener('change', function () { var s = load(); s.collapsed = fc.checked; save(s); });
-  // Thinking summaries is kernel-side but PER-INSTALL (2026-09-01): the post goes to the LOCAL kernel
-  // only — it is deliberately not in federation's KERNEL_SETTING set, so it never queues for or
-  // reaches another machine. Stamped with the gesture time all the same (two dashboards on one
-  // kernel still race, and the kernel orders every setting by `gt`; see the block below).
-  if (ths) ths.addEventListener('change', function () { post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: Date.now() }); });
+  // Every gt-stamped post below mints its stamp through the gesture clock (gesture-clock.js): epoch
+  // ms at the click, lifted above the highest stamp this page has seen for that store — fill()
+  // learns each store's current stamp from /version, the settingStale listener from the frame that
+  // refused a gesture — so a device whose clock runs behind another's still outranks every stamp it
+  // knows of. Federation queues KERNEL_SETTING posts per host while a socket is down and flushes
+  // them on reconnect, so a delayed copy must carry the ORIGINAL gesture's stamp — the kernel orders
+  // applies by it and stands a stale flush down instead of walking the mesh back to an hours-old
+  // pick (a frozen tab's flush did exactly that). Stamp in the message literal, never at send/flush
+  // time.
+  // Thinking summaries and Suggest /compact are kernel-side but PER-INSTALL: each post goes to the
+  // LOCAL kernel only — deliberately not in federation's KERNEL_SETTING set (gear.test.ts pins the
+  // membership), so neither queues for or reaches another machine. Stamped all the same: two
+  // dashboards on one kernel still race, and the kernel orders every setting by `gt`.
+  if (ths) ths.addEventListener('change', function () { post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: gclock.stamp('thinking-summaries') }); });
   // User todos (2026-09-03) is the same per-install class: the LOCAL kernel's answer, never a
-  // KERNEL_SETTING, stamped with the gesture time all the same.
-  if (utd) utd.addEventListener('change', function () { post({ type: 'setUserTodos', enabled: utd.checked, gt: Date.now() }); });
+  // KERNEL_SETTING, stamped through the clock under its own store name all the same.
+  if (utd) utd.addEventListener('change', function () { post({ type: 'setUserTodos', enabled: utd.checked, gt: gclock.stamp('user-todos') }); });
   // Auto Nudge / judge tiers are SERVER-SIDE (the kernel runs them): post the
   // change; the controls re-initialize from /version on every open (fill()).
   // Each attached kernel keeps its own copy, so the post goes to all of them
   // (federation.ts KERNEL_SETTING) — which is also what resolves a split box:
   // the click picks one answer and every machine takes it.
-  // Every KERNEL_SETTING post carries `gt`: epoch ms minted HERE, at the click. Federation queues
-  // these per host while a socket is down and flushes them on reconnect, so a delayed copy must
-  // carry the ORIGINAL gesture's time — the kernel orders applies by it and stands a stale flush
-  // down instead of walking the mesh back to an hours-old pick (a frozen tab's flush did exactly
-  // that). Stamp in the message literal, never at send/flush time.
   if (an) an.addEventListener('change', function () {
     clearAutoNudgeSplit();
-    post({ type: 'setAutoNudge', enabled: an.checked, gt: Date.now() });
+    post({ type: 'setAutoNudge', enabled: an.checked, gt: gclock.stamp('auto-nudge') });
   });
-  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
+  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: gclock.stamp('file-editing') }); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
-  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() }); });
+  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: gclock.stamp('compact-suggest') }); });
   // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
   // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
   // pass-through to the kernel's PTY — nothing is stored or logged on any side.
@@ -539,7 +544,12 @@ function initGear(post) {
   // and the button reopens the modal mid-flow instead of restarting the login.
   var lgM = document.getElementById('rs-login-modal');
   function lgModal(on) { if (lgM) lgM.hidden = !on; }
-  if (lgM) lgM.addEventListener('click', function (e) { if (e.target === lgM) lgModal(false); });
+  if (lgM) lgM.addEventListener('click', function (e) {
+    // This dialog is a sibling of settings. Keep its clicks inside the dialog so the
+    // settings outside-click handler cannot close the panel and shrink its host iframe.
+    e.stopPropagation();
+    if (e.target === lgM) lgModal(false);
+  });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && lgM && !lgM.hidden) lgModal(false); });
   function lgRender(v) {
     if (!lgB) return;
@@ -596,7 +606,7 @@ function initGear(post) {
   });
   if (lgI) lgI.addEventListener('keydown', function (e) { if (e.key === 'Enter' && lgSend) lgSend.click(); });
   if (lgX) lgX.addEventListener('click', function () { lgModal(false); post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
-  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() }); });
+  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: gclock.stamp('update-mode') }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
   // ArrowRight reveals a side submenu of versions. The native select stays (hidden) as the VALUE
@@ -751,13 +761,13 @@ function initGear(post) {
     versionMenu(cmm, [{ value: 'session', label: 'Same as the session', versions: [] },
                       { value: 'default', label: 'Default', versions: [] }]);
   });
-  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: Date.now() }); });
-  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: Date.now() }); });
-  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: Date.now() }); });
+  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: gclock.stamp('judge-model') }); });
+  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: gclock.stamp('index-model') }); });
+  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: gclock.stamp('judge-effort') }); });
   if (jf) jf.addEventListener('change', function () { post({ type: 'setJudgeFast', on: jf.checked }); });
-  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: Date.now() }); });
-  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: Date.now() }); });
-  if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: Date.now() }); });
+  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: gclock.stamp('index-effort') }); });
+  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: gclock.stamp('distill-model') }); });
+  if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: gclock.stamp('distill-effort') }); });
   // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
   // non-Opus comment model makes the box a dead control, so it disables — and a model pick that
   // strands a checked box also unchecks it, visibly, as part of the user's own gesture (never a
@@ -770,12 +780,12 @@ function initGear(post) {
     cmf.disabled = !can;
     if (!can && cmf.checked && fromModelPick) {
       cmf.checked = false;
-      post({ type: 'setCommentFast', fast: 'session', gt: Date.now() });
+      post({ type: 'setCommentFast', fast: 'session', gt: gclock.stamp('comment-fast') });
     }
   }
-  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value, gt: Date.now() }); cmtFastGate(true); });
-  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value, gt: Date.now() }); });
-  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session', gt: Date.now() }); });
+  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value, gt: gclock.stamp('comment-model') }); cmtFastGate(true); });
+  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value, gt: gclock.stamp('comment-effort') }); });
+  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session', gt: gclock.stamp('comment-fast') }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
   var CMAPS = { aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],
     hawaii: [[140, 2, 115], [146, 46, 85], [151, 78, 62], [155, 111, 40], [156, 150, 28], [137, 189, 74], [107, 212, 142], [103, 233, 213], [179, 242, 253]],
@@ -841,13 +851,31 @@ function initGear(post) {
     'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
     'comment-fast': 'Fast comment threads', 'thinking-summaries': 'Thinking summaries',
     'user-todos': 'User todos' };
+  // store name → the message type that sets it: the whitelist for the toast's Apply anyway (a frame
+  // may re-issue the one setting it names, nothing else) and the completeness pin's map
+  // (gear.test.ts checks every emitter stamps through the clock under its own store name)
+  var STALE_TYPE = { 'auto-nudge': 'setAutoNudge', 'compact-suggest': 'setCompactSuggest',
+    'file-editing': 'setFileEditing', 'update-mode': 'setUpdateMode', 'thinking-summaries': 'setThinkingSummaries',
+    'user-todos': 'setUserTodos',
+    'judge-model': 'setJudgeModel', 'judge-effort': 'setJudgeEffort',
+    'index-model': 'setIndexModel', 'index-effort': 'setIndexEffort',
+    'distill-model': 'setDistillModel', 'distill-effort': 'setDistillEffort',
+    'comment-model': 'setCommentModel', 'comment-effort': 'setCommentEffort', 'comment-fast': 'setCommentFast' };
+  // store name → the words its select shows for the sentinel options whose value is not the word. The
+  // effort selects' Default is the EMPTY value (no effort flag), which read as no value at all, so a
+  // refused Default pick drew the value-less copy and a plain Apply anyway — in the frozen-tab case, the
+  // one pick the user most needs to see named (#967 review). Kept in step with paintChoices' option
+  // lists: setting-stale.test.ts pins every literal sentinel there against this map.
+  var STALE_WORDS = { 'judge-effort': { '': 'Default' }, 'index-effort': { '': 'Default' },
+    'distill-model': { 'triage': 'Follow triage' }, 'distill-effort': { 'triage': 'Follow triage', 'none': 'Default' },
+    'comment-model': { 'session': 'Same as the session', 'default': 'Default' }, 'comment-effort': { 'session': 'Same as the session' } };
   // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
   // way out gets in the way — worst on touch, and this toast's mint site is a frozen phone tab
   // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
   // Escape clears the stack, and the fade precedes the auto-remove. COPIED from the family home
   // (render.ts warnToast + styles.css .warn-toast-x) because the gear is its own document, loaded
   // by panes that ship only this sheet — keep the two in step (setting-stale.test.ts pins this copy).
-  function staleToast(text) {
+  function staleToast(text, act) {
     var box = document.getElementById('rs-stale-toasts');
     if (!box) {   // created once; dismissal delegated to the STABLE container (click-safe rule)
       box = document.createElement('div'); box.id = 'rs-stale-toasts';
@@ -867,22 +895,97 @@ function initGear(post) {
     t.className = 'rs-stale-toast'; t.setAttribute('role', 'status'); t.title = 'click to dismiss';
     var txt = document.createElement('span');
     txt.className = 'rs-stale-toast-msg'; txt.textContent = text;
+    t.appendChild(txt);
+    if (act) {   // the toast's one action: a real button whose click also bubbles to the container's
+      var b = document.createElement('button');   // delegated dismiss, so acting clears the toast too
+      b.type = 'button'; b.className = 'rs-stale-toast-act'; b.textContent = act.label;
+      b.title = act.title;   // its own tooltip: the toast's reads "click to dismiss", which the button is not
+      b.addEventListener('click', act.run);
+      t.appendChild(b);
+    }
     var x = document.createElement('button');
     x.className = 'rs-stale-toast-x'; x.setAttribute('aria-label', 'Dismiss'); x.title = 'dismiss (Esc)';
     x.textContent = '✕';   // clicks bubble to the container's delegated dismiss, like the family's
-    t.appendChild(txt); t.appendChild(x);
+    t.appendChild(x);
     box.appendChild(t);
     setTimeout(function () { t.classList.add('fade'); }, 11000);   // the family fade first…
     setTimeout(function () { t.remove(); }, 12000);   // …then the self-clearing backstop; a click/Esc dismisses sooner
+    return t;
+  }
+  // The copy names the setting, the value that was refused, the kernels that refused it and the value
+  // they kept, and says the pick was not applied. The refused value matters in the frozen-tab case: the
+  // pick is hours old and one click on Apply anyway sends it to every linked kernel, so the user must
+  // see what they would be applying (#945 review). It does NOT say who changed the setting, nor that
+  // the kept pick came after this one: the kernel knows only that it holds a larger stamp, and with
+  // device clocks in the mix that is not the same as "someone changed it after you" (#879 review; the
+  // #945 review retired the copy's recency claim on the same ground). The hosts ARE known: each
+  // refusal came from one of them. Either value may be absent (an older kernel echoes no gesture and
+  // sends no kept value); the copy drops that clause.
+  function staleText(label, refused, kept, hosts) {
+    return label + ': ' + (refused ? refused + ' was not applied on ' : 'not applied on ') + hosts.join(', ') + '.'
+      + (kept ? ' Keeping ' + kept + '.' : '');
+  }
+  // Values read as words: a boolean toggle's on/off, a select's sentinel by the name the select shows for
+  // it (STALE_WORDS, per setting), any other string as itself, anything else as absent.
+  function staleWord(v, setting) {
+    var words = STALE_WORDS[setting];
+    if (words && typeof v === 'string' && Object.prototype.hasOwnProperty.call(words, v)) return words[v];
+    return v === true ? 'on' : v === false ? 'off' : (typeof v === 'string' && v ? v : '');
+  }
+  // The value the refused gesture carried. Every emitter posts {type, <one value field>, gt} and the
+  // kernel echoes it without gt, so the value is the echo's one key beside type — read generically
+  // rather than through a third type→field map kept in step with STALE_TYPE. Trusted only for the
+  // setting the frame names (the whitelist Apply anyway uses: an echo for another setting is not this
+  // setting's value); an echo of any other shape (two value fields, none, or no echo from an older
+  // kernel) reads as no value, and the copy and the label take their value-less form.
+  function staleRefused(m) {
+    if (!m.gesture || typeof m.gesture !== 'object' || STALE_TYPE[m.setting] !== m.gesture.type) return '';
+    var keys = Object.keys(m.gesture).filter(function (k) { return k !== 'type'; });
+    return keys.length === 1 ? staleWord(m.gesture[keys[0]], m.setting) : '';
+  }
+  // One toast per refused GESTURE, not per refusing kernel: a dashboard's broadcast reaches every
+  // linked kernel, so one stale flush used to draw N identical toasts naming no host. The fold key
+  // is the gesture's identity — setting + its own gt, which the frame carries — an event key, never
+  // a time window: N kernels refusing one flush share it, two different gestures never do. A frame
+  // without gt (an older kernel) keeps one toast per frame. Liveness is read at lookup — the node's
+  // parentNode, and not yet fading: a toast in its fade→remove second sits at opacity 0, so a frame
+  // written into it would never be seen (#945 review) — so a dismissed, expired or fading toast never
+  // absorbs a later frame, and still no cleanup rides the timers. A remote kernel's frame arrives
+  // host-stamped (federation.ts prefixInbound); the local kernel's has no host and reads as this
+  // machine, the name the gear already uses for it.
+  var staleOpen = {};   // 'setting:gt' → { t: the toast node, hosts: [...], refused: the value in words } while the toast is up
+  function staleHost(m) { return (typeof m.host === 'string' && m.host) ? m.host : 'this machine'; }
+  function staleLive(t) { return !!t.parentNode && !(t.classList && t.classList.contains('fade')); }
+  // Apply anyway re-issues the frame's echoed gesture as a NEW one, stamped above everything this
+  // page has seen (the frame's storedGt included, learned just before): a fresh click is legitimate
+  // new information, the event the ordering rule wants — never a clock heuristic. Offered only when
+  // the echo's type is the setting the frame names, so a frame from any linked kernel may re-issue
+  // that one setting and nothing else; an older kernel sends no echo and the toast shows without it.
+  // The label names the value one click would apply everywhere (the frozen-tab case again), and the
+  // button carries its own title: without one it inherited the toast's click-to-dismiss tooltip.
+  function staleAction(m, refused) {
+    if (!m.gesture || typeof m.gesture !== 'object' || STALE_TYPE[m.setting] !== m.gesture.type) return null;
+    return { label: refused ? 'Apply ' + refused + ' anyway' : 'Apply anyway',
+             title: 'apply ' + (refused || 'this pick') + ' on every linked kernel, replacing the value they kept',
+             run: function () { post(Object.assign({}, m.gesture, { gt: gclock.stamp(m.setting) })); } };
   }
   window.addEventListener('message', function (e) {
     var m = e.data;
     if (!m || m.type !== 'settingStale') return;
+    gclock.learn(m.setting, m.storedGt);   // the frame IS new information about that store's clock
     var label = STALE_LABELS[m.setting] || String(m.setting || 'A setting');
-    var kept = m.kept === true ? 'on' : m.kept === false ? 'off'
-      : (typeof m.kept === 'string' && m.kept ? m.kept : '');
-    staleToast(label + ' changed more recently somewhere else — keeping the newer choice'
-      + (kept ? ' (' + kept + ')' : '') + '.');
+    var kept = staleWord(m.kept, m.setting);
+    var refused = staleRefused(m);
+    var key = typeof m.gt === 'number' ? m.setting + ':' + m.gt : '';
+    var live = key && staleOpen[key] && staleLive(staleOpen[key].t) ? staleOpen[key] : null;
+    var where = staleHost(m);
+    if (live) {   // the same gesture, refused by one more kernel: add the host to the toast on screen
+      if (live.hosts.indexOf(where) < 0) live.hosts.push(where);
+      live.t.querySelector('.rs-stale-toast-msg').textContent = staleText(label, live.refused || refused, kept, live.hosts);
+    } else {
+      var t = staleToast(staleText(label, refused, kept, [where]), staleAction(m, refused));
+      if (key) staleOpen[key] = { t: t, hosts: [where], refused: refused };
+    }
     if (!p.hidden) fill();   // the open modal re-reads the kernel's values so it stops showing the refused pick
   });
   // The model/effort <option>s come from /models — the same single source the
@@ -1047,6 +1150,7 @@ function initGear(post) {
   // setShow — fill()'s write path for every kernel-backed select below — sits beside paintChoices, which
   // shares it.
   function fill() { fillChoices().then(function () { return fetch(ku('/version'), { cache: 'no-store' }); }).then(function (r) { return r.json(); }).then(function (v) {
+    gclock.learnAll(v.settingsGt);   // each store's last-applied stamp: the clock climbs above them (an older kernel sends none)
     // ONE /tunnels fetch feeds every cross-machine comparison: the autoNudge box and the select marks.
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
     fetch(ku('/tunnels'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
@@ -1221,7 +1325,7 @@ function initGear(post) {
     svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Judges</text>';
     svg += '</svg>'; raChart.innerHTML = svg;
     var lg = segs.map(function (s) { return '<span class=ra-li><span class=ra-sw style="background:' + s.color + '"></span>' + raEsc(s.label) + ' <b>' + raFmt(raVal(s)) + '</b></span>'; }).join('');
-    raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;
+    raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:var(--text-faint, #7d8590)"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;   // the swatch matches its bar (PR #886 review: the bar moved to --text-faint and they split in classic)
     var ratio = sessTot ? (judgeTot / sessTot * 100) : 0;
     // The period is whole buckets — this hour and the ones before it, or whole local dates — the rail's
     // own rule, so the ledger figure here IS the rail cell's; the footnote names the real start rather

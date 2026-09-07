@@ -1,9 +1,10 @@
-// The feed's live clock and its age refresh (feed-age.ts), RUN: a delta client hears nothing from a quiet
-// board (the kernel used to repost the frame every 60 s, so its clock was never more than a minute stale),
-// so the pane keeps the clock moving itself and one 15 s pass repaints every stamped age — ask cards, group
-// cards, sub-goal rows, an open modal. The 2026-09-03 review found group cards and the modal frozen at the
-// age of the last change for hours. Pure functions here, plus source pins on feed.ts's wiring (the feed has
-// no DOM harness; see feed-dead.test.ts). Synthetic only.
+// The live clock a pane runs its ages on (feed-age.ts liveNow: the kernel's `now` on the last frame plus the
+// local time elapsed since that frame ARRIVED) and the feed's age refresh, RUN: a delta client hears nothing
+// from a quiet board (the kernel used to repost the frame every 60 s, so its clock was never more than a
+// minute stale), so the pane keeps the clock moving itself and one 15 s pass repaints every stamped age — ask
+// cards, group cards, sub-goal rows, an open modal. The 2026-09-03 review found group cards and the modal
+// frozen at the age of the last change for hours. Pure functions here (node --test runs them without a DOM),
+// plus source pins on feed.ts's wiring (the feed has no DOM harness; see feed-dead.test.ts). Synthetic only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -17,12 +18,14 @@ const rel = (s: number) => s < 60 ? "<1m ago" : s < 3600 ? Math.round(s / 60) + 
 const tint = (s: number) => "rgb(" + ageRgb(s).join(",") + ")";
 const mk = (): AgeEl => ({ textContent: null, style: { color: "" }, dataset: {} });
 
-test("liveNow is the kernel's clock plus the local time since the payload landed — never the browser's own clock", () => {
-  assert.equal(liveNow(1_000_000, 50_000, 50_000), 1_000_000, "at the payload: the payload's now");
-  assert.equal(liveNow(1_000_000, 50_000, 65_500), 1_000_015, "15.5 s later: +15 (whole seconds)");
-  assert.equal(liveNow(1_000_000, 50_000, 40_000), 1_000_000, "a local clock that went backwards never rewinds it");
-  // skew between the kernel's clock and the browser's never enters: only the local clock's DELTAS do
-  assert.equal(liveNow(1_000_000, 1_900_000_000_000, 1_900_000_060_000), 1_000_060);
+test("liveNow adds only the local clock's DELTAS to the kernel's clock — skew between the two never enters", () => {
+  const hostNow = 1_000_000;                    // the kernel's clock, as of the frame (epoch s)
+  const arrivedMs = 9_000_000_000;              // the browser's clock when the frame landed — hours off the kernel's; irrelevant
+  assert.equal(liveNow(hostNow, arrivedMs, arrivedMs), hostNow, "at the arrival the kernel clock IS the frame's `now`");
+  assert.equal(liveNow(hostNow, arrivedMs, arrivedMs + 15_000), hostNow + 15, "15 s later, 15 s older");
+  assert.equal(liveNow(hostNow, arrivedMs, arrivedMs + 999), hostNow, "whole seconds only: ages never read ahead of the tick");
+  assert.equal(liveNow(hostNow, arrivedMs, arrivedMs + 15_500), hostNow + 15, "15.5 s later: +15, the fraction dropped");
+  assert.equal(liveNow(hostNow, arrivedMs, arrivedMs - 5_000), hostNow, "a local clock that steps BACK cannot make an age negative");
 });
 
 test("a quiet board's ages advance: every stamped element repaints from the live clock, tinted ones re-tint", () => {
@@ -63,13 +66,13 @@ test("the anchor is a (now, nowAt) pair that travels with the frame: a re-emit a
   // federation re-emits the merged frame on a view-order write, on every remote host's frame and on a detach,
   // and the pane sets its clock from whatever frame it is handed. The pair pins the anchor to the WIRE arrival:
   // the same stored frame, re-emitted an hour later, anchors identically. Anchored on the emit instead, every
-  // age and tint went back by the quiet period (the 2026-09-03 review: "1m ago" → "<1m ago" on a tab drag).
+  // age and tint would go back by the quiet period (the 2026-09-03 review saw it on a tab drag).
   const T = 1_000_000, arrivedMs = 5_000_000, hourLater = arrivedMs + 3_600_000;
   const anchor = (m: { now: number; nowAt?: number }, handledMs: number) =>
     liveNow(m.now, typeof m.nowAt === "number" ? m.nowAt : handledMs, handledMs);   // feed.ts's rule, pinned below
   assert.equal(anchor({ now: T, nowAt: arrivedMs }, arrivedMs), T, "at the arrival");
   assert.equal(anchor({ now: T, nowAt: arrivedMs }, hourLater), T + 3600, "the re-emit keeps the hour");
-  assert.equal(anchor({ now: T }, hourLater), T, "a frame with no pair anchors on the handling — the old rule, and the bug on a re-emit");
+  assert.equal(anchor({ now: T }, hourLater), T, "a frame with no pair anchors on the handling — the VS Code pipe's frames, which are never re-emitted (the old rule, and the bug on a re-emit)");
 });
 
 test("an unstamped element is left alone", () => {

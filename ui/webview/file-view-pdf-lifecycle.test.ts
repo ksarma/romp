@@ -587,5 +587,8 @@ test("source: one AbortController per attempt, its signal into render() beside t
     "a failed attempt's signal is spent with it — and the deadline's fallback is where a hung attempt's Worker is reached");
   assert.match(show, /\}\)\.then\(\(h\) => \{\n\s*if \(my !== pdfSeq \|\| !wrap\.isConnected\) \{ h\.dispose\(\); return; \}[^\n]*\n\s*disarmBackstop\(\);[^\n]*\n\s*pdfAttempt = null;/,
     "the render settling clears the controller without aborting it: the handle owns the release from the mount on");
-  assert.equal((VIEW.match(/new AbortController\(\)/g) || []).length, 1, "one controller, the attempt's: a second one needs the event it is aborted on named");
+  // two since the 2026-09-07 fold: the attempt's, and the URL viewer's read controller (openUrlView, upstream 2026-09-06),
+  // aborted on the viewer's close and replace (dropUrlRead) and by every response the read refuses (md-url-view.test.ts)
+  assert.equal((VIEW.match(/new AbortController\(\)/g) || []).length, 2, "two controllers, each with the event it is aborted on named: a third needs the same");
+  assert.match(VIEW, /const ctrl = new AbortController\(\);\n\s*urlAbort = ctrl;/, "the URL read's controller is the one dropUrlRead reaches");
 });

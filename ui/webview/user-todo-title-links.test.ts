@@ -250,9 +250,9 @@ test("the Reply modal's one delegate opens a link in the quoted line and one in 
   assert.deepEqual(opened, [["docs/design.md", SID, TID], ["/tmp/TESTHOST/notes-api/layouts.md", SID, TID]]);
 });
 
-// ── the chat host: openLinkedPath (what a click does), bindPathLink (the transcript's per-span binder)
-// and the body delegate's openpath handler, lifted out of render.ts and transpiled, with openPath and
-// activeId injected
+// ── the chat host: openLinkedPath (what a click does), bindPathLink (the transcript's per-span binder,
+// with onMiddleClick, which it calls) and the body delegate's openpath handler, lifted out of render.ts
+// and transpiled, with openPath and activeId injected
 type ChatOpened = [string, string | null];
 function liftRender(name: string): string {
   const at = RENDER.indexOf("function " + name + "(");
@@ -265,7 +265,7 @@ function chatHost(opened: ChatOpened[], activeId: string | null): { openpath: Ha
   const ln = body.split("\n").find((l) => /^\s*openpath: /.test(l));
   assert.ok(ln, "anchor not found: the body delegate's openpath moved; re-anchor");
   const handler = ln!.trim().replace(/^openpath:\s*/, "").replace(/,$/, "");
-  const code = transpile(liftRender("openLinkedPath") + liftRender("bindPathLink") + "const openpath = " + handler + ";");
+  const code = transpile(liftRender("onMiddleClick") + liftRender("openLinkedPath") + liftRender("bindPathLink") + "const openpath = " + handler + ";");
   const fn = new Function("openPath", "activeId", code + "\nreturn { openpath, bindPathLink };");
   return fn((p: string, sid: string | null) => opened.push([p, sid]), activeId);
 }
@@ -362,7 +362,7 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyPathTokens\(node, sid\);\n\}/);
   assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
-  assert.match(bodyMap, /\n    openpath: \(elx\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx\); \},\n/, "the body delegate opens a path link in the todo card or the Reply modal, and nowhere else (the file viewer's links reach it too)");
+  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},\n/, "the body delegate opens a path link in the todo card or the Reply modal, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
   assert.match(RENDER, /const card = el\("div", "todo-card"\);/, "the card's class, as the handler names it");
   assert.match(RENDER, /overlay\.id = "ut-reply-prompt";/, "the modal's id, as the handler names it");
   const card = RENDER.slice(RENDER.indexOf('const head = el("div", "todo-head ut-head");'), RENDER.indexOf("card.appendChild(row);"));

@@ -626,6 +626,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fask-taskbtn { display: inline-flex; align-items: center; gap: 5px; }
 .fask-taskbtn .fask-awaiting-swirl { width: 10px; height: 10px; }
 .ftask-swirl.fask-awaiting-swirl { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; }
+/* the expanded list grouped by KIND (slice 2, 2026-09-05): a small dim caps header per group, in the
+   .fmodal-warn-cap vocabulary, shown only when more than one group is on the card */
+.ftask-group { font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin: 4px 0 1px; }
+.ftask-group:first-child { margin-top: 1px; }
 
 /* "Followed up" — optimistic reopen pending the judge's re-file (judges delegation, 2026-06-17); blue pill */
 .fask-followedup { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
@@ -1411,14 +1415,21 @@ body.fileview-open { overflow: hidden; }
 .fileview-dir { flex: 0 1 auto; min-width: 0; color: var(--dim);
   overflow: hidden; text-overflow: ellipsis; }
 .fileview-base { flex: 0 0 auto; }
-/* the SESSION the file was opened from (the user 2026-09-03), in the waiting pane's chip idiom (.wt-sess): a
-   pill in the session's identity colour (inline, from the resolved row), a remote session's "host:" quiet
-   inside. Fixed width: the chip never yields to the path — only .fileview-dir above gives up room. Uncolored
-   when the session has no colour (a stub for a sid the document cannot name); absent when there is no sid. */
-.fileview-sess { flex: 0 0 auto; display: inline-flex; align-items: center; max-width: 38%; padding: 1px 8px;
-  border-radius: var(--radius-pill, 999px); font-size: 11px; font-weight: 600; line-height: 1.5;
+/* the SESSION the file was opened from (the user 2026-09-03): a pill in the session's identity colour
+   (inline, from the resolved row — the colour its tab wears), a remote session's "host:" quiet inside.
+   Fixed width: the chip never yields to the path — only .fileview-dir above gives up room. Uncolored
+   when the session has no colour (a stub for a sid the document cannot name); absent when there is no
+   sid. The host: token takes the pill's OWN foreground (color: inherit): the global .host-prefix rule's
+   var(--dim) would otherwise beat the inline colour and sit near-invisible on a saturated pill.
+   Sized at the bar's button size — 0.82em of --fs, not a px value — so the chip scales with its
+   neighbours. A BLOCK container, not inline-flex: text-overflow acts on block containers only — on a flex
+   container the text sits in an anonymous flex item the property cannot reach, and an over-long name
+   hard-clipped at max-width (the review of #970). The bar's align-items centres the pill; its one nowrap
+   line centres within it. */
+.fileview-sess { flex: 0 0 auto; display: block; max-width: 38%; padding: 1px 8px;
+  border-radius: var(--radius-pill, 999px); font-size: 0.82em; font-weight: 600; line-height: 1.5;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); }
+  background: var(--overlay-10, rgba(255, 255, 255, 0.12)); color: var(--fg); user-select: none; }
 .fileview-sess .host-prefix { color: inherit; opacity: 0.75; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
@@ -1431,13 +1442,16 @@ body.fileview-open { overflow: hidden; }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* the GitHub action is one unit: the control and, when the kernel gave one, its reason as a caption
-   beside it — visible without hover (touch has none, and a disabled button takes no focus), truncated
-   with the full text in its tooltip; same size as the buttons it annotates. Hidden until the kernel
-   answers: an author `display` beats the UA's [hidden] rule, so the hide is spelled out. */
+   beside it — visible without hover (touch has none, and a disabled button takes no focus), and whole:
+   it wraps inside a bounded width rather than truncating, because nothing in the unit takes a tap,
+   click or focus that could finish a cut sentence; same size as the buttons it annotates, ragged edge
+   away from the control it precedes. */
 .fileview-gh { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
-.fileview-gh[hidden] { display: none; }
-.fileview-gh-why { font-size: 0.82em; color: var(--dim); max-width: 18em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
+.fileview-gh-why { font-size: 0.82em; line-height: 1.25; color: var(--dim); max-width: 18em; text-align: right; }
+/* pending: the kernel's check is on its way (up to 3 s when it must ask origin), so the slot holds the
+   dimmed button and the loader's dots (.fileview-dot, the pane's own) where the caption will go — a slow
+   check must read as a wait, not as the old no-button state nor as a verdict (the loading-state rule) */
+.fileview-gh-dots { display: inline-flex; align-items: center; gap: 4px; }
 /* no link: a real disabled button, greyed, hover inert — never hidden (an absent button read as
    "broken" when the file was simply not committed yet, 2026-09-05) */
 .fileview-gh .fileview-btn:disabled { opacity: 0.55; cursor: default; }
@@ -1533,6 +1547,9 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4 {
   font-weight: 600; color: var(--fg); margin: 1em 0 0.4em; line-height: 1.3; }
 .fileview-md h1 { font-size: 1.3em; } .fileview-md h2 { font-size: 1.15em; } .fileview-md h3 { font-size: 1.05em; }
+/* a heading an in-document link lands on (scrollIntoView) sits a breath below the title bar's hairline
+   rather than flush against it — the bar's own 10px spacing */
+.fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6 { scroll-margin-top: 10px; }
 .fileview-md ul, .fileview-md ol { margin: 0.4em 0; padding-left: 1.4em; }
 .fileview-md li { margin: 0.2em 0; }
 .fileview-md strong { color: var(--fg); font-weight: 600; }
@@ -1915,10 +1932,16 @@ a.fileview-gh-note { border-style: dashed; }
 .fask-bellbtn.on { visibility: visible; opacity: 0.85; color: var(--accent); }
 
 /* ── the file BROWSER (file-browse.ts) ── the viewer's sibling overlay, one z layer BENEATH it
-   so a file opened from a listing overlays the listing and closing the file returns to it. Same
-   pane-takeover reasoning as .fileview; body.filebrowse-open stops the cards scrolling behind it. */
-.filebrowse { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column;
-  background: var(--bg, #1e1e1e); }
+   so a file opened from a listing overlays the listing and closing the file returns to it. The
+   pane takeover it wore was superseded 2026-09-04 (the user found it odd once the listing was
+   capped): the viewer's centered-card treatment now, the id on the BACKDROP (every open/close
+   check looks it up); body.filebrowse-open stops the cards scrolling behind it. Height caps in
+   px/%, never vh (in a pane iframe vh is the pane — the cap must lose to 95% on short panes). */
+#romp-filebrowse { position: fixed; inset: 0; z-index: 890; background: var(--overlay-dim);
+  display: flex; align-items: center; justify-content: center; }
+.filebrowse { width: min(720px, 95%); height: min(760px, 95%); display: flex; flex-direction: column;
+  overflow: hidden; background: var(--bg, #1e1e1e); border: 1px solid var(--box-border);
+  border-radius: var(--radius-modal); box-shadow: var(--shadow-modal); }
 body.filebrowse-open { overflow: hidden; }
 .fb-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
@@ -1931,10 +1954,7 @@ body.filebrowse-open { overflow: hidden; }
 .fb-crumb:hover { color: var(--accent); text-decoration: underline; }
 .fb-crumb:last-child { color: var(--fg); }
 .fb-crumb-sep { margin: 0 3px; opacity: 0.6; }
-/* the overlay still takes the whole pane (the user 2026-08-24 ruling) — but the LISTING reads at a
-   centered 720px measure on a wide pane (the user 2026-09-02: full-width rows put a file's size
-   ~800px from its name); 100% wins on narrow panes/phones, pixel-identical to before */
-.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; width: min(720px, 100%); margin-inline: auto; }
+.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; }
 /* compact one-line rows (progressive disclosure): marker + name, size right-aligned on files; mtime
    and the full path live in the row's hover title */
 .fb-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 14px; cursor: pointer;

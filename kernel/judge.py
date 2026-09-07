@@ -61,6 +61,10 @@ _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
 em = load_source("romp_event_model", HERE / "event_model.py")
+# keysource holds process state (the op credential claim_op_env took, which path selected which source),
+# so a module already loaded under this name is REUSED, never re-executed: load_source, like load_module(),
+# runs the file again into the existing object, which would empty that state (upstream's guard, kept)
+_keysrc = sys.modules.get("romp_keysource") or load_source("romp_keysource", HERE / "keysource.py")
 
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
@@ -258,8 +262,16 @@ _EFFORT_FLOOR = {"fable": (5, 0), "mythos": (5, 0), "opus": (4, 6), "sonnet": (4
 #   family -> first (major, minor) the CLI treats as adaptive; below it is its denylist. The catalog knows
 #   no Haiku past 4.5, so haiku's floor marks where the denylist ends, not a version that exists.
 _ALIAS_HEAD = {"fable": (5, 1), "opus": (5, 0), "sonnet": (5, 0), "haiku": (4, 5)}   # the catalog's aliases block
+#   as read from the 2.1.257 / 2.1.258 binaries. 2.1.263 resolves alias targets at run time from a published
+#   catalog, falling back to its compiled table, so this can go stale with no CLI upgrade: _note_served_model
+#   checks it against the id each call actually served, and _ALIAS_SERVED outranks it once a call has answered.
 _MODEL_FAMILIES = tuple(_EFFORT_FLOOR)
 _UNKNOWN_MODEL_LOGGED = set()   # ids already announced as unplaceable (one stderr line each)
+_ALIAS_SERVED = {}              # family -> (major, minor) the CLI served for the BARE alias this process, read off
+                                #   result envelopes (_note_served_model); _adaptive_thinking asks it before the table
+_ALIAS_DRIFT_LOGGED = set()     # (family, served id) pairs already announced as off the table (one stderr line each)
+_NO_MODEL_USAGE_LOGGED = set()  # a result envelope carried no modelUsage map: said once per PROCESS (the field is a
+                                #   property of the CLI, not of the call), so a stale table is never trusted silently
 
 
 def _model_family_version(model):
@@ -297,7 +309,8 @@ def _model_family_version(model):
 def _adaptive_thinking(model):
     """True when `model` runs adaptive thinking under CLI 2.1.257 / 2.1.258 — the models whose index-tier
     cost lever is `--effort` (_EFFORT_FLOOR: Fable and Mythos, every version; Opus >= 4.6; Sonnet >= 4.6;
-    a bare alias is the version the catalog resolves it to, _ALIAS_HEAD — `haiku` is Haiku 4.5, so False).
+    a bare alias is the version the CLI has been SEEN to serve for it this process — _ALIAS_SERVED, read off
+    the result envelopes — else the table's head, _ALIAS_HEAD: `haiku` is Haiku 4.5, so False).
     False is the CLI's denylist — Haiku 4.5 and older, Sonnet 4.5 and older, Opus 4.5 and older, every
     claude-3 — the models where MAX_THINKING_TOKENS=0 is honored and is the lever. An id this cannot
     place — no family it knows, or a family with no readable version — gets the CLI's own answer for an
@@ -312,16 +325,72 @@ def _adaptive_thinking(model):
             sys.stderr.write("romp-judge: model %r is not one I can place (family + version) — the CLI "
                              "treats an unlisted model as adaptive and drops thinking:disabled for it, so "
                              "the index tier passes --effort (%s unless the gear's Indexing effort says "
-                             "otherwise) and leaves the thinking-off env var unset; extend _EFFORT_FLOOR "
-                             "when the CLI's catalog places it\n" % (model, INDEX_EFFORT_DEFAULT))
+                             "otherwise); the thinking-off env var rides the tier regardless, a no-op the "
+                             "CLI drops for such a model; extend _EFFORT_FLOOR when the CLI's catalog places "
+                             "it\n" % (model, INDEX_EFFORT_DEFAULT))
         return True
-    if ver is None:                                # a bare alias: the version the catalog resolves it to
-        ver = _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])
+    if ver is None:                                # a bare alias: the version the CLI served for it, else the
+        ver = _ALIAS_SERVED.get(fam) or _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])   # catalog head we assume
     return ver >= _EFFORT_FLOOR[fam]
 
 
 _FAST_MODELS = ("opus",)   # fast mode is an Opus-only research preview; the flag on any other model is
 #                            accepted by the CLI but fast never engages, so gate here and skip the argv noise
+
+
+def _note_served_model(model, wrap):
+    """After a successful claude-engine call: compare the id the CLI SERVED — the result envelope's
+    `modelUsage`, which the CLI keys by model id (a dated `claude-haiku-4-5-20251001`) — with what
+    _ALIAS_HEAD assumes for a BARE family alias. The served version is recorded (_ALIAS_SERVED) so
+    _adaptive_thinking follows the CLI from the next call, and a mismatch is announced once per (alias,
+    served id): the table is a copy of the CLI's catalog, and the envelope is that catalog answering.
+    The same-family entry with the most output tokens is the model that wrote the reply (a side call's
+    entry cannot move the alias). Quiet when they agree, when `model` is a versioned id (a pin is a
+    pin, never remapped), and when the envelope names no same-family model — that carries no evidence
+    either way, so the table's answer stands exactly as it did before this check. An envelope with no
+    modelUsage map at all is a different case (the #948 review): the check cannot run for ANY alias, so
+    a stale table would be trusted with nothing in the log — said once per process
+    (_NO_MODEL_USAGE_LOGGED), the loud-failure rule's minimum; a map that names no same-family model
+    stays quiet. Every tier feeds the record; only the index tier's lever reads it. Best-effort, never
+    raises (mirrors _log_judge_usage — bookkeeping must not cost the reply)."""
+    try:
+        fam, ver = _model_family_version(model)
+        if fam is None or ver is not None:
+            return
+        mu = wrap.get("modelUsage") if isinstance(wrap, dict) else None
+        if not isinstance(mu, dict):
+            # no map (a CLI older than the field, a shape change) or a malformed non-dict value — the same
+            # failed precondition either way; the bare-alias gate above keeps a versioned pin silent, so
+            # only a call the check WOULD have served says this, and only the first one does
+            if not _NO_MODEL_USAGE_LOGGED:
+                _NO_MODEL_USAGE_LOGGED.add(True)
+                sys.stderr.write("romp-judge: the result envelope for the bare %s alias carries no modelUsage map, "
+                                 "so the version the CLI served cannot be checked — the index tier's lever answers "
+                                 "from the alias table until a CLI that reports the field (said once per process)\n"
+                                 % fam)
+            return
+        best = None                               # (output tokens, served id, served version)
+        for mid, u in mu.items():
+            sfam, sver = _model_family_version(mid)
+            if sfam != fam or not sver:
+                continue
+            out = u.get("outputTokens") if isinstance(u, dict) else None
+            out = out if isinstance(out, (int, float)) else 0
+            if best is None or out > best[0]:
+                best = (out, mid, sver)
+        if best is None:
+            return
+        _, mid, served = best
+        _ALIAS_SERVED[fam] = served
+        head = _ALIAS_HEAD.get(fam, _EFFORT_FLOOR[fam])
+        if served != head and (fam, mid) not in _ALIAS_DRIFT_LOGGED:
+            _ALIAS_DRIFT_LOGGED.add((fam, mid))
+            sys.stderr.write("romp-judge: the CLI serves the bare %s alias as %s (%d.%d), not the %d.%d "
+                             "_ALIAS_HEAD assumes — the index tier's lever for %s follows the served version "
+                             "from here; move _ALIAS_HEAD when the CLI's catalog does\n"
+                             % (fam, mid, served[0], served[1], head[0], head[1], fam))
+    except Exception:
+        pass
 
 
 # The DISTILLING tier (the user 2026-08-14): the card-prose writers — distiller, briefer, staller — get
@@ -1286,12 +1355,21 @@ def _gate_evict(tier, keep):
 
 _active_lock = threading.Lock()
 _active_seq = [0]
+_active_change = [0]      # bumped on EVERY begin and end — the exact "the set of in-flight judge calls
+#                            changed" event the kernel's view signature keys on (2026-09-03), so a
+#                            judging swirl lights and clears on the call itself, not on a pass cadence
+
+
+def active_change():
+    """Monotonic count of changes to the in-flight judge-call set (begins + ends)."""
+    return _active_change[0]
 
 
 def _active_begin(judge, fsid, sent):
     """Mark a judge call as running; returns a run id to pass to _active_end on completion."""
     with _active_lock:
         _active_seq[0] += 1
+        _active_change[0] += 1
         rid = _active_seq[0]
         _active[rid] = {"judge": judge, "fsid": fsid, "sent": sent}
         return rid
@@ -1299,7 +1377,8 @@ def _active_begin(judge, fsid, sent):
 
 def _active_end(rid):
     with _active_lock:
-        _active.pop(rid, None)
+        if _active.pop(rid, None) is not None:
+            _active_change[0] += 1
 
 
 def active_runs():
@@ -1380,6 +1459,8 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
 
 _WORK_KEY_FN = None   # the kernel wires this to sdk_backend.work_api_key when it loads that module
                       # (_sdk_locked), so judges read the SAME once-per-process stash sessions bill from
+_WORK_KEY_CONFIGURED_FN = None  # metadata only; never retrieve a secret to decide billing
+_LOGIN_AUTH_ENV_FN = None      # login tokens claimed out of the manager's ambient environment
 _ENV_SET_FN = None    # the kernel wires this to sdk_backend.credential_set: the command source's set
                       # (kernel/envsource.py, 2026-09-05) — role variables for a judge call's env, minus
                       # the key, which rides the explicit billing decision below. None = file mode /
@@ -1434,11 +1515,28 @@ def _work_key():
     post-claim environment on a host with no login, and every call refused "Not logged in" for
     13 hours (~53k errors) while the cards sat parked in Working."""
     if _WORK_KEY_FN is not None:
-        try:
-            return _WORK_KEY_FN() or ""
-        except Exception:
-            return ""
-    return os.environ.get("ANTHROPIC_API_KEY", "") or ""
+        return _WORK_KEY_FN() or ""
+    return _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").resolve()
+
+
+def _work_key_configured():
+    if _WORK_KEY_CONFIGURED_FN is not None:
+        return bool(_WORK_KEY_CONFIGURED_FN())
+    # Compatibility for standalone callers wiring only the original callback.
+    if _WORK_KEY_FN is not None:
+        return bool(_work_key())
+    return _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "").configured
+
+
+def _login_auth_env():
+    if _LOGIN_AUTH_ENV_FN is not None:
+        return _LOGIN_AUTH_ENV_FN()
+    return {k: os.environ[k] for k in ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+            if os.environ.get(k)}
+
+
+def _credential_error_note(exc):
+    return str(exc) if isinstance(exc, _keysrc.KeySourceError) else "API credential source failed"
 
 
 def _judge_auth(fsid):
@@ -1456,9 +1554,9 @@ def _judge_auth(fsid):
             a = json.loads((SDKDIR / (fsid + ".json")).read_text()).get("auth") or ""
         except Exception:
             a = ""
-    if a == "login":
-        return "login"
-    return "key" if _work_key() else "login"
+    if a in ("login", "key"):
+        return a
+    return "key" if _work_key_configured() else "login"
 
 
 def _is_auth_error(text):
@@ -1659,44 +1757,49 @@ def _codex_effort(effort, tier):
 
 def _judge_env(tier, auth="login", model=None):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
-    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also applies the cost lever the
-    MODEL can take (2026-09-01): on a model WITHOUT adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and
-    older — _adaptive_thinking, the CLI's own denylist) it disables extended thinking
-    (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot summarization, where the
-    default thinking is pure waste — a Haiku probe showed a ~385-token thinking block emitted before a
-    ~15-token caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption).
-    On a model WITH adaptive thinking (Fable, Mythos, Opus 4.6+, Sonnet 4.6+, and any model the CLI does
-    not place) the env var is NOT set and `--effort low` is the lever (_judge_run, INDEX_EFFORT_DEFAULT,
-    the gear's Indexing effort pick overriding): the CLI (2.1.257 and 2.1.258) drops the thinking parameter
-    for a model carrying its `rejects_disabled_thinking` capability — Fable and Mythos, and its first-party
-    default grants it to every unlisted model (the API refuses thinking:disabled on them) — so there the
-    var was a silent no-op and every "thinking-off" call ran FULL-COST adaptive thinking. (Opus 4.6+ and
-    Sonnet 4.6+ do honor the var; the tier still takes effort on them — one lever for every adaptive
-    model, the gear pick the knob.) `model` is the call's model; None resolves the tier's configured pick
-    (_index_model), so a bare _judge_env("index") answers about the tier as configured rather than
-    assuming Haiku. TRIAGE keeps thinking on every model: the planner / closer / grouper / distiller make
-    real placement + closure judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency
-    driver (~58 tok/s, serial), so this is the captioner's biggest single lever — and it's what makes any
-    future batching latency-safe.
+    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also disables extended thinking
+    (MAX_THINKING_TOKENS=0), on EVERY model (2026-09-01; unconditional since the PR #880 review): the
+    captioner + archiver do mechanical one-shot summarization, where the default thinking is pure waste —
+    a Haiku probe showed a ~385-token thinking block emitted before a ~15-token caption (722 -> 24 output
+    tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption). Where the CLI (2.1.257 and 2.1.258)
+    honors thinking:disabled — Haiku, Sonnet/Opus 4.5 and older, and Sonnet/Opus 4.6+, which run adaptive
+    thinking yet still take it — the var is the lever; where it drops the parameter for a model carrying
+    its `rejects_disabled_thinking` capability — Fable and Mythos, and every unlisted model under its
+    first-party default (the API refuses thinking:disabled on them) — the var is a harmless no-op and
+    `--effort low` in _judge_run (INDEX_EFFORT_DEFAULT, the gear's Indexing effort pick overriding;
+    _adaptive_thinking decides which models) is the lever that lands. Both ride together; neither can
+    hurt the other. `model` is the call's model, accepted for the call shape and not consulted here since
+    the var became unconditional — the model-keyed half of the lever lives in _judge_run. TRIAGE keeps
+    thinking on every model: the planner / closer / grouper / distiller make real placement + closure
+    judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency driver (~58 tok/s,
+    serial), so this is the captioner's biggest single lever — and it's what makes any future batching
+    latency-safe.
 
     `auth` is the call's resolved billing (_judge_auth). The ambient ANTHROPIC_API_KEY is stripped
     unconditionally — in the kernel process the SDK backend already claimed it out of os.environ, and
     standalone the var is still there, where a login-mode child would otherwise bill the key by mere
     inheritance — and injected back EXPLICITLY for a key-mode call only. Removal, not blanking, same
     rule as sdk_backend._options: the CLI treats even an empty var as key-mode-without-a-key and
-    refuses with "Not logged in".
+    refuses with "Not logged in". The login tokens (ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN)
+    are stripped the same way and given back to a login-billed call only (_login_auth_env), and op's
+    own credential never reaches a judge child (_keysrc.strip_op_env). A key-billed call resolves its
+    key at the call boundary (_resolve_work_key_gated: once per pass on a failed retrieval) and a
+    missing key there raises rather than billing the login.
 
     The command source's set (_env_set, 2026-09-05) is merged over the environment MINUS its
     ANTHROPIC_API_KEY — the same one door for the key: a login-billed call never receives the
     command's key by inheritance, and a key-billed call gets it through _work_key (which reads the
     same set in command mode). Its other names (a direct-call key, role variables) reach the child
     exactly as a session CLI's tool shells get them. Empty in file mode."""
-    wk = _work_key()                                  # read before the strip (standalone: same env)
     env = dict(os.environ)
     overlay = _env_set()
     overlay.pop("ANTHROPIC_API_KEY", None)            # the key rides the billing decision below, never the overlay
     env.update(overlay)
-    env.pop("ANTHROPIC_API_KEY", None)                # never ambient: billing is an explicit choice per call
+    for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+        env.pop(k, None)                             # billing is an explicit choice per call
+    _keysrc.strip_op_env(env)                        # op's own credential never rides a judge child (2026-09-05)
+    if auth == "login":
+        env.update(_login_auth_env())
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
@@ -1718,9 +1821,58 @@ def _judge_env(tier, auth="login", model=None):
         # where the CLI drops it (Fable, Mythos, strangers) it is a harmless no-op and `--effort` in
         # _judge_run is the lever that lands. Both ride together; neither can hurt the other.
         env["MAX_THINKING_TOKENS"] = "0"
-    if auth == "key" and wk:
+    if auth == "key":
+        wk = _resolve_work_key_gated()               # resolve only at the call boundary — once per pass on failure
+        if not wk:
+            raise _keysrc.KeySourceError("No API key source is configured for this judge call")
         env["ANTHROPIC_API_KEY"] = wk
     return env
+
+
+# A failed retrieval is remembered for the rest of the PASS it happened in, keyed on the source's
+# identity: the next key-billed call in that pass fails at once with the same note instead of spawning
+# `op` and waiting out its 15 s timeout again (six judge threads, hundreds of calls a pass — review
+# find, 2026-09-05). The deciding events that retry are exact, not timed: the source changes (another
+# fingerprint), or a new pass begins (begin_pass_frame). Standalone callers with no pass frame retry
+# every call, as before.
+_KEY_GATE = {"fp": None, "gen": None, "note": ""}
+_PASS_GEN = [0]
+_KEY_GATE_CV = threading.Condition()                 # guards _KEY_GATE and the in-flight first retrieval of a pass
+_KEY_INFLIGHT = [None]                               # (fp, gen) being retrieved right now, or None
+
+
+def _resolve_work_key_gated():
+    try:
+        src = _keysrc.select_source(os.environ.get("ANTHROPIC_API_KEY", "") or "")
+        fp = src.fingerprint() if src.kind != "error" else "error"
+    except Exception:
+        fp = None
+    gen = _PASS_GEN[0]
+    key = (fp, gen) if (fp is not None and gen) else None
+    if key is None:
+        return _work_key()                           # no pass frame (standalone) or no source identity: as before
+    with _KEY_GATE_CV:
+        # The first wave: six judge threads reach a pass's first key call together, and every one of them
+        # would spawn `op` and wait out its own timeout. The first to arrive retrieves; the others wait for
+        # its verdict — then raise the remembered failure, or retrieve for themselves (no value is shared).
+        while _KEY_INFLIGHT[0] == key:
+            _KEY_GATE_CV.wait(timeout=_keysrc.OP_TIMEOUT + 1)
+        if _KEY_GATE["fp"] == fp and _KEY_GATE["gen"] == gen:
+            raise _keysrc.KeySourceError(_KEY_GATE["note"] or "API credential retrieval failed earlier in this pass")
+        first = _KEY_INFLIGHT[0] is None
+        if first:
+            _KEY_INFLIGHT[0] = key
+    try:
+        return _work_key()
+    except _keysrc.KeySourceError as e:
+        with _KEY_GATE_CV:
+            _KEY_GATE.update(fp=fp, gen=gen, note=str(e))
+        raise
+    finally:
+        if first:
+            with _KEY_GATE_CV:
+                _KEY_INFLIGHT[0] = None
+                _KEY_GATE_CV.notify_all()
 
 
 _RATE_GATE_LOGGED = {}                   # bucket -> resets_at already announced (one line per window)
@@ -1811,7 +1963,14 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
         pass
     fsid = getattr(_judge_ctx, "fsid", None)
     engine = _judge_engine()                          # "claude" | "codex" (docs/codex.md §judges)
-    auth = _judge_auth(fsid)                          # this call bills what the judged session bills
+    try:
+        auth = "codex" if engine == "codex" else _judge_auth(fsid)
+    except Exception as e:
+        note = _credential_error_note(e)
+        _judge_ctx.paused = True
+        _auth_down_mark(fsid, "key", note)
+        _log_judge_error(judge or tier, fsid, "auth", note=note)
+        return ""
     try:
         # RATE-LIMIT GATE (the user 2026-07-07), scoped to the calls it can actually starve (the user
         # 2026-08-28, who watched key-billed cards keep landing under a "paused" banner): usage.json is
@@ -1852,7 +2011,14 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
         # win against. Nothing else about it changes — it still rides the SYSTEM prompt, never the
         # payload, and a call with no marked sections still gets no suffix at all.
         sys_prompt += UNTRUSTED_SYS % (mark, mark)
-    env = _judge_env(tier, auth, model)               # auth resolved above, before the gate (2026-08-28);
+    try:
+        env = _judge_env(tier, auth, model)
+    except Exception as e:
+        note = _credential_error_note(e)
+        _judge_ctx.paused = True
+        _auth_down_mark(fsid, auth, note)
+        _log_judge_error(judge or tier, fsid, "auth", note=note)
+        return ""
     #                                                   the MODEL decides the index tier's lever (below)
     # Per-tier effort from the gear (STATE/judge-effort | index-effort | distill-effort) when the caller
     # didn't pass one — "" or None means NO --effort flag, the long-standing default. An explicit caller
@@ -1893,10 +2059,14 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
             outp = os.path.join(JUDGE_SCRATCH, "codex-%d-%d.out" % (os.getpid(), rid))
             try:
                 try:
-                    # another vendor's process has no use for any Anthropic credential (_judge_env
-                    # re-injects the key for key-billed sessions, and the command source's set can carry
-                    # a direct-call key too); strip every ANTHROPIC_* name from the child's environment
-                    # (PR #885 review; widened 2026-09-05 with the command source)
+                    # another vendor's process has no use for anything in the Anthropic namespace.
+                    # _judge_env already withholds the billing names for a codex call (auth "codex":
+                    # nothing is injected back), but the kernel's environment can carry more under the
+                    # same prefix — ANTHROPIC_BASE_URL and ANTHROPIC_CUSTOM_HEADERS for a proxy (the
+                    # header usually carries its credential), ANTHROPIC_MODEL, debug knobs — and a list
+                    # would need maintaining as the CLI grows names; the command source's set can carry a
+                    # direct-call key under the prefix too (2026-09-05). Strip the prefix; the harmless names go
+                    # too, on purpose (PR #885 review, widened from the one key)
                     cenv = {k: v for k, v in env.items() if not k.startswith("ANTHROPIC_")}
                     p = subprocess.run(_judge_cmd_codex(model, _codex_effort(effort, tier), outp),
                                        input=(sys_prompt or "") + "\n\n" + (user or ""),
@@ -2026,6 +2196,8 @@ def _judge_run_impl(model, sys_prompt, user, effort=None, judge=None, tier="tria
             if isinstance(wrap, dict) and isinstance(wrap.get("result"), str):
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
                 _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
+                _note_served_model(model, wrap)       # the envelope names the model a bare alias resolved to;
+                                                      # the alias table is checked against it (one line per drift)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
                 _env_auth_ok()                        # …and the command source's set was accepted: a later
                 #                                       refusal of it is new information again
@@ -2678,8 +2850,9 @@ def begin_pass_frame():
     global _frame
     with _frame_lock:
         if _frame is not None:
-            return False
+            return False                             # a joiner shares the creator's pass — and its key gate
         _frame = {"parses": {}, "keys": {}, "served": {}}
+        _PASS_GEN[0] += 1                            # a CREATED pass is the event that lets a failed key retrieval retry
         return True
 
 
@@ -3379,7 +3552,7 @@ def _parse_plan(raw, menu_len, allow_extend=False):
         elif do in ("done", "block", "awaiting"):
             g, r = _int(o, "goal"), _int(o, "ref")
             ak = str(o.get("kind") or "").strip().lower() if do == "awaiting" else ""
-            ak = {"kind": ak} if ak in AWAIT_KINDS else {}             # garbage/absent → kindless (legacy)
+            ak = {"kind": ak} if ak in AWAIT_KINDS_JUDGED else {}      # garbage/absent/"mixed" → kindless (legacy)
             if g and 1 <= g <= menu_len:
                 ops.append({"do": do, "why": why, "goal": g, **ak})
             elif r and r >= 1:
@@ -3575,7 +3748,8 @@ def load_goals(fsid):
     function's fallback), or the journal exists but could not be read (_replay_overrides' OSError path). An
     ABSENT store file is not marked: the fresh empty store IS what disk holds. Readers that cache a load's
     answer by the files' identity consult the mark before caching: the kernel's awaiting-lift gate
-    (_LIFT_GATE), the absent-store predicate memo (_absent_store_flags), and load_goals_shared's fill,
+    (_lift_seen, keyed by _sid_inputs_fp), the absent-store predicate memo (_absent_store_flags), and
+    load_goals_shared's fill,
     which never publishes a marked store as the files' content."""
     _goal_io_bump("loads")
     path = GOALDIR / (fsid + ".json")
@@ -10688,7 +10862,10 @@ CLOSER_SYS = (
     "and still needs answered. Work handed OFF to a peer is the peer's own — ownership transferred, "
     "not a wait; omit it. The kind boundaries are strict: job means an external computation the "
     "session ITSELF launched (a cluster job, CI, a build) — another SESSION's work is never a job, "
-    "however long it runs; agents means background agents this session dispatched and still out; "
+    "however long it runs; and job is only for compute the session cannot watch from inside the "
+    "harness (a CI run, a deploy, a remote queue): a wait on its own background command, Monitor, "
+    "or subagent is task or agents, never job; agents means background agents this session "
+    "dispatched and still out; "
     "timer means a scheduled check-back that actually EXISTS at turn end — never one the turn "
     "canceled. Waiting for INBOUND mail (the manager's next dispatch, a peer's next message) is not "
     "a wait at all: an idle recipient reads idle — omit it. Never relabel a wait to a different "
@@ -10735,9 +10912,21 @@ CLOSER_SYS = (
 # The awaiting KINDS — what a wait is on, as data (the user 2026-08-15, who wanted the surfaces to
 # say WHAT is awaited, and the rules scoped by it): agents/subagents dispatched in-harness; a
 # background task/watcher; an external job (cluster/CI/build); a peer session; a scheduled check-back.
+# The task/job line matters mechanically (2026-09-05): task and agents end on events romp observes
+# (the lifecycle registry, notification pairing), so their stamps lift exactly; job is compute the
+# session cannot watch from inside the harness, whose stamp has only the 6h dead-man — a closer that
+# files an in-harness Monitor or background command as job trades an exact lift for a clock.
 # The judge files one per awaiting verdict; a stamp without one (older judges, legacy stores) is
 # kindless and behaves exactly as before the enum existed.
-AWAIT_KINDS = ("agents", "task", "job", "peer", "timer")
+#
+# Two tuples since 2026-09-05 (plans/subagent-transcripts.md, slice 2): AWAIT_KINDS_JUDGED is what a
+# closer may FILE — the specific thing one goal waits on; AWAIT_KINDS adds "mixed", which only the
+# kernel's LIVE session read (_session_awaiting) produces when a session waits on several kinds at
+# once (an agent AND a background command AND a watch). A stamp is never "mixed": the parse sites
+# validate against the judged tuple, so an LLM emitting the word degrades to kindless like any other
+# off-enum kind, and every lift/supersede rule keyed on a stamp's kind keeps seeing a specific one.
+AWAIT_KINDS_JUDGED = ("agents", "task", "job", "peer", "timer")
+AWAIT_KINDS = AWAIT_KINDS_JUDGED + ("mixed",)
 
 # The PEER-kind write gate's evidence (the user 2026-08-24, after three reports of idle sessions
 # reading "awaiting a peer"): a kind=peer stamp requires an un-answered kind=question THIS session
@@ -10843,7 +11032,7 @@ def _parse_close(raw, menu_len):
                 why = " ".join(str(it.get("why", "")).split())[:300]
                 if kinds:
                     k = str(it.get("kind") or "").strip().lower()
-                    out[n] = {"why": why, "kind": k if k in AWAIT_KINDS else None}
+                    out[n] = {"why": why, "kind": k if k in AWAIT_KINDS_JUDGED else None}   # a closer files a specific kind, never "mixed"
                 else:
                     out[n] = why
         return out

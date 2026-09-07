@@ -10,7 +10,7 @@ record and two booleans. Every line it returns carries NAMES and fingerprints on
     ordinary shapes; a unit credential rings only under a declared auth.
   CommandModeChecks — each check: the first run (ok, failed on the previous set, failed on nothing),
     credential lines in the env file (ignored, the command wins), a startup key (ignored), other
-    credential-shaped names in the kernel's environment (informational), credential lines in the
+    credential-shaped names in the kernel's environment (inherited by every session it launches; reported, not a fault), credential lines in the
     unit or plist, ExecStart through a shell, login declared while the command prints a key, ROMP_*
     names dropped.
   BothModes — ROMP_EXPECTED_AUTH=key with nothing to inject and no apiKeyHelper rings in command
@@ -210,7 +210,7 @@ class CommandModeChecks(unittest.TestCase):
         r = verdict(env, snapshot=ok_snap())
         info = [ln for ln in r["lines"] if "kernel's own environment" in ln["text"]]
         self.assertEqual(len(info), 1)
-        self.assertFalse(info[0]["problem"], "a frozen copy the sessions do not get: worth knowing, not a fault")
+        self.assertFalse(info[0]["problem"], "inherited by every session the kernel launches (the owner's 2026-09-07 ruling keeps that): worth knowing, not a fault")
         self.assertIn("ANTHROPIC_LP_API_KEY, HF_TOKEN", info[0]["text"])
         self.assertNotIn("ROMP_SERVE_TOKEN", info[0]["text"], "romp's own serve token is exempt")
         self.assertNotIn("EMPTY_TOKEN", info[0]["text"])

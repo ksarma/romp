@@ -84,9 +84,9 @@ class ShimWatchdogSourcePins(unittest.TestCase):
     def test_shim_ignores_the_keepalive_frame(self):
         # the ka frame never reaches the bundles: the shim consumes it (build-drift check, the stale rule,
         # then RETURN). Pinned as the exact branch text INCLUDING its return: a slice-to-the-next-`return;}`
-        # pin stayed green with the return deleted (the slice ran on to the next branch's return), while
-        # keepalives fell through to the resync retire and to the bundle (the 2026-09-03 review).
-        # pane-shim-stale.test.ts RUNS the same rule and asserts no ka reaches the bundle.
+        # pin would stay green with the return deleted (the slice runs on to the next branch's return) while
+        # keepalives fell through to the resync retire and to the bundle. pane-shim-stale.test.ts RUNS the
+        # same rule and asserts no ka reaches the bundle.
         head = ('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();\n'
                 'if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}')
         i = KSRC.index(head)

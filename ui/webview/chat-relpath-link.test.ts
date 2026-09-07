@@ -32,9 +32,10 @@ test("a relative path click carries the active session id so whoever resolves it
   assert.match(LINKS, /if \(relative\) a\.dataset\.rel = "1";\n\s*if \(sid\) a\.dataset\.sid = sid;/);
   // …and the chat's binder reads exactly that: relative → send the session id (the named one first, the
   // active tab otherwise); absolute/file:// → none needed. Both go through openPath, which picks the host
-  // (VS Code editor vs the feed pane's viewer) — see the openPath test below.
+  // (VS Code editor vs the feed pane's viewer; see the openPath test below). The click itself rides along:
+  // a modified click on a PDF takes a browser tab (pdf-new-tab.test.ts)
   assert.match(RENDER, /const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
+  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/);
 });
 
 test("the cheap pre-filter keys on a slash — or, inside inline code, a dot", () => {

@@ -12,9 +12,11 @@ const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", 
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.css"), "utf8");
 
 test("render() captures rects BEFORE the reconcile and flies changed cards AFTER", () => {
-  // capture must precede the column reconciles…
-  // …over the columns whose planned key sequence differs from the DOM's (feed-card-gate.ts sameKeySeq): a
-  // column where nothing enters, leaves or changes place has nothing that can glide, so its rects go unread
+  // capture must precede the column reconciles… and happens only when a card CAN have moved, because the
+  // capture and the fly each force a layout of the whole document on the main thread every pane shares
+  // (2026-09-04). The gate is per column: the columns whose planned key sequence differs from the DOM's
+  // (feed-card-gate.ts sameKeySeq); a column where nothing enters, leaves or changes place has nothing that
+  // can glide, so its rects go unread
   assert.match(FEED, /const differing = FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?reconcileCol\(cols\.asks/,
     "…and in the stacked layout a move anywhere reads every column: the sections below the move all shift");
   // …and the fly runs after the DOM (and scroll) settle (the identity-alias step sits just before it)
@@ -41,7 +43,8 @@ test("flyColumnChanges FLIPs any moved card (not new cards / non-movers); only c
   assert.match(FEED, /if \(!dx && !dy\) continue;/);                          // no real move → skip
   // staying in the same column NO LONGER aborts — an in-column shifter must glide too (the user 2026-06-29)
   assert.doesNotMatch(FEED, /prev\.col === colEl\.id\) continue/);
-  // a column-crosser gets the back layer; an in-column shifter glides in normal flow
+  // a column-crosser gets the back layer; an in-column shifter glides in normal flow (the decision is taken
+  // in the read pass and carried to the write pass; the read-then-write order is pinned just below)
   assert.match(FEED, /moves\.push\(\{ c, dx, dy, crossed: prev\.col !== colEl\.id \}\);/);
   assert.match(FEED, /if \(crossed\) c\.classList\.add\("fitem-flying"\);/);
   // every Last rect is READ before any transform is WRITTEN: a transform write dirties layout, so the old

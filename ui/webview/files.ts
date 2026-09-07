@@ -56,9 +56,9 @@ function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.string
  *  as recent only when the open really happened (a dirty-edit veto keeps the previous viewer up).
  *  `todoId` is the user todo a Waiting-on-you detail link opened it from (the relay carries it; the recent
  *  list does not — a re-open is no longer that todo). */
-function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, line: number | null = null): void {
+function openHere(path: string, sid: string | null, identity: FileViewIdentity | null, todoId: string | null = null, line: number | null = null, frag: string | null = null): void {
   if (sid && identity) identities.set(sid, identity);
-  if (!openFileView(path, sid, { todoId, line })) return;
+  if (!openFileView(path, sid, { todoId, line, frag })) return;
   const known = identity ?? (sid ? identities.get(sid) ?? null : null);
   recent = rememberRecent(recent, { path, sid, identity: known, t: Date.now() });
   writeStore();
@@ -118,7 +118,7 @@ initFileView((m) => vscodeApi?.postMessage(m), (m) => {
 }, {
   // a link inside the shown file opens here too, so the file it names enters the Recent list (the identity the
   // relay cached for its session names the chip; a link opened from a todo's file is no longer that todo)
-  openFile: (p, sid, line) => openHere(p, sid, null, null, line),
+  openFile: (p, sid, line, frag) => openHere(p, sid, null, null, line, frag),
 });
 initFileBrowse((m) => vscodeApi?.postMessage(m), {
   shellRestore: false,   // the pane stays up; browseClosed is the FEED's restore (see the header)

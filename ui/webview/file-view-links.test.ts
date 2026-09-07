@@ -690,15 +690,16 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.match(codeFn, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);\n\s*linkifyFileText\(code, path\);/, "the wrap branch: after the rows are in the DOM");
   assert.match(codeFn, /if \(hl !== null\) code\.innerHTML = hl; else code\.textContent = text;\n\s*linkifyFileText\(code, path\);/, "the gutter branch too");
   assert.doesNotMatch(codeFn, /linkifyFileText\(text|escapeHtml\(linkify/, "never over the HTML string");
-  const mdFn = VIEW.split("function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {")[1].split("\n}\n")[0];
-  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\) as string;/,
-    "the hook rides on this parse alone: the singleton is the chat's too");
-  const anchorsAt = mdFn.indexOf("if (rendered) linkMarkdownAnchors(box, path);");
+  const mdFn = VIEW.split("function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {")[1].split("\n}\n")[0];
+  assert.match(mdFn, /const base = marked\.defaults\.walkTokens;\n\s*const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/,
+    "the hook rides on this parse alone, and on the file kind's alone: the singleton is the chat's too, and a URL document has no directory for `notes.md:7`");
+  const anchorsAt = mdFn.indexOf("if (rendered) linkMarkdownAnchors(box, doc.path);");
   const hlAt = mdFn.indexOf('box.querySelectorAll("pre code").forEach');
-  const textAt = mdFn.indexOf("if (rendered) linkifyFileText(box, path);");
+  const textAt = mdFn.indexOf('if (rendered && doc && doc.kind === "file") linkifyFileText(box, doc.path);');
   assert.ok(anchorsAt > 0 && hlAt > anchorsAt && textAt > hlAt && mdFn.indexOf("return box;") > textAt, "anchors → highlight → text, then return");
   assert.match(mdFn, /box\.textContent = text;[^\n]*\n\s*rendered = false;/, "the fallback's bare text takes no links");
-  assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "the anchors' sorting moved to the module");
+  assert.ok(mdFn.indexOf('if (doc && doc.kind === "file") {') > 0 && mdFn.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
+  assert.equal((mdFn.match(/querySelectorAll\("a\[href\]"\)/g) || []).length, 2, "the two a[href] loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors");
 });
 
 test("source: the body's delegate and its gesture: a plain click on a panel mark is the card's alone (an anchor's own open cancelled), a drag-select opens nothing, a plain path click opens through the host's opener and goes on to the document (a modified one stops before the row), the chat's body delegate serves the todo card alone, a section link scrolls the rendered document and never moves the page", () => {
@@ -718,27 +719,29 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(VIEW, /const linkOf = \(t: Element \| null\): HTMLElement \| null => \{\n\s*const x = t && typeof t\.closest === "function" \? t\.closest\('\[data-act="openpath"\], a\.' \+ URL_LINK_CLASS \+ ", a\." \+ FRAG_LINK_CLASS\) as HTMLElement \| null : null;\n\s*return x && body\.contains\(x\) \? x : null;/);
   const o = VIEW.split("const openLink = (x: HTMLElement, ev: MouseEvent) => {")[1].split("\n  };\n")[0];
   assert.match(o, /const own = wantsOwnTab\(ev\);/);
-  assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n\s*const id = x\.dataset\.frag;\n(?:\s*\/\/[^\n]*\n)*\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*const hit = id && md \? fragmentTarget\(md, id\) : undefined;\n\s*if \(hit\) hit\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/,
-    "a section link: the rendered document's own ids and named anchors (the viewer's chrome has ids of its own), this document's scroll or nothing, never the page's location");
-  assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)|querySelectorAll\("\[id\]"\)/, "never the whole box (a colliding author id scrolled the notice bar), and never a lookup of its own: the one in file-view-links.ts");
+  assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n(?:\s*\/\/[^\n]*\n)*\s*scrollToFragment\(body, x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/,
+    "a section link: the rendered document's own headings, ids and named anchors (the viewer's chrome has ids of its own), this document's scroll or nothing, never the page's location");
+  assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)|querySelectorAll\("\[id\]"\)|getElementById/, "never the whole box (a colliding author id scrolled the notice bar), and never a lookup of its own: the one in file-view-links.ts");
+  assert.match(VIEW, /const target = fragmentTarget\(box\.querySelector\("\.fileview-md"\) \|\| box, frag\);/, "scrollToFragment (both viewers land through it): the rendered box, through the one lookup");
   assert.match(MOD, /const hit = id \? fragmentTarget\(root, id\) : undefined;/, "mark time reads the same root, the .fileview-md box, through the one lookup");
-  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => e\.getAttribute\("name"\) === id\);/, "an id first, then a GitHub-style <a name>");
+  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => e\.getAttribute\("name"\) === id\)\n\s*\|\| root\.querySelector\('\[id="md-' \+ headingSlug\(id\) \+ '"\]'\) \|\| undefined;/,
+    "an id first, then a GitHub-style <a name>, then the heading whose slug it is (the viewer mints md-<slug> ids; md-url-view.test.ts)");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
-  assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null\);/,
+  assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null, x\.dataset\.frag \|\| null\);/,
     "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");
   assert.equal((o.match(/stopPropagation/g) || []).length, 2, "two stops in openLink, both on the modified gesture: the URL anchor's and the path link's; a plain click goes on to the document's listeners");
-  assert.match(RENDER, /\n    openpath: \(elx\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx\); \},\n/, "the chat's body delegate serves the todo card and its Reply modal alone: a viewer link that reaches it opens nothing there (the double open after #346)");
+  assert.match(RENDER, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},\n/, "the chat's body delegate serves the todo card and its Reply modal alone, with the click's gesture: a viewer link that reaches it opens nothing there (the double open after #346)");
   assert.match(VIEW, /const openUrlTab = \(href: string\) => \{\n\s*if \(!href\) return;\n\s*if \(canPreview\(\)\) window\.open\(href, "_blank", "noopener,noreferrer"\);[^\n]*\n\s*else post\(\{ type: "openLink", href \}\);/, "render.ts's two openers, by host");
   assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "the middle press on a path link starts no autoscroll");
   assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && \(x\.dataset\.act === "openpath" \|\| x\.classList\.contains\(FRAG_LINK_CLASS\)\)\) openLink\(x, ev\);\n\s*\}\);/,
     "the middle-click on a path link is its own tab; on a section link it is this document's scroll (openLink's frag branch cancels the browser's tab at /files#id); a URL anchor's is the browser's");
-  assert.match(VIEW, /import \{ fileUrl, wantsOwnTab, openFileTab, canPreview \} from "\.\/preview";/);
+  assert.match(VIEW, /import \{ openFileTab, canPreview \} from "\.\/preview";/, "on a line of its own beside upstream's two preview imports (file-view.test.ts pins those)");
   assert.match(VIEW, /import \{ fileCommentsAction, panelMark \} from "\.\/file-comments";/);
   // the opener: the host's when registered (the Files pane), else the viewer in place
-  assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, line: number \| null\) => void =\n\s*\(path, sid, line\) => \{ openFileView\(path, sid, \{ line \}\); \};/);
-  assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null\) => void \}\): void \{\n\s*post = poster;\n\s*if \(host && host\.openFile\) openLinkedFile = host\.openFile;/);
-  assert.match(FILES, /openFile: \(p, sid, line\) => openHere\(p, sid, null, null, line\),/, "the Files pane: a linked file enters its Recent list");
-  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null\): void \{\n\s*if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, line \}\)\) return;/);
+  assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void =\n\s*\(path, sid, line, frag\) => \{ openFileView\(path, sid, \{ line, frag \}\); \};/);
+  assert.match(VIEW, /host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{\n\s*post = poster;\n\s*if \(host && host\.openFile\) openLinkedFile = host\.openFile;/);
+  assert.match(FILES, /openFile: \(p, sid, line, frag\) => openHere\(p, sid, null, null, line, frag\),/, "the Files pane: a linked file enters its Recent list, and lands on its line or its section");
+  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null, frag: string \| null = null\): void \{\n\s*if \(sid && identity\) identities\.set\(sid, identity\);\n\s*if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;/);
   // the panel's change mark cancels the anchor's activation as its comment mark does; the keyboard route lands on the same handlers
   assert.match(FC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
   assert.match(FC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\);/);
@@ -766,7 +769,7 @@ test("source: a close or a replace-open asks about an unsaved comment the way it
 });
 
 test("source: a link's line scrolls the code view's row once the text lands, spent once; a line past the end says so in the notice bar and lands on the last row; a markdown file takes its Raw view for that open without saving the preference", () => {
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
   assert.match(VIEW, /const scrollToLine = \(n: number\) => \{\n\s*const rows = body\.querySelectorAll\("code\.hljs \.fv-cl"\);\n\s*if \(!rows\.length\) return;\n\s*if \(n > rows\.length\) noteBar\("Line " \+ n \+ " is past the end of this file, which has " \+ rows\.length \+ \(rows\.length === 1 \? " line" : " lines"\) \+ "; showing the last line\."\);\n\s*\(rows\[Math\.min\(Math\.max\(0, n - 1\), rows\.length - 1\)\] as HTMLElement\)\.scrollIntoView\(\{ block: "center" \}\);/);
   assert.match(VIEW, /let pendingLine: number \| null = opts && typeof opts\.line === "number" && opts\.line > 0 \? Math\.floor\(opts\.line\) : null;/);
   assert.match(VIEW, /text = t;\n\s*\/\/[^\n]*\n\s*if \(pendingLine !== null && isMd && fmt\.md === "rendered"\) fmt\.md = "raw";\n\s*renderBody\(\);\n\s*if \(pendingLine !== null\) \{ scrollToLine\(pendingLine\); pendingLine = null; \}/);

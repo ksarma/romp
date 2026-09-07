@@ -49,15 +49,16 @@ const GUIDE_TEXT = [
   "Bare ../src/app.py:3 links too, and https://example.invalid/prose is a URL.",
   "docs/first.md starts a soft-broken line of the same paragraph, and a hard break follows  ",   // two trailing spaces: marked's <br>
   "docs/second.md starts the line after the break.", "",
-  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err), [install](#install), [api](api.example.com:8443), [spec](app.test.ts:12).", "",
+  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err), [install](#install), [api](api.example.com:8443), [spec](app.test.ts:12), [results](#results), [self](guide.md#install).", "",
   'Copied from "docs/from.md", and the export "out/data.json" is stale.', "",   // the English from and export: prose that names files (round 3)
   "**docs/strong.md** and *docs/em.md*, then \u200bdocs/zwsp.md after a zero-width space.", "",   // Markdown emphasis and a zero-width space before a path: openers in the Raw view (round 3)
   '<svg width="200" height="30"><a href="https://example.invalid/s"><text y="11">svgweb</text></a><a href="x.md"><text x="60" y="11">svgfile</text></a><text y="26">label docs/label.md in the figure</text></svg>', "",   // a bare path only: marked autolinks a URL inside inline HTML itself
   "```bash", "curl https://example.invalid/dl -o data/x.json", "docs/fence2.md", "  ./docs/fence3.md", "```", "",
   ...Array.from({ length: 32 }, (_, i) => "line " + (i + 10) + "\n"),   // one paragraph each (a blank line between), so the rendered body scrolls
-  '<h2 id="top">Top</h2>', "",
-  '<h2 id="fileview-save-err">Collide</h2>', "",   // an author's id spelled like the viewer's own notice bar
-  '<a name="install"></a>', "", "## Install", "",   // the README idiom for a stable anchor: a named <a> above a heading, and the heading carries no id
+  "## Results", "",                                // a heading: the viewer mints it the id md-results, and `#results` finds it by that slug
+  '<p id="top">Top</p>', "",                        // an author's id on an element that is not a heading (a heading's own id is replaced by the minted one)
+  '<p id="fileview-save-err">Collide</p>', "",     // an author's id spelled like the viewer's own notice bar
+  '<a name="install"></a>', "", "## Install", "",   // the README idiom for a stable anchor: a named <a> above a heading; the name is read before the heading's minted id
 ].join("\n");
 const NOTES_TEXT = Array.from({ length: 12 }, (_, i) => "note " + (i + 1)).join("\n") + "\n";
 // what a highlighter cuts: bash puts `$HOME` and `${ROOT}` in spans of their own; typescript does the same to a template's `${x}`
@@ -88,7 +89,7 @@ const MARKED: StatusLike = { ...emptyStatus(APP), storeMtimeNs: "2",
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'import "./files";\nimport { panelMark } from "./file-comments";\nimport { selectionOpenIn } from "./path-links";\n(window as any).__rompProbe = { panelMark, selectionOpenIn };\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" },
+    stdin: { contents: 'import "./files";\nimport { panelMark } from "./file-comments";\nimport { selectionOpenIn } from "./path-links";\nimport { isMarkdownUrl } from "./md-links";\nimport { openUrlView } from "./file-view";\n(window as any).__rompProbe = { panelMark, selectionOpenIn, isMarkdownUrl, openUrlView };\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -106,7 +107,10 @@ function hostScript(kind: "chat" | "feed"): string {
     const start = RENDER.indexOf(head);
     const end = RENDER.indexOf("}, true);", start) + "}, true);".length;
     assert.ok(start > 0 && end > start, "render.ts's document-level anchor opener");
-    ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\nconst selectionOpenIn = (window as any).__rompProbe.selectionOpenIn as (el: Node) => boolean;\n" + RENDER.slice(start, end);
+    // …with what the opener names from the bundle: the panel's registry, the selection test, and the same-origin .md route (md-links.ts
+    // isMarkdownUrl, the real one; file-view.ts openUrlView, the real viewer) — the fixture's URLs are example.invalid, so none takes it
+    ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\nconst selectionOpenIn = (window as any).__rompProbe.selectionOpenIn as (el: Node) => boolean;\n"
+      + "const isMarkdownUrl = (window as any).__rompProbe.isMarkdownUrl as (href: string, origin: string) => boolean;\nconst openUrlView = (window as any).__rompProbe.openUrlView as (href: string) => void;\n" + RENDER.slice(start, end);
     // …and the chat's BODY delegate (actions.ts delegate, the real one, on document.body as render.ts installs it) with
     // render.ts's own openpath handler, lifted from its source: it opens the todo card's and the Reply modal's path links
     // and, since the viewer's links carry the same data-act and the viewer lets a plain click go on to the document,
@@ -123,9 +127,9 @@ function hostScript(kind: "chat" | "feed"): string {
     const handler = ln!.trim().replace(/^openpath:\s*/, "").replace(/,$/, "");
     ts += "\ntype ActionHandler = (el: HTMLElement, ev: Event) => void;\n" + ACTIONS.slice(fStart, dEnd).replace(/^export /gm, "")
       + "\n(window as any).__bodyOpens = []; (window as any).__bodySeen = [];\n"
-      + "const openLinkedPath = (a: HTMLElement) => { (window as any).__bodyOpens.push(a.dataset.path); };\n"
-      + "const openpath: (elx: HTMLElement) => void = " + handler + ";\n"
-      + "delegate(document.body, { openpath: (elx) => { (window as any).__bodySeen.push(elx.dataset.path); openpath(elx); } });\n";
+      + "const openLinkedPath = (a: HTMLElement, _e?: MouseEvent | null) => { (window as any).__bodyOpens.push(a.dataset.path); };\n"
+      + "const openpath: (elx: HTMLElement, ev: Event) => void = " + handler + ";\n"
+      + "delegate(document.body, { openpath: (elx, ev) => { (window as any).__bodySeen.push(elx.dataset.path); openpath(elx, ev); } });\n";
   } else {
     const FEED = fs.readFileSync(path.join(UI, "feed.ts"), "utf8");
     const start = FEED.indexOf("function feedWantsKeys(t: EventTarget | null): boolean {");
@@ -388,7 +392,13 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     assert.deepEqual([byText("q").href, byText("q").target, byText("q").rel, byText("q").act], ["?foo=1", "_blank", "noopener noreferrer", null], "a query alone: a tab, as main had it");
     assert.deepEqual([byText("here").href, /fv-frag/.test(byText("here").cls), /fv-dead/.test(byText("here").cls), byText("here").title], ["#section", true, true, noSectionTitle("section")]);
     assert.deepEqual([byText("go").href, /fv-frag/.test(byText("go").cls), /fv-dead/.test(byText("go").cls), byText("go").title], ["#top", true, false, "Go to top"]);
-    assert.deepEqual([byText("collide").href, /fv-frag/.test(byText("collide").cls), /fv-dead/.test(byText("collide").cls), byText("collide").title], ["#fileview-save-err", true, false, "Go to fileview-save-err"], "the author's heading carries that id");
+    assert.deepEqual([byText("collide").href, /fv-frag/.test(byText("collide").cls), /fv-dead/.test(byText("collide").cls), byText("collide").title], ["#fileview-save-err", true, false, "Go to fileview-save-err"], "the author's element carries that id");
+    // a heading: no author id, and the link finds it through the slug the viewer minted its id from (round 4, the upstream fold)
+    assert.deepEqual([byText("results").href, /fv-frag/.test(byText("results").cls), /fv-dead/.test(byText("results").cls), byText("results").title], ["#results", true, false, "Go to results"]);
+    assert.equal(await page.evaluate(() => document.querySelector("#romp-fileview .fileview-md h2#md-results")!.textContent), "Results", "the minted id, md- prefixed");
+    // a sibling link's own #fragment rides the path link and lands once the file is open (below)
+    assert.deepEqual([byText("self").href, byText("self").act, byText("self").path, byText("self").title], [null, "openpath", GUIDE, "Open " + GUIDE + "#install"]);
+    assert.equal(await page.evaluate(() => (Array.from(document.querySelectorAll("#romp-fileview .fileview-md a")).find((a) => a.textContent === "self") as HTMLElement).dataset.frag), "install");
     // a GitHub-style <a name> is a target (the sanitizer kept it): live, by name (round 3)
     assert.equal(await page.evaluate(() => document.querySelectorAll('#romp-fileview .fileview-md a[name="install"]').length), 1, "the named anchor survived the sanitizer");
     assert.deepEqual([byText("install").href, /fv-frag/.test(byText("install").cls), /fv-dead/.test(byText("install").cls), byText("install").title], ["#install", true, false, "Go to install"]);
@@ -419,7 +429,7 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     const topAfter = await page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.getElementById("top")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
     assert.equal(topAfter, true, "scrolled to the anchor"); assert.equal(page.url(), url0);
     // a colliding id: the viewer's own chrome wears ids too (its notice bar is #fileview-save-err). A stand-in for the bar
-    // sits above the rendered document, as the bar does, and the section link still scrolls to the AUTHOR's heading, the
+    // sits above the rendered document, as the bar does, and the section link still scrolls to the AUTHOR's element, the
     // rendered document's own element: a lookup over the whole viewer took the bar (the 2026-09-07 review, round 2)
     await page.evaluate(() => {
       const d = document.createElement("div"); d.id = "fileview-save-err"; d.className = "fileview-err"; d.textContent = "a notice";
@@ -427,11 +437,11 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
       body.prepend(d);
       for (const e of [body, body.querySelector(".fileview-md")!]) e.scrollTop = 0;
     });
-    const inView = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.querySelector("#romp-fileview .fileview-md h2#fileview-save-err")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
-    assert.equal(await inView(), false, "the author's heading is below the fold again");
+    const inView = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.querySelector("#romp-fileview .fileview-md p#fileview-save-err")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
+    assert.equal(await inView(), false, "the author's element is below the fold again");
     await page.locator("#romp-fileview .fileview-md a", { hasText: "collide" }).click();
     await h.settle();
-    assert.equal(await inView(), true, "scrolled to the author's heading, not to the viewer's own element of that id");
+    assert.equal(await inView(), true, "scrolled to the author's element, not to the viewer's own element of that id");
     assert.equal(page.url(), url0);
     await page.evaluate(() => document.querySelector("#romp-fileview .fileview-body > #fileview-save-err")!.remove());
     // the named anchor: a click scrolls to it (the heading under it comes into view), and the page's location stays
@@ -441,6 +451,22 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     await page.locator("#romp-fileview .fileview-md a", { hasText: "install" }).click();
     await h.settle();
     assert.equal(await installIn(), true, "scrolled to the named anchor above the heading"); assert.equal(page.url(), url0);
+    // a heading with no author id: the link lands on it through the slug the viewer minted its id from
+    await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
+    const resultsIn = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.querySelector("#romp-fileview .fileview-md h2#md-results")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
+    assert.equal(await resultsIn(), false, "the Results heading is below the fold");
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "results" }).click();
+    await h.settle();
+    assert.equal(await resultsIn(), true, "scrolled to the heading by its slug"); assert.equal(page.url(), url0);
+    // a sibling link's own #fragment (`guide.md#install`: this file again): the file opens and, once the first rendered paint
+    // lands, the section is scrolled into view (openFileView's frag option, the upstream fold's landing)
+    await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
+    const nSelf = served.length;
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "self" }).click();
+    await page.locator("#romp-fileview .fileview-md").waitFor({ timeout: 10000 });
+    await h.settle(); await h.settle();
+    assert.deepEqual(served[nSelf], { path: GUIDE, sid: SID }, "the sibling was fetched (this file again)");
+    assert.equal(await installIn(), true, "…and its section came into view once the render landed"); assert.equal(page.url(), url0);
     // a middle-click on a section link: this document's scroll, as a plain click, and NO tab (the browser's own opened a second
     // copy of the hosting page at /files#top; the 2026-09-07 review, round 3); on a dead section link, nothing, and no tab either
     await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });

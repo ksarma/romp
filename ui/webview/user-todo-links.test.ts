@@ -148,9 +148,10 @@ test("render.ts imports the matcher and binds the click itself — the chat's ro
   }
   // one reader of the span: data-rel → the named session first (a todo's note), the active tab otherwise;
   // a URI sends none. The transcript's binder and the body delegate's openpath both call it
-  // (user-todo-title-links.test.ts drives both)
-  assert.match(RENDER, /function openLinkedPath\(a: HTMLElement\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null\);\n\}/);
-  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); openLinkedPath\(a\); \}\);/);
+  // (user-todo-title-links.test.ts drives both), each handing over its click so the gesture rides along
+  // (upstream's PDF own-tab reader, 2026-09-07 fold)
+  assert.match(RENDER, /function openLinkedPath\(a: HTMLElement, e\?: MouseEvent \| null\): void \{\n\s*const open = a\.dataset\.path \|\| "", relative = a\.dataset\.rel === "1", sid = a\.dataset\.sid \?\? null;\n\s*openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);[^\n]*\n\}/);
+  assert.match(RENDER, /function bindPathLink\(a: HTMLElement\): HTMLElement \{\n\s*a\.addEventListener\("click", \(e\) => \{ e\.stopPropagation\(\); openLinkedPath\(a, e\); \}\);\n\s*onMiddleClick\(a, \(e\) => openLinkedPath\(a, e\)\);/);
   // every span the walk and the spaced pass emit is bound (unless the caller delegates); the hits feed
   // the figure pass as before
   assert.match(RENDER, /const bind = delegated \? \(a: HTMLElement\) => a : bindPathLink;/);
@@ -230,15 +231,15 @@ test("the shell forwards todoId into the Files pane; files.ts hands it to the vi
   assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null,todoId:m.todoId||null},'*')"), "pane branch forwards todoId");
   assert.ok(KERNEL.includes("postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*')"), "feed route unchanged");
   assert.match(FILES, /openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);/);
-  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null\): void \{/);
-  assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId, line \}\)\) return;/);   // `line`: a link inside the shown file (file-view-links.test.ts)
+  assert.match(FILES, /function openHere\(path: string, sid: string \| null, identity: FileViewIdentity \| null, todoId: string \| null = null, line: number \| null = null, frag: string \| null = null\): void \{/);
+  assert.match(FILES, /if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;/);   // `line`, `frag`: a link inside the shown file (file-view-links.test.ts)
   assert.doesNotMatch(FILES, /rememberRecent\([^)]*todoId/, "the recent list does not remember the user todo — a re-open is no longer that todo");
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);   // upstream's frag and the viewer links' line joined the opts (2026-09-07)
   assert.match(VIEW, /export interface FileViewActionCtx \{\n  path: string; sid: string \| null; todoId\?: string \| null;/);
   assert.match(VIEW, /const ctx: FileViewActionCtx = \{\n    path, sid: sid \|\| null, todoId: opts\?\.todoId \?\? null,/);   // the seam ctx every action mounts with (Slice 1)
   assert.match(VIEW, /const n = a\.mount\(ctx\);/);
   assert.match(VIEW, /openFileView\(path, sid, opts\);/, "the conflict Reload keeps the provenance");
-  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null\) => void \}\): void \{/);
+  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
 });
 
 test("a relative path resolves against the todo's session ON THE KERNEL: the sid rides the viewer's /file fetch", () => {
