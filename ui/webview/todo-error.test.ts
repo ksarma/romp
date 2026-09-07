@@ -38,3 +38,14 @@ test("the error card wears the err severity — red rail + dot; the reason reads
   assert.match(CSS, /\.notice-body \{[^}]*color: var\(--fg\)/);
   assert.doesNotMatch(CSS, /\.todo-card-error|\.todo-error-msg/);
 });
+
+test("the same fold carries romp's own request store when the kernel cannot read it", () => {
+  // The kernel sets `error` on the todo event for BOTH stores this card reads — Claude's task store
+  // and romp's user-todo store (user-todos.json) — and renderTodo shows the text verbatim, so the
+  // wording is the kernel's; pinned here beside the renderer that displays it. Before this the
+  // shape guard's refusal was stderr-only and a session's open requests vanished from the card.
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /Can't read Claude's task store/);
+  assert.match(KERNEL, /Can't read romp's request store \(%s\)/);
+  assert.match(RENDER, /msg\.textContent = ev\.error;/);
+});

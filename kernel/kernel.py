@@ -6192,6 +6192,29 @@ def _write_user_todos(cur):
     _atomic_write(p, json.dumps(cur, sort_keys=True))
 
 
+def _user_todos_unreadable():
+    """True while the file on disk is the version _user_todos flagged as not-a-store — the check
+    _write_user_todos makes before refusing, offered to the READERS that must not answer a definite
+    state off the guard's empty read (2026-09-07). The guard reads a flagged store as EMPTY for the
+    writers' sake; taken at face value that read told the agent its own row did not exist (the
+    withdraw account's "unknown, not yours"), the person that a row was "already settled"
+    (userTodoAnswer / userTodoDismiss), and the split card nothing at all — when the truth was
+    that the kernel could not read the file. Makes the read itself first (mtime+size cached, so a
+    stat), because the flag is only ever set by a read: a store corrupted since the last build is
+    caught here, not at the next unrelated read. A missing file is the empty store, never an
+    unreadable one (and _write_user_todos agrees: nothing left to protect)."""
+    p = jd.STATE / "user-todos.json"
+    _user_todos()
+    bad = _user_todos_bad.get(str(p))
+    if bad is None:
+        return False
+    try:
+        st = p.stat()
+    except OSError:
+        return False
+    return (st.st_mtime_ns, st.st_size) == bad
+
+
 def _add_user_todo(sid, text, detail=""):
     """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
     for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
@@ -6280,7 +6303,10 @@ def _withdraw_user_todo(sid, tid):
     id among this session's rows; an id that belongs to another session is reported as unknown
     too, never described: the route accounts for the asker's own rows only); `at` is the epoch of
     the stamp that closed the row, None when it is open or unknown; `owner` says whether the id is
-    among the asking session's rows. A row whose `resolved` is truthy but not a {kind, t} stamp
+    among the asking session's rows — None when the kernel could not look, because the store on
+    disk is the version its shape guard flagged (_user_todos_unreadable; `error` names it; the
+    tool tells the agent the store could not be read, never "not yours"). A row whose `resolved`
+    is truthy but not a {kind, t} stamp
     with one of the three kinds (no writer of the store makes one: a hand-edited or damaged row)
     is unknown-shaped too, with `error` naming the stamp and `owner` True, so the tool can tell
     "your row, unreadable" from "not your row"; it is never called open, because the row was not
@@ -6295,6 +6321,12 @@ def _withdraw_user_todo(sid, tid):
                      if isinstance(t, dict) and t.get("id") == tid), None)
 
     with _user_todos_lock:
+        if _user_todos_unreadable():
+            # the store is the version the shape guard flagged: its empty read would make this
+            # row "unknown, not yours" — a definite state the kernel has no basis for. `owner`
+            # None says so (it could not look), `error` names the cause, nothing is stamped
+            return {"ok": False, "state": "unknown", "at": None, "owner": None,
+                    "error": _USER_TODOS_UNREADABLE_ERR}
         hit = _row()
         if hit is None:
             return {"ok": False, "state": "unknown", "at": None, "owner": False}
@@ -6421,6 +6453,10 @@ def _user_todo_fp(sid):
     _user_todos() is the mtime-cached dict, and one sid's rows are a handful of records."""
     rows = _user_todos().get(str(sid))
     if not rows:
+        if _user_todos_unreadable() and _user_todos_on():
+            return "unreadable"                      # the card wears the store error (build_session) until
+            #                                          the file is fixed: a sid with no rows of its own
+            #                                          folded None either way and would never rebuild
         return None                                  # no rows: the switch changes nothing this card shows
     # the switch (2026-09-03) folds in too: a flip changes the split card with NO store write, and a
     # sid-less prefix keeps the fold byte-stable across builds while the switch holds
@@ -7873,6 +7909,14 @@ USER_TODOS_SWITCH_FILE = "user-todos-enabled.json"   # {"enabled": bool, "gt": m
 _USER_TODOS_OFF_ERR = "user todos are turned off on this machine"   # the routes' 409 body + the bus's refusal stem
 _USER_TODOS_OFF_WARN = ("User todos are turned off on this machine, so nothing was sent and nothing changed. "
                         "Turn them on in the gear to answer or dismiss this request.")
+# The store's shape guard (_user_todos / _user_todos_unreadable) on the answering surfaces (2026-09-07):
+# the routes' body, the dashboard's warn, and the split card's error line. Each says what did NOT
+# happen and where the cause is written; none answers a definite state off the guard's empty read.
+_USER_TODOS_UNREADABLE_ERR = "the request store is unreadable (see the kernel log)"
+_USER_TODOS_UNREADABLE_WARN = ("romp can't read its request store (see the kernel log), so nothing was sent "
+                               "and nothing changed. Fix or remove the file and try again.")
+_USER_TODOS_UNREADABLE_CARD = ("Can't read romp's request store (%s), so open requests for this session "
+                               "can't be shown until the file is fixed or removed (see the kernel log).")
 
 
 def _user_todos_on():
@@ -17175,6 +17219,9 @@ def _drive(msg, client):
         # settled-row story below would be the wrong one — the refusal names the switch
         if not _user_todos_on():
             client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))
+        elif _user_todos_unreadable():
+            # ahead of the settled story for the same reason: the guard's empty read is not a state
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN}))
         elif hit is None:
             client["send"](json.dumps({"type": "warn", "text": _USER_TODO_SETTLED_WARN}))
         elif _user_todo_session_ended(sid):
@@ -17194,6 +17241,8 @@ def _drive(msg, client):
         # the session. LOUD when the id is already cleared, for the same stale-row reason as above.
         if not _user_todos_on():
             client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))   # the switch, as above
+        elif _user_todos_unreadable():
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_UNREADABLE_WARN}))   # …and the store
         elif not _resolve_user_todo(sid, str(msg["todoId"]), "dismissed"):
             client["send"](json.dumps({"type": "warn",
                                        "text": "That request was already settled — the agent withdrew "
@@ -32066,6 +32115,19 @@ def _deliver_send_batch(be, sid, run):
     one stamp records them joined as one answer."""
     if not run:
         return
+
+    def _stamp(tid, text, nonce=None):
+        # The answer is DELIVERED by the time a stamp runs here, so its bookkeeping failing — a store
+        # the shape guard refuses to write, a disk error — is said on stderr and swallowed, never
+        # raised into _apply_pending_ops: that walk's failure contract drops the sid's WHOLE
+        # remaining queue, and a parked /compact or a second message behind this answer has nothing
+        # to do with the store (2026-09-07). The ask stays open and visible, which is the honest
+        # state: the person answered, the kernel could not record it, and the line says where.
+        try:
+            _stamp_user_todo_answered(sid, tid, text, nonce=nonce)
+        except Exception as e:
+            sys.stderr.write("user-todos: answered stamp for %s failed after delivery: %s\n" % (tid, e))
+
     if _forwards_sends(be):
         for op in run:
             got = _backend_send(be, sid, op[1], _op_todo(op), _op_qid(op))   # the answered ask and the press id, when either rode the park
@@ -32073,7 +32135,7 @@ def _deliver_send_batch(be, sid, run):
                 _optimistic_echo(sid, op[1], author=op[2])
             tid = _op_todo(op)
             if got and tid:
-                _stamp_user_todo_answered(sid, tid, op[1])
+                _stamp(tid, op[1])
         return
     merged = "\n\n".join(op[1] for op in run)          # tmux: one message, blank-line separated between turns
     answers = {}                                       # unique tid → its ops' bodies, in park order
@@ -32120,7 +32182,7 @@ def _deliver_send_batch(be, sid, run):
         for tid, bodies in answers.items():
             # one stamp per unique todo, presenting this send's nonce; the answer it records is
             # the tid's bodies joined the way the merged paste carries them
-            _stamp_user_todo_answered(sid, tid, "\n\n".join(bodies), nonce=nonces.get(tid))
+            _stamp(tid, "\n\n".join(bodies), nonce=nonces.get(tid))
 
 
 def _refresh_parked_parse(sid, now):
@@ -34471,6 +34533,16 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     if _user_todos_open:
         _todo_ev = _todo_ev or {"kind": "todo", "tasks": []}
         _todo_ev["userTodos"] = _user_todos_open
+    elif _user_todos_on() and _user_todos_unreadable():
+        # FAIL LOUDLY, the same rule as the task store above (2026-09-07): the shape guard reads a
+        # flagged store as EMPTY, which on this card meant the session's open requests simply
+        # vanished, with the only word about it on stderr. The card carries the cause instead, on
+        # the `error` the renderer already shows (it supplants the task list while it stands —
+        # the fixed file brings both back). Store-stable text (the path, no clock), so the
+        # serialized-payload dedup holds; the home dir reads as ~ like the task store's line.
+        _todo_ev = _todo_ev or {"kind": "todo", "tasks": []}
+        _sp = str(jd.STATE / "user-todos.json").replace(str(Path.home()), "~", 1)
+        _todo_ev["error"] = " ".join(filter(None, [_todo_ev.get("error"), _USER_TODOS_UNREADABLE_CARD % _sp]))
     if _todo_ev:
         events.append(_todo_ev)
     # The queued indicator (computed above, before the live merge) appends LAST — at the bottom by the
@@ -55153,7 +55225,17 @@ class Handler(BaseHTTPRequestHandler):
                                                            "detail": str(body.get("detail") or "")})
                     tid = str((res or {}).get("todoId") or "") if isinstance(res, dict) else ""
                     return self._send(200, json.dumps({"ok": bool(tid), "todoId": tid}), "application/json")
-                tid = _add_user_todo(sid, text, str(body.get("detail") or ""))
+                if _user_todos_unreadable():
+                    # the store on disk is the version its shape guard flagged: _add_user_todo's write
+                    # would be refused (RuntimeError), and the generic handler turned that into a 500
+                    # traceback. A plain 503 with the cause; nothing is written, nothing to push.
+                    return self._send(503, json.dumps({"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}),
+                                      "application/json")
+                try:
+                    tid = _add_user_todo(sid, text, str(body.get("detail") or ""))
+                except RuntimeError:                                # the store went bad under the check
+                    return self._send(503, json.dumps({"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}),
+                                      "application/json")
                 # ack-fast (the push-architecture rule, 2026-07-05): wake the pusher, never build the
                 # whole payload set synchronously on this handler thread — the postal bus times its
                 # POST out at 2s, so an inline _push_all here turned a SAVED todo into a loud false
@@ -55217,7 +55299,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps(out), "application/json")
                 acct = _withdraw_user_todo(sid, tid)
                 if not acct["ok"]:
-                    # the account's own error (a malformed stamp) outranks the one-size line
+                    # the account's own error (a malformed stamp; the unreadable store, owner null)
+                    # outranks the one-size line
                     return self._send(200, json.dumps(dict({"error": "no open todo with that id"}, **acct)),
                                       "application/json")
                 _push_soon()                                        # ack-fast: the row leaves the split card

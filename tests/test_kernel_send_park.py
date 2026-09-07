@@ -6,9 +6,13 @@ parked message rendering BEFORE the model change parked ahead of it). A repeated
 replaces its earlier parked op in place. Same event-corroborated _compacting_now gate as ever; a parked
 send stamps its optimistic echo only when it actually fires (an early echo killed the compacting cue).
 SYNTHETIC fixtures only."""
+import contextlib
+import io
 import json
 import os
 import unittest
+from pathlib import Path
+from unittest import mock
 from romp_load import load_source
 import tempfile
 
@@ -997,6 +1001,69 @@ class SendReturnShape(unittest.TestCase):
         km._deliver_send_batch(self.be, SID, [("send", "alpha", None, None, "ut-9f2c1a34"), ("send", "beta", None)])
         self.assertEqual(self.be.calls, [("send", "alpha\n\nbeta")],
                          "tmux-shaped: the fifth slot changes nothing about the merged paste")
+
+
+class DrainStampFailure(unittest.TestCase):
+    """A parked answer's 'answered' stamp fires at the DRAIN, after the send reached the backend. If
+    the stamp's store write fails — a store the shape guard refuses to write, a disk error — the
+    answer is delivered all the same, so the failure is said on stderr and the drain goes on.
+    Raised, it landed in _apply_pending_ops's failure contract ("a raise anywhere in a sid's pass
+    drops that sid's queue once"), which took a parked /compact or a second message down with it
+    for a bookkeeping error that had nothing to do with them."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.saved_state = km.jd.STATE
+        km.jd.STATE = Path(self.td.name)
+        km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+        km._set_user_todos(True)                       # the switch is OFF by default (2026-09-03)
+        self.tid = km._add_user_todo(SID, "Need the staging port")
+        self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
+                       km._working_now)
+        km._push_all = lambda: None
+        km._optimistic_echo = lambda sid, text, author="human": None
+        km._compacting_now = lambda sid: False
+        km._working_now = lambda sid: False
+        km._pending_ops.clear()
+        km._drain_hold.clear()                         # a hold another test's delivery armed is not this story
+
+    def tearDown(self):
+        (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
+         km._working_now) = self._saved
+        km._pending_ops.clear()
+        km._drain_hold.clear()
+        km.jd.STATE = self.saved_state
+        km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+        self.td.cleanup()
+
+    def test_a_failed_stamp_after_an_sdk_delivery_keeps_the_rest_of_the_queue(self):
+        be = _FakeTodoQueueBackend()
+        km.Sessions.backend_for = lambda sid: be
+        km._pending_ops[SID] = [("send", "Re: the port — 8443.", None, None, self.tid), ("compact",)]
+        err = io.StringIO()
+        with mock.patch.object(km, "_write_user_todos", side_effect=RuntimeError("write refused")), \
+                contextlib.redirect_stderr(err):
+            km._apply_pending_ops()
+        self.assertEqual(be.calls, [("send", "Re: the port — 8443.", self.tid)], "the answer was delivered")
+        self.assertEqual(km._pending_ops.get(SID), [("compact",)],
+                         "the op parked behind it survives — its turn comes at the next quiet cycle")
+        lines = [l for l in err.getvalue().splitlines() if l.startswith("user-todos:")]
+        self.assertEqual(len(lines), 1, err.getvalue())
+        self.assertIn("answered stamp for %s failed after delivery" % self.tid, lines[0])
+        self.assertNotIn("pending ops apply", err.getvalue(), "no traceback: the drain never saw a raise")
+        self.assertNotIn("resolved", km._user_todos()[SID][0],
+                         "nothing stamped — the ask stands until the store can be written")
+
+    def test_a_failed_stamp_after_a_tmux_merged_paste_is_said_and_swallowed(self):
+        be = _FakeBackend()
+        err = io.StringIO()
+        with mock.patch.object(km, "_write_user_todos", side_effect=RuntimeError("write refused")), \
+                contextlib.redirect_stderr(err):
+            km._deliver_send_batch(be, SID, [("send", "alpha", None, None, self.tid), ("send", "beta", None)])
+        self.assertEqual(be.calls, [("send", "alpha\n\nbeta")], "the merged paste went out")
+        self.assertIn("answered stamp for %s failed after delivery" % self.tid, err.getvalue())
 
 
 if __name__ == "__main__":

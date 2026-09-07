@@ -4861,6 +4861,12 @@ def _mcp_call(name, args):
         # failure and folded a met need into an error path. An id that is not this session's own,
         # or unknown, stays the error it always was.
         state = str(res.get("state") or "")
+        if state == "unknown" and "owner" in res and res["owner"] is None:
+            # the kernel could not LOOK: the store on disk is not one it can read (its shape
+            # guard flagged the file, 2026-09-07). Neither "not yours" nor closed — the row, if
+            # there is one, still stands, and nothing was stamped.
+            return ("Couldn't read the store that holds these notes, so '%s' was not withdrawn. "
+                    "Nothing changed; if the need is met, say so in your next reply." % tid), True
         if state == "unknown" and res.get("owner") is True:
             # the asker's OWN row, in a shape the kernel could not read (a damaged or hand-edited
             # record): neither "not yours" nor closed. The kernel's error names the part it could

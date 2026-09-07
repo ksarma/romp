@@ -117,6 +117,19 @@ def _post(path, body):
         return code, {}
 
 
+_PM = None
+
+
+def _bus():
+    """The postal bus, loaded once (the test_injected_voice idiom). Its two user-todo tools word the
+    kernel's answers for the agent, and the wording of the cases pinned here — an unreadable store,
+    an over-long note, a switch that flipped under the post — has no other home."""
+    global _PM
+    if _PM is None:
+        _PM = SourceFileLoader("romp_postal_utswitch", os.path.join(BIN, "romp-postal-service")).load_module()
+    return _PM
+
+
 class TheSwitch(_Sandbox):
     def test_the_file_is_not_the_store(self):
         self.assertEqual(km.USER_TODOS_SWITCH_FILE, "user-todos-enabled.json")
@@ -413,10 +426,10 @@ class OffOnTheDriveOps(_Sandbox):
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "dismissed")
 
 
-class OffOnThePayloads(unittest.TestCase):
-    """The kernel ships NO rows while OFF, so the client needs no logic of its own: build_session's
-    `userTodos` field is [] and no split-card event carries rows; build_feed's map is {}. ON: the
-    same store fills both. _open_user_todos is the one gated read."""
+class _PayloadSandbox(unittest.TestCase):
+    """A build_session fixture (one named session, a two-row transcript, no global CLAUDE.md) with
+    one row stored and the switch left OFF — the OFF-side payload pins and the unreadable-store
+    card share it."""
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
@@ -465,6 +478,12 @@ class OffOnThePayloads(unittest.TestCase):
 
     def _todo_events(self, payload):
         return [e for e in payload["events"] if e.get("kind") == "todo"]
+
+
+class OffOnThePayloads(_PayloadSandbox):
+    """The kernel ships NO rows while OFF, so the client needs no logic of its own: build_session's
+    `userTodos` field is [] and no split-card event carries rows; build_feed's map is {}. ON: the
+    same store fills both. _open_user_todos is the one gated read."""
 
     def test_build_session_ships_an_empty_field_and_no_rows_while_off(self):
         payload = km.build_session(SID, NOW)
@@ -533,6 +552,58 @@ class OffOnThePayloads(unittest.TestCase):
         self.assertIn("_todo_standdown = bool(_open_user_todos(sid))", ksrc)
         self.assertIn("_ut_open = _open_user_todos(fsid)", ksrc)
         self.assertIn('frozenset(t["id"] for t in _open_user_todos(str(sid)))', ksrc)
+
+
+class UnreadableStoreOnThePayload(_PayloadSandbox):
+    """The shape guard's refusal used to be stderr-only: a flagged store read as EMPTY on every
+    user-facing surface, so the session's open requests simply vanished from the card with nothing
+    saying why. While the switch is ON and the store is the flagged version, build_session's todo
+    event carries `error` — the renderer already shows that field for Claude's unreadable task
+    store — and the chat sig sees the store go bad even for a sid with no rows of its own."""
+
+    def _corrupt(self):
+        (jd.STATE / "user-todos.json").write_text(json.dumps({"enabled": True, "gt": 1}))
+
+    def test_build_session_carries_the_error_on_the_todo_event(self):
+        km._set_user_todos(True)
+        km._parse_cache.clear()
+        self._corrupt()
+        with contextlib.redirect_stderr(io.StringIO()):
+            payload = km.build_session(SID, NOW)
+        self.assertEqual(payload["userTodos"], [], "the flagged store reads empty…")
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1, "…and the card says WHY instead of showing nothing")
+        self.assertIn("Can't read", evs[0]["error"])
+        self.assertIn("user-todos.json", evs[0]["error"])
+        self.assertNotIn(str(Path.home()), evs[0]["error"], "the path is shown with ~, never the home dir")
+        self.assertEqual(evs[0]["tasks"], [])
+
+    def test_the_error_is_quiet_while_off_and_gone_once_the_file_is_fixed(self):
+        self._corrupt()
+        with contextlib.redirect_stderr(io.StringIO()):
+            payload = km.build_session(SID, NOW)        # OFF: the surfaces are quiet, the stderr line stands alone
+        self.assertEqual(self._todo_events(payload), [])
+        km._set_user_todos(True)
+        km._parse_cache.clear()
+        (jd.STATE / "user-todos.json").write_text(json.dumps({SID: [
+            {"id": self.tid, "text": "Need the auth-scheme decision to wire login",
+             "detail": "OAuth vs cookie", "createdT": NOW}]}))
+        payload = km.build_session(SID, NOW)
+        self.assertNotIn("error", self._todo_events(payload)[0], "a fixed file: the rows, no error")
+        self.assertEqual([t["id"] for t in payload["userTodos"]], [self.tid])
+
+    def test_the_chat_sig_sees_the_store_go_bad_with_no_rows_of_its_own(self):
+        # SID2 has no rows: its fold was None either way, so a cached tab would never learn the
+        # store broke — the fold names the unreadable store while the switch is on
+        km._set_user_todos(True)
+        self.assertIsNone(km._user_todo_fp(SID2))
+        self._corrupt()
+        with contextlib.redirect_stderr(io.StringIO()):
+            bad = km._user_todo_fp(SID2)
+            self.assertIsNotNone(bad)
+            self.assertEqual(bad, km._user_todo_fp(SID2), "byte-stable while the file stands")
+            km._set_user_todos(False)
+            self.assertIsNone(km._user_todo_fp(SID2), "OFF: the switch changes nothing this card shows")
 
 
 class OffOnTheBadge(_Sandbox):
@@ -773,6 +844,136 @@ class StoreShapeGuard(_Sandbox):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(km._user_todos_off_boot_notice(), 0)
             self.assertEqual(km._open_user_todos(SID), [])
+
+    # ── an UNREADABLE store answers "can't read", never a definite state (2026-09-07) ──────────
+    # The guard reads a flagged store as EMPTY for the writers' sake. A reader that answers a
+    # definite state off that empty read tells the agent its own row does not exist ("No note of
+    # yours") and the person that a row was "already settled", when the truth is that the kernel
+    # could not read the file. _user_todos_unreadable is the read those answerers consult first.
+
+    def _corrupt(self):
+        self.store.write_text(json.dumps({"enabled": True, "gt": 1}))
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._user_todos_cache.clear()
+            km._user_todos()
+
+    def _no_push(self):
+        saved = (km._push_all, km._push_soon)
+        km._push_all = km._push_soon = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("nothing changed, nothing to push"))
+        return saved
+
+    def test_unreadable_tracks_the_flagged_file_version(self):
+        self.assertFalse(km._user_todos_unreadable(), "no file: an empty store, not an unreadable one")
+        tid = km._add_user_todo(SID, "Need the staging port")
+        self.assertFalse(km._user_todos_unreadable())
+        self.store.write_text(json.dumps({"enabled": True, "gt": 1}))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(km._user_todos_unreadable(), "the read that flags is the read this makes")
+            self.assertTrue(km._user_todos_unreadable(), "…and it holds while that version stands")
+        self.store.write_text(json.dumps({SID: [{"id": tid, "text": "Need the staging port", "createdT": 1}]}))
+        self.assertFalse(km._user_todos_unreadable(), "a fixed file reads again")
+        self.store.write_text("not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(km._user_todos_unreadable())
+        self.store.unlink()
+        self.assertFalse(km._user_todos_unreadable(), "a removed file is the empty store")
+
+    def test_a_withdraw_against_an_unreadable_store_accounts_unreadable_not_unknown(self):
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision")
+        self._corrupt()
+        acct = km._withdraw_user_todo(SID, tid)
+        self.assertFalse(acct["ok"])
+        self.assertEqual((acct["state"], acct["at"], acct["owner"]), ("unknown", None, None),
+                         "owner None: the kernel cannot say whose the row is, let alone its state")
+        self.assertIn("unreadable", acct["error"])
+        saved = self._no_push()
+        try:
+            code, out = _post("/usertodo/withdraw", {"id": SID, "todoId": tid})
+        finally:
+            km._push_all, km._push_soon = saved
+        # the account rides a 200 like the malformed-stamp account does: the bus's transport drops
+        # the body of every non-2xx, and the agent must hear WHICH nothing-to-do this was
+        self.assertEqual(code, 200)
+        self.assertFalse(out["ok"])
+        self.assertNotIn("no open todo", out["error"], "never the 'already settled' story")
+        self.assertIn("unreadable", out["error"])
+        self.assertIsNone(out["owner"])
+        self.assertEqual(self.store.read_text(), json.dumps({"enabled": True, "gt": 1}), "nothing rewritten")
+
+    def test_the_register_route_answers_503_on_an_unreadable_store(self):
+        self._corrupt()
+        saved = self._no_push()
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                code, res = _post("/usertodo", {"id": SID, "text": "Need the auth-scheme decision"})
+        finally:
+            km._push_all, km._push_soon = saved
+        self.assertEqual(code, 503, "a plain refusal with the cause, not a 500 traceback")
+        self.assertFalse(res["ok"])
+        self.assertIn("unreadable", res["error"])
+        self.assertEqual(self.store.read_text(), json.dumps({"enabled": True, "gt": 1}))
+
+    def test_the_drive_ops_warn_unreadable_not_settled(self):
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision")
+        self._corrupt()
+        sent, injected = [], []
+        client = {"send": lambda s: sent.append(json.loads(s))}
+        with mock.patch.object(km, "_name_of", lambda sid: "web"), \
+                mock.patch.object(km, "_sdk", lambda: None), \
+                mock.patch.object(km, "_send_or_park",
+                                  lambda be, sid, text, echo=None, user_todo=None: injected.append(text) or True), \
+                mock.patch.object(km, "_push_soon", lambda: None), \
+                contextlib.redirect_stderr(io.StringIO()):
+            km._drive({"type": "userTodoAnswer", "id": SID, "todoId": tid, "text": "OAuth"}, client)
+            km._drive({"type": "userTodoDismiss", "id": SID, "todoId": tid}, client)
+        warns = [m["text"] for m in sent if m.get("type") == "warn"]
+        self.assertEqual(len(warns), 2, sent)
+        for w in warns:
+            self.assertNotIn("already settled", w)
+            self.assertIn("can't read", w.lower())
+            self.assertIn("nothing changed", w.lower())
+        self.assertEqual(injected, [], "nothing reaches the session")
+        self.assertEqual(self.store.read_text(), json.dumps({"enabled": True, "gt": 1}))
+
+
+class BusWording(unittest.TestCase):
+    """What the two postal tools tell the agent for the cases the kernel side above adds. The bus
+    reaches the kernel through _kernel_post, whose transport answers None for every non-2xx, so
+    the tool words only what it can tell: a body the kernel answered, its own pre-checks, and a
+    re-read of the switch file it shares with the kernel."""
+
+    def setUp(self):
+        self.pm = pm = _bus()
+        self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
+        self.posts = []
+        self.canned = None
+        pm._kernel_post = lambda path, body, timeout=4.0: (self.posts.append((path, body)) or self.canned)
+        pm._self_identity = lambda: (SID, "api")   # one identity resolution per call: _mcp_call reads _self_identity() before its argument checks
+        pm._heartbeat = lambda *a, **k: None
+        pm.USER_TODOS_SWITCH.parent.mkdir(parents=True, exist_ok=True)
+        pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": True, "gt": 1}))
+
+    def tearDown(self):
+        pm = self.pm
+        pm._kernel_post, pm._self_identity, pm._heartbeat = self._saved
+        pm.USER_TODOS_SWITCH.unlink(missing_ok=True)
+
+    def _no_machinery(self, text):
+        # the veil test_injected_voice.py keeps: the agent has never heard of any of these
+        for word in ("romp", "card", "board", "goal", "cleared", "dismissal", "nudge", "kernel"):
+            self.assertNotIn(word, text.lower(), (word, text))
+
+    def test_withdraw_against_an_unreadable_store_says_so_not_no_note_of_yours(self):
+        self.canned = {"ok": False, "state": "unknown", "at": None, "owner": None,
+                       "error": "the request store is unreadable (see the kernel log)"}
+        text, is_err = self.pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+        self.assertTrue(is_err)
+        self.assertNotIn("of yours", text, "the row may well be the asker's: the kernel could not look")
+        self.assertIn("ut-9f2c1a34", text)
+        self.assertIn("Nothing changed", text)
+        self.assertIn("read", text.lower())
+        self._no_machinery(text)
 
 
 if __name__ == "__main__":
