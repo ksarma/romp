@@ -639,7 +639,10 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   **Reveal** switches to Raw and scrolls there (the inline-display follow-on, 2026-09-07; before
   it every Rendered deletion was card-only). **Show changes inline** in the panel header turns
   every change mark off in both views and back on, at once and without a status round trip, and
-  the choice is kept in the shared webview settings across opens and pages. An unpainted change
+  the choice is kept in the shared webview settings across opens and pages. **All · Comments ·
+  Changes** on the row under those toggles (the filter follow-on, 2026-09-07) narrows the list and
+  the marks to one kind, each option carrying its count, and is kept the same way; Send to session
+  is not narrowed. An unpainted change
   always has a card, so the compact view never dead-ends. Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
@@ -1032,6 +1035,29 @@ saying why, and Escape or Cancel hands the keyboard back to the card's Reply
 rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
 below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
 gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
+
+The filter follow-on (2026-09-07): reviewing a document with dozens of routine changes, the user found
+the few comments that mattered buried among the change cards, and could not tell a comment card from a
+change card at a glance. The panel header gained a filter on the row under the two toggles, one group of
+the toggles' buttons, **All · Comments N · Changes M**, offered once the file has a card to filter
+(`filterOffered`) and kept as `commentsFilter` in the shared webview settings (`settings.ts`, "all" by
+default) the way `changesInline` is: read when a panel opens, written on each pick, and reaching an open
+panel elsewhere through the settings signal. Its counts are the action-row label's (`cardCounts` in
+`file-comments-model.ts`: the open comments and the pending changes), so the label and the control
+agree. **Comments** lists every comment card on its own, a comment bound to a pending change included
+(with the change's words as its reference and an "on a change" tag), with no change card, group, fold or
+Accept all · Reject all foot, and paints no change mark in the text; **Changes** lists the change cards
+alone, each with the comments made on it, and paints no comment highlight or region rectangle; **All**
+is the list as before. Show changes inline applies on top ("Changes" with the marks off shows the cards
+and no mark), the keyed expand state is untouched by a pick, and Send to session is not filtered: the
+confirm lists everything unsent as before. The buttons are one group for the keyboard: an arrow chooses
+the next or previous option, wrapping at the ends, and Home and End the first and last. Every card head
+names its kind, Comment, Change, or Region, in the note's dress before the author's chip, and the
+card's left edge is the accent for a comment (a region is one) and the muted tone for a change
+(`data-cue`; both sheets, tokens only); a detached card keeps its dashed edge. A reply's box whose card
+the filter hides returns to the panel's slot with a line saying so, and Escape or Cancel hands the
+keyboard to All. Tests: `ui/webview/file-comments-filter.test.ts` (driven); `tools/file-review-plan.test.mjs`
+and `tests/test_guide_files_filter.py` hold this note and the guide's paragraph to the source.
 
 ### Slice 3: region comments on images
 
@@ -1499,6 +1525,14 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   scripting option; the installed build has no `eval`, `new Function`, or `isEvalSupported`, and
   its major is the one the section names; the caps are the section's 25 MB and 5,000 pages; the
   fallback is the frame; the worker asset is served behind `_authorize`.
+
+- The filter follow-on (2026-09-07): `ui/webview/file-comments-filter.test.ts` drives the panel through
+  the three states (the cards each shows, the marks each paints, the inline toggle on top), the default
+  and the kept choice, a pick elsewhere, the arrow keys, Send unchanged, the kind cue, and the counts
+  against the label's, and pins the delegate action, the header's order, the paint guards, the store's
+  key and default and the sheets' rules at source; `tools/file-review-plan.test.mjs` and
+  `tests/test_guide_files_filter.py` hold the follow-on note above and the guide's Files paragraph to
+  the source.
 
 ## Docs
 
