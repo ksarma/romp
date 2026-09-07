@@ -30,7 +30,8 @@ km = SourceFileLoader("romp_kernel_bundled_echo", os.path.join(BIN, "romp-kernel
 SID = "11111111-2222-3333-4444-555555555555"
 
 RESTART = "<!-- romp-injected --><!-- romp-system -->[romp] The romp kernel restarted and cut this session's turn."
-DEATH = "<!-- romp-injected --><!-- romp-system -->[romp] 1 background task died with its claude process."
+DEATH = ("<!-- romp-injected --><!-- romp-system -->[romp] 1 background task you had running was cut off "
+         "when the claude process that started it ended.")
 NUDGE = ("> Earlier note about the capture run.\n\nWhere does this stand?\n\n"
          "<!-- romp-injected --><!-- romp-auto --><!-- romp-goal-id: %s:g360 -->" % SID)
 

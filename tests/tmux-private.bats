@@ -22,6 +22,17 @@ teardown() {
     [ "$TMUX_PRIVATE_TEST_DIR" = "$TEST_DIR" ]
 }
 
+@test "tmux_private_socket_dir floors ROMP_CLI_SCOPE=0, over an inherited supervised environment" {
+    # A tool shell under a self-hosted install carries ROMP_SUPERVISED, under which the real manager the
+    # suites start would put its tmux server in a transient scope on the developer's user manager (and a
+    # kernel its sessions' CLIs). The floor rides the one call every such suite already makes.
+    export ROMP_SUPERVISED=1 ROMP_CLI_SCOPE=1
+    tmux_private_socket_dir "$TEST_DIR"
+    [ "$ROMP_CLI_SCOPE" = 0 ]
+    # exported, not merely set: the manager is a child process
+    [ "$(env | grep '^ROMP_CLI_SCOPE=')" = "ROMP_CLI_SCOPE=0" ]
+}
+
 @test "tmux_private_kill fails loudly when the private directory is already gone" {
     # The teardown ordering bug: an `rm -rf "$TEST_DIR"` before the kill takes the sockets with it, so a
     # server started under the directory can no longer be reached by -S. Exit 0 there would hide a leak.

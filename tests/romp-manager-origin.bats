@@ -20,7 +20,7 @@ setup() {
     printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/tmux"
     chmod +x "$BIN/tmux"
     export PATH="$BIN:$PATH"
-    tmux_private_socket_dir "$TEST_DIR"
+    tmux_private_socket_dir "$TEST_DIR"   # also floors ROMP_CLI_SCOPE=0: no real scope on the user manager
     # Fake kernel launcher: stays alive without binding a real port.
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"

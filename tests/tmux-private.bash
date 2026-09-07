@@ -18,12 +18,22 @@
 # silently when TMUX_TMPDIR names a missing one (verified: with TMUX_TMPDIR set to a missing path,
 # `#{socket_path}` reads /tmp/tmux-<uid>/default), so an export without the mkdir isolates nothing.
 # tmux puts its socket at $TMUX_TMPDIR/tmux-<uid>/default, creating the tmux-<uid> level itself.
+#
+# The same call floors ROMP_CLI_SCOPE=0 (2026-09-06). Under ROMP_SUPERVISED — what bin/romp-service's
+# unit sets, and what a tool shell under a self-hosted install inherits from it — bin/romp-manager
+# starts its tmux server through `systemd-run --scope`, and the kernel spawns each session's CLI the
+# same way (cli_scope_supported), so a suite that starts the real manager would leave a transient
+# scope on the developer's user manager. Every suite that isolates tmux inherits the floor here rather
+# than repeating it in setup(); pytest's is tests/conftest.py. A suite that means to exercise the scoped
+# path exports ROMP_CLI_SCOPE=1 AFTER this call, with a fake systemd-run first on PATH
+# (tests/romp-manager-tmux-scope.bats).
 
 tmux_private_socket_dir() {   # $1 = the test's temp dir, removed in teardown
     TMUX_PRIVATE_TEST_DIR="$1"
     TMUX_PRIVATE_DIR="$1/tmux"
     mkdir -p "$TMUX_PRIVATE_DIR"
     export TMUX_TMPDIR="$TMUX_PRIVATE_DIR"
+    export ROMP_CLI_SCOPE=0
 }
 
 # The machine's tmux: the first `tmux` on PATH that is NOT under the test directory, where every suite

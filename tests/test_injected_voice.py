@@ -196,6 +196,46 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         self.assertIn("renamed", body)
         self.assertIn("'tests'", body, "…and it names the new name itself")
 
+    def test_the_lost_tasks_notice_asks_for_a_check_in_the_persons_voice(self):
+        # the lost-background-tasks notice (task_death_notice) is the same [romp]-prefixed mechanics
+        # family; past the prefix it speaks plainly, to "you". Since 2026-09-05 it says the tasks were
+        # CUT OFF, never that they died: under the per-session scopes a task's shell can outlive the
+        # CLI, so the ask is to check whether each still runs before relaunching it. Since 2026-09-06
+        # it names the session once (as "you") and says whose process ended (the one that started the
+        # tasks) — the earlier wording said "session" twice in one clause and left "its" dangling.
+        import os as _os
+        from importlib.machinery import SourceFileLoader as _L
+        sb = _L("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        for tasks in ([{"desc": "watching the CI run"}],
+                      [{"desc": "watching the CI run"}, {"desc": "tailing the deploy log"}, {}]):
+            text = sb.task_death_notice(tasks)
+            prose = text[text.index("[romp]"):]
+            self.assertNotIn("<!--", prose, "markers lead, prose follows")
+            self.assertNotIn("\n", prose, "one line")
+            body = prose.split("]", 1)[1].lower()
+            for word, why in ROMP_WORDS:
+                self.assertNotIn(word, body, "the notice speaks plainly past its prefix (%r: %s)" % (word, why))
+            self.assertIn("%d background task" % len(tasks), body)
+            self.assertIn("cut off when the claude process that started", body)
+            self.assertNotIn("session", body, "the recipient is \"you\"; the noun appears in neither clause")
+            self.assertNotIn(" its claude process", body, "the antecedent-free wording is gone")
+            self.assertIn("will never arrive", body)
+            self.assertIn("still running before relaunching", body)
+            self.assertNotIn("died", body)
+            self.assertIn("watching the ci run", body, "the descriptions name what was lost")
+        # singular and plural agree throughout; an empty description is skipped, not printed
+        self.assertIn("1 background task you had running was cut off when the claude process that started it "
+                      "ended (a restart or crash). Its completion notification will never arrive. Check whether it "
+                      "is still running before relaunching it; if it isn't needed, carry on.",
+                      sb.task_death_notice([{}]))
+        three = sb.task_death_notice([{"desc": "a"}, {"desc": "b"}, {}])
+        self.assertIn("3 background tasks you had running were cut off when the claude process that started them "
+                      "ended (a restart or crash): a; b. Their completion notifications will never arrive. Check "
+                      "whether each is still running before relaunching it; if they aren't needed, carry on.", three)
+        # the reconnect cause reads as the parenthesis after "ended", with "it" the process that ended
+        self.assertIn("ended (a settings switch or a rewind restarted it): a",
+                      sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE))
+
     def test_the_untitled_fallback_names_no_romp_object(self):
         # a node with no text still renders SOMETHING; that placeholder must not smuggle in "goal"
         nodes = _nodes()

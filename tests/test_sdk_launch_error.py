@@ -126,6 +126,16 @@ class RecordedLaunchFailures(unittest.TestCase):
         self.assertIn("claude exited with code 1", rec["text"])
         self.assertFalse(rec["limit"], "a plain crash is not a usage limit")
 
+    def test_a_fallback_launch_that_then_fails_records_the_clis_reason(self):
+        # the scope wrapper's fallback notice is the first stderr line of such a launch, and it was
+        # logged when it arrived (tests/test_cli_scope.py FallbackNotice); the card keeps the CLI's line
+        sess = _FakeSess(stderr=[LaunchFailureText.NOTICE,
+                                 "Error: No conversation found with session ID: " + SID])
+        self.be._record_launch_error(sess, RuntimeError("Command failed with exit code 1"))
+        text = self._reg()["launchError"]["text"]
+        self.assertTrue(text.startswith("Error: No conversation found"), text)
+        self.assertNotIn("romp-cli-scope", text)
+
     def test_the_connect_that_disproves_it_clears_it(self):
         self.be._record_launch_error(_FakeSess(), RuntimeError("transport closed"))
         self.assertIsNotNone(self.be.launch_error(SID))
@@ -175,6 +185,47 @@ class LaunchFailureText(unittest.TestCase):
         exc = RuntimeError("Command failed")
         exc.stderr = "claude: command not found"
         self.assertIn("command not found", sb.launch_failure_text(exc, "some older noise"))
+
+    # bin/romp-cli-scope's fallback notice (2026-09-05): on a launch whose pre-flight scope failed it is
+    # the FIRST line of the CLI's stderr, about 230 characters, and the kernel logs it the moment it
+    # arrives (_note_cli_scope_fallback). Left in the tail, it led the card text of a CLI that then
+    # failed at start and pushed the CLI's own reason past the 600-character cut.
+    NOTICE = (sb.CLI_SCOPE_FALLBACK_PREFIX + " systemd-run cannot start a transient scope (Failed to connect to "
+              "bus: No such file or directory) — running the CLI directly, outside a scope; a service restart "
+              "will take its background work down")
+
+    def test_the_scope_wrappers_fallback_notice_is_dropped_from_the_tail(self):
+        exc = RuntimeError("Command failed with exit code 1")
+        exc.stderr = sb.SDK_STDERR_PLACEHOLDER
+        tail = self.NOTICE + "\n" + "y" * 500 + "\nNo conversation found with session ID: " + SID
+        text = sb.launch_failure_text(exc, tail)
+        self.assertNotIn("romp-cli-scope", text)
+        self.assertTrue(text.startswith("y" * 500), "the CLI's own stderr leads the card: %r" % text[:60])
+        self.assertIn("No conversation found", text, "and its reason fits inside the cut")
+
+    def test_the_notice_is_dropped_from_the_exceptions_own_stderr_too(self):
+        exc = RuntimeError("Command failed with exit code 1")
+        exc.stderr = self.NOTICE + "\nclaude: the CLI's own reason"
+        text = sb.launch_failure_text(exc)
+        self.assertNotIn("romp-cli-scope", text)
+        self.assertTrue(text.startswith("claude: the CLI's own reason"), text)
+
+    def test_a_tail_that_was_only_the_notice_falls_through_to_the_exception(self):
+        exc = RuntimeError("Command failed with exit code 1")
+        exc.stderr = sb.SDK_STDERR_PLACEHOLDER
+        text = sb.launch_failure_text(exc, self.NOTICE)
+        self.assertNotIn("romp-cli-scope", text)
+        self.assertIn("exit code 1", text)
+
+    def test_the_wrappers_refusal_stays_on_the_card(self):
+        # ROMP_CLI_REAL unset: the wrapper exits 127 before any CLI runs, so its line IS the reason and
+        # nothing else reports it (the kernel logs no fallback for it: tests/test_cli_scope.py)
+        exc = RuntimeError("Command failed with exit code 127")
+        exc.stderr = sb.SDK_STDERR_PLACEHOLDER
+        refusal = sb.CLI_SCOPE_REFUSAL_PREFIX + " ROMP_CLI_REAL is unset or empty; it must name the real claude CLI"
+        text = sb.launch_failure_text(exc, refusal)
+        self.assertIn("ROMP_CLI_REAL", text)
+        self.assertTrue(text.startswith(sb.CLI_SCOPE_REFUSAL_PREFIX), text)
 
     def test_usage_limits_are_classified_apart_from_breakage(self):
         self.assertTrue(sb.is_launch_limit("You've hit your session limit · resets 4:00pm"))

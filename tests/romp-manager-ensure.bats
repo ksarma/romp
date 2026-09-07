@@ -29,7 +29,7 @@ exit 0
 FAKE
     chmod +x "$BIN/tmux"
     export PATH="$BIN:$PATH"
-    tmux_private_socket_dir "$TEST_DIR"
+    tmux_private_socket_dir "$TEST_DIR"   # also floors ROMP_CLI_SCOPE=0: no real scope on the user manager
     # Fake kernel launcher: stay alive without binding a real port (we assert on the
     # manager's control endpoint, not a live kernel).
     FAKE="$TEST_DIR/fake-serve"

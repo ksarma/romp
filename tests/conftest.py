@@ -111,6 +111,22 @@ def _no_model_catalog_fetch():
     yield
 
 
+# No test may reach the REAL `systemd-run` (2026-09-05): constructing the SDK backend decides once
+# whether to spawn CLIs inside per-session transient scopes (sdk_backend.cli_scope_supported), and
+# that verdict defaults to ON under the supervised service — ROMP_SUPERVISED=1 is inherited by every
+# tool shell of a session running on a self-hosted romp, so a suite run from one would probe the
+# live user manager at every backend construction and route every _options() through the wrapper.
+# Floored to the explicit off value; the truth-table tests pass their own environ and are unaffected.
+# Per-test re-assert below, on the same reasoning as the manager-port floor.
+os.environ["ROMP_CLI_SCOPE"] = "0"
+
+
+@pytest.fixture(autouse=True)
+def _no_cli_scope():
+    os.environ["ROMP_CLI_SCOPE"] = "0"
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _stub_place_llm(monkeypatch):
     """Card-first placer floor (2026-07-08): every loaded romp-judge instance gets a no-op place_llm so
