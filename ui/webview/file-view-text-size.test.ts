@@ -598,9 +598,11 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.doesNotMatch(VIEW, /if \(textShowing\(\)\) fireRendered\(\);/);
   assert.match(VIEW, /sel\.setBaseAndExtent\(a\[0\], a\[1\], f\[0\], f\[1\]\)/, "put back anchor then focus: the direction is kept");
   // round 3: the ends go back only when the paint cost the selection one (the browser's own record is exact where the
-  // offsets are not), never when the two offsets coincide (a figure alone)
+  // offsets are not), never for a figure alone; round 5: that guard reads the captured text, not the offsets alone (a
+  // selection of one line break from a highlight's end has coincident offsets too, and it IS rebuilt)
   assert.match(VIEW, /sel\.toString\(\) === kept\.text\) return;/, "a selection the paint left standing is not touched");
-  assert.match(VIEW, /if \(kept\.a\.at === kept\.f\.at\) return;/, "no text between the ends: no restore");
+  assert.match(VIEW, /if \(kept\.a\.at === kept\.f\.at && kept\.text === ""\) return;/, "no text in the selection: no restore");
+  assert.doesNotMatch(VIEW, /if \(kept\.a\.at === kept\.f\.at\) return;/, "coincident offsets alone never skip the restore");
   // round 4: each end is kept with its node, offset, text offset and the side of a text-node boundary it sat on; an end whose
   // node came through the paint at the same text offset goes back to it, and only an end whose node is gone is mapped from
   // its offset, the side of a boundary chosen by the side kept (a point inside a text node has none: its role decides)
@@ -1340,13 +1342,18 @@ test("in a browser, the real module, the Raw view: a drag from a row's first col
   });
 });
 
-test("in a browser, the real module: an end on a text-less line boundary keeps its side through a forced restore — a drag begun after a row's last glyph (Raw) or before a <br> (Rendered) into a highlight keeps its leading newline and its anchor line; a triple-clicked row (Raw) or line (Rendered) whose whole text is highlighted from column 0 keeps its trailing newline; plain prose, a collapsed caret and no selection are left as they are", async (t) => {
+test("in a browser, the real module: an end on a text-less line boundary keeps its side through a forced restore — a drag begun after a row's last glyph (Raw) or before a <br> (Rendered) into a highlight keeps its leading newline and its anchor line; a triple-clicked row (Raw) or line (Rendered) whose whole text is highlighted from column 0 keeps its trailing newline; a drag from the end of a highlighted word to the next row's first column (Raw), the newline alone, keeps it; plain prose, a collapsed caret and no selection are left as they are", async (t) => {
   // round 4: the Raw view's rows carry no newline text and a <br> is none either, so the end of one line's text and the
   // first column of the next share ONE offset. Round 3 chose the side by the end's role, and a forced restore (the other
   // end inside a re-wrapped highlight) moved a START that sat after a row's last glyph to the next row's first character
   // (the leading newline lost, the anchor a line down) and an END at a row's first column (a triple-click's) to the end of
   // the row above (the trailing newline lost). Each end now keeps its own node and offset and goes back to them when the
   // node came through the paint; only an end whose node is gone is mapped, and by the side it sat on.
+  // round 5: a selection of the newline alone, from the end of a highlight's text (the row's last word, after a prefix)
+  // to the next row's first column, has ONE offset for both ends like the picture-only selection, and round 3's guard
+  // against rebuilding such a pair skipped its restore too: after the repaint moved the start out of the mark's node,
+  // Chrome showed and copied the highlighted word with the newline. The guard now fires only for a selection holding no
+  // text; this one holds "\n", and the side bits put its start back at the new mark's end.
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "feed"] as const) {
       const read = (page: any) => page.evaluate(() => {
@@ -1461,6 +1468,21 @@ test("in a browser, the real module: an end on a text-less line boundary keeps i
         await step();
         r = await read(page);
         assert.deepEqual([r.ranges, r.marks >= 1], [0, true], mode + ": no selection: none after the paint either, the highlight re-wrapped");
+        assert.deepEqual(errors, [], mode + ": no script error");
+        await page.close();
+      }
+      // (5) Raw: a drag from the end of the highlighted "main():" (the third row's last text, after its "def " prefix) to
+      // the fourth row's first column: the newline alone, both ends on one offset (round 5)
+      {
+        const { page, errors } = await openReal(browser, mode, 900, undefined, { find: "main():", len: 7 }, { path: SNIPPET, raw: true });
+        assert.ok((await read(page)).marks >= 1, mode + ": a highlight stands over the third row's last word");
+        const r2 = await rowRect(page, 2);
+        const c3 = await page.evaluate(() => { const r = (document.querySelectorAll(".fileview-body .fv-cl")[3].querySelector(".fv-ct") as HTMLElement).getBoundingClientRect(); return { left: r.left, top: r.top, bottom: r.bottom }; });
+        await page.mouse.move(r2.right - 10, mid(r2)); await page.mouse.down(); await page.mouse.move(c3.left + 1, mid(c3), { steps: 6 }); await page.mouse.up();
+        const drag = await read(page);
+        assert.equal(drag.text, "\n", mode + ": the drag holds the row break alone");
+        assert.deepEqual([drag.anchorKind, drag.anchorOffset, drag.anchorRow, drag.anchorInMark, drag.focusKind, drag.focusOffset, drag.focusRow], ["text", 7, 2, true, "span", 0, 3], mode + ": anchored at the end of the highlight's text, the focus at the next row's first column (its cell, before the text)");
+        await forced(page, "the newline from the highlight's end", drag);
         assert.deepEqual(errors, [], mode + ": no script error");
         await page.close();
       }

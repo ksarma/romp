@@ -884,7 +884,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // touched: the browser's record of it is exact where the offsets are not. A selection holding NO text (a figure
   // alone, the shape a drag across a picture makes) has one offset for both ends, and put back from them it collapsed
   // after every reflow though the paint had touched nothing near it (review 2026-09-07, round 3); such a selection is
-  // never rebuilt from offsets, so when a paint does disturb it, it stays as the paint left it. An end whose own node
+  // never rebuilt from offsets, so when a paint does disturb it, it stays as the paint left it. The test is the text,
+  // not the offsets alone: a selection of one line break, from the end of a highlight's text to the next row's first
+  // column, has one offset for both ends too, and skipped by the offsets its start was left where the repaint had put
+  // it, outside the new mark, so the highlighted word showed and copied with the newline (round 5); its ends go back
+  // like any other pair, the side bits below placing the start at the new mark's end. An end whose own node
   // came through the paint (moved into a mark, or untouched) goes back to that node, and only an end whose node is
   // gone is mapped from its offset (round 4: an end on a text-less line boundary, the end of a row's text or the first
   // column of the next, has the offset of both sides, and mapped by its role as start or end it landed on the wrong
@@ -899,7 +903,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     fireRendered();
     if (!sel || !kept || !kept.a || !kept.f) return;
     if (!sel.isCollapsed && sel.anchorNode?.isConnected && sel.focusNode?.isConnected && sel.toString() === kept.text) return;   // the paint left it standing
-    if (kept.a.at === kept.f.at) return;   // no text between the ends: the offsets cannot rebuild it, and would collapse it
+    if (kept.a.at === kept.f.at && kept.text === "") return;   // a figure alone: the offsets cannot rebuild it, and would collapse it
     const a = pointBack(body, kept.a, kept.a.at < kept.f.at); const f = pointBack(body, kept.f, kept.f.at < kept.a.at);
     try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
   };
