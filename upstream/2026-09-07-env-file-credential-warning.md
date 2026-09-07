@@ -13,3 +13,5 @@ The tier-2 piece of the API-key management bucket (`api-key-management`) that is
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature). Carve out of #229 without the file-mode refusal or the no-keys docs stance (neither is offerable); upstream's open #932 (CONFLICTING as of 2026-09-07) also edits the credential-read paths.
 
 OFFERED 2026-09-07: offered upstream as their PR #1002 (2026-09-07, label feature, head 312a3d34).
+
+2026-09-07: rebased onto upstream f3dc387a; head 026923a5.

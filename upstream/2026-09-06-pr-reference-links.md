@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — state the two judgment calls (the cross-repo form only when the session is on GitHub; the sender's repo for postal, never the reader's) and the host-name-agreement limit).
 
 OFFERED 2026-09-07: offered upstream as their PR #1004 (2026-09-07, label feature, head ccdb4707).
+
+2026-09-07: rebased onto upstream f3dc387a; head fd83e587.

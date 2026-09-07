@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — depends on the tag-edits entry (`tag-edits-targeted-ops`) and the tab-groups entry (`tab-groups-on-tags`); the flag part depends on user todos slice 2 (tier 3) for meaning upstream, so offer the Show-when-folded pins and the header-as-label parts alone, or after that conversation).
 
 OFFERED 2026-09-07: offered upstream as their PR #997 (2026-09-07, label feature, head f1be7245); depends on their PR #1007, which must merge first; offered subset: the Show-when-folded pins and the header-as-label parts only; the folded-section user-todo flag and the feature flag are held back.
+
+2026-09-07: rebased onto upstream f3dc387a; head 9b43341e; a later review commit moved the head to 1a28b84b.

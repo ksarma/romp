@@ -4,7 +4,7 @@ status: offered
 where: leak fix: fork PR #233 (branch `tmpleak`, merged 2026-09-06 as `54bd3106`), commit `e98c8c79` (the detached call honours `ROMP_POSTAL_BIN` like the mail and refresh paths, and romp.bats stands in for the service). Their #944's exit-time sweep cannot catch it (the write happens in a detached process after cleanup). SIGPIPE flake: the curl mock's stdin drain, fork main `3190e9d6` (2026-09-04, the `romp new --in` commit; not `835a0a4a`, the Codex-spawn `--env` refusal, which only reuses `_stub_curl`); upstream's romp.bats has no drain
 added: 2026-09-06
 pr: 233
-tier: tests-only
+tier: fix
 offered: their PR #999
 closed:
 ---
@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier tests-only — offered with the child-process hygiene entry (`tmp-hygiene-child-processes`). Pointer fixes today: fork PR #233 merged 2026-09-06 (`54bd3106`); the SIGPIPE drain came in `3190e9d6`, not `835a0a4a`).
 
 OFFERED 2026-09-07: offered upstream as their PR #999 (2026-09-07, label fix, head 08cac9fa); relabeled fix because the incoming docs tier is documentation only.
+
+2026-09-07: rebased onto upstream f3dc387a; head f043b17d.

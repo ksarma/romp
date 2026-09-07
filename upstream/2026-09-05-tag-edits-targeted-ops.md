@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier fix — the folded-tab-strip entry stacks on it).
 
 OFFERED 2026-09-07: offered upstream as their PR #1001 (2026-09-07, label fix, head 698bb5f1).
+
+2026-09-07: rebased onto upstream f3dc387a; head 95133620.

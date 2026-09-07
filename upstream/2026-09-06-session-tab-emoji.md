@@ -15,3 +15,5 @@ Status detail (migrated from the table): **candidate**
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — the SDK/Codex `write_name` fifth-field carry is the one hunk outside the feature's files; fork PR #278 (`emojipicker`, draft, 2026-09-07) builds a picker on top and should ride behind the offer or be folded in before it).
 
 OFFERED 2026-09-07: offered upstream as their PR #1010 (2026-09-07, label feature, head 78c65757); depends on their PR #1004, which must merge first.
+
+2026-09-07: rebased onto upstream f3dc387a; head f3f916ba; a later review commit moved the head to 126aafee.

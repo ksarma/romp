@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier fix — offer with or after the echo-floor entry (`mid-turn-send-record`); three widened UI pins ride along).
 
 OFFERED 2026-09-07: offered upstream as their PR #996 (2026-09-07, label fix, head 8f8d10a1); depends on their PR #1006, which must merge first.
+
+2026-09-07: rebased onto upstream f3dc387a; head 4b6c0e1e; a later review commit moved the head to e0394080.

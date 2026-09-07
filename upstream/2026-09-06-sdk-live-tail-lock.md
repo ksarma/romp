@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier fix — disclose in the offer: six `SystemMessage` subtypes still reach the unhandled catch-all, and `tests/test_kernel_deferral_sweep.py` mints under the shared placeholder sid).
 
 OFFERED 2026-09-07: offered upstream as their PR #1000 (2026-09-07, label fix, head 9523f5f3).
+
+2026-09-07: rebased onto upstream f3dc387a; head d7475c45.

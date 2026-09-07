@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — pairs with the kernel counters entry (`romp-perf`); the `waiting.ts` wrap is fork-only (`waiting.ts` is absent upstream) and must be dropped from the offer).
 
 OFFERED 2026-09-07: offered upstream as their PR #1009 (2026-09-07, label feature, head f9511d74); depends on their PR #1003, which must merge first.
+
+2026-09-07: rebased onto upstream f3dc387a; head 195265b9; a later review commit moved the head to 564000ec.

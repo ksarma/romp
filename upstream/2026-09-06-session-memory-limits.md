@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — its dependency, the per-session scopes, merged upstream as their PR #953 on 2026-09-07T00:37Z, so it is offerable now. The `/api-health` `cliScope.rejected` surface depends on the API-health entry (`api-health-signal`); without it, carve that to a log line. The fake-`timeout` bats nit from the #953 review (`batch12-review-tests-only-followups`) touches `tests/romp-cli-scope.bats`).
 
 OFFERED 2026-09-07: offered upstream as their PR #1008 (2026-09-07, label feature, head 17486265); depends on their PR #1002, which must merge first.
+
+2026-09-07: rebased onto upstream f3dc387a; head 9f4891c7.

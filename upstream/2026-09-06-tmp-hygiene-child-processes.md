@@ -4,7 +4,7 @@ status: offered
 where: fork PR #233 (branch `tmpleak`, merged 2026-09-06 as `54bd3106`): `tests/conftest.py`, `tests/__init__.py`, `tests/git-hermetic.bash`, `tests/git-hermetic.bats`, `tests/test_tempdir_hygiene.py`, `tests/test_kernel_socket_deliver.py`, `tests/test_kernel_worktree_display.py`, `tests/test_reg_field_gutting.py`, `tests/test_kernel_provisional_command.py`, seven `tests/*.bats` (four upstream, three fork-only), `tests/README.md`
 added: 2026-09-06
 pr: 233
-tier: tests-only
+tier: fix
 offered: their PR #999
 closed:
 ---
@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier tests-only — offer after their #944 (merged); this is the natural carrier for the #944 review follow-up, `@pytest.hookimpl(trylast=True)` on `pytest_sessionfinish` so the sweep runs after pytest's deferred teardown (upstream's conftest has a plain hook at :17). Fork side, open fork PRs #275 (`tests/conftest.py`) and #276 (every test module) touch the same files: rebase or base on their heads).
 
 OFFERED 2026-09-07: offered upstream as their PR #999 (2026-09-07, label fix, head 08cac9fa); relabeled fix because the incoming docs tier is documentation only.
+
+2026-09-07: rebased onto upstream f3dc387a; head f043b17d.

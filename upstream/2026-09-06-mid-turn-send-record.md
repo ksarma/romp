@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier fix — the base for the mid-turn send story and the boot duplicate guard entries).
 
 OFFERED 2026-09-07: offered upstream as their PR #1006 (2026-09-07, label fix, head 27dd6a76); depends on their PR #1000, which must merge first.
+
+2026-09-07: rebased onto upstream f3dc387a; head bf4279da.

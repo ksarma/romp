@@ -15,3 +15,5 @@ Status detail (migrated from the table): candidate
 APPROVED 2026-09-07: the fork owner said offer it (batch 13, tier feature — two offerable units (inheritance; the sectioned strip); the folded-tab-strip entry and the Codex-arm tagging divergence ride on it; state the v1 gaps (local-tags-only inheritance, a drop does not change membership, the phone strip is unsectioned)).
 
 OFFERED 2026-09-07: offered upstream as their PR #1007 (2026-09-07, label feature, head 27fbd1a3); depends on their PR #1001, which must merge first.
+
+2026-09-07: rebased onto upstream f3dc387a; head 8f4c170e.
