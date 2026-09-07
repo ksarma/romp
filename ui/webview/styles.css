@@ -3823,10 +3823,21 @@ body.filebrowse-open { overflow: hidden; }
 .fc-panel.fc-margin { overflow: hidden; padding: 0; gap: 0; }
 .fc-margin > .fc-sec-head { flex: 0 0 auto; padding: 10px 12px 0; }
 .fc-margin > .fc-composer { flex: 0 0 auto; padding: 10px 12px 0; }
-.fc-margin > .fc-sec-cards { flex: 1 1 auto; min-height: 0; position: relative; overflow: auto; scrollbar-width: none; }
+.fc-margin > .fc-sec-cards { flex: 1 1 0; min-height: 30%; position: relative; overflow: auto; scrollbar-width: none; }
 .fc-margin > .fc-sec-cards::-webkit-scrollbar { display: none; }
 .fc-margin > .fc-sec-send, .fc-margin > .fc-sec-log { flex: 0 0 auto; padding: 0 12px; }
 .fc-margin > .fc-sec-log { padding-bottom: 10px; }
+/* a footer taller than the panel: the panel clips (a panel that scrolled would carry the track away from the body and
+   every card off its mark), and the track is the one section that yields — so an open Send confirm (fifteen comments
+   listed, the message preview under them) or an open Log (up to the host's 200 rows) pushed its own controls past the
+   panel's bottom edge with nothing to scroll them back (found 2026-09-07). The rule: the track's basis is 0 with a
+   floor of 30% of the panel, so it takes the free space when the footer is short and keeps about two cards when it is
+   tall, and never gives up the floor; and a section yields only while it holds the content that grew — the Send
+   section while its confirm is up, the Log section while it has rows — becoming a scroller of its own, its collapsed
+   controls (Accept all · Reject all, Send, the Log toggle) never squeezed since a collapsed section keeps flex 0 0 auto.
+   The Log toggle sticks to the top of its scroller so the fold is in reach while the rows scroll. */
+.fc-margin > .fc-sec-send:has(.fc-confirm), .fc-margin > .fc-sec-log:has(.fc-log-row) { flex: 0 1 auto; min-height: 0; overflow: auto; }
+.fc-margin .fc-log > .fc-sec { position: sticky; top: 0; background: var(--bg); }
 .fc-margin .fc-sec-send > .fc-foot { padding-top: 8px; border-top: 1px solid var(--card-border); }
 .fc-margin .fc-cards { display: block; position: relative; }
 .fc-margin .fc-cards > * { position: absolute; left: 12px; right: 12px; box-sizing: border-box; }

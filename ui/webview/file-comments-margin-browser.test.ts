@@ -3,10 +3,12 @@
 // out under feed.css's own rules, with the kernel's replies arriving as window messages. This is the leg no
 // stand-in can stand in for: whether a card's box lands where its mark's box is once the browser has laid out the
 // paragraphs, the cards and the header the track begins under; whether two cards whose marks are a line apart
-// stack instead of overlapping; whether the two scrollers move together; and whether the sheet's container query
-// (the narrow fold) reaches the panel as the list layout. Runs in Chromium and Firefox; skips LOUDLY without a
-// playwright browser (CI installs none), as the other browser legs do. Synthetic values only: invented prose,
-// placeholder ids.
+// stack instead of overlapping; whether the two scrollers move together, to the far end included — the fixed footer
+// (Accept all · Reject all, Send, Log) makes the track's box shorter than the body's, and unless the track's content
+// is shorter by the same amount the track scrolls on past the body's end and every card floats above its mark
+// (found 2026-09-07); and whether the sheet's container query (the narrow fold) reaches the panel as the list
+// layout. Runs in Chromium and Firefox; skips LOUDLY without a playwright browser (CI installs none), as the other
+// browser legs do. Synthetic values only: invented prose, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -63,9 +65,10 @@ const comment = (i: number, n: number): Record<string, unknown> => ({
   anchor: { quote: quoteOf(i), prefix: "", suffix: " says something about the cache" }, replies: [], resolved: false,
 });
 const WHOLE = { id: (T0 - 5000) + "-0", author: "you", ts: T0 - 5000, body: "Add a summary at the top.", replies: [], resolved: false };
-// marks on paragraphs 3 and 4 (a line apart: the second card cannot fit beside its paragraph), and on paragraph 30 (far down)
-const COMMENTS = [WHOLE, comment(3, 1), comment(4, 2), comment(30, 3)];
-const KEYS = { c3: COMMENTS[1].id as string, c4: COMMENTS[2].id as string, c30: COMMENTS[3].id as string, whole: WHOLE.id };
+// marks on paragraphs 3 and 4 (a line apart: the second card cannot fit beside its paragraph), on paragraph 30 (far
+// down) and on paragraph 40 (the last one: its mark is in the body's last lines, where the footer covers the track)
+const COMMENTS = [WHOLE, comment(3, 1), comment(4, 2), comment(30, 3), comment(40, 4)];
+const KEYS = { c3: COMMENTS[1].id as string, c4: COMMENTS[2].id as string, c30: COMMENTS[3].id as string, c40: COMMENTS[4].id as string, whole: WHOLE.id };
 // one change: a word the session inserted in paragraph 6, painted in Rendered as a tint (the foot goes to the footer)
 const INS_AT = SRC.indexOf("Paragraph 6 of the report");
 const HUNK = { id: "h1", author: "api", ts: T0 - 30000, kind: "ins", curFrom: INS_AT, curTo: INS_AT + 9, baseFrom: INS_AT, baseTo: INS_AT, oldText: "", newText: "Paragraph", anchor: null };
@@ -83,6 +86,8 @@ type Scene = {
   margin: boolean; footIn: string | null; listHeight: number; bodyScrollHeight: number; offset: number;
   cards: Record<string, Box & { pushed: string | null; leader: string }>; marks: Record<string, Box | null>;
   bodyScroll: number; trackScroll: number; flex: string;
+  bodyRange: number; trackRange: number;                          // each scroller's farthest scrollTop (scrollHeight - clientHeight)
+  bodyBox: Box; trackBox: Box;                                    // the two scrollers' boxes in the viewport (the track's ends above the footer)
 };
 
 /** Mount the panel over the rendered document, answer its status asks, open it, and let the paint and the pass run. */
@@ -133,6 +138,7 @@ const scene = (page: any, keys: Record<string, string>): Promise<Scene> => page.
     margin: aside.classList.contains("fc-margin"), footIn: foot ? (foot.parentElement as HTMLElement).className : null,
     listHeight: parseFloat(list.style.height || "0"), bodyScrollHeight: body.scrollHeight, offset: track.getBoundingClientRect().top - body.getBoundingClientRect().top,
     cards, marks, bodyScroll: body.scrollTop, trackScroll: track.scrollTop, flex: getComputedStyle(document.getElementById("main")!).flexDirection,
+    bodyRange: body.scrollHeight - body.clientHeight, trackRange: track.scrollHeight - track.clientHeight, bodyBox: box(body), trackBox: box(track),
   };
 }, keys);
 const frames = (page: any, n = 2): Promise<void> => page.evaluate((n: number) => new Promise<void>((r) => { const step = (k: number) => (k ? requestAnimationFrame(() => step(k - 1)) : r()); step(n); }), n);
@@ -165,7 +171,7 @@ async function inBrowser(t: any, name: string, body: (page: any) => Promise<void
 }
 
 for (const name of ["chromium", "firefox"]) {
-  test(`in ${name}: cards land level with their marks, a colliding card stacks under the one above, the whole-file card is loose at the top, the foot is in the footer, and the scrollers move together`, async (t) => {
+  test(`in ${name}: cards land level with their marks, a colliding card stacks under the one above, the whole-file card is loose at the top, the foot is in the footer, and the scrollers move together over one range, the far end included`, async (t) => {
     await inBrowser(t, name, async (page) => {
       await mount(page);
       const keys = { ...KEYS, chg: "chg:h1" };
@@ -174,8 +180,14 @@ for (const name of ["chromium", "firefox"]) {
       assert.equal(s.margin, true, "the margin layout is on");
       assert.equal(s.footIn, "fc-sec-send", "Accept all · Reject all stand in the footer, above Send");
       assert.ok(s.offset > 40, "the track begins under the header: " + s.offset);
-      near(s.listHeight, s.bodyScrollHeight - s.offset, "the track's content is the body's content less the header", 1);
-      for (const k of ["c3", "c4", "c30", "chg"]) assert.ok(s.marks[k], k + "'s mark is painted");
+      // one range: the track's box is the body's less the header above it AND the footer below it (Accept all · Reject
+      // all, Send, Log), so its content must be shorter than the body's by both for the two farthest positions to
+      // agree — the plan's "share one range". Content shorter by the header alone leaves the track a footer's height
+      // of range the body does not have (the 2026-09-07 finding). scrollHeight and clientHeight are integers, so a
+      // fractional footer can round the two ranges a pixel apart.
+      assert.ok(s.bodyBox.bottom - s.trackBox.bottom > 40, "the footer stands under the track's box: " + (s.bodyBox.bottom - s.trackBox.bottom));
+      near(s.trackRange, s.bodyRange, "the track's scroll range is the body's (list " + s.listHeight + ", body content " + s.bodyScrollHeight + ", header " + s.offset + ")", 2);
+      for (const k of ["c3", "c4", "c30", "c40", "chg"]) assert.ok(s.marks[k], k + "'s mark is painted");
       // level: the card's top is its mark's top, in the viewport, for every card nothing pushes
       near(s.cards.c3.top, s.marks.c3!.top, "paragraph 3's card is level with its highlight");
       near(s.cards.chg.top, s.marks.chg!.top, "the change card is level with its tint");
@@ -204,6 +216,42 @@ for (const name of ["chromium", "firefox"]) {
       s = await scene(page, keys);
       assert.equal(s.trackScroll, 120);
       assert.equal(s.bodyScroll, 120, "the body followed the track");
+      // the far end, from the cards' side: a wheel over the cards column runs the track to ITS end. That end must be
+      // the body's — the body clamps at its own farthest position, and a track that can go on past it leaves every
+      // card floating a footer's height above its mark, with nothing to bring the two back but a scroll of the body
+      // (the poll re-renders nothing for an unchanged file). Chromium and Firefox both showed -109px here before the fix.
+      await page.evaluate(() => { (document.querySelector(".fileview-aside .fc-sec-cards") as HTMLElement).scrollTop = 1e6; });
+      await frames(page);
+      s = await scene(page, keys);
+      near(s.bodyScroll, s.bodyRange, "the body is at its end", 1);
+      near(s.trackScroll, s.bodyScroll, "the track stopped where the body did, not a footer's height past it", 1);
+      near(s.cards.c30.top, s.marks.c30!.top, "paragraph 30's card is level with its mark at the far end");
+      near(s.cards.c40.top, s.marks.c40!.top, "the last paragraph's card is level with its mark at the far end");
+      near(s.cards.c3.top, s.marks.c3!.top, "and so is paragraph 3's, far above the box");
+      // the last passage's card is not a dead end: at the body's end its mark is in the body's last lines, and the
+      // footer covers that height of the track — so the body's content must run on past its last passage by at least
+      // the footer's height, or the card that is level with the mark sits under Send and Log where no scroll reaches it
+      assert.ok(s.marks.c40!.top >= s.bodyBox.top && s.marks.c40!.bottom <= s.bodyBox.bottom + 1, "the last paragraph's mark is in the body's box: " + JSON.stringify(s.marks.c40) + " in " + JSON.stringify(s.bodyBox));
+      assert.ok(s.cards.c40.top >= s.trackBox.top - 1 && s.cards.c40.bottom <= s.trackBox.bottom + 1, "its card is in the track's box, above the footer: " + JSON.stringify(s.cards.c40) + " in " + JSON.stringify(s.trackBox));
+      // the far end from the body's side agrees
+      await page.evaluate(() => { document.getElementById("body")!.scrollTop = 0; });
+      await frames(page);
+      await page.evaluate(() => { document.getElementById("body")!.scrollTop = 1e6; });
+      await frames(page);
+      s = await scene(page, keys);
+      near(s.bodyScroll, s.bodyRange, "the body is at its end again", 1);
+      near(s.trackScroll, s.bodyScroll, "the track came to the same end", 1);
+      near(s.cards.c40.top, s.marks.c40!.top, "the last paragraph's card is level from this side too");
+      // a click on the last card's reference: the centering clamps at the body's end, and the card is still in view
+      await page.evaluate(() => { document.getElementById("body")!.scrollTop = 0; });
+      await frames(page);
+      await page.evaluate((key: string) => { (document.querySelector('.fc-card[data-id="' + key + '"] [data-act="fcgoto"]') as HTMLElement).click(); }, KEYS.c40);
+      await frames(page);
+      s = await scene(page, keys);
+      assert.ok(s.marks.c40!.top >= s.bodyBox.top && s.marks.c40!.bottom <= s.bodyBox.bottom + 1, "the last mark is in the body's box after its reference was clicked");
+      assert.ok(s.cards.c40.top >= s.trackBox.top - 1 && s.cards.c40.bottom <= s.trackBox.bottom + 1, "and its card is in the track's box: " + JSON.stringify(s.cards.c40) + " in " + JSON.stringify(s.trackBox));
+      near(s.cards.c40.top, s.marks.c40!.top, "level with it");
+      near(s.trackScroll, s.bodyScroll, "the track came along", 1);
       // a click on the far card's reference centers its mark in the body and brings the card with it
       await page.evaluate((key: string) => { (document.querySelector('.fc-card[data-id="' + key + '"] [data-act="fcgoto"]') as HTMLElement).click(); }, KEYS.c30);
       await frames(page);

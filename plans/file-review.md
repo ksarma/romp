@@ -947,9 +947,13 @@ and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left
 elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
 beside their own and need no rule of their own to be usable; the sheets are the painter's.
 
-The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked that comment cards
-follow the text: each card level with the passage it is about and scrolling with the window, at least for markdown,
-laid out as margin-aligned cards the way document editors lay out comments. Built: beside the body the aside wears
+The margin-layout follow-on (2026-09-07), panel side. The user, after walking the loop, asked whether comments could
+move with the window when possible, each trying to stay centered near the place in the text it was left as the
+reader scrolls, at least for markdown. The layout is the build's reading of that ask: comment cards that follow the
+text, laid out as margin-aligned cards the way document editors lay out comments, each card's top level with its
+passage rather than centered on it, overlapping cards pushed down in order and never up, and the passage centered
+only on a click. The build described the design to the user as the work began, so the user could redirect it early
+if it was not what the ask meant; the user has not yet said whether it is. Built: beside the body the aside wears
 the margin layout (`fc-margin`). The head and the composer stay put at the top; Accept all · Reject all (moved out of
 the list), Send and the Log stay put at the bottom; the cards section between them is a track whose scroll is locked
 to the body's — each scroller's scroll event writes its position onto the other, the echo let through without a
@@ -1359,7 +1363,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   read, `too-large` before `figure-changed`. `tools/file-review-plan.test.mjs` pins what this plan
   states for the target's shape, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other
-  fails a test.
+  fails a test. `tools/file-review-plan-attribution.test.mjs` holds the margin-layout note to the
+  record: the ask as the user made it, with its hedges, and the layout as the build's reading of
+  it, awaiting the user's word (a review of the follow-on found the note had folded the build's
+  design into the ask, 2026-09-07).
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).
@@ -1545,8 +1552,9 @@ document stands on its own, each with the reasoning it was given.
 
 ## Open questions for the user
 
-None remain. Every question raised by this document, by its reviews, or in the design interview
-has been ruled on; see Decisions.
+Every question raised by this document, by its reviews, or in the design interview has been ruled
+on; see Decisions. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
+is the build's reading of the ask, not a ruling, and the walk answers it.
 
 ## Upstream
 
