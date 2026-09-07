@@ -204,7 +204,7 @@ test("the card owns the keys while open, ahead of the send path: Enter picks, it
 
 test("Escape closes without inserting and latches for that @ until the token is gone; typing narrows, a space or a miss closes", () => {
   assert.match(RENDER, /else \{ mDismissedAt = mAt \? mAt\.start : -1; closeMention\(\); \}/);
-  assert.match(RENDER, /if \(!at\) \{ mDismissedAt = -1; closeMention\(\); return; \}/);
+  assert.match(RENDER, /if \(!at\) \{ if \(!mentionTokenAt\(ta\.value, mDismissedAt\)\) mDismissedAt = -1; closeMention\(\); return; \}/, "the latch holds while its @ does (composer-mention-pane.test.ts runs it)");
   assert.match(RENDER, /if \(mDismissedAt === at\.start\) return;/);
   assert.match(RENDER, /if \(!items\.length\) \{ closeMention\(\); return; \}/);
   assert.match(RENDER, /updateSlash\(\);[^\n]*\n\s*updateMention\(\);/, "the input handler refreshes the card as the query changes");
@@ -223,7 +223,8 @@ test("the card is a .ctx-menu above the composer that never takes focus, and the
   assert.doesNotMatch(block, /row\.addEventListener\("click"/);
   assert.equal((block.match(/addEventListener\("mousedown"/g) || []).length, 1, "the card's one listener");
   // the pick fills the text and puts the caret after the token; the draft follows
-  assert.match(RENDER, /const next = insertMention\(ta\.value, at, ta\.selectionStart, mentionToken\(c\)\);\s*\n\s*ta\.value = next\.text;/);
+  assert.match(RENDER, /const token = mentionToken\(c, activeId\);/, "the token is relative to the recipient's kernel");
+  assert.match(RENDER, /const next = insertMention\(ta\.value, at, caret, token\);\s*\n\s*ta\.value = next\.text;/, "the value assignment is the fallback behind execCommand (composer-mention-pane.test.ts)");
   assert.match(RENDER, /ta\.setSelectionRange\(next\.caret, next\.caret\);/);
 });
 
@@ -232,17 +233,17 @@ test("each row: the emoji, the name in its identity color, a remote host as the 
   assert.match(RENDER, /nm\.replaceChildren\(\.\.\.hostNameNodes\(c\.name, c\.id\)\);/);
   assert.match(RENDER, /if \(c\.color\?\.bg\) nm\.style\.color = c\.color\.bg;/);
   assert.match(RENDER, /if \(s\.status\.state === "closed" \|\| isProvisionalId\(id\)\) continue;/, "a closed session cannot take mail");
-  assert.match(RENDER, /matchMentions\(at\.query, mentionRoster\(\), activeId\)/, "the session being written to is the excluded self");
+  assert.match(RENDER, /rankMentions\(at\.query, mentionRoster\(\), activeId\)/, "the session being written to is the excluded self");
   assert.match(RENDER, /refreshMentionCard\?\.\(\);/, "renderTabs re-ranks an open card when the roster changes");
 });
 
 test("in the transcript a typed @name that names a live session is a chip in its color with the state as its title; text elsewhere", () => {
   assert.match(RENDER, /linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\);[^\n]*\n\s*markMentions\(bubble\);/,
     "the typed-prompt bubble only, after the path links");
-  assert.match(RENDER, /!n\.parentElement\?\.closest\("code, pre, a"\)/, "never inside code, a fenced block or a link");
+  assert.match(RENDER, /!n\.parentElement\?\.closest\("code, pre, a, \.mention-chip"\)/, "never inside code, a fenced block, a link or a chip already made");
   assert.match(RENDER, /const chip = el\("span", "mention-chip"\);/);
-  assert.match(RENDER, /chip\.style\.setProperty\("--chip-bg", sg\.hit\.color\.bg\); chip\.style\.setProperty\("--chip-fg", sg\.hit\.color\.fg\);/);
-  assert.match(RENDER, /chip\.title = sg\.hit\.name \+ " · " \+ \(CHIP_LABEL\[sg\.hit\.status\.state\] \|\| sg\.hit\.status\.state\);/);
+  assert.match(RENDER, /chip\.style\.setProperty\("--chip-bg", s\.color\.bg\); chip\.style\.setProperty\("--chip-fg", s\.color\.fg\);/);
+  assert.match(RENDER, /chip\.title = s\.name \+ " · " \+ \(CHIP_LABEL\[s\.status\.state\] \|\| s\.status\.state\);/, "dressMentionChip: the same dress at render and on every roster change");
   const fn = RENDER.slice(RENDER.indexOf("function markMentions("), RENDER.indexOf("// Composer: Enter sends the message"));
   assert.ok(fn.length > 0 && fn.length < 3000, "markMentions is the small function before setupComposer");
   assert.doesNotMatch(fn, /addEventListener|dataset\.act|href|createElement\("a"\)/, "no link behavior");

@@ -60,7 +60,7 @@ import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's 
 import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
 import { pastedFilePath } from "./paste-path";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
-import { mentionQuery, matchMentions, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";
+import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
@@ -5311,6 +5311,7 @@ function tabEmojiNode(emoji: string | undefined): HTMLElement | null {
 }
 
 function renderTabs() {
+  mentionRosterChanged();   // the @-mention card and the transcript's chips follow the WHOLE roster, ahead of the strip's own guards and its visible-tabs signature
   if (renameActive) { renderPendingAfterRename = true; return; }
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
   const bar = document.getElementById("tabs");
@@ -5395,7 +5396,6 @@ function renderTabs() {
   const mslotEl = document.getElementById("mtag-slot");
   if (stripSig === tabStripSig && !(mslotEl && !mslotEl.firstChild)) { stripAftermath(visibleIds, ids); return; }
   tabStripSig = stripSig;
-  refreshMentionCard?.();   // the roster changed (a name, a color, an emoji, a session gone): an open @-mention card follows it
   // Preserve TAB-MODE keyboard focus across the rebuild (the user 2026-06-29). renderTabs runs on EVERY kernel
   // push (0.5–3s), and replaceChildren() destroys the focused tab — dropping focus out of the strip (often out
   // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
@@ -13148,8 +13148,7 @@ function fireRewindDelete(sid: string, uuid: string): void {
 function cancelComposerEdit(sid: string): void {
   if (!composerEdits.delete(sid)) return;
   if (sid !== activeId) return;
-  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
-  if (ta) { ta.value = ""; composerManualH = null; ta.style.height = ""; }
+  clearComposerBox?.();   // the composer's one clear path: the menus see the box go empty
   drafts.delete(sid); persistDrafts();
   renderComposerChips(sid);
 }
@@ -14868,25 +14867,91 @@ function growComposer(ta: HTMLTextAreaElement) {
 // a one-line description, an optional argument hint, and any aliases.
 interface SlashCmd { name: string; description?: string; argumentHint?: string; aliases?: string[]; }
 
-// Re-rank an OPEN @-mention card against the current roster (set by setupComposer; renderTabs calls it
-// when the strip's content changed). Null before the composer is wired, and a no-op while no card is up.
+// Re-rank an OPEN @-mention card against the current roster (set by setupComposer). Null before the
+// composer is wired, and a no-op while no card is up. mentionRosterChanged calls it on every roster change.
 let refreshMentionCard: (() => void) | null = null;
+// Empty the message box (set by setupComposer): the ONE path every clear takes, so the @-mention card and
+// the slash menu see the box go empty. A bare `ta.value = ""` fires no input event, and with the card up a
+// Send click or Cmd/Ctrl+Enter left it open over the empty box, where the next Enter inserted a stale
+// "@name " (review find, 2026-09-07). cancelComposerEdit clears from outside the composer's closure by it.
+let clearComposerBox: (() => void) | null = null;
+
+// The roster as the @-mention surfaces see it: every session the webview holds, hidden ones included, by
+// id, name, color, emoji and state. renderTabs compares it on every kernel push; a change re-ranks the open
+// card and re-dresses the transcript's chips, and a NAME the roster did not hold before re-marks the
+// bubbles, so a peer whose frame lands after the active transcript rendered gets its chip (the connect push
+// sends the active tab first). The strip's own signature covers the visible tabs only, so a session in
+// another view renamed, recolored or changing state never reached these surfaces through it (review find,
+// 2026-09-07).
+let mentionRosterSig = "";
+let mentionNames = new Set<string>();
+function mentionRosterChanged(): void {
+  const rows: unknown[] = [];
+  const names = new Set<string>();
+  for (const [id, s] of sessions) {
+    rows.push([id, s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, s.status.state]);
+    if (s.status.state !== "closed" && s.name) names.add(s.name);
+  }
+  const sig = JSON.stringify(rows);
+  if (sig === mentionRosterSig) return;
+  mentionRosterSig = sig;
+  refreshMentionCard?.();
+  refreshMentionChips();
+  let fresh = false;
+  for (const n of names) if (!mentionNames.has(n)) { fresh = true; break; }
+  mentionNames = names;
+  if (fresh) remarkMentions();
+}
+
+// A chip's dress from the session it names: the identity color and, as its title, the name and the state.
+// The chip is keyed by the session's id (data-sid) and re-dressed on every roster change, so a rename or a
+// state change reaches a chip rendered long before (the sent text itself stays as typed). A session gone
+// reads Closed and keeps its last color, so the reader still sees who was meant.
+function dressMentionChip(chip: HTMLElement, s: Session | null): void {
+  if (!s) { chip.title = (chip.textContent || "").replace(/^@/, "") + " · " + CHIP_LABEL.closed; return; }
+  if (s.color) { chip.style.setProperty("--chip-bg", s.color.bg); chip.style.setProperty("--chip-fg", s.color.fg); }
+  chip.title = s.name + " · " + (CHIP_LABEL[s.status.state] || s.status.state);
+}
+function refreshMentionChips(): void {
+  const byName = new Map<string, Session>();
+  for (const s of sessions.values()) if (s.status.state !== "closed" && s.name) byName.set(s.name, s);
+  for (const v of views.values()) {
+    for (const chip of Array.from(v.el.querySelectorAll<HTMLElement>(".mention-chip[data-sid]"))) {
+      let s = sessions.get(chip.dataset.sid || "") || null;
+      if (!s) {   // the session is gone; a live one that took its name is what the text names now
+        const again = byName.get((chip.textContent || "").replace(/^@/, ""));
+        if (again) { chip.dataset.sid = again.id; s = again; }
+      }
+      dressMentionChip(chip, s);
+    }
+  }
+}
+// Mark again every bubble that carries an "@" outside a chip (data-mentions, set when it rendered): a name
+// that was plain text because its session's frame had not landed yet becomes a chip. Idempotent: text
+// already inside a chip is skipped, so a chip is never wrapped twice.
+function remarkMentions(): void {
+  for (const v of views.values()) for (const b of Array.from(v.el.querySelectorAll<HTMLElement>("[data-mentions]"))) markMentions(b);
+}
 
 // A typed "@name" that names a live session wears that session's identity color (the user 2026-09-07):
 // the reader sees who was meant, and a hover says how that session is doing. A quiet chip, the tab's
 // own dress, with no link behavior; a word that names nothing stays plain text. Text nodes only, never
-// inside code, a fenced block or a link, so a path or an email address is left alone. The same
-// boundary rule as the composer's trigger (composer-mention.ts mentionSegments).
+// inside code, a fenced block, a link or a chip already made, so a path or an email address is left
+// alone. The same boundary rule as the composer's trigger (composer-mention.ts mentionSegments). Exact
+// names only: postal's direct match is exact, so a hand-typed "@API" for the session "api" is not a name
+// its mail tools would take, and the chip must not say it is (review find, 2026-09-07).
 function markMentions(root: HTMLElement): void {
-  const exact = new Map<string, Session>(), folded = new Map<string, Session>();
-  for (const s of sessions.values()) if (s.status.state !== "closed" && s.name) { exact.set(s.name, s); folded.set(s.name.toLowerCase(), s); }
-  if (!exact.size) return;
-  const lookup = (w: string) => exact.get(w) || folded.get(w.toLowerCase()) || null;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts: Text[] = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if ((n.nodeValue || "").includes("@") && !n.parentElement?.closest("code, pre, a")) texts.push(n as Text);
+    if ((n.nodeValue || "").includes("@") && !n.parentElement?.closest("code, pre, a, .mention-chip")) texts.push(n as Text);
   }
+  if (!texts.length) return;
+  root.dataset.mentions = "1";   // a bubble remarkMentions revisits when a new name joins the roster
+  const live = new Map<string, Session>();
+  for (const s of sessions.values()) if (s.status.state !== "closed" && s.name) live.set(s.name, s);
+  if (!live.size) return;
+  const lookup = (w: string) => live.get(w) || null;
   for (const t of texts) {
     const segs = mentionSegments(t.nodeValue || "", lookup);
     if (!segs.some((sg) => sg.hit)) continue;
@@ -14895,8 +14960,8 @@ function markMentions(root: HTMLElement): void {
       if (!sg.hit) { frag.appendChild(document.createTextNode(sg.text)); continue; }
       const chip = el("span", "mention-chip");
       chip.textContent = sg.text;
-      if (sg.hit.color) { chip.style.setProperty("--chip-bg", sg.hit.color.bg); chip.style.setProperty("--chip-fg", sg.hit.color.fg); }
-      chip.title = sg.hit.name + " · " + (CHIP_LABEL[sg.hit.status.state] || sg.hit.status.state);
+      chip.dataset.sid = sg.hit.id;
+      dressMentionChip(chip, sg.hit);
       frag.appendChild(chip);
     }
     t.replaceWith(frag);
@@ -14926,7 +14991,7 @@ function setupComposer() {
     stagedMsgs.push(activeId, { text: typed, cites: (composerCitations.get(activeId) || []).slice() });
     composerCitations.delete(activeId); renderComposerChips(activeId);   // the chips now live on the staged item
     drafts.delete(activeId); draftStartedAt.delete(activeId);
-    ta.value = ""; composerManualH = null; ta.style.height = "";
+    clearBox();
     persistDrafts();
     renderStagedStrip(activeId);
   };
@@ -14982,7 +15047,7 @@ function setupComposer() {
     if (askRoute) {
       if (askRoute === "custom") addCustomLiveAsk(typed); else sendTextLiveAsk(typed);
       drafts.delete(activeId); draftStartedAt.delete(activeId); persistDrafts();
-      ta.value = ""; composerManualH = null; ta.style.height = "";
+      clearBox();
       return;
     }
     // EDIT mode → a rewindSend: branch the conversation from just before the edited message. No
@@ -14998,7 +15063,7 @@ function setupComposer() {
       const s = sessions.get(activeId);
       if (s) { reconcileRewind(s); appendActive(); }   // paint the overlay NOW (stale → window re-render)
       drafts.delete(activeId); draftStartedAt.delete(activeId); persistDrafts();
-      ta.value = ""; composerManualH = null; ta.style.height = "";
+      clearBox();
       return;
     }
     const sid = activeId;   // the session this send (and any confirm below) was armed for
@@ -15034,7 +15099,7 @@ function setupComposer() {
         histWalk.delete(sid);                         // …and the history walk starts fresh
         if (attached.length) { composerFiles.delete(sid); if (sid === activeId) renderComposerFiles(sid); }
         drafts.delete(sid); draftStartedAt.delete(sid); persistDrafts();
-        ta.value = ""; composerManualH = null; ta.style.height = "";
+        clearBox();
         return;
       }
       lastSent.set(activeId, text);   // remembered for a possible Ctrl+C restore
@@ -15063,9 +15128,7 @@ function setupComposer() {
       histWalk.delete(sid);                         // …and the history walk starts fresh
       if (attached.length) { composerFiles.delete(sid); if (sid === activeId) renderComposerFiles(sid); }   // the strip emptied into this message
       drafts.delete(activeId); draftStartedAt.delete(activeId); persistDrafts();   // sent — no draft to restore on a later switch-back
-      ta.value = "";
-      composerManualH = null;   // a drag-expanded box snaps back to one line after a send (the user 2026-07-07)
-      ta.style.height = "";
+      clearBox();   // a drag-expanded box snaps back to one line after a send (the user 2026-07-07)
       // The box is empty again, so a live picker re-takes it: send your pre-question draft, then just type the
       // answer (the user 2026-07-16). Repaints the "answering" tint that draftPredatesAsk had suppressed.
       setComposerAskMode();
@@ -15079,7 +15142,7 @@ function setupComposer() {
     // the SDK's control requests instead — status, enable/disable, reconnect. Intercepted here, the
     // one point that sees a command before it runs (the /clear precedent below).
     if (/^\/mcp\s*$/.test(text)) {
-      ta.value = ""; composerManualH = null; ta.style.height = "";
+      clearBox();
       drafts.delete(sid); persistDrafts();
       openMcpPanel(sid);
       return;
@@ -15327,13 +15390,18 @@ function setupComposer() {
   // rule); the row's index resolves against the list painted at that moment.
   let mPop: HTMLElement | null = null;
   let mItems: MentionCandidate[] = [];
+  let mMore: string | null = null;      // the "N more, keep typing" row when the cap left matches out
   let mSel = 0;
   let mAt: MentionQuery | null = null;   // the token the open card is about
-  // Escape latches the card closed for THIS "@" (its index in the text) until the token is gone, the
-  // slash menu's rule: typing more of the same query after an Esc must not re-pop it.
+  // Escape latches the card closed for THIS "@" (its index in the text) until that "@" is gone, the slash
+  // menu's rule: typing more of the same query after an Esc must not re-pop it, and neither may a caret
+  // that leaves the token and comes back (review find, 2026-09-07: the latch cleared on any caret move off
+  // the token). Deleting the "@", or the character after it, re-arms.
   let mDismissedAt = -1;
+  // an IME composition in progress: its keystrokes and its interim text are the IME's, not the card's
+  let mComposing = false;
   // the sessions a mention can name: every live session the webview knows, the one being written to
-  // excluded by matchMentions; hidden (background) sessions included, since mail reaches them like any other
+  // excluded by rankMentions; hidden (background) sessions included, since mail reaches them like any other
   const mentionRoster = (): MentionCandidate[] => {
     const out: MentionCandidate[] = [];
     for (const [id, s] of sessions) {
@@ -15342,7 +15410,7 @@ function setupComposer() {
     }
     return out;
   };
-  const closeMention = () => { if (mPop) { mPop.remove(); mPop = null; } mItems = []; mAt = null; };
+  const closeMention = () => { if (mPop) { mPop.remove(); mPop = null; } mItems = []; mMore = null; mAt = null; };
   const positionMention = () => {
     if (!mPop) return;
     const r = ta.getBoundingClientRect();
@@ -15350,16 +15418,38 @@ function setupComposer() {
     mPop.style.maxWidth = Math.max(r.width, 220) + "px";
     mPop.style.bottom = (window.innerHeight - r.top + 6) + "px";   // just ABOVE the composer, like the slash menu
   };
+  // the "@query" the caret ends right now, or null; a selection is not a caret (Ctrl+A, Shift+Home, a drag)
+  const caretMention = (): MentionQuery | null =>
+    ta.selectionStart === ta.selectionEnd ? mentionQuery(ta.value, ta.selectionStart) : null;
+  // is an "@word" still opening at `start`, the "@" the Escape latch is about?
+  const mentionTokenAt = (text: string, start: number): boolean =>
+    start >= 0 && start + 1 < text.length && text[start] === "@" && (start === 0 || /\s/.test(text[start - 1])) && !/[\s@]/.test(text[start + 1]);
   const pickMention = (c: MentionCandidate) => {
-    const at = mAt || mentionQuery(ta.value, ta.selectionStart);
-    if (!at) { closeMention(); return; }
-    const next = insertMention(ta.value, at, ta.selectionStart, mentionToken(c));
-    ta.value = next.text;
+    // The card is about mAt; the pick replaces the token the caret ends NOW, and the two must agree. Splicing
+    // the cached token against a caret the card had not followed repeated the draft between them ("ask @ro",
+    // Ctrl+A, Enter gave "ask @romp ask @ro"; review find, 2026-09-07). The selectionchange listener below
+    // closes the card on such a move, but it is asynchronous, so a pick can land first: nothing to replace.
+    const at = caretMention();
+    if (!at || !mAt || at.start !== mAt.start || at.query !== mAt.query) { closeMention(); return; }
+    const token = mentionToken(c, activeId);
+    const caret = ta.selectionStart;
     closeMention();
     ta.focus();
-    ta.setSelectionRange(next.caret, next.caret);
-    growComposer(ta);
-    if (activeId) { drafts.set(activeId, ta.value); persistDrafts(); }
+    // Through the browser's own editing command where it works, so the pick sits on the textarea's undo
+    // stack (Ctrl+Z puts the typed "@ro" back) and fires the input event the draft bookkeeping listens to;
+    // assigning ta.value drops the undo history (review find, 2026-09-07), so that is the fallback, with
+    // the same input event dispatched by hand. execCommand is deprecated, but every engine keeps it for
+    // exactly this and reports false where it does not apply.
+    ta.setSelectionRange(at.start, caret);
+    let done = false;
+    try { done = typeof document.execCommand === "function" && document.execCommand("insertText", false, token); } catch { done = false; }
+    if (done && ta.value.slice(at.start, at.start + token.length) !== token) done = false;
+    if (!done) {
+      const next = insertMention(ta.value, at, caret, token);
+      ta.value = next.text;
+      ta.setSelectionRange(next.caret, next.caret);
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    }
   };
   const paintMention = () => {
     if (!mPop) return;
@@ -15377,6 +15467,8 @@ function setupComposer() {
       row.addEventListener("mousemove", () => { if (mSel !== i) { mSel = i; paintMention(); } });   // hover highlights; the pick is the card's listener
       mPop!.appendChild(row);
     });
+    // the matches the cap left out, counted, so a narrower query is the visible way to them (not a row: no pick)
+    if (mMore) { const more = el("div", "mention-more"); more.textContent = mMore; mPop.appendChild(more); }
     positionMention();
     (mPop.querySelector(".mention-row.sel") as HTMLElement | null)?.scrollIntoView({ block: "nearest" });
   };
@@ -15394,22 +15486,40 @@ function setupComposer() {
     document.body.appendChild(mPop);
   };
   const updateMention = () => {
-    const at = mentionQuery(ta.value, ta.selectionStart);
-    if (!at) { mDismissedAt = -1; closeMention(); return; }   // no "@query" at the caret (a space typed, the caret moved): closed, and the Esc latch re-arms
-    if (mDismissedAt === at.start) return;                     // Esc'd this "@": stays closed until the token is gone
-    mDismissedAt = -1;
-    const items = matchMentions(at.query, mentionRoster(), activeId);
+    if (mComposing) return;                                    // the IME owns the box until compositionend, which runs this again
+    const at = caretMention();
+    if (!at) { if (!mentionTokenAt(ta.value, mDismissedAt)) mDismissedAt = -1; closeMention(); return; }   // no "@query" at the caret (a space typed, the caret moved, a selection): closed; the Esc latch stands while its "@" does
+    if (mDismissedAt === at.start) return;                     // Esc'd this "@": stays closed until it is gone
+    if (!mentionTokenAt(ta.value, mDismissedAt)) mDismissedAt = -1;
+    const all = rankMentions(at.query, mentionRoster(), activeId);
+    const items = all.slice(0, MENTION_MAX_ROWS);
     if (!items.length) { closeMention(); return; }             // nothing matches: no card, the "@word" is ordinary text
-    if (!mAt || mAt.start !== at.start || mAt.query !== at.query) mSel = 0;   // a new query: the best match first
-    else if (mSel >= items.length) mSel = 0;
-    mAt = at; mItems = items;
+    // The highlight follows the SESSION, not the row number: a roster re-rank under an open card (a rename, a
+    // session gone or arrived; pushes land every few seconds) moved a different name under the kept index, and
+    // an Enter within reaction time picked it (review find, 2026-09-07). A new query starts at the best match;
+    // a highlighted session that left the list falls back to the first row.
+    const same = !!mAt && mAt.start === at.start && mAt.query === at.query;
+    const keep = same ? mItems[mSel]?.id : undefined;
+    const idx = keep ? items.findIndex((c) => c.id === keep) : -1;
+    mSel = idx >= 0 ? idx : 0;
+    mAt = at; mItems = items; mMore = mentionMoreNote(all.length);
     openMention();
     paintMention();
   };
   refreshMentionCard = () => { if (mPop) updateMention(); };
+  // Empty the box: the one path for every clear (a send, a stage, a picker answer, an edit, /mcp, a cancelled
+  // edit), so the menus see it go empty; see clearComposerBox. The drag height snaps back with it.
+  const clearBox = () => {
+    ta.value = ""; composerManualH = null; ta.style.height = "";
+    updateSlash(); updateMention();
+  };
+  clearComposerBox = clearBox;
   // ↑/↓/⏎/Tab/Esc while the card is OPEN; true when the key was the card's, so the composer's own
-  // Enter-to-send, history and Escape-to-tabs handlers below do not also fire. A modifier passes through.
+  // Enter-to-send, history and Escape-to-tabs handlers below do not also fire. A modifier passes through,
+  // and so does every key of an IME composition: Enter commits the IME's text and the arrows walk its
+  // candidates there (the type-from-anywhere handler's rule).
   const mentionKey = (e: KeyboardEvent): boolean => {
+    if (e.isComposing || e.keyCode === 229) return false;
     const act = mentionKeyAction(e.key, !!mPop, mSel, mItems.length, e.shiftKey || e.ctrlKey || e.metaKey || e.altKey);
     if (!act) return false;
     e.preventDefault();
@@ -15418,9 +15528,13 @@ function setupComposer() {
     else { mDismissedAt = mAt ? mAt.start : -1; closeMention(); }
     return true;
   };
-  // a caret move without an edit (arrows, Home/End, a click into the text) changes which token the caret ends
-  ta.addEventListener("keyup", (e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") updateMention(); });
-  ta.addEventListener("click", updateMention);
+  // A caret move without an edit changes which token the caret ends. selectionchange fires on the text
+  // control itself for every one (a click, Home/End, PageUp, Ctrl+A, a drag; Chromium, Firefox, Safari 17),
+  // asynchronously, so the card follows the caret wherever it goes; an allowlist of arrow, Home and End
+  // keyups used to stand here and missed Ctrl+A and PageUp (review find, 2026-09-07).
+  ta.addEventListener("selectionchange", updateMention);
+  ta.addEventListener("compositionstart", () => { mComposing = true; });
+  ta.addEventListener("compositionend", () => { mComposing = false; updateMention(); });
   ta.addEventListener("blur", () => window.setTimeout(closeMention, 120));   // a row's mousedown keeps focus, so this fires only on a real leave
   window.addEventListener("resize", positionMention);
 

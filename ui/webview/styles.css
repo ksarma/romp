@@ -1202,6 +1202,8 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .mention-row.sel { background: var(--menu-hover); }
 .mention-emoji { flex: 0 0 auto; line-height: 1; }
 .mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+/* the matches the cap left out ("N more, keep typing"): the menu's sub-line dress, not a row (no wash, no pick) */
+.mention-more { padding: 4px 10px; font-size: 0.82em; opacity: 0.6; cursor: default; white-space: nowrap; }
 /* a sent message's "@name" that names a live session: a small pill in the session's identity color (the
    tab's own --chip-bg/--chip-fg, set inline), over the blue you-bubble; the thin light ring keeps a blue
    identity apart from the bubble. No link: the title carries the session's state. */
