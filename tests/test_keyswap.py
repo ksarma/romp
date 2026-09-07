@@ -2278,6 +2278,57 @@ class CommandBeatsFileAndStartup(_CommandMode):
         self.assertFalse("ANTHROPIC_API_KEY" in os.environ, "the one-claimer property holds in every mode")
 
 
+class InheritedEnvironmentNamed(_CommandMode):
+    """The boot verdict's line about the OTHER credential-shaped names in the kernel's own environment
+    says what becomes of them (probe, 2026-09-07): the SDK transport spawns each session CLI with the
+    kernel's whole os.environ under the options overlay, judge CLIs copy os.environ, tmux panes take the
+    manager-started server's globals, and the kernel takes out only ANTHROPIC_API_KEY, the CLI's token
+    names and, as the op consumer, op's OP_* names. Every name listed is therefore inherited by every
+    session, and the line says so; until the upmerge it called them frozen copies the sessions do not
+    receive. Not a scrub: whether to scrub is the owner's ruling, filed separately. A synthetic name,
+    never a real one, so a developer's own shell exports are neither read nor moved."""
+
+    NAME = "SYNTHETIC_FIXTURE_TOKEN"
+
+    def test_the_line_says_the_listed_names_are_inherited_and_the_launch_leaves_them_in_place(self):
+        had = os.environ.get(self.NAME)
+        self.addCleanup(lambda: os.environ.pop(self.NAME, None) if had is None else os.environ.__setitem__(self.NAME, had))
+        v = fixture_value("inherited")
+        os.environ[self.NAME] = v
+        self.logged.clear()
+        es._reset()
+        self.be = self.construct()
+        lines = [ln for ln in self.be.key_source["lines"] if "kernel's own environment" in ln["text"]]
+        self.assertEqual(len(lines), 1, self.be.key_source["lines"])
+        text = lines[0]["text"]
+        self.assertIn(self.NAME, text)
+        self.assertNotIn(v, text)
+        self.assertFalse(lines[0]["problem"], "listed, not flagged: scrubbing is a separate ruling")
+        self.assertIn("They are inherited: every session CLI and judge CLI this kernel launches gets the kernel's "
+                      "environment with only ANTHROPIC_API_KEY, the CLI's own token names and, while romp is the "
+                      "1Password consumer, op's OP_* names taken out, and every tmux pane gets the manager-started "
+                      "server's globals, so each name listed reaches them all unless it is removed from the "
+                      "manager's environment.", text)
+        self.assertIn("The command's set is merged over that inherited environment at each launch.", text)
+        for gone in ("frozen cop", "do not receive", "informational", "is what a launch carries"):
+            self.assertNotIn(gone, text, gone)
+        # membership, not the whole list: a developer's shell may export credential-shaped names of its own
+        self.assertIn(self.NAME, self.be.key_source["credentialNamesFound"]["environment"])
+        # the mechanism the line describes: a launch neither removes the name from the kernel's environment
+        # (the transport merges options.env OVER os.environ) nor blanks it in the overlay
+        overlay = self._env_for(1, "login")
+        self.assertEqual(os.environ.get(self.NAME), v, "the kernel removes nothing but its own claims")
+        self.assertNotIn(self.NAME, overlay, "the overlay does not touch it either way")
+        # the docstring and the reference say the same
+        self.assertNotIn("informational", sb.key_source_verdict.__doc__)
+        self.assertIn("reaches every session,\n    judge call and pane the kernel launches", sb.key_source_verdict.__doc__)
+        root = os.path.dirname(os.path.dirname(os.path.realpath(sb.__file__)))
+        with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
+            doc = fh.read()
+        self.assertIn("every session CLI and judge CLI the kernel\nlaunches inherits that environment", doc)
+        self.assertIn("each listed name reaches them all unless you remove it from the manager's\nenvironment.", doc)
+
+
 class CommandModeSkipsTheFileWarning(_CommandMode):
     def test_a_key_line_under_a_declared_auth_is_said_once_by_the_verdict_alone(self):
         # file mode's _warn_credential_lines_in_env_file and the verdict would both speak about the

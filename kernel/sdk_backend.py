@@ -4174,7 +4174,12 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
     a startup ANTHROPIC_API_KEY (ignored: the command supplies the key); ExecStart routed through a
     shell (the variables it loads freeze until a manager restart, which the mode makes needless);
     ROMP_EXPECTED_AUTH=login while the command prints a key; ROMP_* names the command printed
-    (dropped). Other credential-shaped names in the kernel's own environment are informational.
+    (dropped). Other credential-shaped names in the kernel's own environment are listed, not flagged, with
+    what becomes of them: the SDK transport hands every session CLI the kernel's whole environment (the
+    options overlay merges over it), judge CLIs copy it, and tmux panes inherit the manager-started
+    server's globals; the kernel takes out only ANTHROPIC_API_KEY, the CLI's token names and, while it
+    is the 1Password consumer, op's OP_* names, so every name that line lists reaches every session,
+    judge call and pane the kernel launches (probe, 2026-09-07). Nothing here scrubs them.
     File mode says nothing the existing checks (_warn_credential_lines_in_env_file, _check_key_file_agrees)
     do not already say — an unset command leaves upstream's log byte for byte — except a unit
     credential under a declared auth. Command mode only: ROMP_EXPECTED_AUTH=key with nothing to
@@ -4252,8 +4257,20 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
                 "it sits in a process environment the command mode exists to keep clean.")
         others = [n for n in env_names if n != "ANTHROPIC_API_KEY"]
         if others:
-            say("key source: credential-shaped names in the kernel's own environment: %s — frozen copies the "
-                "sessions do not receive; the command's set is what a launch carries." % ", ".join(others),
+            # Not flagged, but stated plainly (probe, 2026-09-07): the SDK transport spawns each session CLI
+            # with this process's whole os.environ under the options overlay, judge CLIs copy os.environ
+            # (judge.py _judge_env) and tmux panes take the manager-started server's globals; the kernel
+            # takes out ANTHROPIC_API_KEY (startup_api_key), the CLI's token names (startup_auth_env, given
+            # back to login launches) and, while it is the op consumer, op's OP_* names (claim_op_env), all
+            # before this verdict runs, so every name listed here is one the sessions inherit. Whether to
+            # scrub them is the owner's ruling, filed separately.
+            say("key source: credential-shaped names in the kernel's own environment: %s. They are inherited: "
+                "every session CLI and judge CLI this kernel launches gets the kernel's environment with only "
+                "ANTHROPIC_API_KEY, the CLI's own token names and, while romp is the 1Password consumer, op's "
+                "OP_* names taken out, and "
+                "every tmux pane gets the manager-started server's globals, so each name listed reaches them "
+                "all unless it is removed from the manager's environment. The command's set is merged over that "
+                "inherited environment at each launch." % ", ".join(others),
                 problem=False)
         if unit_hits:
             say("key source: the service definition carries credential-shaped lines — %s — copies on disk "

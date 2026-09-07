@@ -8,7 +8,7 @@ import stat
 import subprocess
 import tempfile
 import traceback
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -19,9 +19,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-ks = SourceFileLoader(
+ks = load_source(
     "romp_runtime_keysource_test", str(ROOT / "kernel" / "keysource.py")
-).load_module()
+)
 
 REF = "op://test-vault/test-item/credential"
 OTHER_REF = "op://test-vault/other-item/credential"
@@ -295,9 +295,9 @@ def test_supervised_kernel_restart_cannot_restore_removed_source(env, monkeypatc
 
     # A fresh kernel under the still-running manager receives its original environment,
     # but none of the previous kernel's authority maps or discarded startup-key state.
-    restarted = SourceFileLoader(
+    restarted = load_source(
         "romp_runtime_keysource_restarted_test", str(ROOT / "kernel" / "keysource.py")
-    ).load_module()
+    )
     assert not restarted._AUTHORITATIVE_PATHS
     assert not restarted._ENV_PROVIDER_PATHS
     source = restarted.select_source(BOOT_KEY)
@@ -323,9 +323,9 @@ def test_foreground_fresh_kernel_keeps_explicit_environment_auth(env, monkeypatc
     monkeypatch.setenv("ANTHROPIC_API_KEY", BOOT_KEY)
     if credential == "provider":
         monkeypatch.setenv("ROMP_API_KEY_REF", REF)
-    restarted = SourceFileLoader(
+    restarted = load_source(
         "romp_runtime_keysource_foreground_restart_test", str(ROOT / "kernel" / "keysource.py")
-    ).load_module()
+    )
     source = restarted.select_source(BOOT_KEY)
     if credential == "provider":
         assert (source.kind, source.value) == ("op", REF)
@@ -499,7 +499,7 @@ def test_loading_a_consumer_preserves_prior_provider_removal(env, monkeypatch, c
     monkeypatch.setitem(sys.modules, "romp_keysource", ks)
     module_name = "romp_lazy_source_consumer_test"
     try:
-        loaded = SourceFileLoader(module_name, str(ROOT / consumer)).load_module()
+        loaded = load_source(module_name, str(ROOT / consumer))
         assert getattr(loaded, attribute) is ks
         assert ks.select_source(BOOT_KEY).kind == "error"
         safe_failure(lambda: ks.select_source(BOOT_KEY).resolve())

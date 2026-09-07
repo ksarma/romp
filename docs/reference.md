@@ -964,6 +964,14 @@ sessions' key is sha256:…`. It logs a problem line for each of the following:
   command printed.
 - `ROMP_CREDENTIAL_TIMEOUT_S` outside its range.
 
+It also lists, without flagging them, the other credential-shaped names in the
+manager's own environment, because every session CLI and judge CLI the kernel
+launches inherits that environment (only `ANTHROPIC_API_KEY`, the CLI's own
+token names and, while Romp is the 1Password consumer, the `OP_*` names are
+taken out) and every tmux pane inherits the manager-started server's globals:
+each listed name reaches them all unless you remove it from the manager's
+environment.
+
 An authentication failure invalidates the set once per credential: a second
 refusal while the set (and the helper's output) is unchanged does not re-run
 the command, so a revoked credential does not turn every judge call into a

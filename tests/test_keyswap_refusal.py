@@ -174,7 +174,9 @@ def render_shapes(env, path=None):
     named = path or env.path
     shapes = {}
     said = []
-    cli._compare(ks.fingerprint(NEW_KEY), named, said.append)
+    # the read body, not a bare fingerprint: _compare(body, path, out) is upstream's signature (upmerge
+    # 2026-09-07, keyswap-code DECISIONS 2); a key-line file is still compared by keyFp
+    cli._compare({"keyFp": ks.fingerprint(NEW_KEY)}, named, said.append)
     shapes["file-mode fingerprint"] = "\n".join(said)
     said = []
     cli._mode_mismatch({"keySource": "command", "keyFp": ks.fingerprint(NEW_KEY)}, said.append, path)
@@ -582,9 +584,11 @@ class NamedSwapRefused(_Env):
         cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(NEW_KEY), "keySource": "file", "rows": []}
         rc, out, _err = self.run_cli()
         self.assertEqual(rc, 1)
-        self.assertIn("MISMATCH    the kernel is not reading this file's key. Usual causes: the file is unreadable to the\n"
-                      "            kernel, the file has no %s line and the kernel still holds its startup\n"
-                      "            key, or the kernel reads another service.env:\n" % ks.KEY_VAR
+        # upstream's noun on the first line, "key source", since a reference is a source too (upmerge
+        # 2026-09-07, keyswap-code DECISIONS 2); the key-line causes and the shared blocks are the fork's
+        self.assertIn("MISMATCH    the kernel is not reading this file's key source. Usual causes: the file is unreadable\n"
+                      "            to the kernel, the file has no %s line and the kernel still holds its\n"
+                      "            startup key, or the kernel reads another service.env:\n" % ks.KEY_VAR
                       + other_file_block(self.path, " " * 12) + "\n" + restart_block(" " * 12), out)
         for gone in ("installed with", "does not carry", "re-run", "then restart the manager)", "wherever its"):
             self.assertNotIn(gone, out, gone)

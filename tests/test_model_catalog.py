@@ -325,8 +325,22 @@ class FetchAndFallback(unittest.TestCase):
         self.assertNotIn("synthetic-test-credential", log)
         self.assertFalse(km._catalog_status["inflight"])
 
+    def _wire_the_claimer(self):
+        """The wired path, exactly what _sdk_locked installs before the boot refresh: jd._WORK_KEY_FN =
+        sdk_backend.work_api_key, the one door through which the kernel reaches a key source. Upstream's
+        _models_api_credential also consulted keysource.select_source on its own when nothing was wired;
+        the fork refused that rung (upmerge 2026-09-07, kernel-code flag: the kernel never reads a key
+        source itself, and an unwired ambient ANTHROPIC_API_KEY stays unread, CredentialPolicy below), so
+        the two runtime-source tests reach the source the way the running kernel does. The claimer's
+        process-lifetime stash is cleared so the claim happens here and restored afterwards."""
+        stash = sb._WORK_KEY
+        sb._WORK_KEY = None
+        self.addCleanup(setattr, sb, "_WORK_KEY", stash)
+        jd._WORK_KEY_FN = sb.work_api_key
+
     def test_runtime_reference_is_resolved_once_per_catalog_refresh_without_persistence(self):
         os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
+        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (upmerge 2026-09-07)
         ref = "op://test-vault/test-item/api-key"
         os.environ["ROMP_API_KEY_REF"] = ref
         with patch.object(jd._keysrc.subprocess, "run",
@@ -342,14 +356,20 @@ class FetchAndFallback(unittest.TestCase):
 
     def test_invalid_reference_prevents_requests_and_does_not_use_legacy_key(self):
         os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
+        self._wire_the_claimer()                        # through the claimer, not an unwired select_source (upmerge 2026-09-07)
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"    # the legacy key the error must not use
         Path(os.environ["ROMP_SERVICE_ENV_FILE"]).write_text("ROMP_API_KEY_REF=\n")
         with patch.object(jd._keysrc.subprocess, "run") as run:
-            started, _ = self._refresh()
+            started, log = self._refresh()
         self.assertTrue(started)
         run.assert_not_called()
         self.assertEqual(_FakeModelsAPI.seen, [])
         self.assertIn("ROMP_API_KEY_REF", km._catalog_status["lastError"])
+        # the claimer took the legacy key out of the environment and the selected (invalid) reference
+        # retired it: fail closed, and no value in the log
+        self.assertNotIn("ANTHROPIC_API_KEY", os.environ)
+        self.assertNotIn("synthetic-test-credential", log)
+        self.assertFalse(km._catalog_status["inflight"])
 
     def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
         # the refresh used to call _push_soon() here, its comment claiming the pickers re-read /models
