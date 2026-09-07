@@ -52,6 +52,20 @@ A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
 directory has as its `origin` remote; when that remote is not on GitHub, the number stays
 plain text.
 
+**Naming another session.** Type `@` and the first letters of a session's name in the
+message box, and the sessions whose names match are listed above it, twelve at most; when
+more match, the last row says how many, and more letters narrow the list. Arrow to one and
+press **⏎** or **Tab**, or click it, and `@name` goes into the message as plain text, the
+name the session's mail tools take. Which form goes in depends on the session you are
+writing to. Writing to a session on this machine, a session on another machine is inserted
+as `@host:name`, the way this machine knows it. Writing to a session on another machine,
+every name is inserted bare, because the dashboard cannot see what that machine calls its
+peers; if the bare name is ambiguous there, the session's mail tools refuse the send and
+list the candidates as `host:name`, and the session picks one. **Escape** closes the list
+without inserting, and it stays closed for that `@` until you delete it: more letters, or a
+caret move away and back, do not reopen it. In the sent message, a name that matches a live
+session is shown as a chip in that session's color.
+
 **Sending while the session is working.** The session takes your message at its next
 step, and the chat places it at the time you sent it, above the steps that were already
 running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
