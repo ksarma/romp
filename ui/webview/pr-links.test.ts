@@ -431,6 +431,12 @@ test("a line or block edge is a boundary with no whitespace node: marked's hard-
     el("div", "done", el("hr"), "#12"),
     el("div", el("p", "done"), "#12"),
     el("p", el("span", "docs"), el("br"), "#12"),
+    // block-display tags the sanitizer passes as raw HTML (review round 3): the carry stops at them too
+    el("li", "done", el("center", "#12")),
+    el("div", "done", el("legend", "#12")),
+    el("div", "done", el("dialog", "#12")),
+    el("div", el("center", "done"), "#12"),
+    el("div", "done", el("hgroup", "#12")),
   ];
   for (const r of abutting) assert.deepEqual((linkifyPrRefs(r as unknown as Node, REPO), linked(r)), ["#12"], r.html());
   // the glue protections stay: a path span, an empty inline element, a walked inline wrapper

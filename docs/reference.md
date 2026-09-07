@@ -62,7 +62,7 @@ and `../` paths, relative paths whose last segment has a file extension, and `fi
 is made of ASCII letters, digits and `_ . ~ / -` only, so any other character ends it (a space, `+`, `#`,
 `(`, `@`, `=`, `%`, `:`, an accented letter); a `file://` URI runs to the next whitespace, angle bracket,
 quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
-link. A relative path is read against the working directory of the session that flagged it.
+link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a path. A relative path is read against the working directory of the session that flagged it.
 
 These are for scripting and for agents rather than daily use:
 

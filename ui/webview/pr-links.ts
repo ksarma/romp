@@ -171,6 +171,8 @@ const BLOCK_TAGS = new Set([
   "TABLE", "CAPTION", "THEAD", "TBODY", "TFOOT", "TR", "TD", "TH",
   "DIV", "DL", "DT", "DD", "SECTION", "ARTICLE", "HEADER", "FOOTER", "NAV", "ASIDE", "MAIN",
   "FIGURE", "FIGCAPTION", "DETAILS", "SUMMARY", "FORM", "FIELDSET", "ADDRESS",
+  // block-display tags the sanitizer also passes (review round 3, 2026-09-07)
+  "CENTER", "LEGEND", "DIALOG", "DIR", "MENU", "HGROUP", "SEARCH",
 ]);
 
 const tagOf = (e: Element): string => String(e.tagName || "").toUpperCase();
