@@ -598,7 +598,7 @@ function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileView
   const body = new El("div") as unknown as HTMLElement;
   return {
     path: ABS, sid: SID, todoId: null,
-    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [],
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
     post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
@@ -785,7 +785,8 @@ test("the floating Comment button rides the seam's selection hook — before the
 
 test("the seam in file-view.ts: every member exists, hooks fire where they should, and both exits drain the close hooks", () => {
   for (const m of ["body(): HTMLElement;", 'mode(): "raw" | "rendered" | "media";', "text(): string | null;", "mtimeNs(): string;",
-    'media(): "image" | "pdf" | "svg" | null;', "identity(): FileViewIdentity | null;", "onRendered(cb: () => void): void;",
+    'media(): "image" | "pdf" | "svg" | null;', "mediaElement(): HTMLImageElement | HTMLElement | null;", "renderedImages(): HTMLImageElement[];",
+    "pdfPages(): HTMLElement[];", "identity(): FileViewIdentity | null;", "onRendered(cb: () => void): void;",
     "onSelection(cb: (sel: Selection) => void): void;", "onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;",
     "onClose(cb: () => void): void;", "post(m: Record<string, unknown>): void;", "ensureEditingAllowed(refusal?: string): Promise<boolean>;",
     "setEditBlocked(reason: string | null): void;", "aside(el: HTMLElement | null): void;", 'setMode(mode: "raw" | "rendered"): void;',

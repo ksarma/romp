@@ -257,7 +257,7 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
   const ctx: FileViewActionCtx = {
     path: ABS, sid: SID, todoId: null,
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => (src === undefined ? null : src),
-    mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], identity: () => ({ name: "api", color: null }),
+    mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
     post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },

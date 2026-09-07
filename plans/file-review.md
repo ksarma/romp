@@ -1010,7 +1010,8 @@ Re-place. `kernel.py` is unchanged, as the Files line says.
 
 User-visible: a PDF opens as rendered pages inside the viewer instead of the browser's own frame,
 with the same Comment on this file button and the same rectangle gesture per page; a region
-comment names its page; the card shows the page crop.
+comment names its page; the card shows the page crop once its page has been drawn (pages draw as the
+reader nears them), and until then a line naming the page that scrolls it in.
 
 Why a slice of its own: the browser's PDF frame gives the page no coordinates or selection, so
 region comments need romp to render pages itself. Ruled (decision 12): a lazily loaded PDF chunk
@@ -1068,26 +1069,26 @@ wraps the POST so the webview needs no serve token. Parked until asked for (deci
 
 ## Security posture
 
-Unchanged in kind, and stated rather than silently widened, as the file-browser plan did for
-saves. `fileComments` is issuable from any authenticated socket, like `saveFile`; every verb that
-writes disk sits behind the same server-side consent gate, checked before any content check; the
-server-side gate is the enforcement and the UI's checks are convenience. The host script runs
-only on the owning kernel, on paths resolved by the kernel (and, from Slice 3, on the figure
-paths the next paragraph describes, the one class of path it resolves itself), and writes only the
-sidecar, the comments log, `config.json`, and (on reject or save) the commented file. The mtime
-fences refuse and never merge. Both ops route by `sid` to the owning kernel over the existing federation
-splice; nothing new is exempt from `_authorize`, and the panel's verdict rides the authenticated
-`/defaults` payload rather than `/version`. Nothing under `.trackchanges/` is read or written through
-a symbolic link: the sidecar, the comments log and `config.json` are named from the file's path and
-never shown to the person, and a checked-out repository can commit anything under those names, so a
-link there would carry a write outside the four files above; every verb refuses `unreadable` when any
-of the three, or `.trackchanges/` itself, is a link or otherwise not a regular file, the log is opened
-`O_NOFOLLOW`, and every temp file the host creates takes a random name with `O_EXCL`. The commented
-file is the one path written through its link, on purpose: the person chose it (the Slice 2 review,
-2026-09-06). The installer's new step registers a PreToolUse hook
-that runs on every Edit and Write in every Claude Code session on the machine; it exits at once
-in any session romp did not launch (no `ROMP_SID`), and in romp's sessions it is a path check
-that passes untracked files through.
+Stated rather than silently widened, as the file-browser plan did for saves. On the kernel side
+the posture is unchanged in kind. `fileComments` is issuable from any authenticated socket, like
+`saveFile`; every verb that writes disk sits behind the same server-side consent gate, checked
+before any content check; the server-side gate is the enforcement and the UI's checks are
+convenience. The host script runs only on the owning kernel, on paths resolved by the kernel (and, from
+Slice 3, on the figure paths the next paragraph describes, the one class of path it resolves
+itself), and writes only the sidecar, the comments log, `config.json`, and (on reject or save) the
+commented file. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
+kernel over the existing federation splice; nothing new is exempt from `_authorize`, and the
+panel's verdict rides the authenticated `/defaults` payload rather than `/version`. Nothing under
+`.trackchanges/` is read or written through a symbolic link: the sidecar, the comments log and
+`config.json` are named from the file's path and never shown to the person, and a checked-out
+repository can commit anything under those names, so a link there would carry a write outside the
+four files above; every verb refuses `unreadable` when any of the three, or `.trackchanges/`
+itself, is a link or otherwise not a regular file, the log is opened `O_NOFOLLOW`, and every temp
+file the host creates takes a random name with `O_EXCL`. The commented file is the one path
+written through its link, on purpose: the person chose it (the Slice 2 review, 2026-09-06). The
+installer's new step registers a PreToolUse hook that runs on every Edit and Write in every Claude
+Code session on the machine; it exits at once in any session romp did not launch (no `ROMP_SID`),
+and in romp's sessions it is a path check that passes untracked files through.
 
 From Slice 3 the host also reads one class of path the kernel did not resolve: the figure a region
 comment's `target.src` names (the Slice 3 build, 2026-09-06). The client names that path on
@@ -1112,6 +1113,43 @@ serve because it never renders that extension. A socket with no such write names
 anchored passage embeds. Refusing on a reply what a write verb refuses (a non-media extension, a
 src the passage does not embed) is the follow-up if that hash is judged worth withholding; the
 Risks bullet on figure paths names the trade.
+
+Slice 4 widens the browser side, and in kind: PDF parsing moves into the dashboard's origin.
+Before it, a PDF in the viewer was an iframe over the bytes, parsed by the browser's own PDF
+viewer in a process of its own, apart from the dashboard's document. While the Comments panel is
+open, the viewer hands the same bytes to pdf.js instead (the `/file` response it already holds,
+fetched with the dashboard's cookie; no second request, no new route, no kernel-side tool, per
+decision 12). pdf.js parses them in a module Worker on the dashboard's origin,
+`/dist/pdf-worker.js`, served behind `_authorize` like every `/dist` asset, and paints each page
+onto a canvas on the main thread, embedded fonts included (through `FontFace`). A PDF is
+untrusted input: sessions download PDFs into the trees the viewer shows, and the person opens
+them. A parser fault that reached script would run on the authenticated origin, where the
+browser's viewer would have contained it. pdf.js is JavaScript, so a malformed file cannot
+corrupt memory as it could in a native parser; a parser bug becomes script on the origin only
+through a sink that executes code or inserts content, and the properties below remove every such
+sink. The dashboard already interprets untrusted files on this origin under the same discipline
+(marked and DOMPurify over markdown, the highlighter over source); a PDF joins that list.
+
+What bounds the widening, each a property to keep across every pdfjs-dist upgrade and every later
+slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
+
+- **`getDocument` receives `data`, never a URL.** pdf.js issues no request of its own, and the
+  chunk fetches nothing.
+- **No eval path.** The installed pdfjs-dist (6.x) has no `eval`, no `new Function`, and none of
+  the `isEvalSupported` switch of earlier majors, in the main build or the worker. This is a
+  property of the installed version, not of the API: an upgrade re-verifies it before landing and
+  restates it here if the answer changes.
+- **Pixels are the only sink.** The chunk imports pdf.js's core alone, never `pdfjs-dist/web`: no
+  text layer, no annotation layer, no forms, no XFA, no scripting manager, so no PDF content
+  becomes DOM, a form field, a link, or a script. Page painting runs at pdf.js's default,
+  `AnnotationMode.ENABLE`, which draws annotation appearance streams onto the canvas as pixels and
+  nothing else. A later slice that wants selectable text or clickable links on a PDF page widens
+  this list and says so here first.
+- **Two caps, refused by name before any work.** 25 MB of bytes before pdf.js sees one; 5,000
+  pages once the document has opened and before a page shell exists.
+- **The fallback is the old boundary.** A chunk that fails to load, a document pdf.js refuses, or a
+  PDF over either cap gets today's frame, the browser's own viewer, with whole-file comments and a
+  line saying why; the widening never keeps a PDF from opening.
 
 ## Doctrines this respects
 
@@ -1213,7 +1251,9 @@ Risks bullet on figure paths names the trade.
   sidecar and whether the guide tells sessions to resolve `.trackchanges/` conflicts by taking the
   branch that holds the newer comments; nothing here changes the plan's shape.
 - **A PDF rendering dependency** (Slice 4). Mitigation: lazy chunk, size cap, frame fallback, and
-  a slice of its own so the rest of the feature never waits on it.
+  a slice of its own so the rest of the feature never waits on it. Its trust boundary, PDF parsing
+  on the dashboard's origin rather than in the browser's viewer, is stated under Security posture
+  with the properties an upgrade or a later slice keeps.
 - **Polling cost.** Two HEAD requests every 2.5 s per open panel, plus one per figure the file's
   open region comments name (Slice 3). Mitigation: only while the panel is open and the tab
   visible. The poll's state per file is one of absent, present with an
@@ -1268,8 +1308,27 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   state), pure tests for the card model, the Raw and Rendered mapping walks over the fixtures
   named in the acceptance criteria, and the message builder against the kernel's text.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
-  (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5) and for the
-  PDF chunk staying lazy (Slice 4).
+  (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
+- `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
+  own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
+  standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
+  contract is the window global), the chunk and its worker as esbuild entries, `file-view.ts`
+  loading the PDF chunk with the editor chunk's own find literal, the byte cap refused by name,
+  the page shells and the observer-driven draws, and the license named beside romp's own;
+  `pdf-lazy-render.test.ts` executes the draws over pdf.js's legacy build.
+- `ui/webview/file-review-docs.test.ts`: this plan's own record of its tests and docs, held to
+  the tree the way the posture test holds the Security posture section to the code: every test
+  file the Tests section names exists; the file the section credits with the PDF chunk staying
+  lazy holds that test; and each of the Docs section's two Slice 4 items (`SECURITY.md`'s bullet,
+  the `pdf-chunk.ts` header) is in its file unless the section says it is not yet landed, and
+  absent while it does, so whichever side moves first, the test names the other.
+- `ui/webview/file-review-posture.test.ts` (Slice 4): the Security posture section's PDF
+  statements held against the code, so the section cannot drift from what ships: the section
+  names the boundary; `getDocument` takes `data` only and the chunk fetches nothing; the chunk
+  imports pdf.js's core alone, never `pdfjs-dist/web`, and enables no layer, form, XFA, or
+  scripting option; the installed build has no `eval`, `new Function`, or `isEvalSupported`, and
+  its major is the one the section names; the caps are the section's 25 MB and 5,000 pages; the
+  fallback is the frame; the worker asset is served behind `_authorize`.
 
 ## Docs
 
@@ -1281,7 +1340,15 @@ in place; "Waiting on you" notes the linked path and the ended-session case; "Fi
 either view and on images and PDFs, the comments log and the `.gitignore` opt-out, and where to
 look when the action is missing. `docs/reference.md`, under install-time switches, notes the
 User todos switch as a prerequisite for the todo path and the node requirement on the owning
-kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`.
+kernel; `docs/install.md` names the tooling the installer links into `~/.claude/`. With Slice 4,
+`SECURITY.md`'s output-sanitization bullet names the PDF renderer (pdf.js parsing on the
+dashboard's origin, in a Worker, with pixels as its only sink, as Security posture states it),
+and the `pdf-chunk.ts` header says the same in a sentence, so a session upgrading pdfjs-dist
+reads the boundary where it edits. The slice's merge carried neither (its review, 2026-09-06);
+both landed with the review's fixes.
+`ui/webview/file-review-docs.test.ts` holds this paragraph to the two files: an item it calls not
+yet landed must be absent from its file and every other present, so the paragraph and the files
+move together.
 `claude/romp-session-prompt.md` gains its one sentence. `CONTEXT.md` already carries the
 vocabulary; `docs/adr/0002` records the storage decision. In track-changents (its author): the
 offers back named under Vendoring, and a README "Hosts" row.

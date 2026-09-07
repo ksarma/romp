@@ -169,37 +169,46 @@ function harness(over: { rect?: Rect; fit?: string; active?: boolean } = {}) {
 
 // ── the click on a rectangle ───────────────────────────────────────────────────────────────────────
 
-test("armed: a press on a rectangle is captured by the overlay, so the layer clicks the rectangle itself and the card's action fires once", () => {
+test("armed: a press on a rectangle is not captured, so the browser's own click reaches the rectangle and the card's action fires once; released off it, the layer clicks the rectangle itself", () => {
   const h = harness();
   const [rect] = h.layer.paint([mark("c1")], null, false) as unknown as E[];
   const click = h.press(rect, 160, 250);
-  assert.equal(captured.size, 0, "the capture was released with the pointer");
+  assert.equal(captured.size, 0, "nothing was captured: the browser's click can go to the rectangle (arm)");
   assert.deepEqual(h.calls, ["press", "fcopen:c1"], "the float hides on the press; the card opens; no picture click, no Comment offer");
   assert.equal(h.acted[0], rect, "the rectangle is the activated control");
   assert.ok(rect.classList.contains("romp-acted"), "and it acknowledged the press (flash)");
-  assert.equal(click.defaultPrevented, true, "the browser's own click, on the overlay, is swallowed: it is not a second activation");
+  assert.equal(click.defaultPrevented, false, "the browser's own click IS the activation; the layer adds none and swallows none");
   assert.equal(h.rects().length, 1);
+  // a slip: pressed on the rectangle, released a pixel off it — the browser's click lands on the overlay (the common
+  // ancestor), where no action is, so the layer hands the press on to the rectangle and swallows that click
+  h.calls.length = 0; h.acted.length = 0;
+  rect.dispatch("pointerdown", { clientX: 160, clientY: 250, pointerId: 9, button: 0 });
+  h.overlay.dispatch("pointerup", { clientX: 161, clientY: 250, pointerId: 9 });
+  const slipped = h.overlay.dispatch("click");
+  assert.deepEqual(h.calls, ["press", "fcopen:c1"], "the card opens once, from the rectangle the press began on");
+  assert.equal(h.acted[0], rect);
+  assert.equal(slipped.defaultPrevented, true, "the browser's own click, on the overlay, is swallowed: it is not a second activation");
 });
 
-test("armed: a rectangle rebuilt by a paint pass mid-press still opens its comment — the one now carrying the same id", () => {
+test("armed: a rectangle rebuilt mid-press — its mark gone and back between paint passes — still opens its comment: the one now carrying the same id", () => {
   const h = harness();
   const [old] = h.layer.paint([mark("c1")], null, false) as unknown as E[];
   old.dispatch("pointerdown", { clientX: 160, clientY: 250, pointerId: 7, button: 0 });
-  const [fresh] = h.layer.paint([mark("c1", { x: 0.2, y: 0.2, w: 0.3, h: 0.3 })], null, false) as unknown as E[];   // a status arrived: every rectangle is rebuilt
+  h.layer.paint([], null, false);                                                                                  // the comment resolved…
+  const [fresh] = h.layer.paint([mark("c1", { x: 0.2, y: 0.2, w: 0.3, h: 0.3 })], null, false) as unknown as E[];   // …and was reopened, moved: a fresh node (a mark that stays is updated in place)
   assert.notEqual(fresh, old); assert.equal(old.parentNode, null, "the pressed rectangle is gone from the overlay");
-  const cap = captured.get(7)!;
-  cap.dispatch("pointerup", { clientX: 160, clientY: 250, pointerId: 7 });
-  const click = cap.dispatch("click");
+  assert.equal(captured.size, 0, "a rectangle press is not captured (arm)");
+  fresh.dispatch("pointerup", { clientX: 160, clientY: 250, pointerId: 7 });                                        // the release, on what is under the pointer now
+  const click = fresh.dispatch("click");                                                                             // the browser's click, wherever it lands, passes the overlay
   assert.deepEqual(h.calls, ["press", "fcopen:c1"]);
   assert.equal(h.acted[0], fresh, "the click landed on the rectangle that now stands for the comment");
-  assert.equal(click.defaultPrevented, true);
+  assert.equal(click.defaultPrevented, true, "and the browser's own is swallowed: not a second activation");
   // the comment resolved mid-press: nothing is left to open, nothing throws, the browser's click is left alone
   h.calls.length = 0;
   fresh.dispatch("pointerdown", { clientX: 160, clientY: 250, pointerId: 8, button: 0 });
   h.layer.paint([], null, false);
-  const cap2 = captured.get(8)!;
-  cap2.dispatch("pointerup", { clientX: 160, clientY: 250, pointerId: 8 });
-  const click2 = cap2.dispatch("click");
+  h.overlay.dispatch("pointerup", { clientX: 160, clientY: 250, pointerId: 8 });
+  const click2 = h.overlay.dispatch("click");
   assert.deepEqual(h.calls, ["press"]);
   assert.equal(click2.defaultPrevented, false);
 });

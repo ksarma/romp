@@ -70,7 +70,7 @@ const withoutReset = (css: string) => css.replace(RESET_RULE, "");
 test("the layer's DOM: the chip sits in the rectangle, the rectangle in the overlay — so a size on the overlay reaches the chip", () => {
   assert.match(LAYER, /this\.overlay = mk\(doc, "div", "fc-overlay fc-overlay-off"\);/, "a layer starts disarmed");
   assert.match(LAYER, /this\.overlay\.classList\.toggle\("fc-overlay-off", !on\);/, "setActive arms and disarms through the one class");
-  assert.match(LAYER, /const chip = mk\(doc, "span", "fc-region-chip"\);\n[^\n]*\n\s*r\.appendChild\(chip\);\n\s*o\.appendChild\(r\);/, "chip in rectangle, rectangle in overlay");
+  assert.match(LAYER, /chip = mk\(doc, "span", "fc-region-chip"\); r\.appendChild\(chip\);\n\s*o\.insertBefore\(r, ref\);/, "chip in rectangle, rectangle in overlay (a new rectangle; one that is up keeps its chip)");
 });
 
 for (const [name, css] of SHEETS) {

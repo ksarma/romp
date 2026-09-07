@@ -338,6 +338,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
     text: () => (kind === "media" ? null : src === undefined ? null : src),
     mtimeNs: () => "1757145600000000001",
     media: () => (kind === "media" ? "image" : null),
+    pdfPages: () => [],                              // the Slice 4 seam member: these harnesses mount no PDF pages
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
@@ -661,7 +662,7 @@ test("a region composer survives a body repaint: the pending rectangle follows t
 
 // ── the rectangle as a keyboard control ────────────────────────────────────────────────────────────
 
-test("Enter on a rectangle with the panel closed opens it without rebuilding the rectangle: the press pulse shows, the keyboard stays on it through the status that follows, and a rebuild re-finds it", async () => {
+test("Enter on a rectangle with the panel closed opens it without rebuilding the rectangle: the press pulse shows, the keyboard stays on it through the status that follows, and new information updates it in place", async () => {
   const h = await harness();
   await h.ok(withStore([regionComment()]));
   const rect = h.q('.fc-region[data-id="' + RID + '"]')!;
@@ -676,12 +677,13 @@ test("Enter on a rectangle with the panel closed opens it without rebuilding the
   await h.ok(withStore([regionComment()]));
   assert.equal(h.q('.fc-region[data-id="' + RID + '"]'), rect);
   assert.equal(doc.activeElement, rect);
-  // a status that changes what the rectangle shows (the image's bytes moved: stale) rebuilds it — the keyboard follows
+  // a status that changes what the rectangle shows (the image's bytes moved: stale) repaints it IN PLACE — the layer's
+  // pass is keyed by the comment (RegionLayer.paint), so the same node turns stale and the keyboard never leaves it
   await h.restatus({ ...withStore([regionComment()]), fileHash: H2 });
   const fresh = h.q('.fc-region[data-id="' + RID + '"]')!;
-  assert.notEqual(fresh, rect, "rebuilt on new information");
+  assert.equal(fresh, rect, "updated in place on new information: the node stands");
   assert.ok(fresh.classList.contains("fc-stale"));
-  assert.equal(doc.activeElement, fresh, "re-found by its comment id, never left on the body");
+  assert.equal(doc.activeElement, fresh, "the keyboard stayed on it, never left on the body");
   rect.blur(); fresh.blur();
   h.dispose();
 });

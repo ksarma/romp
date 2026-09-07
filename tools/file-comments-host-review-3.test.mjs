@@ -288,7 +288,7 @@ test('fence.figureHash that is not a sha256 hex is a caller bug before any disk 
   fs.writeFileSync(big, '');
   fs.truncateSync(big, FILE_HASH_CAP + 1);
   const tooBig = refused(w, { verb: 'comment', path: big, fence: { storeMtimeNs: '', figureHash: sha256(CHART) }, args: standaloneComment(big, st).args }, 'too-large');
-  assert.match(tooBig.error, /more than the 47\.7 MB the viewer shows/);
+  assert.match(tooBig.error, /more than the 50\.0 MB the viewer shows/);
   assert.equal(fs.existsSync(storePathFor(w.root, big)), false);
 });
 

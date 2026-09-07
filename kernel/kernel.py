@@ -34413,7 +34413,9 @@ _img_cache = {}                                  # "path:mtime:size" → dataURL
 #      served as an image (an <img> never runs its scripts); the files are the user's own, written by
 #      their own agents, on their own machine.
 _PREVIEW_MIME = dict(_IMG_MIME, **{".pdf": "application/pdf"})
-_PREVIEW_MAX_BYTES = 50_000_000                  # a plot/report, not a dataset — bigger 413s (fail loudly)
+_MEDIA_MAX_BYTES = 50 * 1024 * 1024              # a plot/report, not a dataset — bigger 413s (fail loudly). A power
+#   of two so the 413 says "50.0 MB" (50_000_000 read as "47.7 MB", a cap that sounds miscopied — _TEXT_MAX_BYTES's
+#   reason); the cap of GET /file on every non-text file, the relay's backstop, and the mention pin's floor
 
 # ---- …and the SOURCE/TEXT half of the same route (the user 2026-08-08). Clicking a file link used to
 #      post openFile, which runs an opener on the KERNEL's machine — useless when you are reading the
@@ -36012,7 +36014,7 @@ def _pin_mention(fp):
     if ext not in _IMG_MIME:
         return None
     try:
-        if os.path.getsize(fp) > _PREVIEW_MAX_BYTES:   # /file would 413 it anyway — nothing to pin
+        if os.path.getsize(fp) > _MEDIA_MAX_BYTES:   # /file would 413 it anyway — nothing to pin
             return None
         with open(fp, "rb") as f:
             raw = f.read()
@@ -41858,7 +41860,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(415, b"" if head else
                               "not viewable in the browser: %s" % _tilde(fp), "text/plain")
         size = os.path.getsize(fp)
-        cap = _TEXT_MAX_BYTES if text else _PREVIEW_MAX_BYTES
+        cap = _TEXT_MAX_BYTES if text else _MEDIA_MAX_BYTES
         if size > cap:
             return self._send(413, b"" if head else
                               "too large to show: %s (%s, limit %s)"
@@ -45214,7 +45216,7 @@ class Handler(BaseHTTPRequestHandler):
                 hdrs["Range"] = _rng
             conn.request("HEAD" if head else "GET", "/file?" + urlencode(q, doseq=True), headers=hdrs)
             resp = conn.getresponse()
-            body = b"" if head else resp.read(_PREVIEW_MAX_BYTES + 1)
+            body = b"" if head else resp.read(_MEDIA_MAX_BYTES + 1)
             status, ctype = resp.status, mime          # OUR mime, never resp.getheader("Content-Type")
             clen = resp.getheader("Content-Length")
             # These three are MIRRORED, unlike Content-Type: they are data about the remote's file
@@ -45234,7 +45236,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except OSError:
                 pass
-        if len(body) > _PREVIEW_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
+        if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
         if head:
             # mirror _file_preview's HEAD: the remote's verdict + real length, no body

@@ -346,6 +346,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "re
     text: () => (kind === "media" ? null : src === undefined ? null : src),
     mtimeNs: () => "1757145600000000001",
     media: () => (kind === "media" ? "image" : null),
+    pdfPages: () => [],                              // the Slice 4 seam member: these harnesses mount no PDF pages
     mediaElement: () => media as unknown as HTMLElement | null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },

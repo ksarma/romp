@@ -52,6 +52,9 @@ const tests = section('## Tests', '## Docs');
 const decisions = section('## Decisions', '## Open questions for the user');
 
 const mb = (n) => `${n / 1_000_000} MB`;
+// the viewer's cap is the kernel's _MEDIA_MAX_BYTES, a power-of-two 50 MiB (file-comments-host-caps.test.mjs), which the plan
+// and the kernel's own 413 both call 50 MB
+const mib = (n) => `${n / (1024 * 1024)} MB`;
 const region = { x: 0.1, y: 0.2, w: 0.3, h: 0.4 };
 
 // ── the target's shape ──────────────────────────────────────────────
@@ -165,13 +168,13 @@ test('the poll\'s figure baseline is the status reply\'s embeddedMtimes, in the 
 
 // ── Slice 3's build note and the UX paragraph ───────────────────────
 
-test('Slice 3 carries a build note whose caps are the host\'s constants and the kernel\'s preview cap', () => {
+test('Slice 3 carries a build note whose caps are the host\'s constants and the kernel\'s media cap', () => {
   assert.ok(slice3.includes('The Slice 3 build (2026-09-06), host side'));
-  assert.ok(slice3.includes(`\`too-large\` past the ${mb(FILE_HASH_CAP)} the viewer shows`));
+  assert.ok(slice3.includes(`\`too-large\` past the ${mib(FILE_HASH_CAP)} the viewer shows`));
   assert.ok(slice3.includes(`one ${mb(EMBEDDED_HASH_CAP)} budget per call`));
-  const m = /^_PREVIEW_MAX_BYTES = ([0-9_]+)/m.exec(kernel);
-  assert.ok(m, 'the kernel names its preview cap');
-  assert.equal(Number(m[1].replace(/_/g, '')), FILE_HASH_CAP, 'the write-verb cap is the most the viewer shows');
+  const m = /^_MEDIA_MAX_BYTES = ([0-9_]+) \* ([0-9_]+) \* ([0-9_]+)/m.exec(kernel);
+  assert.ok(m, 'the kernel names its media cap');
+  assert.equal(Number(m[1]) * Number(m[2]) * Number(m[3]), FILE_HASH_CAP, 'the write-verb cap is the most the viewer shows');
   assert.ok(slice3.includes('`target {kind: "image", region, hash, src?}`'), 'the acceptance line carries src?');
   assert.ok(slice3.includes('`kernel.py` is unchanged'));
 });
@@ -195,7 +198,7 @@ test('Security posture states the client-named figure path, that it is only read
   assert.ok(posture.includes('not out through a symlink'));
   assert.ok(posture.includes('to be a regular file, opened non-blocking') && host.includes('fs.constants.O_NONBLOCK'));
   assert.ok(posture.includes('a figure the anchored passage embeds (`figure-mismatch`)') && host.includes('function checkEmbedNamesSrc('));
-  assert.ok(posture.includes(`under the ${mb(FILE_HASH_CAP)} the viewer shows, refused before a byte is read`));
+  assert.ok(posture.includes(`under the ${mib(FILE_HASH_CAP)} the viewer shows, refused before a byte is read`));
   assert.ok(posture.includes(`one ${mb(EMBEDDED_HASH_CAP)} budget per call`));
   assert.ok(posture.includes('decoded as the viewer decodes it') && host.includes('function decodeSrc('));
 });

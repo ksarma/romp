@@ -224,6 +224,26 @@ win.__rompEditor = {
   },
 };
 const typeInto = (s: string) => { ed.buf = s; ed.onChange!(); };
+// The PDF renderer chunk (Slice 4) the viewer's pdfChunkLoad resolves from: two page shells in the chunk's own DOM
+// shape (div.fileview-pdf > div.fileview-pdf-page[data-page] > canvas.fileview-pdf-canvas), page 1 "drawn" before the
+// promise resolves as the real chunk does, later pages drawn when a test calls onPage; a test may make it refuse.
+const pdf = { renders: 0, disposed: 0, bytes: 0, opts: null as null | { maxBytes?: number; onPage?: (p: unknown) => void }, refuse: null as string | null, roots: [] as El[] };
+win.__rompPdf = {
+  DEFAULT_MAX_BYTES: 25 * 1024 * 1024,
+  render(bytes: ArrayBuffer, container: El, opts: { maxBytes?: number; onPage?: (p: unknown) => void } = {}) {
+    pdf.renders++; pdf.bytes = bytes.byteLength; pdf.opts = opts;
+    if (pdf.refuse) return Promise.reject(new Error(pdf.refuse));
+    const root = doc.createElement("div"); root.className = "fileview-pdf";
+    for (let i = 1; i <= 2; i++) {
+      const w = doc.createElement("div"); w.className = "fileview-pdf-page"; w.dataset.page = String(i); w.style.position = "relative";
+      const c = doc.createElement("canvas"); c.className = "fileview-pdf-canvas"; c.dataset.page = String(i);
+      w.appendChild(c); root.appendChild(w);
+    }
+    container.appendChild(root); pdf.roots.push(root);
+    opts.onPage?.({ index: 1, canvas: root.childNodes[0], width: 800, height: 1035 });
+    return Promise.resolve({ pages: 2, dispose() { pdf.disposed++; root.remove(); } });
+  },
+};
 
 // ── the kernel's /file, /version and /sessions, as the viewer fetches them ──────────────────────────
 type Served = { bytes: string | Uint8Array; type: string; mtimeNs: string };
@@ -299,6 +319,7 @@ async function open(p: string, t: TestContext, sid: string | null = SID): Promis
   posted.length = 0; fetches.length = 0; savedInfos.length = 0; paints = 0; seam = null;
   store.delete("romp:fileviewFmt");                     // every open starts from the default: markdown Rendered
   ed.mounted = 0; ed.destroyed = 0;
+  pdf.renders = 0; pdf.disposed = 0; pdf.bytes = 0; pdf.opts = null; pdf.refuse = null; pdf.roots.length = 0;
   assert.equal(fv.openFileView(p, sid), true, "the open happened");
   t.after(() => { fv.closeFileView(); });
   await settle();
@@ -448,6 +469,105 @@ test("a PDF body: mediaElement() is the frame, onRendered fires at once (the fra
   assert.equal(paints, 1, "shown the moment it is in the body");
   assert.deepEqual(ctx.renderedImages(), []);
   assert.equal(b.edit.hidden, true);
+});
+
+// ── Slice 4: the PDF's pages while the Comments panel is open (plans/file-review.md Slice 4; contract F3) ──
+
+test("a PDF with the panel open: the loader over the kept frame, then the chunk's pages in its place — mediaElement() the pages root, pdfPages() the shells, onRendered after page 1 and per page; the panel closing brings the frame back and disposes", async (t) => {
+  const { ctx, body } = await open(DECK, t);
+  assert.equal(paints, 1, "the frame showed first: the panel is closed at open");
+  assert.equal(pdf.renders, 0, "the chunk is not asked for a PDF nobody is commenting on");
+  const shown = body.querySelector("iframe.fileview-frame")!;
+  const aside = new El("div");
+  ctx.aside(aside as unknown as HTMLElement);                                      // the panel opens: the seam's aside() IS the event
+  assert.ok(body.querySelector(".fileview-load"), "the romp loader first (the loading-state rule)");
+  const host = body.querySelector(".fileview-pdfhost")!;
+  assert.ok(host && host.isConnected, "the chunk's host is in the body before render(): the pages fit its width");
+  // The frame is NOT dropped for the loader: it stays through the attempt, in place, so the document is not
+  // reloaded under the reader (a rebuilt or moved iframe reloads at page 1 — the review, 2026-09-06). The loader
+  // heads the frame's own column, the host follows the column in the body, and nothing repaints for it.
+  assert.equal(body.querySelector("iframe.fileview-frame"), shown, "the frame the open painted is still the frame, under the loader");
+  const col = shown.parentElement!;
+  assert.ok(col.classList.contains("fileview-pdffall") && col.parentNode === body, "…in its column, still the body's first child");
+  assert.equal(col.childNodes[0], body.querySelector(".fileview-load"), "…the loader at the head of that column");
+  assert.ok(host.parentNode === body && body.childNodes[0] === col && body.childNodes[1] === host, "…and the host after the column, never inside it: the frame does not move");
+  assert.equal(paints, 1, "no paint for the loader: what shows is the frame that already painted");
+  await settle();
+  assert.equal(pdf.renders, 1);
+  assert.equal(pdf.bytes, "%PDF-1.4\n".length, "the bytes the viewer already fetched — no second request");
+  assert.equal(pdf.opts!.maxBytes, 25 * 1024 * 1024, "the cap rides into render() too, so the two cannot disagree");
+  assert.equal(body.querySelector(".fileview-load"), null, "page 1 drawn: the loader gives way");
+  assert.equal(body.querySelector("iframe.fileview-frame"), null, "…and only now is the frame gone: the pages are the body");
+  assert.equal(body.querySelector(".fileview-pdffall"), null, "…its column with it");
+  const root = body.querySelector(".fileview-pdf")!;
+  assert.ok(root, "the chunk's root in the host");
+  assert.equal(ctx.mediaElement(), root as unknown as HTMLElement, "the pages root is the media element while rendered");
+  assert.equal(ctx.mode(), "media"); assert.equal(ctx.media(), "pdf");
+  const pages = ctx.pdfPages();
+  assert.equal(pages.length, 2, "one shell per page");
+  assert.deepEqual(pages.map((pg) => (pg as unknown as El).dataset.page), ["1", "2"], "in page order, data-page 1-based");
+  assert.equal(paints, 2, "onRendered once page 1 is drawn (the first onPage fired before the resolve, and counted nothing)");
+  pdf.opts!.onPage!({ index: 2, canvas: pages[1], width: 800, height: 1035 });
+  assert.equal(paints, 3, "…and again for every page the chunk draws after that");
+  assert.equal(fetches.filter((f) => f.includes("deck.pdf")).length, 1, "one fetch of the file, ever");
+  // the panel closes: the frame again, the pages released, and a late onPage from the old render is nothing
+  ctx.aside(null);
+  assert.equal(pdf.disposed, 1, "dispose(): the draws cancelled, the worker released, the root removed");
+  const frame = body.querySelector("iframe.fileview-frame")!;
+  assert.ok(frame && frame.src.startsWith("blob:"), "the browser's viewer at the object URL, as with the panel closed");
+  assert.equal(ctx.mediaElement(), frame as unknown as HTMLElement);
+  assert.deepEqual(ctx.pdfPages(), [], "no shells under the frame");
+  assert.equal(paints, 4, "the frame's own paint");
+  pdf.opts!.onPage!({ index: 2, canvas: pages[1], width: 800, height: 1035 });
+  assert.equal(paints, 4, "a draw finishing after the pages left fires nothing");
+  // open again: a fresh render from the same bytes
+  ctx.aside(aside as unknown as HTMLElement); await settle();
+  assert.equal(pdf.renders, 2);
+  assert.equal(ctx.pdfPages().length, 2);
+  assert.equal(body.querySelector("iframe.fileview-frame"), null);
+});
+
+test("a PDF over the cap with the panel open: the frame stays, with the notice naming the size and the cap above it; the chunk is never asked", async (t) => {
+  const BIG = ROOT + "/docs/atlas.pdf";
+  disk[BIG] = { bytes: new Uint8Array(26 * 1024 * 1024), type: "application/pdf", mtimeNs: MT };
+  t.after(() => { delete disk[BIG]; });
+  const { ctx, body } = await open(BIG, t);
+  ctx.aside(new El("div") as unknown as HTMLElement); await settle();
+  assert.equal(pdf.renders, 0, "refused before a megabyte of renderer is fetched for nothing");
+  const fall = body.querySelector(".fileview-pdffall")!;
+  assert.ok(fall, "the fallback column: the notice over the frame");
+  const note = fall.querySelector(".fileview-err")!;
+  assert.equal(note.textContent, "this PDF is 26.0 MB, over the 25.0 MB cap for rendering pages in the viewer — showing the browser's PDF viewer instead; comments on the whole file still work.");
+  const frame = fall.querySelector("iframe.fileview-frame")!;
+  assert.ok(frame && frame.src.startsWith("blob:"), "the browser's viewer under the notice, at the same object URL");
+  assert.equal(ctx.mediaElement(), frame as unknown as HTMLElement, "the frame is the media element: whole-file comments work as before");
+  assert.deepEqual(ctx.pdfPages(), []);
+  assert.equal(paints, 2, "the fallback frame counts as shown, so the panel paints its whole-file cards");
+  assert.equal(body.querySelector(".fileview-load"), null, "no loader left behind");
+});
+
+test("the chunk refusing the document, or failing to load at all, falls back the same way — the frame under the reason, never a blank pane", async (t) => {
+  const { ctx, body } = await open(DECK, t);
+  pdf.refuse = "Invalid PDF structure.";                 // pdf.js's own words for a file it will not open
+  ctx.aside(new El("div") as unknown as HTMLElement); await settle();
+  assert.equal(pdf.renders, 1, "the chunk was asked");
+  let note = body.querySelector(".fileview-pdffall .fileview-err")!;
+  assert.equal(note.textContent, "Invalid PDF structure. — showing the browser's PDF viewer instead; comments on the whole file still work.");
+  assert.ok(body.querySelector(".fileview-pdffall iframe.fileview-frame"), "the frame");
+  assert.equal(body.querySelector(".fileview-load"), null);
+  assert.equal(body.querySelector(".fileview-pdfhost"), null, "the chunk's host went with the loader");
+  // no chunk registered and no bundle script tag to derive it from (this stand-in has none): the loader's own refusal.
+  // The chunk latch is per OPEN — a chunk that loaded once stays loaded for that viewer — so this is a fresh open.
+  pdf.refuse = null;
+  const saved = win.__rompPdf; win.__rompPdf = undefined;
+  t.after(() => { win.__rompPdf = saved; });
+  const again = await open(DECK, t);
+  again.ctx.aside(new El("div") as unknown as HTMLElement); await settle();
+  assert.equal(pdf.renders, 0, "the loader refused before any renderer was reached");
+  note = again.body.querySelector(".fileview-pdffall .fileview-err")!;
+  assert.ok(note, "the frame with a notice, again");
+  assert.equal(note.textContent, "no bundle script tag to derive the PDF chunk URL from — showing the browser's PDF viewer instead; comments on the whole file still work.");
+  assert.equal(again.ctx.mediaElement(), again.body.querySelector("iframe.fileview-frame") as unknown as HTMLElement);
 });
 
 test("an SVG: mediaElement() is the img while it shows as a picture, null under the Source view (a text view), the img again when toggled back", async (t) => {
@@ -696,7 +816,9 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(docOf("renderedImages():"), /data-fv-src/, "the doc names where the authored src went");
   assert.match(docOf("onRendered(cb"), /a media body once it shows/, "onRendered's doc no longer says TEXT bodies only");
   // both read the LIVE body under the mode gate — never a handle kept at paint time
-  assert.match(VIEW, /mediaElement: \(\) => \(ctx\.mode\(\) === "media" \? body\.querySelector\("img\.fileview-img, iframe\.fileview-frame"\) as HTMLElement \| null : null\),/);
+  assert.match(VIEW, /mediaElement: \(\) => \(ctx\.mode\(\) === "media" \? body\.querySelector\("img\.fileview-img, iframe\.fileview-frame, \.fileview-pdf"\) as HTMLElement \| null : null\),/,
+    "…the pages root joins the selector for a PDF the chunk renders (Slice 4)");
+  assert.match(VIEW, /pdfPages: \(\) => \(ctx\.mode\(\) === "media" && isPdf \? Array\.from\(body\.querySelectorAll\("\.fileview-pdf \.fileview-pdf-page"\)\) as HTMLElement\[\] : \[\]\),/);
   assert.match(VIEW, /renderedImages: \(\) => \(ctx\.mode\(\) === "rendered" \? Array\.from\(body\.querySelectorAll\("\.fileview-md img"\)\) as HTMLImageElement\[\] : \[\]\),/);
   // the media arm: build, mount, THEN wait for the picture — so the element is in the DOM when the hook runs
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
@@ -705,7 +827,7 @@ test("source: the Slice 3 seam members exist with their doc comments; the media 
   assert.match(when, /const img = shown\.querySelector\("img\.fileview-img"\) as HTMLImageElement \| null;/);
   assert.match(when, /if \(!img \|\| img\.complete\) \{ cb\(\); return; \}/, "a frame, or an already-complete img: at once");
   assert.match(when, /img\.addEventListener\("load", \(\) => \{ if \(img\.isConnected\) cb\(\); \}, \{ once: true \}\);/, "else the load event, once, and only for a picture still in the document");
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 3, "the SVG Source view, the text views and the decode-failure pane call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins a floor)");
+  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 6, "the SVG Source view, the text views, the decode-failure pane, and the PDF pages path three times (page 1 drawn; every later page; a later page pdf.js refuses, so the overlay armed on its canvas is redrawn) call fireRendered directly; the media arm hands it to whenShown (file-comments.test.ts pins the floor)");
   const failed = VIEW.split("const imgFailed = () => {")[1].split("\n  };\n")[0];
   assert.match(failed, /body\.replaceChildren\(why\);\n[\s\S]*fireRendered\(\);$/, "the pane swap fires the hooks AFTER the swap, so a hook reading mediaElement() finds none");
   // the figure rewrite: called from mdBlock on the sanitized DOM, after DOMPurify and after the marked-failure fallback

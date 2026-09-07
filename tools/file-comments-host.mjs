@@ -132,11 +132,16 @@ export const LOG_SUFFIX = '.comments-log.jsonl';
 // file it answers the hashes of the figures its region comments name (embeddedHashes). The regions
 // test pins this set against the kernel's dict.
 export const MEDIA_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'pdf']);
-// How many bytes a reply will hash: a media file up to the kernel's _PREVIEW_MAX_BYTES (the most
-// the viewer shows), and one shared budget for the figures a text file's region comments name.
-// Past either the hash is null. FILE_COMMENTS_HASH_CAP and FILE_COMMENTS_EMBEDDED_HASH_CAP
-// override them for tests; the kernel never sets them.
-export const FILE_HASH_CAP = 50_000_000;
+// How many bytes a reply will hash: a media file up to the kernel's _MEDIA_MAX_BYTES (the cap of
+// GET /file on every non-text file, so the most the viewer shows), and one shared budget for the
+// figures a text file's region comments name. Past either the hash is null. FILE_COMMENTS_HASH_CAP
+// and FILE_COMMENTS_EMBEDDED_HASH_CAP override them for tests; the kernel never sets them.
+// FILE_HASH_CAP must equal the kernel's number BYTE FOR BYTE: a media file the viewer serves but
+// this script will not hash gets fileHash null on every reply, so each region on it reads "unknown"
+// and regenerating the file never reads stale (the two drifted apart by 2.4 MB when the kernel's cap
+// was renamed and rounded to a power of two). file-comments-host-caps.test.mjs reads the constant
+// out of kernel.py and pins the two equal.
+export const FILE_HASH_CAP = 50 * 1024 * 1024;
 export const EMBEDDED_HASH_CAP = 200_000_000;
 // config.json's format version: store-io's CONFIG_VERSION (not exported), the one shape this script
 // and the vendored CLIs read and write.
@@ -781,7 +786,7 @@ function figureFence(ctx) {
 // symlink). Then `kind` must be what the named file's extension says it is, the way the viewer
 // decides what to render — a `pdf` target on a png, or a figure whose extension the viewer never
 // shows as media, is a caller bug, not a stored shape. Then the bytes are hashed under
-// FILE_HASH_CAP, the most the viewer shows of any one file (the kernel's _PREVIEW_MAX_BYTES): a
+// FILE_HASH_CAP, the most the viewer shows of any one file (the kernel's _MEDIA_MAX_BYTES): a
 // figure past it was never on the person's screen, so a request naming one refuses `too-large`
 // instead of hashing it — before this cap a multi-GB src named by a client pinned the host for as
 // long as the kernel's deadline allowed and then failed as a timeout. The constant, not the

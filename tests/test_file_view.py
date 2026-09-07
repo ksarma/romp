@@ -146,9 +146,43 @@ class ServeText(_Route):
 
     def test_the_text_cap_is_its_own_and_far_under_the_media_one(self):
         # a 50 MB log dragged down a tunnel to a phone helps nobody (the user asked for a size cap)
-        self.assertLess(km._TEXT_MAX_BYTES, km._PREVIEW_MAX_BYTES)
+        self.assertLess(km._TEXT_MAX_BYTES, km._MEDIA_MAX_BYTES)
         img = self.write("plot.png", b"\x89PNG\r\n\x1a\n" + b"p" * (km._TEXT_MAX_BYTES + 1))
         self.assertEqual(self.get(img)[0], 200, "the media cap is untouched by the text one")
+
+    # ── the media cap (plans/file-review.md Slice 4, contract F5): GET /file on an image or a PDF ──
+    def test_the_media_cap_is_50_mb_and_reads_as_the_round_number_it_means(self):
+        # 50_000_000 divided by 1<<20 read "limit 47.7 MB" in the 413 — the same miscopied-sounding cap the
+        # text one had (test_the_text_cap_reads_as_the_round_number_it_means); a power of two says "50.0 MB"
+        self.assertEqual(km._MEDIA_MAX_BYTES, 50 * 1024 * 1024)
+        self.assertEqual(km._human_bytes(km._MEDIA_MAX_BYTES), "50.0 MB")
+
+    def test_oversize_media_413s_in_the_text_cap_s_own_words_and_head_keeps_its_empty_body(self):
+        # the cap is lowered for the test rather than writing 50 MB to disk; the WORDING is what is under test
+        fp = self.write("report.pdf", b"%PDF-1.4\n" + b"x" * 64)
+        old = km._MEDIA_MAX_BYTES
+        km._MEDIA_MAX_BYTES = 32
+        try:
+            status, body = self.get(fp)[:2]
+            self.assertEqual(status, 413)
+            self.assertIn("too large to show", body, "the text cap's reason style, word for word")
+            self.assertIn(km._tilde(fp), body, "every /file error names the resolved path")
+            self.assertIn(km._human_bytes(os.path.getsize(fp)), body, "the file's size")
+            self.assertIn("limit " + km._human_bytes(32), body, "and the cap it is over")
+            # HEAD above the cap: the same 413, no body — the path unchanged by the rename (contract F5)
+            self.sent.clear()
+            km.Handler._file_preview(self.h, {"path": [fp]}, head=True)
+            status, body = self.sent[-1][:2]
+            self.assertEqual(status, 413)
+            self.assertEqual(body, b"")
+            # at the cap exactly: served (the check is strictly over, as the text cap's is)
+            km._MEDIA_MAX_BYTES = os.path.getsize(fp)
+            status, body, mime = self.get(fp)[:3]
+            self.assertEqual(status, 200)
+            self.assertEqual(mime, "application/pdf")
+            self.assertEqual(body, b"%PDF-1.4\n" + b"x" * 64, "the bytes, untouched")
+        finally:
+            km._MEDIA_MAX_BYTES = old
 
     def test_a_relative_path_still_resolves_against_the_session_cwd(self):
         self.write("rel.md", "# hi\n")
