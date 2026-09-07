@@ -344,6 +344,19 @@ EOF
     [[ "$output" == *"3.11"* && "$output" == *"3.12"* ]]   # the cfg's version, not a bare "?"
 }
 
+@test "romp-sdk-setup: ROMP_PYTHON naming a missing interpreter is refused as such, not called a too-old python" {
+    # The pin the docs recommend for service.env, after an OS upgrade removed what it named. The old
+    # diagnosis was "best python found is <pin> (?) but claude-agent-sdk needs >= 3.10", and its remedy
+    # (install a newer python) changed nothing while the pin pointed at a dead path.
+    export ROMP_STATE_DIR="$TEST_DIR/state"
+    PATH="$(bare_path)" ROMP_PYTHON="$TEST_DIR/no-such/python3.12" run "$ROMP_DIR/bin/romp-sdk-setup"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ROMP_PYTHON=$TEST_DIR/no-such/python3.12"* ]]
+    [[ "$output" == *"not an executable interpreter"* ]]
+    [[ "$output" != *"needs >= 3.10"* ]]
+    [ ! -e "$TEST_DIR/state/sdkvenv" ]
+}
+
 # ── installs ship a PRODUCTION bundle ────────────────────────────────────────
 # Without --production the dashboard shipped a development build: render.js, the chat pane's
 # code, was 578 KB of unminified JS the browser parsed before anything appeared (a slow chat

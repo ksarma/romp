@@ -15,12 +15,26 @@ VENV="$STATE/sdkvenv"
 
 # The Agent SDK needs python >= 3.10; some hosts pin the system python3 older (Ubuntu 20.04 = 3.8)
 # with a newer one alongside (e.g. a uv-managed 3.12 in ~/.local/bin — probed explicitly because a
-# non-login ssh shell doesn't have it on PATH). Order: ROMP_PYTHON, then the interpreter the existing
-# venv records, then the newest pythonX.Y found.
+# non-login ssh shell doesn't have it on PATH). Order: ROMP_PYTHON (checked to be an executable
+# interpreter), then the interpreter the existing venv records (checked to run and to be the recorded
+# X.Y), then another python of that same X.Y on PATH or in ~/.local/bin, then the newest pythonX.Y found.
 # KEEP IN SYNC with bin/romp-serve's pick_python — the kernel must run the interpreter this venv
 # is built with.
 pick_python() {
-    if [[ -n "${ROMP_PYTHON:-}" ]]; then echo "$ROMP_PYTHON"; return; fi
+    if [[ -n "${ROMP_PYTHON:-}" ]]; then
+        # The pin is checked, not echoed as-is. A pin naming nothing runnable used to reach romp-serve's
+        # exec, which died on bash's own "No such file or directory" with no mention of the pin while the
+        # manager crash-looped on it, and romp-sdk-setup called the same pin a too-old python. The docs
+        # tell operators to pin ROMP_PYTHON in service.env, so a typo, or an upgrade that removes the
+        # pinned interpreter, lands here. A bare command name is looked up on PATH, as the exec would.
+        local pin="$ROMP_PYTHON"
+        [[ "$pin" == */* ]] || pin="$(type -P "$pin" 2>/dev/null || true)"
+        if [[ -z "$pin" || ! -f "$pin" || ! -x "$pin" ]]; then
+            echo "romp: ROMP_PYTHON=$ROMP_PYTHON is not an executable interpreter (set in service.env?)" >&2
+            exit 1
+        fi
+        echo "$ROMP_PYTHON"; return
+    fi
     local v c
     # THE VENV FIRST. bin/romp-sdk-setup builds the SDK venv with the interpreter this function picked at
     # the time, and pyvenv.cfg records it. Running anything else imports 3.X-compiled extensions into a
@@ -30,6 +44,24 @@ pick_python() {
     # venv's interpreter, however old, and the newest-first walk below is only for a box without one
     # (or whose recorded interpreter is gone; then we say so and romp-sdk-setup rebuilds to match).
     # Builtins only in here: the unit tests run it on a bare PATH. Kept in sync with romp-sdk-setup.
+    #
+    # A candidate must RUN, and when the cfg names a version it must BE that python X.Y: `home` is a
+    # directory, and a distro upgrade that removes python3.12 and repoints home/python3 at 3.14 leaves
+    # that path present and runnable while the venv's extensions are still 3.12's, the exact failure
+    # the recorded interpreter exists to prevent. The check is a version-tuple compare (builtins only),
+    # and it is bounded: this is the first place the picker executes a candidate, and an interpreter
+    # that blocks (a stalled network mount, a sitecustomize reaching for the network) would otherwise
+    # hang the launch with the manager watching a live pid. `timeout 5` where coreutils provides it (a
+    # bare test PATH does not); running out the clock counts as not runnable.
+    _runs_as() {   # $1 candidate, $2 the X.Y it must be, or "" for "runs at all"
+        local -a run=("$1")
+        if command -v timeout >/dev/null 2>&1; then run=(timeout 5 "$1"); fi
+        if [[ -n "$2" ]]; then
+            "${run[@]}" -c "import sys; sys.exit(sys.version_info[:2] != (${2%%.*}, ${2#*.}))" >/dev/null 2>&1
+        else
+            "${run[@]}" -c pass >/dev/null 2>&1
+        fi
+    }
     local state="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
     local cfg="$state/sdkvenv/pyvenv.cfg"
     if [[ -r "$cfg" ]]; then
@@ -44,11 +76,31 @@ pick_python() {
             esac
         done < "$cfg"
         [[ "$ver" =~ ^([0-9]+\.[0-9]+) ]] && mm="${BASH_REMATCH[1]}"
-        for c in "$exe" "${home:+$home/python$mm}" "${home:+$home/python3}"; do
+        # The home candidates need the version. Without it `$home/python$mm` is the bare `$home/python`
+        # (python2 on many boxes) and `$home/python3` can be checked against nothing, so a cfg with a
+        # home but no version line (hand-edited or truncated; venv, uv and virtualenv all write one)
+        # offers only its `executable`, the recorded binary itself.
+        for c in "$exe" "${mm:+${home:+$home/python$mm}}" "${mm:+${home:+$home/python3}}"; do
             [[ -n "$c" && -x "$c" ]] || continue
-            if "$c" -c pass >/dev/null 2>&1; then echo "$c"; return; fi
+            if _runs_as "$c" "$mm"; then echo "$c"; return; fi
         done
-        echo "romp: the SDK venv at $state/sdkvenv was built with ${exe:-${home:-?}/python$mm}, which is gone or will not run; picking the newest python instead. Re-run bin/romp-sdk-setup to rebuild the venv for it." >&2
+        local rec="${exe:-${home:-?}/python${mm:-?}}"
+        # SAME MINOR NEXT. The venv's site-packages are ABI-valid for any python $mm, so another python$mm
+        # on PATH or in ~/.local/bin keeps the kernel and the venv agreeing with nothing rebuilt:
+        # `executable` is a realpath into a patch-versioned install root (Homebrew's Cellar, a uv
+        # per-patch directory), which a patch upgrade removes while `python3.12` on PATH still runs.
+        # Newest-first is the last resort, and it costs a rebuild.
+        if [[ -n "$mm" ]]; then
+            for c in "python$mm" "$HOME/.local/bin/python$mm"; do
+                c="$(command -v "$c" 2>/dev/null || true)"
+                [[ -n "$c" ]] || continue
+                if _runs_as "$c" "$mm"; then
+                    echo "romp: the SDK venv at $state/sdkvenv was built with $rec, which is gone, will not run, or is no longer python $mm; using $c, another python $mm, so the venv still matches." >&2
+                    echo "$c"; return
+                fi
+            done
+        fi
+        echo "romp: the SDK venv at $state/sdkvenv was built with $rec, which is gone, will not run, or is no longer python ${mm:-?}, and no other python ${mm:-?} was found; picking the newest python instead. Re-run bin/romp-sdk-setup to rebuild the venv for it." >&2
     fi
     # Newest first. The list has to GROW with each release: a machine whose only python is newer than
     # everything named here falls through to `python3`, which is right when that IS the new one and wrong
