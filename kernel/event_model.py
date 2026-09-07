@@ -608,7 +608,7 @@ def _read_jsonl_incremental(path):
     return records
 
 
-def fold_records(cache, path, init, step):
+def fold_records(cache, path, init, step, on=None):
     """Fold a JSONL file's records into a carried state, APPEND-INCREMENTALLY (issue 903, 2026-09-03):
     the states/transcript readers re-read their whole file behind an (mtime,size) key that every append
     invalidates — O(file) per push for every working session. _read_jsonl_incremental already serves the
@@ -619,6 +619,12 @@ def fold_records(cache, path, init, step):
     makes a fresh state; `step(state, record)` returns the next state (mutate-and-return is fine: the
     cached state is deep-copied before folding onto it, so a state a caller was handed never changes
     under it). Returns the state; [] records (a missing or unreadable file) fold to init().
+
+    `on`, when given, is called once per call with which path the fold took: "hit" (the records are the
+    cached ones; nothing stepped), "append" (only the records past the cached prefix stepped) or "refold"
+    (every record stepped: a rewrite, a shrink, or the first fold of this file). A caller's /perf counters
+    ride it (kernel `_states_awaiting_overlay`, 2026-09-07); the fold itself keeps no counters, since one
+    cache dict serves many readers and the kernel's counters are locked per reader.
 
     Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
     background-task pairing below is shared by both."""
@@ -634,19 +640,23 @@ def fold_records(cache, path, init, step):
     if hit is not None:
         n0, last0, state0 = hit
         if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
+            if on is not None:
+                on("hit")
             return _fold_eof_fragment(key, ent, state0, step)   # unchanged records; a newline-less tail may still sit past them
         if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
-            state, start = copy.deepcopy(state0), n0
+            state, start, kind = copy.deepcopy(state0), n0, "append"
         else:
-            state, start = init(), 0
+            state, start, kind = init(), 0, "refold"
     else:
-        state, start = init(), 0
+        state, start, kind = init(), 0, "refold"
     for r in recs[start:]:
         if isinstance(r, dict):
             state = step(state, r)
     if len(cache) > 256:                                  # bounded by the session count; never unbounded
         cache.clear()
     cache[key] = (len(recs), recs[-1] if recs else None, state)
+    if on is not None:
+        on(kind)
     return _fold_eof_fragment(key, ent, state, step)
 
 

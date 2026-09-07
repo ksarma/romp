@@ -2027,6 +2027,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cycle served from the cycle's rows against swept) and `wide_hit` and
   `wide_miss` (the wide walk taken for a live session idle longer than the
   caption window); the memo lives for one cycle, so it has no occupancy gauge.
+  `captions` is the memo behind the captioner-store reader every timeline lane,
+  the feed's held card and the postal join read, keyed on the file's identity
+  (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
+  from memory against read and parsed), `fail` (reads that failed after a
+  successful stat and were not memoized; the kernel's stderr names the file
+  once per episode), `evict` (entries dropped for lanes that left the timeline
+  or past the 512-entry bound), and the gauge `entries`. `states_overlay` is the
+  states-log fold behind the awaiting overlay: `hit` (the records were the
+  cached ones), `append` (only the appended rows were folded), `refold` (every
+  row was folded: a rewrite, a shrink, or the file's first fold), `evict`
+  (entries dropped for sessions that left the alive set), and `entries`.
+  `thread_reg` is the SDK registry reader's memo, keyed like `captions`, with
+  the same `hit`, `miss`, `fail`, `evict` and `entries`.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

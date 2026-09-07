@@ -127,7 +127,8 @@ class Collector(unittest.TestCase):
                                               "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
-                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},
+                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
+                          "captions", "states_overlay", "thread_reg"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
@@ -158,6 +159,16 @@ class Collector(unittest.TestCase):
                          "the pusher cycle's discover memo: _sessions reads and the wide walk")
         for k, v in snap["memos"]["sessions_scope"].items():
             self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["captions"]), {"hit", "miss", "fail", "evict", "entries"},
+                         "the captions store memo (perf round 4, item C): reads served against read, failed reads, "
+                         "entries dropped, and its occupancy")
+        self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "evict", "entries"},
+                         "the states-overlay fold: unchanged, appended rows only, every row, entries dropped, occupancy")
+        self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
+                         "the SDK registry reader's memo: the captions memo's shape")
+        for blk in ("captions", "states_overlay", "thread_reg"):
+            for k, v in snap["memos"][blk].items():
+                self.assertIsInstance(v, int, "%s.%s" % (blk, k))
         for k in ("rss_kb", "threads", "cpu_s", "pid"):
             self.assertIn(k, snap["process"])
         self.assertGreater(snap["process"]["threads"], 0)
