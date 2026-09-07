@@ -1756,15 +1756,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   branch. A hit served a memoized check, a miss built one, a populate stored
   one (a build that failed is a miss with no populate), and a bypass built
   without memoizing because an input file could not be stat'd. `tiers` holds
-  the evidence gate's counters per gated tier (`plan`, `close`, and the four
-  store-only tiers once they are gated): `ran` (per-session stage runs),
-  `skipped` (runs the gate declined because nothing the tier reads had
+  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
+  `courier`, `group`, `consolidate`, `distill`): `ran` (per-session stage
+  runs), `skipped` (runs the gate declined because nothing the tier reads had
   changed), `stamped` (runs that ended complete and recorded what they
   judged), `bypassed` (runs with no signature to record, or whose parse ran
   under a cut that moved after the gate looked), `incomplete` (runs a
-  deferral or a failed call left unfinished), `due_clock` (runs a background
-  task's deadline made due), plus `stamps`, the number of per-session records
-  held. `skipped / (ran + skipped)` is the share of per-session runs the gate
+  deferral or a failed call left unfinished; for the courier, scans that
+  produced pending rows or consulted another session's store, which run again
+  next pass by design), `due_clock` (runs a background task's deadline made
+  due), plus `stamps`, the number of per-session records held. `skipped / (ran + skipped)` is the share of per-session runs the gate
   saved; `romp perf` prints it per tier on the `tiers` line and adds
   `cpu/pass` to the `judge` line, since the judge's CPU share alone cannot
   tell a cheaper pass from a faster cadence.

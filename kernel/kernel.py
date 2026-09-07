@@ -246,9 +246,12 @@ class _PerfStats:
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
                                    read from the live kernel rather than assumed; tiers: the
                                    evidence gate's per-tier counters (judge.tier_stats: ran,
-                                   skipped, stamped, bypassed, incomplete, due_clock per gated tier,
-                                   plus stamps held), from which skipped / (ran + skipped) is the
-                                   share of per-session runs the gate declined
+                                   skipped, stamped, bypassed, incomplete, due_clock per gated tier:
+                                   plan, close, unblock, courier, group, consolidate, distill; plus
+                                   stamps held), from which skipped / (ran + skipped) is the share
+                                   of per-session runs the gate declined; the courier's incomplete
+                                   counts scans that produced pending rows or consulted another
+                                   session's store, which run again next pass by design
       memos                        one entry per memo the kernel keeps, each a flat dict of counters:
                                    goals_snap (the judge pass's stat-keyed goal-store snapshot, see
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs

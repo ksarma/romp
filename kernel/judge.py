@@ -999,6 +999,28 @@ def pass_watermark(tier, fsid):
 #              _blocked_sub_candidates, _newest_done_at, _completed_since). The candidate scan comes
 #              first, so about half the sessions never reach the parse, yet the pair re-arms them on
 #              every transcript append at one load each: accepted (about 10 ms per pass), stated here.
+#  courier     parse pair + candidates (the scan walks the parse's turns for peer-triggered segments;
+#              the sender sid it files under is the ledger's from_id READ THROUGH the parse's postal index,
+#              author_of -> postal_index[m]); store trio (load_goals, placements, the seams _segs applies,
+#              _attach_courier_link's idempotence scan over origin/links msgIds); the episode log
+#              (episode_floor). Two sites mark the run incomplete so it is never stamped: a scan that
+#              appended a pending row (the pending loop runs after every scan, reads the sender's store,
+#              the ledger and the model, and every branch of it writes or defers), and _attach_courier_link
+#              reaching _handoff_backref (it reads every discovered store, which no per-session signature
+#              carries). Not in the signature: MESSAGES (the ledger stays out on the framework's reason
+#              below: deliver() appends the sent row BEFORE the wake, so the transcript atom always follows
+#              it and the pinned pair re-arms the scan; a sender-less peer segment, the residual, is placed
+#              by the planner as plain work in the same pass, before the courier reaches it, and the store
+#              move re-arms the courier when the parse next resolves it); _sdk_owned (the parse's
+#              sdk_human: _is_opener opens a turn for human, sdk, romp and peer authors alike, and the scan
+#              reads only dict authors, so the flag cannot change what the scan sees); the settle
+#              (_session_settled reads the bg-launch scan, the reg and the marker) is read at the WRITE
+#              sites only, from the store being written, never on the idle path. The xrows arm (the
+#              cross-host sender-side plant) runs per pass outside the gate; its writes re-arm the
+#              sender's scan once. Behaviour change with the gate (2026-09-07): a crash in the scan
+#              (_segs, episode_floor, load_goals) is caught per session as a pass-crash row ("scan: ...")
+#              and the pass goes on; before, only a parse crash was, and any other aborted the tiers after
+#              the courier for the pass.
 #  group       store trio (_group_tops, _overgrown_tops, _group_sig read the store), cleared.jsonl
 #              (_group_tops -> _view_cleared). NO parse: it is read only after a relink, which follows a
 #              model call, which follows a store change. The archive stays in: compaction rewrites it
@@ -1014,7 +1036,9 @@ def pass_watermark(tier, fsid):
 #              calls _distill_session directly for absent stores and is not gated (a straggler never
 #              holds a stamp to be skipped on).
 # Not in any signature, on purpose: MESSAGES (the parse cache key excludes it too: a delivery appends to
-# the transcript); retry-paused.json and usage.json (a skip on either is a "" call, so the belt marks the
+# the transcript, and the sent row is appended before the wake that produces the atom, so the row is
+# always in the ledger by the time the pinned pair moves; the FsCompleteness test allows it for every
+# parse tier); retry-paused.json and usage.json (a skip on either is a "" call, so the belt marks the
 # run incomplete); session-flags.json (_hidden_from_feed filters run_plan's, run_close's and run_unblock's
 # session lists, and the post-pool eviction drops a hidden sid's stamps, so an unmute costs one full run;
 # the other three runners do not filter on it). A store loaded with the `_unread` mark (the file or the
@@ -1022,9 +1046,10 @@ def pass_watermark(tier, fsid):
 # judged from a fallback view never stamps under the identity of files it did not read; the same holds
 # for the side files a stage reads after the gate stat'd them (cleared.jsonl, the states file, the stall
 # records): a read that fails on a file that exists marks the run incomplete and logs a row (_read_failed).
-GATED_TIERS = ("plan", "close", "unblock", "group", "consolidate", "distill")
-PARSE_TIERS = ("plan", "close", "unblock")   # the tiers whose decision path reads the parse: their signature
-#                                              carries the pinned pair, and _gated checks the served pair
+GATED_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill")   # run_triage's order
+PARSE_TIERS = ("plan", "close", "unblock", "courier")   # the tiers whose decision path reads the parse: their
+#                                                         signature carries the pinned pair, and _gated checks
+#                                                         the served pair
 _STAGE_STAMP = {}        # (tier, fsid) -> (sig, not_before): the inputs the tier last judged to completion
 _STAGE_LOCK = threading.Lock()
 _STAGE_STAMP_MAX = 4096  # belt: a wholesale clear at the cap (one full walk next pass)
@@ -1148,11 +1173,14 @@ def _sig_inputs(tier, fsid, path):
     gone marker and the reg, plan_units reads cleared.jsonl (_live_anchor_gone -> _view_cleared),
     rollup_status reads the stall slice, _sync_declared_plan reads the LEAF stem's task store; the
     closer's idle path is the parse, the store, the marker, the reg, cleared.jsonl and the stall slice;
-    the unblocker's is the parse and the store; the grouper's and consolidator's the store and
-    cleared.jsonl; the distiller's the store, the states file and the stall slice (the inventory above
-    GATED_TIERS). Kept apart from _stage_sig so the completeness test can hold a stage's reads against it."""
+    the unblocker's is the parse and the store; the courier's the parse, the store and the episode log
+    (episode_floor); the grouper's and consolidator's the store and cleared.jsonl; the distiller's the
+    store, the states file and the stall slice (the inventory above GATED_TIERS). Kept apart from
+    _stage_sig so the completeness test can hold a stage's reads against it."""
     ident = [GOALDIR / (fsid + ".json"), _overrides_dir() / (fsid + ".jsonl"), GOALARCHDIR / (fsid + ".json")]
     value = []
+    if tier == "courier":
+        ident += [EPIDIR / (fsid + ".jsonl")]
     if tier in ("plan", "close"):
         ident += [GONEDIR / (fsid + ".json"), STATE / "cleared.jsonl"]
         value += [STATE / "sdk" / (fsid + ".json"), STATE / "auto-nudge.json"]
@@ -14633,6 +14661,11 @@ def _attach_courier_link(store, seg_id, mid):
     if not tgt or tgt not in nodes:
         return False
     top = _top_ancestor(nodes, tgt)
+    # The backref reads OTHER sessions' stores (every discovered one), which no per-session signature
+    # carries: a courier scan that reached this line is never stamped (the evidence gate), so a tracker
+    # that appears later in a sender's store is linked on a later pass rather than skipped over. A link
+    # that IS attached saves the store, which re-arms the scan on its own.
+    _judge_ctx.stage_incomplete = True
     peer_sid, peer_gid = _handoff_backref(mid)
     if not (peer_sid and peer_gid):
         return False
@@ -15266,64 +15299,120 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     return n
 
 
+def _courier_scan(fsid, path, now):
+    """The courier's per-session SCAN, the gated computation (the evidence gate, 2026-09-07): walk the
+    pass's parse of `fsid` for peer-triggered segments and return the pending rows the pass's write loop
+    files, `(seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path)`, in transcript order.
+    Reads exactly what the courier's signature carries (the inventory above GATED_TIERS): the pinned
+    parse, the store trio and the episode log. Two outcomes mark the run incomplete, so the gate never
+    stamps it: rows returned (the write loop that consumes them runs after every scan and every branch
+    of it writes or defers, so the session stays due until its rows are consumed), and the LINK-ONLY
+    repair reaching _handoff_backref (other sessions' stores; the mark sits in _attach_courier_link) or
+    raising (the repair did not run: the next pass retries it). A store that did not read stands the
+    session down (load_goals marked the run, so it stays due). A parse or walk that raises propagates:
+    _gated counts it incomplete and the runner logs the pass-crash row and goes on to the next session.
+    The settle is NOT read here: run_courier reads it at its write sites, from the store being written
+    (the scan used to read it for every session, every pass)."""
+    session = parsed_session(fsid, [path], now)       # states-aware + cached, so _session_closed is correct
+    cstore = load_goals(fsid)
+    if _fallback_store(cstore):
+        return []                                      # its messages wait until the store reads (load_goals logged it)
+    rows = []
+    placed_ids = cstore["placements"]
+    floor = episode_floor(fsid)
+    for turn in session["turns"]:
+        for seg in _segs(turn, cstore):
+            if seg["id"] in placed_ids:
+                # LINK-ONLY repair (the user 2026-08-23): the planner placed this peer segment
+                # before the courier saw it, so no courier goal was minted and the SENDER's
+                # handoff waits on a completion event that can never fire (12 live handoffs, up
+                # to 240h old). A placed DELEGATE with no courier link gets the link attached to
+                # the placement's TOP — run_propagate completes the sender's tracking node when
+                # that goal lands. No model call; idempotent by msgId.
+                try:
+                    pm0 = _seg_peer(seg)
+                    if pm0 and pm0[0] and pm0[1] and _seg_peer_kind(seg) == "delegate":
+                        _attach_courier_link(cstore, seg["id"], pm0[1])
+                except Exception as e:             # bookkeeping, but its failure is not nothing (T111)
+                    _judge_ctx.stage_incomplete = True         # the repair did not run: no stamp, retried next pass
+                    _log_judge_error("courier", fsid, "pass-crash", note="link-attach: %r" % e)
+                continue
+            if floor and seg["t"] < floor:
+                # pre-episode: conversation the agent can no longer see. The planner retires these
+                # before any model call; the courier needs its own guard because a FORK's copied
+                # history is the first shape that leaves OLD peer segments visible here (a /clear's
+                # null-rooted head drops pre-clear history from the parse for free, so this never
+                # fired before). Defense in depth beside the fork's sealed-placements seed.
+                continue
+            pm = _seg_peer(seg)
+            if not pm or not pm[0]:                # peer-triggered with a KNOWN sender only. This filter
+                #                                    is one half of a partition contract with plan_units:
+                #                                    the courier places exactly the peer segments it can
+                #                                    file under a sender's goal, and plan_units yields a
+                #                                    '#d' unit for exactly those (a sender-less one gets a
+                #                                    plain work unit there instead — a '#d' nothing places
+                #                                    wedges auto-nudge's placement gate, 2026-08-16).
+                continue
+            rows.append((seg["t"], fsid, seg["id"], _unit_text(seg["atoms"]), pm[1], pm[0],
+                         _seg_peer_kind(seg), _seg_anchor(seg), path))
+    if rows:
+        _judge_ctx.stage_incomplete = True             # the rows are filed by the write loop, outside the
+        #                                                gate: the session stays due until they are consumed
+    return rows
+
+
 def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
     """One TRIAGE-TIER courier pass: place peer-message (postal) segments as delegations, GLOBAL
     oldest-first across sessions. Idempotent (msgId + seg_id). COORDINATING segments are marked processed
     without a goal-edit; a declared coordinate/question files that way outright, no model call (demote-
     only, the user 2026-07-27). (Sender goals are read as-of-NOW for the MVP; true as-of-send is a
-    refinement.)"""
+    refinement.)
+
+    The per-session scan (_courier_scan) is on the evidence gate (2026-09-07): a session is scanned only
+    when its pinned parse pair, its store trio or its episode log moved since the scan that last
+    completed with no rows and no backref (the inventory above GATED_TIERS); otherwise the gate stamps
+    pass_done and moves on. The scans run inline on this thread in discover order (CPU-bound walks over
+    a cached parse; a pool adds nothing under the GIL). The write loop below is not gated: a session with
+    rows is never stamped, so it is scanned every pass until its rows are consumed by a write, which
+    moves the store and re-arms the scan once more."""
     if now is None:
         now = int(time.time())
     fleet = discover(now)[:sessions_cap]
     id2name = {f: nm for f, p, a, nm in fleet}          # recipient id → name, for the sender's tracking-node label
     paths_map = {f: str(p) for f, p, a, nm in fleet}    # sid → transcript, for the mint-time chain trace
-    pending, closed = [], {}                           # pending: (seg_t, fsid, seg_id, text, mid, sender)
+    pending = []                                       # (seg_t, fsid, seg_id, text, mid, sender, declared, anchor, path)
     for fsid, path, anchor, name in fleet:
         try:
-            session = parsed_session(fsid, [str(path)], now)   # states-aware + cached, so _session_closed is correct
-        except Exception as e:                         # a poisoned transcript must not skip silently (T111)
-            _log_judge_error("courier", fsid, "pass-crash", note="parse: %r" % e)
-            continue
-        cstore = load_goals(fsid)
-        if _fallback_store(cstore):
-            continue                                   # its messages wait until the store reads (load_goals logged it)
-        closed[fsid] = _session_settled(fsid, str(path), session, cstore)
-        placed_ids = cstore["placements"]
-        floor = episode_floor(fsid)
-        for turn in session["turns"]:
-            for seg in _segs(turn, cstore):
-                if seg["id"] in placed_ids:
-                    # LINK-ONLY repair (the user 2026-08-23): the planner placed this peer segment
-                    # before the courier saw it, so no courier goal was minted and the SENDER's
-                    # handoff waits on a completion event that can never fire (12 live handoffs, up
-                    # to 240h old). A placed DELEGATE with no courier link gets the link attached to
-                    # the placement's TOP — run_propagate completes the sender's tracking node when
-                    # that goal lands. No model call; idempotent by msgId.
-                    try:
-                        pm0 = _seg_peer(seg)
-                        if pm0 and pm0[0] and pm0[1] and _seg_peer_kind(seg) == "delegate":
-                            _attach_courier_link(cstore, seg["id"], pm0[1])
-                    except Exception as e:             # bookkeeping, but its failure is not nothing (T111)
-                        _log_judge_error("courier", fsid, "pass-crash", note="link-attach: %r" % e)
-                    continue
-                if floor and seg["t"] < floor:
-                    # pre-episode: conversation the agent can no longer see. The planner retires these
-                    # before any model call; the courier needs its own guard because a FORK's copied
-                    # history is the first shape that leaves OLD peer segments visible here (a /clear's
-                    # null-rooted head drops pre-clear history from the parse for free, so this never
-                    # fired before). Defense in depth beside the fork's sealed-placements seed.
-                    continue
-                pm = _seg_peer(seg)
-                if not pm or not pm[0]:                # peer-triggered with a KNOWN sender only. This filter
-                    #                                    is one half of a partition contract with plan_units:
-                    #                                    the courier places exactly the peer segments it can
-                    #                                    file under a sender's goal, and plan_units yields a
-                    #                                    '#d' unit for exactly those (a sender-less one gets a
-                    #                                    plain work unit there instead — a '#d' nothing places
-                    #                                    wedges auto-nudge's placement gate, 2026-08-16).
-                    continue
-                pending.append((seg["t"], fsid, seg["id"], _unit_text(seg["atoms"]), pm[1], pm[0],
-                                _seg_peer_kind(seg), _seg_anchor(seg), str(path)))
+            skip, sig = _gate_check("courier", fsid, str(path), now)
+            if skip:
+                continue
+            pending.extend(_gated("courier", _courier_scan, fsid, str(path), now, sig, settle=False))
+            pass_done("courier", fsid)
+        except Exception as e:                         # a poisoned transcript or a crashed walk must not skip
+            #                                            silently (T111), nor end the pass for the sessions
+            #                                            after it (before the gate, only a parse crash was
+            #                                            caught here; a _segs crash aborted the triage pass)
+            _log_judge_error("courier", fsid, "pass-crash", note="scan: %r" % e)
+    _gate_evict("courier", {f[0] for f in fleet})
+    closed = {}                                        # fsid -> settled, read at the write sites (settled())
+
+    def settled(fsid, store):
+        """The rollup's settled gate for a store the write loop is about to publish, once per session per
+        pass, from the pass's parse (a frame hit: the scan pinned it) and the store being written. Read at
+        the write moment, not in the scan: the scan computed it for every session every pass and only the
+        sessions with rows ever read it. Equal to or newer than the scan-time value: the courier's own
+        writes never touch awaitingWhy or closedTurns, and a concurrent writer's change is newer
+        evidence. A parse that raises here (outside a frame: a transcript that moved and no longer parses)
+        logs a pass-crash row and reads as not settled, the default the scan-time dict had, rather than
+        ending the write loop mid-list."""
+        if fsid not in closed:
+            try:
+                session = parsed_session(fsid, [paths_map[fsid]], now)
+                closed[fsid] = _session_settled(fsid, paths_map[fsid], session, store, now)
+            except Exception as e:
+                _log_judge_error("courier", fsid, "pass-crash", note="settle: %r" % e)
+                closed[fsid] = False
+        return closed[fsid]
     # CROSS-HOST delegates plant the SENDER-side tracking node here too (the user 2026-08-24, the
     # paused-cards investigation): the recipient lives on a remote kernel, so no inbound segment
     # ever reaches this courier and _plant_handoff_track never ran — the sender's goal waited on a
@@ -15385,7 +15474,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             _log_judge_error("courier", fsid, "give-up", seg=seg_id,
                              note="peer message unsummarized past the %dh retry horizon (usage-limited) — abandoned"
                                   % (COURIER_RETRY_HORIZON // 3600))
-            rollup_status(store, closed.get(fsid, False))   # the release its demote-only sibling always had
+            rollup_status(store, settled(fsid, store))   # the release its demote-only sibling always had
             #                                                 (2026-08-13): without it, a node this abandoned
             #                                                 unit was holding stayed un-rolled until some
             #                                                 other pass happened to touch the store
@@ -15402,7 +15491,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             store["placements"][seg_id] = "fyi"
             store.get("courierDeferred", {}).pop(seg_id, None)
             store.get("courierFails", {}).pop(seg_id, None)
-            rollup_status(store, closed.get(fsid, False))
+            rollup_status(store, settled(fsid, store))
             save_goals(fsid, store)
             placed += 1
             continue
@@ -15464,7 +15553,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 store["placements"][seg_id] = None
                 _log_judge_error("courier", fsid, "rewind-stand-down", seg=seg_id,
                                  note="the peer segment sits on a rewound-away branch — retired, nothing planted")
-                rollup_status(store, closed.get(fsid, False))
+                rollup_status(store, settled(fsid, store))
                 save_goals(fsid, store)
                 continue
             link_id = menu[edit["n"] - 1]["id"] if edit["n"] else None   # sender's related open goal (or None)
@@ -15547,7 +15636,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 store["placements"][seg_id] = "fyi"    # quiet: processed, no recipient top (the #d
                 #                                        delegation phase retires on this, exactly the
                 #                                        coordinate treatment)
-                rollup_status(store, closed.get(fsid, False))
+                rollup_status(store, settled(fsid, store))
                 save_goals(fsid, store)
                 placed += 1
                 continue
@@ -15577,7 +15666,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             #               head — same content, one hop later
         else:
             store["placements"][seg_id] = "fyi"        # coordinating: no goal, but mark processed
-        rollup_status(store, closed.get(fsid, False))
+        rollup_status(store, settled(fsid, store))
         save_goals(fsid, store)
         placed += 1
     if verbose:
