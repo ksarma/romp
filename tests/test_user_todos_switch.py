@@ -614,6 +614,54 @@ class StoreShapeGuard(_Sandbox):
         for bad in ({"../x": []}, {".hidden": []}, {"": []}):
             self.assertFalse(km._user_todo_store_shaped(bad), bad)
 
+    # The register path is the ONE writer that mints a NEW key. A key the reader rejects would flag
+    # the whole file: every open row reads as empty on every surface and every later write (a
+    # register, an answer stamp, a dismiss, a withdraw, a reopen) raises until the file is
+    # hand-edited. So the writer refuses the key before it is ever written, and the store stays
+    # shaped. The stamp/reopen helpers only touch EXISTING keys and need no such check.
+    _BAD_SIDS = ("TESTHOST:" + SID, "web/" + SID, "." + SID, "a" * 129)
+
+    def test_the_writer_refuses_a_sid_the_reader_would_reject(self):
+        for bad in self._BAD_SIDS:
+            with self.assertRaises(ValueError, msg=bad):
+                km._add_user_todo(bad, "Need the staging port")
+        self.assertFalse(self.store.exists(), "nothing written for a refused key")
+        km._add_user_todo(SID, "Need the staging port")           # a real sid still registers
+        for bad in self._BAD_SIDS:
+            with self.assertRaises(ValueError, msg=bad):
+                km._add_user_todo(bad, "Need the staging port")
+        d, err = self._read()
+        self.assertEqual(err, "", "the store never became unreadable")
+        self.assertEqual(set(d), {SID})
+        self.assertTrue(km._user_todo_store_shaped(json.loads(self.store.read_text())))
+        self.assertEqual(km._user_todos_bad, {})
+
+    def test_the_register_route_answers_400_for_a_malformed_id_before_the_switch_and_the_forward(self):
+        saved = (km._push_all, km._push_soon)
+        km._push_all = km._push_soon = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("nothing changed, nothing to push"))
+        try:
+            for bad in self._BAD_SIDS:
+                code, res = _post("/usertodo", {"id": bad, "text": "Need the staging port"})
+                self.assertEqual((code, res), (400, {"ok": False, "error": "id must be a session id"}), bad)
+            self.assertFalse(self.store.exists(), "nothing written")
+            # before the switch: while OFF the malformed id is still the shape error, not the 409
+            km._set_user_todos(False)
+            self.assertEqual(_post("/usertodo", {"id": self._BAD_SIDS[0], "text": "Need the staging port"})[0], 400)
+            km._set_user_todos(True)
+            # before any forward: a malformed id is refused here, never relayed to another kernel
+            with mock.patch.object(km, "_host_for_sid", lambda sid: "otherhost"), \
+                    mock.patch.object(km, "_remote_forward",
+                                      side_effect=AssertionError("forwarded a malformed id")):
+                self.assertEqual(_post("/usertodo", {"id": self._BAD_SIDS[0], "text": "Need the staging port"})[0], 400)
+            # the well-formed ask still lands (and is the first thing that wakes the pusher)
+            pushed = []
+            km._push_soon = lambda: pushed.append(True)
+            code, res = _post("/usertodo", {"id": SID, "text": "Need the staging port"})
+            self.assertEqual((code, res["ok"], pushed), (200, True, [True]))
+        finally:
+            km._push_all, km._push_soon = saved
+
     def test_a_shaped_store_is_never_flagged(self):
         self.store.write_text(json.dumps({SID: [{"id": "ut-1", "text": "x", "createdT": 1}], SID2: []}))
         d, err = self._read()
