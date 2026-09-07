@@ -777,6 +777,30 @@ class RealBuildIdleBoard(_World):
         km._push([self.client], tmux=self.tmux)
         self.assertEqual(self._chat()["cached"] - c0["cached"], 1, "the same key: served, and correct")
 
+    def test_the_dependency_tail_is_evaluated_only_where_it_is_compared(self):
+        """Review should-fix 3: the active tab never checks the cache and every post-build signature is
+        compared on the static part, so neither evaluates the dependency tail (deps=False)."""
+        calls = []
+        real = km._chat_sig_deps
+        km._chat_sig_deps = lambda sid, deps: calls.append(deps) or real(sid, deps)
+        try:
+            a = km._chat_build_sig(self.sess, self.tmux, NOW, deps=False)
+            self.assertEqual(a[-3:], ((), (), None))
+            self.assertEqual(calls, [], "deps=False evaluates nothing")
+            self.assertEqual(km._chat_build_sig(self.sess, self.tmux, NOW)[:-3], a[:-3], "the static part is the same")
+            del calls[:]
+            watched = {"app": "chat", "alive": True, "sent": {}, "active": SID, "send": lambda s: None}
+            km._push([watched], tmux=self.tmux)            # our tab is the watched one: built, never checked
+            self.assertEqual(calls, [], "an active tab's pre-build and post-build signatures skip the tail")
+            km._built_chat.clear()
+            km._push([self.client], tmux=self.tmux)        # a cold background tab: one pre-build check, no tail after the build
+            self.assertEqual(len(calls), 1)
+            del calls[:]
+            km._push([self.client], tmux=self.tmux)        # served: the one check
+            self.assertEqual(len(calls), 1)
+        finally:
+            km._chat_sig_deps = real
+
     def _pusher_push(self, *clients):
         """A push as _pusher_cycle runs it: the cycle's scopes open on this thread."""
         km._live_scope.snapshot = self.tmux

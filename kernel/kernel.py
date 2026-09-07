@@ -26282,7 +26282,10 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     dependency record (_chat_build_deps; None reads the tab's own entry): the three trailing components
     re-evaluate what that build embedded. Returns None only when the session has no transcript path at
     all; a transcript that does not exist yet is a component (None), so a just-created session caches
-    like any other. The components shared by every tab come from _chat_sig_shared, once per push. The
+    like any other. `deps=False` appends the three components EMPTY: for a signature whose dependency
+    tail is discarded — the active tab's, which never checks the cache, and every post-build signature,
+    compared on the static components only — the re-evaluation (stats, token resolves, card values) is
+    skipped. The components shared by every tab come from _chat_sig_shared, once per push. The
     session chip is NOT a component: it is a function of components that are (the parse and live tail,
     the row, the backend brackets, the clock booleans, the task rows, the watches, the states overlay,
     the store), so the build derives it once and the key derives nothing twice."""
@@ -26445,7 +26448,7 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     # the sdk/ directory's mtime, which moves at turn rate; the per-sid value moves only when a fork of
     # THIS session appears, is promoted or is deleted).
     sig.append((_be.fork_children().get(sid) if _be and hasattr(_be, "fork_children") else None) or None)
-    sig.extend(_chat_sig_deps(sid, deps))              # taskout, pathlink, postal
+    sig.extend(((), (), None) if deps is False else _chat_sig_deps(sid, deps))   # taskout, pathlink, postal
     return tuple(sig)
 
 
@@ -41304,7 +41307,8 @@ def _push(targets, connect=False, tmux=None):
                 #                                          signature is unchanged (upstream's 2026-09-03 rule for the
                 #                                          watched tab, on the one key since round-4 plan P4)
                 try:
-                    sig = _chat_build_sig(s, chat_tmux, now)
+                    # the active tab never checks the cache, so its dependency tail is not evaluated (deps=False)
+                    sig = _chat_build_sig(s, chat_tmux, now, deps=False if is_active else None)
                 except Exception:
                     # a signature that cannot be taken is no signature: the tab rebuilds and is not cached,
                     # and the cause is said (never a silent forever-miss)
@@ -41350,7 +41354,7 @@ def _push(targets, connect=False, tmux=None):
                     # reading B: accepted, and stated here (round-4 plan P4, the value-flip amendment).
                     if sig is not None:
                         try:
-                            post = _chat_build_sig(s, chat_tmux, now)
+                            post = _chat_build_sig(s, chat_tmux, now, deps=False)   # compared on the static part only
                         except Exception:
                             post = None
                     # WHY a tab rebuilt (round-4 plan P3): the labelled _chat_build_sig components that
@@ -41408,7 +41412,8 @@ def _push(targets, connect=False, tmux=None):
                     elif post is not None:
                         _PERF_STATS.build_chat_moved()
                         if _PERF:
-                            _perf("chatsig", sid=str(s["sid"])[:8], moved=",".join(_chat_sig_miss(sig, post)))
+                            _perf("chatsig", sid=str(s["sid"])[:8],
+                                  moved=",".join(l for l in _chat_sig_miss(sig, post) if l not in _CHAT_SIG_DEPS))
             _chat_push_scopes_close()
             if tab_order is not None:                    # "no longer shown" is only a trustworthy claim when the
                 #                                          tab list itself is: a sentinel cycle's SDK-only list
