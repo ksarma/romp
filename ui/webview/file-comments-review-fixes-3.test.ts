@@ -245,6 +245,8 @@ type World = {
   ctx: FileViewActionCtx; posted: any[]; main: El; body: El; code: El;
   hooks: { rendered: Array<() => void>; saved: Array<(i: { mtimeNs: string; logged: boolean }) => void>; close: Array<() => void> };
   disk: string; reloads: number;
+  /** the view's mtime (ctx.mtimeNs): the file's at open, then the saved mtime on a save, then the disk's on a reload */
+  viewMtime: string;
   mtimes: Record<string, string>; codes: Record<string, number>; heads: string[];
   setText(src: string): void; close(): void;
 };
@@ -283,26 +285,29 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
   const w = {
     posted: [] as any[], main, body, code,
     hooks: { rendered: [] as Array<() => void>, saved: [] as Array<(i: { mtimeNs: string; logged: boolean }) => void>, close: [] as Array<() => void> },
-    disk: text, reloads: 0, mtimes: {} as Record<string, string>, codes: {} as Record<string, number>, heads: [] as string[],
+    disk: text, reloads: 0, viewMtime: F1, mtimes: {} as Record<string, string>, codes: {} as Record<string, number>, heads: [] as string[],
   } as World;
   rows(code, text);
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
     path: over.path ?? ABS, sid: over.sid === undefined ? SID : over.sid, todoId: over.todoId ?? null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => F1, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
     post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ },
-    reload: () => { w.reloads++; w.setText(w.disk); },
+    // fetchFile: the bytes and the mtime now on disk (the HEAD table's, when the test set one)
+    reload: () => { w.reloads++; if (w.mtimes[w.ctx.path] !== undefined) w.viewMtime = w.mtimes[w.ctx.path]; w.setText(w.disk); },
   };
   w.close = () => { for (const cb of w.hooks.close) cb(); if (cur === w) cur = null; };
   cur = w;
   return w;
 }
 const flush = () => new Promise<void>((r) => setImmediate(r));
+/** A save acknowledged: the viewer sets its mtime to the saved one BEFORE it fires onSaved (file-view.ts doSave). */
+function saved(w: World, mtimeNs: string): void { w.viewMtime = mtimeNs; for (const cb of w.hooks.saved) cb({ mtimeNs, logged: true }); }
 const lastOf = (w: World, type: string, verb?: string) => [...w.posted].reverse().find((m) => m.type === type && (verb === undefined || m.verb === verb));
 const countOf = (w: World, type: string, verb?: string) => w.posted.filter((m) => m.type === type && (verb === undefined || m.verb === verb)).length;
 /** Answer the ask `m` with `s`. `disk` = the HEADs follow this reply's mtimes (the default); false for a reply that
@@ -499,7 +504,7 @@ test("a status the poll asked AFTER a comment, answered from a sidecar read BEFO
   // an ask that overlapped the write but whose run started late — after the write and after the session's own
   // track-comment — read a LATER disk: new information, applied whatever its place in line
   const C = await enterComment(w, aside, "And a date.");
-  w.hooks.saved[0]({ mtimeNs: F55, logged: true });   // a direct edit acknowledged meanwhile re-asks status (E > C)
+  saved(w, F55);                                       // a direct edit acknowledged meanwhile re-asks status (E > C)
   const E = lastOf(w, "fileComments", "status");
   assert.ok(E.reqId > C.reqId);
   answer(w, withComments(S12, [first, second, third, fourth], { fileMtimeNs: F55 }), C); await flush();
@@ -507,7 +512,7 @@ test("a status the poll asked AFTER a comment, answered from a sidecar read BEFO
   answer(w, withComments(S22, [first, second, third, fourth, fifth], { fileMtimeNs: F55 }), E); await flush();
   assert.equal(cards(aside), 5, "a later reading of the disk lands");
   // a status asked once no write is out is not suspect: a sidecar gone (the vendored CLIs delete a clean one) is applied
-  w.hooks.saved[0]({ mtimeNs: F55, logged: true });
+  saved(w, F55);
   answer(w, status({ fileMtimeNs: F55, store: null, storePath: STORE_PATH, storeMtimeNs: null, unsent: NO_UNSENT })); await flush();
   assert.equal(cards(aside), 0, "the poll settles a deletion");
 });
@@ -706,7 +711,7 @@ test("Reload from a row re-reads with the romp loader standing where the row was
   assert.equal(aside.querySelector(".fc-load"), null, "the answer takes the loader down");
   assert.equal(aside.querySelector(".fc-err"), null);
   // a refused refresh over a showing status leaves the head's row with Reload: the same wait, in the head's slot
-  w.hooks.saved[0]({ mtimeNs: F55, logged: true });
+  saved(w, F55);
   refuse(w, lastOf(w, "fileComments", "status"), "host-error", "the comments helper crashed"); await flush();
   const r2 = aside.querySelector('.fc-err[data-slot="head"] [data-act="fcreload"]')!;
   assert.ok(r2);

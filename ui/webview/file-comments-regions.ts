@@ -313,7 +313,7 @@ export class RegionLayer {
    *  without a scroll: a mouse-initiated focus never scrolls, but a scripted focus() brings the element into
    *  view, and a rectangle straddling the body's edge (a PDF page or a tall image is taller than .fileview-body)
    *  jumped the content under the held pointer on every first press (2026-09-06). preventScroll keeps the
-   *  emulation faithful, as the panel's refocusBody already does. */
+   *  emulation faithful, as the panel's refocusMark already does. */
   private arm(): void {
     const o = this.overlay;
     const capture = (ev: PointerEvent) => {

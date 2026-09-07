@@ -270,8 +270,8 @@ request  {type:"fileComments", reqId, sid, path, verb, args?,
                    figureHash?: str}}
 reply    {type:"fileCommentsResult", reqId, verb, root, storePath, trackedBy, agentTooling,
           fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, unsent,
-          fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?, derivedSrcs?,
-          derivedSrcReasons?, baseline?}
+          log, logTruncated, decided, fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?,
+          derivedSrcs?, derivedSrcReasons?, baseline?}
 refusal  {type:"fileCommentsFailed", reqId, verb, code, error}
 ```
 
@@ -322,7 +322,15 @@ mtime fences alone, and a value that is not a sha256 hex is a caller bug, refuse
 read. A moved fence refuses, and the client re-issues `status`, re-renders, and retries by stable
 change or comment id, surfacing a second refusal verbatim. `figure-changed` is not retried, because
 a retry would stamp the new bytes: the person is told to reload and draw the region on the picture
-as it is now. Nothing merges.
+as it is now. Nothing merges. Two limits on the retry, from the Slice 2 build (2026-09-06):
+`accept-all` and `reject-all` carry no id, so after a moved fence they re-issue `status` and stop,
+saying nothing was decided — the choice is made again over the fresh set, never over changes that
+landed after the click; and `accept` and `reject` retry by id only while the change under that id
+still reads as its card showed it (a same-author `track-edit` coalesces into a pending change and
+grows its texts under the same id), else they stand down the same way and the card shows the new
+reading. The fresh status also carries the file's mtime, and when that is not the view's the panel
+re-fetches the bytes — a `store-moved` from a `track-edit` moved the file too, and the code names
+only the sidecar.
 
 Refusal codes name the resolved path, tilde-collapsed: `no-node` (node absent on the owning
 kernel; `status` returns it quietly and the action never appears), `editing-off` (an `error`
@@ -454,6 +462,15 @@ When you have addressed these, ask me for another look the same way you asked fo
 naming the file.
 ```
 
+The parenthetical for a comment bound to a change follows the change's kind: a substitution reads
+`on your change "<old>" to "<new>"` as above, an insertion `on the text you added "<new>"`, a
+deletion `on the text you removed "<old>"` — never an empty quoted string in the person's voice. A
+send that carries decisions and no comment takes a second shape (the Slice 2 build): `[obsidian-diff]
+I went over <absPath>.`, the accepted-and-rejected line, `No comments this time, so nothing needs a
+reply.`, and the closing sentence with the lead-in `When you have made more changes, ` — no comment
+ids and no command lines, since there is nothing to reply into; the vendored skill says such a message
+exists (patch 0005).
+
 The format is modeled on the VS Code host's `buildThreadPing` (`vscode/src/dispatch.ts:519-533`)
 but is romp's own text. It keeps what the skill describes: the `[obsidian-diff]` prefix, the
 absolute path, a comment id per comment (the CLI flag is still `--thread`, the format's word),
@@ -548,7 +565,11 @@ earlier occasions. And it holds the only state for what is unsent: the watermark
 of the last `send` entry, a `you` comment or reply is unsent when its `ts` is later, and accepts and rejects since the last send are counted from the log. The
 `status` reply carries the derivation. A browser crash, a second browser, or a fresh machine all
 see the same answer, which resolves the user's concern about a browser-local send state (decision
-10). The log is JSON lines by the user's ruling (decision 16); a rendered export for reading on
+10). The reply's `log` is the newest 200 entries (`logTruncated` says when that is a tail), and the
+panel reads a decided change's texts from the log to describe a comment bound to it; so the reply
+also carries `decided`, read off the whole log: for every comment bound to a change the sidecar no
+longer holds, the newest accept or reject entry naming that change, with its texts. A decision older
+than the tail describes its comment the same as a fresh one (the Slice 2 consolidation, 2026-09-06). The log is JSON lines by the user's ruling (decision 16); a rendered export for reading on
 GitHub can follow if wanted.
 
 ### Consent, trace, routing
@@ -907,8 +928,12 @@ change is shown on the change's card and leaves the comment list; once the chang
 comment's card stands on its own again with the change's texts read from the log's accept or reject
 entry, which is also what `describeComment` falls back to, so a manual Accept before the send keeps
 "on your change …" in the message. Reply on a change card writes `comment {suggestionId, note}`,
-an argument the verb list above does not name. After a reject the panel reloads the view itself:
-every reply re-baselines the poll, so the poll never sees the bytes the reject changed. The new
+an argument the verb list above does not name. The panel re-fetches the view's bytes itself whenever
+a status lands whose file mtime is not the view's — a reject's reply, the fresh status a moved fence
+asked for, an accept's reply after a write the poll had not seen — one fetch per mtime, with the loader
+over the cards until the paint shows that text: every reply re-baselines the poll, so the poll never
+sees a move a status already reported (the consolidation, 2026-09-06; before it, only a reject's reply
+and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
 elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
 beside their own and need no rule of their own to be usable; the sheets are the painter's.
 
@@ -1053,10 +1078,17 @@ Slice 3, on the figure paths the next paragraph describes, the one class of path
 itself), and writes only the sidecar, the comments log, `config.json`, and (on reject or save) the
 commented file. The mtime fences refuse and never merge. Both ops route by `sid` to the owning
 kernel over the existing federation splice; nothing new is exempt from `_authorize`, and the
-panel's verdict rides the authenticated `/defaults` payload rather than `/version`. The installer's
-new step registers a PreToolUse hook that runs on every Edit and Write in every Claude Code session
-on the machine; it exits at once in any session romp did not launch (no `ROMP_SID`), and in romp's
-sessions it is a path check that passes untracked files through.
+panel's verdict rides the authenticated `/defaults` payload rather than `/version`. Nothing under
+`.trackchanges/` is read or written through a symbolic link: the sidecar, the comments log and
+`config.json` are named from the file's path and never shown to the person, and a checked-out
+repository can commit anything under those names, so a link there would carry a write outside the
+four files above; every verb refuses `unreadable` when any of the three, or `.trackchanges/`
+itself, is a link or otherwise not a regular file, the log is opened `O_NOFOLLOW`, and every temp
+file the host creates takes a random name with `O_EXCL`. The commented file is the one path
+written through its link, on purpose: the person chose it (the Slice 2 review, 2026-09-06). The
+installer's new step registers a PreToolUse hook that runs on every Edit and Write in every Claude
+Code session on the machine; it exits at once in any session romp did not launch (no `ROMP_SID`),
+and in romp's sessions it is a path check that passes untracked files through.
 
 From Slice 3 the host also reads one class of path the kernel did not resolve: the figure a region
 comment's `target.src` names (the Slice 3 build, 2026-09-06). The client names that path on
@@ -1143,7 +1175,8 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
 ## Risks
 
 - **Two writers on one sidecar** (agent CLIs and the host script). Mitigation: one
-  load-mutate-write per verb, mtime fences, refuse-and-reload, retry by stable id. The Obsidian
+  load-mutate-write per verb, mtime fences, refuse-and-reload, retry by stable id while the change
+  still reads as shown (the id-less verbs stop and re-read). The Obsidian
   host spends several hundred lines on this race; the fence-plus-retry shape is the smaller
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
@@ -1179,7 +1212,7 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
   orphan; the comments log keeps the record either way (decision 27), and there is no rename UI.
   The follow-up option: heal on a mutating verb only, behind the consent, and let the
   fence-and-retry shape absorb the appearance (the verb refuses `store-moved` once, the client
-  re-issues `status` and retries by id).
+  re-issues `status` and retries by id while the change reads as it did).
 - **Author chips on a file a remote kernel owns.** `GET /sessions` lists only the local kernel's
   sessions and no `/remote/<host>/sessions` relay exists, so on such a file the panel cannot map a
   sidecar `authorId` to a session's name and color: those chips fall back to the neutral chip with

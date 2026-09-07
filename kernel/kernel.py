@@ -31329,12 +31329,14 @@ def _reject_trace_body(path, n):
     it and drops the records from the sidecar — so, like a save's edit trace, it is told in the
     person's voice with the same marker tail, and tests/test_injected_voice.py renders it
     with every other injected body. The count is the host's own answer (the ids it actually resolved),
-    the path is tilde-collapsed and marker-neutralized like the edit trace's. Sidecar-only verbs
-    (accept, comment, reply, resolve, set-tracked) send nothing: the sent message carries that news."""
-    n = int(n or 0)
-    return ("I rejected %d of your tracked changes in %s while reading it; the file and its sidecar both "
+    the path is tilde-collapsed and marker-neutralized like the edit trace's. `n` None is the landing
+    the host could not report — it died after writing the file (_file_comments_after) — and says "some
+    of", never a number the kernel would have to guess. Sidecar-only verbs (accept, comment, reply,
+    resolve, set-tracked) send nothing: the sent message carries that news."""
+    count = "some of" if n is None else "%d of" % int(n or 0)
+    return ("I rejected %s your tracked changes in %s while reading it; the file and its sidecar both "
             "changed, so re-read it before writing."
-            % (n, _neutralize_romp_markers(_tilde(str(path or ""))))) + _TRACE_MARKER_TAIL
+            % (count, _neutralize_romp_markers(_tilde(str(path or ""))))) + _TRACE_MARKER_TAIL
 
 
 def _reject_trace(path, sid, n):
@@ -31363,6 +31365,7 @@ def _reject_trace(path, sid, n):
 #      fileComments (the disk verbs) and fileCommentsSend (the message); saveFile itself appends a
 #      direct edit to the log.
 _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"   # tests point this at a stub
+_FILE_COMMENTS_TRACED_VERBS = frozenset(("reject", "reject-all"))   # the verbs that change the FILE's bytes
 _FILE_COMMENTS_TIMEOUT = 10                                        # seconds: one verb is one load-mutate-write
 _FILE_COMMENTS_REPLY_MAX = 16 * 1024 * 1024                        # bytes of host stdout the kernel will hold for ONE
 #   reply — WS_QUEUE_BYTES's default, past which _mk_ws_send drops the client anyway, so a bigger answer could never
@@ -31611,12 +31614,31 @@ def _file_comments_op(msg):
     if not _file_comments_node():
         return fail("no-node", "cannot open the comments for %s: node is not installed on this machine, "
                                "and the comments helper runs under it" % _tilde(p))
+    # the file-writing verbs: the file's identity before and after the host run, so a host that wrote the
+    # file and then died — killed after its rename, or failing inside the reply it builds after the writes
+    # — is not reported as a request that changed nothing (_file_comments_after tells the session)
+    before = _file_comments_file_id(p) if verb in _FILE_COMMENTS_TRACED_VERBS else None
     out, err = _file_comments_call(p, verb, msg.get("args"), msg.get("fence"))
     if err:
-        return fail(*err)
+        code, error = err
+        if code == "host-error" and before is not None and _file_comments_file_id(p) != before:
+            f = fail(code, error + " The file itself changed on disk during the request — reload to see what landed.")
+            f["fileChanged"] = True
+            return f
+        return fail(code, error)
     rep = {k: v for k, v in out.items() if k != "ok"}
     rep.update({"type": "fileCommentsResult", "reqId": rid, "verb": verb})
     return rep
+
+
+def _file_comments_file_id(p):
+    """(mtime_ns, size) of the file at `p`, or None when it cannot be stat'ed — the evidence _file_comments_op
+    compares across a host run to tell whether the file's bytes changed under a request that then failed."""
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
 
 
 def _sh_word(s):
@@ -31632,6 +31654,12 @@ def _sh_word(s):
     return shlex.quote(str(s))
 
 
+# The closing both shapes of the sent message end on, after their own lead-in ("When you have addressed
+# these, " / "When you have made more changes, "): the loop's return signal, one constant so the two
+# shapes cannot drift apart. The line break before "naming the file." is the plan's own.
+_SEND_ASK_AGAIN = ("ask me for another look the same way you asked for this one,", "naming the file.")
+
+
 def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
@@ -31643,8 +31671,25 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
     it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
-    The webview's preview builder produces this text byte for byte, so change both or neither."""
+    The webview's preview builder produces this text byte for byte, so change both or neither.
+
+    With NO comments the message is decisions only (Slice 2: a manual Accept or Reject, or Accept
+    all, is unsent until a send carries it, and the send op admits an empty list when a decision
+    is pending) and wears the shape below instead. The comments shape would have said "I left 0
+    comments", printed the two `--thread <id>` command lines with no id to put in them, and asked
+    the session to address a list that was not there (the review, 2026-09-06): a template speaking,
+    and a reply command aimed at a comment that does not exist. So the decisions-only shape names the
+    file and the decisions, says outright that nothing needs a reply, and keeps the closing ask so
+    the loop still comes back. The prefix stays: to the vendored skill it means "you are the
+    editor for the file named here", which is as true of a decision as of a comment."""
     ap = _neutralize_romp_markers(str(path or ""))
+    if not comments:
+        lines = ["[obsidian-diff] I went over %s." % ap, ""]
+        if (accepted or 0) + (rejected or 0) > 0:
+            lines += ["I accepted %d of your changes and rejected %d." % (accepted or 0, rejected or 0), ""]
+        lines += ["No comments this time, so nothing needs a reply.",
+                  "When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
+        return "\n".join(lines) + "\n"
     word = _sh_word(ap)                  # the command lines: what a shell hands the CLI as --file's value
     n = len(comments)
     lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
@@ -31668,8 +31713,8 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
         lines.append("  • to revise the text: edit the file normally, then say what you changed with the "
                      "reply command above")
     lines.append("")
-    lines.append("When you have addressed these, ask me for another look the same way you asked for this one,")
-    lines.append("naming the file.")
+    lines.append("When you have addressed these, " + _SEND_ASK_AGAIN[0])
+    lines.append(_SEND_ASK_AGAIN[1])
     return "\n".join(lines) + "\n"
 
 
@@ -31836,9 +31881,6 @@ def _file_comments_reply(client, msg, op, fail_type, after=None):
     threading.Thread(target=_run, daemon=True).start()
 
 
-_FILE_COMMENTS_TRACED_VERBS = frozenset(("reject", "reject-all"))   # the verbs that change the FILE's bytes
-
-
 def _file_comments_after(msg, rep):
     """What follows a fileComments reply (plans/file-review.md, Consent, trace, routing): after a
     successful reject or reject-all — the host answered ok and its `rejected` list names the ids it
@@ -31849,8 +31891,24 @@ def _file_comments_after(msg, rep):
     whose reply lacks the list is a contract break between the host and the kernel: it is written to
     stderr and no trace goes, because a count the kernel would have to guess is not one to tell the
     session. The path is resolved as the op resolved it (_file_comments_path: the real file), so the
-    owner lookup and the body name the same file the sidecar keys on."""
-    if rep.get("type") != "fileCommentsResult" or str(msg.get("verb") or "") not in _FILE_COMMENTS_TRACED_VERBS:
+    owner lookup and the body name the same file the sidecar keys on.
+
+    One failure is told too: a `host-error` on a reject whose file changed under the run (`fileChanged`,
+    set by _file_comments_op from the file's stat before and after) — the host wrote the sidecar and the
+    file and then died before its reply, so the bytes moved with no ok to say so. The session hears the
+    count-less body ("some of"), since the host never reported which ids landed. The host's own refusals
+    (`ok: false`) are never traced: a refusal writes nothing, so a file that moved under one was moved by
+    someone else (the review, 2026-09-06: the never-lose-the-thread rule)."""
+    verb = str(msg.get("verb") or "")
+    if verb not in _FILE_COMMENTS_TRACED_VERBS:
+        return
+    if rep.get("type") == "fileCommentsFailed":
+        if rep.get("code") == "host-error" and rep.get("fileChanged") is True:
+            sid = msg.get("sid") or None
+            path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
+            _reject_trace(path, sid, None)
+        return
+    if rep.get("type") != "fileCommentsResult":
         return
     rejected = rep.get("rejected")
     if not isinstance(rejected, list):

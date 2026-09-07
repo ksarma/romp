@@ -68,18 +68,42 @@
 //     such a comment whose request names no `src` takes the passage's figure and writes the target
 //     with its src; a passage that cannot tell refuses (`no-figure`, or the anchor's own code),
 //     since that is the disk's state and not a caller bug. A stored src must still be named by the
-//     request, as before: the panel holds it, and a re-place keeps the figure.
+//     request, as before: the panel holds it, and a re-place keeps the figure;
+//   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
+//     comments log and config.json are named from the file's path and never shown to the person,
+//     and a checked-out repository can commit anything under those names (the plan leaves committing
+//     `.trackchanges/` to the project), so a link there would carry a write — the log line with a
+//     change's text in it, the sidecar's bytes — to wherever it points, outside the four files the
+//     plan's Security posture says this script writes. Every verb refuses `unreadable` when any of
+//     the three, or `.trackchanges/` itself, is a link or otherwise not a regular file
+//     (checkTrackDir, before any read through them); the log is opened O_NOFOLLOW besides
+//     (appendLog, readLog); and every temp file this script creates takes a random name and O_EXCL,
+//     and the sidecar is never saved onto its own path (store-io's saveStore writes a fixed
+//     `<sidecar>.tmp` and follows a link planted there), so no temp can be planted. The commented
+//     file is the one path written through its link, on purpose: the person chose it, and its
+//     realpath is where the text lives (prepareFileWrite).
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
 // The verbs that change the FILE (reject, reject-all) fence on its mtime too, refuse a file that is
-// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, write the
-// sidecar first and the file second, and put the prior sidecar back if the file write fails — the
-// order track-edit uses, so a reader never finds a file whose changes its sidecar does not describe.
+// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, land the
+// sidecar before the file (the order track-edit uses, so a reader never finds a file whose changes
+// its sidecar does not describe), and put the prior sidecar back if the file write fails.
+//
+// A decision is recorded before it lands, never after. Accept and reject each end in one rename
+// that makes them true, and the comments-log entry is appended BEFORE that rename, with every other
+// fallible step (the temp file's bytes, the sidecar's bytes) done earlier still: a failed append
+// refuses with nothing changed, and a kill after the append leaves the record. Appending after the
+// writes left a landed decision with no record when the append failed (the log holds the only state
+// for what is unsent, so the next send omitted it), and for a reject it inverted track-edit's safety
+// property: a record without its text detaches loudly on the next load, but a rejected change whose
+// text is still in the file, with no op and no log entry, reads as accepted. What remains: a kill
+// between the sidecar's rename and the append (no fsync between them) still reads that way, and a
+// kill after the last rename lands the decision while the kernel hears no reply.
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
-import { createHash } from 'node:crypto';
+import crypto, { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -209,6 +233,71 @@ function pathsFor(root, abs) {
   };
 }
 
+// The entry at a path, the link itself when it is one; null when nothing is there.
+function lstatOrNull(p) {
+  try {
+    return fs.lstatSync(p);
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return null;
+    throw e;
+  }
+}
+
+// The unguessable part of every temp name this script creates. A pid and a millisecond clock are
+// guessable in principle; a name nobody can predict is one nobody can plant a link under, and every
+// temp is opened O_EXCL besides, so a planted one fails the open instead of being written through.
+function tempToken() {
+  return `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
+}
+
+// Open flags for a path this script must never follow a link at: O_NOFOLLOW where the platform has
+// it (Linux, macOS; Windows has no such flag, and the lstat checks stand alone there), O_NONBLOCK
+// so a FIFO planted under the name returns a descriptor to fstat instead of blocking the host until
+// the kernel's deadline kills it (the same reason openRegular uses it on the commented file).
+const O_NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
+const O_NONBLOCK = fs.constants.O_NONBLOCK || 0;
+
+// What an lstat found, for a refusal that ends "…, not a regular file" (or "…, not a directory").
+function whatIs(st) {
+  if (st.isSymbolicLink()) return 'a symbolic link';
+  if (st.isDirectory()) return 'a directory';
+  if (st.isFIFO()) return 'a named pipe';
+  if (st.isSocket()) return 'a socket';
+  if (st.isCharacterDevice() || st.isBlockDevice()) return 'a device';
+  return 'an entry of another kind';
+}
+
+// Every verb under a root runs this before it reads or writes anything under `.trackchanges/`. The
+// three names this script writes there are derived from the commented file's path, never shown or
+// chosen by the person, and a checked-out repository can commit anything under them: a symbolic link
+// at the log's name would carry the next accept's entry — the change's text in it — to wherever the
+// link points, and a link at the sidecar's name would be read through as the sidecar. So each of
+// them, when it exists, must be a regular file, and `.trackchanges/` itself a directory rather than
+// a link to one elsewhere; anything else refuses `unreadable` naming the entry, with nothing
+// changed. A link is never followed to see what it points at, and never removed: the project's
+// files are the project's, and the refusal says what to change. A root that has no `.trackchanges/`
+// yet (a `.git` landmark before the first comment) passes: there is nothing to check until the
+// first write creates the directory.
+function checkTrackDir(ctx, paths) {
+  const dir = path.dirname(paths.storePath);
+  const dst = lstatOrNull(dir);
+  if (dst && !dst.isDirectory()) {
+    throw new Refusal('unreadable', `the comments folder for ${ctx.shown} (${tilde(dir)}) is ${whatIs(dst)}, not a directory, so nothing in it is read or written from the dashboard; nothing was changed`);
+  }
+  if (!dst) return;
+  const entries = [
+    ['comments', paths.storePath],
+    ['comments log', paths.logPath],
+    ['tracking list', paths.configPath],
+  ];
+  for (const [what, p] of entries) {
+    const st = lstatOrNull(p);
+    if (st && !st.isFile()) {
+      throw new Refusal('unreadable', `the ${what} for ${ctx.shown} cannot be used: ${tilde(p)} is ${whatIs(st)}, not a regular file, and the dashboard never reads or writes it through one — replace it with a regular file, or remove it; nothing was changed`);
+    }
+  }
+}
+
 // "present" when the agent-side CLIs are linked on this machine (romp's install.sh, or
 // track-changents' own): without them the session cannot answer a comment.
 export function agentTooling() {
@@ -217,14 +306,39 @@ export function agentTooling() {
 
 // ── the comments log ────────────────────────────────────────────────
 
+// The one way the log is opened, for reading or appending: never through a link at its path
+// (O_NOFOLLOW fails the open with ELOOP), and only as a regular file (the fstat through the
+// descriptor, so the check and the use are one inode). checkTrackDir refuses a link before any verb
+// gets here; this is the enforcement under it, on the open itself, so no route past the check can
+// write through a link. Throws the OS error, or one naming what the path is.
+function openLog(logPath, forAppend) {
+  const c = fs.constants;
+  const flags = (forAppend ? (c.O_WRONLY | c.O_APPEND | c.O_CREAT) : c.O_RDONLY) | O_NOFOLLOW | O_NONBLOCK;
+  let fd;
+  try {
+    fd = fs.openSync(logPath, flags, 0o666);
+    const st = fs.fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${logPath} is ${whatIs(st)}, not a regular file`);
+    return fd;
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    if (e && e.code === 'ELOOP') throw new Error(`${logPath} is a symbolic link, and the comments log is never written or read through one`);
+    throw e;
+  }
+}
+
 // Parse every line; a line that is not a JSON object is skipped and counted, never rewritten.
 export function readLog(logPath) {
   let raw;
+  let fd;
   try {
-    raw = fs.readFileSync(logPath, 'utf8');
+    fd = openLog(logPath, false);
+    raw = fs.readFileSync(fd, 'utf8');
   } catch (e) {
     if (e && e.code === 'ENOENT') return { entries: [], bad: 0 };
     throw e;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
   }
   const entries = [];
   let bad = 0;
@@ -239,9 +353,19 @@ export function readLog(logPath) {
   return { entries, bad };
 }
 
-// One line per entry, appended; the directory must already exist (the caller makes sure).
+// One line per entry, appended; the directory must already exist (the caller makes sure). Opened
+// through openLog, so a link at the log's path is never written through (the plan's Security
+// posture names four files this script writes; a link would make the entry — a decision's change
+// texts, checkout-controlled — land in a fifth, anywhere the link points).
 export function appendLog(logPath, entry) {
-  fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
+  const fd = openLog(logPath, true);
+  try {
+    const buf = Buffer.from(JSON.stringify(entry) + '\n', 'utf8');
+    let off = 0;
+    while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
+  } finally {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+  }
 }
 
 function logEntry(kind, fields) {
@@ -1021,30 +1145,54 @@ export function applyEdits(text, edits) {
   return out;
 }
 
-// Atomic write of a file's new text, for the verbs that change file bytes (reject, save): a
-// temp file in the same directory whose name does not end in .json (so the other hosts' sidecar
-// scans skip it), written through the realpath (never over a symlink), mode preserved, renamed
-// into place. Returns the new mtime string. Reject writes through it; Slice 5's save will too.
-export function writeFileAtomic(absPath, text) {
+// Atomic write of a file's new text, for the verbs that change file bytes (reject, save), in two
+// halves so a verb can land other writes between them (doReject puts the sidecar and the log entry
+// there). `prepareFileWrite` does every step that can fail for a reason of its own — the realpath
+// (never over a symlink), the temp file in the same directory with a name that does not end in
+// .json (so the other hosts' sidecar scans skip it), the bytes, fsync, the mode preserved — and
+// nothing under the file's own name changes until `commitFileWrite` renames the temp into place
+// and returns the new mtime string; `discardFileWrite` removes a temp that will not land.
+// writeFileAtomic is the two in one call; Slice 5's save will write through it.
+function prepareFileWrite(absPath, text) {
   const real = fs.realpathSync(absPath);
   const st = fs.statSync(real);
   const mode = st.mode & 0o7777;
-  const tmp = path.join(path.dirname(real), `.${path.basename(real)}.romp-fc-${process.pid}-${Date.now()}.tmp`);
+  const tmp = path.join(path.dirname(real), `.${path.basename(real)}.romp-fc-${tempToken()}.tmp`);
   let fd;
   try {
-    fd = fs.openSync(tmp, 'w', mode);
+    fd = fs.openSync(tmp, 'wx', mode);
     fs.writeFileSync(fd, text, 'utf8');
     try { fs.fsyncSync(fd); } catch { /* fsync unsupported on some filesystems */ }
     fs.closeSync(fd);
     fd = undefined;
     fs.chmodSync(tmp, mode);
-    fs.renameSync(tmp, real);
   } catch (e) {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }
     throw e;
   }
-  return statNs(real);
+  return { tmp, real };
+}
+function commitFileWrite(prepared) {
+  fs.renameSync(prepared.tmp, prepared.real);
+  return statNs(prepared.real);
+}
+function discardFileWrite(prepared) {
+  try { fs.unlinkSync(prepared.tmp); } catch { /* ignore */ }
+}
+export function writeFileAtomic(absPath, text) {
+  const prepared = prepareFileWrite(absPath, text);
+  try {
+    return commitFileWrite(prepared);
+  } catch (e) {
+    discardFileWrite(prepared);
+    throw e;
+  }
+}
+
+// The OS text of a failed write, tilde-collapsed, for a refusal.
+function whyOf(e) {
+  return tildeText(e && e.message ? e.message : String(e));
 }
 
 // ── the sidecar ─────────────────────────────────────────────────────
@@ -1093,7 +1241,15 @@ function seedStore(rel) {
 // then on, for this script and for the CLIs alike (decision 37).
 function createLandmark(ctx) {
   const dir = path.dirname(ctx.abs);
-  fs.mkdirSync(path.join(dir, '.trackchanges'), { recursive: true });
+  const mark = path.join(dir, '.trackchanges');
+  // findVaultRoot saw no directory here, so anything AT the name is a link to nowhere or a
+  // non-directory: never followed, never removed, and never built over (mkdir would fail or land
+  // the folder wherever a dangling link is later pointed).
+  const st = lstatOrNull(mark);
+  if (st) {
+    throw new Refusal('unreadable', `the comments folder for ${ctx.shown} cannot be created: ${tilde(mark)} already exists as ${whatIs(st)}${st.isSymbolicLink() ? ' to nothing' : ''}, not a directory — remove it, or replace it with a directory; nothing was changed`);
+  }
+  fs.mkdirSync(mark, { recursive: true });
   const root = findVaultRoot(ctx.abs);
   if (root !== dir) throw new Error(`created ${tilde(dir)}/.trackchanges but findVaultRoot answers ${tilde(String(root))}`);
   return root;
@@ -1203,6 +1359,39 @@ export function buildComment(text, args, now, suggestions) {
 
 // ── the reply ───────────────────────────────────────────────────────
 
+// The decisions the panel needs that the log TAIL may not carry: for every comment bound (suggestionId) to a
+// change the sidecar no longer holds — not pending, not detached — the newest accept or reject entry naming
+// that id, with the texts recorded at the time. The panel reads a decided change's texts from the log
+// (plans/file-review.md, The comments log: a decision survives the change leaving the sidecar), and the
+// reply's `log` is the newest LOG_TAIL entries; a decision older than that fell out of what the panel saw,
+// and its comment's card said "this file" (the review, 2026-09-06). Read from the FULL entries, keyed by
+// change id, so a card and a message describe the change however old the decision is.
+export function decidedFor(store, entries) {
+  const out = {};
+  if (!store) return out;
+  const held = new Set();
+  for (const s of store.suggestions || []) if (s && s.id != null) held.add(String(s.id));
+  for (const d of store.detached || []) if (d && d.id != null) held.add(String(d.id));
+  const want = new Set();
+  for (const c of store.comments || []) {
+    if (c && c.suggestionId != null && !held.has(String(c.suggestionId))) want.add(String(c.suggestionId));
+  }
+  for (let i = entries.length - 1; i >= 0 && want.size; i--) {
+    const e = entries[i];
+    if (!e || (e.kind !== 'accept' && e.kind !== 'reject') || !Array.isArray(e.changes)) continue;
+    for (const ch of e.changes) {
+      if (!ch || ch.id == null || !want.has(String(ch.id))) continue;
+      want.delete(String(ch.id));
+      out[String(ch.id)] = {
+        decision: e.kind === 'accept' ? 'accepted' : 'rejected',
+        oldText: typeof ch.oldText === 'string' ? ch.oldText : '',
+        newText: typeof ch.newText === 'string' ? ch.newText : '',
+      };
+    }
+  }
+  return out;
+}
+
 function reply(ctx, state, extra) {
   const { root, paths, store: loaded, text, fileMtimeNs } = state;
   let log = [];
@@ -1236,6 +1425,7 @@ function reply(ctx, state, extra) {
     unsent: deriveUnsent(store, entries),
     log,
     logTruncated,
+    decided: decidedFor(store, entries),
   };
   // What a region comment's target.hash is compared with, on every reply (each one is the status
   // the panel holds next): a media file's own bytes, or the figures a text file's comments name —
@@ -1275,6 +1465,7 @@ function doStatus(ctx) {
   const root = findVaultRoot(ctx.abs);
   if (!root) return reply(ctx, { root: null, paths: null, ...loadFile(ctx, null) });
   const paths = pathsFor(root, ctx.abs);
+  checkTrackDir(ctx, paths);
   checkConfig(ctx, paths);
   return reply(ctx, { root, paths, ...loadFile(ctx, paths) });
 }
@@ -1293,6 +1484,7 @@ function withSidecar(ctx, create, plan) {
   const file = readFile(ctx);
   let root = findVaultRoot(ctx.abs);
   let paths = root ? pathsFor(root, ctx.abs) : null;
+  if (paths) checkTrackDir(ctx, paths);
   requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved',
     `the comments for ${ctx.shown}`);
   if (paths) checkConfig(ctx, paths);
@@ -1305,10 +1497,11 @@ function withSidecar(ctx, create, plan) {
   if (!root) {
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
+    checkTrackDir(ctx, paths);
   }
   if (!store) store = seedStore(paths.rel);
   apply(store);
-  saveStore(root, paths.storePath, store, file.text);
+  landSidecar(root, paths.storePath, store, file.text);
   return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
 }
 
@@ -1436,6 +1629,7 @@ function requireIds(ctx) {
 
 // The file and its sidecar for a decision, checked in the order every fenced verb uses: the
 // request's shape (a missing fence key is a caller bug whatever the disk says), the file, the
+// names under .trackchanges/ (a fence stat'ed through a link would compare the link's target), the
 // sidecar fence, for the file-writing verbs the file fence too, the config, then the load. `store`
 // is null when there is no sidecar, which for a decision means nothing is pending.
 function loadForDecision(ctx, writesFile) {
@@ -1445,6 +1639,7 @@ function loadForDecision(ctx, writesFile) {
   const file = readFile(ctx);
   const root = findVaultRoot(ctx.abs);
   const paths = root ? pathsFor(root, ctx.abs) : null;
+  if (paths) checkTrackDir(ctx, paths);
   requireFence(ctx, 'storeMtimeNs', paths ? statNs(paths.storePath) : null, 'store-moved', `the comments for ${ctx.shown}`);
   if (writesFile) requireFence(ctx, 'fileMtimeNs', file.fileMtimeNs, 'file-moved', `the file ${ctx.shown}`);
   if (paths) checkConfig(ctx, paths);
@@ -1486,11 +1681,63 @@ function afterDecision(ctx, paths, store, text) {
   return reloadSaved(ctx, paths, text);
 }
 
+// The sidecar's next bytes written by saveStore — the format stays store-io's — under a temp name
+// beside it that no .json scan matches, so the log entry can be appended before the one rename that
+// lands them (commitSidecar). Until that rename the disk holds the prior sidecar. saveStore itself
+// writes `<tmp>.tmp` and renames it to `<tmp>`; a failure leaves neither behind.
+// This is also the ONLY way this script saves a sidecar (landSidecar is the two steps back to
+// back): saveStore called on the sidecar's own path writes a fixed `<sidecar>.tmp` with a plain
+// open, which follows a link planted under that name in a checked-out `.trackchanges/` and
+// replaces the link's target with the sidecar's bytes. The staged name carries a random token
+// nobody can plant a link under, and both names saveStore will use are confirmed empty first.
+function stageSidecar(root, storePath, store, text) {
+  const tmp = `${storePath}.romp-fc-${tempToken()}.tmp`;
+  for (const p of [tmp, `${tmp}.tmp`]) {
+    if (lstatOrNull(p)) throw new Error(`${p} already exists; the sidecar is never written over an existing entry`);
+  }
+  try {
+    saveStore(root, tmp, store, text);
+  } catch (e) {
+    discardSidecar(tmp);
+    throw e;
+  }
+  return tmp;
+}
+function commitSidecar(tmp, storePath) { fs.renameSync(tmp, storePath); }
+function discardSidecar(tmp) {
+  try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  try { fs.unlinkSync(`${tmp}.tmp`); } catch { /* ignore */ }
+}
+// Stage and land in one step, for the verbs whose sidecar write has nothing to interleave (the
+// comment, reply and resolve of withSidecar, and reject's sidecar-before-file order).
+function landSidecar(root, storePath, store, text) {
+  const staged = stageSidecar(root, storePath, store, text);
+  try {
+    commitSidecar(staged, storePath);
+  } catch (e) {
+    discardSidecar(staged);
+    throw e;
+  }
+}
+
+// The refusals a decision's writes can end in, each naming what the disk holds afterwards.
+function cannotWriteSidecar(ctx, paths, e) {
+  return new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; nothing was changed`);
+}
+function cannotRecord(ctx, paths, e, then) {
+  return new Refusal('unreadable', `cannot record the decision in the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${whyOf(e)}; ${then}`);
+}
+
 // accept / accept-all: the engine drops the records and the file is untouched (a change's effect
 // is already in the text). Every comment bound to an accepted change by `suggestionId` is marked
 // resolved and KEPT — a stated divergence from the Obsidian host, which drops them — so the ids a
 // sent message named still answer to track-reply. The match is on the field alone, anchor or not:
 // track-edit --thread gives a passage comment a suggestionId while it keeps its anchor.
+// The writes, in order: the sidecar's bytes staged beside it, the log entry, the rename that lands
+// the sidecar. A failed stage or append refuses with nothing changed (the change is still pending,
+// the log says nothing); the rename is the one step after the append, and its failure — a
+// destination made immutable, a race on the directory — refuses saying the log already holds the
+// decision (`logged: true`), so the person knows the entry counts a decision that did not land.
 function doAccept(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, false);
   const decided = decidedChanges(ctx, store, all);
@@ -1500,28 +1747,74 @@ function doAccept(ctx, all) {
   for (const c of store.comments) {
     if (c && c.suggestionId != null && set.has(String(c.suggestionId))) c.resolved = true;
   }
-  saveStore(root, paths.storePath, store, file.text);
-  appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
+  let staged;
+  try {
+    staged = stageSidecar(root, paths.storePath, store, file.text);
+  } catch (e) {
+    throw cannotWriteSidecar(ctx, paths, e);
+  }
+  try {
+    appendLog(paths.logPath, logEntry('accept', { changes: changesOf(decided) }));
+  } catch (e) {
+    discardSidecar(staged);
+    throw cannotRecord(ctx, paths, e, 'nothing was changed');
+  }
+  try {
+    commitSidecar(staged, paths.storePath);
+  } catch (e) {
+    discardSidecar(staged);
+    throw new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; the decision was recorded in the comments log but did not land — reload and retry`, { logged: true });
+  }
   return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids });
 }
 
-// Put the sidecar back as it was before a reject whose file write failed: the prior bytes, or
-// nothing when there were none (a reject always finds a sidecar, so that branch is a guard).
-// Replaced by temp-and-rename like every other sidecar write, with a name no .json scan matches.
+// Put the sidecar back as it was before a reject that landed it and then could not finish: the
+// prior bytes, or nothing when there were none (a reject always finds a sidecar, so that branch is
+// a guard). Replaced by temp-and-rename like every other sidecar write, with a name no .json scan
+// matches, random, and opened O_EXCL, so nothing planted under it is written through. Returns the
+// clause the refusal ends with: put back, or not, and why.
 function restoreSidecar(storePath, prior) {
   if (prior == null) { fs.unlinkSync(storePath); return; }
-  const tmp = `${storePath}.romp-fc-restore-${process.pid}.tmp`;
-  fs.writeFileSync(tmp, prior);
-  fs.renameSync(tmp, storePath);
+  const tmp = `${storePath}.romp-fc-restore-${tempToken()}.tmp`;
+  let fd;
+  try {
+    fd = fs.openSync(tmp, 'wx');
+    fs.writeFileSync(fd, prior);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmp, storePath);
+  } catch (e) {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw e;
+  }
+}
+function putBack(storePath, prior, then) {
+  try {
+    restoreSidecar(storePath, prior);
+  } catch (e2) {
+    return `the comments file could not be put back either (${whyOf(e2)}) — reload before doing anything else`;
+  }
+  return `the comments file was put back as it was${then ? `, ${then}` : ' and nothing was changed'}`;
 }
 
 // reject / reject-all: the engine's reverse edits give the new text, applied by applyEdits and
-// checked against the file before anything is written (not-text, too-large). Then the order
-// track-edit uses: the sidecar first, saved against the NEW text so its fingerprint describes the
-// file about to exist, then the file through writeFileAtomic; if the file write fails the prior
-// sidecar bytes go back and the verb refuses `unreadable` with the OS text. The survivors come
-// back from the engine remapped into post-reject coordinates; reloading the saved sidecar against
-// the new text re-verifies them the way every later load will.
+// checked against the file before anything is written (not-text, too-large). The writes, in order:
+//   1. the file's new bytes, staged in a temp beside it (prepareFileWrite: the realpath, the
+//      directory, the mode — everything that can refuse for a reason of its own — with nothing
+//      under the file's name changed; a failure here touches neither the sidecar nor the log);
+//   2. the sidecar, saved against the NEW text so its fingerprint describes the file about to
+//      exist — the order track-edit uses, the sidecar landing before the file — through
+//      landSidecar (a random-named stage and a rename), never saveStore on the sidecar's path;
+//   3. the log entry; a failure puts the prior sidecar bytes back and refuses with nothing changed;
+//   4. the rename that lands the file. The one step after the append: if it fails (a destination
+//      made immutable, a race on the directory) the sidecar goes back and the refusal says the log
+//      already holds the decision (`logged: true`).
+// Between 2 and 3 a kill leaves the rejected change's text in the file with no op and no record —
+// a rename and an append apart, no fsync between them; the plan's sidecar-first order keeps that
+// window and this order makes it as narrow as it can be. Every refusal is `unreadable` with the OS
+// text. The survivors come back from the engine remapped into post-reject coordinates; reloading
+// the saved sidecar against the new text re-verifies them the way every later load will.
 function doReject(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, true);
   const decided = decidedChanges(ctx, store, all);
@@ -1539,20 +1832,33 @@ function doReject(ctx, all) {
   checkTooLarge(ctx.shown, newText);
   let prior = null;
   try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+  let prepared;
+  try {
+    prepared = prepareFileWrite(ctx.abs, newText);
+  } catch (e) {
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
+  }
   store.suggestions = res.suggestions;
-  saveStore(root, paths.storePath, store, newText);
+  try {
+    landSidecar(root, paths.storePath, store, newText);
+  } catch (e) {
+    discardFileWrite(prepared);
+    throw cannotWriteSidecar(ctx, paths, e);
+  }
+  try {
+    appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
+  } catch (e) {
+    discardFileWrite(prepared);
+    throw cannotRecord(ctx, paths, e, putBack(paths.storePath, prior));
+  }
   let fileMtimeNs;
   try {
-    fileMtimeNs = writeFileAtomic(ctx.abs, newText);
+    fileMtimeNs = commitFileWrite(prepared);
   } catch (e) {
-    const why = tildeText(e && e.message ? e.message : String(e));
-    let restored = 'the comments file was put back as it was and nothing was changed';
-    try { restoreSidecar(paths.storePath, prior); } catch (e2) {
-      restored = `the comments file could not be put back either (${tildeText(e2 && e2.message ? e2.message : String(e2))}) — reload before doing anything else`;
-    }
-    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${why}; ${restored}`);
+    discardFileWrite(prepared);
+    const back = putBack(paths.storePath, prior, 'but the decision had already been recorded in the comments log — reload and retry');
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, { logged: true });
   }
-  appendLog(paths.logPath, logEntry('reject', { changes: changesOf(decided) }));
   return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids });
 }
 
@@ -1590,10 +1896,10 @@ function writeConfigAtomic(root, relPath, on) {
   const configPath = configPathFor(root);
   const dir = path.dirname(configPath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.config.romp-fc-${process.pid}-${Date.now()}.tmp`);
+  const tmp = path.join(dir, `.config.romp-fc-${tempToken()}.tmp`);
   let fd;
   try {
-    fd = fs.openSync(tmp, 'w');
+    fd = fs.openSync(tmp, 'wx');
     fs.writeFileSync(fd, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
     try { fs.fsyncSync(fd); } catch { /* fsync unsupported on some filesystems */ }
     fs.closeSync(fd);
@@ -1612,6 +1918,7 @@ function doSetTracked(ctx) {
   if (on && scope !== 'file' && scope !== 'folder') throw new BadRequest('set-tracked needs scope: "file"|"folder"');
   let root = findVaultRoot(ctx.abs);
   let paths = root ? pathsFor(root, ctx.abs) : null;
+  if (paths) checkTrackDir(ctx, paths);
   requireFence(ctx, 'configMtimeNs', paths ? statNs(paths.configPath) : null, 'config-moved',
     `the tracking setting for ${ctx.shown}`);
   if (paths) checkConfig(ctx, paths);
@@ -1668,6 +1975,7 @@ function doLogEdit(ctx) {
   let logged = false;
   try {
     if (paths) {
+      checkTrackDir(ctx, paths);
       const cfg = configStatus(paths);
       if (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs))) {
         const fields = {};
@@ -1708,6 +2016,7 @@ function doLogSend(ctx) {
       root = createLandmark(ctx);
     }
     const paths = pathsFor(root, ctx.abs);
+    checkTrackDir(ctx, paths);
     fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
     const fields = { sid: a.sid };
     if (typeof a.sessionName === 'string') fields.sessionName = a.sessionName;

@@ -54,6 +54,7 @@ process.stdin.on('end', () => {
   fs.writeFileSync(CFG.seen, JSON.stringify({ request,
     hasRoot: Object.prototype.hasOwnProperty.call(process.env, 'TRACKCHANGES_ROOT'),
     argv: process.argv.slice(2) }));
+  if (CFG.write !== null && request && request.path) fs.writeFileSync(request.path, CFG.write);   // the host wrote the file…
   const finish = () => {
     if (CFG.stderr) process.stderr.write(CFG.stderr);
     if (CFG.stdout !== null) process.stdout.write(CFG.stdout);
@@ -92,10 +93,11 @@ class _Harness(unittest.TestCase):
         km._set_file_editing(False)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def stub(self, reply=None, exit=0, stderr="", stdout=None, sleep=0, wait_for=None):
+    def stub(self, reply=None, exit=0, stderr="", stdout=None, sleep=0, wait_for=None, write=None):
         """(Re)write the stub host script: answer `reply` as JSON (or raw `stdout`), exit `exit`. `sleep`
         stalls the answer for that many seconds; `wait_for` holds it until that path exists (a gate the
-        test opens, so a test about the wait itself needs no clock)."""
+        test opens, so a test about the wait itself needs no clock). `write` makes the stub rewrite the
+        request's file with that text before it answers — the host that landed its writes and then died."""
         if reply is None:
             reply = {"ok": True, "verb": "status", "root": self.root, "storePath": None, "trackedBy": None,
                      "agentTooling": "absent", "fileMtimeNs": str(self.ns), "storeMtimeNs": None,
@@ -103,7 +105,7 @@ class _Harness(unittest.TestCase):
                      "unsent": {"comments": [], "replies": [], "accepted": 0, "rejected": 0, "watermark": None},
                      "log": [], "logTruncated": False}
         cfg = {"seen": self.seen_path, "reply": reply, "exit": exit, "stderr": stderr, "stdout": stdout,
-               "sleep": sleep, "waitFor": wait_for}
+               "sleep": sleep, "waitFor": wait_for, "write": write}
         with open(self.stub_path, "w") as f:
             f.write(_STUB % json.dumps(cfg))
         try:
@@ -433,14 +435,14 @@ class _TraceWorld(_Wire):
         km.Sessions.backend_for = bf
         super().tearDown()
 
-    def verb(self, verb, args, reply=None, fence=None):
+    def verb(self, verb, args, reply=None, fence=None, exit=0, write=None):
         """One fileComments verb through the dispatcher, the stub answering ok — `reply` adds to or
-        overrides that answer, the way the real host's carries `accepted`/`rejected` or a refusal. The
-        op answers from its own thread and may run on past the reply, so that thread is joined before
-        the asserts."""
+        overrides that answer, the way the real host's carries `accepted`/`rejected` or a refusal; `exit`
+        and `write` are the stub's (a host that died, a host that wrote the file first). The op answers
+        from its own thread and may run on past the reply, so that thread is joined before the asserts."""
         rep = {"ok": True, "verb": verb}
         rep.update(reply or {})
-        self.stub(reply=rep)
+        self.stub(reply=rep, exit=exit, write=write)
         if fence is None and verb != "status":
             fence = {"storeMtimeNs": ""}
         before = set(threading.enumerate())
@@ -593,6 +595,39 @@ class RejectTellsTheSession(_TraceWorld):
         self.assertEqual(self.reject_traced, [])
         self.assertEqual(self.reached, [])
 
+    def test_a_host_that_wrote_the_file_and_then_died_still_tells_the_session_without_a_count(self):
+        # the host landed the sidecar and the file, then died before its reply (killed after the rename, or
+        # failing inside the status it builds after the writes): the kernel answers host-error, and the file
+        # on disk is not what the session last wrote — the never-lose-the-thread rule says tell it
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            r = self.verb("reject", {"ids": self.IDS}, fence=self.fence(), exit=1, write="# Report\n\nreverted text\n")
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"))
+        self.assertIs(r["fileChanged"], True, "the failure says the file moved under it")
+        self.assertIn("The file itself changed on disk during the request", r["error"])
+        real = os.path.realpath(self.fp)
+        self.assertEqual(self.reject_traced, [(real, SID, None)], "one trace, with no count to claim")
+        self.assertEqual([sid for sid, _ in self.reached], [SID])
+        body = self.reached[0][1]
+        self.assertEqual(body, km._reject_trace_body(real, None))
+        self.assertIn("I rejected some of your tracked changes in %s while reading it; the file and its sidecar both "
+                      "changed, so re-read it before writing." % km._tilde(real), body)
+        self.assertNotIn(" 0 of ", body, "never a number the kernel would have to guess")
+        self.assertEqual(self.order, ["reply", "trace"], "the failure is on the wire before the trace goes")
+
+    def test_a_host_that_died_without_writing_tells_nothing_and_a_refusal_after_a_write_is_someone_elses(self):
+        r = self.verb("reject", {"ids": self.IDS}, fence=self.fence(), exit=1)
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"))
+        self.assertNotIn("fileChanged", r, "the file is as it was: nothing to report beyond the failure")
+        self.assertNotIn("changed on disk", r["error"])
+        # the host's own refusal writes nothing, so a file that moved under it was moved by someone else —
+        # the session's own write, which it knows about; and a sidecar-only verb never stats the file at all
+        self.verb("reject", {"ids": self.IDS}, reply={"ok": False, "code": "file-moved", "error": "~/x changed"},
+                  fence=self.fence(), write="# Report\n\nthe session's own write\n")
+        self.verb("accept", {"ids": self.IDS}, exit=1, write="# Report\n\nanother write\n")
+        self.assertEqual(self.reject_traced, [])
+        self.assertEqual(self.reached, [])
+
     def test_a_file_outside_every_live_tree_is_nobodys_to_tell(self):
         km._cwd_of = lambda s: os.path.join(self.tmp, "elsewhere")      # the one live session works somewhere else
         self.verb("reject", {"ids": self.IDS}, reply={"rejected": self.IDS}, fence=self.fence())
@@ -612,6 +647,9 @@ class RejectTellsTheSession(_TraceWorld):
         self.assertIn("reject-trace to %s failed: backend gone" % SID, err.getvalue())
 
     def test_the_body_speaks_as_the_person_wears_the_edit_traces_tail_and_neutralizes_the_path(self):
+        some = km._reject_trace_body(REPORT, None)
+        self.assertTrue(some.startswith("I rejected some of your tracked changes in %s while reading it;" % REPORT), some)
+        self.assertEqual(km._reject_trace_body(REPORT, 0), km._reject_trace_body(REPORT, 0).replace("some of", "0 of"), "0 is a number, not the unknown")
         two, one = km._reject_trace_body(REPORT, 2), km._reject_trace_body(REPORT, 1)
         self.assertTrue(two.startswith(
             "I rejected 2 of your tracked changes in %s while reading it; the file and its sidecar both changed, "
@@ -688,14 +726,18 @@ class TheMessage(unittest.TestCase):
         self.assertIn("I accepted 0 of your changes and rejected 2.\n",
                       km._file_comments_message(REPORT, ONE, 0, 2, True, True))
         # Slice 2's Send: the accept-pending-changes checkbox adds N to accepted with nothing rejected —
-        # A + R > 0, so the line renders, blank line after (contract C3 / D3), and a decisions-only send
-        # still says "0 comments" above it
+        # A + R > 0, so the line renders, blank line after (contract C3 / D3). With no comments the send
+        # wears the DECISIONS-ONLY shape (the review, 2026-09-06): it never says "I left 0 comments" over
+        # two `--thread <id>` command lines with no thread to name. That shape is pinned byte for byte in
+        # tests/test_kernel_file_comments_decisions_send.py; this checks the line and its blank lines
         body = km._file_comments_message(REPORT, [], 3, 0, True, True)
-        self.assertIn("[obsidian-diff] I left 0 comments on %s.\n"
+        self.assertIn("[obsidian-diff] I went over %s.\n"
                       "\n"
                       "I accepted 3 of your changes and rejected 0.\n"
                       "\n"
-                      "To respond:\n" % REPORT, body)
+                      "No comments this time, so nothing needs a reply.\n" % REPORT, body)
+        self.assertNotIn("0 comments", body)
+        self.assertNotIn("To respond:", body)
         for a, r in ((0, 0), (None, None), (0, None)):
             self.assertNotIn("I accepted", km._file_comments_message(REPORT, ONE, a, r, True, True), (a, r))
 

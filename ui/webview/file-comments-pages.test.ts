@@ -529,9 +529,9 @@ test("keyboard focus on a rectangle survives a page draw: the rectangle is the s
 
 test("source pins: the keep runs before any layer is dropped, the refocus scrolls nothing, and Re-place is gated on the picture OR the vanished page", () => {
   const SRC = web("file-comments.ts");
-  assert.match(SRC, /private paintRegions\(\): void \{\n\s*const keep = this\.bodyFocusKey\(\);/, "the focused mark is read before a layer is dropped or a pass removes a rectangle (a comment moved to another page)");
-  assert.match(SRC, /this\.refocusBody\(keep\);\n\s*\}\n\s*\/\*\* The overlay for a picture/, "…and refocused after every layer has painted, when the keyboard fell to the body");
-  assert.match(SRC, /if \(n && this\.owns\(n\)\) n\.focus\(\{ preventScroll: true \}\);/, "a page drawing in as it scrolls near must not yank the view back");
+  assert.match(SRC, /private paintRegions\(\): void \{\n\s*const held = this\.heldMark\(\);/, "the focused mark is read before a layer is dropped or a pass removes a rectangle (a comment moved to another page)");
+  assert.match(SRC, /if \(held\) this\.refocusMark\(held\);\n\s*\}\n\s*\/\*\* The overlay for a picture/, "…and refocused after every layer has painted, when the keyboard fell to the body");
+  assert.match(SRC, /next\[Math\.min\(Math\.max\(held\.k, 0\), next\.length - 1\)\]\.focus\(\{ preventScroll: true \}\);/, "a page drawing in as it scrolls near must not yank the view back");
   assert.match(SRC, /const replaceOffered = \(!!picture \|\| gone\) && !c\.resolved && this\.drawsRegions\(\);/, "Re-place is gated on the picture OR the vanished page");
   assert.match(SRC, /const gone = this\.pageGone\(c\);\n\s*const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";/);
   assert.match(SRC, /const shownGone = gone && !c\.resolved;\n[\s\S]*?if \(shownGone \|\| shownSt === "stale"\) \{/, "a vanished page reads stale whatever the hashes say — unless resolved, when nothing is left to report");
