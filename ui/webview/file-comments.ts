@@ -12,10 +12,12 @@
 //   • A session's pending changes (Slice 2) are cards too: one per change, grouped by the paragraph it
 //     falls in, with Accept, Reject, Reply (a comment bound to the change, so the session's answering
 //     track-edit revisions fold into it) and Reveal; the comments bound to a change sit ON its card. Past
-//     three groups the rest fold behind one row. The changes are also marked inline — insertions tinted,
-//     deletions struck at their point in Raw — through anchor-map's change painters (contract D4), and a
-//     click on a mark opens its card. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites
-//     the file, also fences on the file's mtime and then reloads the view, since the bytes changed under it.
+//     three groups the rest fold behind one row. The changes are also marked inline in both views — insertions
+//     tinted, deletions struck at their point (Rendered places it through the index map since the inline-display
+//     follow-on, 2026-09-07; a deletion the map cannot place is card-only) — through anchor-map's change painters
+//     (contract D4); a click on a mark opens its card, and Show changes inline in the panel's head turns every mark
+//     off in both views. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites the file, also
+//     fences on the file's mtime and then reloads the view, since the bytes changed under it.
 //   • A region on an image (Slice 3) or on a PDF page (Slice 4) is a comment too: the overlays file-comments-regions.ts
 //     puts over the media body's picture, over every figure in rendered markdown, and over each page the PDF chunk
 //     draws (one per page, the region's `page` from the canvas's data-page; a far page with nothing to paint takes its

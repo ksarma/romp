@@ -11,6 +11,9 @@
 //   • a Rendered deletion the map cannot place (inside a code fence) is card-only, its "not shown" tag wearing the
 //     generic title (this view does not show the change; Reveal opens it in Raw) — the same deletion IS struck in
 //     Raw, so a title that said Rendered cannot show deletions would be false since the follow-on.
+// The source pins that close the file hold fcchange's cancel beside fcopen's, and the module header's account of the
+// marks: both views since the follow-on, where Slice 2's sentence (struck at their point in Raw) stood until the
+// review's consolidation.
 // Synthetic fixtures only: the notes-api world, placeholder ids, example.invalid URLs.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
@@ -534,4 +537,13 @@ test("pins: fcchange cancels the click as fcopen does, and both are Enter-activa
   assert.match(SRC, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \},/);
   assert.match(SRC, /fcopen: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\);/);
   assert.match(SRC, /const KEY_ACTS = new Set\(\[[^\]]*"fcopen", "fcchange"[^\]]*\]\);/);
+});
+
+test("pins: the module header says the changes are marked in both views, a deletion the map cannot place card-only, and the toggle turns every mark off — not Slice 2's 'struck at their point in Raw', which read as current after the follow-on", () => {
+  const header = SRC.slice(0, SRC.indexOf("\nimport "));
+  assert.ok(header.startsWith("// File comments and tracked changes"), "the header is the module's opening comment, up to the first import");
+  assert.match(header, /marked inline in both views/, "the header names both views");
+  assert.match(header, /a deletion the map cannot place is card-only/, "…and the one case Rendered leaves to the card");
+  assert.match(header, /Show changes inline in the panel's head turns every mark\s+(?:\/\/\s+)?off in both views/, "…and the toggle");
+  assert.doesNotMatch(header, /struck at their point in Raw\b/, "Slice 2's Raw-only sentence is gone from the header");
 });
