@@ -346,9 +346,16 @@ class _PerfStats:
                                    caller, connect pushes on handler threads included, so their sum
                                    can exceed `push`
       builds                       chat / feed / timeline -> {cached, built, ms}: served from the
-                                   build cache vs rebuilt, and the rebuild time; feed also carries
+                                   build cache vs rebuilt, and the rebuild time. feed also carries
                                    dirty, the rebuilds a kernel-side mutation forced past the view
-                                   signature (_mark_views_dirty)
+                                   signature (_mark_views_dirty); chat also carries active_built /
+                                   bg_built (rebuilds of the watched tab, which always
+                                   rebuilds, against rebuilds of a background tab whose signature
+                                   moved) and bg_miss {judge_gen, transcript, states, tasks, todos,
+                                   cut, note, needs, cold, nosig}: per labelled _chat_build_sig
+                                   component, the background rebuilds it caused (one count per
+                                   differing component, so the sum can exceed bg_built; cold = no
+                                   cached build, nosig = no signature could be taken)
       sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
                                    name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
                                    under "other"). A deduped frame was built and compared, not sent
@@ -494,6 +501,9 @@ class _PerfStats:
     SLOTS = 32
     STAGES = ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")
     BUILDS = ("chat", "feed", "timeline")
+    # builds.chat's bg_miss labels: _chat_build_sig's components (_CHAT_SIG_TAIL plus the transcript and
+    # states sections), a tab with no cached build, and a tab whose signature could not be taken
+    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "cold", "nosig")
     SEND_KINDS = ("full", "delta", "deduped")
 
     def __init__(self):
@@ -510,6 +520,8 @@ class _PerfStats:
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
             self.builds["feed"]["dirty"] = 0       # rebuilds a kernel-side mutation forced past the view signature
+            self.builds["chat"].update({"active_built": 0, "bg_built": 0,
+                                        "bg_miss": {k: 0 for k in self.CHAT_MISS}})
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
                           "wakes": 0, "wakes_event": 0, "wakes_backstop": 0}
@@ -551,6 +563,30 @@ class _PerfStats:
                 b["ms"] += dt * 1000.0
                 if dirty and "dirty" in b:
                     b["dirty"] += 1
+
+    def build_chat(self, cached, dt=0.0, active=False, miss=()):
+        """The chat builder's record: build("chat", ...) plus the attribution the round-4 plan's item P3
+        asked for (2026-09-07). A rebuild counts under active_built (the watched tab, which always
+        rebuilds) or bg_built (a background tab whose signature moved), and a background rebuild adds one
+        to bg_miss[label] for EVERY labelled _chat_build_sig component that differed from the cached
+        signature (`miss`, from _chat_sig_miss), so the sum over bg_miss can exceed bg_built when several
+        inputs moved together. `cold` is a tab with no cached build, `nosig` one whose signature could not
+        be taken (no transcript path)."""
+        ms = dt * 1000.0
+        with self.lock:
+            b = self.builds["chat"]
+            if cached:
+                b["cached"] += 1
+                return
+            b["built"] += 1
+            b["ms"] += ms
+            if active:
+                b["active_built"] += 1
+                return
+            b["bg_built"] += 1
+            bm = b["bg_miss"]
+            for lab in miss:
+                bm[lab] = bm.get(lab, 0) + 1
 
     def send(self, key, kind, nbytes):
         slot = key[0] if isinstance(key, tuple) else key
@@ -615,6 +651,7 @@ class _PerfStats:
             pusher = dict(self.pusher)
             stages = dict(self.stages)
             builds = {k: dict(v) for k, v in self.builds.items()}
+            builds["chat"]["bg_miss"] = dict(self.builds["chat"]["bg_miss"])   # the nested map: a copy too
             sends = {k: {sl: {"count": e[0], "bytes": e[1]} for sl, e in d.items()}
                      for k, d in self.sends.items()}
             judge = dict(self.judge)
@@ -25970,6 +26007,45 @@ def _chat_build_sig(sess, tm=None):
     return tuple(sig)
 
 
+# The labels of _chat_build_sig's components after the two transcript values and the per-states-file
+# pairs, in append order. The sig stays a flat tuple (its callers compare it whole, and test pins read
+# its source), so the labels are derived from the tuple's SHAPE: the states section is the only one
+# whose length varies (one or two files, two values each); the head and the tail are fixed. A component
+# appended to _chat_build_sig must be appended here too; tests/test_chat_fixed_cost_memos.py pins the
+# appends against this tuple.
+_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "cut", "note", "needs")
+
+
+def _chat_sig_labels(sig):
+    """One label per position of a _chat_build_sig tuple (see _CHAT_SIG_TAIL)."""
+    n_states = len(sig) - 2 - len(_CHAT_SIG_TAIL)
+    return ("transcript", "transcript") + ("states",) * max(n_states, 0) + _CHAT_SIG_TAIL
+
+
+def _chat_sig_miss(old, new):
+    """Why a background tab rebuilt: the sorted labels of every _chat_build_sig component that differs
+    between the cached signature `old` and the fresh one `new` (the bg_miss attribution under
+    builds.chat in /perf). No cached build is ("cold",); a fresh signature of None (no transcript path,
+    or one that cannot be stat'd) is ("nosig",). Signatures of different lengths differ in their states
+    section (the session's anchor appeared or went), so that label is set and the fixed head and tail
+    are compared from their own ends."""
+    if new is None:
+        return ("nosig",)
+    if old is None:
+        return ("cold",)
+    labels = _chat_sig_labels(new)
+    if len(old) == len(new):
+        return tuple(sorted({labels[i] for i in range(len(new)) if old[i] != new[i]}))
+    out = {"states"}
+    for i in range(2):                                 # the head: the transcript's (mtime, size)
+        if old[i] != new[i]:
+            out.add(labels[i])
+    for j in range(1, len(_CHAT_SIG_TAIL) + 1):        # the tail, aligned from the end
+        if old[-j] != new[-j]:
+            out.add(_CHAT_SIG_TAIL[-j])
+    return tuple(sorted(out))
+
+
 def _parse(path, sid, now):
     """em.parse_session, CACHED by the transcript's (mtime, size, pending-rollback cut). The build hot
     path re-parsed every transcript on every push (4s); an unchanged transcript now returns the cached
@@ -40544,7 +40620,7 @@ def _push(targets, connect=False, tmux=None):
                     m, ms, asig, started = hit[1], hit[2], hit[3], hit[4]   # unchanged → reuse, no reshape/serialize
                     _VIEW_STATS["chatServeActive" if is_active else "chatServeBg"] += 1
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
-                    _PERF_STATS.build("chat", True)
+                    _PERF_STATS.build_chat(True)
                 else:
                     _VIEW_STATS["chatBuildActive" if is_active else "chatBuildBg"] += 1
                     started = time.time()                # the _views_dirty floor for this build (start-keyed)
@@ -40569,10 +40645,14 @@ def _push(targets, connect=False, tmux=None):
                     # session pays on every single push. If chat ever feels slow again, this number and
                     # the deduped= on the matching send say which half is at fault.
                     _dt = time.monotonic() - _t0
-                    _PERF_STATS.build("chat", False, _dt)
+                    # WHY a background tab rebuilt (round-4 plan P3): the labelled _chat_build_sig
+                    # components that moved against the cached signature, so /perf can say which input
+                    # drives the background rebuilds (the active tab rebuilds by design and is not attributed)
+                    _miss = () if is_active else _chat_sig_miss(hit[0] if hit is not None else None, sig)
+                    _PERF_STATS.build_chat(False, _dt, active=is_active, miss=_miss)
                     if _PERF:                            # the keyword values below cost lookups; skip them when off
                         _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
-                              ms=round(_dt * 1000, 1),
+                              ms=round(_dt * 1000, 1), miss=",".join(_miss),
                               events=(len(m.get("events") or []) if m else 0),
                               fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
                               prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix

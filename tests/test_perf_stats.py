@@ -112,6 +112,13 @@ class Collector(unittest.TestCase):
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline"})
+        self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
+        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss"},
+                         "the chat builder carries the active/background split and the miss attribution (round-4 P3)")
+        self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
+        self.assertEqual(set(km._PerfStats.CHAT_MISS),
+                         {"judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "cold", "nosig"})
+        self.assertEqual(sum(snap["builds"]["chat"]["bg_miss"].values()), 0)
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
@@ -336,7 +343,10 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 750.0)
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 100.0)
-        self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0})
+        chat = snap["builds"]["chat"]
+        self.assertEqual({k: chat[k] for k in ("cached", "built", "ms")}, {"cached": 1, "built": 1, "ms": 40.0})
+        self.assertEqual((chat["active_built"], chat["bg_built"], sum(chat["bg_miss"].values())), (0, 0, 0),
+                         "the plain writer records no split; build_chat does (test_chat_fixed_cost_memos)")
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
         self.assertEqual(snap["judge"]["passes"], 2)

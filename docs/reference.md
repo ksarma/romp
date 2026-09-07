@@ -1966,6 +1966,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   `dirty`, the rebuilds a kernel-side mutation forced past the view signature (a card reply, a
   clear, a follow-up: the mutation is invisible to the signature and must not wait out the
   rebuild interval).
+  `chat` also carries `active_built` and `bg_built` (rebuilds of the watched
+  tab, which always rebuilds, against rebuilds of a background tab whose
+  signature moved) and `bg_miss`, a map from each labelled component of the
+  chat-build signature (`judge_gen`, `transcript`, `states`, `tasks`, `todos`,
+  `cut`, `note`, `needs`, plus `cold` for a tab with no cached build and
+  `nosig` for one whose signature could not be taken) to the background
+  rebuilds it caused. A rebuild with several moved components counts under
+  each, so the map's sum can exceed `bg_built`. `romp perf` prints the split
+  and the non-zero causes after the chat average.
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
