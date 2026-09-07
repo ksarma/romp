@@ -51,7 +51,6 @@ import { openPathLink, linkifyPathTokens } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's own browser instance, for standalone /chat (openBrowse)
-import { closeFileView } from "./file-view";                       // openBrowse closes a viewer up over this chat before relaying
 import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
 import { pastedFilePath } from "./paste-path";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
@@ -1328,20 +1327,18 @@ function browseRouteNow(): BrowseRoute {
 //            this document, the one place the chat's own overlay (and its CSS mirror in styles.css) shows.
 // Web-only: in VS Code the folder link keeps openFolder (asFolderLink) and the menu row is not built; the
 // webview cannot reach the kernel origin, and the editor has its own explorer.
-// A viewer up over this chat closes first ("browse" means the person wants the listing now, the browser's
-// own rule), unless its dirty-edit guard keeps it; then the click stands down whole, since a listing must
-// not open elsewhere while the edits the person chose to keep sit here. The message carries the session's
-// identity (name + color, nameOf's ladder) for the Files pane, which has no session list to name a picked
-// file's session by (openPath's viewFile does the same); the feed resolves its own and ignores it.
+// A viewer up over this chat stays where it is when the listing opens in another pane: closing it bought
+// nothing there and, with unsaved edits in the viewer, cost a discard prompt for a click that never needed
+// the edits gone (review 2026-09-07). Only the in-place route closes it first ("browse" means the person
+// wants the listing now, the browser's own rule, in openFileBrowse), and a dirty-edit veto there stands the
+// click down whole. The message carries the session's identity (name + color, nameOf's ladder) for the
+// Files pane, which has no session list to name a picked file's session by (openPath's viewFile does the
+// same); the feed resolves its own and ignores it.
 function openBrowse(path: string, sid?: string | null): void {
   const route = browseRouteNow();
   if (route === "editor") return;
   const to = sid || activeId || null;
   if (route === "here") { openFileBrowse(path || ".", to); return; }
-  if (document.getElementById("romp-fileview")) {
-    closeFileView();
-    if (document.getElementById("romp-fileview")) return;   // kept for its unsaved edits: no listing elsewhere
-  }
   const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
   window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: route,
     identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");

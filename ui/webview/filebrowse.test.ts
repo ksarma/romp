@@ -94,8 +94,9 @@ test("rows carry an honest verdict: download-only files are dimmed and download 
   assert.match(BROWSE, /row\.dataset\.act = dlOnly \? "dl" : "file";/);
   assert.match(BROWSE, /if \(row\.dataset\.act === "dl"\) startDownload\(p\);/);
   assert.match(FEED_CSS, /\.fb-dlonly \.fb-name \{ color: var\(--dim\); \}/);
-  // viewable files open through the EXISTING viewer — one leaf open action for the whole dashboard
-  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileView\(p, curSid\); return; \}/);
+  // viewable files open through the EXISTING viewer — one leaf open action for the whole dashboard; a host
+  // may route the pick through its own open (BrowseHost.openFile: the Files pane's Recent list, 2026-09-07)
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ if \(openPick\) openPick\(p, curSid\); else openFileView\(p, curSid\); return; \}/);
 });
 
 test("clicks are delegated to stable roots and the cap is stated in-band", () => {

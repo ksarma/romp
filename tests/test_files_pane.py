@@ -291,15 +291,28 @@ class BrowseRelay(unittest.TestCase):
         for tok in ("__rompFeedWasOff", "browseClosed", "'f-feed'", "__rompMobileTab('feed')"):
             self.assertNotIn(tok, branch, tok + " belongs to the feed route")
 
-    def test_the_feed_route_is_the_else_branch_and_unchanged(self):
+    def test_the_feed_route_is_the_else_branch_with_the_phone_return_trip(self):
         js = km._LANDING_SETTINGS_JS
         feed = js.split(self.FEED)[1].split("if(m.romp==='browseClosed'")[0]
         self.assertIn("window.__rompFeedWasOff=true;", feed)
-        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", feed)
         self.assertIn("postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*')", feed)
         self.assertNotIn("identity", feed, "the feed resolves its own identity")
-        # the restore still consumes either feed flag, and only those
-        self.assertIn("if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){", js)
+        # phone: the Feed tab comes forward only in the mobile layout (on desktop show() would persist a stale
+        # romp-mobile-tab for a later narrow layout), and the tab the click came from is remembered, the viewFile
+        # pane branch's idiom (review 2026-09-07; the executed cases live in ui/webview/browse-route.test.ts)
+        self.assertIn("try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';\n"
+                      "    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}", feed)
+        self.assertNotIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", feed, "no unconditional tab switch")
+        # browseClosed first puts a phone back on the remembered tab (the memory dropped either way, so a rotation
+        # to desktop in between replays nothing), THEN restores the pane, consuming either feed flag and only those
+        back = ("if(m.romp==='browseClosed'){var backf=window.__rompFeedTabFrom;window.__rompFeedTabFrom=null;\n"
+                "  if(backf&&window.__rompMobileOn&&window.__rompMobileOn()){try{window.__rompMobileTab&&window.__rompMobileTab(backf);}catch(e){}}}")
+        self.assertIn(back, js)
+        restore = "if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){"
+        self.assertIn(restore, js)
+        self.assertLess(js.index(back), js.index(restore))
+        self.assertNotIn("__rompFeedTabFrom", js.split(self.HEAD)[1].split(self.FEED)[0],
+                         "the Files route keeps its own memory (__rompFilesTabFrom)")
 
     def test_the_comment_above_the_pane_branch_names_the_ladder_and_the_gesture(self):
         js = km._LANDING_SETTINGS_JS

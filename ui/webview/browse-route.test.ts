@@ -77,12 +77,13 @@ test("render.ts: the chat reads the ladder live at the click and posts its targe
   const fn = RENDER.split("function openBrowse(path: string, sid?: string | null): void {")[1].split("\n}")[0];
   assert.match(fn, /const route = browseRouteNow\(\);\n\s*if \(route === "editor"\) return;/);
   assert.match(fn, /if \(route === "here"\) \{ openFileBrowse\(path \|\| "\.", to\); return; \}/, "standalone /chat: the pane-local browser");
-  // a viewer up over the chat closes first; a dirty-edit veto keeps it AND stands the click down whole
-  assert.match(fn, /if \(document\.getElementById\("romp-fileview"\)\) \{\n\s*closeFileView\(\);\n\s*if \(document\.getElementById\("romp-fileview"\)\) return;/);
-  assert.ok(fn.indexOf("closeFileView()") < fn.indexOf('romp: "browseFiles"'), "the close precedes the relay");
+  // a viewer up over the chat is LEFT UP when the listing opens in another pane (review 2026-09-07: closing it
+  // bought nothing there, and cost a discard prompt when the viewer held unsaved edits); the in-place route
+  // closes it inside openFileBrowse, whose veto stand-down is pinned with the browser below
+  assert.doesNotMatch(fn, /closeFileView|romp-fileview/, "openBrowse touches no viewer");
+  assert.doesNotMatch(RENDER, /import \{ closeFileView \} from "\.\/file-view";/, "no import for a close the chat no longer makes");
   // the message names its target and carries the session's identity for the Files pane's chip (openPath's shape)
   assert.match(fn, /window\.parent\.postMessage\(\{ romp: "browseFiles", path: path \|\| "\.", sid: to, pane: route,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
-  assert.match(RENDER, /import \{ closeFileView \} from "\.\/file-view";/);
 });
 
 test("render.ts: every folder surface goes through openBrowse, click-safe by delegation", () => {
@@ -113,11 +114,48 @@ test("file-browse.ts: each hosting document states its contract; only the feed's
   // Escape closes the TOPMOST layer, the browser last: the Files pane inherits the same keydown story
   assert.match(BROWSE, /if \(document\.getElementById\("romp-fileview"\)\) return;   \/\/ the viewer is topmost/);
   assert.match(BROWSE, /if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); closeFileBrowse\(\); return; \}/);
+  // a host may open a picked file its own way (the Files pane's Recent list, review 2026-09-07); the default
+  // stays the shared viewer, so the feed and the chat change nothing
+  assert.match(BROWSE, /openFile\?: \(path: string, sid: string \| null\) => void;/);
+  assert.match(BROWSE, /openPick = host\.openFile \?\? null;/);
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ if \(openPick\) openPick\(p, curSid\); else openFileView\(p, curSid\); return; \}/);
+  assert.equal((BROWSE.match(/openPick\(/g) || []).length, 1, "one pick site: the row click (Enter on the active row goes through the same onAct)");
+});
+
+test("file-browse.ts: a viewer's dirty-edit veto stands the browse down whole, in every host", () => {
+  // openFileBrowse builds the box first (the handoff suppress in closeFileView reads it), asks the viewer to
+  // close, and a viewer that survived (the person kept the edits) ends the click: no listDir goes out to load a
+  // listing beneath a viewer that covers it, and a box built for this click is unbuilt again. The chat had this
+  // stand-down at its own end before 2026-09-07; the Files pane's and the feed's relays reach here.
+  const fn = BROWSE.split("export function openFileBrowse")[1].split("\nfunction unbuild")[0];
+  assert.match(fn, /if \(document\.getElementById\("romp-fileview"\)\) closeFileView\(\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(document\.getElementById\("romp-fileview"\)\) \{ if \(!had\) unbuild\(\); return; \}/);
+  const veto = fn.indexOf("if (!had) unbuild(); return;");
+  assert.ok(veto > 0 && veto < fn.indexOf("ask(path);"), "the stand-down precedes the ask");
+  assert.ok(veto < fn.indexOf("curSid = sid || null;"), "a vetoed re-invoke leaves the listing beneath as it was, its sid included");
+  assert.ok(fn.indexOf("document.body.appendChild(box)") < fn.indexOf("closeFileView()"), "the box still exists before the close (the handoff suppress)");
+  const un = BROWSE.split("function unbuild(): void {")[1].split("\n}")[0];
+  assert.match(un, /document\.getElementById\("romp-filebrowse"\)\?\.remove\(\);/);
+  assert.match(un, /document\.body\.classList\.remove\("filebrowse-open"\);/);
+  assert.match(un, /if \(onKeyRef\) \{ document\.removeEventListener\("keydown", onKeyRef\); onKeyRef = null; \}/);
+  assert.doesNotMatch(un, /tellShellClosed|browseClosed/, "nothing opened, so no close notice: a browseClosed here would put back a feed whose kept viewer lives in it");
+});
+
+test("files-pane.css: a narrow column wraps the viewer's title bar, so the path and its directory link keep their width", () => {
+  // the row of action buttons alone outgrows a 480px pane; the modal sheets keep their one-line bar (the parity
+  // pair), the pane variant wraps the actions onto a second line (measured in the browser legs below)
+  const PANE_CSS = read("files-pane.css");
+  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar\{flex-wrap:wrap;row-gap:6px\}/);
+  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-name\{flex:1 1 0;min-width:12em\}/);
+  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-acts\{margin-left:auto\}/);
+  assert.doesNotMatch(CHAT_CSS, /\.fileview-bar \{[^}]*flex-wrap/, "the modal bar stays one line");
 });
 
 test("files.ts: the Files pane hosts the listing as a column: identity cached, the browser is a pane surface, one close edge", () => {
   assert.match(FILES, /import \{ initFileBrowse, openFileBrowse \} from "\.\/file-browse";/);
   assert.match(FILES, /onRelay: \(m\) => \{\n\s*const sid = typeof m\.sid === "string" \? m\.sid : null;\n\s*const id = asIdentity\(m\.identity\);\n\s*if \(sid && id\) identities\.set\(sid, id\);[^\n]*\n\s*openFileBrowse\(m\.path \|\| "\.", sid\);\n\s*\},/);
+  // a pick from the listing goes through the pane's own open, so it enters the Recent list (review 2026-09-07)
+  assert.match(FILES, /openFile: \(p, sid\) => openHere\(p, sid, null\),/);
+  assert.equal((FILES.match(/rememberRecent\(/g) || []).length, 1, "one writer of the recent list, inside openHere");
   // presence of either element is "something is up": the empty state hides, and the close edge is nothing left
   assert.match(FILES, /function surfaceUp\(\): boolean \{\n\s*return !!\(document\.getElementById\("romp-fileview"\) \|\| document\.getElementById\("romp-filebrowse"\)\);\n\}/);
   assert.match(FILES, /const open = surfaceUp\(\);\n\s*empty\.hidden = open;/);
@@ -197,12 +235,16 @@ test("shell, executed: on a phone the Files tab comes forward and the pane's clo
   assert.deepEqual(bareWin.send({ romp: "browseFiles", pane: "pane", path: ".", sid: SID }).tabs, []);
 });
 
-test("shell, executed: pane:'feed' (and no pane) take the feed route exactly as before: lift, remember, put back on browseClosed", () => {
+test("shell, executed: pane:'feed' (and no pane) take the feed route: lift, remember, put back on browseClosed; desktop switches no tab", () => {
   for (const m of [{ romp: "browseFiles", pane: "feed", path: ".", sid: SID, identity: IDENTITY }, { romp: "browseFiles", path: ".", sid: SID }]) {
-    const on = shell().send(m);
+    const desk = shell();
+    const on = desk.send(m);
     assert.deepEqual(on.posted["f-feed"], [{ romp: "browseFiles", path: ".", sid: SID }], "path + sid only; the feed resolves its own identity");
     assert.deepEqual(on.posted["f-files"], []);
-    assert.deepEqual(on.tabs, ["feed"], "phone: one pane at a time");
+    // DESKTOP: no mobile tab switch (review 2026-09-07: the unconditional show() persisted romp-mobile-tab=feed, and a
+    // later narrow layout booted on the Feed tab), and nothing to remember
+    assert.deepEqual(on.tabs, []);
+    assert.equal(desk.win.__rompFeedTabFrom, undefined);
     assert.deepEqual(on.toggles, [], "the feed pane was on: nothing to lift");
     assert.equal(on.wasOff, undefined);
     // the feed pane OFF: lifted for the listing, remembered, and put back by the FEED's browseClosed
@@ -217,6 +259,47 @@ test("shell, executed: pane:'feed' (and no pane) take the feed route exactly as 
   // a browseClosed with nothing lifted moves nothing: the Files pane and the chat never send one (shellRestore
   // false at the source), and even an unexpected one cannot hide a feed the shell did not turn on
   assert.deepEqual(shell().send({ romp: "browseClosed" }).toggles, []);
+});
+
+test("shell, executed: on a phone the feed route switches to the Feed tab and the listing's close puts the person back, once", () => {
+  // the review's medium finding (2026-09-07): with the default setting a phone's folder click showed the listing on
+  // the Feed tab and its close left the person on the feed cards; the pane route already returned (filesViewerClosed)
+  const phone = shell({ mobile: true, tab: "chat" });
+  const opened = phone.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  assert.deepEqual(opened.tabs, ["feed"]);
+  assert.equal(phone.win.__rompFeedTabFrom, "chat", "the tab the click came from is remembered");
+  const closed = phone.send({ romp: "browseClosed" });
+  assert.deepEqual(closed.tabs, ["feed", "chat"], "the listing closed: back to the remembered tab");
+  assert.equal(phone.win.__rompFeedTabFrom, null, "the memory is consumed");
+  assert.deepEqual(closed.toggles, [], "the feed pane was on: nothing to put back");
+  assert.deepEqual(phone.send({ romp: "browseClosed" }).tabs, ["feed", "chat"], "a second close switches nothing");
+  // the feed's own dir-link route (no browseFiles through the shell) remembered nothing: its close moves no tab
+  assert.deepEqual(shell({ mobile: true, tab: "feed" }).send({ romp: "browseClosed" }).tabs, []);
+  // already on the Feed tab: nothing to switch, nothing to remember
+  const already = shell({ mobile: true, tab: "feed" });
+  assert.deepEqual(already.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID }).tabs, []);
+  assert.equal(already.win.__rompFeedTabFrom, undefined);
+  // the feed pane OFF on a phone: the tab return and the pane restore ride the one close
+  const off = shell({ mobile: true, tab: "chat", feedOn: false });
+  off.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  const back = off.send({ romp: "browseClosed" });
+  assert.deepEqual(back.toggles, [["feed", true], ["feed", false]]);
+  assert.deepEqual(back.tabs, ["feed", "chat"]);
+  // a rotation to desktop between open and close: the memory is dropped, never replayed later
+  const rotated = shell({ mobile: true, tab: "chat" });
+  rotated.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  rotated.win.__rompMobileOn = () => false;
+  assert.deepEqual(rotated.send({ romp: "browseClosed" }).tabs, ["feed"]);
+  assert.equal(rotated.win.__rompFeedTabFrom, null);
+  // the Files route keeps its own memory: a pane browse then a feed close touch different slots
+  const mixed = shell({ mobile: true, tab: "chat" });
+  mixed.send({ romp: "browseFiles", pane: "pane", path: ".", sid: SID });
+  assert.equal(mixed.win.__rompFilesTabFrom, "chat"); assert.equal(mixed.win.__rompFeedTabFrom, undefined);
+  assert.deepEqual(mixed.send({ romp: "browseClosed" }).tabs, ["files"], "a feed close moves nothing for a listing the Files pane holds");
+  // an older shell without __rompMobileOn: neither arm throws, and nothing switches
+  const bare = shell(); delete bare.win.__rompMobileOn;
+  assert.deepEqual(bare.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID }).tabs, []);
+  assert.deepEqual(bare.send({ romp: "browseClosed" }).tabs, []);
 });
 
 // ── the Files pane under the real shell script, in a browser ──────────────────────────────────────
@@ -324,6 +407,11 @@ for (const name of ["firefox", "chromium"]) {
           rows: Array.from(f.document.querySelectorAll(".fb-row")).map((c) => (c as HTMLElement).dataset.act + ":" + c.querySelector(".fb-name")!.textContent),
           back: !!f.document.querySelector(".fileview-back"),
           chip: f.document.querySelector(".fileview-sess")?.textContent ?? null,
+          // the directory half of the title (the click back into the listing), as laid out in this 480px pane
+          dirLink: (() => { const d = f.document.querySelector(".fileview-dir-link"); return d ? Math.round(d.getBoundingClientRect().width) : null; })(),
+          // the pane's Recent list: the stored entries, and the rows the empty state paints from them
+          recent: (() => { try { return JSON.parse(f.localStorage.getItem("romp:files-recent") || "[]").map((r: { path: string }) => r.path); } catch { return null; } })(),
+          recentRows: Array.from(f.document.querySelectorAll("#files-empty .fs-row")).map((r) => (r as HTMLElement).title),
         };
       });
       let s = await state();
@@ -362,6 +450,11 @@ for (const name of ["firefox", "chromium"]) {
       assert.equal(s.chip, "web", "the chip names the session from the relayed identity, not the kernel's stub");
       assert.equal(served.length, 1); assert.match(served[0], /path=%2Frepo%2Fnotes-api%2FREADME\.md/);
       assert.deepEqual(s.shellGot, [], "nothing told the shell yet: the viewer is up over the listing");
+      // the pick was remembered (files.ts openHere, through BrowseHost.openFile; review 2026-09-07: a file picked
+      // from the listing never entered the Recent list), and the directory link is on screen in a 480px pane
+      // (files-pane.css wraps the title bar; before, the row of buttons squeezed the link to 0px, in " + name + ")
+      assert.deepEqual(s.recent, ["/repo/notes-api/README.md"]);
+      assert.ok((s.dirLink ?? 0) > 40, "the directory link has width in a 480px pane: " + s.dirLink + "px in " + name);
       // Escape: the viewer (topmost) goes, the listing stays, and the pane says NOTHING (a viewer closing back onto
       // its listing is not the pane's close edge)
       await page.keyboard.press("Escape");
@@ -379,12 +472,124 @@ for (const name of ["firefox", "chromium"]) {
       assert.equal(s.emptyHidden, false, "the empty state is back");
       assert.deepEqual(s.shellGot, ["filesViewerClosed"]);
       assert.equal(s.filesOn, true, "the pane stays up: nothing to put back");
+      assert.deepEqual(s.recentRows, ["/repo/notes-api/README.md"], "the empty state lists the picked file under Recent");
       // the feed route, for contrast: the shell forwards path + sid into the feed and the Files pane hears nothing
       await page.evaluate((sid: string) => { window.postMessage({ romp: "browseFiles", pane: "feed", path: ".", sid }, "*"); }, SID);
       await page.waitForFunction(() => (((document.getElementById("f-feed") as HTMLIFrameElement).contentWindow as any).__got as unknown[]).length === 1, null, { timeout: 10000 });
       s = await state();
       assert.deepEqual(s.feedGot, [{ romp: "browseFiles", path: ".", sid: SID }]);
       assert.equal(s.browser, false, "the Files pane did not open a listing for a feed-bound browse");
+      assert.deepEqual(errors, [], "no script error in any frame");
+    } finally { await browser.close(); }
+  });
+
+  // review 2026-09-07: the Files pane's relay ran straight into openFileBrowse, which built the box, was vetoed by
+  // the viewer's dirty-edit guard, and still sent listDir, so the listing loaded beneath the kept viewer (and on a
+  // phone the tab had already switched). The stand-down now lives in openFileBrowse, for every host: a kept viewer
+  // ends the click, nothing is fetched, and a box built for it is unbuilt. Both shapes, with the real editor chunk:
+  // a viewer with no listing beneath (the viewFile relay), and one over a listing (a pick from the rows).
+  test(`in ${name}: a viewer with unsaved edits in the Files pane stands a relayed browse down whole, with and without a listing beneath`, async (t) => {
+    if (!pw) { t.skip("playwright is not installed under vscode-extension: the browser legs need it (CI installs no browsers)"); return; }
+    let browser: any;
+    try { browser = await pw[name].launch(); }
+    catch (e) { t.skip("no playwright " + name + " on this box: this leg needs it (CI installs none): " + String((e as Error).message).split("\n")[0]); return; }
+    try {
+      const errors: string[] = [];
+      const filesJs = bundle("files.ts");
+      const editorJs = bundle("editor-chunk.ts");   // the on-demand CodeMirror bundle file-view.ts loads at the first Edit
+      const css = CHAT_CSS + "\n" + read("files-pane.css");
+      const page = await browser.newPage({ viewport: { width: 1000, height: 500 } });
+      page.on("pageerror", (e: Error) => { errors.push(e.message); });
+      await page.route("http://romp.test/**", (route: any) => {
+        const u = new URL(route.request().url());
+        const html = (b: string) => route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", body: b });
+        const js = (b: string) => route.fulfill({ status: 200, contentType: "application/javascript", body: b });
+        if (u.pathname === "/shell") return html(SHELL_HTML);
+        if (u.pathname === "/feed") return html(FEED_HTML);
+        if (u.pathname === "/files") return html(FILES_HTML(css));
+        if (u.pathname === "/dist/files.js") return js(filesJs);
+        if (u.pathname === "/dist/editor-chunk.js") return js(editorJs);
+        // editing is allowed on this kernel, so the Edit button's consent gate asks nothing (file-view.ts ensureEditingAllowed)
+        if (u.pathname === "/version") return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ fileEditing: true }) });
+        if (u.pathname === "/file") {
+          return route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", headers: { "X-Romp-Mtime-Ns": "1", "X-Romp-Text-Utf8": "1" }, body: "# notes-api\n\nTwo services.\n" });
+        }
+        return route.fulfill({ status: 404, body: "" });
+      });
+      await page.goto("http://romp.test/shell?panes=feed");
+      const F = page.frameLocator("#f-files");
+      const state = () => page.evaluate(() => {
+        const f = (document.getElementById("f-files") as HTMLIFrameElement).contentWindow!;
+        return {
+          viewer: !!f.document.getElementById("romp-fileview"),
+          editing: !!f.document.querySelector(".fileview-cm .cm-content"),
+          browser: !!f.document.getElementById("romp-filebrowse"),
+          browseClass: f.document.body.classList.contains("filebrowse-open"),
+          listDirs: ((f as any).__posted as Array<Record<string, unknown>>).filter((m) => m.type === "listDir").map((m) => m.path),
+          crumbs: Array.from(f.document.querySelectorAll("#fb-crumbs .fb-crumb")).map((c) => c.textContent),
+          shellGot: (window as any).__shellGot as string[],
+        };
+      });
+      // enter edit mode on the open file and type one character: the viewer's close guard now asks before discarding
+      const editAndDirty = async () => {
+        await F.getByRole("button", { name: "Edit", exact: true }).click();
+        await F.locator(".fileview-cm .cm-content").waitFor({ timeout: 10000 });
+        await F.locator(".fileview-cm .cm-content").click();
+        await page.keyboard.type("x");
+      };
+      // the chat's relay for route 'pane' while the guard is armed: the confirm is the one announcement; `keep` answers it
+      const browse = async (path: string, keep: boolean) => {
+        const dlg = page.waitForEvent("dialog");
+        await page.evaluate(([p, sid]: [string, string]) => { window.postMessage({ romp: "browseFiles", pane: "pane", path: p, sid }, "*"); }, [path, SID] as [string, string]);
+        const d = await dlg;
+        assert.equal(d.message(), "Discard unsaved changes to README.md?");
+        if (keep) await d.dismiss(); else await d.accept();
+      };
+      // NO listing beneath: the file arrived by the viewFile relay
+      await page.evaluate(([sid, identity]: [string, unknown]) => {
+        window.postMessage({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/README.md", sid, identity }, "*");
+      }, [SID, IDENTITY] as [string, unknown]);
+      await F.locator("#romp-fileview").waitFor({ timeout: 10000 });
+      await editAndDirty();
+      await browse("/repo/notes-api", true);
+      let s = await state();
+      assert.equal(s.viewer, true, "the viewer the person chose to keep is still up");
+      assert.equal(s.editing, true, "still in edit mode, the edit intact");
+      assert.equal(s.browser, false, "the box built for this click is unbuilt again");
+      assert.equal(s.browseClass, false, "and its body class with it");
+      assert.deepEqual(s.listDirs, [], "no listDir: nothing is fetched to sit beneath the kept viewer");
+      assert.deepEqual(s.shellGot, [], "nothing told the shell");
+      // the same click answered with OK: the edits go and the listing opens
+      await browse("/repo/notes-api", false);
+      await F.locator("#romp-filebrowse").waitFor({ timeout: 10000 });
+      s = await state();
+      assert.equal(s.viewer, false);
+      assert.deepEqual(s.listDirs, ["/repo/notes-api"]);
+      assert.deepEqual(s.shellGot, [], "the viewer closed onto the listing: not the pane's close edge");
+      // WITH a listing beneath: answer the ask, pick the file from the rows, edit it, then browse elsewhere
+      const reqId = await page.evaluate(() => {
+        const f = (document.getElementById("f-files") as HTMLIFrameElement).contentWindow as any;
+        return f.__posted.filter((m: { type: string }) => m.type === "listDir")[0].reqId;
+      });
+      await page.evaluate(([sid, reqId]: [string, unknown]) => {
+        const f = (document.getElementById("f-files") as HTMLIFrameElement).contentWindow!;
+        f.postMessage({ type: "dirListing", reqId, host: "", sid, base: "/repo/notes-api", parent: "/repo",
+          entries: [{ name: "README.md", isDir: false, isLink: false, size: 120, mtime: 1, viewable: true }], total: 1, truncated: false }, "*");
+      }, [SID, reqId] as [string, unknown]);
+      await F.locator('.fb-row[data-act="file"]').click();
+      await F.locator("#romp-fileview").waitFor({ timeout: 10000 });
+      await editAndDirty();
+      await browse("/repo", true);
+      s = await state();
+      assert.equal(s.viewer, true); assert.equal(s.editing, true);
+      assert.equal(s.browser, true, "the listing beneath stays");
+      assert.deepEqual(s.listDirs, ["/repo/notes-api"], "no second ask: the listing beneath is not moved under a kept viewer");
+      assert.deepEqual(s.crumbs, ["/", "repo", "notes-api"], "as it was");
+      await browse("/repo", false);
+      await F.locator("#romp-fileview").waitFor({ state: "detached", timeout: 10000 });
+      s = await state();
+      assert.deepEqual(s.listDirs, ["/repo/notes-api", "/repo"], "OK: the edits go and the listing moves");
+      assert.equal(s.browser, true);
       assert.deepEqual(errors, [], "no script error in any frame");
     } finally { await browser.close(); }
   });

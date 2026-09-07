@@ -48,6 +48,7 @@ let curSid: string | null = null;
 let onKeyRef: ((e: KeyboardEvent) => void) | null = null;   // the live keydown handler, so close can unbind it
 let showHidden = false;
 let shellRestore = true;               // this document's close owes the shell a browseClosed (the feed's contract)
+let openPick: ((path: string, sid: string | null) => void) | null = null;   // the host's own file open (BrowseHost.openFile), else openFileView here
 
 /** A browse ask that reached this window: the shell's relay, or a viewer's directory link posting to its own
  *  window ({romp:"browseFiles", path, sid, identity}). */
@@ -57,6 +58,10 @@ export type BrowseHost = {
   /** Take the ask whole instead of opening here: the chat routes it through its file-link ladder (render.ts
    *  openBrowse); the Files pane caches the identity it carries, then opens (files.ts). Default: open here. */
   onRelay?: (m: BrowseAsk) => void;
+  /** Open a file picked from the listing (a row click, Enter on the active row) in place of the default
+   *  openFileView here. The Files pane routes a pick through its own open (files.ts openHere), so the file
+   *  enters its Recent list like every other file opened there (review 2026-09-07). */
+  openFile?: (path: string, sid: string | null) => void;
   /** Whether a close here tells the shell browseClosed. TRUE only for the FEED, the pane the shell lifts for a
    *  relayed browse and puts back on that message. The Files pane stays up and the chat never asks for a lift,
    *  so their closes say nothing: a browseClosed from either would consume a flag the feed's relay armed and
@@ -127,12 +132,6 @@ function dirnameOf(p: string): string {
 /** Open the browser at `path` (as the sid's kernel resolves it — "." means that session's cwd). */
 export function openFileBrowse(path: string, sid?: string | null): void {
   const had = document.getElementById("romp-filebrowse");
-  curSid = sid || null;
-  showHidden = false;
-  // A re-invoke while open must resync the persistent Hidden control with the state it claims to
-  // show — resetting the variable alone left the button lit over a dotfile-hidden listing (review).
-  const hb = document.getElementById("fb-hidden");
-  if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   if (!had) {
     const box = el("div", "filebrowse");
     box.id = "romp-filebrowse";
@@ -233,13 +232,36 @@ export function openFileBrowse(path: string, sid?: string | null): void {
   // belongs to the browser — the shell carries the restore on the browser's own flag and
   // browseClosed discharges it. The pane stays up for the listing either way.
   if (document.getElementById("romp-fileview")) closeFileView();
+  // The viewer's dirty-edit guard can keep it (the person answered the discard confirm with cancel): then
+  // the click stands down WHOLE. No listing is fetched to sit beneath a viewer that covers it (a dead click,
+  // and a listing the pane's next Escape would fall through to), the confirm the person just answered is
+  // the announcement, and a box built above for this click is unbuilt again. The listing beneath an
+  // existing box is left as it was, its sid included: nothing below changed. The chat had this stand-down
+  // at its own end; the Files pane's and the feed's relays land here (review 2026-09-07).
+  if (document.getElementById("romp-fileview")) { if (!had) unbuild(); return; }
+  curSid = sid || null;
+  showHidden = false;
+  // A re-invoke while open must resync the persistent Hidden control with the state it claims to
+  // show — resetting the variable alone left the button lit over a dotfile-hidden listing (review).
+  const hb = document.getElementById("fb-hidden");
+  if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   ask(path);
+}
+
+// A box built for a click that then stood down (the viewer's veto above): gone again, outside the close
+// protocol. Nothing opened, so nothing is owed: no browseClosed (the shell may have lifted the feed for this
+// listing, and putting it back now would hide the kept viewer, which lives there; the pane parks forward,
+// the same named price a lost relay pays), and no latch to reset (no ask went out).
+function unbuild(): void {
+  document.getElementById("romp-filebrowse")?.remove();
+  document.body.classList.remove("filebrowse-open");
+  if (onKeyRef) { document.removeEventListener("keydown", onKeyRef); onKeyRef = null; }
 }
 
 function onAct(row: HTMLElement): void {
   const p = row.dataset.path || "";
   if (row.dataset.act === "dir") { ask(p); return; }
-  if (row.dataset.act === "file") { openFileView(p, curSid); return; }
+  if (row.dataset.act === "file") { if (openPick) openPick(p, curSid); else openFileView(p, curSid); return; }
   if (row.dataset.act === "dl") startDownload(p);       // download-only rows download directly —
 }                                                       // a viewer that could only apologize helps nobody
 
@@ -408,6 +430,7 @@ function onListing(m: DirListing): void {
 export function initFileBrowse(poster: (m: Record<string, unknown>) => void, host: BrowseHost = {}): void {
   post = poster;
   shellRestore = host.shellRestore !== false;
+  openPick = host.openFile ?? null;
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;

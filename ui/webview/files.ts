@@ -21,7 +21,8 @@
 //   • the shell's browseFiles relay ({romp:"browseFiles", path, sid, identity}: a folder clicked in the chat
 //     while this pane is on screen or the File-links setting names it, render.ts openBrowse; the user
 //     2026-09-06) opens the file BROWSER here, the listing as its own column. The identity it carries is
-//     cached the same way, so a file picked from the listing names its session in the chip. The browser
+//     cached the same way, so a file picked from the listing names its session in the chip, and the pick
+//     itself opens through openHere (BrowseHost.openFile), so it enters the Recent list. The browser
 //     owes the shell no browseClosed either (initFileBrowse's shellRestore false): the pane stays up, and
 //     that message is the FEED's restore.
 // Close returns to the empty state, never to a hidden pane: closeFileView and closeFileBrowse only remove
@@ -123,6 +124,9 @@ initFileBrowse((m) => vscodeApi?.postMessage(m), {
     if (sid && id) identities.set(sid, id);   // so a file picked from the listing names its session
     openFileBrowse(m.path || ".", sid);
   },
+  // a file picked from the listing opens through the pane's own open, so it enters the Recent list like a
+  // relayed or re-opened file does (the identity the relay cached names its chip; review 2026-09-07)
+  openFile: (p, sid) => openHere(p, sid, null),
 });
 
 // re-open rows: delegated on the stable #files-empty (actions.ts), so a repaint mid-click still lands

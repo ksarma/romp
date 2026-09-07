@@ -39117,9 +39117,21 @@ else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  // phone (one pane at a time): the Feed tab comes forward ONLY in the mobile layout — on desktop the column
+  // is already visible and show() would only persist a stale romp-mobile-tab for a later narrow layout (the
+  // viewFile pane branch's gate, 2026-09-07) — and the tab the click came from is remembered, so the listing's
+  // close puts the person back (the browseClosed arm below; the feed's own dir-link route remembers nothing)
+  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';
+    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
-// the browser's close ends the overlay chain: browseClosed puts a brought-forward feed back the way
+// the browser's close ends the overlay chain, and the feed's browser tells the shell on every close path
+// (file-browse.ts tellShellClosed). First the phone's way back: where the feed browse branch above switched
+// tabs to show the listing, return to the tab the click came from (the filesViewerClosed idiom below); a
+// browse the feed opened for itself remembered nothing and moves nothing. The memory is dropped either way,
+// so a rotation to desktop in between makes the return a no-op, never a stale switch later.
+if(m.romp==='browseClosed'){var backf=window.__rompFeedTabFrom;window.__rompFeedTabFrom=null;
+  if(backf&&window.__rompMobileOn&&window.__rompMobileOn()){try{window.__rompMobileTab&&window.__rompMobileTab(backf);}catch(e){}}}
+// Then the pane: browseClosed puts a brought-forward feed back the way
 // it was, consuming the VIEWER's flag too — the feed-document handoff (the viewer's own dir-link →
 // initFileBrowse) opens the browser without any browseFiles reaching this shell, so the transfer
 // above never ran and the handed-off obligation still sits on the viewer flag. Either way: one
