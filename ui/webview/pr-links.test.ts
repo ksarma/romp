@@ -9,12 +9,24 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-// ── a DOM stand-in: text and element nodes with the handful of members the applier touches ─────────
+// ── a DOM stand-in: text and element nodes with the handful of members the applier touches, plus the
+// path pass (path-links.ts linkifyPathTokens: a tree walker, fragments, replaceWith, class selectors), so
+// the two-pass case runs both linkers for real over one tree ─────────────────────────────────────────
 class T {
   nodeType = 3;
   parentNode: E | null = null;
   constructor(public textContent: string) {}
+  get data(): string { return this.textContent; }
+  get parentElement(): E | null { return this.parentNode; }
+  replaceWith(frag: Frag): void {
+    const p = this.parentNode!;
+    const i = p.childNodes.indexOf(this);
+    for (const k of frag.childNodes) k.parentNode = p;
+    p.childNodes.splice(i, 1, ...frag.childNodes);
+    this.parentNode = null;
+  }
 }
+class Frag { childNodes: Array<E | T> = []; appendChild<N extends E | T>(c: N): N { this.childNodes.push(c); return c; } }
 class E {
   nodeType = 1;
   parentNode: E | null = null;
@@ -22,6 +34,7 @@ class E {
   href = ""; target = ""; rel = ""; title = ""; className = "";
   dataset: Record<string, string | undefined> = {};
   constructor(public tagName: string) {}
+  get parentElement(): E | null { return this.parentNode; }
   get classList() { const cs = this.className.split(/\s+/).filter(Boolean); return { contains: (c: string) => cs.includes(c) }; }
   get textContent(): string { return this.childNodes.map((c) => c.textContent).join(""); }
   set textContent(v: string) { for (const c of this.childNodes) c.parentNode = null; this.childNodes = []; if (v) this.appendChild(new T(v)); }
@@ -33,9 +46,11 @@ class E {
     return n;
   }
   removeChild(c: E | T): E | T { const i = this.childNodes.indexOf(c); if (i >= 0) this.childNodes.splice(i, 1); c.parentNode = null; return c; }
+  matches(sel: string): boolean {
+    return sel.split(",").some((one) => { const s = one.trim(); return s.startsWith(".") ? this.classList.contains(s.slice(1)) : s.toUpperCase() === this.tagName.toUpperCase(); });
+  }
   closest(sel: string): E | null {
-    const tags = sel.split(",").map((s) => s.trim().toUpperCase());
-    for (let n: E | null = this; n; n = n.parentNode) if (tags.includes(n.tagName.toUpperCase())) return n;
+    for (let n: E | null = this; n; n = n.parentNode) if (n.matches(sel)) return n;
     return null;
   }
   /** a compact serialization for assertions: tags lower-case, anchors with their href only */
@@ -46,9 +61,18 @@ class E {
     return `<${t}${attrs}>${inner}</${t}>`;
   }
 }
+function textNodesOf(root: E): T[] {
+  const out: T[] = [];
+  const walk = (n: E) => { for (const c of n.childNodes) { if (c instanceof T) out.push(c); else walk(c); } };
+  walk(root);
+  return out;
+}
+(globalThis as any).NodeFilter = { SHOW_TEXT: 4 };
 (globalThis as any).document = {
   createElement: (tag: string) => new E(tag.toUpperCase()),
   createTextNode: (s: string) => new T(s),
+  createDocumentFragment: () => new Frag(),
+  createTreeWalker: (root: E) => { const nodes = textNodesOf(root); let i = 0; return { nextNode: () => (i < nodes.length ? nodes[i++] : null) }; },
 };
 /** build a tree from a tiny tag language: el("p", "text", el("code", "#12")) */
 function el(tag: string, ...kids: Array<string | E>): E {
@@ -289,6 +313,142 @@ test("text already inside a link is never wrapped again", () => {
 test("the chat's path links are skipped, so a docs/x.md#12-shaped path stays the path it is", () => {
   const p = el("p", cls(el("span", "docs/x.md#12"), "file-uri-link"), " and ", cls(el("span", el("code", "https://x/#1")), "url-code-link"));
   assert.equal(linkifyPrRefs(p as unknown as Node, REPO), 0);
+});
+
+test("the boundary is judged over the rendered text: the #12 the path pass leaves at the head of its own node after docs/a.md is the path's fragment, not a reference", async () => {
+  // both passes for real, in the order every todo surface runs them (paths, then PR refs): the path pass
+  // cuts `docs/a.md#12` into [span docs/a.md][text "#12 …"], and the text node's start is no boundary
+  const { linkifyPathTokens } = await import("./path-links");
+  const twoPass = (text: string): E => {
+    const p = el("p", text);
+    linkifyPathTokens(p as unknown as HTMLElement, null);
+    linkifyPrRefs(p as unknown as Node, REPO);
+    return p;
+  };
+  const paths = (p: E): string[] => p.childNodes.filter((c): c is E => c instanceof E && c.classList.contains("file-uri-link")).map((c) => c.textContent);
+  let p = twoPass("Read docs/a.md#12 before merging");
+  assert.deepEqual(paths(p), ["docs/a.md"], "the path linked");
+  assert.equal(anchors(p).length, 0, "its fragment did not");
+  assert.equal(p.textContent, "Read docs/a.md#12 before merging");
+  p = twoPass("see docs/x.html#12 and #77");
+  assert.deepEqual(paths(p), ["docs/x.html"]);
+  assert.deepEqual(anchors(p).map((a) => a.textContent), ["#77"], "only the reference after a real boundary");
+  p = twoPass("check ~/notes/plan.md#7/#8 then #9");
+  assert.deepEqual(anchors(p).map((a) => a.textContent), ["#9"], "a glued run is refused whole, like a refused cross-repo form");
+  p = twoPass("compare /tmp/TESTHOST/a.md#3 with example-org/other#4");
+  assert.deepEqual(anchors(p).map((a) => a.textContent), ["example-org/other#4"], "a cross-repo reference later in the same node still links");
+  // the single-pass reading of the same texts is unchanged (the cross-repo filename rule already refused them)
+  assert.equal(links("Read docs/a.md#12 before merging").length, 0);
+  assert.deepEqual(links("see docs/x.html#12 and #77").map((s) => s.text), ["#77"]);
+  // the pure rule, given the character before the text: a word character glues, a boundary or the start does not
+  assert.deepEqual(prRefSegments("#12 next", REPO, "d"), [{ text: "#12 next" }]);
+  assert.deepEqual(prRefSegments("#12 next", REPO, " ").filter((s) => s.href).map((s) => s.text), ["#12"]);
+  assert.deepEqual(prRefSegments("#12 next", REPO, "(").filter((s) => s.href).map((s) => s.text), ["#12"]);
+  assert.deepEqual(prRefSegments("#12 next", REPO).filter((s) => s.href).map((s) => s.text), ["#12"], "no character before: the start of the text");
+  assert.deepEqual(prRefSegments("#12 and #13", REPO, "d").filter((s) => s.href).map((s) => s.text), ["#13"], "the scan resumes after the refused match");
+});
+
+test("an element's text ends the run too: #12 glued to <code>x</code> is no reference, #12 after a space is; an inline element with no text carries the run", () => {
+  const glued = el("p", "use ", el("code", "x"), "#12");
+  assert.equal(linkifyPrRefs(glued as unknown as Node, REPO), 0);
+  assert.equal(glued.html(), "<p>use <code>x</code>#12</p>");
+  const spaced = el("p", "use ", el("code", "x"), " #12");
+  assert.equal(linkifyPrRefs(spaced as unknown as Node, REPO), 1);
+  // a path link (skipped, like <code>) followed by its fragment in a sibling node, as the path pass leaves it
+  const split = el("p", "see ", cls(el("span", "docs/a.md"), "file-uri-link"), "#12 and #13");
+  assert.equal(linkifyPrRefs(split as unknown as Node, REPO), 1);
+  assert.deepEqual(anchors(split).map((a) => a.textContent), ["#13"]);
+  // an empty INLINE element between (an <img>, an empty span) does not reset the run: the text before it decides
+  const img = el("p", "see ", cls(el("span", "docs/a.md"), "file-uri-link"), el("img"), "#12");
+  assert.equal(linkifyPrRefs(img as unknown as Node, REPO), 0);
+  const imgSpaced = el("p", "see docs ", el("img"), "#12");
+  assert.equal(linkifyPrRefs(imgSpaced as unknown as Node, REPO), 1);
+  // a walked wrapper's text carries into the node after it, and the run before it carries into its first node
+  const wrapped = el("p", el("em", "see"), " #8 and ", el("strong", "ok"), "#9 and ", el("strong", "x"), " ", el("em", "#10"));
+  assert.equal(linkifyPrRefs(wrapped as unknown as Node, REPO), 2);
+  assert.deepEqual(anchors(wrapped).map((a) => a.textContent), ["#8", "#10"]);
+  const glued2 = el("p", "docs/a.md", el("em", "#12"));
+  assert.equal(linkifyPrRefs(glued2 as unknown as Node, REPO), 0, "a fragment inside a wrapper is glued to the text before the wrapper");
+});
+
+// ── marked's HTML read into the stand-in, so the chat's own markdown shapes run through the walk ─────
+const VOID_TAGS = new Set(["BR", "HR", "IMG", "INPUT", "WBR"]);
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", "#39": "'" };
+const unescapeHtml = (s: string): string => s.replace(/&(amp|lt|gt|quot|#39);/g, (_, k: string) => ENTITIES[k]);
+/** tags and text only, the class attribute kept; enough for what marked emits */
+function fromHtml(html: string): E {
+  const root = new E("DIV");
+  let cur = root;
+  const re = /<\/([A-Za-z][\w-]*)\s*>|<([A-Za-z][\w-]*)([^>]*)>|([^<]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[1]) { cur = cur.parentNode || root; continue; }
+    if (m[2]) {
+      const e = cur.appendChild(new E(m[2].toUpperCase()));
+      const c = /class="([^"]*)"/.exec(m[3] || "");
+      if (c) e.className = c[1];
+      if (!VOID_TAGS.has(e.tagName) && !/\/\s*$/.test(m[3] || "")) cur = e;
+      continue;
+    }
+    cur.appendChild(new T(unescapeHtml(m[4])));
+  }
+  return root;
+}
+const shape = (e: E): string[] => e.childNodes.map((c) => (c instanceof T ? JSON.stringify(c.textContent) : c.tagName));
+const linked = (root: E): string[] => anchors(root).map((a) => a.textContent);
+
+test("a line or block edge is a boundary with no whitespace node: marked's hard-break <br>, abutting paragraphs, list items, table cells; an inline element with no text is not", async () => {
+  const { marked } = await import("marked");
+  const { linkifyPathTokens } = await import("./path-links");
+  marked.setOptions({ gfm: true, breaks: false });   // the chat's options (render.ts md()); the sanitizer needs a browser DOM and keeps every tag used here
+  const md = (src: string): E => fromHtml(marked.parse(src) as string);
+  // a GFM hard break (two trailing spaces, or a backslash): <br> with NO text node between it and the `#`
+  let root = md("done  \n#12 next");
+  assert.deepEqual(shape(root.childNodes[0] as E), ['"done"', "BR", '"#12 next"'], "marked's shape: no whitespace after the <br>");
+  assert.equal(linkifyPrRefs(root as unknown as Node, REPO), 1);
+  assert.deepEqual(linked(root), ["#12"]);
+  root = md("done\\\n#12 next");
+  assert.equal(linkifyPrRefs(root as unknown as Node, REPO), 1, "the backslash form");
+  root = md("done  \nPR #12 next");
+  assert.deepEqual((linkifyPrRefs(root as unknown as Node, REPO), linked(root)), ["PR #12"]);
+  root = md("done  \nexample-org/other#4 next");
+  assert.deepEqual((linkifyPrRefs(root as unknown as Node, REPO), linked(root)), ["example-org/other#4"]);
+  root = md("see docs/a.md  \n#12 merged");
+  linkifyPathTokens(root as unknown as HTMLElement, null);
+  assert.deepEqual((linkifyPrRefs(root as unknown as Node, REPO), linked(root)), ["#12"], "a path on the line before, then the hard break: both passes for real");
+  root = md("Read docs/a.md#12 before merging");
+  linkifyPathTokens(root as unknown as HTMLElement, null);
+  assert.equal(linkifyPrRefs(root as unknown as Node, REPO), 0, "the fragment case through marked still refuses");
+  // marked separates blocks with a "\n" text node; a DOM whose blocks abut has the same boundary
+  const abutting: E[] = [
+    el("div", el("p", "done"), el("p", "#12")),
+    el("ul", el("li", "fixed"), el("li", "#12")),
+    el("li", "#12"),
+    el("tr", el("td", "fix"), el("td", "#12")),
+    el("div", el("h2", "Status"), el("p", "#12")),
+    el("div", el("p", "note"), el("blockquote", "#12")),
+    el("div", el("pre", "x"), "#12"),
+    el("div", "done", el("hr"), "#12"),
+    el("div", el("p", "done"), "#12"),
+    el("p", el("span", "docs"), el("br"), "#12"),
+    // block-display tags the sanitizer passes as raw HTML (review round 3): the carry stops at them too
+    el("li", "done", el("center", "#12")),
+    el("div", "done", el("legend", "#12")),
+    el("div", "done", el("dialog", "#12")),
+    el("div", el("center", "done"), "#12"),
+    el("div", "done", el("hgroup", "#12")),
+  ];
+  for (const r of abutting) assert.deepEqual((linkifyPrRefs(r as unknown as Node, REPO), linked(r)), ["#12"], r.html());
+  // the glue protections stay: a path span, an empty inline element, a walked inline wrapper
+  for (const r of [
+    el("p", "see ", cls(el("span", "docs/a.md"), "file-uri-link"), "#12"),
+    el("p", "docs", el("span"), "#12"),
+    el("p", "docs", el("img"), "#12"),
+    el("p", "docs", el("em", ""), "#12"),
+    el("p", "see docs/a.md", el("em", "#12")),
+  ]) assert.equal(linkifyPrRefs(r as unknown as Node, REPO), 0, r.html());
+  // a text node right after an <hr> or <br> is at a boundary; a whole-text `#` with a block before it too
+  assert.equal(linkifyPrRefs(el("div", el("p", "x"), el("div", "#7")) as unknown as Node, REPO), 1);
 });
 
 test("references inside emphasis and list items link (only anchors and code-like elements are opaque)", () => {
@@ -662,10 +822,11 @@ test("the chat learns its kernel's own name from every tabOrder frame too, throu
 });
 
 test("the chat's plain-text surfaces link too: user-todo rows, their detail folds, and the reply prompt's quote", () => {
-  assert.match(RENDER, /txt\.textContent = t\.text;\s*\n\s*linkifyPrRefs\(txt, prRepoFor\(renderingSid\)\);/);
-  assert.match(RENDER, /linkifyFileUris\(d, undefined, undefined, undefined, undefined, renderingSid \|\| null\);\s*\n\s*linkifyPrRefs\(d, prRepoFor\(renderingSid\)\);/);
-  assert.match(RENDER, /d\.textContent = todoText;\s*\n\s*linkifyPrRefs\(d, prRepoFor\(sid\)\);/);
-  assert.match(RENDER, /linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\); linkifyPrRefs\(dd, prRepoFor\(sid\)\);/);
+  // the line links paths first (user-todo-title-links.test.ts pins that line), then PR refs: each skips the other's anchors
+  assert.match(RENDER, /txt\.textContent = t\.text;\s*\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);[^\n]*\n\s*linkifyPrRefs\(txt, prRepoFor\(renderingSid\)\);/);
+  assert.match(RENDER, /linkTodoDetailPaths\(d, renderingSid \|\| null\);\s*\n\s*linkifyPrRefs\(d, prRepoFor\(renderingSid\)\);/);
+  assert.match(RENDER, /d\.textContent = todoText;\s*\n\s*linkTodoLinePaths\(d, sid\);[^\n]*\n\s*linkifyPrRefs\(d, prRepoFor\(sid\)\);/);
+  assert.match(RENDER, /linkTodoDetailPaths\(dd, sid\); linkifyPrRefs\(dd, prRepoFor\(sid\)\);/);
 });
 
 test("the feed links card titles (keyed), distiller lines, held-mail gists (by sender), group cards, checklists and the modal — per the card's session", () => {
@@ -701,9 +862,14 @@ test("the Waiting-on-you pane links asks and their detail per session and opens 
   const WAITING = read("waiting.ts");
   assert.match(WAITING, /import \{ linkifyPrRefs, installPrLinkOpener \} from "\.\/pr-links";/);
   assert.match(WAITING, /repoBySid = new Map\(m\.sessions\.filter/);
-  assert.match(WAITING, /txt\.textContent = w\.todo\.text;\s*\n\s*linkifyPrRefs\(txt, repoBySid\.get\(w\.sid\) \|\| null\);/);
-  // the detail links paths first (user-todo-links.test.ts pins that line), then PR refs — each skips the other's anchors
-  assert.match(WAITING, /d\.textContent = w\.todo\.detail \|\| "";\s*\n\s*linkDetailPaths\(d, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(d, repoBySid\.get\(w\.sid\) \|\| null\);/);
+  // the text and the detail link paths first (user-todo-links.test.ts pins those lines), then PR refs: each skips the other's anchors
+  assert.match(WAITING, /txt\.textContent = w\.todo\.text;\s*\n\s*linkTodoPaths\(txt, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(txt, repoBySid\.get\(w\.sid\) \|\| null\);/);
+  assert.match(WAITING, /d\.textContent = w\.todo\.detail \|\| "";\s*\n\s*linkTodoPaths\(d, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(d, repoBySid\.get\(w\.sid\) \|\| null\);/);
+  // the Reply modal's quoted line and detail: the same two passes in the same order as the row (the
+  // 2026-09-07 review: the modal linked paths but not PR refs, while the chat's modal linked both)
+  const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
+  assert.match(modal, /d\.textContent = todoText;\s*\n\s*linkTodoPaths\(d, sid\);[^\n]*\n\s*linkifyPrRefs\(d, repoBySid\.get\(sid\) \|\| null\);/);
+  assert.match(modal, /dd\.textContent = todoDetail;\s*\n\s*linkTodoPaths\(dd, sid\);\s*\n\s*linkifyPrRefs\(dd, repoBySid\.get\(sid\) \|\| null\);/);
   assert.match(WAITING, /installPrLinkOpener\(document, vscodeApi \? \(m\) => vscodeApi\.postMessage\(m\) : undefined\);/);
 });
 

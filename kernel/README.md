@@ -26,15 +26,23 @@ Shared lookup tables: `colormap.py` (recency tints, single source shared with
 the web bundles) and `palette.py` (session-identity colors).
 
 Two key sources, one switch (`docs/reference.md`, "API keys on disk: the file
-mode" and "Installing without keys on disk"):
+mode", "Installing without keys on disk", and the migration and service
+authentication setup for a 1Password reference):
 
-- `keysource.py` is the file source: where an installation keeps an
-  `ANTHROPIC_API_KEY=` line in `service.env`, it is re-read at every session
-  launch so a rotation there needs no manager restart. `cli/keyswap.py` (`romp
-  keyswap`) loads the same module to read and fingerprint that line, so the
-  two cannot disagree about the path or the parse. This fork does not write API
-  keys to files: the named swap that would write the line is refused in this
-  mode.
+- `keysource.py` is the file source. It selects the manager's live API key
+  source from `service.env`: a `ROMP_API_KEY_REF=op://vault/item/field`
+  reference or a legacy `ANTHROPIC_API_KEY=` line, re-read at every session
+  launch so a rotation there needs no manager restart. Source inspection is
+  separate from resolution, so a status read never fetches a secret; a selected
+  reference is resolved with `op read --no-newline` for each session
+  launch/reconnect, key-billed judge call and direct model-catalog refresh, an
+  explicit cycle check resolves it again to detect a rotation, resolved provider
+  keys are never cached or written to disk, and a resolution failure fails
+  closed. Removing a service-file source cannot restore a stale startup key.
+  `cli/keyswap.py` (`romp keyswap`) loads the same module to read and
+  fingerprint that line, so the two cannot disagree about the path or the
+  parse. This fork does not write API keys to files: the named swap that would
+  write the line is refused in this mode.
 - `envsource.py` is the command source, selected by `ROMP_CREDENTIAL_COMMAND`:
   the kernel runs that command with the selector file's token as `$1` and
   merges the `NAME=VALUE` set it prints into every session CLI's launch

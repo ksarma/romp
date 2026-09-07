@@ -834,11 +834,16 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   // overlays paint after the picture loads) is a third, so the count is a floor and the two text sites are pinned by shape
   assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "every text paint fires it");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/,
+    "every text paint fires it (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
-  assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 2, "closeFileView AND the replace path");
+  assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,
+    "closeFileView, the replace path, and the URL viewer's replace path (openUrlView is a third way a viewer is replaced, upstream 2026-09-06, folded 2026-09-07; its teardown drains the hooks too)");
   const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
-  assert.match(closeFn, /dropMediaUrl\(\);[^\n]*\n\s*runCloseHooks\(\);[^\n]*\n\s*wrap\.remove\(\);/, "hooks drain before the element goes");
+  assert.match(closeFn, /dropUrlRead\(\);[^\n]*\n\s*runCloseHooks\(\);[^\n]*\n\s*wrap\.remove\(\);/,
+    "hooks drain before the element goes (the URL read's cancel sits between the media revoke and the hooks: md-url-view.test.ts pins that pair adjacent)");
+  const urlFn = VIEW.split("export function openUrlView")[1].split("// Kick the browser's downloader")[0];
+  assert.match(urlFn, /dropOnKey\(\);[^\n]*\n\s*runCloseHooks\(\);/, "the URL viewer's replace path drains the old viewer's hooks too");
   // Edit refuses in words while blocked — the button stays a button so the reason reaches touch users
   assert.match(VIEW, /if \(editBlocked\) \{ noteBar\(editBlocked\); return; \}/);
   assert.match(VIEW, /editBtn\.title = reason \|\| "Edit this file in place";/);

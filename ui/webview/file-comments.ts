@@ -12,10 +12,12 @@
 //   • A session's pending changes (Slice 2) are cards too: one per change, grouped by the paragraph it
 //     falls in, with Accept, Reject, Reply (a comment bound to the change, so the session's answering
 //     track-edit revisions fold into it) and Reveal; the comments bound to a change sit ON its card. Past
-//     three groups the rest fold behind one row. The changes are also marked inline — insertions tinted,
-//     deletions struck at their point in Raw — through anchor-map's change painters (contract D4), and a
-//     click on a mark opens its card. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites
-//     the file, also fences on the file's mtime and then reloads the view, since the bytes changed under it.
+//     three groups the rest fold behind one row. The changes are also marked inline in both views — insertions
+//     tinted, deletions struck at their point (Rendered places it through the index map since the inline-display
+//     follow-on, 2026-09-07; a deletion the map cannot place is card-only) — through anchor-map's change painters
+//     (contract D4); a click on a mark opens its card, and Show changes inline in the panel's head turns every mark
+//     off in both views. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites the file, also
+//     fences on the file's mtime and then reloads the view, since the bytes changed under it.
 //   • A region on an image (Slice 3) or on a PDF page (Slice 4) is a comment too: the overlays file-comments-regions.ts
 //     puts over the media body's picture, over every figure in rendered markdown, and over each page the PDF chunk
 //     draws (one per page, the region's `page` from the canvas's data-page; a far page with nothing to paint takes its
@@ -74,6 +76,7 @@ import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
+import { loadSettings, saveSettings, onExternalSettingsChange } from "./settings";   // Show changes inline: the shared, persisted webview settings (the inline-display follow-on, 2026-09-07)
 import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
@@ -709,6 +712,11 @@ function ensureListener(): void {
     else if (m.type === "warn") live.failAll(droppedRequestText(m.text));
   });
   window.addEventListener("romp:wsdown", () => { if (live) live.failAll("the connection dropped; try again once it returns"); });
+  // Show changes inline is one preference for every viewer (settings.ts): a flip in another pane or tab — the
+  // `storage` event, or the gear's same-document signal — repaints this one's marks so its header and its body
+  // agree. Installed once here, with the message listener, and routed to the live panel: a listener per panel
+  // would outlive the panels (onExternalSettingsChange has no remove).
+  onExternalSettingsChange((s) => { if (live && live.inline !== s.changesInline) { live.inline = s.changesInline; live.paintAll(); } });
 }
 /** The save chord, claimed at the WINDOW in the capture phase while the live panel's box is the key's target: the first
  *  listener a keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts
@@ -765,6 +773,24 @@ export function rawTarget(src: string, r: MapRefusal & { selText: string }): Sou
 
 let reqSeq = 0;
 
+// ── the landing cue (the inline-display follow-on's review, 2026-09-07) ─────────────────────────────
+// Reveal switches to Raw and centres the change's row. With Show changes inline off — or a batch the Raw painter refused
+// (D4) — that row wears no mark of ours, so the person landed among a screen of identical rows with nothing saying which
+// one held the change: the line number and the "marks are off" clause were in the button's title, which a finger never
+// sees (ui/CLAUDE.md: never dead-end a compact view). So a Reveal that lands where the view shows no mark for its subject
+// cues the LANDING ROW (landOn): the `.fv-cl` the scroll centred wears `fc-landing`, the accent wash and a 2px accent bar
+// at its left edge — the focus-cue colour (ui/CLAUDE.md), never a status colour, and never a change mark's dress (the
+// tint, the struck wash): the marks are off by the person's choice, and a row cue is not a change mark, so the toggle's
+// contract (no change mark in either view) holds. The dress rides inline, as a framed picture's outline does (styleFrame):
+// the row is the viewer's element, and the sheets dress no landing. The cue is transient by EVENT, never by clock: it
+// leaves on the next paint pass (a status landed, the body re-rendered, the marks flipped — each new information the row
+// may no longer fit), on the next Reveal (one landing at a time), and with the panel; a card opening or any other
+// re-render of the aside alone leaves it standing, and so does scrolling away — the row is where the change is until the
+// text moves. When the view DOES mark the subject there (the marks on: Raw paints every change; a comment's highlight),
+// the mark is the cue and the row wears none.
+const LANDING_BG = "var(--accent-wash)";
+const LANDING_BAR = "inset 2px 0 0 var(--accent)";
+
 // ── the panel's marks, for listeners that never see a panel ─────────────────────────────────────────
 // Every element a panel paints into the file's body — a highlight, a change mark, a picture frame, a rectangle, and
 // the overlay the rectangles sit on — is registered here beside the panel's own `marks` (owns), so a document-level
@@ -797,6 +823,12 @@ class Panel {
   moreChangesOpen = false;                  // the "… N more changes" fold past GROUP_LIMIT groups — the same rule
   rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
   paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
+  landing: HTMLElement | null = null;       // the Raw row the last Reveal cued, when the view showed no mark of ours there (landOn)
+  // Show changes inline (the inline-display follow-on, 2026-09-07): whether the read view marks the session's changes
+  // in the text — insertions tinted, deletions struck — in both views. Off, the file reads as it is and every change
+  // is its card alone (no "not shown" tag: nothing is shown by choice). The shared settings store keeps it across
+  // opens and pages (settings.ts changesInline, ON by default); comment highlights are not governed by it.
+  inline = loadSettings().changesInline;
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
@@ -969,6 +1001,7 @@ class Panel {
         fctrackfolder: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "folder" }, "track"); },
         fctrackcancel: () => { this.trackChoice = false; this.trackStop = false; this.render(); },
         fctrackstop: () => { this.trackStop = false; void this.mutate("set-tracked", { on: false, scope: "folder" }, "track"); },
+        fcinline: () => this.toggleInline(),
         fcfile: () => this.startFileComment(),
         fcsave: () => { void this.saveComposer(); },
         fccancel: () => this.closeComposer(),
@@ -993,7 +1026,12 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
-        fcchange: (x) => { this.openPanel(); this.showCard("chg:" + x.dataset.id!); },   // an inline change mark opens its card
+        // an inline change mark opens its card — and, like fcopen below, cancels the click: a mark inside the author's
+        // link (a deletion point placed at the start of a link's label, a substitution's point and tint over it, an
+        // insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the
+        // card also opened a tab to the author's URL — the session's URL, on a file under review (the 2026-09-07
+        // review). The chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
+        fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
@@ -1257,9 +1295,11 @@ class Panel {
     // are the person's, and its pending rectangle is a mark like any other.
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
+    this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
     this.stopPoll();
   }
   dispose(): void {
+    this.clearLanding();
     this.stopPoll();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
@@ -1991,13 +2031,23 @@ class Panel {
   private indexedText(): string | null {
     return this.ctx.editing() && this.editText !== null ? this.editText : this.ctx.text();
   }
+  /** Show changes inline, flipped: the preference goes to the shared store (saveSettings; every other viewer reads
+   *  it on its next paint or through the settings signal) and the body is repainted at once from the status already
+   *  here — no status ask, the hunks have not changed — which also re-renders the header's button. */
+  private toggleInline(): void {
+    this.inline = !this.inline;
+    saveSettings({ changesInline: this.inline });
+    this.paintAll();
+  }
   /** Paint every open comment's anchor over the current view: located → the ring; quote gone but its
    *  context found → the text-changed ring; neither → card only, marked detached. Detached is a
    *  rendering state, never a stored flag. Then the changes (D4/D5): insertions and substitutions tinted
-   *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
-   *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
+   *  over the new text, deletions struck at their point in both views (Rendered through the index map; a
+   *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
+   *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
     if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
+    this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
     // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
     // refusal has since replaced in the same slot is left alone)
@@ -2078,6 +2128,7 @@ class Panel {
    *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
   private paintChanges(root: Element, src: string, rendered: boolean): void {
     const s = this.status;
+    if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
     // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
@@ -2528,14 +2579,16 @@ class Panel {
     this.reveal(key);
   }
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
-   *  a comment or change the Rendered view could not paint (a deletion never is), so the compact card never
-   *  dead-ends. */
+   *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
+   *  inline off), so the compact card never dead-ends. Where Raw shows no mark of ours for the subject either, the row
+   *  the scroll centred is cued (landOn), so the landing is not a guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
       this.ctx.setMode("raw");
       this.ctx.scrollToOffset(c.curFrom);
+      this.landOn(c.curFrom, "fcchange", c.id);
       return;
     }
     const card = this.cards().find((c) => c.id === key);
@@ -2549,6 +2602,34 @@ class Panel {
     if (!loc || !loc.range) return;
     this.ctx.setMode("raw");
     this.ctx.scrollToOffset(loc.range.start);
+    this.landOn(loc.range.start, "fcopen", key);
+  }
+  /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
+   *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
+   *  last row, so the cue and the scroll never disagree — wears the cue when the Raw body shows no mark of ours for the
+   *  subject (`act` + `id`: the change's marks, or the comment's highlight). setMode re-renders the body synchronously
+   *  and its onRendered pass has painted by now (paintAll), so what the body shows is what the person sees. One landing
+   *  at a time: the last cue is cleared first, whether or not a new one is painted. */
+  private landOn(offset: number, act: string, id: string): void {
+    this.clearLanding();
+    if (this.ownMarks(act, id).length) return;         // the view marks the subject itself: that mark is the cue
+    const src = this.ctx.text();
+    const code = this.ctx.body().querySelector("code.hljs");
+    if (src === null || !code) return;                 // no Raw rows to cue (a media body; the editor's)
+    const rows = code.querySelectorAll(".fv-cl");
+    if (!rows.length) return;
+    const row = rows[Math.min(rawOffsetToLine(src, offset), rows.length - 1)] as HTMLElement;
+    row.classList.add("fc-landing");
+    row.style.background = LANDING_BG; row.style.boxShadow = LANDING_BAR;
+    this.landing = row;
+  }
+  /** The cue comes off its row — on a paint pass, the next Reveal, the panel closing: each an event, never a timer. */
+  private clearLanding(): void {
+    const row = this.landing;
+    this.landing = null;
+    if (!row) return;
+    row.classList.remove("fc-landing");
+    row.style.background = ""; row.style.boxShadow = "";
   }
   scrollCard(id: string): void {
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
@@ -2852,6 +2933,16 @@ class Panel {
     t.title = tb ? (tb.kind === "inherited" ? "Tracked through " + tb.entry + "; turn it off there" : "Tracked by the entry " + tb.entry + "; click to stop")
       : "Record this session's edits to the file as changes you accept or reject";
     row.appendChild(t);
+    // Show changes inline, beside Track changes, only while the file has changes to show (progressive disclosure: a
+    // control over marks that do not exist is noise) and the read view is up (the editor draws every change itself)
+    if (s && (s.hunks || []).length && !this.ctx.editing()) {
+      const i = btn("Show changes inline", "fcinline", "fileview-btn fc-toggle");
+      i.dataset.on = this.inline ? "1" : "0";
+      i.setAttribute("aria-pressed", this.inline ? "true" : "false");
+      i.title = this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
+        : "The marks are off and the file reads as it is; click to mark the session's changes in the text";
+      row.appendChild(i);
+    }
     row.appendChild(btn("Comment on this file", "fcfile"));
     head.appendChild(row);
     if (this.trackChoice && s) {
@@ -3248,8 +3339,9 @@ class Panel {
   /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark
    *  when the view shows one), and the buttons — Accept and Reject are the card's reason to exist, so they
    *  never hide behind the expand. Open: the old and new text, and the comments bound to the change with
-   *  their turns and their own Reply and Resolve. Reveal on a deletion (never painted in Rendered; a point in
-   *  Raw) and on any change whose mark the view does not show, so the compact card never dead-ends. While the
+   *  their turns and their own Reply and Resolve. Reveal on a deletion (a point in both views, which a scroll can
+   *  miss) and on any change whose mark the view does not show — a refused block, or Show changes inline off — so
+   *  the compact card never dead-ends. While the
    *  editor is up (Slice 5) the editor's own marks show every change, deletions included, and the read view Reveal
    *  and the link would scroll is gone, so neither is offered; Accept and Reject stay, and answer with where to
    *  decide (DECIDES).
@@ -3288,9 +3380,10 @@ class Panel {
       const t = el("span", "fc-tag", "detached");
       t.title = "The file no longer holds this text, so the change cannot be accepted or rejected; its record stays with the file's comments";
       head.appendChild(t);
-    } else if (!painted && !editing && !inFlux && src !== null && this.ctx.mode() !== "media") {
+    } else if (!painted && this.inline && !editing && !inFlux && src !== null && this.ctx.mode() !== "media") {
+      // with the marks off (inline) the view shows no change by choice, and the tag would claim a failing that is none
       const t = el("span", "fc-tag", "not shown");
-      t.title = this.ctx.mode() === "rendered" && c.kind === "del" ? "The Rendered view cannot show a deletion; Reveal opens it in Raw" : "This view does not show the change; Reveal opens it in Raw";
+      t.title = "This view does not show the change; Reveal opens it in Raw";
       head.appendChild(t);
     }
     if (c.comments.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.comments.length)));
@@ -3319,7 +3412,12 @@ class Panel {
       if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
         if (c.kind === "del" || !painted) {
           const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-          rv.title = "Show the change in the Raw view" + (src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
+          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "";
+          // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
+          // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
+          // is what reaches a finger; on, Raw shows every change, a deletion as its point
+          rv.title = this.inline ? "Show the change in the Raw view" + line
+            : "Open the Raw view at the change" + line + "; the marks are off, so the change is not marked there";
           if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
         }
       }

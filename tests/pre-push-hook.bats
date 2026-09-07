@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-# .githooks/pre-push — the identifier scan, exercised against real commits.
+# .githooks/pre-push — the identifier scan, driven by hand against real commits.
 #
 # The hook refuses to publish a commit carrying a string from the machine's
 # private-strings denylist. Every identifier below is SYNTHETIC (the repo may go
@@ -15,11 +15,13 @@
 # A symlink's target IS its content once committed, so the hook reads those
 # blobs directly and these tests hold that line.
 #
-# The "which commits a push publishes" cases pin the 2026-09-06 shape: the TIP
-# tree of each pushed ref must be clean (that is what a push exposes), and each
-# commit the remote does not already have must ADD no banned line — a commit
-# that only inherits an older leak in its tree is not refused, a commit that
-# introduced one is, even if a later commit removed it again.
+# Two rules, both about what a push changes on the remote: the TIP tree of each
+# pushed ref must be clean (that is what a push exposes), and each commit no
+# fetched remote already has must ADD no banned line — a commit that only
+# inherits an older leak in its tree is not refused, a commit that introduced
+# one is, even if a later commit removed it again. install-sh.bats exercises the
+# hook through a real `git push`; this file feeds it ref lines directly, so it
+# can model a remote and its remote-tracking refs the way a clone has them.
 
 ROMP_DIR="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 HOOK="$ROMP_DIR/.githooks/pre-push"
@@ -27,6 +29,8 @@ HOOK="$ROMP_DIR/.githooks/pre-push"
 load git-hermetic
 
 setup() {
+    # Hermetic git: the fixtures commit and merge with plain defaults, and a developer's global
+    # config (merge.ff=only, commit.gpgsign, a hooks path) must not reach them (the #968 review).
     git_hermetic
     TEST_DIR="$(mktemp -d)"
     REPO="$TEST_DIR/repo"
@@ -40,7 +44,7 @@ setup() {
     mkdir -p "$TEST_DIR/no-hooks"
     git -C "$REPO" config core.hooksPath "$TEST_DIR/no-hooks"
 
-    # the denylist: one invented identifier, nothing that exists on any real box
+    # the denylist: invented identifiers, nothing that exists on any real box
     STRINGS="$TEST_DIR/private-strings.txt"
     printf '# synthetic\nzzsynthuser\nTESTHOST\n' > "$STRINGS"
 
@@ -52,13 +56,18 @@ teardown() { rm -rf "${TEST_DIR:-}"; }
 
 ZERO=0000000000000000000000000000000000000000
 
+# Run the hook from inside the repo, the way git does. bats' `run` executes the
+# command in a subshell, so the cd here does not leak into the test. (A cd
+# helper rather than `env -C`, which BSD env lacks.)
+_hook_in() { cd "$1" && shift && bash "$@"; }
+
 # Feed the hook a ref line the way git does: <local_ref> <sha> <remote_ref> <remote_sha>.
 # The default remote sha of zero means a new branch, i.e. every commit here is
 # being published; pass the sha the remote holds to model updating a branch it has.
 run_hook() {
     local sha remote_sha="${1:-$ZERO}"
     sha="$(git -C "$REPO" rev-parse HEAD)"
-    run env -C "$REPO" bash "$HOOK" origin git@example.invalid:x/y.git <<< \
+    run _hook_in "$REPO" "$HOOK" origin git@example.invalid:x/y.git <<< \
         "refs/heads/main $sha refs/heads/main $remote_sha"
 }
 
@@ -105,17 +114,13 @@ main_redacts_and_branch_merges() {
 }
 
 @test "a clean commit passes" {
-    echo "nothing to see" > "$REPO/file.txt"
-    git -C "$REPO" add file.txt
-    git -C "$REPO" commit -qm "clean"
+    commit_file file.txt "nothing to see" "clean"
     run_hook
     [ "$status" -eq 0 ]
 }
 
 @test "an identifier in a regular file is blocked" {
-    echo "home is /home/zzsynthuser/code" > "$REPO/file.txt"
-    git -C "$REPO" add file.txt
-    git -C "$REPO" commit -qm "leak"
+    commit_file file.txt "home is /home/zzsynthuser/code" "leak"
     run_hook
     [ "$status" -ne 0 ]
     [[ "$output" == *"personal identifier"* ]]
@@ -153,6 +158,16 @@ main_redacts_and_branch_merges() {
 }
 
 @test "an identifier in an INTERMEDIATE commit is caught, not just the tip" {
+    commit_file bad.txt "home is /home/zzsynthuser/x" "leak"
+    leak_sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file bad.txt "remove it"               # tip is clean; history is not
+    run_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"commit ${leak_sha:0:10} ADDS a personal identifier"* ]]
+    [[ "$output" == *"  bad.txt"* ]]
+}
+
+@test "an identifier in an INTERMEDIATE commit's SYMLINK TARGET is caught, not just the tip" {
     ln -s /home/zzsynthuser/x "$REPO/bad"
     git -C "$REPO" add bad
     git -C "$REPO" commit -qm "leak"
@@ -166,11 +181,24 @@ main_redacts_and_branch_merges() {
     [[ "$output" == *"  bad"* ]]
 }
 
+@test "an added line shaped like a diff header is content, not a new path" {
+    # In a patch, content `++ b/decoy.txt` renders as `+++ b/decoy.txt`, the same
+    # text as a file header. Only a header names the path the next hit belongs to.
+    printf '%s\n' '++ b/decoy.txt' 'home is /home/zzsynthuser/x' > "$REPO/real.txt"
+    git -C "$REPO" add real.txt
+    git -C "$REPO" commit -qm "leak"
+    leak_sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file real.txt "remove it"              # tip is clean, so the added-lines pass decides
+    run_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"commit ${leak_sha:0:10} ADDS a personal identifier"* ]]
+    [[ "$output" == *"  real.txt"* ]]
+    [[ "$output" != *"decoy.txt"* ]]
+}
+
 @test "no denylist file means no identifier scan (a fresh clone is unaffected)" {
     export ROMP_PRIVATE_STRINGS="$TEST_DIR/does-not-exist.txt"
-    ln -s /home/zzsynthuser/x "$REPO/bad"
-    git -C "$REPO" add bad
-    git -C "$REPO" commit -qm "leak"
+    commit_file bad.txt "home is /home/zzsynthuser/x" "leak"
     run_hook
     [ "$status" -eq 0 ]
 }
@@ -194,7 +222,7 @@ main_redacts_and_branch_merges() {
     [[ "$output" == *"the tip of refs/heads/main"* ]]   # named as the tip, not as an introduction
     [[ "$output" == *"leak.txt"* ]]
     [[ "$output" != *"ADDS"* ]]
-    [[ "$output" == *"merge main"* ]]                   # the remedy is spelled out
+    [[ "$output" == *"merge the main that has since redacted it"* ]]   # the remedy is spelled out
 }
 
 @test "a leak ADDED by a branch commit and removed by a later one is refused, naming the commit" {
@@ -219,15 +247,129 @@ main_redacts_and_branch_merges() {
     [[ "$output" != *"leak.txt"* ]]       # main's commits were skipped, not re-flagged
 }
 
-@test "a commit only ANOTHER remote has is still new to this one" {
-    # --not --remotes (every remote) would have excused this; the exclusion is per remote
+# ── two remotes: a fork and the project it forked from ────────────────────
+# "New" means new to EVERY fetched remote, not only the one being pushed to. With
+# the exclusion scoped to the pushed-to remote, a clean branch cut from the
+# project's main was refused on its way to the fork as a new ref, over a commit
+# only the project's main reaches — named as ADDING a string the project had
+# since redacted, which no rewrite of the branch could fix — and syncing the
+# fork's main to the project's was refused the same way (the #968 review). A
+# string a remote already holds is fixed forward on that remote, whichever one.
+
+# The project (upstream) publishes an identifier and redacts it; the fork
+# (origin) still holds only the base. Leaves HEAD on main, at the project's tip.
+project_leaked_and_redacted_fork_behind() {
+    add_remote
+    git init -q --bare "$TEST_DIR/upstream.git"
+    git -C "$REPO" remote add upstream "$TEST_DIR/upstream.git"
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" push -q upstream main
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    LEAK_SHA="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file leak.txt "redact"
+    git -C "$REPO" push -q upstream main          # the fork's main is still at the base
+}
+
+@test "a clean branch cut from the project's main passes to the fork as a NEW ref" {
+    project_leaked_and_redacted_fork_behind
+    git -C "$REPO" checkout -q -b feature
+    commit_file web.txt "the web session's work" "branch work"
+    run_hook                                      # to origin, which reaches none of the project's commits
+    [ "$status" -eq 0 ]
+}
+
+@test "syncing the fork's main to the project's passes" {
+    project_leaked_and_redacted_fork_behind
+    run_hook "$(git -C "$REPO" rev-parse origin/main)"   # updating origin's main from the base
+    [ "$status" -eq 0 ]
+}
+
+@test "a commit no remote has is still scanned on the way to either remote" {
+    # the exclusion excuses what a remote already published, never a leak still local to this clone
+    project_leaked_and_redacted_fork_behind
+    git -C "$REPO" checkout -q -b feature
+    commit_file api.txt "home is /home/zzsynthuser/api" "branch leak"
+    leak_sha="$(git -C "$REPO" rev-parse HEAD)"
+    remove_file api.txt "remove it"               # tip is clean; the branch's own history is not
+    run_hook
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"commit ${leak_sha:0:10} ADDS a personal identifier"* ]]
+    [[ "$output" == *"  api.txt"* ]]
+    [[ "$output" != *"${LEAK_SHA:0:10}"* ]]       # the project's own commit is not re-flagged
+}
+
+@test "a commit only ANOTHER remote has is not rescanned on the way to this one" {
+    # This case once asserted the opposite: the exclusion stopped at the pushed-to remote's refs,
+    # so a leak another remote held was named again here. The #968 review turned rev_range around
+    # (--remotes, every remote): a string a remote already holds is fixed forward on that remote,
+    # and any refs/remotes/* ref counts, whether or not a remote of that name is configured.
     commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
     leak_sha="$(git -C "$REPO" rev-parse HEAD)"
     remove_file leak.txt "redact"                # tip is clean
     git -C "$REPO" update-ref refs/remotes/elsewhere/main HEAD
+    commit_file web.txt "the web session's work" "more work"   # the one commit new to every remote
+    run_hook
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"${leak_sha:0:10}"* ]]       # the other remote's commit is not re-flagged
+}
+
+# ── merges ────────────────────────────────────────────────────────────────
+# A merge's own additions are the lines in NONE of its parents: a conflict
+# resolution, a line typed into the merge. A merge of main taken while main
+# carried a string brings it in through the second parent, which the remote
+# already has, and a diff against the first parent alone named the merge as
+# adding it although the branch's tip was clean (the #968 review).
+
+# A branch cut BEFORE main publishes an identifier merges main while the string
+# is live (the merge's first-parent diff adds it; its second parent has it),
+# then merges the redaction: the tip is clean. Leaves HEAD on the branch.
+branch_merged_main_while_leak_was_live() {
+    add_remote
+    commit_file base.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file web.txt "the web session's work" "branch work"
+    git -C "$REPO" checkout -q main
+    commit_file leak.txt "home is /home/zzsynthuser/code" "leak"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q feature
+    git -C "$REPO" merge -q -m "merge main while the leak is live" main
+    LIVE_MERGE_SHA="$(git -C "$REPO" rev-parse HEAD)"
+    git -C "$REPO" checkout -q main
+    remove_file leak.txt "redact"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q feature
+    git -C "$REPO" merge -q -m "merge the redaction" main
+}
+
+@test "a merge of main taken while the leak was live is not the merge's own addition" {
+    branch_merged_main_while_leak_was_live
+    run_hook                # new ref: the branch commit and both merges are in the range, main's commits are not
+    [ "$status" -eq 0 ]
+}
+
+@test "a string typed into a merge's conflict resolution is the merge's own addition, naming the merge" {
+    add_remote
+    commit_file notes.txt "notes-api" "base"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q -b feature
+    commit_file notes.txt "the web session's line" "branch side"
+    git -C "$REPO" checkout -q main
+    commit_file notes.txt "the api session's line" "main side"
+    git -C "$REPO" push -q origin main
+    git -C "$REPO" checkout -q feature
+    run git -C "$REPO" merge -q -m "merge main" main
+    [ "$status" -ne 0 ]                           # both sides changed notes.txt: a conflict to resolve
+    printf '%s\n' "resolved at /home/zzsynthuser/notes" > "$REPO/notes.txt"   # in neither parent
+    git -C "$REPO" add notes.txt
+    git -C "$REPO" commit -qm "merge main, resolved"
+    merge_sha="$(git -C "$REPO" rev-parse HEAD)"
+    commit_file notes.txt "settled" "settle"      # tip is clean, so the added-lines pass decides
     run_hook
     [ "$status" -ne 0 ]
-    [[ "$output" == *"commit ${leak_sha:0:10} ADDS"* ]]
+    [[ "$output" == *"commit ${merge_sha:0:10} ADDS a personal identifier"* ]]
+    [[ "$output" == *"  notes.txt"* ]]
 }
 
 @test "with no remote-tracking refs, the same rule covers everything the remote ref lacks (the fallback)" {

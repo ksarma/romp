@@ -64,7 +64,9 @@ LABEL_MAJOR = "major-feature"
 LABEL_HOLD = "hold"
 LABEL_LAND = "land"
 LABEL_BATCH = "batch"
-TIERS = ("fix", "tests-only", "feature", LABEL_MAJOR)
+# `docs` is upstream's coming rename of tests-only, accepted ahead of the rename; the fork's own PRs
+# keep tests-only. The fork's .github/workflows/pr-tier.yml counts the same labels (plus LABEL_BATCH).
+TIERS = ("fix", "tests-only", "docs", "feature", LABEL_MAJOR)
 # Paths that put a member under "Read these first" when it touches them.
 SENSITIVE_PREFIXES = ("kernel/", ".github/", ".githooks/")
 SENSITIVE_FILES = ("install.sh", "uninstall.sh")

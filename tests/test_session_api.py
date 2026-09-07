@@ -71,6 +71,17 @@ class AbcContract(unittest.TestCase):
         for m in ABSTRACT:
             self.assertIn(m, defs, "SdkBackend must implement the SessionBackend method %s" % m)
 
+    def test_control_setters_document_their_per_backend_mechanics(self):
+        # set_model, set_effort and set_fast land DIFFERENTLY on the two backends — the SDK switches
+        # model live over its control request but RECONNECTS for effort; tmux types the CLI's own
+        # command into the pane and accepts /model's confirmation — and the contract is where a reader
+        # learns that, so each carries a docstring naming its mechanism. One distinctive word per
+        # method keeps the pin honest without freezing the prose.
+        for m, word in (("set_model", "control"), ("set_effort", "reconnect"), ("set_fast", "connect")):
+            doc = getattr(sb.SessionBackend, m).__doc__ or ""
+            self.assertTrue(doc.strip(), "SessionBackend.%s carries a docstring" % m)
+            self.assertIn(word, doc, "SessionBackend.%s's docstring names its mechanism (%r)" % (m, word))
+
 
 # quoted-literal markers — a raw `["tmux"` subprocess list, a tmux SUBCOMMAND string arg, or a tmux @-var
 # NAME string. Matching only QUOTED literals (not bare words) means prose in comments/docstrings that merely

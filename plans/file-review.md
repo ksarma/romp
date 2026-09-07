@@ -633,8 +633,13 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
 - **Raw view is exact, Rendered view is best effort.** Changes are offsets into the source. In
   Raw, insertions tint, deletions render struck at their point, substitutions show both, each with
   the author's session chip in the session's color. In Rendered, insertions and substitutions are
-  re-found by their text and highlighted; a deletion cannot be placed in rendered prose and
-  appears only as a card, whose **Reveal** switches to Raw and scrolls there. An unpainted change
+  re-found by their text and highlighted, and deletions are struck at their point in both views:
+  the Rendered point is placed through the same index map the comment highlights use, so a
+  deletion inside a block the map refuses (a table, a code fence) appears only as a card, whose
+  **Reveal** switches to Raw and scrolls there (the inline-display follow-on, 2026-09-07; before
+  it every Rendered deletion was card-only). **Show changes inline** in the panel header turns
+  every change mark off in both views and back on, at once and without a status round trip, and
+  the choice is kept in the shared webview settings across opens and pages. An unpainted change
   always has a card, so the compact view never dead-ends. Session colors come from one
   `GET /sessions` fetch per panel open, mapping `authorId` to name and color; an author with no
   live match gets a neutral chip with its label.
@@ -909,8 +914,9 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
 a Reply bound to the change so the agent's `track-edit --thread` revisions fold into it; inline
-marks in Raw, highlights in Rendered, Reveal for deletions; Send to session states accepts and
-rejects and offers the accept-pending-changes checkbox.
+marks in Raw, highlights and deletion points in Rendered (the points since the inline-display
+follow-on, 2026-09-07), Reveal for a change the Rendered view cannot paint; Send to session states
+accepts and rejects and offers the accept-pending-changes checkbox.
 
 Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and marks bound
 comments resolved without dropping them; reject applies the engine's reverse edits to the file
@@ -947,6 +953,43 @@ elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear 
 beside their own and need no rule of their own to be usable, all but `.fc-hosted`, which the reply-place
 follow-on below gave a flex-column rule at the turns' gap (the review of 2026-09-07); the sheets are the
 painter's.
+
+The inline-display follow-on (2026-09-07): after walking the loop, the user asked for two things the
+Slice 2 build left out: tracked changes must read inline in the Rendered view too, not only in Raw,
+and the person must be able to turn the inline marks off. In the Rendered view, `paintChangesRendered`
+now paints a deletion as the same zero-width `span.fc-del` point Raw paints (one element constructor
+for both views, `makePoint`), placed in the rendered text at its `curFrom` through the index map
+(`paintRenderedPoint`). The point goes before the first emitted character at or past the offset, or
+right after the last character before it when the offset follows that character directly, so a
+deletion at a word's end sits against the word. A refused block, a hole, or a blank line between
+blocks leaves the change unpainted, with its card's "not shown" tag and Reveal. A substitution's point
+sits immediately before its tint, wherever the tint was found: inside a code fence or a table cell
+too, where the tint came through the text-match fallback, so a substitution there is shown while a
+deletion at the same offset is card-only. A point at the edge of a painter's own mark (a change's
+`fc-ins`, a comment's `fc-hl`, the composer's `fc-presel`) sits outside the mark, in both views and
+whichever change was painted first: a deletion right after an insertion follows the insertion's mark
+as its sibling, one right before it precedes the mark, and a substitution whose tint begins a comment
+highlight has its point before the highlight, while one whose tint is inside the highlight keeps its
+point inside, immediately before the tint. Points at one offset keep their paint order
+(`insertBeforeNode` and `insertAfterText` in `anchor-map.ts`). The renderer's own inline elements are
+not boundaries: a point after the last word of a `<strong>` stays in it. Before the rule, placement
+followed the paint order: with the insertion painted first, Rendered made the point the mark's last
+child, and the struck old text wore the insertion's tint and author underline (the review,
+2026-09-07). The point adds no text node, so
+`mapRenderedSelection` and `unpaintChanges` are unaffected. The **Show changes inline** toggle sits
+beside Track changes in the panel header, a two-state `fc-toggle` button offered while the file has
+changes and the read view is up. It is ON by default and kept as `changesInline` in the shared webview
+settings (`settings.ts`, the store the gear writes; toggled from the panel as `subgoals` is from the
+feed footer). Off, no change mark is painted in either view, comment highlights are untouched, and
+every change card is plain (no "not shown" tag, since nothing is shown by choice) and offers Reveal. A
+flip repaints from the status already held, with no request; a flip in another pane or tab reaches an
+open panel through the settings signal. The sheets gained no rule: the point is the same inline span,
+and the label takes the block's font. Its white-space is the block's when the label has a visible
+character, which folds a multi-line label onto its line. A label of spaces or tabs alone (a removed
+space beside one that stayed, a substitution of whitespace) carries the Raw rows' `white-space:
+pre-wrap` as an inline style (`renderedPointStyles` in `anchor-map.ts`): under the block's normal
+white-space such a label collapsed to a 0px point with no struck mark and nothing to hover, while the
+painter reported the change shown (the review, 2026-09-07).
 
 The composer follow-on (2026-09-07): after walking the loop, the user found the one-line box too
 small for the comments the loop needs. Every composer the panel offers (a passage, the whole file, a
@@ -1257,9 +1300,11 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
   lexer walk with per-token verification and refuses rather than mis-anchoring; the fallback
-  painter reuses the whitespace-tolerant matcher in `ui/webview/comments.ts:86-162`; deletions
-  are panel-only there; every change and comment has a card; a comment whose selection cannot be
-  mapped offers Raw.
+  painter reuses the whitespace-tolerant matcher in `ui/webview/comments.ts:86-162`; a deletion
+  there is a point placed through the same index map, card-only where the map refuses (the
+  inline-display follow-on, 2026-09-07; before it every Rendered deletion was panel-only); every
+  change and comment has a card, and an unpainted change's Reveal opens Raw; a comment whose
+  selection cannot be mapped offers Raw.
 - **Raw direct edits desync changes before Slice 5.** Mitigation: the Edit refusal from Slice 1
   on.
 - **Tracking off before a session writes.** Mitigation: folder tracking before the files exist,
@@ -1383,6 +1428,55 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `delegate()` root, string mtime comparison, no client-computed sidecar path, keyed expand
   state), pure tests for the card model, the Raw and Rendered mapping walks over the fixtures
   named in the acceptance criteria, and the message builder against the kernel's text.
+- The inline-display follow-on (2026-09-07), in webview tests beside the Slice 2 suites:
+  `anchor-map.test.ts` gains the Rendered change marks and the deletion points' placement (before
+  the word the offset is on, against a word the deletion followed, a paragraph's end, the file's
+  end, a list item, a blockquote, the capped label) and the blocks the map refuses (a code fence,
+  a table, an HTML block, a blank line between blocks, a nested code block's inside);
+  `anchor-map-rendered-points.test.ts` pins a table nested in a list item as a hole with the
+  table's own extent, the block that begins at an offset holding the point where one block ends
+  as the next begins, and the `white-space: pre-wrap` a label of spaces or tabs alone carries;
+  `anchor-map-block-edges.test.ts` pins the blank line a token's raw swallows (under an ATX or a
+  setext heading, an hr, a blockquote) as unpainted like the one under a paragraph, the end of a
+  file whose last block is a heading, a deletion at the first character of a nested code fence or
+  table sitting after the item text before the hole, and the change-marks section's statement
+  that Rendered leaves only an unplaceable change to its card;
+  `anchor-map-boundary-points.test.ts` pins the boundary rule over marked's output in Raw and
+  Rendered under both paint orders: a deletion right after or right before an insertion sits
+  outside the insertion's mark, at a row's end too, while a deletion inside the insertion still
+  splits the mark; a deletion at a comment highlight's edge sits outside the highlight, a
+  substitution whose tint begins the highlight has its point before it and one whose tint is inside
+  keeps its point inside, before the tint; a deletion at the edge of a change mark and a highlight
+  over the same word sits outside both; two points at one offset keep their paint order; and a
+  substitution inside a code fence or a table cell gets its point before its fallback-placed tint
+  and is reported painted while a deletion at the same offset is card-only;
+  `anchor-map-whitespace-point-browser.test.ts` and `file-comments-rendered-point-browser.test.ts`
+  measure the points under the real sheets in headless Chromium and Firefox (skipped where
+  playwright or an engine is missing): a removed space or tab has width and takes the pointer, a
+  short label adds no line, a long one wraps with the prose, the selection never carries the
+  struck text, and unpaint restores the markup; `file-comments-changes-review.test.ts`'s Rendered
+  half now expects the struck point and a plain card; `file-comments-inline-toggle.test.ts`
+  drives Show changes inline as a panel: the ON default with nothing written until a flip, the
+  deletion and substitution points and their cards, off with no status ask and the comment
+  highlights kept, the store's `changesInline` read on the next open and a corrupt store as the
+  default, the settings-signal and storage-event repaint, and the source pins (the delegate
+  action, the header's order, the key and default, the listener's install);
+  `file-comments-inline-review.test.ts`: a change mark inside the author's link opens its card
+  and opens no tab, by click and by keyboard and under the chat pane's capture-phase link handler,
+  the toggle withheld while the editor holds the body, and the generic "not shown" title on a
+  deletion inside a code fence; `file-comments-reveal-title.test.ts`: Reveal's title with the
+  marks off, in both views, with and without a line number; `file-comments-reveal-landing.test.ts`:
+  the cue a Reveal paints on the Raw row it centred when the view shows no mark of ours there (the
+  marks off; a batch the Raw painter refused), one row at a time and none beside a mark, its
+  lifetime by event (a paint pass, the next Reveal, the panel closing), and a file the viewer
+  shows only Raw.
+  `tests/test_file_review_plan_rendered_deletions.py` holds this plan's Rendered-deletion
+  passages (the surface paragraph, the Slice 2 line, the Risks bullet, the not-in-v1 list) to the
+  painter's source; `tests/test_file_review_plan_inline_display.py` holds the follow-on note's
+  white-space clause to `renderedPointStyles` and this bullet's file names to the tree; and
+  `tests/test_file_review_plan_boundary_points.py` holds the note's boundary clause to
+  `insertBeforeNode` and `insertAfterText` and this bullet's account of the boundary suite to the
+  suite's tests.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
@@ -1438,9 +1532,10 @@ HTML files (the viewer serves them as source by design); text-quote anchors insi
 cannot read a PDF's text, so PDF comments are whole-file or region); region drawing by touch on
 the phone; changes authored by the person (their edits are direct edits, decision 23); the
 Obsidian host's embed trees, explorer badges, status bar, multi-pane sync, and vault rename
-re-keying; a scheduler for overnight work; changes to the Obsidian and VS Code hosts; inline
-deletions in the Rendered view; undo of accept and reject before Slice 5; multi-file sends (one
-send per file, decision 28).
+re-keying; a scheduler for overnight work; changes to the Obsidian and VS Code hosts; undo of
+accept and reject before Slice 5; multi-file sends (one send per file, decision 28). Inline
+deletions in the Rendered view were on this list until the inline-display follow-on (2026-09-07,
+under Slice 2's build note) built them.
 
 ## Dependencies
 

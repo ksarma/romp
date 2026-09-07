@@ -9,8 +9,10 @@ expects to read), or the sha when HEAD is detached. Real temp git repos, synthet
 (TESTORG / notes-api — the demo world); the one network query (ls-remote) is served by a LOCAL bare
 repo through a stand-in ssh, so no test reaches GitHub.
 """
+import http.server
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -248,8 +250,8 @@ class GitHubUrl(_Repo):
                          "https://github.com/TESTORG/notes-api/blob/main/..cfg")
 
     def test_no_link_verdicts_name_their_reason(self):
-        # the user 2026-09-05 could not tell "not committed yet" from "the link is broken": every
-        # no-link verdict now says which, in a plain phrase the viewer shows verbatim
+        # the user 2026-09-05 could not tell an uncommitted file from a broken link: every no-link
+        # verdict now says which, in a plain phrase the viewer shows verbatim
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
         self.assertEqual(km._file_github_link(os.path.join(self.tmp, "loose.txt"), None),
                          ("", "not committed (untracked file)"), "untracked file — no link to a thing not there")
@@ -276,6 +278,25 @@ class GitHubUrl(_Repo):
         _git("add", "new.py", cwd=fresh)
         self.assertEqual(km._file_github_link(fp, None), ("", "not committed (no commits yet)"))
 
+    def test_a_file_staged_on_a_branch_with_commits_is_not_committed(self):
+        # the unborn case's sibling: HEAD is real, ls-files sees the index entry — and the URL that used
+        # to come back named a path GitHub has on no ref, so the viewer drew an enabled button that 404d
+        # (found in review). Only the tree HEAD names decides what a push can put on GitHub.
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        fp = os.path.join(self.tmp, "src", "new.py")
+        with open(fp, "w") as f:
+            f.write("pass\n")
+        _git("add", "src/new.py", cwd=self.tmp)
+        self.assertEqual(km._file_github_link(fp, None), ("", "not committed (staged only)"))
+        self.assertEqual(km._file_github_url(fp, None), "")
+        self.assertEqual(km._file_github_url(self.fp, None),
+                         "https://github.com/TESTORG/notes-api/blob/main/src/app.py",
+                         "its committed neighbour still links")
+        _git("commit", "-q", "-m", "new", cwd=self.tmp)
+        self.assertEqual(km._file_github_url(fp, None),
+                         "https://github.com/TESTORG/notes-api/blob/main/src/new.py",
+                         "the commit is the event: nothing else changed")
+
     def test_a_relative_path_resolves_against_the_sessions_cwd(self):
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
         real = km._cwd_of
@@ -283,10 +304,38 @@ class GitHubUrl(_Repo):
         try:
             self.assertEqual(km._file_github_url("src/app.py", "11111111-2222-3333-4444-000000000001"),
                              "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
-            self.assertEqual(km._file_github_link("src/app.py", None), ("", "not in a git repository"),
-                             "no sid, no base — no guess, and the reason a viewer would show")
+            self.assertEqual(km._file_github_link("src/app.py", None),
+                             ("", "relative path with no session directory to resolve it against"),
+                             "no sid, no base — no guess; and the verdict names THAT, not a repository "
+                             "check the kernel never ran (found in review)")
         finally:
             km._cwd_of = real
+
+
+    def test_the_branch_name_needs_no_modern_git(self):
+        # `branch --show-current` arrived in git 2.22; below it the query fails, and a failed branch
+        # query silently gave EVERY file a commit-sha URL where the branch URL was right (found in
+        # review). The branch comes from `symbolic-ref -q HEAD` now, which every git has and which a
+        # same-named tag cannot bend either. Reproduced with a git that rejects the option and hands
+        # everything else on — first on PATH, which is where the kernel finds its git.
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        _git("tag", "main", cwd=self.tmp)
+        real = shutil.which("git")
+        _restore_env_after(self, "PATH")
+        old = tempfile.mkdtemp()
+        _script(old, "git",
+                'for a in "$@"; do [ "$a" = "--show-current" ] && '
+                '{ echo "error: unknown option \\`show-current\'" >&2; exit 129; }; done\n'
+                'exec "%s" "$@"\n' % real)
+        os.environ["PATH"] = old + os.pathsep + os.environ["PATH"]
+        self.assertEqual(km._file_github_url(self.fp, None),
+                         "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.tmp,
+                             capture_output=True, text=True).stdout.strip()
+        _git("checkout", "-q", sha, cwd=self.tmp)
+        self.assertEqual(km._file_github_url(self.fp, None),
+                         "https://github.com/TESTORG/notes-api/blob/%s/src/app.py" % sha,
+                         "detached: the sha stays the only honest ref")
 
 
 class BranchOnOrigin(_WithOrigin):
@@ -422,6 +471,84 @@ class BranchOnOrigin(_WithOrigin):
         self.assertEqual(km._file_github_link(self.fp, None)[1], "branch wip is not on origin")
         self.assertEqual(asked(), 2, "the local verdict changed, so the memo was dropped")
 
+    def test_a_branch_on_origin_that_this_clone_never_fetched_is_asked_each_time(self):
+        # pushed from another clone: origin has it and this clone has no tracking ref. A True memoized
+        # here would have no drop event — a deletion on GitHub writes nothing locally, and `fetch
+        # --prune` has no ref to prune — and served a 404 link with no caption until the kernel
+        # restarted (found in review). So each open asks, until a fetch writes the tracking ref and
+        # the free check takes over.
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        _git("push", "-q", "origin", "wip", cwd=self.tmp)
+        _git("update-ref", "-d", "refs/remotes/origin/wip", cwd=self.tmp)   # as a clone that never fetched it
+        asked = self.counting_ssh()
+        for _ in range(2):
+            self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "wip", ""))
+        self.assertEqual(asked(), 2, "a True with no tracking ref is not memoized: nothing local could contradict it")
+        _git("update-ref", "-d", "refs/heads/wip", cwd=os.path.join(self.root, "TESTORG", "notes-api.git"))
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "branch wip is not on origin"),
+                         "deleted on GitHub: the next open says so, no restart needed")
+
+    def test_a_clone_whose_refspec_leaves_the_branch_untracked_is_asked_each_time(self):
+        # `git clone --single-branch` writes +refs/heads/main:refs/remotes/origin/main, so a push of any
+        # OTHER branch from this clone writes no tracking ref. A memoized False would have outlived the
+        # push and captioned a working link as not on origin until restart (found in review). With no
+        # local event able to contradict it, nothing is memoized here; each open asks.
+        _git("config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main", cwd=self.tmp)
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        asked = self.counting_ssh()
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "wip", "branch wip is not on origin"))
+        _git("push", "-q", "origin", "wip", cwd=self.tmp)
+        self.assertIsNone(km._git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/wip"], self.tmp),
+                          "the fixture reproduces the gap: this push wrote no tracking ref")
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "wip", ""),
+                         "the push is seen on the next open, not after a restart")
+        self.assertEqual(asked(), 2)
+
+    def test_a_refspec_ahead_of_the_default_takes_the_push_as_git_does(self):
+        # git updates the tracking ref of the FIRST fetch refspec that covers a pushed branch, and no
+        # other: with a `refs/remotes/other/*` line ahead of the default, the push writes other's ref.
+        # Reading any match as tracked memoized a False that push could not contradict, so the working
+        # link stayed captioned as not on origin until the next fetch (found in review).
+        _git("config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/other/*", cwd=self.tmp)
+        _git("config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*", cwd=self.tmp)
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        asked = self.counting_ssh()
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "wip", "branch wip is not on origin"))
+        _git("push", "-q", "origin", "wip", cwd=self.tmp)
+        self.assertIsNone(km._git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/wip"], self.tmp),
+                          "the fixture reproduces git's first-match rule: this push wrote no origin/wip")
+        self.assertTrue(km._git_out(["rev-parse", "--verify", "--quiet", "refs/remotes/other/wip"], self.tmp),
+                        "...it wrote other/wip, the first line's destination")
+        self.assertEqual(km._file_github_link(self.fp, None), (self.URL % "wip", ""),
+                         "the push is seen on the next open, not after the next fetch")
+        self.assertEqual(asked(), 2)
+
+    def test_the_fetch_refspec_decides_what_a_push_can_contradict(self):
+        # the memo's precondition, on the refspec shapes git writes: the default wildcard, a
+        # --single-branch exact ref (for that branch alone), a second remote's namespace, a negative
+        # refspec that excludes the branch, GitHub's pull-request refspec riding beside the default, a
+        # second namespace ahead of the default and behind it (the first positive match decides, as in
+        # git's push), and a source-only line ahead of the default (git skips a refspec with no
+        # destination; so does the read)
+        for specs, tracked in ((["+refs/heads/*:refs/remotes/origin/*"], True),
+                               (["+refs/heads/wip:refs/remotes/origin/wip"], True),
+                               (["+refs/heads/main:refs/remotes/origin/main"], False),
+                               (["+refs/heads/*:refs/remotes/upstream/*"], False),
+                               (["+refs/heads/*:refs/remotes/origin/*", "^refs/heads/wip"], False),
+                               (["^refs/heads/wip", "+refs/heads/*:refs/remotes/origin/*"], False),
+                               (["+refs/heads/*:refs/remotes/origin/*",
+                                 "+refs/pull/*/head:refs/remotes/origin/pr/*"], True),
+                               (["+refs/heads/*:refs/remotes/other/*", "+refs/heads/*:refs/remotes/origin/*"], False),
+                               (["+refs/heads/*:refs/remotes/origin/*", "+refs/heads/*:refs/remotes/other/*"], True),
+                               (["refs/heads/wip", "+refs/heads/*:refs/remotes/origin/*"], True)):
+            _git("config", "--replace-all", "remote.origin.fetch", specs[0], cwd=self.tmp)
+            for extra in specs[1:]:
+                _git("config", "--add", "remote.origin.fetch", extra, cwd=self.tmp)
+            self.assertEqual(km._origin_tracks(self.tmp, "wip"), tracked, specs)
+        _git("config", "--unset-all", "remote.origin.fetch", cwd=self.tmp)
+        self.assertFalse(km._origin_tracks(self.tmp, "wip"), "no refspec at all: nothing can write the ref")
+
     def test_concurrent_opens_share_one_query(self):
         # rapid opens used to put as many ls-remotes in flight as opens; askers of one key now wait
         # for the one in flight and take its answer
@@ -454,6 +581,76 @@ class BranchOnOrigin(_WithOrigin):
         os.environ["GIT_SSH_COMMAND"] = _script(self.root, "probe-ssh", "touch '%s'\nexit 255\n" % marker)
         self.assertEqual(km._file_github_url(self.fp, None), self.URL % "wip")
         self.assertFalse(os.path.exists(marker), "_file_github_url pays no network query")
+
+
+class NoPromptOnOrigin(_WithOrigin):
+    """The origin check's git must never pop a prompt of any kind (the #947 review). GIT_TERMINAL_PROMPT=0
+    closes the terminal route only: the child inherited GIT_ASKPASS, core.askPass and SSH_ASKPASS, so an
+    https origin answering 401 asked for a username and a password through the first of those it found —
+    with a GUI askpass exported in the kernel's shell, a prompt on every viewer open of a file under such
+    an origin, then killed at the deadline. ssh's own SSH_ASKPASS use (DISPLAY set, no tty) was open too.
+    The chosen behaviour: such an origin reads "could not check" rather than a verdict, and an askpass
+    that would have answered silently for a signed-in user is refused with the rest."""
+
+    def test_the_transport_child_sees_every_prompt_route_closed(self):
+        # the environment git hands its transport child is the one its own askpass lookup read; the
+        # stand-in ssh dumps it. Set-EMPTY GIT_ASKPASS is what overrides core.askPass and SSH_ASKPASS: git
+        # tests the variable's presence before falling to either, so unset would not do — pinned as
+        # `${GIT_ASKPASS+set}:` so a later cleanup to a pop() reads as the regression it is.
+        _restore_env_after(self, "GIT_ASKPASS", "SSH_ASKPASS", "DISPLAY")
+        gui = os.path.join(self.root, "gui-askpass")          # a path only; nothing runs it on the ssh path
+        os.environ["GIT_ASKPASS"] = os.environ["SSH_ASKPASS"] = gui
+        os.environ["DISPLAY"] = ":0"
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        dump = os.path.join(self.root, "child-env")
+        os.environ["GIT_SSH_COMMAND"] = _script(
+            self.root, "env-ssh",
+            'printf "%%s\\n" "${GIT_ASKPASS+set}:$GIT_ASKPASS" "$SSH_ASKPASS_REQUIRE" "$GIT_TERMINAL_PROMPT" > "%s"\n'
+            'exit 255\n' % dump)
+        self.assertEqual(km._file_github_link(self.fp, None),
+                         (self.URL % "wip", "could not check whether branch wip is on origin"),
+                         "the stand-in refused, so the verdict is unchecked: the dump came from the kernel's query")
+        with open(dump) as f:
+            self.assertEqual(f.read().splitlines(), ["set:", "never", "0"],
+                             "GIT_ASKPASS set-empty (never unset), SSH_ASKPASS_REQUIRE=never, GIT_TERMINAL_PROMPT=0")
+
+    def test_a_credential_wanting_origin_pops_no_askpass_and_reads_unchecked(self):
+        # A loopback origin answering 401 with a Basic challenge is the credential-wanting private origin;
+        # a marker-writing askpass stands in for the GUI one. The control comes first: under
+        # GIT_TERMINAL_PROMPT=0 alone git DOES run the askpass, so the stand-in elicits the prompt this
+        # test is about. Then the kernel's query: no askpass run, and the verdict is unchecked.
+        # _origin_has_branch is called directly because _file_github_link's URL check reads a loopback
+        # origin as not GitHub before any ls-remote (and _local_origin's note says why an insteadOf
+        # rewrite cannot stand in for the URL).
+        exec_path = subprocess.run(["git", "--exec-path"], capture_output=True, text=True).stdout.strip()
+        if not os.path.exists(os.path.join(exec_path, "git-remote-https")):
+            self.skipTest("this git has no https transport")
+
+        class Challenge(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="notes-api"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+        srv = http.server.HTTPServer(("127.0.0.1", 0), Challenge)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)                        # cleanups run last-added first: shutdown, then close
+        marker = os.path.join(self.root, "asked")
+        _restore_env_after(self, "GIT_ASKPASS")
+        os.environ["GIT_ASKPASS"] = _script(self.root, "askpass", 'echo asked >> "%s"\necho user\n' % marker)
+        _git("remote", "set-url", "origin", "http://127.0.0.1:%d/TESTORG/notes-api.git" % srv.server_address[1],
+             cwd=self.tmp)
+        _git("checkout", "-q", "-b", "wip", cwd=self.tmp)
+        subprocess.run(["git", "-C", self.tmp, "ls-remote", "--heads", "origin", "refs/heads/wip"],
+                       env=dict(os.environ, GIT_TERMINAL_PROMPT="0"), capture_output=True, timeout=30)
+        self.assertTrue(os.path.exists(marker), "control: under GIT_TERMINAL_PROMPT=0 alone git runs the askpass")
+        os.remove(marker)
+        self.assertIsNone(km._origin_has_branch(self.tmp, "wip"), "a credential-wanting origin reads as unchecked")
+        self.assertFalse(os.path.exists(marker), "the kernel's query ran no askpass program")
 
 
 class GitLinkWire(_WithOrigin):

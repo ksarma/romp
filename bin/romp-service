@@ -20,7 +20,9 @@
 # Non-secret settings the service needs but only shells have (e.g. ROMP_EXPECTED_AUTH)
 # go in ~/.config/romp/service.env — read at manager start, never baked into the unit.
 # API keys never go in that file: they reach the manager through the environment of
-# whatever starts it. See SERVICE_ENV_FILE below and docs/reference.md.
+# whatever starts it. A ROMP_API_KEY_REF line is a 1Password reference, not a key, and
+# may go there: the kernel resolves it through op at the moment a key is needed. See
+# SERVICE_ENV_FILE below and docs/reference.md.
 set -euo pipefail
 
 # Resolve the repo root through any symlink (matches the other bin/ consumers).
@@ -71,6 +73,9 @@ UNIT="$SYSTEMD_DIR/romp-manager.service"
 # ROMP_CREDENTIAL_COMMAND set HERE (a non-secret command line), through that
 # command, which the kernel runs per launch and whose output it injects
 # (kernel/envsource.py; docs/reference.md, "Installing without keys on disk").
+# A ROMP_API_KEY_REF line (a 1Password reference, resolved through op by
+# kernel/keysource.py at the moment a key is needed) is configuration too, not a
+# key, and the kernel re-reads key source assignments live.
 # Values are read fresh on every manager (re)start, so changing one never needs
 # a reinstall. ROMP_SERVICE_ENV_FILE overrides the path (tests); ROMP_SERVICE_ENV is
 # the alias kernel/keysource.py accepts after it, resolved the same way here so an
@@ -580,7 +585,7 @@ case "${1:-status}" in
         fi
         echo "  Installed launchd agent: $PLIST"
         echo "  romp-manager now auto-starts at login — just open the browser."
-        echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH): $SERVICE_ENV_FILE"
+        echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH, or a ROMP_API_KEY_REF reference): $SERVICE_ENV_FILE"
         echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it: set"
         echo "      ROMP_CREDENTIAL_COMMAND there instead (docs/reference.md, Installing without keys on"
         echo "      disk), or let the environment of whatever starts the manager carry them."
@@ -600,7 +605,7 @@ case "${1:-status}" in
         fi
         echo "  Installed systemd --user service: $UNIT"
         echo "  romp-manager now auto-starts at login — just open the browser."
-        echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH): $SERVICE_ENV_FILE"
+        echo "  Extra service env (non-secret settings, e.g. ROMP_EXPECTED_AUTH, or a ROMP_API_KEY_REF reference): $SERVICE_ENV_FILE"
         echo "      KEY=VALUE lines, picked up at manager (re)start. API keys never go in it: set"
         echo "      ROMP_CREDENTIAL_COMMAND there instead (docs/reference.md, Installing without keys on"
         echo "      disk), or let the environment of whatever starts the manager carry them." ;;

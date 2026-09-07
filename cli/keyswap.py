@@ -4,11 +4,15 @@
 Two key sources, one command. Which one a box uses is decided by ONE non-secret setting, read the way
 the kernel reads it (this shell's environment first, then the same line in the manager's env file):
 
-  * FILE mode (ROMP_CREDENTIAL_COMMAND unset) is upstream's: the kernel reads the `ANTHROPIC_API_KEY=`
-    line of `~/.config/romp/service.env` at every launch. Upstream's `romp keyswap <name>` rewrites
-    that line from a sibling file (`service.env.<name>`); THIS FORK REFUSES THAT (the user 2026-09-05):
-    the fork does not write API keys to files, so in file mode the named swap exits 2 and touches
-    nothing. The bare report and the cycle are upstream's, unchanged.
+  * FILE mode (ROMP_CREDENTIAL_COMMAND unset) is upstream's: the kernel reads the key source line of
+    `~/.config/romp/service.env` at every launch — an `ANTHROPIC_API_KEY=` line, or since upstream's
+    1Password work (kernel/keysource.py, KeySource) a `ROMP_API_KEY_REF=op://…` reference the kernel
+    resolves at runtime. Upstream's `romp keyswap <name>` rewrites that line from a sibling profile
+    (`service.env.<name>`); THIS FORK REFUSES THAT (the user 2026-09-05): the fork does not write API
+    keys to files, so in file mode the named swap exits 2 and touches nothing, whatever the profile
+    holds. The bare report and the cycle are upstream's: both read the file's source without ever
+    resolving a reference, and the cycle carries the source fingerprint it read as `expectedSourceFp`
+    so a source that changes mid-request is refused rather than cycled onto.
   * COMMAND mode (ROMP_CREDENTIAL_COMMAND set; kernel/envsource.py): the kernel runs the command,
     with the selector file's one token as `$1`, and injects the `NAME=VALUE` set it prints into every
     launch. Here `romp keyswap <name>` writes that token (a name, never a key) — after checking it is
@@ -30,7 +34,9 @@ Common to both modes:
     turn; a session with a turn, subagents or background tasks in flight is skipped and named.
 
 No key value is ever printed, logged or passed over the wire. The only rendered form is the first
-12 hex of its sha256 ("sha256:1a2b3c…"); a failure reason carries counts and exit codes only.
+12 hex of its sha256 ("sha256:1a2b3c…"); a failure reason carries counts and exit codes only. A
+1Password reference is represented by its fingerprint too: comparing it confirms the kernel's
+configured source, and the retrieval and rotation checks happen in the kernel, never here.
 
 Usage:
     romp keyswap                            # which credential the kernel holds, and whether this shell agrees
@@ -55,7 +61,10 @@ _ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(ROOT / 
 _ls_mod = importlib.util.module_from_spec(_ls_spec)
 _ls_spec.loader.exec_module(_ls_mod)
 load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
-ks = load_source("romp_keysource", ROOT / "kernel" / "keysource.py")
+# A keysource already loaded in this process (a test that drives the kernel and the CLI together) is
+# reused as it is, not re-executed: its source memory (_AUTHORITATIVE_PATHS, the op claim) must stay
+# the one instance the kernel holds (upstream, 2026-09-05).
+ks = sys.modules.get("romp_keysource") or load_source("romp_keysource", ROOT / "kernel" / "keysource.py")
 es = load_source("romp_envsource", ROOT / "kernel" / "envsource.py")
 
 KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7432"]
@@ -156,6 +165,29 @@ def _sha(fp):
     return ("sha256:" + fp) if fp else "(none)"
 
 
+def _source_label(source):
+    """Describe configuration without retrieving a provider's secret or exposing a literal key."""
+    try:
+        source.validate()
+    except ks.KeySourceError:
+        return "(invalid key source)"
+    if source.kind == "op":
+        return "1Password reference " + source.fingerprint()
+    return _fp(source.value)
+
+
+def _legacy_key_present(path):
+    """Detect plaintext hidden by a higher-priority reference so selecting it also cleans up. Upstream's
+    named swap uses it; the fork refuses that swap in file mode (REFUSAL), so nothing here calls it. It
+    is kept with the rest of upstream's key-source surface for a re-graft the fork's owner may decide on."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return bool(ks.parse_key(fh.read()))
+    except (OSError, UnicodeError):
+        # Attempt the write so its ordinary error path reports an unreadable live file.
+        return True
+
+
 def _ask(out, refresh=False):
     """The /keycycle read that names no session — the kernel's fingerprint and key-source facts, with
     `refresh` asking it to re-run its command first. Returns (body, rc): body None when nothing could
@@ -182,7 +214,8 @@ def _ask(out, refresh=False):
 
 
 # ---------------------------------------------------------------------------
-# FILE mode — upstream's report and cycle, unchanged but for the shared row printer and --refresh.
+# FILE mode — upstream's report and cycle (key line or 1Password reference), unchanged but for the
+# shared row printer, --refresh and the mode check.
 # ---------------------------------------------------------------------------
 
 def _candidates(path, out):
@@ -191,20 +224,24 @@ def _candidates(path, out):
     d = os.path.dirname(path) or "."
     base = os.path.basename(path) + "."
     try:
-        names = sorted(n[len(base):] for n in os.listdir(d) if n.startswith(base) and not n.endswith("~"))
+        # `service.env.source` is the kernel's durable "the source was a reference" marker (keysource
+        # .SOURCE_MARKER), not a candidate profile — it holds no key line and would list as "(no key source)"
+        names = sorted(n[len(base):] for n in os.listdir(d)
+                       if n.startswith(base) and not n.endswith("~") and n[len(base):] != ks.SOURCE_MARKER)
     except OSError:
         names = []
-    live = ks.read_key(path)
+    live = ks.read_source(path)
     if not names:
         # the fork writes no key files, so an empty list is the expected state — upstream's line here
-        # told the operator to create one file per key
+        # told the operator to create one profile per key (a ROMP_API_KEY_REF=op://… or a key line)
         out("candidates  none (this fork does not write API keys to files; the named swap is disabled)")
         return
     out("candidates")
     for n in names:
-        k = ks.read_key(ks.sibling_path(n, path))
-        mark = "  <- live" if (k and k == live) else ""
-        out("  %-14s %s%s" % (n, _fp(k) if k else "(no %s line)" % ks.KEY_VAR, mark))
+        source = ks.read_source(ks.sibling_path(n, path))
+        mark = "  <- live" if (source.configured and source == live) else ""
+        label = _source_label(source) if source.kind != "none" else "(no key source)"
+        out("  %-14s %s%s" % (n, label, mark))
 
 
 def _kernel_check(path, out, refresh=False):
@@ -213,10 +250,11 @@ def _kernel_check(path, out, refresh=False):
     ROMP_SERVICE_ENV_FILE from their own environments, so they can read different service.env files
     (_other_file renders that cause, shared with the two mode MISMATCHes: the places the kernel's
     environment comes from and the remedy per place), the file is unreadable to the kernel, the kernel
-    still holds its startup key because the file has no key line, or the kernel predates this feature.
-    Reads the fingerprint through /keycycle with no sessions named — a read, nothing cycles. Returns 0
-    when they agree (or no kernel is up to ask), 1 when they do not — or when the port override is
-    unusable, which is a misconfiguration to fix, not "no kernel"."""
+    still holds its startup key because the file has no key line, the file names a 1Password reference
+    the kernel does not hold, or the kernel predates this feature. Reads the fingerprint through
+    /keycycle with no sessions named — a read, nothing cycles. Returns 0 when they agree (or no kernel
+    is up to ask), 1 when they do not — or when the port override is unusable, which is a
+    misconfiguration to fix, not "no kernel"."""
     body, rc = _ask(out, refresh)
     if body is None:
         if rc == 0:
@@ -224,22 +262,51 @@ def _kernel_check(path, out, refresh=False):
         return rc
     if (body.get("keySource") or "file") != "file":
         return _mode_mismatch(body, out)
-    return _compare(body.get("keyFp") or "", path, out, body.get("refreshed"))
+    return _compare(body, path, out)
 
 
-def _compare(kfp, path, out, refreshed=None):
-    """Print the kernel's fingerprint and, when it is not the file's, say so and why it may be. The
-    other-file cause is the one explanation the three MISMATCH hints share (_other_file): a kernel
-    whose ROMP_SERVICE_ENV_FILE comes from a drop-in, a profile or the `romp up` shell is pointed at
-    that place, one whose unit or plist lacks the line this shell's environment carries is pointed at
-    the install that writes it, and the restart-and-reload block (_restart_block) follows once."""
-    note = _refreshed_note(refreshed, kfp, "re-read")
-    out("kernel      reads %s%s" % (_sha(kfp), (" (%s)" % note) if note else ""))
-    if kfp == ks.fingerprint(ks.read_key(path)):
-        return 0
-    out("MISMATCH    the kernel is not reading this file's key. Usual causes: the file is unreadable to the")
-    out("            kernel, the file has no %s line and the kernel still holds its startup" % ks.KEY_VAR)
-    out("            key, or the kernel reads another service.env:")
+def _compare(body, path, out):
+    """Print what the kernel holds and, when it is not this file's key source, say so and why it may be.
+    `body` is the /keycycle read: `keyFp` (the key the kernel reads, by fingerprint), `sourceFp` (the
+    fingerprint of its configured source, a 1Password reference included; absent on a kernel that
+    predates upstream's runtime sources) and `refreshed` (the fork's --refresh record). The file's source
+    is read and validated, never resolved: an invalid one is a MISMATCH of its own; a reference is
+    compared by `sourceFp` (the kernel retrieves the key at runtime, so `keyFp` says nothing about the
+    reference); a key line, or no line, by `keyFp`, as before upstream's references. The other-file
+    cause is the one explanation the three MISMATCH hints share (_other_file): a kernel whose
+    ROMP_SERVICE_ENV_FILE comes from a drop-in, a profile or the `romp up` shell is pointed at that
+    place, one whose unit or plist lacks the line this shell's environment carries is pointed at the
+    install that writes it, and the restart-and-reload block (_restart_block) follows once."""
+    source = ks.read_source(path)
+    try:
+        source.validate()
+    except ks.KeySourceError as exc:
+        out("MISMATCH    this file has an invalid key source — %s" % exc)
+        return 1
+    kfp = body.get("keyFp") or ""
+    note = _refreshed_note(body.get("refreshed"), kfp, "re-read")
+    if source.kind == "op":
+        if "sourceFp" not in body:
+            out("kernel      predates runtime key sources; update it with `romp refresh` before cycling")
+            return 1
+        source_fp = body.get("sourceFp") or ""
+        out("kernel      source %s%s" % (source_fp or "(none)", (" (%s)" % note) if note else ""))
+        if source_fp == source.fingerprint():
+            out("            1Password reference matches; credentials are retrieved at runtime")
+            return 0
+    else:
+        out("kernel      reads %s%s" % (_sha(kfp), (" (%s)" % note) if note else ""))
+        if kfp == source.fingerprint():
+            return 0
+    out("MISMATCH    the kernel is not reading this file's key source. Usual causes: the file is unreadable")
+    if source.kind == "op":
+        # a reference: the kernel holds another source (a key line, another reference), upstream's cause
+        # (2026-09-05); "no key line and the startup key" would name a cause a reference file cannot have
+        out("            to the kernel, its credential configuration differs from the running manager's,")
+        out("            or the kernel reads another service.env:")
+    else:
+        out("            to the kernel, the file has no %s line and the kernel still holds its" % ks.KEY_VAR)
+        out("            startup key, or the kernel reads another service.env:")
     pad = " " * 12
     for line in _other_file(path, len(pad), _path_alias()) + _restart_block():
         out(pad + line)
@@ -292,11 +359,12 @@ def _cycle(sessions, all_, out, path=None, refresh=False):
         _mode_mismatch(body, out)
         out("cycle       NOT DONE — fix the mismatch above first, then cycle.")
         return 1
-    if _compare(body.get("keyFp") or "", path or ks.service_env_path(), out, body.get("refreshed")):
-        out("cycle       NOT DONE — the kernel is not on this file's key, so a reconnect would re-present")
-        out("            the key it already has. Fix the mismatch above first, then cycle.")
+    if _compare(body, path or ks.service_env_path(), out):
+        # upstream's one line (2026-09-05) since the compare now also fails on an invalid source and on
+        # a kernel that predates references, where "not on this file's key" would be the wrong reason
+        out("cycle       NOT DONE — the kernel's key source could not be verified; fix the issue above first")
         return 1
-    return _do_cycle(u, sessions, all_, out, file_mode=True)
+    return _do_cycle(u, sessions, all_, out, body, file_mode=True)
 
 
 def _not_done_unasked(rc, out):
@@ -310,13 +378,24 @@ def _not_done_unasked(rc, out):
         out("cycle       NOT DONE — see above. Nothing was cycled.")
 
 
-def _do_cycle(u, sessions, all_, out, file_mode=False):
-    """The cycle itself, once the read agreed: one POST naming the sessions (or all), then the rows. In
-    file mode a row skipped as the login may be a session billed through the apiKeyHelper (the kernel
-    hands it no key, so it reads as the login there): one hint line says where such sessions cycle."""
-    body = _post(u, "/keycycle", {"all": True} if all_ else {"sessions": sessions})
+def _do_cycle(u, sessions, all_, out, read, file_mode=False):
+    """The cycle itself, once the read agreed: one POST naming the sessions (or all), then the rows.
+    `read` is the /keycycle read that agreed: the fingerprint of the kernel's source (`sourceFp`; `keyFp`
+    on a kernel that predates upstream's runtime sources) rides the request as `expectedSourceFp`, so a
+    kernel whose source moved between the read and the cycle refuses (409) instead of reconnecting
+    sessions onto a source nobody compared, and an answer whose fingerprint moved is not reported as a
+    success (upstream, 2026-09-05). In file mode a row skipped as the login may be a session billed
+    through the apiKeyHelper (the kernel hands it no key, so it reads as the login there): one hint line
+    says where such sessions cycle."""
+    expected_fp = read.get("sourceFp", read.get("keyFp") or "") or ""
+    request = {"all": True} if all_ else {"sessions": sessions}
+    request["expectedSourceFp"] = expected_fp
+    body = _post(u, "/keycycle", request)
     if not body.get("ok"):
         out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
+        return 1
+    if (body.get("sourceFp", body.get("keyFp") or "") or "") != expected_fp:
+        out("cycle       FAILED — the key source changed during the request; check it before cycling again")
         return 1
     rows = body.get("rows") or []
     if not rows:
@@ -335,7 +414,9 @@ def _do_cycle(u, sessions, all_, out, file_mode=False):
     if file_mode and any(str(r.get("status")) == "login" for r in rows):
         out("            a session billed through the apiKeyHelper reads as the login here and is skipped: such")
         out("            sessions cycle in command mode (set ROMP_CREDENTIAL_COMMAND); romp refresh --quiet reaches them too")
-    return 0
+    # a row the kernel could not cycle because its key retrieval failed (`error: …`, upstream's runtime
+    # sources) is a failed cycle, not a success with a strange row: the exit code says so
+    return 1 if any(str(r.get("status")).startswith("error:") for r in rows) else 0
 
 
 def _explain(status):
@@ -721,7 +802,7 @@ def _cycle_command(sessions, all_, out, header=True):
         out("cycle       NOT DONE — the kernel is not on the credential this shell reads, so a reconnect would")
         out("            re-present what it already has. Fix the mismatch above first, then cycle.")
         return 1
-    return _do_cycle(_kernel(), sessions, all_, out)
+    return _do_cycle(_kernel(), sessions, all_, out, body)
 
 
 def _restore_selector(old, sel_err, target, name):
@@ -868,11 +949,19 @@ def main(argv, out=None):
         sys.stderr.write(REFUSAL)
         return 2
     path = ks.service_env_path()
-    # Read-only report: the key the kernel holds (fingerprint), the file it reads, and the sibling
-    # files upstream's swap would have used (none expected here).
+    # Read-only report: the key source the kernel holds (a key's fingerprint, or a 1Password reference's),
+    # the file it reads, and the sibling profiles upstream's swap would have used (none expected here).
+    # The source is read and validated, never resolved: an invalid line is said and exits 1 before the
+    # kernel is asked, as upstream's report does (2026-09-05).
     out("service.env %s" % path)
-    out("live key    %s" % _fp(ks.read_key(path)))
+    current = ks.read_source(path)
+    out("live key    %s" % _source_label(current))
     _candidates(path, out)
+    try:
+        current.validate()
+    except ks.KeySourceError as exc:
+        out("configuration invalid — %s" % exc)
+        return 1
     if cycle or cycle_all:
         return _cycle(cycle, cycle_all, out, path, refresh)
     rc = _kernel_check(path, out, refresh)
