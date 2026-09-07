@@ -45,6 +45,7 @@ Contracts the tests hold this file to (tests/test_batch_tool.py):
 """
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -700,6 +701,47 @@ def blob_of(rev, path, cwd):
     return git("rev-parse", "--verify", "--quiet", "%s:%s" % (rev, path), cwd=cwd, check=False) or None
 
 
+def hunk_lines(cwd, mt, tree, path):
+    """One path's resolution as the diff from `mt` (the merge-tree of the parents, markers left in the
+    conflicted files) to `tree`, reduced to what identifies the resolution of the hunks: the lines
+    the diff removes and adds, in order. Hunk headers and context lines are dropped, since line
+    numbers and neighboring lines move when the file changes outside the conflict between
+    assemblies; each conflict marker line is cut back to the marker, since its label names a parent
+    by SHA and the batch side is a different commit in each assembly. None when the diff has no text
+    hunk (a binary file, an unchanged path), where the lines would identify nothing."""
+    proc = subprocess.run(["git", "--literal-pathspecs", "diff-tree", "-r", "-p", mt, tree, "--", path],
+                          cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        return None
+    out, in_hunk, after_change = [], False, False
+    for line in proc.stdout.split(b"\n"):
+        if line.startswith(b"@@"):
+            in_hunk, after_change = True, False
+        elif line.startswith(b"diff --git"):
+            in_hunk = False
+        elif not in_hunk:
+            continue
+        elif line[:1] in (b"-", b"+"):
+            body = line[1:]
+            if _CONFLICT_MARKER.match(body.decode("utf-8", "replace")):
+                line = line[:8]
+            out.append(line)
+            after_change = True
+        elif line.startswith(b"\\"):
+            # "\ No newline at end of file" qualifies the line before it: part of the resolution
+            # after a change line, part of the surroundings after a context line.
+            if after_change:
+                out.append(line)
+        else:
+            after_change = False
+    return out or None
+
+
+def hunk_hash(cwd, mt, tree, path):
+    lines = hunk_lines(cwd, mt, tree, path)
+    return None if lines is None else hashlib.sha256(b"\n".join(lines)).hexdigest()
+
+
 def resolution_choices(cwd, merge, paths, label1, label2):
     """Per path, what the resolution chose when it equals one parent's version: {path: phrase}. label1
     names the merge's first parent (the batch), label2 the second (a member, or origin/main). A path
@@ -782,23 +824,49 @@ def resolution_blobs(cwd, merge, paths):
     return {p: blob_of(merge, p, cwd) for p in paths}
 
 
+def resolution_hunk_hashes(cwd, merge, paths):
+    """Per path, the identity of the merge's resolution of its hunks (hunk_hash), recorded with the
+    blobs so a rerere replay of the same hunk resolution into a file that changed elsewhere since is
+    recognized as the reviewed resolution too. None when this git cannot compute the merge-tree."""
+    ps = parents_of(merge, cwd)
+    mt = merge_tree_of(ps[0], ps[1], cwd)[0] if len(ps) == 2 else None
+    if mt is None:
+        return None
+    return {p: hunk_hash(cwd, mt, merge + "^{tree}", p) for p in paths}
+
+
 def prior_resolution(state, key, files, wt):
     """The resolution an earlier assembly of this batch recorded under `key` (a member number as a
     string, or "main") that covers `files`, the paths rerere replayed and staged in `wt`: every one of
-    them is among the record's files and the blob staged for it equals the record's, so the review
-    carries over. A replay of a SUBSET of a recorded resolution qualifies: main can take one file's
-    change between assemblies and leave the others to conflict again, and their resolution is the
-    bytes the review covered. Same name, different bytes (rerere's cache is shared across batches)
-    does not. A record without blobs, written before they were recorded, matches on an equal file
-    list only."""
+    them is among the record's files and holds the recorded resolution, so the review carries over.
+    A path holds it when the blob staged for it equals the record's, or when the diff from the
+    conflicted merge-tree to the index resolves the hunks as the record did (hunk_hash): main, or
+    an earlier member, can change the same file outside the conflict between assemblies, and rerere
+    then replays the reviewed hunk resolution into a file of different bytes. A replay of a SUBSET of
+    a recorded resolution qualifies: main can take one file's change between assemblies and leave
+    the others to conflict again. The same hunks resolved to other bytes (rerere's cache is shared
+    across batches, and a replayed file can be edited before --continue) do not. A record without
+    hunk hashes, written before they were recorded, matches blob for blob; one without blobs, on an
+    equal file list only."""
     rec = (state["assembly"].get("previous_resolutions") or {}).get(key)
     if not rec or not files or not set(files) <= set(rec.get("files") or []):
         return None
     blobs = rec.get("blobs")
     if blobs is None:
         return rec if set(files) == set(rec["files"]) else None
-    for p in files:
-        if blob_of("", p, wt) != blobs.get(p):   # ":path" is the index at stage 0
+    differing = [p for p in files if blob_of("", p, wt) != blobs.get(p)]   # ":path" is the index at stage 0
+    if not differing:
+        return rec
+    hashes = rec.get("hunk_hashes")
+    if not hashes or not merge_in_progress(wt):
+        return None
+    mt, _, _ = merge_tree_of(git("rev-parse", "HEAD", cwd=wt), git("rev-parse", "MERGE_HEAD", cwd=wt), wt)
+    index_tree = git("write-tree", cwd=wt, check=False)   # fails while a path is unmerged
+    if mt is None or not index_tree:
+        return None
+    for p in differing:
+        h = hunk_hash(wt, mt, index_tree, p)
+        if h is None or h != hashes.get(p):
             return None
     return rec
 
@@ -904,8 +972,8 @@ def merge_member(root, wt, state, m, resolve_set):
     resolved = None
     if not still and merge_in_progress(wt):
         # rerere replayed a recorded resolution and staged the result (rerere.autoUpdate). The review
-        # of the earlier assembly's resolution carries over when the replayed files are that
-        # resolution's, blob for blob (prior_resolution).
+        # of the earlier assembly's resolution carries over when the replayed files hold that
+        # resolution, blob for blob or hunk for hunk (prior_resolution).
         prior = prior_resolution(state, str(n), replayed, wt)
         resolved = {"files": conflicted, "hunks": None, "replayed": True,
                     "how": "rerere replayed the resolution recorded in the earlier assembly" if prior else "rerere replayed a recorded resolution",
@@ -928,6 +996,7 @@ def merge_member(root, wt, state, m, resolve_set):
         resolved["hunks"] = resolution_hunks(wt, sha, resolved["files"])
         resolved["choices"] = resolution_choices(wt, sha, resolved["files"], "the batch", "#%d" % n)
         resolved["blobs"] = resolution_blobs(wt, sha, resolved["files"])
+        resolved["hunk_hashes"] = resolution_hunk_hashes(wt, sha, resolved["files"])
         state["assembly"]["merged"].append({"n": n, "merge": sha, "resolved": resolved})
         log(state, "merged #%d -> %s with %s" % (n, short(sha), resolved["how"]))
         return "merged"
@@ -973,7 +1042,7 @@ def continue_after_resolution(root, wt, state, reviewed):
         how += "; rerere replayed the earlier assembly's resolution in %s" % ", ".join(replayed)
     resolved = {"files": files, "how": how, "hunks": resolution_hunks(wt, sha, files), "review": reviewed,
                 "choices": resolution_choices(wt, sha, files, "the batch", remote_main() if is_main else "#%d" % cur["n"]),
-                "blobs": resolution_blobs(wt, sha, files)}
+                "blobs": resolution_blobs(wt, sha, files), "hunk_hashes": resolution_hunk_hashes(wt, sha, files)}
     if replayed:
         resolved["replayed_files"] = replayed
     if is_main:
@@ -1052,6 +1121,7 @@ def merge_main(root, wt, state):
         resolved["hunks"] = resolution_hunks(wt, sha, conflicted)
         resolved["choices"] = resolution_choices(wt, sha, conflicted, "the batch", remote_main())
         resolved["blobs"] = resolution_blobs(wt, sha, conflicted)
+        resolved["hunk_hashes"] = resolution_hunk_hashes(wt, sha, conflicted)
     state["assembly"].setdefault("main_merges", []).append({"merge": sha, "main": main_sha, "resolved": resolved})
     state["assembly"]["head"] = sha
     state["verified"] = None

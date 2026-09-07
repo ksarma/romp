@@ -131,8 +131,8 @@ class Fixture:
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # -- git ---------------------------------------------------------------
-    def _git(self, *args, cwd, check=True):
-        proc = subprocess.run(["git", *args], cwd=cwd, env=self.env, text=True,
+    def _git(self, *args, cwd, check=True, input=None):
+        proc = subprocess.run(["git", *args], cwd=cwd, env=self.env, text=True, input=input,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if check and proc.returncode != 0:
             raise AssertionError("git %s failed in %s:\n%s%s" % (" ".join(args), cwd, proc.stdout, proc.stderr))
@@ -865,11 +865,111 @@ class Assemble(_Base):
         self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round in the earlier assembly, replayed by rerere: round two.", body)
         self.assertNotIn("NOT recorded", body)
 
+    def test_a_rerere_replay_into_a_file_main_changed_elsewhere_keeps_its_review(self):
+        """Between assemblies main appends lines to notes.txt after the conflict. The second assembly's
+        merge of #108 conflicts on the same hunk, rerere replays the reviewed resolution, and the
+        staged file's blob differs from the record's. The record was matched blob for blob, so this
+        read 'rerere replayed a recorded resolution' with no review and the digest said NOT recorded
+        for reviewed bytes. The carry is keyed on the resolution of the hunks, which is the same."""
+        fx = self.fx
+        self.conflict_pair()
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round one")
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertEqual(list(rec["hunk_hashes"]), ["notes.txt"], "the record names the resolution of each file's hunks")
+        self.assertRegex(rec["hunk_hashes"]["notes.txt"], r"^[0-9a-f]{64}$")
+        blob1, hash1 = rec["blobs"]["notes.txt"], rec["hunk_hashes"]["notes.txt"]
+        fx.commit_main({"notes.txt": "one\ntwo\nthree\nfour\nfive\nsix\nseven\n"}, "main appends after the conflict")
+        p = fx.ok("assemble", "b1", "--resolve", "108")
+        self.assertIn("rerere replayed the resolution recorded in the earlier assembly", p.stdout)
+        rec = [e for e in fx.state("b1")["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        self.assertTrue(rec["replayed"])
+        self.assertEqual(rec["review"], "round one", "the same hunk resolution was reviewed")
+        self.assertNotEqual(rec["blobs"]["notes.txt"], blob1, "the file differs outside the hunk")
+        self.assertEqual(rec["hunk_hashes"]["notes.txt"], hash1)
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree\nfour\nfive\nsix\nseven")
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); one review round in the earlier assembly, replayed by rerere: round one.", body)
+        self.assertNotIn("NOT recorded", body)
+
+    def test_a_rerere_replay_of_other_bytes_in_the_hunk_carries_no_review(self):
+        """rerere keeps the resolution it recorded first. A replayed file the batcher edits before
+        --continue is committed and reviewed with the new bytes, but the next assembly's replay
+        produces the old ones: the record names the reviewed bytes, so that replay carries no review
+        and the digest says so."""
+        fx = self.fx
+        fx.branch("a", {"notes.txt": "one\ntwo-a\nthree\n"})
+        fx.branch("g", {"notes.txt": "one\ntwo-g\nthree\n", "README.md": "# notes-api\n\ng's line\n"})
+        fx.pr(101, "a", labels=["fix"], body=TRAILER)
+        fx.pr(108, "g", title="notes: the g version", labels=["fix"], body=TRAILER)
+        fx.ok("plan", "--name", "b1")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        wt = fx.wt("b1")
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g\nthree\n")
+        fx._git("add", "notes.txt", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round one")
+        fx.commit_main({"README.md": "# notes-api\n\nmain's line\n"}, "main moved on")
+        self.assertEqual(fx.run("assemble", "b1", "--resolve", "108").returncode, 3)
+        self.assertEqual(fx.state("b1")["assembly"]["cursor"]["replayed"], ["notes.txt"])
+        with open(os.path.join(wt, "notes.txt"), "w") as f:
+            f.write("one\ntwo-a-g-x\nthree\n")   # the batcher changes the replayed resolution
+        with open(os.path.join(wt, "README.md"), "w") as f:
+            f.write("# notes-api\n\nmain's line\ng's line\n")
+        fx._git("add", "notes.txt", "README.md", cwd=wt)
+        fx.ok("assemble", "b1", "--continue", "--reviewed", "round two")
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g-x\nthree")
+        fx.commit_main({"README.md": "# notes-api\n\ng's line\n"}, "main takes g's README")
+        fx.ok("assemble", "b1", "--resolve", "108")
+        self.assertEqual(fx.dev_git("show", "batch/b1:notes.txt"), "one\ntwo-a-g\nthree", "rerere replayed its first resolution")
+        st = fx.state("b1")
+        rec = [e for e in st["assembly"]["merged"] if e["n"] == 108][0]["resolved"]
+        reviewed = st["assembly"]["previous_resolutions"]["108"]["hunk_hashes"]["notes.txt"]
+        self.assertIsNotNone(reviewed)
+        self.assertNotEqual(rec["hunk_hashes"]["notes.txt"], reviewed, "the replayed hunk is not the reviewed one")
+        self.assertTrue(rec["replayed"])
+        self.assertIsNone(rec["review"], "round two reviewed other bytes")
+        self.assertEqual(rec["how"], "rerere replayed a recorded resolution")
+        body = fx.ok("summarize", "b1", "--print-only").stdout
+        self.assertIn("- #108 g: conflict resolved in notes.txt (1 hunk); review round NOT recorded.", body)
+
+    def test_hunk_lines_identify_a_resolution_without_line_numbers_context_or_marker_labels(self):
+        """The identity prior_resolution compares when the blobs differ: the same hunk resolution in a
+        file with other lines around it, under markers labeled with other parents, reads the same;
+        other bytes in the hunk, or a dropped final newline, do not; a binary file has no identity."""
+        fx = self.fx
+
+        def tree(content):
+            blob = fx._git("hash-object", "-w", "--stdin", cwd=fx.dev, input=content)
+            return fx._git("mktree", cwd=fx.dev, input="100644 blob %s\tnotes.txt\n" % blob)
+
+        m1 = tree("one\n<<<<<<< %s\ntwo-a\n=======\ntwo-g\n>>>>>>> %s\nthree\n" % ("1" * 40, "2" * 40))
+        r1 = tree("one\ntwo-a-g\nthree\n")
+        m2 = tree("zero\none\n<<<<<<< %s\ntwo-a\n=======\ntwo-g\n>>>>>>> %s\nthree\nfour\nfive\nsix\n" % ("3" * 40, "4" * 40))
+        r2 = tree("zero\none\ntwo-a-g\nthree\nfour\nfive\nsix\n")
+        lines = batch.hunk_lines(fx.dev, m1, r1, "notes.txt")
+        self.assertEqual(lines, [b"-<<<<<<<", b"-two-a", b"-=======", b"-two-g", b"->>>>>>>", b"+two-a-g"])
+        self.assertEqual(batch.hunk_lines(fx.dev, m2, r2, "notes.txt"), lines, "other surroundings and labels: the same resolution")
+        self.assertEqual(batch.hunk_hash(fx.dev, m2, r2, "notes.txt"), batch.hunk_hash(fx.dev, m1, r1, "notes.txt"))
+        self.assertNotEqual(batch.hunk_lines(fx.dev, m2, tree("zero\none\ntwo-a-x\nthree\nfour\nfive\nsix\n"), "notes.txt"), lines,
+                            "other bytes in the hunk")
+        self.assertNotEqual(batch.hunk_lines(fx.dev, m1, tree("one\ntwo-a-g\nthree"), "notes.txt"), lines,
+                            "a missing final newline is a byte difference")
+        self.assertIsNone(batch.hunk_lines(fx.dev, m1, m1, "notes.txt"), "no change")
+        self.assertIsNone(batch.hunk_lines(fx.dev, tree("a\0b\n"), tree("a\0c\n"), "notes.txt"), "binary: no text hunk")
+
     def test_prior_resolution_matches_a_subset_blob_for_blob_and_a_legacy_record_on_its_file_list(self):
-        """The rule behind the replay above, on a bare index: a record covers a replay when every
-        replayed path is among its files AND the blob staged for it equals the record's. Different
-        bytes under the same name (rerere's cache is shared across batches) carry no review. A record
-        written before blobs were recorded matches on an equal file list only, as it did."""
+        """The rule behind the replays above, on a bare index: a record covers a replay when every
+        replayed path is among its files AND the blob staged for it equals the record's, or the
+        hunks resolve as recorded (a merge in progress is needed to compare them; the replay tests
+        cover that). Different bytes under the same name (rerere's cache is shared across batches)
+        carry no review. A record written before blobs were recorded matches on an equal file list
+        only, as it did."""
         fx = self.fx
         wt = fx.dev
         with open(os.path.join(wt, "notes.txt"), "w") as f:
@@ -888,6 +988,9 @@ class Assemble(_Base):
             f.write("one\ntwo-other\nthree\n")
         fx.dev_git("add", "notes.txt")
         self.assertIsNone(batch.prior_resolution(state, "108", ["notes.txt"], wt), "same name, different bytes")
+        hashed = dict(rec, hunk_hashes={"README.md": "0" * 64, "notes.txt": "0" * 64})
+        state = {"assembly": {"previous_resolutions": {"108": hashed}}}
+        self.assertIsNone(batch.prior_resolution(state, "108", ["notes.txt"], wt), "different bytes and no merge to compare hunks in")
         legacy = {"files": ["README.md", "notes.txt"], "review": "r"}
         state = {"assembly": {"previous_resolutions": {"108": legacy}}}
         self.assertIs(batch.prior_resolution(state, "108", ["notes.txt", "README.md"], wt), legacy)
