@@ -71,13 +71,13 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   push did; and a row in the dashboard's bell (at most five drop rows, none older
   than an hour, so they never crowd out a backend problem). Every close the
   browser reports for a socket that opened leaves a `wsclose` breadcrumb (code,
-  reason, socket age) in `client-diag.jsonl`; a socket the shim abandons leaves
-  none — the watchdog's own `watchdog-close` row went down the quiet socket
-  before the abandon (the foreground path's abandon sends none), so an armed
-  socket's raise, `reconnect-quiet` or `foreground-quiet`, queued for the redial,
-  is the record that survives; the redials an outage refuses are counted and
-  reported as one `wsconnfail` row on the next open, and at most 20 breadcrumbs
-  wait in the shim's queue for it.
+  reason, socket age) in `client-diag.jsonl` (rotated to `.1` at 8 MB); a socket
+  the shim abandons leaves none — the watchdog's own `watchdog-close` row went
+  down the quiet socket before the abandon (the foreground path's abandon sends
+  none), so an armed socket's raise, `reconnect-quiet` or `foreground-quiet`,
+  queued for the redial, is the record that survives; the redials an outage
+  refuses are counted and reported as one `wsconnfail` row on the next open, and
+  at most 20 breadcrumbs wait in the shim's queue for it.
 - **The Outline pane's ages run on the kernel's clock.** Its timestamps are the
   kernel's, so the pane never reads the browser's clock against them: it anchors
   on the frame's `now` paired with the moment that frame arrived from the wire
