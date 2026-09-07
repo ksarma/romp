@@ -1,6 +1,8 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
+import { highlightHtml } from "./highlight-cache";
+import { turnWorkedSecs as workedSecsOf, workedFooterPlan } from "./worked-footer";
 import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -508,7 +510,17 @@ const pendingRewind = new Map<string, { uuid: string; text: string; ts: number; 
 // the CLI only addresses post-boundary records, so older bubbles get no edit affordance (the kernel
 // re-validates regardless). Runs beside reconcileOptimistic on every ingest path; the rewound flags
 // are stripped first because a chatTail delta REUSES prefix event objects across pushes.
-function reconcileRewind(s: Session): void {
+function reconcileRewind(s: Session, bound?: number): void {
+  // What the two outputs looked like BEFORE this pass — the editable set, and the overlay (which events dim,
+  // the pending edit) — so a change in either marks the view stale below. The tail path re-renders exactly
+  // the events the kernel's `from` names (syncViewInner, 2026-09-06), so a prefix bubble whose edit buttons or
+  // dim depend on these is repainted by THIS signal: a compaction landing at `from` strips the affordance
+  // from every earlier bubble; a failed rewind's TTL expiry lifts a dim no later `from` reaches back to.
+  // (A trailing window re-rendered on every tail used to cover the last 25 of them by accident.) `bound` is the
+  // tail path's re-render start (chatTail's `from`): events at or past it are re-rendered anyway, so only the
+  // prefix below it counts as a change — unbounded, every human prompt landing (a new editable bubble) marked
+  // the view stale and rebuilt the whole window instead of taking the exact tail.
+  const before = rewindSig(s, bound);
   for (const e of s.events) if ((e as any).rewound) delete (e as any).rewound;
   let lastCompact = -1;
   for (let i = 0; i < s.events.length; i++) if (s.events[i].kind === "compact") lastCompact = i;
@@ -522,29 +534,45 @@ function reconcileRewind(s: Session): void {
   }
   (s as any)._editable = editable;
   const pr = pendingRewind.get(s.id);
-  if (!pr) return;
-  const idx = s.events.findIndex((e) => e.kind === "user" && (e as any).uuid === pr.uuid);
-  if (idx < 0 || Date.now() - pr.ts > REWIND_TTL_MS) {
-    pendingRewind.delete(s.id);          // the branch landed (old uuid gone) — or the backstop expired
-    return;
-  }
-  if (pr.bare) {
-    // DELETE rollback: the deleted bubble goes too — dim from it onward. No text replacement and no
-    // queued-chip suppression (nothing was sent; the kernel's cut payload retires this in a beat).
-    for (let j = idx; j < s.events.length; j++) (s.events[j] as any).rewound = true;
-  } else {
-    s.events[idx] = { ...(s.events[idx] as any), md: pr.text, pending: true, images: undefined };
-    for (let j = idx + 1; j < s.events.length; j++) (s.events[j] as any).rewound = true;
-    for (let j = s.events.length - 1; j > idx; j--) {
-      const e = s.events[j] as any;
-      if (e.kind === "queued" && Array.isArray(e.texts)) {
-        e.texts = e.texts.filter((t: any) => t.md !== pr.text);
-        if (!e.texts.length) s.events.splice(j, 1);
+  if (pr) {
+    const idx = s.events.findIndex((e) => e.kind === "user" && (e as any).uuid === pr.uuid);
+    if (idx < 0 || Date.now() - pr.ts > REWIND_TTL_MS) {
+      pendingRewind.delete(s.id);          // the branch landed (old uuid gone) — or the backstop expired
+    } else if (pr.bare) {
+      // DELETE rollback: the deleted bubble goes too — dim from it onward. No text replacement and no
+      // queued-chip suppression (nothing was sent; the kernel's cut payload retires this in a beat).
+      for (let j = idx; j < s.events.length; j++) (s.events[j] as any).rewound = true;
+    } else {
+      s.events[idx] = { ...(s.events[idx] as any), md: pr.text, pending: true, images: undefined };
+      for (let j = idx + 1; j < s.events.length; j++) (s.events[j] as any).rewound = true;
+      for (let j = s.events.length - 1; j > idx; j--) {
+        const e = s.events[j] as any;
+        if (e.kind === "queued" && Array.isArray(e.texts)) {
+          e.texts = e.texts.filter((t: any) => t.md !== pr.text);
+          if (!e.texts.length) s.events.splice(j, 1);
+        }
       }
     }
   }
   const v = views.get(s.id);
-  if (v) v.stale = true;                 // the overlay touches MID-window turns — the append fast path won't repaint them
+  if (v && rewindSig(s, bound) !== before) v.stale = true;   // the overlay or the editable set changed: MID-window turns repaint (the tail path never reaches them)
+}
+/** The editable set and the rewind overlay as one string: which bubbles may be edited, which events are
+ *  dimmed, and the pending edit (its uuid; its text, or "b" for a delete). "?" before the first pass. The
+ *  editable and dimmed parts read events below `bound` only (the whole transcript by default): the tail path
+ *  re-renders from there anyway. The pending edit stays unbounded — its retirement or TTL expiry lifts a dim
+ *  that no `from` reaches back to. */
+function rewindSig(s: Session, bound: number = s.events.length): string {
+  const ed = (s as any)._editable as Set<string> | undefined;
+  const eds: string[] = [], dim: number[] = [];
+  const n = Math.min(bound, s.events.length);
+  for (let i = 0; i < n; i++) {
+    const e = s.events[i] as any;
+    if (ed && e.uuid && ed.has(e.uuid)) eds.push(e.uuid);
+    if (e.rewound) dim.push(i);
+  }
+  const pr = pendingRewind.get(s.id);
+  return (ed ? eds.join(",") : "?") + "|" + dim.join(",") + "|" + (pr ? pr.uuid + ":" + (pr.bare ? "b" : pr.text) : "");
 }
 // Tab name+color from the kernel's tabOrder push (the user 2026-06-26): lets renderTabs paint the WHOLE
 // strip as placeholders BEFORE each session's build_session arrives, so tabs don't pop in one-by-one.
@@ -1000,7 +1028,7 @@ let landTrail: string[] = [];
 // count is NOT len − winStart + spacer: a unit may own more than one node (the day
 // divider that opens a new day precedes its turn), so anything mapping DOM back to
 // units reads data-unit off the node rather than counting children.
-interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; }
+interface View { el: HTMLElement; rendered: number; scrollTop: number; stick: boolean; shown: boolean; stale: boolean; winStart: number; winEnd?: number; avgTurnH?: number; spacerCount?: number; spacerCountBot?: number; unitTotal?: number; working?: boolean; }   // working: the session's state at the last sync, the "worked …" footer's one non-event input (syncViewInner)
 const views = new Map<string, View>();
 
 // Pending pickers (AskUserQuestion / tool-permission) keyed by session id. These
@@ -1100,9 +1128,7 @@ function highlight(container: HTMLElement, lineNos = true) {
     const raw = code.textContent || "";   // capture BEFORE we rewrite innerHTML: line-wrapping drops the \n joins, so the on-screen markup's textContent is NOT copy-safe
     const lang = (code.className.match(/language-([\w-]+)/) || [])[1];
     try {
-      code.innerHTML = lang && hljs.getLanguage(lang)
-        ? hljs.highlight(raw, { language: lang }).value
-        : hljs.highlightAuto(raw).value;
+      code.innerHTML = highlightHtml(hljs, lang, raw);   // by (language, source): a fence re-rendered by a tail, a tab switch or a scroll-back tokenizes once (highlight-cache.ts)
       code.classList.add("hljs");
       if (lineNos) wrapCodeLines(code);   // per-line gutter so a soft-wrap reads distinctly from a real newline
     } catch { /* leave as-is */ }
@@ -1359,8 +1385,8 @@ function inlineFold(head: HTMLElement, turn: HTMLElement, label: string, content
 }
 
 // Expand/collapse state must SURVIVE the incremental re-render that every send/turn triggers (the user
-// 2026-06-19): a short transcript rebuilds from index 0, a long one re-renders the trailing TAIL_RECHECK
-// turns — either way a DOM-only `.open` silently resets whatever the user had opened (e.g. they expand
+// 2026-06-19): a short transcript rebuilds from index 0, a long one re-renders from the first changed
+// event — either way a DOM-only `.open` silently resets whatever the user had opened (e.g. they expand
 // the system-context card, type a message, hit ⏎, and it snaps shut). So we persist open-state in a Set
 // keyed by a stable id (the turn uuid, or the session id for the pinned system card) and reapply it on
 // rebuild — the same trick `expandedGroups` uses for collapsed tool runs. A keyless fold (no stable id)
@@ -4909,6 +4935,13 @@ let renderPendingAfterRename = false;
 // unreleased hold defers the strip's rebuilds until the next press.
 let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
+// The strip's last rendered SIGNATURE (renderTabs, 2026-09-06): every input the strip paints, as one string.
+// renderTabs runs on every kernel push — on a 33-tab dashboard about 1500 of 2554 tails in an hour went to
+// tabs that were not active, and rebuilding 33 tab nodes with their listeners and then reading each one's
+// offsetTop (paintTabRowLines forces a layout) was those tails' whole 2-4 ms floor. An unchanged signature
+// returns before the rebuild. Reset ("") wherever the strip's DOM is changed outside renderTabs — a drag's
+// live reorder — so the next render rebuilds whatever the inputs say.
+let tabStripSig = "";
 // Release the press-hold and flush any deferred rebuild. Hoisted so the DRAG handlers can call it
 // too: a native drag swallows the pointerup, so without this a finished drag would leave the strip
 // frozen against pushes until the next unrelated press (see the dragend handler).
@@ -5244,21 +5277,6 @@ function renderTabs() {
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
   const bar = document.getElementById("tabs");
   if (!bar) return;
-  // Preserve TAB-MODE keyboard focus across the rebuild (the user 2026-06-29). renderTabs runs on EVERY kernel
-  // push (0.5–3s), and replaceChildren() destroys the focused tab — dropping focus out of the strip (often out
-  // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
-  // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
-  // the active tab after the rebuild so "tab mode" survives the repaint.
-  // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
-  // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
-  // the active tab. The header's ⚑ flag is a button INSIDE it, and closest() names the header from
-  // there too: remember which of the two held focus, so a push does not walk the user from the flag
-  // back onto the header. Captured before the tab rule below, which keeps its pinned two-line shape.
-  const focusedEl = document.activeElement as HTMLElement | null;
-  const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
-  const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
-  const refocusTab = bar.contains(document.activeElement);
-  bar.replaceChildren();
   // TABS-FIRST (the user 2026-06-26): render the WHOLE strip up front, in `order` — the kernel's order
   // verbatim (applyTabOrder), plus any just-arrived tab not yet pushed. An id whose session hasn't landed yet
   // draws as a placeholder (name+color, non-interactive) that fills in when build_session arrives — so tabs
@@ -5308,7 +5326,52 @@ function renderTabs() {
   const plan = planStrip(visibleIds, unions, readTabGroups(unions), activeId, phoneLayout(),
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
-  lastStripItems = plan.items;
+  lastStripItems = plan.items;   // before the skip below: the snapshot (stripAftermath → renderSnapshot) and the folded stand-in read the plan from here on either path
+  // AN UNCHANGED STRIP IS NOT REBUILT (2026-09-06). The signature is every input the loop below and the
+  // controls after it paint — the plan (ids in order, section headers with their folds and hidden members),
+  // the active and peek tabs, the section the pane shows (snapView: a header's snap-shown mark, its way-back
+  // act and its words derive from it, and leaveSnapshot changes it with no fold change), and per visible
+  // session (rendered or folded away, since a folded header's pip and flag derive from its members) the
+  // name, color, emoji, state and its tab class, faded, context and
+  // its tint, todo flag, host-down mark and note, or a placeholder's meta; plus the layout mode, the tag lens
+  // and unions the filter chips render, the context-gauge setting, the theme and the colormap (the gauge's tone
+  // and the compacting sweep's gradient read them, so a settings change repaints through this signature), and
+  // the + tab's key hint. Equal string,
+  // same DOM: the guards above (a rename in flight, a pressed tab) still stand, the placeholder and the
+  // all-hidden blank still reconcile (stripAftermath), and the mobile slot's once-only mount still happens.
+  // Anything that mutates the strip's DOM outside this function resets tabStripSig (the tab dragstart).
+  const stripSig = JSON.stringify([
+    activeId, peekId, phoneLayout(), plan.sectioned, ids, visibleIds, activeId ? tabInView(activeId) : null,
+    settings.tabCtx, settings.theme, settings.colormap, titleWithKey("Open a session", "session.new"),
+    surfaceLens(effViews(), "chat"), viewTagUnion(effViews()),
+    plan.items.map((it) => ("head" in it ? ["h", it.head.name, it.head.localId, it.head.color, it.head.ids, it.folded, it.active, it.hidden] : it.id)),
+    snapView,   // the section whose snapshot the pane shows (makeGroupHead: the header's mark and its way-back act)
+    visibleIds.map((id) => {
+      const s = sessions.get(id);
+      if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji]; }
+      const st = s.status, down = hostIsDown(id);
+      return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), !!st.faded,
+              st.ctx, st.ctxColor, st.ctxTone, !!(s.userTodos && s.userTodos.length), down, down ? hostDownNote(id) : ""];
+    }),
+  ]);
+  const mslotEl = document.getElementById("mtag-slot");
+  if (stripSig === tabStripSig && !(mslotEl && !mslotEl.firstChild)) { stripAftermath(visibleIds, ids); return; }
+  tabStripSig = stripSig;
+  // Preserve TAB-MODE keyboard focus across the rebuild (the user 2026-06-29). renderTabs runs on EVERY kernel
+  // push (0.5–3s), and replaceChildren() destroys the focused tab — dropping focus out of the strip (often out
+  // of the chat iframe entirely), which silently killed ←/→/Enter nav after a send or any push: you were left
+  // focused on nothing, so the keyboard model was dead until you clicked again. If a tab held focus, re-focus
+  // the active tab after the rebuild so "tab mode" survives the repaint.
+  // A focused section HEADER (a label the keyboard folds; headers live only in this bar) re-focuses by
+  // its group name after the rebuild, so a push mid-read does not kick the user from the header onto
+  // the active tab. The header's ⚑ flag is a button INSIDE it, and closest() names the header from
+  // there too: remember which of the two held focus, so a push does not walk the user from the flag
+  // back onto the header. Captured before the tab rule below, which keeps its pinned two-line shape.
+  const focusedEl = document.activeElement as HTMLElement | null;
+  const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
+  const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
+  const refocusTab = bar.contains(document.activeElement);
+  bar.replaceChildren();
   for (const item of plan.items) {
     if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active, item.hidden)); continue; }
     const id = item.id;
@@ -5329,6 +5392,7 @@ function renderTabs() {
     // snapshots it), hence the fixed off-viewport 1px div installed once below.
     tab.addEventListener("dragstart", (e) => {
       draggedId = id; tabDragCommitted = false;
+      tabStripSig = "";   // the drag live-reorders the strip's DOM: whatever the order ends up, the next render rebuilds
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
       tab.classList.add("dragging");
       hideTabTip();                        // defect 2 (2026-08-28): the hover popover pinned open through the gesture
@@ -5443,7 +5507,7 @@ function renderTabs() {
     }
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.
-    tab.addEventListener("mouseenter", () => showTabTip(tab, s));
+    tab.addEventListener("mouseenter", () => showTabTip(tab, sessions.get(id) ?? s));   // fresh: the node outlives a frame that replaced the session object (the unchanged-strip skip)
     tab.addEventListener("mouseleave", hideTabTip);
     const close = el("span", "tab-close");
     close.textContent = "×";
@@ -5554,6 +5618,13 @@ function renderTabs() {
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
   // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
   if (tabTipOwner && !tabTipOwner.isConnected) rehoverTabTip();
+  stripAftermath(visibleIds, ids);
+}
+/** What follows a strip render whether or not the strip was rebuilt: the no-sessions placeholder, the section
+ *  snapshot's refresh (its rows read session state the strip's signature does not carry: a member's last
+ *  event, its working note), and the all-hidden blank (all idempotent, all read live state a skipped rebuild
+ *  must not leave behind). */
+function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): void {
   syncNoSessionsPlaceholder(visibleIds.length, ids.length);
   // the section snapshot follows the push (renderTabs runs on every one): a no-op when nothing a row
   // shows has changed (snapshotModel's same-object return). The section GONE from the plan (its tag
@@ -9831,15 +9902,13 @@ function warnToast(msg: string) {
   setTimeout(() => t.remove(), 12000);
 }
 
-// Trailing events to re-render on each sync, in case they mutated in place
-// (e.g. a tool's output arriving after its tool_use was first shown). Earlier
-// events are immutable in an append-only transcript, so they stay cached.
-const TAIL_RECHECK = 25;
+// (TAIL_RECHECK, the 25 trailing events every sync re-rendered "in case they mutated in place", is gone
+// (2026-09-06): the kernel's chatTail names the first changed event exactly, and the client passes that
+// touch a prefix event mark the view stale — see syncViewInner's tail path and reconcileRewind.)
 
 // Tail-windowing (see the View comment): a fresh/rewound view renders only the
 // last WINDOW_TAIL events; scrolling within EXPAND_TRIGGER_PX of the top reveals
-// the next EXPAND_CHUNK older ones. WINDOW_TAIL > TAIL_RECHECK so the trailing
-// re-check window is always fully rendered.
+// the next EXPAND_CHUNK older ones.
 const WINDOW_TAIL = 80;
 const EXPAND_CHUNK = 80;
 const EXPAND_TRIGGER_PX = 600;
@@ -9927,6 +9996,11 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     return v;
   }
   const working = s.status.state === "working" || s.status.state === "compacting";
+  // The footer on the current turn's last reply reads the session's working state (on once idle, off while
+  // it works), and a status-only tail changes that with no event change — the no-op fast path below would
+  // leave the footer as it was. So the state is remembered per view, and a flip patches the footer there.
+  const workFlip = v.working != null && v.working !== working;
+  v.working = working;
   const items = displayItems(s);   // units: one per event (normal) or one folded compactDisplay item (compact)
   const total = items.length;
   const len = s.events.length;
@@ -9944,6 +10018,12 @@ function syncViewInner(id: string, atBottom?: boolean): View {
   // WITHOUT this, every showActive() re-built the trailing window (markdown + highlight.js) — the big-session
   // switch lag (the user 2026-06-25). A REAL change lowers v.rendered (delta-send sets it to the change index;
   // an append grows len past it) or sets v.stale, so this never skips an actual update.
+  // …except the "worked …" footer on a status-only tail: nothing re-rendered, and the footer follows the flip.
+  // (The patch marks the view stale when the reply's unit is not addressable — a folded run — so the fast
+  // path stands down and the window path below re-renders it.)
+  if (workFlip && v.rendered === len && !v.stale && v.el.childNodes.length > 0) {
+    patchWorkedFooters(v, s, len, working, settings.compact ? items : null);
+  }
   if (v.rendered === len && !v.stale && v.el.childNodes.length > 0) return v;
   const wasAtTail = (v.winEnd ?? total) >= (v.unitTotal ?? total);   // window was covering the OLD end
   // An in-place change (tool-group toggle, off-screen update) OR compact mode → re-render the CURRENT window
@@ -9964,9 +10044,15 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     v.spacerCountBot = total - (v.winEnd ?? total); v.unitTotal = total; v.rendered = len; sizeSpacers(v); return v;
   }
   // Normal mode, append AT the tail (unit === event, top spacer only): the cheap incremental hot path —
-  // append the new turns + re-check a trailing window, tagging data-unit so the scroll↔unit map stays valid.
-  let from = Math.min(v.rendered, Math.max(0, len - TAIL_RECHECK));
-  from = Math.max(from, v.winStart ?? 0);
+  // re-render EXACTLY from the first changed event, tagging data-unit so the scroll↔unit map stays valid.
+  // v.rendered is exact: the kernel's chatTail names the first changed index (its _chat_diff is identity-
+  // first and the fold never writes an event in place), and every client pass that touches a prefix event
+  // marks the view stale instead — reconcileRewind (the editable set, the rewind dim), reconcileOptimistic
+  // (the echo set), a full session frame (upsert) — which takes the window rebuild above. A trailing window
+  // of 25 events re-rendered on every tail used to stand in for those signals, and was most of a tail's
+  // render (2026-09-06). The one render that depends on LATER events, the "worked …" footer of a turn's
+  // last reply, is patched by unit after the loop (patchWorkedFooters).
+  const from = Math.max(v.rendered, v.winStart ?? 0);
   // Drop every node from unit `from` onward, then re-render that span. Trim by DATA-UNIT, never by
   // child COUNT: a unit can put more than one node in the thread (a day divider precedes the turn
   // that opens a new day), so `keep = spacer + (from - winStart)` counted one node per unit and the
@@ -9987,8 +10073,43 @@ function syncViewInner(id: string, atBottom?: boolean): View {
     node.dataset.unit = String(i);   // unit === event in normal mode
     v.el.appendChild(node);
   }
+  patchWorkedFooters(v, s, from, working);
   v.winEnd = total; v.spacerCount = v.winStart ?? 0; v.spacerCountBot = 0; v.unitTotal = total; v.rendered = len;
   return v;
+}
+
+// The "worked …" footer is the one render on a turn that depends on LATER events and on the session's state:
+// it appears once the turn is complete (a genuine prompt landed after its last reply) or the session is idle.
+// With the tail rendered exactly from `from`, the events that change a reply's footer leave that reply BEFORE
+// `from` — a human prompt landing completes its turn, a later reply in the same turn demotes it — and a
+// status-only tail (empty suffix: the session went idle, or back to work on the same turn after a nudge or a
+// postal push) changes it with no event at all, which syncViewInner's fast path hands here with from = len.
+// worked-footer.ts names the reply and the seconds; the footer goes on or comes off by unit. applyForkSpots
+// homes a turn's fork spot inside its elapsed row when the turn has one, so the spot moves with the footer
+// either way. `items` is compact mode's unit list: there a unit is a display item (a folded run, or one event),
+// so the window's start maps to its first event and the reply's event index back to the unit whose node carries
+// it; a reply folded into a run has no node of its own, and the view goes stale for the window path instead.
+function patchWorkedFooters(v: View, s: Session, from: number, working: boolean, items: DisplayItem[] | null = null): void {
+  const winStart = v.winStart ?? 0;
+  const winEv = items ? (items[winStart] ? itemFirstEvent(items[winStart]) : s.events.length) : winStart;
+  const unitOfEvent = (i: number): number => items ? items.findIndex((it) => it.kind === "event" && it.index === i) : i;
+  for (const { unit: ev, secs } of workedFooterPlan(s.events, from, winEv, working, eventEpoch)) {
+    const unit = unitOfEvent(ev);
+    if (unit < 0) { v.stale = true; continue; }
+    const node = v.el.querySelector(`:scope > [data-unit="${unit}"]:not(.day-divider)`) as HTMLElement | null;
+    if (!node) continue;
+    const have = node.querySelector(":scope > .turn-elapsed") as HTMLElement | null;
+    if (secs != null && !have) {
+      const f = elapsedFooter(secs);
+      const spot = node.querySelector(":scope > .fork-spot");
+      node.appendChild(f);
+      if (spot) f.appendChild(spot);
+    } else if (secs == null && have) {
+      const spot = have.querySelector(":scope > .fork-spot");
+      if (spot) node.appendChild(spot);
+      have.remove();
+    }
+  }
 }
 
 // prevEpoch for event i = the most recent EARLIER timed event's epoch (untimed todo/queued skipped so the
@@ -10251,23 +10372,7 @@ function lastTurnStart(events: ChatEvent[]): number {
 // 2-min-old nudge — the clock had run from a much older human prompt). Drives the
 // "worked …" rail footer.
 function turnWorkedSecs(events: ChatEvent[], i: number, working: boolean): number | null {
-  const ev = events[i];
-  if (ev.kind === "user") return null;                 // a prompt, not a reply
-  let completed = false;
-  for (let j = i + 1; j < events.length; j++) {
-    const e = events[j];
-    if (e.kind !== "user") return null;                // another reply in this turn → i isn't its last
-    if (e.human) { completed = true; break; }          // next genuine prompt → the turn ended at i
-    // injected user line (postal push, /command stdout, …) → same turn, keep scanning
-  }
-  if (!completed && working) return null;              // final turn still in progress → spinner owns it
-  const end = eventEpoch(ev);
-  if (end == null) return null;
-  let start: number | null = null;                     // the IMMEDIATE trigger: the most recent user line, ANY
-  for (let j = i; j >= 0; j--) { const e = events[j]; if (e.kind === "user") { start = eventEpoch(e); break; } }   // author (human / nudge / postal) — not the older human prompt
-  if (start == null) return null;
-  const secs = end - start;
-  return secs > 0 ? secs : null;
+  return workedSecsOf(events, i, working, eventEpoch);   // the rule lives in worked-footer.ts (pure, node-tested); the tail path's footer patch reads the same one
 }
 
 // Show only the active session's (lazily built) view and set its scroll: a
@@ -13664,6 +13769,13 @@ function upsert(msg: any) {
   if (forked) {
     const v = views.get(msg.id);
     if (v) { v.el.remove(); views.delete(msg.id); }
+  } else if (existed) {
+    // A full frame replaces every event object and can differ from what this view rendered ANYWHERE (it is
+    // what the kernel sends a client it believes is behind): the tail path trusts v.rendered as the exact
+    // first changed index (2026-09-06), so the whole window rebuilds here instead. Full frames for a held
+    // session are the reconnect and the repair, not the steady state; deltas (chatTail) are.
+    const v = views.get(msg.id);
+    if (v) v.stale = true;
   }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   if (!existed) order.push(msg.id);
@@ -13712,6 +13824,7 @@ function update(msg: any) {
   s.events = msg.events || s.events;
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
+  if (msg.events) { const v0 = views.get(msg.id); if (v0) v0.stale = true; }   // events replaced wholesale: the window rebuilds (the tail path trusts v.rendered)
   reconcileRewind(s);                    // pending-rewind overlay + the editable-bubble set, from the fresh payload
   reconcileOptimistic(s);                // re-assert (or retire) any in-flight optimistic sends on this push
   renderTabs();                          // status/chip change only — repaint, never re-order (the user 2026-06-27)
@@ -13820,7 +13933,7 @@ function chatTail(msg: any) {
   const wasLen = s.events.length;
   s.events.length = from;                          // drop the (now superseded) tail...
   for (const e of (msg.events || [])) s.events.push(e);   // ...and append the freshly-changed suffix
-  reconcileRewind(s);                              // pending-rewind overlay + the editable-bubble set
+  reconcileRewind(s, from);                        // pending-rewind overlay + the editable-bubble set, judged below the tail's start (see there)
   reconcileOptimistic(s);                          // re-assert (or retire) any in-flight optimistic sends
   // A delta that SHRINKS the tail (an event retired with nothing replacing it — cancelling the last queued
   // message is the everyday case) lands on `from === new length`, so lowering v.rendered to `from` leaves it

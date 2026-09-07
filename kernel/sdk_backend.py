@@ -44,24 +44,28 @@ from pathlib import Path
 # The tmux launcher picks the first unused colour; for an SDK session we pick deterministically by a
 # stable hash of the sid (the launcher's own fallback when all are taken), so the session gets a
 # consistent colour without cross-backend "used" bookkeeping.
-from importlib.machinery import SourceFileLoader as _SFL
-_pal = _SFL("romp_palette", str(Path(__file__).resolve().parent / "palette.py")).load_module()
+import importlib.util
+_HERE = Path(__file__).resolve().parent
+_ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(_HERE / "loadsource.py"))
+_ls_mod = importlib.util.module_from_spec(_ls_spec)
+_ls_spec.loader.exec_module(_ls_mod)
+load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
+_pal = load_source("romp_palette", _HERE / "palette.py")
 # The LIVE source of the manager's API key (keysource.py — stdlib only, loaded the same way so the
 # module works from bin/ symlinks too). `romp keyswap` loads the identical file, so the writer and
 # the reader can never disagree about which path holds the key or how its line is parsed.
-_keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysource.py")).load_module()
+_keysrc = load_source("romp_keysource", _HERE / "keysource.py")
 # The COMMAND source (envsource.py — stdlib only): a configured command prints a set of NAME=VALUE
 # lines that is merged into each child's environment at launch. Setting ROMP_CREDENTIAL_COMMAND
 # selects it; unset, every call here returns an empty set and the file source above is the whole
 # story. Values leave that module through one accessor (injection), never through a log or a wire.
-_envsrc = _SFL("romp_envsource", str(Path(__file__).resolve().parent / "envsource.py")).load_module()
+_envsrc = load_source("romp_envsource", _HERE / "envsource.py")
 # The by-text KEY RULE (session_backend.echo_text_key): the one normalization under which an input echo's
 # text is compared with a transcript record's, shared with the kernel's _atom_user_texts so the landing
 # scan below can never find what prune_live cannot retire. Loaded under its own module name on purpose:
 # the kernel loads that file as romp_session_backend and TmuxBackend subclasses that copy's ABC, and
 # re-executing the source into that module object would rebind the class out from under the subclass.
-echo_text_key = _SFL("romp_session_backend_keys",
-                     str(Path(__file__).resolve().parent / "session_backend.py")).load_module().echo_text_key
+echo_text_key = load_source("romp_session_backend_keys", _HERE / "session_backend.py").echo_text_key
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -1564,9 +1568,9 @@ def last_state(state_dir: Path, sid: str) -> dict:
         return {}
 
 
-def last_state_value(state_dir: Path, sid: str) -> str:
-    """The latest STATE record's value in states/<sid>.jsonl, skipping the interleaved awaiting
-    OVERLAY records ('' if none). last_state() returns the literal last LINE — which can be an
+def last_state_record(state_dir: Path, sid: str) -> dict:
+    """The latest STATE record in states/<sid>.jsonl ({t, state}), skipping the interleaved awaiting
+    OVERLAY records ({} if none). last_state() returns the literal last LINE — which can be an
     overlay (the boot heal itself appends awaiting:false) — so anything keying on the state tail
     (the boot reconcile's cut-turn detector) must read through the overlays, not the last line."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
@@ -1580,10 +1584,74 @@ def last_state_value(state_dir: Path, sid: str) -> str:
             except ValueError:
                 continue
             if isinstance(rec, dict) and "state" in rec:
-                return str(rec["state"])
+                return rec
     except OSError:
         pass
-    return ""
+    return {}
+
+
+def last_state_value(state_dir: Path, sid: str) -> str:
+    """The latest STATE record's value ('' if none): last_state_record's value."""
+    rec = last_state_record(state_dir, sid)
+    return str(rec["state"]) if rec else ""
+
+
+# The states a restart CUTS: the CLI is mid-turn in each (working; retrying, waiting out an API
+# error; compacting). "permission" and "picker" are turns already waiting on the user, so a cut
+# there leaves blocked-on-you the truth (the boot reconcile's cut-turn detector).
+MACHINE_ACTIVE_STATES = ("working", "retrying", "compacting")
+
+
+def cut_turn_start(state_dir: Path, sid: str) -> int | None:
+    """The stamp the session's CUT turn started at, or None when its state tail is not a
+    machine-active state (nothing was cut). Reads states/<sid>.jsonl back from the end through the
+    trailing run of machine-active records (one turn's marks, however many it wrote) to the last
+    TURN BOUNDARY: a state record that is not machine-active (the turn before ended there), or a
+    machineCut marker (a boot resumed an earlier cut of this session, so the marks below it belong
+    to that earlier turn). The first machine-active record after the boundary is the start; a
+    marker with no state record after it (a resumed session that never marked again) answers its
+    own stamp. Overlays, other keyed rows and corrupt lines are skipped.
+
+    The boot reconcile compares the `romp down` audit row against THIS, not the newest state stamp
+    (review find, round 2, 2026-09-06): `romp down` files its row after the wait, a moment before
+    the service stop, and a mark written in that window (an api_retry storm's `retrying`, a
+    mid-turn forward's `working`) postdated the row and demoted the turn to the plain restart
+    notice, with no stop time or gap. A turn begun AFTER the row (its hold lapsed with no stop) is
+    still not the down's: its start postdates the row."""
+    p = Path(state_dir) / "states" / (sid + ".jsonl")
+    start: int | None = None
+    boundary: int | None = None     # a machineCut newer than every state record
+    tail_seen = False
+    try:
+        for line in _lines_from_end(p):              # newest first
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            if "state" in rec:
+                active = str(rec.get("state") or "") in MACHINE_ACTIVE_STATES
+                if not tail_seen:
+                    tail_seen = True
+                    if not active:
+                        return None                  # the tail is a turn's end: nothing was cut
+                    if boundary is not None:
+                        return boundary              # nothing marked since the boot that wrote the marker
+                elif not active:
+                    break                            # the turn before this one ended here
+                start = int(rec.get("t") or 0)
+            elif rec.get("machineCut"):
+                if tail_seen:
+                    break                            # the marks below belong to the turn that boot resumed
+                if boundary is None:
+                    boundary = int(float(rec.get("t") or 0))
+    except OSError:
+        pass
+    return start
 
 
 def last_awaiting(state_dir: Path, sid: str) -> bool | None:
@@ -2540,13 +2608,85 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
 # session in six answered this notice by standing down and awaiting direction instead of resuming. Naming the record verbatim and disowning it is what
 # lets "pick the work back up" win. Lockstep: kernel INTR_RESTART_SIG/INTR_CRASH_SIG match on these
 # texts (test_kernel_interrupt_machine_cut), so the leading sentences must keep their phrases.
-BOOT_RESUME_NUDGE = (
+_RESUME_NUDGE_LEAD = (
     "<!-- romp-injected --><!-- romp-system -->[romp] The romp kernel restarted and cut this session's "
-    "in-flight turn; the session has been resumed with its history intact. If the conversation tail "
+    "in-flight turn; the session has been resumed with its history intact.")
+_RESUME_NUDGE_REST = (
+    " If the conversation tail "
     "shows '[Request interrupted by user]', that record came from this cut, not from the user: nobody "
     "asked you to stop. Re-read the tail of the conversation and pick the work back up where it "
     "stopped, without asking whether to continue. Any messages queued before the restart follow "
     "this one.")
+BOOT_RESUME_NUDGE = _RESUME_NUDGE_LEAD + _RESUME_NUDGE_REST
+
+
+def _clock_pair(stop_t: int, start_t: int) -> tuple[str, str]:
+    """Both times as HH:MM when the stop and the start fell on the same local day, else both with
+    their date (the form `romp status` uses for an older marker)."""
+    same_day = time.strftime("%Y-%m-%d", time.localtime(stop_t)) == time.strftime("%Y-%m-%d", time.localtime(start_t))
+    fmt = "%H:%M" if same_day else "%Y-%m-%d %H:%M"
+    return time.strftime(fmt, time.localtime(stop_t)), time.strftime(fmt, time.localtime(start_t))
+
+
+def _gap_text(seconds: int) -> str:
+    """A gap as the reader would say it: 'under a minute', '12 min', '3 h 38 min', '2 d 4 h'."""
+    s = max(0, int(seconds))
+    if s < 60:
+        return "under a minute"
+    m, h, d = s // 60, s // 3600, s // 86400
+    if h < 1:
+        return "%d min" % m
+    if d < 1:
+        return "%d h %d min" % (h, m % 60) if m % 60 else "%d h" % h
+    return "%d d %d h" % (d, h % 24) if h % 24 else "%d d" % d
+
+
+def down_resume_nudge(stop_t: int, start_t: int) -> str:
+    """BOOT_RESUME_NUDGE for a turn that `romp down` cut (2026-09-06): the same lead sentence (the
+    kernel's INTR_RESTART_SIG lockstep, and is_resume_nudge's prefix), then the stop and the start
+    named with their times, because a model resumed hours or days later otherwise reads the cut as
+    a restart seconds long and trusts shell state, running jobs and remote work it last saw before
+    the gap. A `[romp]` notice about romp's own act, so it may name romp and the command."""
+    stop_s, start_s = _clock_pair(int(stop_t), int(start_t))
+    return (_RESUME_NUDGE_LEAD
+            + " The stop was on purpose: romp down at %s, started again at %s (%s later). Check anything "
+              "you were running or watching before relying on it." % (stop_s, start_s, _gap_text(int(start_t) - int(stop_t)))
+            + _RESUME_NUDGE_REST)
+
+
+def is_resume_nudge(text) -> bool:
+    """Whether a queue entry is a boot-reconcile continuation nudge: BOOT_RESUME_NUDGE, its `romp
+    down` variant (down_resume_nudge, which shares the lead), or the crash one. Readers that keep the
+    nudge at the head of a queue, or hide it from a 'you' bubble, match on this, never on equality
+    with one constant."""
+    return isinstance(text, str) and (text == CRASH_RESUME_NUDGE or text.startswith(_RESUME_NUDGE_LEAD))
+
+
+def newest_down_stop(state_dir: Path) -> int | None:
+    """The time of the `romp down` that stopped the previous kernel, when the newest restart-audit
+    INTENT row is one (`romp down` files {t, action: 'down'} there before the supervisor stop; the
+    marker it also leaves is cleared by the deliberate start, so at boot the row is what remains).
+    None when the newest intent is anything else: a refresh, a p2p update, a `down-failed`, or no
+    row at all (a crash respawn). Rows with action `manager-sigterm` are skipped on the way back:
+    the manager appends one right before it kills a kernel (fork PR #272; `trigger` names what set
+    it off), so under `romp down` it lands AFTER the CLI's `down` row. It says the manager was the
+    messenger, never who asked, and a reader that stopped at it read every `romp down` as no
+    deliberate stop. The caller still checks the row is newer than the cut turn's own state stamp,
+    so a `down` from days ago cannot be blamed for a later crash's cut."""
+    try:
+        for line in _lines_from_end(Path(state_dir) / "restart-audit.jsonl"):
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            if isinstance(rec, dict) and rec.get("action") == "manager-sigterm":
+                continue                                          # a mechanism note, not an intent
+            if isinstance(rec, dict) and rec.get("action") == "down" and isinstance(rec.get("t"), int):
+                return rec["t"]
+            return None
+    except (OSError, ValueError):
+        pass
+    return None
 
 # T214: the restart also killed a QUESTION the session had up — the ask future lived only in the
 # old process, so the user's answer (often flushed by the reconnecting page) had nowhere to land,
@@ -7370,6 +7510,7 @@ class SdkBackend:
         self._live_lock = threading.RLock()
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
+        self._quiesce_until = 0.0                 # `romp down` going-down hold (quiesce): runtime-only for the same reason
         self._drain_hold_since = 0.0
         self._drain_hold_rang = False
         self._drain_wake_timer = None
@@ -7995,6 +8136,8 @@ class SdkBackend:
                     self._log("boot reconcile: orphan reap failed: %s" % traceback.format_exc())
             resumed, restored, notified = 0, 0, 0
             to_start: list[str] = []   # sids to spawn — collected first, spawned STAGGERED below
+            boot_t = int(time.time())
+            down_t = newest_down_stop(self.state_dir)   # the previous kernel was stopped by `romp down`?
             for r in alive:
                 # Per-session isolation: one session's hiccup (a reg-write race with the outgoing
                 # kernel, a corrupt state file) must not abort the sweep and strand the REST —
@@ -8041,7 +8184,18 @@ class SdkBackend:
                     # record read as the user's Esc (INTERRUPT_BLOCK_WHY) and nothing ever resumed
                     # the session. "permission"/"picker" stay excluded: those turns were already
                     # waiting on the user, so blocked-on-you is the truth there.
-                    cut = last_state_value(self.state_dir, sid) in ("working", "retrying", "compacting")
+                    tail = last_state_record(self.state_dir, sid)
+                    cut = str(tail.get("state") or "") in MACHINE_ACTIVE_STATES
+                    # a turn `romp down` cut hears so, with the stop and start times. The `down` audit
+                    # row must be no older than the START of the cut turn (cut_turn_start), not its
+                    # newest mark: a mark written in the stop window between the row and the SIGTERM
+                    # is still this turn, while a row older than the turn belongs to an earlier stop
+                    # (this boot is a crash respawn or a refresh), and a row followed by any other
+                    # intent row, `down-failed` included, is no stop at all; the manager's own
+                    # `manager-sigterm` notes are skipped on the way back (newest_down_stop)
+                    start_t = cut_turn_start(self.state_dir, sid) if cut else None
+                    stop_t = down_t if (down_t is not None and start_t is not None and down_t >= start_t) else None
+                    nudge = down_resume_nudge(stop_t, boot_t) if stop_t is not None else BOOT_RESUME_NUDGE
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
                     # the session must HEAR about them or it waits forever on a dead timer/watcher.
                     dead_tasks = [t for t in (r.get("bgTasks") or []) if isinstance(t, dict)]
@@ -8051,7 +8205,7 @@ class SdkBackend:
                     # Prepend to the PERSISTED queue (not enqueue()) so it is fed FIRST, before the
                     # restored backlog, and survives even a death mid-reconcile. Order: the resume
                     # nudge (continuation context), then the task-death notice.
-                    prepend = ([BOOT_RESUME_NUDGE] if cut else []) \
+                    prepend = ([nudge] if cut else []) \
                             + ([ASK_DIED_NOTICE] if ask_died else []) \
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     if prepend or dead_tasks:
@@ -8400,12 +8554,18 @@ class SdkBackend:
         now = time.time()
         with self._lock:
             first = self._drain_hold_until <= now
-            self._drain_hold_until = now + self.DRAIN_HOLD_TTL
+            # never SHORTEN a hold: `romp down`'s quiesce (quiesce below) arms a longer one, and a
+            # deploy poll landing inside it must extend, not cut it back to one lease
+            self._drain_hold_until = max(self._drain_hold_until, now + self.DRAIN_HOLD_TTL)
             if first:
                 self._drain_hold_since = now
                 self._drain_hold_rang = False
             t = self._drain_wake_timer
-            self._drain_wake_timer = threading.Timer(self.DRAIN_HOLD_TTL + 0.5, self._wake_all_inputs)
+            # the wake fires when the HOLD lapses, whichever lease set it: inside a `romp down`
+            # quiesce the hold is the longer going-down one, and a 12.5s timer here would fire
+            # under a still-held lease and then never again, leaving held fresh turns waiting on an
+            # unrelated event once the quiesce lapsed with no stop (review find, 2026-09-06)
+            self._drain_wake_timer = threading.Timer(self._drain_hold_until - now + 0.5, self._drain_wake_fired)
             self._drain_wake_timer.daemon = True
             nt = self._drain_wake_timer
         if t is not None:
@@ -8427,6 +8587,93 @@ class SdkBackend:
         """Whether new turn starts are currently held for a parked deploy restart."""
         with self._lock:
             return self._drain_hold_until > time.time()
+
+    # ── going down (`romp down`, 2026-09-06) ─────────────────────────────────
+    # `romp down` stops this kernel through its supervisor, and before it does it asks the kernel to
+    # QUIESCE (POST /down): hold new turn starts so the in-flight count can only fall, refuse new
+    # session creates (a session born now would die with the kernel seconds later), and give the
+    # turns in flight a bounded wait to reach a turn boundary. The hold rides the SAME lease the
+    # deploy drain uses (drain_holding is the one gate inputs() consults), extended to cover the
+    # wait plus the stop that follows — and it stays a LEASE: if the stop never comes (the CLI died
+    # between /down and the supervisor call), the hold lapses on its own and the kernel carries on.
+    # Runtime-only like the deploy lease: a fresh boot starts clear by construction.
+    def quiesce(self, ttl: float) -> None:
+        """Hold new turn starts and session creates for `ttl` seconds: the kernel is going down."""
+        now = time.time()
+        ttl = max(0.0, float(ttl))
+        with self._lock:
+            if self._drain_hold_until <= now:      # a fresh episode: the deploy poll's "still parked"
+                self._drain_hold_since = now       # clock starts here, not at a stale earlier episode
+                self._drain_hold_rang = False
+            # never SHORTEN either lease, and arm the wake for the HOLD's lapse: a second, shorter
+            # quiesce inside a longer one (a `romp down --wait 300` abandoned mid-wait, then a
+            # `romp down --wait 30` abandoned too) used to reopen the create doors at its own lapse
+            # while turn starts stayed held to the longer one, with the only wake fired under the
+            # hold and none at its end, so held fresh turns waited on an unrelated event (review
+            # find, round 2, 2026-09-06; the defect refresh_drain_hold had, one function up)
+            self._quiesce_until = max(self._quiesce_until, now + ttl)
+            self._drain_hold_until = max(self._drain_hold_until, now + ttl)
+            hold_s = self._drain_hold_until - now
+            t = self._drain_wake_timer
+            self._drain_wake_timer = threading.Timer(hold_s + 0.5, self._drain_wake_fired)
+            self._drain_wake_timer.daemon = True
+            nt = self._drain_wake_timer
+            n = sum(1 for s in self.sessions.values() if s.inflight and not s.ended)
+        if t is not None:
+            t.cancel()
+        nt.start()
+        self._log("going down: %d in-flight turn(s); new turn starts and session creates held for up "
+                  "to %ds while they finish (sessions resume with their history at the next start)"
+                  % (n, int(hold_s)))
+
+    def quiescing(self) -> bool:
+        """Whether a `romp down` quiesce is in force (the create doors refuse while it is)."""
+        with self._lock:
+            return self._quiesce_until > time.time()
+
+    def cancel_quiesce(self) -> None:
+        """Release the going-down hold early (the stop did not happen): turn starts resume now."""
+        with self._lock:
+            was = self._quiesce_until > time.time()
+            self._quiesce_until = 0.0
+            self._drain_hold_until = 0.0
+            t = self._drain_wake_timer
+            self._drain_wake_timer = None
+        if t is not None:
+            t.cancel()
+        if was:
+            self._log("going down canceled: new turn starts and session creates resume")
+        self._wake_all_inputs()
+
+    def inflight_names(self) -> list:
+        """The names of the sessions with a turn in flight right now (what a stop would cut)."""
+        with self._lock:
+            sessions = list(self.sessions.values())
+        return [s.name for s in sessions if s.inflight and not s.ended]
+
+    def _drain_wake_fired(self) -> None:
+        """The lease's wake timer fired. Held inputs are woken only once the hold has LAPSED: a timer
+        that fires under a hold still in force (armed for a lease a later quiesce or poll extended)
+        re-arms for what remains, so the lapse always has a wake and no held fresh turn waits on an
+        unrelated event (review find, round 2, 2026-09-06). A fire with no hold left wakes now and
+        arms nothing."""
+        now = time.time()
+        with self._lock:
+            remaining = self._drain_hold_until - now
+            t = self._drain_wake_timer
+            if remaining > 0:
+                nt = threading.Timer(remaining + 0.5, self._drain_wake_fired)
+                nt.daemon = True
+                self._drain_wake_timer = nt
+            else:
+                nt = None
+                self._drain_wake_timer = None
+        if nt is not None:
+            if t is not None:
+                t.cancel()                 # a finished timer's cancel is a no-op; a newer one is replaced
+            nt.start()
+            return
+        self._wake_all_inputs()
 
     def _wake_all_inputs(self) -> None:
         """Nudge every session's input generator to re-check its gate — the lease just expired
@@ -9499,7 +9746,7 @@ class SdkBackend:
                         # a resume nudge at the head stays there — continuation context first, then
                         # the notices, the sweep's order; the crash resume prepends one before it
                         # calls here
-                        head = rest[:1] if rest and rest[0] in (BOOT_RESUME_NUDGE, CRASH_RESUME_NUDGE) else []
+                        head = rest[:1] if rest and is_resume_nudge(rest[0]) else []
                         cur["queue"] = head + notices + rest[len(head):]
                         cur["bgTasks"] = []                # reported — never re-notify for the same deaths
                         cur["pendingAsk"] = False          # asked once per death

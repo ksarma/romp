@@ -11,22 +11,25 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from importlib.machinery import SourceFileLoader
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote, unquote, urlencode
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 BIN = ROOT / "bin"
-em = SourceFileLoader("romp_event_model", str(HERE / "event_model.py")).load_module()
-jd = SourceFileLoader("romp_judge", str(HERE / "judge.py")).load_module()
-cm = SourceFileLoader("romp_colormap", str(HERE / "colormap.py")).load_module()  # age → recency tint
-pal = SourceFileLoader("romp_palette", str(HERE / "palette.py")).load_module()  # session-identity palettes (selectable)
-ap = SourceFileLoader("romp_askparse", str(HERE / "askparse.py")).load_module()  # tmux-pane → live AskUserQuestion picker
-sb = SourceFileLoader("romp_session_backend", str(HERE / "session_backend.py")).load_module()  # the SessionBackend ABC
+_ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(HERE / "loadsource.py"))
+_ls_mod = importlib.util.module_from_spec(_ls_spec)
+_ls_spec.loader.exec_module(_ls_mod)
+load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
+em = load_source("romp_event_model", HERE / "event_model.py")
+jd = load_source("romp_judge", HERE / "judge.py")
+cm = load_source("romp_colormap", HERE / "colormap.py")  # age → recency tint
+pal = load_source("romp_palette", HERE / "palette.py")  # session-identity palettes (selectable)
+ap = load_source("romp_askparse", HERE / "askparse.py")  # tmux-pane → live AskUserQuestion picker
+sb = load_source("romp_session_backend", HERE / "session_backend.py")  # the SessionBackend ABC
 CHAT_VIEW = ROOT / "vscode-extension"               # the tuned UI, current in this worktree via `git merge main`
 # ROMP_DIST_DIR: test seam (romp-lab serves a COPY of the built bundles, so its rebuild simulations —
 # mtime bumps that must raise the reload banner — never touch the dist the LIVE kernel serves).
@@ -678,6 +681,18 @@ def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
 _intr_marks_memo = {}
 _INTR_MARKS_MEMO_MAX = 512
 _intr_marks_memo_stats = {"hit": 0, "miss": 0, "evict": 0}
+_INTR_MARKS_STATS_LOCK = threading.Lock()   # the counters are bumped from the ticks on the pusher and from
+#                                             connect-push builds on WS threads at once; `+= 1` is a
+#                                             read-modify-write and drifts low without the GIL (the
+#                                             free-threading review's counter rule). The memo dict itself
+#                                             needs no lock: its ops are single dict operations on
+#                                             immutable tuples keyed by the parse object, so a lost insert
+#                                             or a double clear is one extra miss, never a wrong answer.
+
+
+def _intr_marks_bump(key, n=1):
+    with _INTR_MARKS_STATS_LOCK:
+        _intr_marks_memo_stats[key] = _intr_marks_memo_stats.get(key, 0) + n
 
 
 def _interrupt_marks(turns, sid="", family=None):
@@ -714,14 +729,14 @@ def _interrupt_marks(turns, sid="", family=None):
     if key is not None:
         e = _intr_marks_memo.get(key)
         if e is not None and e[0] is turns and e[1] == cut:
-            _intr_marks_memo_stats["hit"] += 1
+            _intr_marks_bump("hit")
             return e[2]
-        _intr_marks_memo_stats["miss"] += 1
+        _intr_marks_bump("miss")
     atoms = [a for turn in turns for a in (turn.get("atoms") or [])]
     res = _interrupt_marks_atoms(atoms, cut[0], cut[1])
     if key is not None:
         if len(_intr_marks_memo) >= _INTR_MARKS_MEMO_MAX and key not in _intr_marks_memo:
-            _intr_marks_memo_stats["evict"] += len(_intr_marks_memo)   # the repo's overflow idiom: clear whole
+            _intr_marks_bump("evict", len(_intr_marks_memo))   # the repo's overflow idiom: clear whole
             _intr_marks_memo.clear()
         _intr_marks_memo[key] = (turns, cut, res)
     return res
@@ -734,12 +749,13 @@ def _intr_marks_forget(alive):
     WS thread may insert concurrently."""
     for k in list(_intr_marks_memo):
         if k[0] not in alive and _intr_marks_memo.pop(k, None) is not None:
-            _intr_marks_memo_stats["evict"] += 1
+            _intr_marks_bump("evict")
 
 
 def _intr_marks_memo_report():
     """The memo's counters plus its occupancy, for /perf (plan D4: a memo reports hit/miss/evict)."""
-    out = dict(_intr_marks_memo_stats)
+    with _INTR_MARKS_STATS_LOCK:
+        out = dict(_intr_marks_memo_stats)
     out["entries"] = len(_intr_marks_memo)
     return out
 
@@ -1385,6 +1401,10 @@ _learned_announced = set()   # ids already announced on stderr as outside the ca
 # high-water mark a LOWER rev, or that page would ignore every re-read until the count caught up — a silent
 # stale list. Milliseconds leave room for one bump per ms across a restart.
 _models_rev = [int(time.time() * 1000)]
+_COUNTER_LOCK = threading.Lock()   # the small read-modify-write counters (`x[0] += 1`, `d[k] += 1`: this one,
+#                                    _nonce, _POSTAL_UNRESOLVED, _DRAIN_REFUSED) are three bytecodes each; two
+#                                    threads lose an increment, and the counts are asserted exact (the
+#                                    2026-09-06 free-threading review). Held for the increment only.
 
 # ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
 # Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
@@ -1879,7 +1899,8 @@ def _models_changed():
     rail gear and VS Code's settings command both open it in the feed pane). The feed shim and the VS Code
     pipe hand every non-keepalive frame to the window as a message; feed.ts's own listener ignores a type
     it does not know."""
-    _models_rev[0] += 1
+    with _COUNTER_LOCK:
+        _models_rev[0] += 1
     frame = {"type": "models", "rev": _models_rev[0]}
     for app in ("chat", "timeline", "feed"):
         _send_to_app(app, frame)
@@ -4307,7 +4328,11 @@ def _forward_tag_edit(host, body):
 # only on evidence (the cards-move rule): the remote copy is fetched fresh at apply time, and a
 # same-named tag CREATED there after the ruling (tag ids encode their creation ms) — or the same
 # tag EDITED there after the ruling (the v2 mtime stamp) — is new information and survives, loudly.
-_PENDING_TAG_LOCK = threading.Lock()
+_PENDING_TAG_LOCK = threading.RLock()        # re-entrant: a writer holds it across its whole read-modify-write
+#                                              (below) while the read and the save each take it too. Two lock
+#                                              sections let a second queue land between a caller's read and its
+#                                              save and be overwritten after its client was told "queued" (the
+#                                              2026-09-06 free-threading review, race 9).
 _PENDING_TAG_CACHE = {"rows": None}          # None = not loaded; kept in sync under the lock
 
 
@@ -4359,29 +4384,30 @@ def _queue_pending_tag_edit(host, body):
         return False
     tid = next((str(t.get("id") or "") for t in (cached.get("tags") or [])
                 if isinstance(t, dict) and _tag_name_basis(t.get("name")) == name), "")
-    rows = _pending_tag_rows()
-    same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
-    mine = [x for x in rows if same(x)]
-    if any(x.get("delete") for x in mine):
-        return True                              # the delete already rules this name; nothing to add
-    row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
-    if body.get("delete"):
-        rows = [x for x in rows if not same(x)]
-        row["delete"] = True
-    else:
-        if isinstance(body.get("rename"), str) and body["rename"].strip():
-            row["rename"] = body["rename"]
-            rows = [x for x in rows if not (same(x) and x.get("rename"))]
-        if isinstance(body.get("remove"), list) and body.get("remove"):
-            merged = []
-            for x in mine:
-                if x.get("remove") and not x.get("rename"):
-                    merged += [m for m in x["remove"] if m not in merged]
-                    rows = [y for y in rows if y is not x]
-            row["remove"] = merged + [m for m in body["remove"] if m not in merged]
-            row["tagId"] = row["tagId"] or next((x.get("tagId") or "" for x in mine), "")
-    rows.append(row)
-    _save_pending_tag_rows(rows)
+    with _PENDING_TAG_LOCK:                      # read, coalesce and save as ONE step (see the lock's note)
+        rows = _pending_tag_rows()
+        same = lambda x: x.get("host") == host and _tag_name_basis(x.get("name")) == name   # a journal from before the basis may hold a padded name
+        mine = [x for x in rows if same(x)]
+        if any(x.get("delete") for x in mine):
+            return True                          # the delete already rules this name; nothing to add
+        row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
+        if body.get("delete"):
+            rows = [x for x in rows if not same(x)]
+            row["delete"] = True
+        else:
+            if isinstance(body.get("rename"), str) and body["rename"].strip():
+                row["rename"] = body["rename"]
+                rows = [x for x in rows if not (same(x) and x.get("rename"))]
+            if isinstance(body.get("remove"), list) and body.get("remove"):
+                merged = []
+                for x in mine:
+                    if x.get("remove") and not x.get("rename"):
+                        merged += [m for m in x["remove"] if m not in merged]
+                        rows = [y for y in rows if y is not x]
+                row["remove"] = merged + [m for m in body["remove"] if m not in merged]
+                row["tagId"] = row["tagId"] or next((x.get("tagId") or "" for x in mine), "")
+        rows.append(row)
+        _save_pending_tag_rows(rows)
     return True
 
 
@@ -4463,8 +4489,9 @@ def _apply_pending_tag_edits(r):
         retired.append(row)                      # a refusal is the host's own answer — terminal
         applied += 1 if ok else 0
     if retired:
-        keep = [x for x in _pending_tag_rows() if x not in retired]
-        _save_pending_tag_rows(keep)
+        with _PENDING_TAG_LOCK:                  # read-filter-save as one step, like the queue side
+            keep = [x for x in _pending_tag_rows() if x not in retired]
+            _save_pending_tag_rows(keep)
         r.pop("_views_at", None)                 # re-read the post-apply truth next pass
         _mark_views_dirty()
     return applied
@@ -7109,7 +7136,7 @@ _REBUILT_FOR = [""]   # the checkout sha this RUNNING kernel already converged t
 def _restart_class(path):
     """Which RUNNING PROCESS a changed file's code lives in — "kernel", "bus", or "skip" (T216).
     Verified process boundaries, not guesses: the kernel process loads exactly kernel/*.py +
-    bin/romp-kernel in-process (every kernel module rides SourceFileLoader at import; judges run
+    bin/romp-kernel in-process (every kernel module is loaded by file path at import; judges run
     in-process too). postal/ is NEVER imported here — the bus is its own process with its own
     restart verb, and bouncing the kernel for a bus change restarts the WRONG thing. cli/ is
     loaded per `romp` invocation, never by this process — the next run picks it up. .md files
@@ -12067,7 +12094,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
     # romp's own injections are not the user's words: anything wearing the `<!-- romp-` marker
     # (nudges, notices) plus the boot reconcile's continuation text (marker-less by design) must
     # not render as a 'you' bubble in the popover
-    boot_nudge = getattr(sys.modules.get("romp_sdk_backend"), "BOOT_RESUME_NUDGE", None)
+    is_nudge = getattr(sys.modules.get("romp_sdk_backend"), "is_resume_nudge", None) or (lambda t: False)
     while u is not None and hops < 500000:
         if u == cut_uuid:
             break                                   # copied history starts here — the parent's, not the thread's
@@ -12084,7 +12111,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
                                                     # with one — the event model's own anchored test; prose that merely
                                                     # quotes a tag is the user's message): the CLI's bookkeeping, not
                                                     # something the user SAID — it must not owe a reply (T237 review)
-            if txt and txt != boot_nudge and not (r.get("type") == "user" and "<!-- romp-" in txt):
+            if txt and not is_nudge(txt) and not (r.get("type") == "user" and "<!-- romp-" in txt):
                 rows.append({"who": "you" if r.get("type") == "user" else "agent",
                              "text": txt[:4000],
                              "t": int(em.parse_z(r.get("timestamp")) or 0)})
@@ -12501,7 +12528,27 @@ def _comment_markers(sid):
 # this in-memory park). The typed transient nack keeps the client's optimistic mark alive meanwhile.
 ANCHOR_LAG_ERR = "that message isn't in the transcript yet; try again in a moment"
 _parked_creates = []                       # [{sid,uuid,exact,text,name,model,effort,fast,color,tries}]
+_parked_lock = threading.Lock()            # the list is shared by the pusher's cycle and a connect push on a WS
+#                                            thread: both iterated it and re-ran the same create, and the loser's
+#                                            .remove raised ValueError (the 2026-09-06 free-threading review,
+#                                            race 5). A pass CLAIMS each entry under the lock before acting on it
+#                                            and re-parks under it; the create itself runs unlocked.
 _PARK_MAX_TRIES = 30                       # pusher cycles (~15-90s) — past this the record isn't coming
+
+
+def _park_create(pk):
+    with _parked_lock:
+        _parked_creates.append(pk)
+
+
+def _claim_parked(pk):
+    """Take `pk` off the parked list for this pass; False when another pass already has it."""
+    with _parked_lock:
+        for i, x in enumerate(_parked_creates):
+            if x is pk:
+                del _parked_creates[i]
+                return True
+    return False
 
 
 def _retry_parked_creates():
@@ -12510,16 +12557,22 @@ def _retry_parked_creates():
     chat client (the creating client's socket may be gone — the adopt keys on the uuid, and clients
     without a matching pending simply ignore it). Still lagging → keep, bounded; any OTHER error →
     drop (the client's own attempt cap surfaces the failure honestly)."""
-    if not _parked_creates:
-        return
-    for pk in list(_parked_creates):
+    with _parked_lock:
+        batch = list(_parked_creates)
+    for pk in batch:
+        if not _claim_parked(pk):
+            continue                                  # a concurrent pass owns this one
         pk["tries"] += 1
-        err, tid = _comment_create(pk["sid"], pk["uuid"], pk["exact"], pk["text"], name=pk["name"],
-                                   model=pk["model"], effort=pk["effort"], fast=pk.get("fast", ""),
-                                   color=pk["color"])
+        try:
+            err, tid = _comment_create(pk["sid"], pk["uuid"], pk["exact"], pk["text"], name=pk["name"],
+                                       model=pk["model"], effort=pk["effort"], fast=pk.get("fast", ""),
+                                       color=pk["color"])
+        except Exception:
+            _park_create(pk)                          # not this pass's to lose: the next cycle retries it
+            raise
         if err == ANCHOR_LAG_ERR and pk["tries"] < _PARK_MAX_TRIES:
+            _park_create(pk)
             continue
-        _parked_creates.remove(pk)
         if not err:
             fr = _comments_frame(pk["sid"])
             with _clients_lock:
@@ -13059,7 +13112,7 @@ def _sdk_locked():
                 # is what puts this line in front of the user instead of only in the kernel log. Before
                 # that, a fresh install whose romp-sdk-setup had bailed looked like romp silently eating
                 # every message (the user 2026-07-28).
-            sbmod = SourceFileLoader("romp_sdk_backend", str(HERE / "sdk_backend.py")).load_module()
+            sbmod = load_source("romp_sdk_backend", HERE / "sdk_backend.py")
             # ONE claimer for the manager env's API key: the backend's work_api_key pops it out of
             # os.environ (so no session CLI inherits it ambiently), and judges read that same stash
             # through this wire. Before it lands the key is still in os.environ and judge._work_key
@@ -13157,7 +13210,7 @@ def _codex():
     with _codex_lock:
         if _codex_backend is None:
             try:
-                cxmod = SourceFileLoader("romp_codex_backend", str(HERE / "codex_backend.py")).load_module()
+                cxmod = load_source("romp_codex_backend", HERE / "codex_backend.py")
                 _codex_backend = cxmod.CodexBackend(
                     jd.STATE, notify=_send_to_app,
                     poke=_wake_kernel, push=_pusher_wake.set,
@@ -13499,6 +13552,10 @@ RETRY_MSG = "retry\n\n<!-- romp-injected -->"
 # sid → the error-record uuid its last retry was sent FOR (the one-retry-per-error-episode gate in the
 # apiRetry route). A new error record = a new episode = one more retry; recovery = no key = no retries.
 _auto_retried = {}
+_auto_retry_lock = threading.Lock()   # _fire_api_retry's episode check-and-stamp: the pusher's tick and a client's
+#                                       apiRetry ask both passed the gate at once and injected two retries (the
+#                                       2026-09-06 free-threading review, race 8). Held for the gate only, never
+#                                       across the send.
 # ...and how long to WAIT before that next episode's retry (the user 2026-07-29, whose usage-limited thread
 # collected a ridiculous number of attempts). One-per-episode alone slows nothing down when every attempt
 # fails instantly: each failure writes a new error record, which is a new episode, so a blocked session
@@ -13600,14 +13657,16 @@ def _fire_api_retry(sid, be, manual=False):
                       or _rerr.get("modelLimit") or _rerr.get("authErr")
                       or _rerr.get("refusal")):
             return
-        if _auto_retried.get(sid) == _rk:
-            return                                        # this episode already got its retry
-        if time.time() < _retry_gate_state(sid)[1]:
-            return                                        # backing off: this outage's next rung isn't due
-    if _rk is not None:
-        if len(_auto_retried) > 256:
-            _auto_retried.clear()
-        _auto_retried[sid] = _rk
+    with _auto_retry_lock:
+        if not manual:
+            if _auto_retried.get(sid) == _rk:
+                return                                    # this episode already got its retry
+            if time.time() < _retry_gate_state(sid)[1]:
+                return                                    # backing off: this outage's next rung isn't due
+        if _rk is not None:
+            if len(_auto_retried) > 256:
+                _auto_retried.clear()
+            _auto_retried[sid] = _rk
     # ALWAYS mark the retry romp-injected → GRAY romp bubble on BOTH backends (the user 2026-06-30): an
     # auto-retry is romp's action, not the human's. Without the marker the SDK retry was authored 'human'
     # (promptSource 'sdk' + sdk_human → blue bubble) AND the planner mis-read each bare "retry" as a user
@@ -14005,7 +14064,7 @@ def _drive(msg, client):
             _push_soon()
     elif t == "interrupt":
         be.interrupt(sid)                                 # Esc/stop AND settle idle (in the backend)
-        _interrupt_clicked[str(sid)] = time.time()        # chip → "interrupting" NOW (event-cleared on settle)
+        _mark_interrupt_clicked(sid)                      # chip → "interrupting" NOW (event-cleared on settle)
         _suppress_session_retry(sid)                      # interrupting a thread STOPS romp's auto-retry into it until a
                                                           # successful turn re-arms (the user 2026-07-06) — the interrupt
                                                           # already aborted any in-flight CLI retry; this stops the relapse
@@ -14297,12 +14356,12 @@ def _drive(msg, client):
             # keeps the client's optimistic mark alive; no toast for plumbing the retry makes moot.
             # Every real refusal stays loud (fail loudly).
             if err == ANCHOR_LAG_ERR:
-                _parked_creates.append({"sid": sid, "uuid": str(msg["uuid"]), "exact": str(msg["exact"]),
-                                        "text": str(msg["text"]), "name": str(msg.get("name") or ""),
-                                        "model": str(msg.get("model") or ""),
-                                        "effort": str(msg.get("effort") or ""),
-                                        "fast": str(msg.get("fast") or ""),
-                                        "color": str(msg.get("color") or ""), "tries": 0})
+                _park_create({"sid": sid, "uuid": str(msg["uuid"]), "exact": str(msg["exact"]),
+                              "text": str(msg["text"]), "name": str(msg.get("name") or ""),
+                              "model": str(msg.get("model") or ""),
+                              "effort": str(msg.get("effort") or ""),
+                              "fast": str(msg.get("fast") or ""),
+                              "color": str(msg.get("color") or ""), "tries": 0})
             else:
                 client["send"](json.dumps({"type": "warn", "text": err}))
             client["send"](json.dumps({"type": "commentCreateFailed", "id": sid,
@@ -15073,18 +15132,19 @@ class TmuxBackend(sb.SessionBackend):
         Matched exactly as sdk_backend.dismiss_echo matches — store key first, else the echo's send time,
         as an OR so a client whose handle came from a different paint still lands. Returns the dismissed
         text (idempotent: None when it's already gone)."""
-        d = _tmux_echo.get(str(sid))
-        if not d:
+        with _tmux_echo_lock:
+            d = _tmux_echo.get(str(sid))
+            if not d:
+                return None
+            for k, a in list(d.items()):
+                if not (a.get("_echo_text") and a.get("dropped")):
+                    continue
+                if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
+                    d.pop(k, None)
+                    if not d:
+                        _tmux_echo.pop(str(sid), None)
+                    return a.get("_echo_text")
             return None
-        for k, a in list(d.items()):
-            if not (a.get("_echo_text") and a.get("dropped")):
-                continue
-            if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
-                d.pop(k, None)
-                if not d:
-                    _tmux_echo.pop(str(sid), None)
-                return a.get("_echo_text")
-        return None
 
     # ask picker — translate a webview action into pane keystrokes (AskDriver); current_ask SCRAPES the pane
     # (the SDK answers its own callback / reads its stored ask instead).
@@ -16538,7 +16598,10 @@ def _start_remote_kernel(host):
     ssh shell often lacks the user's PATH additions), then conventional clone locations. romp-serve
     itself picks the right python (its pick_python) and self-builds stale UI bundles, so a plain
     clone is enough. Returns (started, detail) — detail names everything the probe tried when romp
-    isn't installed there. KEEP the source order IN SYNC with _discover_remote_clone."""
+    isn't installed there. A host stopped by `romp down` (its down-by-romp marker in the state root) is
+    NOT booted: a bare kernel there would serve under a marker that says down and no manager would own
+    it (review find, 2026-09-06); (False, why) names `romp up` on that host as the way to start it.
+    KEEP the source order IN SYNC with _discover_remote_clone."""
     cmd = ('S=""; SR="${ROMP_REPO_ROOT:-$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/repo-root" 2>/dev/null)}"; '
            'if [ -n "$SR" ] && [ -x "$SR/bin/romp-serve" ]; then S="$SR/bin/romp-serve"; fi; '
            'if [ -z "$S" ]; then S="$(command -v romp-serve || bash -lc "command -v romp-serve" 2>/dev/null || true)"; fi; '
@@ -16546,12 +16609,16 @@ def _start_remote_kernel(host):
            'if [ -x "$d/bin/romp-serve" ]; then S="$d/bin/romp-serve"; break; fi; done; fi; '
            'if [ -z "$S" ]; then echo NOROMP; exit 0; fi; '
            'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; '
+           'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
            'nohup "$S" >>"$LOGDIR/kernel.log" 2>&1 </dev/null & echo "STARTED:$S"')
     try:
         r = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, cmd], capture_output=True, text=True, timeout=25)
         out = (r.stdout or "").strip()
         if "STARTED" in out:
             return True, out.partition(":")[2]
+        if out == "DOWN":
+            return False, ("romp is stopped on %s by romp down; not starting it (romp up there starts it)"
+                           % host)
         if "NOROMP" in out:
             return False, ("romp not installed on %s — no repo-root state file (a kernel that has "
                            "run there writes one; ROMP_REPO_ROOT on that machine also works), no "
@@ -17017,8 +17084,14 @@ def attach_remote(host, kernel_port=None):
                 time.sleep(1.0)
             if not token:
                 token = _fetch_remote_token(host)  # the fresh kernel wrote its serve-token on startup
-        elif not token:
-            boot_detail = detail                   # applied below, AFTER _spawn_tunnel resets detail
+        else:
+            # the refusal rides the row whether or not a token came back: a host attached before
+            # `romp down` stopped it still has its serve-token file, and keeping the reason only on
+            # the no-token path left the popover with the generic no-kernel hint instead of the stop
+            # and the way out (review find, round 2, 2026-09-06). Applied below, AFTER _spawn_tunnel
+            # resets detail; the supervisor keeps a specific parked detail over its generic hint
+            # and clears it once the kernel answers.
+            boot_detail = detail
     with _remotes_lock:
         r = _remotes.get(host)
         if r is None:                              # detached mid-fetch
@@ -17041,8 +17114,8 @@ def attach_remote(host, kernel_port=None):
             except Exception:
                 pass
             _spawn_tunnel(r)
-        if boot_detail and not token:
-            r["detail"] = boot_detail              # the popover's next step (e.g. "run bin/romp-host-setup")
+        if boot_detail:
+            r["detail"] = boot_detail              # the popover's next step ("run bin/romp-host-setup", the romp down refusal)
         pub = _remote_public(r)
     _remotes_save()
     _tunnel_wake.set()
@@ -18342,12 +18415,19 @@ def _update_remote(host):
         'NEW="$(git -C "$R" rev-parse --short HEAD)"; '
         # RESTART the kernel THROUGH THE MANAGER (the user 2026-07-04: the manager is romp's durable supervisor —
         # "there is never an invisible orphan" — so a restart should keep/leave the remote MANAGER-owned, not
-        # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the SAME idempotent auto-start
-        # the SessionStart hook uses): if a manager already supervises this host it respawns the kernel on the new
-        # code; if this host was only ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager,
-        # which spawns a SUPERVISED kernel — UPGRADING the orphan to properly managed. ensure needs node; if it
-        # can't run (or the port never returns) we relaunch romp-serve bare as a last resort so the host isn't
-        # left dead. The port poll confirms whichever path brought it back.
+        # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the idempotent supervised
+        # start; this apply and _restart_remote_kernel's are its only callers, no hook runs it): if a manager
+        # already supervises this host it respawns the kernel on the new code; if this host was only
+        # ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager, which spawns a SUPERVISED
+        # kernel — UPGRADING the orphan to properly managed. ensure needs node; if it can't run (or the port
+        # never returns) we relaunch romp-serve bare as a last resort so the host isn't left dead. The port
+        # poll confirms whichever path brought it back.
+        # A host stopped by `romp down` (its down-by-romp marker in the state root, and no manager owning
+        # the kernel) is left stopped: ensure refuses on the marker, so the immediate path below would boot
+        # the bare fallback while `romp status` there still said down (review find, 2026-09-06). The code
+        # is synced and nothing is killed or started; SYNCED:<sha>:DOWN says so, and `romp up` there boots
+        # the new code. The OWNED check comes first: a manager running beside a marker was started some
+        # way that did not clear it, and its kernel gets the normal quiet restart.
         'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW"; exit 0; fi; '
         # NEVER AN ANONYMOUS SIGTERM (T238, the T121 rule): a restart-audit row lands BEFORE whichever
         # restart happens, so the far kernel's cut row carries WHO and WHY (the p2p update, from this
@@ -18368,6 +18448,8 @@ def _update_remote(host):
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
         '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
         'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
+        # stopped on purpose (see above): synced, nothing restarted
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
         # kill, then `ensure` upgrades the host to a supervised kernel.
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
@@ -18436,6 +18518,10 @@ def _update_remote(host):
         if mode == "FALLBACK":
             return True, ("synced to %s + restarting now (no manager owns that kernel there — an "
                           "immediate restart)" % short)
+        if mode == "DOWN":
+            _unexpect()                           # nothing restarts: the host stays stopped on purpose
+            return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
+                          "(romp up on it starts the new code)" % (short, host))
         return True, "synced to %s + restarting" % short
     _unexpect()                                   # nothing restarted: DIVERGED / RESETFAIL / NOLAUNCH / error
     if tag == "DIVERGED":
@@ -18655,7 +18741,10 @@ def _restart_remote_kernel(host):
     to push but the process still has to come back on the new build of ITS own code. Same shape as
     _update_remote's step 3 (manager `ensure` so the restart stays supervised, the `romp-kern[e]l`
     self-match guard so pkill can't kill the apply shell, setsid so an ssh drop can't leave the host with
-    no kernel at all), minus every git step. Returns (ok, detail)."""
+    no kernel at all), minus every git step. A host stopped by `romp down` (its marker present) is not
+    restarted: ensure would refuse and the bare fallback would boot an unsupervised kernel under a
+    marker that says down (review find, 2026-09-06); the detail says so and names `romp up` there.
+    Returns (ok, detail); a `romp down` host is (False, why), since the restart asked for did not run."""
     with _remotes_lock:
         r = dict(_remotes.get(host) or {})
     if r.get("checkin_peer"):
@@ -18667,6 +18756,7 @@ def _restart_remote_kernel(host):
     apply_cmd = (
         'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; R=%s; '
         'if [ ! -x "$R/bin/romp-serve" ]; then echo NOLAUNCH; exit 0; fi; '
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
         # never an anonymous SIGTERM (T238): the far kernel's cut row names this explicit restart
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
         '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
@@ -18700,6 +18790,8 @@ def _restart_remote_kernel(host):
             rr.pop("restartExpected", None)
     if out == "NOLAUNCH":
         return False, "found no romp/romp-serve launcher to restart the kernel"
+    if out == "DOWN":
+        return False, "%s is stopped by romp down; not restarting it (romp up there starts it)" % host
     return False, (_ssh_err(a.stderr) or out or "remote restart failed").strip()[:180]
 
 
@@ -18880,6 +18972,35 @@ def _mark_boot(kind):
             _append_boot_settled(_BOOT_MARKS["firstServe"], _BOOT_MARKS["reconcileDone"])
     except Exception:
         pass
+
+
+# ── going down (`romp down`, 2026-09-06) ─────────────────────────────────────────
+# `romp down` stops this kernel through its supervisor (the login service, or the manager's /stop
+# when nothing supervises it), and asks the kernel to QUIESCE first via POST /down: hold new turn
+# starts, refuse new session creates, and wait a bounded time for the turns in flight to reach a
+# turn boundary — so the SIGTERM that follows cuts as little as possible. The kernel never exits
+# from that route: under the manager a kernel exit is a crash to respawn, so the stop has to come
+# top-down through the supervisor, and the route only makes the moment quiet. What the stop then
+# cuts resumes at the next start exactly as after `romp refresh` (the boot reconcile reads the
+# 'working' state tail, never anything written here).
+DOWN_WAIT_DEFAULT_S = 5.0     # the CLI's default `--wait`; a turn boundary in the next few seconds is caught
+DOWN_WAIT_MAX_S = 600.0       # a cap on the request, so a typo cannot hold a handler thread for an hour
+DOWN_HOLD_GRACE_S = 30.0      # the hold outlives the wait by this much: the supervisor stop lands on a
+#                               still-quiet kernel, and if no stop comes the lease lapses on its own
+# The refusal both create doors give. Its reader can be an AGENT (`romp new` inside a session prints
+# a 4xx body's error verbatim), and an agent told to run `romp up` would do so and undo a stop the
+# user made on purpose (review find, 2026-09-06). So it states the fact and hands over no command:
+# the person who stopped the kernel knows how to start it.
+GOING_DOWN_REFUSAL = "the kernel is being stopped on purpose; a new session cannot start right now"
+
+
+def _going_down():
+    """True while POST /down's quiesce is in force. Reads the backend GLOBAL, never _sdk(): the
+    route must not construct a backend just to ask whether one is quiescing (the SIGTERM path's
+    rule). Both session-create doors (POST /new, the WS createSession op) refuse on this — a session
+    born now would die with the kernel seconds later, with the create read as a success."""
+    be = _sdk_backend
+    return bool(be) and hasattr(be, "quiescing") and be.quiescing()
 
 
 def _recent_restart_reason(window=90, now=None):
@@ -22344,18 +22465,20 @@ def _hydrate_postal(events, index, sid=None):
                 # build; a repeat is a count, a NEW pair is news.
                 _unres = [m for m in _mids if m not in {c["mid"] for c in cards}]
                 _skey = sid or ev.get("uuid") or "?"
-                _new = [m for m in _unres if (_skey, m) not in _POSTAL_UNRESOLVED["seen"]]
+                with _COUNTER_LOCK:                           # check-and-record as one step across builders
+                    _new = [m for m in _unres if (_skey, m) not in _POSTAL_UNRESOLVED["seen"]]
+                    if _new:
+                        if len(_POSTAL_UNRESOLVED["seen"]) >= _POSTAL_UNRESOLVED_CAP:
+                            _POSTAL_UNRESOLVED["seen"].clear()       # bounded: wrap, re-warn once
+                        _POSTAL_UNRESOLVED["seen"].update((_skey, m) for m in _new)
+                        _POSTAL_UNRESOLVED["warned"] += 1
+                    else:
+                        _POSTAL_UNRESOLVED["suppressed"] += 1
                 if _new:
-                    if len(_POSTAL_UNRESOLVED["seen"]) >= _POSTAL_UNRESOLVED_CAP:
-                        _POSTAL_UNRESOLVED["seen"].clear()           # bounded: wrap, re-warn once
-                    _POSTAL_UNRESOLVED["seen"].update((_skey, m) for m in _new)
-                    _POSTAL_UNRESOLVED["warned"] += 1
                     sys.stderr.write("postal hydrate: %d of %d message id(s) unresolved on %s (%s) - said "
                                      "once per id; repeats are counted on /version postalUnresolved\n"
                                      % (len(ids) - len(cards), len(ids), ev.get("uuid") or "?",
                                         ",".join(_unres)))
-                else:
-                    _POSTAL_UNRESOLVED["suppressed"] += 1
         out.append(ev)
     return out
 
@@ -23707,6 +23830,25 @@ _interrupt_clicked = {}       # sid -> ts; event-cleared the moment the turn is 
 # its own (more precise, event-resolved) modelPending — _model_pending_now ORs the two so a session on
 # either backend, switched from either surface, shows the SAME cue at the SAME moment on both surfaces.
 _model_switch_pending = {}
+_ui_stamp_lock = threading.Lock()   # the three stamps above: a builder's "read the stamp, then pop it once
+#                                     settled" and a fresh click's write race across threads (builders on the
+#                                     pusher and connect pushes, clicks on WS/HTTP handlers), and the pop took
+#                                     the new click's cue with it (the 2026-09-06 free-threading review, race
+#                                     10). A pop retires only the stamp it ruled on; writes take the lock too.
+
+
+def _pop_stamp_if(stamps, sid, seen):
+    """Retire `stamps[sid]` only if it is still the very value the caller ruled on; a newer click stands."""
+    with _ui_stamp_lock:
+        if stamps.get(sid) is seen:
+            stamps.pop(sid, None)
+
+
+def _mark_interrupt_clicked(sid):
+    """An interrupt WE just sent (the stop button, the Ctrl+C relay): the chip reads 'interrupting' from
+    now until the settle — the one writer behind both callers."""
+    with _ui_stamp_lock:
+        _interrupt_clicked[str(sid)] = time.time()
 
 
 def _interrupting(sid, session, now, tm):
@@ -23750,13 +23892,13 @@ def _interrupting(sid, session, now, tm):
     snap_t = (tm or {}).get("snapT")
     if inflight is not None and not (snap_t is not None and snap_t < t0):
         if not inflight or now - t0 > 120:
-            _interrupt_clicked.pop(sid, None)
+            _pop_stamp_if(_interrupt_clicked, sid, t0)
             return False
         return True
     landed = any(em.is_interrupt_record(a) and (a.get("t") or 0) >= int(t0)
                  for turn in session.get("turns", []) for a in turn.get("atoms") or [])
     if landed or now - t0 > 120:
-        _interrupt_clicked.pop(sid, None)
+        _pop_stamp_if(_interrupt_clicked, sid, t0)
         return False
     return True
 
@@ -23780,7 +23922,8 @@ def _mark_model_pending(sid, value):
     NOW (mirrors _mark_compacting), so both the chat statusline and the timeline lane's dots appear at the
     same instant regardless of which UI's click fired."""
     if sid:
-        _model_switch_pending[sid] = {"target": value, "until": time.time() + 20}
+        with _ui_stamp_lock:
+            _model_switch_pending[sid] = {"target": value, "until": time.time() + 20}
         _mark_views_dirty()           # the stamp lives in memory — the timeline's dots need a dirty rebuild
 
 
@@ -23795,7 +23938,7 @@ def _model_pending_now(sid, tm):
     if not p:
         return False
     if _alias_reflects((tm or {}).get("model") or "", p["target"]) or time.time() > p["until"]:
-        _model_switch_pending.pop(sid, None)
+        _pop_stamp_if(_model_switch_pending, sid, p)
         return False
     return True
 # Dead-lane dismissals (the user 2026-07-02; DURABLE since 2026-08-14): a DEAD session lingers in the
@@ -23850,7 +23993,8 @@ def _undismiss_lanes(sids):
 def _mark_compacting(sid):
     """A compact we just sent /compact for → show 'compacting' on every surface AT ONCE, now."""
     if sid:
-        _compact_clicked[sid] = time.time()
+        with _ui_stamp_lock:
+            _compact_clicked[sid] = time.time()
         _mark_views_dirty()           # in-memory stamp: dirty-rebuild the views so 'compacting' shows at once
 
 
@@ -23866,10 +24010,10 @@ def _compacting_optimistic(sid, session, now):
     for turn in session["turns"]:
         for a in turn["atoms"]:
             if a.get("type") == "system" and a.get("subtype") == "compact_boundary" and (a.get("t") or 0) >= t0:
-                _compact_clicked.pop(sid, None)
+                _pop_stamp_if(_compact_clicked, sid, t0)
                 return False
     if now - t0 > 180:
-        _compact_clicked.pop(sid, None)
+        _pop_stamp_if(_compact_clicked, sid, t0)
         return False
     return True
 
@@ -25451,18 +25595,28 @@ def _atom_user_texts(a):
 # turn lands. A SUCCESSFUL send's echo prunes when the turn writes; a DROPPED send's echo PERSISTS, so the
 # lost message stays visible (no response) instead of vanishing silently.
 _tmux_echo = {}                                       # sid -> {key -> synthetic user atom}
+_tmux_echo_lock = threading.Lock()                    # every compound step on the store runs under it: senders
+#                                                       (WS/HTTP handler threads) add while builders (the pusher,
+#                                                       connect pushes) prune and settle, and "snapshot the keys,
+#                                                       then d[k]" or "if not d: pop(sid)" lost a fresh echo to a
+#                                                       concurrent pop or add (the 2026-09-06 free-threading review,
+#                                                       race 4). Never held across I/O; nothing under it takes
+#                                                       another lock.
 
 def _tmux_echo_add(sid, text, author="human"):
     key = "echo:" + uuid.uuid4().hex
-    _tmux_echo.setdefault(sid, {})[key] = {
+    atom = {
         "type": "user", "uuid": key, "session_id": sid, "t": int(time.time()), "parentUuid": None,
         # author drives the bubble: "human" → blue (a typed message), "romp" → gray (a nudge/auto-follow-up).
         # Matches the real transcript atom's author so the optimistic echo reads identically until it lands.
         "author": author, "_echo_text": text,
         "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+    with _tmux_echo_lock:
+        _tmux_echo.setdefault(sid, {})[key] = atom
 
 def _tmux_echo_atoms(sid):
-    return list(_tmux_echo.get(sid, {}).values())
+    with _tmux_echo_lock:
+        return list(_tmux_echo.get(sid, {}).values())
 
 def _tmux_echo_prune(sid, tx_uuids, tx_texts):
     """Drop an echo once the transcript has its real user atom (by uuid or text); pop the sid when empty.
@@ -25471,17 +25625,17 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
     trailing-newline send (`romp send` passes its argument verbatim): the delivered echo stayed, hidden by
     the display dedup, and the settle then marked it `dropped` once a later human turn landed — a "never
     delivered" bubble for a message the transcript holds (2026-09-06 review, round 4)."""
-    d = _tmux_echo.get(sid)
-    if not d:
-        return
-
     def _landed(a):
         et = sb.echo_text_key(a.get("_echo_text"))
         return a.get("uuid") in tx_uuids or (et and et in tx_texts)
-    for k in [k for k, a in d.items() if _landed(a)]:
-        d.pop(k, None)
-    if not d:
-        _tmux_echo.pop(sid, None)
+    with _tmux_echo_lock:
+        d = _tmux_echo.get(sid)
+        if not d:
+            return
+        for k in [k for k, a in d.items() if _landed(a)]:
+            d.pop(k, None)
+        if not d:
+            _tmux_echo.pop(sid, None)
 
 
 def _human_turn_floor(session):
@@ -25534,23 +25688,23 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
     misdiagnosis the dropped field exists to prevent. The queue ledger is the authoritative "still
     owed" record, so it outranks the floor here; once the ledger releases the text (delivery or
     recall), the next settle rules on it normally."""
-    d = _tmux_echo.get(sid)
-    if not d:
-        return
     owed = {t.strip() for t in still_queued if isinstance(t, str)}
     path_bearing = getattr(sys.modules.get("romp_sdk_backend"), "_path_bearing", None)
-    for k in list(d.keys()):
-        a = d[k]
-        if not _echo_overtaken(a, human_floor):
-            continue
-        if (a.get("_echo_text") or "").strip() in owed:
-            continue                                     # still owed by the queue ledger → waiting, not lost
-        if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
-            d.pop(k, None)
-        else:
-            a["dropped"] = True
-    if not d:
-        _tmux_echo.pop(sid, None)
+    with _tmux_echo_lock:
+        d = _tmux_echo.get(sid)
+        if not d:
+            return
+        for k, a in list(d.items()):
+            if not _echo_overtaken(a, human_floor):
+                continue
+            if (a.get("_echo_text") or "").strip() in owed:
+                continue                                 # still owed by the queue ledger → waiting, not lost
+            if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
+                d.pop(k, None)
+            else:
+                a["dropped"] = True
+        if not d:
+            _tmux_echo.pop(sid, None)
 
 
 def _sendvis_diag(sid):
@@ -29887,7 +30041,10 @@ def _usage():
     return out
 
 
-_jf_cache = {"fp": None, "val": None}                 # judge-failure scan, mtime-fingerprinted over the goals dir
+_jf_cache = [(None, None)]                            # judge-failure scan, mtime-fingerprinted over the goals dir:
+#                                                       (fingerprint, value) as ONE tuple rebound whole — two slots
+#                                                       stored one after the other let a reader pair a new fingerprint
+#                                                       with the old value (the 2026-09-06 free-threading review)
 
 
 def _judge_failures():
@@ -29899,13 +30056,14 @@ def _judge_failures():
         fp = tuple(sorted((p.name, int(p.stat().st_mtime)) for p in gd.glob("*.json"))) if gd.exists() else ()
     except Exception:
         fp = None
-    if fp is not None and _jf_cache["fp"] == fp:
-        return _jf_cache["val"]
+    fp0, val0 = _jf_cache[0]
+    if fp is not None and fp0 == fp:
+        return val0
     try:
         val = jd.judge_failure_scan()
     except Exception:
         val = None
-    _jf_cache["fp"], _jf_cache["val"] = fp, val
+    _jf_cache[0] = (fp, val)
     return val
 
 
@@ -30145,6 +30303,7 @@ def _usage_for_client():
 
 
 _msg_sum_cache = {}                               # {"per": {sid: (mtime, submap)}, "map": union {mid: caption}}
+_msg_sum_lock = threading.Lock()                  # guards the two slots' read and swap only — never a scan
 
 
 def _msg_sum_scan_session(sid, path, now):
@@ -30183,7 +30342,14 @@ def _msg_summaries():
         sess = _sessions(now)
     except Exception:
         return _msg_sum_cache.get("map", {})
-    per = _msg_sum_cache.setdefault("per", {})       # sid -> (mtime, submap)
+    # Builders run on several threads at once (the pusher, a connect push on a WS thread). Each works on
+    # its OWN copy of the per-session table and publishes it by one swap under the lock, so a peer's
+    # insert or eviction can never land mid-iteration here — "dictionary changed size during iteration"
+    # out of _hydrate_postal / _postal_messages aborted a whole build (the 2026-09-06 free-threading
+    # review, race 2). The scans run outside the lock: two builders may scan one changed session once
+    # each (the same bytes; the later swap wins) and no lock is ever held across a parse.
+    with _msg_sum_lock:
+        per = dict(_msg_sum_cache.get("per") or {})  # sid -> (mtime, submap), this builder's copy
     live = set()
     dirty = False
     for s in sess:
@@ -30201,12 +30367,13 @@ def _msg_summaries():
     for sid in [k for k in per if k not in live]:    # forget dead sessions so `per` can't grow unbounded
         del per[sid]
         dirty = True
-    if dirty or "map" not in _msg_sum_cache:         # rebuild the union only when a submap changed
-        m = {}
-        for _mt, sub in per.values():
-            m.update(sub)
-        _msg_sum_cache["map"] = m
-    return _msg_sum_cache["map"]
+    with _msg_sum_lock:
+        if dirty or "map" not in _msg_sum_cache:     # rebuild the union only when a submap changed
+            m = {}
+            for _mt, sub in per.values():
+                m.update(sub)
+            _msg_sum_cache["per"], _msg_sum_cache["map"] = per, m
+        return _msg_sum_cache["map"]
 
 
 _postal_log_cache = {}        # messages.jsonl -> _fold_records entry; every timeline rebuild used to re-parse the whole log
@@ -31017,13 +31184,24 @@ def _session_tokens(path, t0):
 # a fresh install) resets cleanly.
 _JUDGE_USAGE_RETAIN = 31 * 86400
 _JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": []}
+_JUDGE_USAGE_LOCK = threading.Lock()   # the seek-read-append-advance below is ONE transaction: the pusher's build
+#                                        and an HTTP analytics call each read from the shared offset and appended,
+#                                        double-counting every row of the chunk (the 2026-09-06 free-threading
+#                                        review, race 6). The file it covers is a local append-only log; nothing
+#                                        under it takes another lock.
 
 
 def _judge_usage_rows():
     """Every parsed judge-usage row from the last ~31 days, incrementally maintained. Fully defensive —
     a missing or garbled log never breaks a build; a mid-append partial line is left for the next read.
     Keyed on the PATH too (a test repointing jd.STATE must never inherit another dir's offset — the
-    overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite)."""
+    overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite). Returns a
+    snapshot list: the cached one keeps growing and pruning under later reads."""
+    with _JUDGE_USAGE_LOCK:
+        return list(_judge_usage_rows_locked())
+
+
+def _judge_usage_rows_locked():
     p = jd.STATE / "judge-usage.jsonl"
     c = _JUDGE_USAGE_CACHE
     try:
@@ -32725,8 +32903,9 @@ _nonce = [0]
 
 
 def _next_nonce():
-    _nonce[0] += 1
-    return _nonce[0]
+    with _COUNTER_LOCK:
+        _nonce[0] += 1
+        return _nonce[0]
 
 
 def _goal_segments(item_id):
@@ -32884,8 +33063,18 @@ _wire_stats = {"feed_cards_hit": 0, "feed_cards_miss": 0, "feed_body": 0, "bars_
 #   /perf memos.wire (plan D4: a memo reports its hits): _feed_parts' per-card encode served from its memo vs run,
 #   whole frames serialized (a _LazyWire materialized; at most once per build each), bars builds whose payload
 #   could not be keyed and took the whole dump for their signature, and values a wire encoder shipped as str()
-#   (_wire_default, one per encode). Bare increments like _goals_memo_stats: a lost count under a thread race is
-#   a counter's business, not a frame's.
+#   (_wire_default, one per encode). Bumped through _wire_bump, under a lock: the pusher bumps the per-entry
+#   cache and the bars signature, and whichever sender thread first materializes a _LazyWire bumps its counter,
+#   so `+= 1` here is a read-modify-write across threads and drifts low without the GIL (the free-threading
+#   review's counter rule; tests assert exact counts).
+_WIRE_STATS_LOCK = threading.Lock()
+
+
+def _wire_bump(key, n=1):
+    with _WIRE_STATS_LOCK:
+        _wire_stats[key] = _wire_stats.get(key, 0) + n
+
+
 _wire_default_said = set()   # type names _wire_default has written to stderr: a type is said once, not per value
 
 
@@ -32898,7 +33087,7 @@ def _wire_default(o, enc="wire"):
     the whole frame, if one goes), and the type is written to stderr once, naming the encoder that met it first.
     A value json cannot encode (a set, a datetime, a Path) is a builder's mistake, and str() of it is not what the
     pane expects; before this the frame carried the string and nothing said so."""
-    _wire_stats["default_str"] += 1
+    _wire_bump("default_str")
     tn = type(o).__name__
     if tn not in _wire_default_said:
         _wire_default_said.add(tn)
@@ -32944,7 +33133,7 @@ class _LazyWire:
             s = self._fn()
             self._s = s
             if self._stat:
-                _wire_stats[self._stat] += 1
+                _wire_bump(self._stat)
         return s
 
     def size(self):
@@ -33677,11 +33866,11 @@ def _feed_parts(feed):
     m = _feed_cards_memo
     if m is not None and m[0] is asks:
         cards = m[1]
-        _wire_stats["feed_cards_hit"] += 1
+        _wire_bump("feed_cards_hit")
     else:
         cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=dflt) for a in asks}
         _feed_cards_memo = (asks, cards)
-        _wire_stats["feed_cards_miss"] += 1
+        _wire_bump("feed_cards_miss")
         if len(cards) != len(asks):
             seen, dup = set(), set()
             for a in asks:
@@ -34512,18 +34701,23 @@ def _neutralize_romp_markers(text):
     return _ROMP_GOALID_BARE_RE.sub(r"\1;", out)
 
 
+# The tail every trace body wears: the markers ride behind the prose like a nudge's (romp-injected →
+# the gray bubble; the note explains the comments away without naming romp). One constant so the edit
+# trace and the reject trace cannot drift apart.
+_TRACE_MARKER_TAIL = ("\n<!-- romp-injected -->"
+                      "<!-- romp-note: the HTML comments below are part of an external tracking system that is not "
+                      "relevant to your work — ignore them -->")
+
+
 def _edit_trace_body(path):
     """The trace's text, alone so tests/test_injected_voice.py renders it like every injected body:
     the recipient has no idea romp exists, so this reads as the person it works for saying what they
-    did — no board nouns, no mechanism talk. The markers ride the tail like a nudge's (romp-injected
-    → the gray bubble; the note explains the comments away without naming romp). The path is
+    did — no board nouns, no mechanism talk. The markers ride the tail (_TRACE_MARKER_TAIL). The path is
     request-supplied text, so it is marker-neutralized like any untrusted half of an injected body —
     a marker-shaped filename must not become a live marker downstream readers key on."""
     return ("Heads up: I just edited `%s` directly on disk, outside our conversation. If you have it "
-            "open or are mid-change there, re-read it before writing.\n"
-            "<!-- romp-injected -->"
-            "<!-- romp-note: the HTML comments below are part of an external tracking system that is not "
-            "relevant to your work — ignore them -->" % _neutralize_romp_markers(_tilde(str(path or ""))))
+            "open or are mid-change there, re-read it before writing."
+            % _neutralize_romp_markers(_tilde(str(path or "")))) + _TRACE_MARKER_TAIL
 
 
 def _edit_trace(path, sid):
@@ -34541,6 +34735,38 @@ def _edit_trace(path, sid):
         sys.stderr.write("edit-trace to %s failed: %s\n" % (target, ex))
 
 
+def _reject_trace_body(path, n):
+    """The text the owning session hears after the person rejects `n` of its tracked changes in the
+    viewer (plans/file-review.md, Consent, trace, routing; the Slice 2 contract, D3). A reject is the
+    one comments verb that changes the FILE's bytes — the host script writes the reverse edits into
+    it and drops the records from the sidecar — so, like a save's edit trace, it is told in the
+    person's voice with the same marker tail, and tests/test_injected_voice.py renders it
+    with every other injected body. The count is the host's own answer (the ids it actually resolved),
+    the path is tilde-collapsed and marker-neutralized like the edit trace's. `n` None is the landing
+    the host could not report — it died after writing the file (_file_comments_after) — and says "some
+    of", never a number the kernel would have to guess. Sidecar-only verbs (accept, comment, reply,
+    resolve, set-tracked) send nothing: the sent message carries that news."""
+    count = "some of" if n is None else "%d of" % int(n or 0)
+    return ("I rejected %s your tracked changes in %s while reading it; the file and its sidecar both "
+            "changed, so re-read it before writing."
+            % (count, _neutralize_romp_markers(_tilde(str(path or ""))))) + _TRACE_MARKER_TAIL
+
+
+def _reject_trace(path, sid, n):
+    """After a reject or reject-all lands on disk, TELL the session whose worktree holds the file —
+    _edit_trace's twin: the same owner lookup (_edit_trace_sid: the deepest live tree containing the
+    file, the viewer's own sid on a tie, nobody when the file is outside every live tree), the same
+    direct backend send (never _send_or_park: nothing parks, nothing stamps a todo), best-effort and
+    loud on failure. The reject itself already succeeded and was acked before this runs."""
+    target = _edit_trace_sid(path, sid)
+    if not target:
+        return
+    try:
+        Sessions.backend_for(target).send(target, _reject_trace_body(path, n))
+    except Exception as ex:
+        sys.stderr.write("reject-trace to %s failed: %s\n" % (target, ex))
+
+
 # ---- FILE COMMENTS (plans/file-review.md, Slice 1). The viewer's comments panel keeps a person's
 #      comments on a file, and a session's tracked changes, in the track-changents sidecar beside the
 #      file (<root>/.trackchanges/), and hands everything unsent to the owning session as ONE message.
@@ -34552,6 +34778,7 @@ def _edit_trace(path, sid):
 #      fileComments (the disk verbs) and fileCommentsSend (the message); saveFile itself appends a
 #      direct edit to the log.
 _FILE_COMMENTS_HOST = ROOT / "tools" / "file-comments-host.mjs"   # tests point this at a stub
+_FILE_COMMENTS_TRACED_VERBS = frozenset(("reject", "reject-all"))   # the verbs that change the FILE's bytes
 _FILE_COMMENTS_TIMEOUT = 10                                        # seconds: one verb is one load-mutate-write
 _FILE_COMMENTS_REPLY_MAX = 16 * 1024 * 1024                        # bytes of host stdout the kernel will hold for ONE
 #   reply — WS_QUEUE_BYTES's default, past which _mk_ws_send drops the client anyway, so a bigger answer could never
@@ -34800,12 +35027,31 @@ def _file_comments_op(msg):
     if not _file_comments_node():
         return fail("no-node", "cannot open the comments for %s: node is not installed on this machine, "
                                "and the comments helper runs under it" % _tilde(p))
+    # the file-writing verbs: the file's identity before and after the host run, so a host that wrote the
+    # file and then died — killed after its rename, or failing inside the reply it builds after the writes
+    # — is not reported as a request that changed nothing (_file_comments_after tells the session)
+    before = _file_comments_file_id(p) if verb in _FILE_COMMENTS_TRACED_VERBS else None
     out, err = _file_comments_call(p, verb, msg.get("args"), msg.get("fence"))
     if err:
-        return fail(*err)
+        code, error = err
+        if code == "host-error" and before is not None and _file_comments_file_id(p) != before:
+            f = fail(code, error + " The file itself changed on disk during the request — reload to see what landed.")
+            f["fileChanged"] = True
+            return f
+        return fail(code, error)
     rep = {k: v for k, v in out.items() if k != "ok"}
     rep.update({"type": "fileCommentsResult", "reqId": rid, "verb": verb})
     return rep
+
+
+def _file_comments_file_id(p):
+    """(mtime_ns, size) of the file at `p`, or None when it cannot be stat'ed — the evidence _file_comments_op
+    compares across a host run to tell whether the file's bytes changed under a request that then failed."""
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
 
 
 def _sh_word(s):
@@ -34821,6 +35067,12 @@ def _sh_word(s):
     return shlex.quote(str(s))
 
 
+# The closing both shapes of the sent message end on, after their own lead-in ("When you have addressed
+# these, " / "When you have made more changes, "): the loop's return signal, one constant so the two
+# shapes cannot drift apart. The line break before "naming the file." is the plan's own.
+_SEND_ASK_AGAIN = ("ask me for another look the same way you asked for this one,", "naming the file.")
+
+
 def _file_comments_message(path, comments, accepted, rejected, tracked, is_text):
     """The message Send to session hands the owning session: the [obsidian-diff] shape the vendored
     skill handles, in the person's voice (tests/test_injected_voice.py renders it). `comments` are
@@ -34832,8 +35084,25 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
     an untracked one, regenerate-with-normal-writes for an image or PDF (track-edit would destroy
     it). The accepted/rejected line appears only when there was a decision. The closing sentence
     is the loop's return signal: the session asks for another look the way it asked for this one.
-    The webview's preview builder produces this text byte for byte, so change both or neither."""
+    The webview's preview builder produces this text byte for byte, so change both or neither.
+
+    With NO comments the message is decisions only (Slice 2: a manual Accept or Reject, or Accept
+    all, is unsent until a send carries it, and the send op admits an empty list when a decision
+    is pending) and wears the shape below instead. The comments shape would have said "I left 0
+    comments", printed the two `--thread <id>` command lines with no id to put in them, and asked
+    the session to address a list that was not there (the review, 2026-09-06): a template speaking,
+    and a reply command aimed at a comment that does not exist. So the decisions-only shape names the
+    file and the decisions, says outright that nothing needs a reply, and keeps the closing ask so
+    the loop still comes back. The prefix stays: to the vendored skill it means "you are the
+    editor for the file named here", which is as true of a decision as of a comment."""
     ap = _neutralize_romp_markers(str(path or ""))
+    if not comments:
+        lines = ["[obsidian-diff] I went over %s." % ap, ""]
+        if (accepted or 0) + (rejected or 0) > 0:
+            lines += ["I accepted %d of your changes and rejected %d." % (accepted or 0, rejected or 0), ""]
+        lines += ["No comments this time, so nothing needs a reply.",
+                  "When you have made more changes, " + _SEND_ASK_AGAIN[0], _SEND_ASK_AGAIN[1]]
+        return "\n".join(lines) + "\n"
     word = _sh_word(ap)                  # the command lines: what a shell hands the CLI as --file's value
     n = len(comments)
     lines = ["[obsidian-diff] I left %d comment%s on %s." % (n, "" if n == 1 else "s", ap), ""]
@@ -34857,8 +35126,8 @@ def _file_comments_message(path, comments, accepted, rejected, tracked, is_text)
         lines.append("  • to revise the text: edit the file normally, then say what you changed with the "
                      "reply command above")
     lines.append("")
-    lines.append("When you have addressed these, ask me for another look the same way you asked for this one,")
-    lines.append("naming the file.")
+    lines.append("When you have addressed these, " + _SEND_ASK_AGAIN[0])
+    lines.append(_SEND_ASK_AGAIN[1])
     return "\n".join(lines) + "\n"
 
 
@@ -34998,11 +35267,15 @@ def _file_comments_send_op(msg):
     return rep
 
 
-def _file_comments_reply(client, msg, op, fail_type):
+def _file_comments_reply(client, msg, op, fail_type, after=None):
     """Run one file-comments op on its own thread and answer the SENDING socket — the fileGitLink
     shape: the host script is a node subprocess with a deadline, and the recv loop must not wait
     on it. An exception inside the op still answers (the saveFile lesson: a handler that raises
-    sends nothing and the client hangs), as a host-error carrying the exception's text."""
+    sends nothing and the client hangs), as a host-error carrying the exception's text. `after(msg,
+    rep)`, when given, runs on the same thread once the reply is on the wire and only when the op
+    answered for itself — the saveFile order (ack, then the trace to the owning session), kept here
+    so the client's button is released before any backend send, and so a follow-up that fails can
+    never turn an answered op into a hang or a second answer."""
     def _run(c=client, m=msg):
         try:
             rep = op(m)
@@ -35010,8 +35283,56 @@ def _file_comments_reply(client, msg, op, fail_type):
             rep = {"type": fail_type, "reqId": m.get("reqId"), "verb": str(m.get("verb") or ""),
                    "code": "host-error", "error": "the comments request failed inside the kernel: %s" % ex}
             sys.stderr.write("file-comments %s failed: %s\n" % (m.get("type"), traceback.format_exc()))
+            _reply(c, rep)
+            return
         _reply(c, rep)
+        if after is not None:
+            try:
+                after(m, rep)
+            except Exception:
+                sys.stderr.write("file-comments %s follow-up failed: %s\n" % (m.get("type"), traceback.format_exc()))
     threading.Thread(target=_run, daemon=True).start()
+
+
+def _file_comments_after(msg, rep):
+    """What follows a fileComments reply (plans/file-review.md, Consent, trace, routing): after a
+    successful reject or reject-all — the host answered ok and its `rejected` list names the ids it
+    resolved — the session whose tree holds the file is told, once, through _reject_trace. Nothing
+    follows any other verb, a refusal, or a reject that resolved nothing (an empty list: the file did
+    not change). The count comes from the host's reply, never from the client's request (the ids a
+    client ASKED to reject may have landed, coalesced or been refused by id), so a successful reject
+    whose reply lacks the list is a contract break between the host and the kernel: it is written to
+    stderr and no trace goes, because a count the kernel would have to guess is not one to tell the
+    session. The path is resolved as the op resolved it (_file_comments_path: the real file), so the
+    owner lookup and the body name the same file the sidecar keys on.
+
+    One failure is told too: a `host-error` on a reject whose file changed under the run (`fileChanged`,
+    set by _file_comments_op from the file's stat before and after) — the host wrote the sidecar and the
+    file and then died before its reply, so the bytes moved with no ok to say so. The session hears the
+    count-less body ("some of"), since the host never reported which ids landed. The host's own refusals
+    (`ok: false`) are never traced: a refusal writes nothing, so a file that moved under one was moved by
+    someone else (the review, 2026-09-06: the never-lose-the-thread rule)."""
+    verb = str(msg.get("verb") or "")
+    if verb not in _FILE_COMMENTS_TRACED_VERBS:
+        return
+    if rep.get("type") == "fileCommentsFailed":
+        if rep.get("code") == "host-error" and rep.get("fileChanged") is True:
+            sid = msg.get("sid") or None
+            path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
+            _reject_trace(path, sid, None)
+        return
+    if rep.get("type") != "fileCommentsResult":
+        return
+    rejected = rep.get("rejected")
+    if not isinstance(rejected, list):
+        sys.stderr.write("file-comments %s answered ok without a `rejected` list; the owning session was not "
+                         "told\n" % msg.get("verb"))
+        return
+    if not rejected:
+        return
+    sid = msg.get("sid") or None
+    path = _file_comments_path(msg.get("path"), sid) or str(msg.get("path") or "")
+    _reject_trace(path, sid, len(rejected))
 
 
 def _under_trackchanges(p):
@@ -35635,32 +35956,41 @@ def _pin_assoc_dir():
     return d
 
 
+def _pin_assoc_memo(sid):
+    """This sid's association memo, loaded from the sidecar on first use. Two builders resolving one
+    session at once each load a copy; setdefault keeps the FIRST published, so an append that landed on
+    it between a peer's file read and its store is never displaced by the peer's older copy — the memo
+    is what _pin_assoc reads until the next reload, and a row missing there re-pins the file's CURRENT
+    bytes, the history rewrite this store exists to prevent (the 2026-09-06 free-threading review, race
+    10). No lock: the read runs unlocked and the publish is one step."""
+    memo = _PIN_ASSOC_MEMO.get(sid)
+    if memo is not None:
+        return memo
+    memo = {}
+    try:
+        with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                    memo.setdefault(str(row["u"]), {})[str(row["t"])] = str(row["p"])
+                except (ValueError, KeyError, TypeError):
+                    continue                         # a torn tail line loses one row, never the file
+    except OSError:
+        pass
+    if len(_PIN_ASSOC_MEMO) > 2048:                  # sid-count bound; reloads are one small file read
+        _PIN_ASSOC_MEMO.clear()
+    return _PIN_ASSOC_MEMO.setdefault(sid, memo)
+
+
 def _pin_assoc(sid, uuid):
     """The durable pins already latched for this message — {target: pin id}, {} when none."""
-    memo = _PIN_ASSOC_MEMO.get(sid)
-    if memo is None:
-        memo = {}
-        try:
-            with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        row = json.loads(line)
-                        memo.setdefault(str(row["u"]), {})[str(row["t"])] = str(row["p"])
-                    except (ValueError, KeyError, TypeError):
-                        continue                     # a torn tail line loses one row, never the file
-        except OSError:
-            pass
-        if len(_PIN_ASSOC_MEMO) > 2048:              # sid-count bound; reloads are one small file read
-            _PIN_ASSOC_MEMO.clear()
-        _PIN_ASSOC_MEMO[sid] = memo
-    return memo.get(uuid) or {}
+    return _pin_assoc_memo(sid).get(uuid) or {}
 
 
 def _pin_assoc_append(sid, uuid, target, pid):
     """Record a first-ever latch durably (append + memo). Best-effort: a failed write degrades to
     the old in-memory behavior for this message, never blocks the build."""
-    memo = _PIN_ASSOC_MEMO.setdefault(sid, {})
-    memo.setdefault(uuid, {})[target] = pid
+    _pin_assoc_memo(sid).setdefault(uuid, {})[target] = pid
     try:
         with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"u": uuid, "t": target, "p": pid}) + "\n")
@@ -35743,6 +36073,9 @@ def _path_links(md, sid, uuid, memo):
                {})
     links, misses, pins = hit if len(hit) == 3 else (hit[0], hit[1], {})
     if misses:
+        links, pins = dict(links), dict(pins)             # copy-on-write: the cached tuple's dicts are read by
+        #                                                   other builders (_path_pins, the fold's pl_pending
+        #                                                   check) — resolve into copies, publish a new tuple
         still = []
         for tok in misses:
             r = _resolve_path_token(tok, sid, memo)
@@ -36249,10 +36582,15 @@ def _push(targets, connect=False, tmux=None):
     feed_ms = feed_sig = feed_parts = bars = bars_ms = bars_sig = bars_parts = None
     feed_down = bars_down = False                        # this cycle's fill raised: the slot's clients are skipped
     _t_stage = time.monotonic()
+    if want_feed and feed is None:
+        # Not expected (_cached_feed returns a build or raises inside the try above) — but this loop is
+        # OUTSIDE that try, and a None here raised on feed.get and ended the pusher thread. A logged skip;
+        # the next cycle rebuilds.
+        sys.stderr.write("push: no feed build this cycle; feed clients skipped\n")
     for c in targets:
         try:
             if c["app"] in ("feed", "fleet", "waiting"):   # the feed pane, the Fleet view AND the Waiting-on-you pane ride the feed payload (Fleet reads feed.ledgers; waiting reads feed.userTodoRows)
-                if feed_down:
+                if feed_down or feed is None:                # a fill that raised, or no build came back (logged above)
                     continue
                 if feed_ms is None:
                     w = _feed_wire                           # tuple snapshot — rebound whole, never mutated (torn reads)
@@ -36289,7 +36627,7 @@ def _push(targets, connect=False, tmux=None):
                         else:                                # unkeyable (said once by _delta_parts): whole frames, as before
                             s = json.dumps(bars, default=_wire_default_in("_push bars"))
                             bars_ms, bars_sig = _LazyWire(None, len(s), text=s), _dedup_sig(bars, s)
-                            _wire_stats["bars_sig_fallback"] += 1
+                            _wire_bump("bars_sig_fallback")
                         _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig, bars_parts)
                 _send_slot(c, "bars", bars, bars_ms, bars_sig, bars_parts)
         except Exception:
@@ -36347,13 +36685,16 @@ _DRAIN_REFUSED = {"count": 0, "episodeCount": 0, "episode": False, "lastT": 0}
 
 def _note_drain_refused():
     try:
-        _DRAIN_REFUSED["count"] += 1
-        _DRAIN_REFUSED["lastT"] = int(time.time())
-        if _DRAIN_REFUSED["episode"]:
-            _DRAIN_REFUSED["episodeCount"] += 1
-        else:
-            _DRAIN_REFUSED["episode"] = True
-            _DRAIN_REFUSED["episodeCount"] = 1     # a fresh episode starts its own count
+        with _COUNTER_LOCK:
+            _DRAIN_REFUSED["count"] += 1
+            _DRAIN_REFUSED["lastT"] = int(time.time())
+            fresh = not _DRAIN_REFUSED["episode"]
+            if fresh:
+                _DRAIN_REFUSED["episode"] = True
+                _DRAIN_REFUSED["episodeCount"] = 1     # a fresh episode starts its own count
+            else:
+                _DRAIN_REFUSED["episodeCount"] += 1
+        if fresh:
             sys.stderr.write("romp-kernel: REFUSED a drain hold — /busy?drain=1 arrived without a valid "
                              "serve token (an old manager, or a drive-by client): new turn starts are NOT "
                              "held while it polls; the exempt count still answers. Said once per refusal "
@@ -36364,11 +36705,15 @@ def _note_drain_refused():
 
 def _note_drain_armed():
     try:
-        if _DRAIN_REFUSED["episode"]:
-            _DRAIN_REFUSED["episode"] = False
+        with _COUNTER_LOCK:
+            closing = _DRAIN_REFUSED["episode"]
+            if closing:
+                _DRAIN_REFUSED["episode"] = False
+                ep, total = _DRAIN_REFUSED["episodeCount"], _DRAIN_REFUSED["count"]
+        if closing:
             sys.stderr.write("romp-kernel: drain hold armed again after %d refused request(s) — the "
                              "refusal episode above is over (%d refused in total this kernel life)\n"
-                             % (_DRAIN_REFUSED["episodeCount"], _DRAIN_REFUSED["count"]))
+                             % (ep, total))
     except Exception:
         pass
 
@@ -36691,6 +37036,11 @@ def _cached_feed(now, tmux, sig, connect=False):
     # UNLESS an optimistic kernel-side mutation postdates the build (_views_dirty): that state is invisible
     # to the sig AND must not wait out REBUILD_MIN_S, or the push meant to show it serves the stale payload.
     e = _built_feed
+    built = e[1]                          # read ONCE: the parse-warm thread (_warm_fleet_bg) sets this slot to None
+    #                                       to force a rebuild, and two reads straddling that write returned None to
+    #                                       _push, whose wire loop raised on feed.get OUTSIDE its build try and ended
+    #                                       the pusher thread for the rest of the process. A live race under the GIL;
+    #                                       a likely one without it (the 2026-09-06 free-threading review, race 1).
     # The dirty mark compares against build START, not finish (the user 2026-07-28): a build takes
     # ~1-1.6s and reads the stores one session at a time, so a mutation landing MID-build may or may
     # not have been read — its payload can predate the gesture while its finish time postdates it.
@@ -36700,9 +37050,9 @@ def _cached_feed(now, tmux, sig, connect=False):
     # back to Completed. REBUILD_MIN_S stays keyed on the FINISH (e[2]): it rate-limits build COST,
     # so back-to-back starts must not shrink its window.
     dirty = not connect and _views_dirty[0] > e[3]        # connect still serves the warmed build (never rebuilds)
-    if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+    if built is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
         _PERF_STATS.build("feed", True)
-        return e[1]
+        return built
     bid = _next_feed_build_id()          # claimed BEFORE the read, so an ack issued during this build outranks it
     started = time.time()                # …and the dirty floor for the NEXT check: mutations after this
     _t0 = time.monotonic()
@@ -37235,10 +37585,11 @@ def _consume_pending_reveal(client):
 
 def _cached_timeline(now, tmux, sig, connect=False):
     e = _built_timeline
+    built = e[1]                                          # read once, as _cached_feed does
     dirty = not connect and _views_dirty[0] > e[3]        # start-keyed, same as _cached_feed above
-    if e[1] is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
+    if built is not None and not dirty and (connect or e[0] == sig or (time.time() - e[2]) < REBUILD_MIN_S):
         _PERF_STATS.build("timeline", True)
-        return e[1]
+        return built
     started = time.time()
     _t0 = time.monotonic()
     tl = build_timeline(now, tmux)
@@ -37610,7 +37961,7 @@ else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="co
 // checked at RAISE time (there is no event for a CSS display flip). The hidden pane still reconnects in
 // the background; if it is shown again while genuinely stale, its watchdog re-raises within one tick,
 // now visible, and the resync retires it exactly as before.
-function paneHidden(){try{return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}
+function paneHidden(){try{if(typeof window.__rompPaneHidden==="function")return !!window.__rompPaneHidden();return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}   // federation's hidden-pane hold publishes the shell's own word; the zero-viewport probe is the fallback (it misses a pane hidden after a first show)
 // every raise (and every hidden-pane suppression) leaves a clientDiag breadcrumb naming the pane, the
 // PATH that raised (reconnect/foreground), the socket state and the quiet gap — so the next "the banner
 // keeps flapping" report is diagnosable from client-diag.jsonl instead of re-hypothesized (the user
@@ -37731,8 +38082,19 @@ if(kind==="dict"){items[kk]=v[kk];}
 else if(kind.indexOf("dictlist:")===0){var cut=kk.indexOf(SEP),dk=cut<0?kk:kk.slice(0,cut),rest=cut<0?"":kk.slice(cut+1),lane=v[dk];if(rest===""){items[kk]=lane;}else{var j=pos[dk]||0;pos[dk]=j+1;items[kk]=lane[j];}}
 else{items[kk]=v[i];}}
 maps[name]={order:order,items:items};}return maps;}
-function assemble(kind,map){var i,kk;if(kind==="dict"){var o={};for(i=0;i<map.order.length;i++){kk=map.order[i];if(map.items.hasOwnProperty(kk))o[kk]=map.items[kk];}return o;}
+// dictlist lanes keep their ARRAY IDENTITY across a delta that did not touch them (2026-09-06): the lane
+// prefix of every set/del key names a touched lane, and an order that crosses touches every lane whose
+// key subsequence differs from the held order. An untouched lane assembles elementwise-identical to the
+// array the pane already holds, so assemble hands back that same array — turns[sid] identity then means
+// "unchanged", the feed gate's convention, and a per-lane cache in the pane can key on it. The assembled
+// VALUE is what it always was; only object identity differs.
+function laneOf(kk){var cut=kk.indexOf(SEP);return cut<0?kk:kk.slice(0,cut);}
+function laneSeqs(order){var s={};for(var i=0;i<order.length;i++){var kk=order[i],ln=laneOf(kk);(s[ln]||(s[ln]=[])).push(kk);}return s;}
+function touchedLanes(c,oldOrder,newOrder){var t={},k;if(c.del)for(k=0;k<c.del.length;k++)t[laneOf(c.del[k])]=1;if(c.set)for(k in c.set)t[laneOf(k)]=1;
+if(c.order){var a=laneSeqs(oldOrder),b=laneSeqs(newOrder),ln;for(ln in a)if(!(ln in b)||JSON.stringify(a[ln])!==JSON.stringify(b[ln]))t[ln]=1;for(ln in b)if(!(ln in a))t[ln]=1;}return t;}
+function assemble(kind,map,prev,touched){var i,kk;if(kind==="dict"){var o={};for(i=0;i<map.order.length;i++){kk=map.order[i];if(map.items.hasOwnProperty(kk))o[kk]=map.items[kk];}return o;}
 if(kind.indexOf("dictlist:")===0){var d={};for(i=0;i<map.order.length;i++){kk=map.order[i];if(!map.items.hasOwnProperty(kk))continue;var cut=kk.indexOf(SEP);var dk=cut<0?kk:kk.slice(0,cut),rest=cut<0?"":kk.slice(cut+1);
+if(prev&&touched&&!touched[dk]&&Object.prototype.hasOwnProperty.call(prev,dk)){if(!d.hasOwnProperty(dk))d[dk]=prev[dk];continue;}   // an untouched lane: the held array itself, not a copy
 if(rest===""){d[dk]=map.items[kk];continue;}   // a bare-prefix entry: the lane's own (empty or non-list) value
 if(!d.hasOwnProperty(dk))d[dk]=[];d[dk].push(map.items[kk]);}return d;}
 var out=[];for(i=0;i<map.order.length;i++){kk=map.order[i];if(map.items.hasOwnProperty(kk))out.push(map.items[kk]);}return out;}
@@ -37742,7 +38104,8 @@ var coll=d.coll||{};for(var name in coll){var kind=kinds[name];if(!kind)continue
 if(c.del){for(var x=0;x<c.del.length;x++){delete items[c.del[x]];}}
 if(c.set){for(var sk in c.set){if(!items.hasOwnProperty(sk))order.push(sk);items[sk]=c.set[sk];}}
 if(c.order){order=c.order.slice();}else{order=order.filter(function(kk){return items.hasOwnProperty(kk);});}
-last.maps[name]={order:order,items:items};m[name]=assemble(kind,last.maps[name]);}
+var touched=kind.indexOf("dictlist:")===0?touchedLanes(c,map.order,order):null;
+last.maps[name]={order:order,items:items};m[name]=assemble(kind,last.maps[name],last.msg[name],touched);}
 last.rev=d.rev;last.msg=m;return m;}
 window.__rompLocalSend=send;window.__rompApp=APP;   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
 var SK="romp-vscode-state-%s";   // persist webview state to localStorage so UI prefs survive a refresh
@@ -42231,6 +42594,54 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, FLEET_REPORT.read_text(), "application/json")
                 except OSError:
                     return self._send(200, json.dumps({"rows": []}), "application/json")
+            if u.path == "/down":
+                # `romp down`'s quiesce (see _going_down): body {"wait": seconds} holds new turn starts
+                # + creates and blocks until the in-flight count reaches 0 or `wait` runs out, then
+                # answers {quiet, busy, inflight[names], waited} so the CLI can say what the stop is
+                # about to cut. {"cancel": true} releases the hold (the stop did not happen). A WRITE
+                # that holds every session's turn starts, so it needs the EXPLICIT serve token
+                # (_write_token_ok) on top of the preamble's _authorize — the /busy?drain=1 rule.
+                # No SDK backend ever built → nothing to hold or wait for: quiet at once.
+                # Every 200 names this process's pid: `romp down` ends by SIGTERMing a kernel nothing
+                # above it stopped, and the pid it signals must come from a route the serve token
+                # gates. GET /version's pid is auth-exempt and vouches for nothing: a CLI aimed at
+                # the wrong port (an empty ROMP_KERNEL_PORT falls to the default) took another
+                # romp's kernel pid from it and stopped every session there (2026-09-06). A pid
+                # given here was given under the caller's token, to a kernel the caller manages.
+                if not self._write_token_ok(q):
+                    return self._send(403, json.dumps({"ok": False, "error":
+                        "forbidden: /down needs the serve token (X-Romp-Token or ?token=)"}), "application/json")
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                if not isinstance(b, dict):
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        'body must be {"wait": seconds} or {"cancel": true}'}), "application/json")
+                be = _sdk_backend or None
+                if b.get("cancel") is True:
+                    if be is not None and hasattr(be, "cancel_quiesce"):
+                        be.cancel_quiesce()
+                    return self._send(200, json.dumps({"ok": True, "canceled": True, "pid": os.getpid()}),
+                                      "application/json")
+                wait = b.get("wait", DOWN_WAIT_DEFAULT_S)
+                if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0 or wait > DOWN_WAIT_MAX_S:
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        "wait must be a number of seconds in [0, %d]" % int(DOWN_WAIT_MAX_S)}), "application/json")
+                if be is None or not hasattr(be, "quiesce"):
+                    return self._send(200, json.dumps({"ok": True, "quiet": True, "busy": 0,
+                                                       "inflight": [], "waited": 0, "pid": os.getpid()}),
+                                      "application/json")
+                be.quiesce(float(wait) + DOWN_HOLD_GRACE_S)
+                t0 = time.monotonic()
+                busy = be.busy_count()
+                while busy and time.monotonic() - t0 < wait:
+                    time.sleep(min(0.25, max(0.01, wait - (time.monotonic() - t0))))
+                    busy = be.busy_count()
+                return self._send(200, json.dumps({
+                    "ok": True, "quiet": busy == 0, "busy": busy,
+                    "inflight": be.inflight_names() if busy else [],
+                    "waited": round(time.monotonic() - t0, 1), "pid": os.getpid()}), "application/json")
             if u.path == "/update-dismiss":
                 # the banner's Not-now, PERSISTED (the user 2026-08-31): the dismissal outlives the
                 # page and the kernel — event-keyed, a NEW sha/tag offers again. Body: {"tag": id}.
@@ -42574,7 +42985,7 @@ class Handler(BaseHTTPRequestHandler):
                 be = Sessions.backend_for(sid)
                 if u.path == "/interrupt":
                     be.interrupt(sid)                           # Esc/stop AND settle idle (in the backend)
-                    _interrupt_clicked[str(sid)] = time.time()  # chip → "interrupting" NOW, same as the WS op
+                    _mark_interrupt_clicked(sid)                # chip → "interrupting" NOW, same as the WS op
                 elif isinstance(b, dict) and b.get("when") == "idle":
                     # SELF-CLOSE deferral (the user 2026-08-15): record the wish; the pusher's sweep
                     # kills at the turn's settle, so a session ending itself finishes its goodbye first
@@ -42620,6 +43031,9 @@ class Handler(BaseHTTPRequestHandler):
                     b = json.loads(raw_body or b"{}")
                 except Exception:
                     b = {}
+                if _going_down():             # `romp down` in progress: a session born now dies with the kernel
+                    return self._send(503, json.dumps({"ok": False, "error": GOING_DOWN_REFUSAL}),
+                                      "application/json")
                 nm = str((b or {}).get("name") or "").strip()
                 if not nm or not NAME_RE.match(nm):
                     return self._send(400, json.dumps({"ok": False, "error":
@@ -44128,6 +44542,8 @@ class Handler(BaseHTTPRequestHandler):
                         # AFTER the focus so the client sees the running session first.
                         client["send"](json.dumps({"type": "warn", "text":
                             '"%s" is already running; its tags were not changed — use the tab\'s Tags menu' % nm}))
+                elif _going_down():              # `romp down` in progress: the same refusal POST /new gives
+                    client["send"](json.dumps({"type": "warn", "text": GOING_DOWN_REFUSAL}))
                 elif _thread_name_refusal(nm, _thread_names()):   # a thread's name (or unverifiable): never mint a namesake tab (T223)
                     client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(nm, _thread_names())}))
                 elif msg.get("backend") == "sdk":   # non-tmux: drive via the Agent SDK
@@ -44451,12 +44867,15 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=_gl, daemon=True).start()
         elif msg and msg.get("type") == "fileComments":
             # The viewer's comments panel (plans/file-review.md): ONE sidecar verb on the owning
-            # kernel's disk — status, set-tracked, comment, reply, resolve, and the log verbs — run by
-            # the node host script and answered on the sending socket with the client's reqId. Routed
-            # by sid like saveFile (federation strips the host prefix), so a remote session's file is
-            # answered by the kernel that holds its disk. Threaded like fileGitLink: the host script
-            # is a subprocess with a 10 s deadline, and the recv loop must not wait on it.
-            _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed")
+            # kernel's disk — status, set-tracked, comment, reply, resolve, accept, accept-all, reject,
+            # reject-all, and the kernel's own log verbs — run by the node host script and answered on
+            # the sending socket with the client's reqId. Routed by sid like saveFile (federation strips
+            # the host prefix), so a remote session's file is answered by the kernel that holds its
+            # disk. Threaded like fileGitLink: the host script is a subprocess with a 10 s deadline,
+            # and the recv loop must not wait on it. After the reply, like saveFile's trace: a reject
+            # or reject-all that changed the file is told to the owning session (_file_comments_after);
+            # sidecar-only verbs tell it nothing.
+            _file_comments_reply(client, msg, _file_comments_op, "fileCommentsFailed", after=_file_comments_after)
         elif msg and msg.get("type") == "fileCommentsSend":
             # Send to session: the file's unsent comments and decisions as ONE message in the person's
             # voice, optionally answering the user todo the file was opened from. Not a _drive op (the

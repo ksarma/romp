@@ -9,7 +9,7 @@ import os
 import tempfile
 import time
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -18,11 +18,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-km = SourceFileLoader("romp_kernel_ulimit", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_ulimit", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 
@@ -306,12 +306,12 @@ class JudgeFailureBanner(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         jd.GOALDIR = jd.STATE / "goals"
         self._u, self._jf = km._usage, km._judge_failures
-        km._jf_cache["fp"] = None; km._jf_cache["val"] = None
+        km._jf_cache[0] = (None, None)
 
     def tearDown(self):
         jd.STATE, jd.GOALDIR = self.saved
         km._usage, km._judge_failures = self._u, self._jf
-        km._jf_cache["fp"] = None; km._jf_cache["val"] = None
+        km._jf_cache[0] = (None, None)
         self.td.cleanup()
 
     def test_usage_for_client_attaches_judge_failures(self):

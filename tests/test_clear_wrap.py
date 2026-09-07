@@ -11,7 +11,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -22,10 +22,16 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_clearwrap", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_clearwrap", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
-SID = "11111111-2222-3333-4444-555555555555"
+SID = "33333333-4444-5555-6666-777777777777"   # private to this module (the repo's goal-store fixture
+#                                                   rule): the clear below appends a row for <sid>:g1 to the
+#                                                   worker's shared cleared.jsonl, and under the shared
+#                                                   placeholder sid that row sealed every later fresh store's
+#                                                   g1 (open_menu reads _view_cleared) — test_judge's
+#                                                   KnownTargetContext failed whenever this module ran first
+#                                                   on its worker (2026-09-06)
 G_OPEN = SID + ":g1"
 NOW = 1781100000
 
@@ -39,6 +45,19 @@ class SentNothing:
 
 
 class ClearIsSilent(unittest.TestCase):
+    # The clear writes three files under the worker's shared state root (cleared.jsonl, this sid's goal
+    # store, its override journal); each goes back to what it was, or away, so no later test reads them.
+    def setUp(self):
+        paths = (jd.STATE / "cleared.jsonl", jd.GOALDIR / (SID + ".json"), jd._overrides_dir() / (SID + ".jsonl"))
+        self._before = [(q, q.read_bytes() if q.exists() else None) for q in paths]
+
+    def tearDown(self):
+        for q, data in self._before:
+            if data is None:
+                q.unlink(missing_ok=True)
+            else:
+                q.write_bytes(data)
+
     def test_clearing_an_open_card_sends_the_session_nothing(self):
         store = jd.load_goals(SID)
         store["nodes"][G_OPEN] = jd.GuardedNode({"id": G_OPEN, "text": "build the exporter",
