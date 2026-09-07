@@ -134,8 +134,11 @@ isolation_problems() {   # $1 suite
     local expected
     # romp-manager-tmux-scope.bats came with the 2026-09-07 upstream sync: it starts the real manager
     # to read where tmux lands, and floors its state root through tests/tmux-private.bash.
+    # romp-refresh-audit.bats (upstream, the 2026-09-07 catch-up) starts no real manager: its fake lives at
+    # "$TEST_DIR/bin/romp-manager", and the detector reads that path's tail as the binary. Listed rather
+    # than excused, since it does isolate (ROMP_STATE_DIR exported in setup) and the list stays exact.
     expected="$(printf '%s\n' "$TESTS/romp-manager-ensure.bats" "$TESTS/romp-manager-origin.bats" \
-        "$TESTS/romp-manager-tmux-scope.bats" "$TESTS/romp.bats" | LC_ALL=C sort)"
+        "$TESTS/romp-manager-tmux-scope.bats" "$TESTS/romp-refresh-audit.bats" "$TESTS/romp.bats" | LC_ALL=C sort)"
     [ "$(printf '%s\n' "$output" | LC_ALL=C sort)" = "$expected" ]
 }
 

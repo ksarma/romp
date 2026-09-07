@@ -854,15 +854,20 @@ _romp_down_release() {   # <state-dir> <kernel-port> <skip-cancel> <why>
 # kernel?" is one command (tail) instead of forensics. The kernel's SIGTERM path joins the newest
 # row (its `action`, and `reason` if set) onto the restart-cut ledger, so a deliberate `romp down`
 # reads as one there too. Best-effort: never blocks the restart or the stop itself.
-_romp_restart_audit() {   # <action> [reason]
+_romp_restart_audit() {   # <action> [reason] [flag]   (flag --quiet: a PARKED restart; the row names it and the checkout sha)
     {
-        local _ra_dir _ra_sid _ra_name=""
+        local _ra_dir _ra_sid _ra_name="" _ra_sha=""
         _ra_dir="$(_romp_state_dir)"
         mkdir -p "$_ra_dir"
         _ra_sid="${CLAUDE_CODE_SESSION_ID:-}"
         [[ -n "$_ra_sid" && -f "$_ra_dir/names/$_ra_sid" ]] \
             && _ra_name="$(cut -f1 "$_ra_dir/names/$_ra_sid" 2>/dev/null | head -1)"
-        RA_ACTION="$1" RA_REASON="${2:-}" \
+        # a quiet restart is parked at the manager: the kernel's drift check reads when + sha off this row
+        # to stand down for it (T240d), where before an immediate converge pre-empted the quiet window the
+        # flag asked for. The sha is the checkout this romp runs from, best-effort: no sha, no stand-down
+        [[ "${3:-}" == "--quiet" ]] \
+            && _ra_sha="$(git -C "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
+        RA_ACTION="$1" RA_REASON="${2:-}" RA_WHEN="${3:-}" RA_SHA="$_ra_sha" \
         RA_PPID="$PPID" \
         RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" \
         RA_TTY="$(tty 2>/dev/null || true)" \
@@ -876,6 +881,11 @@ row = {"t": int(time.time()), "action": os.environ.get("RA_ACTION") or "",
        "tmux": os.environ.get("TMUX_PANE") or ""}
 if os.environ.get("RA_REASON"):
     row["reason"] = os.environ["RA_REASON"]
+if os.environ.get("RA_WHEN") == "--quiet":
+    # a PARKED restart: the kernel's drift check reads when + sha to stand down for it (T240d)
+    row["when"] = "quiet"
+    if os.environ.get("RA_SHA"):
+        row["sha"] = os.environ["RA_SHA"]
 print(json.dumps(row))
 PYEOF
     } 2>/dev/null || true
@@ -2655,7 +2665,7 @@ PYEOF
     refresh)   # restart EVERYTHING (the user 2026-06-29): the postal bus too, not just the kernels — the bus
                # is a separate long-lived singleton the manager doesn't own, so a kernel-only refresh left it
                # serving stale code. Bounce the bus first (best-effort), then exec the kernel restart.
-               _romp_restart_audit refresh          # who asked (see the helper) — before acting
+               _romp_restart_audit refresh "" "${2:-}"   # who asked (see the helper), before acting; --quiet rides along
                "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
                # Deploys bounce IMMEDIATELY, cutting in-flight turns (T160 — the parked
                # quiet window cost minutes per push; boot reconcile resumes cut turns with
