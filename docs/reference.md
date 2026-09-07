@@ -2032,11 +2032,17 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against decoded, summed over passes), `fail` (file versions that did not
   decode), `evict` (entries dropped for files gone from the directory), `punch`
   (entries copied so a user gesture could be applied to them), and the gauges
-  `entries` and `bytes` (memoized files and their summed size). `bg_tops` is
-  the placed-launch memo behind the awaiting lift and the feed's
-  background-task classification, keyed on the parse object and the store
-  object: `hit` and `miss` (calls answered from the per-version map against
-  resolved), `resolve` (launch ids resolved), `walk` and `walk_neg`
+  `entries` and `bytes` (memoized files and their summed size). `lift_gate` is
+  the awaiting-lift job's per-session identity gate: `skip` and `load`
+  (session-cycles that took no store read against the ones that read it, a
+  probe on the shared read-only view), `shared` (probes the shared cache
+  answered), `writer` (writer loads taken because a lift was due) and `noop`
+  (writer loads whose fresh decision filed nothing, the store having moved
+  between the probe and the load), and the gauge `entries` (sessions
+  remembered). `bg_tops` is the placed-launch memo behind that lift and the
+  feed's background-task classification, keyed on the parse object and the
+  store object: `hit` and `miss` (calls answered from the per-version map
+  against resolved), `resolve` (launch ids resolved), `walk` and `walk_neg`
   (transcript walks, and the walks that left a launch unresolved),
   `idx_build` (placement indexes built, one per store version asked) and the
   gauge `entries` (sessions holding a map). `goals_shared`

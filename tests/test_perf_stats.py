@@ -141,8 +141,9 @@ class Collector(unittest.TestCase):
                          "the judge pass's goal-store memo: counters plus its occupancy")
         for k, v in snap["memos"]["goals_snap"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "entries"},
-                         "the awaiting-lift gate: session-cycles skipped vs loaded, plus its occupancy")
+        self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
+                         "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
+                         "answered, the writer loads and the ones that filed nothing, plus its occupancy")
         for k, v in snap["memos"]["lift_gate"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["bg_tops"]),

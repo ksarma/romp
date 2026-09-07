@@ -38,10 +38,12 @@ T0 = NOW - 3600
 WIRED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
          "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2,
          "_bg_placed_tops": 1}
-# NOT wired, on purpose. _lift_spent_awaiting belongs to the next commit (the probe-then-write two-phase
-# read); _feed_goals' live path is the feed's main store read and stays on the writer's loader until the
-# B5 snapshot memo is replaced (its own change).
-UNWIRED = ("_lift_spent_awaiting", "_feed_goals")
+# TWO-PHASE (performance plan 4, P16): one shared PROBE, one writer load taken only when the probe found
+# a lift due; the decision body (_lift_decisions) loads nothing and writes nothing.
+TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
+# NOT wired, on purpose: _feed_goals' live path is the feed's main store read and stays on the writer's
+# loader until the B5 snapshot memo is replaced (its own change).
+UNWIRED = ("_feed_goals",)
 
 
 class WiringPins(unittest.TestCase):
@@ -57,6 +59,29 @@ class WiringPins(unittest.TestCase):
             self.assertEqual(src.count("jd.load_goals_shared("), 0, "%s: not wired" % name)
             self.assertGreaterEqual(src.count("jd.load_goals("), 1, "%s: still the writer's loader" % name)
 
+    def test_the_awaiting_lift_probes_the_shared_view_and_loads_the_writers_copy_once(self):
+        for name, (shared, writer) in TWO_PHASE.items():
+            src = inspect.getsource(getattr(km, name))
+            self.assertEqual(src.count("jd.load_goals_shared("), shared, "%s: the phase-1 probe" % name)
+            self.assertEqual(src.count("jd.load_goals("), writer, "%s: the phase-2 writer load" % name)
+
+    def test_the_lifts_decision_body_loads_nothing_and_writes_nothing(self):
+        # every rule of the lift is decided here, on whichever store the caller hands in (the shared view
+        # in phase 1, the writer's copy in phase 2); the verdict gate is read through jd.may_apply only
+        src = inspect.getsource(km._lift_decisions)
+        for needle in ("jd.load_goals(", "jd.load_goals_shared(", "record_verdict(", "save_goals(",
+                       "rollup_status(", "_drop_auto_nudge_rec(", "_lift_gate_key("):
+            self.assertEqual(src.count(needle), 0, "_lift_decisions: %s" % needle)
+        self.assertGreaterEqual(src.count("jd.may_apply("), 3, "the read-only gate, once per arm")
+
+    def test_bg_placed_tops_keys_on_objects_not_on_a_stat(self):
+        # the per-version map is keyed on the parse and store OBJECTS in hand (a stat taken after the
+        # read can describe a version the read did not see); the gate's three stats are not taken here
+        src = inspect.getsource(km._bg_placed_tops)
+        self.assertEqual(src.count("_lift_gate_key("), 0)
+        self.assertEqual(src.count(".stat()"), 0)
+        self.assertEqual(src.count("os.stat("), 0)
+
     def test_the_compaction_sweep_evicts_the_caches_absent_paths(self):
         src = inspect.getsource(km._compact_goal_stores)
         self.assertIn("jd._disk_memo_evict_absent()", src)
@@ -66,14 +91,6 @@ class WiringPins(unittest.TestCase):
         src = inspect.getsource(km._PerfStats.snapshot)
         self.assertIn('("goals_shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
         self.assertIn('("bg_tops", _bg_tops_report)', src, "…and the placed-launch memo beside it")
-
-    def test_bg_placed_tops_keys_on_objects_not_on_a_stat(self):
-        # the per-version map is keyed on the parse and store OBJECTS in hand (a stat taken after the
-        # read can describe a version the read did not see); the gate's three stats are not taken here
-        src = inspect.getsource(km._bg_placed_tops)
-        self.assertEqual(src.count("_lift_gate_key("), 0)
-        self.assertEqual(src.count(".stat()"), 0)
-        self.assertEqual(src.count("os.stat("), 0)
 
 
 class SharedViewInBuilds(unittest.TestCase):
