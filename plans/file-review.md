@@ -1621,7 +1621,9 @@ document stands on its own, each with the reasoning it was given.
     through romp.
 34. **Whole-file comments on every file**, not only images and PDFs.
 35. **Sessions learn the pattern from romp's default session prompt** and from the skill: name
-    the file's absolute path in the todo's detail; ask for another look the same way.
+    the file's absolute path in the todo's detail; ask for another look the same way. (The todo-file
+    follow-on, 2026-09-07: the path goes to `add_user_todo`'s `file` argument, and the detail may
+    still describe it; the prompt's sentence says so. See Getting into it.)
 36. **The three Send checkboxes** keep their generic wording: answer the todo; turn on tracking so
     the session's edits come back as changes; accept the N pending changes.
 
