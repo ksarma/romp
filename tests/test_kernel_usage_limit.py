@@ -101,19 +101,47 @@ class UsageLimitSignal(unittest.TestCase):
 
 
 class AutoPauseOnLimit(unittest.TestCase):
+    """The flip's delivery (perf batch 2 P1, 2026-09-06): the tick job WAKES the pusher and builds nothing
+    inline; the flag rides the next push's globalRetryPaused frame. No view reads retry-paused.json, so
+    the dirty mark must NOT move (a dirty mark here is a full feed + timeline rebuild for nothing). The
+    idempotent path (already paused) neither wakes nor dirties. _views_dirty is a module global shared
+    across the suite, so each test records its own floor rather than asserting an absolute value."""
+
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.saved = jd.STATE
         jd.STATE = Path(self.td.name)
         self._usage = km._usage
         self._push = km._push_all
-        km._push_all = lambda: None
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        self._was_set = km._pusher_wake.is_set()
+        km._pusher_wake.clear()
 
     def tearDown(self):
         jd.STATE = self.saved
         km._usage = self._usage
         km._push_all = self._push
+        if self._was_set:
+            km._pusher_wake.set()
+        else:
+            km._pusher_wake.clear()
         self.td.cleanup()
+
+    def test_the_flip_wakes_the_pusher_and_leaves_the_views_clean(self):
+        km._usage = lambda: {"limited": {"fiveHour": True, "sevenDay": False, "fable": False}}
+        floor = km._views_dirty[0]
+        km._auto_pause_on_limit()
+        self.assertTrue(km._retry_paused_on())
+        self.assertTrue(km._pusher_wake.is_set(), "the flip wakes the pusher; the next cycle carries it")
+        self.assertEqual(km._views_dirty[0], floor, "no view reads the flag: a dirty mark is the regression")
+
+    def test_the_idempotent_path_neither_wakes_nor_dirties(self):
+        km._set_retry_paused(True)                       # already paused: the write is skipped
+        km._usage = lambda: {"limited": {"fiveHour": True, "sevenDay": False, "fable": False}}
+        floor = km._views_dirty[0]
+        km._auto_pause_on_limit()
+        self.assertFalse(km._pusher_wake.is_set(), "nothing written, nothing to deliver")
+        self.assertEqual(km._views_dirty[0], floor)
 
     def test_hitting_a_limit_engages_the_retry_pause(self):
         km._usage = lambda: {"limited": {"fiveHour": True, "sevenDay": False, "fable": False}}
@@ -153,11 +181,37 @@ class AutoPauseOnSpendLimit(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved = (jd.STATE, km._alive_sessions, km._api_error, km._push_all)
         jd.STATE = Path(self.td.name)
-        km._push_all = lambda: None
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        self._was_set = km._pusher_wake.is_set()
+        km._pusher_wake.clear()
 
     def tearDown(self):
         jd.STATE, km._alive_sessions, km._api_error, km._push_all = self.saved
+        if self._was_set:
+            km._pusher_wake.set()
+        else:
+            km._pusher_wake.clear()
         self.td.cleanup()
+
+    def test_the_flip_wakes_the_pusher_and_leaves_the_views_clean(self):
+        # perf batch 2 P1 (2026-09-06): the same delivery as AutoPauseOnLimit — a wake, no dirty mark
+        self._sessions({"spendLimit": True, "text": "spend limit"})
+        floor = km._views_dirty[0]
+        km._auto_pause_on_spend_limit(0, {})
+        self.assertTrue(km._retry_paused_on())
+        self.assertTrue(km._pusher_wake.is_set(), "the flip wakes the pusher; the next cycle carries it")
+        self.assertEqual(km._views_dirty[0], floor, "no view reads the flag: a dirty mark is the regression")
+
+    def test_the_no_op_paths_neither_wake_nor_dirty(self):
+        floor = km._views_dirty[0]
+        self._sessions(None, {"spendLimit": False, "text": "500"})   # no capped session
+        km._auto_pause_on_spend_limit(0, {})
+        self.assertFalse(km._pusher_wake.is_set())
+        km._set_retry_paused(True)                       # already paused: the write is skipped
+        self._sessions({"spendLimit": True, "text": "spend limit"})
+        km._auto_pause_on_spend_limit(0, {})
+        self.assertFalse(km._pusher_wake.is_set(), "nothing written, nothing to deliver")
+        self.assertEqual(km._views_dirty[0], floor)
 
     def _sessions(self, *errs):
         sess = [{"sid": "s%d" % i, "path": "/tmp/s%d.jsonl" % i} for i in range(len(errs))]

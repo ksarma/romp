@@ -1,0 +1,98 @@
+# Patch 0004 — the guard exits 0 at once when ROMP_SID is absent from its environment
+# Offered back: no (romp-only; plans/file-review.md decision 24)
+# Files: hooks/track-guard.mjs, hooks/track-hooks.test.mjs
+#
+# Reason: romp's installer registers the guard machine-wide, as a PreToolUse hook on
+# Write|Edit|MultiEdit in ~/.claude/settings.json, so it runs on every edit in every Claude
+# Code session on the machine. It must act only in sessions romp launched. Both romp
+# backends put the session's stable id in its environment as ROMP_SID and hook commands
+# inherit that environment (one of romp's own hooks already gates on it), so the first
+# statement of the `if (invokedDirectly)` block exits 0 when ROMP_SID is unset, before stdin
+# is read. The exported evaluate() and its unit tests are unchanged. Tests: two process-level
+# cases appended to hooks/track-hooks.test.mjs (exit 0 within 2 s with stdin held open; with
+# ROMP_SID, deny a tracked text file, pass an untracked file and a tracked image).
+diff --git a/hooks/track-guard.mjs b/hooks/track-guard.mjs
+index 4f7a0820..80baad87 100755
+--- a/hooks/track-guard.mjs
++++ b/hooks/track-guard.mjs
+@@ -53,6 +53,13 @@ const invokedDirectly = (() => {
+ })();
+ 
+ if (invokedDirectly) {
++  // romp-only (vendor/track-changents/patches/0004): romp's installer registers this guard
++  // machine-wide, so it runs on every Edit/Write in every Claude Code session on the
++  // machine — but it must act only in sessions romp launched. Both romp backends put
++  // the session's stable id in its environment as ROMP_SID and hook commands inherit
++  // that environment; no ROMP_SID means not a romp session, so pass the call through
++  // before stdin is read. evaluate() above is unchanged.
++  if (!process.env.ROMP_SID) process.exit(0);
+   let raw = '';
+   process.stdin.setEncoding('utf8');
+   process.stdin.on('data', (c) => { raw += c; });
+diff --git a/hooks/track-hooks.test.mjs b/hooks/track-hooks.test.mjs
+index c0187882..af3c288d 100644
+--- a/hooks/track-hooks.test.mjs
++++ b/hooks/track-hooks.test.mjs
+@@ -5,6 +5,8 @@ import os from 'node:os';
+ import path from 'node:path';
+ import { createHash } from 'node:crypto';
+ import { createRequire } from 'node:module';
++import { spawn, spawnSync } from 'node:child_process';
++import { fileURLToPath } from 'node:url';
+ 
+ import { evaluate as guard } from './track-guard.mjs';
+ import {
+@@ -260,3 +262,53 @@ test('guard ignores a file outside any vault (no root, no config)', () => {
+   assert.equal(guard(payload('Edit', f)), null);
+   try { fs.rmSync(outside, { recursive: true, force: true }); } catch { /* ignore */ }
+ });
++
++// ── the guard as a PROCESS, under romp (vendor/track-changents/patches/0004) ──
++// romp registers the guard machine-wide and gates it on ROMP_SID, the stable
++// session id both romp backends put in a session's environment. Outside a romp
++// session it must exit 0 at once, before reading stdin, so a session romp did
++// not launch never waits on it; inside one it reads Claude Code's PreToolUse
++// JSON from stdin and denies with exit 2.
++
++const GUARD = fileURLToPath(new URL('./track-guard.mjs', import.meta.url));
++const ROMP_SID = '11111111-2222-3333-4444-555555555555';
++
++function guardEnv(extra) {
++  const env = { ...process.env, ...extra };
++  delete env.TRACKCHANGES_ROOT;
++  if (!('ROMP_SID' in extra)) delete env.ROMP_SID;   // the suite may itself run inside a romp session
++  return env;
++}
++
++test('guard process exits 0 at once without ROMP_SID, with stdin still open', async () => {
++  const child = spawn(process.execPath, [GUARD], { env: guardEnv({}), stdio: ['pipe', 'pipe', 'pipe'] });
++  // stdin is a pipe that is never ended: a guard that waited for it would hang here.
++  const code = await new Promise((resolve, reject) => {
++    const timer = setTimeout(() => {
++      child.kill('SIGKILL');
++      reject(new Error('the guard did not exit within 2 s without ROMP_SID'));
++    }, 2000);
++    child.on('error', reject);
++    child.on('exit', (c) => { clearTimeout(timer); resolve(c); });
++  });
++  child.stdin.destroy();
++  assert.equal(code, 0);
++});
++
++test('guard process with ROMP_SID denies a Write to a tracked text file, passes an untracked file and a tracked image', () => {
++  fs.writeFileSync(note, 'prose');
++  const other = path.join(vault, 'other.md');
++  fs.writeFileSync(other, 'untracked prose');
++  const png = path.join(vault, 'figure.png');
++  fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]));
++  setTracked(vault, 'note.md', true);
++  setTracked(vault, 'figure.png', true);
++  const run = (file) => spawnSync(process.execPath, [GUARD], {
++    input: payload('Write', file), encoding: 'utf8', env: guardEnv({ ROMP_SID }),
++  });
++  const denied = run(note);
++  assert.equal(denied.status, 2, denied.stderr);
++  assert.match(denied.stderr, /track-edit/);
++  assert.equal(run(other).status, 0, 'an untracked file passes');
++  assert.equal(run(png).status, 0, 'a tracked image passes');
++});

@@ -1,0 +1,24 @@
+{
+  "commit": "320cd25fda6fe218481fbf08fa5cfb4670404c96",
+  "date": "2026-09-03",
+  "note": "sha256 of every vendored file as it was at the pinned upstream commit, BEFORE the patches under patches/ were applied. tools/vendor-drift.test.mjs reverse-applies the patch series and checks these.",
+  "files": {
+    "LICENSE": "706cc602cf80dc0845aef147b7d02c37b89c6031ae2c8905964048934f500831",
+    "cli/cli-args.mjs": "031351a7022b1769852957fff7af1c693cd8d0e2c85539d1d64d375472108ee4",
+    "cli/track-comment.mjs": "8dd7ec59538067de599db223f88f623d2c9ec0d09aafbf0c4556310043cdd893",
+    "cli/track-config.mjs": "ca2f4e22084c291b2ea3186bbf491a551ff814ae154eea88322d33378ac51742",
+    "cli/track-edit.mjs": "f8942e6bc025c998207c433f9687c1949b3067dd07ca2f43704da89d36a3d825",
+    "cli/track-reply.mjs": "7dbd7708a96c6eb22c74851f51812e923bba0cd3327b36b0b11c79b33460e70f",
+    "display.js": "bf26c8874ceaaf0f85da1941db26979a46a818d3c6d643ed64902e2cdef643cf",
+    "engine.js": "1eb9ca6c8843312f1c6e6025221a6dbbbfdfee15f90975448bc89d468bde3664",
+    "hooks/track-guard.mjs": "21621ac1270307ef057f79de5d0b7fe1091ebf2a6e414fd66d6499e6cab0a95c",
+    "hooks/track-hooks.test.mjs": "5023293f9957ae56746c5b67e57b398b8a3dd42509f6751bc82c8abcb21a1628",
+    "obsidian/src/track-cm.js": "2179c9f606cc4db8cbc0308ba2f04005f5d6c0755df00b8518eb9d30d6b6ed4e",
+    "obsidian/src/track-logic.js": "7d11ce9045f2e90d5d7dcbf768a9c35e6b3507bb3e36b1ee6de3ca0ee82f25b4",
+    "obsidian/src/track-rollup.js": "37710074ee30dbced7091bfd5b0abd856660367fb9cb678fbadcc10dc8c0420d",
+    "package.json": "e512642391ada88ffa83d5584d4159742c156a5f27f46c7ec8bf7e1dc31f4984",
+    "protocol.js": "e315d3b47db8e938dde691f8b857c105e3bc39501ca809fcc6be600eb4ac522e",
+    "skill/SKILL.md": "15b72be0a3f4afedf7b2afa76f473fbac3acfdcfbb16888dea42e24374225369",
+    "store-io.mjs": "a1565e849bf638592c860910a40bc8c82ba30df0e2528492868af686c156c93b"
+  }
+}

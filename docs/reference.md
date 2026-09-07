@@ -451,6 +451,20 @@ through to `install.sh`:
   release tag, falling back to `main` when none is published.
 - `ROMP_NO_PATH=1` leaves your shell rc alone.
 
+**File comments** (the viewer's Comments panel) have two prerequisites and one
+consent. The **User todos** switch (above) is what lets a session flag a file
+for you to look at: without it the session has no `add_user_todo` tool, so no
+request appears under Waiting on you, and a comment you send from the viewer
+reaches the session as a plain message. The machine whose kernel holds the
+file needs `node`: the kernel runs a small node helper for every read and
+write of a file's comments, and without it the viewer shows no Comments
+action. For the session to reply, `install.sh` must have linked the comment
+tools into `~/.claude/hooks` on that machine. Writing a comment also stands
+behind the **File editing** consent, like any dashboard write to a file, and so
+does **Send to session**: the send is recorded in the comments log, so with the
+consent off it is refused and the panel offers the consent and sends again on
+yes. The gear reports a machine that is missing node or the comment tools.
+
 ### Ports
 
 - `ROMP_KERNEL_PORT=<port>` moves the kernel and its dashboard off the default
@@ -1584,15 +1598,22 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
-- `goals`: `loads`, `saves`, `writes` on the goal stores. A save that would
-  rewrite identical bytes is a save without a write. `scans`, `scan_hits`,
+- `goals`: `loads`, `loads_shared`, `saves`, `writes` on the goal stores.
+  `loads` counts `load_goals` calls and `loads_shared` the `load_goals_shared`
+  calls the shared read-only cache answered, a hit or a version parsed there;
+  the calls it hands to `load_goals` count under `loads`, so the two together
+  are every store read. A save that would rewrite identical bytes is a save
+  without a write. `scans`, `scan_hits`,
   `scan_parses` count the give-up scan behind the judge-failure notice: calls,
   stores served from its per-store memo, and stores read and parsed (or
   attempted) because they were new, changed, or failed to parse on the
   previous call. `disk_hits`, `disk_misses` and `disk_seeds` count the memo
   behind the no-op save check: the file's identity matched and it was not
   parsed, it was read and parsed (or attempted), or the entry was filled from
-  the publish's own write.
+  the publish's own write. `absent_hits` and `absent_misses` count the memo
+  behind the two triage sweeps over stores no discovered session owns:
+  answered from the memo, or loaded and evaluated because the store, its
+  override journal or its archive changed or was new.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`), and
@@ -1608,7 +1629,35 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against decoded, summed over passes), `fail` (file versions that did not
   decode), `evict` (entries dropped for files gone from the directory), `punch`
   (entries copied so a user gesture could be applied to them), and the gauges
-  `entries` and `bytes` (memoized files and their summed size).
+  `entries` and `bytes` (memoized files and their summed size). `goals_shared`
+  is the shared read-only goal-store cache the pusher's read-only sites load
+  through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
+  did not), `refuse` (a fill under a moving archive, served but not
+  published), `dup` (a concurrent fill of the same version published first),
+  `absent`, `corrupt` and `unreadable_journal` (stores handed to the writer's
+  loader or served as a fresh store), `evict` (entries dropped for files gone
+  from the directory), `fallback` (calls served by the writer's loader while
+  the cache is off), `poisoned` (write attempts on a shared view), and the
+  gauges `entries`, `bytes` (the raw store bytes held for the compare) and
+  `off` (1 once a write attempt switched the cache off, until the kernel
+  restarts).
+  `wire` is the pusher's per-build wire caches: `feed_cards_hit` and
+  `feed_cards_miss` (the per-card encode served from its memo against run),
+  `feed_body` and `bars_body` (whole frames serialized, at most once per build
+  each), `bars_sig_fallback` (bars builds that could not be keyed and took the
+  whole dump for their signature), and `default_str` (values no wire encoder
+  could serialize as JSON and shipped as `str()`, one per encode; the kernel's
+  stderr names each such type once).
+  `intr_marks` is the interrupt-marks memo, one entry per (session, parse
+  family) keyed on the parse object's identity and the machine-cut stamp:
+  `hit` and `miss` (reads served from memory against re-tallied), `evict`
+  (entries dropped for sessions that left the alive set, or the whole memo
+  cleared once it holds 512 entries), and the gauge `entries`.
+  `sessions_scope` is the pusher cycle's discover memo, one sweep per
+  (window, forks) key per cycle: `hit` and `miss` (session-row reads inside a
+  cycle served from the cycle's rows against swept) and `wide_hit` and
+  `wide_miss` (the wide walk taken for a live session idle longer than the
+  caption window); the memo lives for one cycle, so it has no occupancy gauge.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys
@@ -1644,6 +1693,17 @@ frames it received is measured in the panes themselves, by
   kernel page loads, times its own prefixing, delta application and merge of
   each frame as `fed:<type>`, nested outside the pane's handler; each level
   records its own time, so `fed:feed` and `feed` add up to the frame's cost.
+  The federation layer hands its merged frames (`feed`, `tabOrder`, `data`,
+  `bars`) to the pane's handler by direct call once the pane has registered it
+  (`window.__rompFed.onFrame`, through `ui/webview/frame-listener.ts`), so
+  `fed:<type>` is that layer's own compute; it dispatches them on `window` only
+  when nothing registered, and every other frame still arrives as a `window`
+  `message` event. A `message` listener from another JavaScript world (a
+  browser extension's content script) that reads `event.data` receives a
+  structured clone of every frame dispatched on `window`, tens of milliseconds
+  for a multi-megabyte board; the direct call keeps the merged frames out of
+  its reach. See "A message listener from another world" in `CONTRIBUTING.md`
+  for the check that finds such a listener.
   The timeline's listener is wrapped the same way on both hosts (the VS Code
   bundle directly; the kernel page's inline boot through the `window.__rompPerf`
   that `federation.js` publishes before it runs), so `data`, `bars`, `hover`,

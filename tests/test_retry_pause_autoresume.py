@@ -34,13 +34,22 @@ class RetryPauseAutoResume(unittest.TestCase):
         self._orig_alive = km._alive_sessions
         self._orig_apierr = km._api_error
         self._orig_push = km._push_all
-        km._push_all = lambda *a, **k: None             # no clients in the test
+        km._push_all = lambda *a, **k: self.fail("a tick job built a push inline (P1 removed those)")
+        self._orig_rearm = km.jd.rearm_failed_summaries
+        km.jd.rearm_failed_summaries = lambda now, **k: 0   # no given-up cards unless a test says so
+        self._was_set = km._pusher_wake.is_set()
+        km._pusher_wake.clear()
 
     def tearDown(self):
         km.jd.STATE = self._orig_state
         km._alive_sessions = self._orig_alive
         km._api_error = self._orig_apierr
         km._push_all = self._orig_push
+        km.jd.rearm_failed_summaries = self._orig_rearm
+        if self._was_set:
+            km._pusher_wake.set()
+        else:
+            km._pusher_wake.clear()
         self.td.cleanup()
 
     def _transcript(self, name, mtime):
@@ -95,6 +104,47 @@ class RetryPauseAutoResume(unittest.TestCase):
         km._alive_sessions = lambda now, tmux: called.append(1) or []
         km._auto_resume_retry(int(time.time()), {})
         self.assertEqual(called, [], "not paused → the resume check does no work")
+
+    # --- delivery (perf batch 2 P1, 2026-09-06): a wake, and a dirty mark only for a store write ---
+    def _recovered(self):
+        km._set_retry_paused(True)
+        floor = km._retry_pause_ts()
+        path = self._transcript("healthy.jsonl", floor + 5)
+        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._api_error = lambda p: None
+
+    def test_the_clear_wakes_the_pusher_and_leaves_the_views_clean(self):
+        self._recovered()
+        km._pusher_wake.clear()
+        floor = km._views_dirty[0]
+        km._auto_resume_retry(int(time.time()), {})
+        self.assertFalse(km._retry_paused_on())
+        self.assertTrue(km._pusher_wake.is_set(), "the clear wakes the pusher; globalRetryPaused rides its push")
+        self.assertEqual(km._views_dirty[0], floor, "no view reads the flag, and nothing was re-armed")
+
+    def test_a_re_arm_marks_the_views_dirty(self):
+        # the ONE write on this path the feed shows: a given-up card's summary sentinel goes back to None
+        self._recovered()
+        km.jd.rearm_failed_summaries = lambda now, **k: 2
+        floor = km._views_dirty[0]
+        km._auto_resume_retry(int(time.time()), {})
+        self.assertGreater(km._views_dirty[0], floor, "store writes the cards show → rebuild past the sig")
+        self.assertTrue(km._pusher_wake.is_set())
+
+    def test_the_no_op_paths_neither_wake_nor_dirty(self):
+        floor = km._views_dirty[0]
+        km._set_retry_paused(False)
+        km._auto_resume_retry(int(time.time()), {})
+        self.assertFalse(km._pusher_wake.is_set(), "not paused: nothing to deliver")
+        km._set_retry_paused(True)
+        pfloor = km._retry_pause_ts()
+        path = self._transcript("stale.jsonl", pfloor - 60)
+        km._alive_sessions = lambda now, tmux: [{"sid": "s1", "path": path}]
+        km._api_error = lambda p: None
+        km._auto_resume_retry(int(time.time()), {})
+        self.assertTrue(km._retry_paused_on())
+        self.assertFalse(km._pusher_wake.is_set(), "still paused: nothing to deliver")
+        self.assertEqual(km._views_dirty[0], floor)
 
 
 if __name__ == "__main__":
