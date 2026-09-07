@@ -26288,7 +26288,19 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     skipped. The components shared by every tab come from _chat_sig_shared, once per push. The
     session chip is NOT a component: it is a function of components that are (the parse and live tail,
     the row, the backend brackets, the clock booleans, the task rows, the watches, the states overlay,
-    the store), so the build derives it once and the key derives nothing twice."""
+    the store), so the build derives it once and the key derives nothing twice.
+
+    Cost (the state copy, 31 tabs, tools/perf-bench.py push_steady with every tab a hit, against the
+    memo stack's base): 92 ms per push, 3.0 ms per background tab, of which the dependency tail (the
+    task-output identities, the pending-token pre-check, the postal card values) is about 2 ms and the
+    per-file identities with the backend's registry reads (owns, pending_cut, pending_queued,
+    launch_error: one file read each) the rest. At the profiled 0.33 cycles per second that is 30 ms
+    per second, 3.0% of a core, against the background rebuilds it removes (the replay: 423 to 14 per
+    120 s steady, 300 to 0 per 30 s on an idle board; the cycle p50 moved 71 to 147 ms while the 120 s
+    wall fell 14.4 to 10.6 s and the idle board's 10.6 to 1.6 s). Per-cycle scoping of the registry
+    reads cannot halve it: the dependency tail is more than half. The cycle after a tab's rebuild
+    re-resolves that tab's pending tokens once (its record's pre-check starts empty, since the build's
+    own resolves ran before a pre-check could be taken), about 10 ms for a tab with 200 pending tokens."""
     path = sess.get("path")
     if not path:
         return None
