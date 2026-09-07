@@ -1766,10 +1766,11 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   produced pending rows, or whose link repair found the sender's tracker
   completed or the sender outside the discover window, so the next pass scans
   the session again), `due_clock` (runs a background task's deadline made
-  due), plus `stamps`, the number of per-session records held. `skipped / (ran + skipped)` is the share of per-session runs the gate
-  saved; `romp perf` prints it per tier on the `tiers` line and adds
-  `cpu/pass` to the `judge` line, since the judge's CPU share alone cannot
-  tell a cheaper pass from a faster cadence.
+  due), plus `stamps`, the number of per-session records held.
+  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
+  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
+  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
+  pass from a faster cadence.
 - `memos`: one block per memo the kernel keeps, each a flat map of counters.
   `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
   only when its file changed: `hit` and `miss` (stores served from memory
