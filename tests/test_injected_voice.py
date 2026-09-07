@@ -372,6 +372,12 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": True,
                              "error": "malformed closing stamp on ut-9f2c1a34: resolved=True"}
             results["withdraw: unreadable record"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            # the two branches added after the first sweep (2026-09-07): the caps refusal, worded at
+            # the tool, and the unreadable STORE (owner None — the kernel could not look at all)
+            results["add: over the cap"] = pm._mcp_call("add_user_todo", {"text": "Need the port", "detail": "x" * 100_000})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": None,
+                             "error": "the request store is unreadable (see the kernel log)"}
+            results["withdraw: unreadable store"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
             pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 2}))
             results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
@@ -387,6 +393,9 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         self.assertIn("Already withdrawn", results["withdraw: already withdrawn"])
         self.assertIn("of yours", results["withdraw: not yours"])
         self.assertIn("Couldn't read the record", results["withdraw: unreadable record"])
+        self.assertIn("one line", results["add: over the cap"])
+        self.assertIn("Nothing changed", results["withdraw: unreadable store"])
+        self.assertNotIn("Couldn't read the record", results["withdraw: unreadable store"], "the store branch, not the record's")
         self.assertIn("turned off on this machine", results["add: switch off"])
         self.assertIn("turned off on this machine", results["withdraw: switch off"])
         for name, text in results.items():

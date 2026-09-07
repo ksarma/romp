@@ -1034,6 +1034,7 @@ class DrainStampFailure(unittest.TestCase):
         km.jd.STATE = Path(self.td.name)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._UT_FLOOR_ARM.clear()                       # the floor's arm record is process state (tests/README)
         km._set_user_todos(True)                       # the switch is OFF by default (2026-09-03)
         self.tid = km._add_user_todo(SID, "Need the staging port")
         self._saved = (km._compacting_now, km.Sessions.backend_for, km._push_all, km._optimistic_echo,
@@ -1053,6 +1054,7 @@ class DrainStampFailure(unittest.TestCase):
         km.jd.STATE = self.saved_state
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._UT_FLOOR_ARM.clear()
         self.td.cleanup()
 
     def test_a_failed_stamp_after_an_immediate_delivery_warns_and_keeps_the_dispatch_alive(self):

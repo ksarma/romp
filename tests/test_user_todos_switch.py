@@ -33,6 +33,7 @@ Pinned here, kernel side:
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
+import ast
 import contextlib
 import inspect
 import io
@@ -75,6 +76,7 @@ class _Sandbox(unittest.TestCase):
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._user_todos_switch_bad.clear()
+        km._UT_FLOOR_ARM.clear()                     # the floor's per-sid arm record is process state (tests/README)
 
     def tearDown(self):
         jd.STATE = self.saved
@@ -82,6 +84,7 @@ class _Sandbox(unittest.TestCase):
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
         km._user_todos_switch_bad.clear()
+        km._UT_FLOOR_ARM.clear()
 
     @property
     def switch(self):
@@ -117,6 +120,25 @@ def _post(path, body):
         return code, json.loads(out.decode() or "{}")
     except ValueError:
         return code, {}
+
+
+_ROMP_WORDS = None
+
+
+def _romp_words():
+    """The veil's vocabulary — ROMP_WORDS in tests/test_injected_voice.py, the words only romp knows —
+    read out of that file as a literal, so the two session-facing texts pinned here are scanned
+    with exactly the list the injected bodies and tool descriptions are."""
+    global _ROMP_WORDS
+    if _ROMP_WORDS is None:
+        tree = ast.parse(Path(HERE, "test_injected_voice.py").read_text())
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "ROMP_WORDS" for t in node.targets):
+                _ROMP_WORDS = [word for word, _why in ast.literal_eval(node.value)]
+                break
+        else:
+            raise AssertionError("ROMP_WORDS not found in tests/test_injected_voice.py")
+    return _ROMP_WORDS
 
 
 _PM = None
@@ -476,6 +498,7 @@ class _PayloadSandbox(unittest.TestCase):
         km._parse_cache.clear()
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._UT_FLOOR_ARM.clear()
         rows = [
             {"type": "user", "uuid": "u1", "timestamp": "2026-06-01T00:00:00Z",
              "sessionId": SID, "message": {"role": "user", "content": "wire the login routes"}},
@@ -495,6 +518,7 @@ class _PayloadSandbox(unittest.TestCase):
         km._parse_cache.clear()
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._UT_FLOOR_ARM.clear()
         self.td.cleanup()
 
     def _todo_events(self, payload):
@@ -1106,8 +1130,12 @@ class BusWording(unittest.TestCase):
         pm.USER_TODOS_SWITCH.unlink(missing_ok=True)
 
     def _no_machinery(self, text):
-        # the veil test_injected_voice.py keeps: the agent has never heard of any of these
-        for word in ("romp", "card", "board", "goal", "cleared", "dismissal", "nudge", "kernel"):
+        # the veil test_injected_voice.py keeps: the agent has never heard of any of these. Its
+        # ROMP_WORDS is the one list (a hand copy here drifted from it once), read as a literal
+        # rather than imported — that module loads the kernel and the bus at import time under
+        # its own state root. "kernel" stays a local extra: the injected bodies that list also
+        # scans name it on purpose, so widening ROMP_WORDS is a separate call.
+        for word in _romp_words() + ["kernel"]:
             self.assertNotIn(word, text.lower(), (word, text))
 
     def test_the_bus_switch_reader_says_once_when_the_file_is_not_a_switch_file(self):
