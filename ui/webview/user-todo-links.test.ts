@@ -173,7 +173,7 @@ test("the chat's todo card and its Reply modal still link the note against the t
 });
 
 test("waiting.ts links the text and the detail at BOTH sites (the row and the Reply modal) with the todo's sid, only when framed", () => {
-  assert.match(WAITING, /import \{ linkifyPathTokens \} from "\.\/path-links";/);
+  assert.match(WAITING, /import \{ linkifyPathTokens, openPathLink \} from "\.\/path-links";/);   // openPathLink builds the file chip (waiting-file-chip.test.ts)
   // the gate: a pane the shell does not frame has no Files pane to send a click to → plain text
   assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
   // the row: text first, then the links, on the one-line text (the user 2026-09-07) and on the fold body

@@ -34,3 +34,12 @@ background:var(--overlay-10, rgba(255,255,255,0.10));color:var(--vscode-foregrou
 .wt-sess .host-prefix{font-weight:400;opacity:.75;font-style:italic}
 .wt-age{flex:0 0 auto;font-size:11px;color:var(--vscode-descriptionForeground,#9a9a9a);white-space:nowrap}
 .wt-item .ut-detail{margin-left:2px}
+/* the file a todo names (its record's own `file`; waiting.ts fileChip): a chip with the basename, the full path on
+   hover, on the row and in the Reply modal. It is a path link (.file-uri-link) so the openpath delegate opens it
+   like a path in the text; the chip dress replaces the link's underline. Plain when the pane is not framed. */
+.wt-file{flex:0 0 auto;display:inline-flex;align-items:center;max-width:32%;padding:1px 8px;
+border-radius:var(--radius-pill,999px);font-size:11px;line-height:1.5;
+overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+background:var(--overlay-10, rgba(255,255,255,0.10));color:var(--accent,#9cd2ff);text-decoration:none}
+.wt-file.file-uri-link:hover{filter:brightness(1.12);text-decoration:none}
+#ut-reply-prompt .wt-file{align-self:flex-start;margin:2px 0 4px}
