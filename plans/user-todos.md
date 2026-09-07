@@ -1,6 +1,7 @@
 # User todos — what a session needs from you, held until you or it says otherwise
 
-**Status: built (2026-08-22; settled with the user 2026-08-20/21).** Landed in the commits of the
+**Status: built on the fork (2026-08-22); design settled with the fork's author 2026-08-20/21; upstream
+acceptance of the default, vocabulary, badge semantics and escalation is open in romp-on/romp#993.** Landed in the commits of the
 user-todos change: the store and the two postal tools, the split card with Reply and Dismiss, the
 delivery-keyed answer, the tab flag and the feed marker, the idle-escalation floor and the badge,
 the SessionStart hook, and the per-install switch. The decisions recorded here are the plan of
@@ -69,7 +70,7 @@ them a judgment.
 
 ### Name and scope
 
-"User todo" is the user-facing and glossary term (the user's pick over "ask", 2026-08-20).
+"User todo" is the user-facing and glossary term (the author's pick over "ask", 2026-08-20).
 Internal identifiers use `userTodo`/`user_todos` and never `ask` — the feed payload's existing
 `asks` field is the card list itself, and a second meaning of the word in the same payloads
 would be a collision. Scope is gatekept by the tool description, not by any classifier: partial
@@ -266,7 +267,7 @@ banner slot stays single-purpose.
 
 **(d) The app badge.** `_needs_you_count` widens to one number for "things only the user can
 move": **open user todos (of non-ended sessions) plus hard-stopped needs-input sessions** —
-the permission-prompt class stays in (the user confirmed, 2026-08-20). Dedup rule: the
+the permission-prompt class stays in (the author confirmed, 2026-08-20). Dedup rule: the
 escalation floor is a *presentation* of todos the count already includes, so an idle session
 escalated by its todos adds nothing extra; a session hard-stopped for a non-todo reason
 (permission prompt, on-you API error) counts once as itself. Per-item decision cards count per
@@ -339,20 +340,36 @@ build_session's exact corroborated read per backend — the SDK registry's `aliv
 reg-less tmux sid's durable death record (un-ended by any newer states row), never a raw
 listing miss — with the answer op refusing a dead session loudly instead of firing into the
 void.
+*As built (2026-09-07):* the card's per-row UI state is KEYED by todo id, not held on the DOM
+node: Dismiss's armed "Really dismiss?" and the optimistic row removal after Reply or Dismiss
+live in Sets, so both survive the card's rebuild while the session streams (before, a push
+between the two Dismiss clicks reset the button); the removal also rewrites the "Waiting on you ·
+N" heading and drops it with the last row, and the kernel-warn re-sync of the chat view runs only
+while this client has an unconfirmed Reply or Dismiss outstanding, not on every warn. Enter in
+the Reply box sends on a fine pointer only; on a coarse pointer it is a newline and the Send
+button sends, the composer's own rule. The writer bounds a note (`_USER_TODO_TEXT_CAP` 500,
+`_USER_TODO_DETAIL_CAP` 4000 characters): over the cap is REFUSED, never trimmed, and the route's
+400 and the tool's refusal carry the one-line advice. An unreadable store (a `user-todos.json`
+that is not sid → records) is said on every surface instead of read as empty: the card carries an
+error line naming the file in place of the requests, Reply and Dismiss warn that nothing was sent
+and nothing changed, `POST /usertodo` answers 503, a withdrawal is told the store could not be
+read (`owner: null`, never "no such request"), and the kernel log names the file and what it
+found.
 
 **Slice 2 — ambient visibility and the endgame.** The feed seam + card marker, the tab glyph,
 the widened badge, the idle escalation floor + placeholder, and the auto-nudge stand-down.
 *Tests*: floor semantics (idle + open todo → needs_input; working session → no column change;
-clear → stands down; ended session → excluded; placeholder when no card), badge arithmetic
+a turn the user did not open → holds; clear → stands down; ended session → excluded; placeholder
+when no card; the real predicate through build_feed, `EscalationFloorLive`), badge arithmetic
 (including the no-double-count rule), nudge stand-down, UI pins for glyph and marker.
 *As built (2026-08-22):* the stand-down is SCOPED to the status-nudge branch — the awaiting
 wake and the debt machinery flow past (the escalation section carries the reasoning). The
 floor's predicate gained a PEER-WAIT gate: `_wait_for_graph`'s edge (the same one the
 waitingOn chip reads) stands the floor down while a live peer owes this session a reply,
 because waiting on a peer is not needs-you — local-host scope only, the documented limitation
-above. The floor's OS push gained a LATCH (`_NOTIFY_UT_FIRED`): the card's designed Working
-dips re-enter the column without new information, so the push dedups on the floored todo SET,
-not the column transition — a new id is news, an identical set re-entering is not; a LOST
+above. The floor's OS push gained a LATCH (`_NOTIFY_UT_FIRED`): the card dips to Working when
+the user speaks to the session and re-enters the column at the next settle without new
+information, so the push dedups on the floored todo SET, not the column transition — a new id is news, an identical set re-entering is not; a LOST
 answer's reopen un-latches its id (the re-floor is the one signal the answer never arrived)
 while the user's own ✕ recall stays silent, and a restart's baseline seeds the latch from the
 already-floored world. Two focus refinements: a done-CONFIRMING top is never floored (its
@@ -361,6 +378,13 @@ information), and when the focus chain dead-ends in a completed top the floor fa
 the first plain-working top in store order — without that, the escalation was invisible
 exactly when a card existed to carry it. The badge grew the per-item decision classes,
 recorded in (d).
+*As built (2026-09-07):* the stand-down is AUTHOR-AWARE. `_user_todo_idle` keeps a per-sid arm
+record (`_UT_FLOOR_ARM`: the open todo ids + the settled turn's end it armed at); a turn a peer,
+romp or the harness opens holds the floor; the record is spent by the human opening a turn (plain
+or a card reply), a user interrupt, queued intent, the open set changing (build_feed disarms when
+it empties), or a peer-wait edge; awaiting / API error / live prompt / compaction still read
+not-idle for their duration without touching the record; the record is in-memory, so after a
+kernel restart a session mid non-human turn reads Working once until its next settle.
 
 **Slice 3 — memory across context loss.** The SessionStart hook (sources: resume and compact)
 that emits open todos as a passive context block, in the agent's-own-notes voice.
@@ -408,13 +432,30 @@ real needs-input card, per card), so an install that never turned the feature on
 in the number its icon wears. The store is untouched by the switch: rows registered while it was
 on stay on disk and reappear when it is turned back on, and a boot notice counts the open rows
 stored behind an off switch. The switch is its own commit, so dropping that commit ships the
-feature on by default.
+feature on by default. The stdio server also declares `tools.listChanged` and polls the switch
+file (one stat per 2 s tick on a poll thread of its own, `ROMP_POSTAL_SWITCH_POLL`), so a connected
+session is told to re-list on a flip and gains or loses the two tools without a restart
+(2026-09-07).
 
 The store also guards its own shape, because the switch file is easy to mistake for it. A
-`user-todos.json` that is not sid → list (a settings blob, a JSON list, unparsable text) reads as
-empty, says so once per file version, and every writer refuses to overwrite that version until the
-file is fixed or removed; without the guard, the next register would replace the whole store with
-a one-row one.
+`user-todos.json` that is not sid → list (a settings blob, a JSON list, unparsable text) is
+reported once per file version in the kernel log, with what was found, and every writer refuses
+to overwrite that version until the file is fixed or removed; without the guard, the next register
+would replace the whole store with a one-row one. Since 2026-09-07 the flagged version is not read
+as empty either: every surface says the store is unreadable (the slice 1 as-built notes list
+them). The switch file has the mirror guard: a `user-todos-enabled.json` that is not an
+`{"enabled": …}` object reads as OFF and is said once per file version in the kernel log and the
+bus's log; an absent file is silent.
+
+**The route contract (as built, 2026-09-07).** `POST /usertodo` answers 400 over the caps (the
+error carries the one-line advice), 409 while the switch is off, and 503 `{"ok": false, "error":
+"the request store is unreadable (see the kernel log)"}` on a flagged store; for a sid on an
+attached machine it relays that kernel's 409 (the error names the host) or answers 502 with the
+cause (the tunnel not answering, a kernel that predates `/usertodo`, an HTTP status, an answer
+without a todo id) instead of a 200 `{"ok": false}` the bus could only word as "try again". `POST
+/usertodo/withdraw` answers the same 409 and, on a 200, an account (`state`, `at`, `owner`); when
+the local store is flagged the account is `owner: null` with the unreadable-store error, so the
+tool says the store could not be read rather than "no such request".
 
 ## Judges: no vote now, a suggestion later
 

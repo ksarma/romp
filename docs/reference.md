@@ -463,27 +463,30 @@ once.
 ### User todos
 
 A session can flag a decision or an input it needs from you and keep working
-meanwhile. Each open request is listed under *Waiting on you* on the card at the
-bottom of that session's transcript, with Reply and Dismiss, and a session that
-resumes after a restart or a compaction is handed its open requests back so it
-can withdraw the ones that no longer apply. A session that withdraws a request
-you already answered or dismissed, or one it already withdrew, is told so
-plainly, with the time, and not handed an error; only an id that is unknown or
-another session's is refused as one. A withdrawal the kernel cannot carry out is
-refused, never reported as closed: a request held on an attached machine the
-kernel cannot reach, or one running older romp, is reported as still standing,
-and a stored request whose closing record is damaged is reported as unreadable,
-with the record named. The guide's [User todos](guide.md#user-todos) section
-covers what you see and what the session sees.
+meanwhile; the guide's [User todos](guide.md#user-todos) section covers what
+you see and what the session sees. A request's line holds up to 500 characters
+and its detail up to 4000; a longer one is refused, never cut short, and the
+session is told to keep the note to one line and put the rest in its reply. If
+the kernel cannot read its request store (`user-todos.json` under
+`~/.local/state/romp/`), the card says so in place of the requests, Reply and
+Dismiss change nothing and say so, and a session's flag or withdrawal is refused
+with the cause; the kernel log names the file and what it found. A withdrawal
+that meets a damaged closing record is refused the same way, with the record
+named, never reported as closed.
 
 The feature is off by default. The gear's **User todos** checkbox (under
 *Sessions*) turns it on for one machine at a time: each kernel keeps its own
 copy, and the choice does not spread to other attached machines. While it is
 off, sessions on that machine are not offered the tools that flag or withdraw a
 request, nothing is listed, nothing is handed back on resume, and the app-icon
-count is the one from before the feature. Requests flagged earlier stay stored
-and reappear when you turn it back on; at startup, the kernel's log says how
-many are waiting.
+count is the one from before the feature. A session already connected gains or
+loses the two tools within a few seconds of the flip, in either direction; no
+restart or revival is needed. Requests flagged earlier stay stored and reappear
+when you turn it back on; at startup, the kernel's log says how many are
+waiting. The switch is `user-todos-enabled.json` in the same directory, holding
+`{"enabled": true}` or `false`; a file of any other shape reads as off and is
+reported once in the kernel log and the postal bus's log, and an absent file is
+off, silently.
 
 ### Install-time switches
 

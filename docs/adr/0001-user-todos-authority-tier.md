@@ -1,6 +1,6 @@
 # User todos are an authority tier the judges cannot clear
 
-Status: proposed (decided 2026-08-21, submitted 2026-09-07)
+Status: proposed 2026-09-07 (the decision dates from 2026-08-21)
 
 A user todo — a need an agent registers with the user while it keeps working — is cleared by
 exactly three events: the user answers it, the user dismisses it, or the agent withdraws it.
@@ -27,7 +27,7 @@ cannot be clearable by it.
 - The vanishing stops: once a user todo is visible, it stays visible until an accountable
   actor — the user, or the agent explicitly — says otherwise.
 - The stated cost: an agent that forgets to withdraw leaves a moot todo sitting until the user
-  dismisses it. Accepted deliberately — a stale visible todo costs a glance and a click; a
+  dismisses it. The cost is taken deliberately — a stale visible todo costs a glance and a click; a
   silently vanished ask costs whatever was asked. Withdrawal is supported passively (the tool
   description's contract, open todos re-surfaced in the contexts the agent naturally receives
   after restart or compaction) — never by scheduled check-in turns, which were rejected as
