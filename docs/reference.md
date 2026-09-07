@@ -625,8 +625,11 @@ the plist, `service.env`, the manager's own environment) reaches every
 session's CLI and tool shells, and the tmux server keeps whatever the manager
 started with. The set itself reaches none of them, because it is not in the
 environment. A `ROMP_API_KEY_REF` line beside the command line is ignored, and
-romp does not become the `op` consumer for it: the command may need `op`'s
-variables itself. The boot log names what it finds, names only.
+the kernel does not become the `op` consumer for it: the command may need
+`op`'s variables itself. The manager's own tmux server start still reads that
+leftover line and strips `op`'s names and the startup `ANTHROPIC_API_KEY` from
+the server it starts, so remove a reference line you no longer use. The boot
+log names what it finds, names only.
 
 At boot the kernel logs one `key source:` line per finding, names and
 fingerprints only:
