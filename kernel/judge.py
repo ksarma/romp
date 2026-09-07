@@ -91,7 +91,7 @@ EPIDIR   = STATE / "episodes"            # per-session append-only episode log, 
 STATESDIR = STATE / "states"             # per-session real idle/compacting transitions → idle atoms (settled gate)
 PCACHE   = STATE / "judge-units-cache"   # (mtime,size) cache of a transcript's ready units
 MESSAGES = STATE / "timeline" / "messages.jsonl"
-ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — surfaced by `romp judges`
+ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — the card warn modal and the debug feed read it
 USAGE    = STATE / "judge-usage.jsonl"   # one line per successful judge call: tokens/cost/ms — the kernel/UI roll up pipeline cost
 JUDGE_AUTH = STATE / "judge-auth.json"   # judge-auth-down latch {fsid: {t, mode, note}}: set by a credential-class error
 JUDGE_LIMIT = STATE / "judge-limit.json"  # usage-limit-down latch {t, bucket, pct, resets_at, model}: the gate
@@ -848,7 +848,11 @@ def consume_judge_recovery():
 
 
 def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
-    """Append one failure row to ERRORS (judge-errors.jsonl) so `romp judges` can surface it. The row contract
+    """Append one failure row to ERRORS (judge-errors.jsonl). Rows with a `goal` reach the card's warn modal
+    (the kernel's _card_warn_rows joins them onto cards) and the debug feed; a row without one is file-level
+    and reaches nobody by itself (`romp judges`, which listed them all, was retired 2026-07-27), so a
+    condition that needs the user's eye also needs a surface of its own: the goals-store read failures ride
+    the kernel's once-per-episode warn frame and the /perf gauge (unreadable_store_sids). The row contract
     (the user 2026-07-09) — every row answers who/where/what/why on its own:
       judge  who failed — the judge's own one-per-prompt name, never a tier
       fsid   where — the session it was judging ("" only for fleet-level rows like the rate gate)
@@ -1061,9 +1065,10 @@ _UNREADABLE_LOGGED = set()   # path strings whose last read failed and was logge
 _UNREADABLE_LOCK = threading.Lock()
 
 
-def _read_failed(path_s, err, fsid, exc):
+def _read_failed(path_s, err, fsid, exc, note=None):
     """A file the signature stat'd (or reads by value) could not be READ by the stage: mark the running
-    stage incomplete and log one judge-errors row. An absent file is a real state (_ident's None, the
+    stage incomplete and log one judge-errors row (`note` names the consequence when the default, written
+    for the side files, does not fit: a goals store's readers stand down rather than judge without it). An absent file is a real state (_ident's None, the
     scans' FileNotFoundError) and is never this; every other failure (a permission bit, EMFILE, EIO, an
     unparseable document) means the stage decided WITHOUT an input the signature says it saw, and a stamp
     would skip the session until that file moved, which a permission or descriptor failure never does
@@ -1077,14 +1082,29 @@ def _read_failed(path_s, err, fsid, exc):
         _UNREADABLE_LOGGED.add(path_s)
     if first:
         _log_judge_error("romp", fsid or "", err,
-                         note="%s unreadable: %r — the pass judged without it and stays due until it reads"
-                              % (os.path.basename(path_s), exc))
+                         note=note or ("%s unreadable: %r — the pass judged without it and stays due until it reads"
+                                       % (os.path.basename(path_s), exc)))
 
 
 def _read_ok(path_s):
     """A read of `path_s` succeeded: the next failure is a new episode and logs again."""
     with _UNREADABLE_LOCK:
         _UNREADABLE_LOGGED.discard(path_s)
+
+
+_STORE_UNREADABLE_NOTE = ("goals store unreadable: %r — every judge stage and the courier stand down on this session "
+                          "and nothing is published for it until the file reads; the kernel warns the app once per "
+                          "episode and GET /perf counts it (goals.unreadable_stores)")
+
+
+def unreadable_store_sids():
+    """The sids whose goals file is in a read-failure episode: load_goals or load_goals_shared found it
+    unreadable or unparseable and no read of it has succeeded since (_read_failed / _read_ok). The one
+    judge-errors row per episode carries no goal, so no card can hold it; the kernel's once-per-episode warn
+    to the app and the /perf gauge (goal_io_stats' `unreadable_stores`) read this instead."""
+    prefix = str(GOALDIR) + os.sep
+    with _UNREADABLE_LOCK:
+        return sorted(p[len(prefix):-5] for p in _UNREADABLE_LOGGED if p.startswith(prefix) and p.endswith(".json"))
 
 
 def _reg_spawned_at(fsid):
@@ -3478,7 +3498,9 @@ def goal_io_stats():
     the memo (`absent_hits`), or loaded and evaluated because the store's files changed or were new
     (`absent_misses`). The counters stay private to this module; readers get a copy."""
     with _GOAL_IO_LOCK:
-        return dict(_GOAL_IO)
+        out = dict(_GOAL_IO)
+    out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the episodes standing now, not a count
+    return out
 
 
 def _fresh_store(fsid, unread=None):
@@ -3566,7 +3588,7 @@ def load_goals(fsid):
         # so — a reader that caches "what the file holds" by its identity must not cache this answer (the
         # kernel's awaiting-lift gate skipped a stamped store for good after one EMFILE, 2026-09-06), no
         # writer publishes it (save_goals refuses), and one judge-errors row per failure episode says so
-        _read_failed(str(path), "store-unreadable", fsid, e)
+        _read_failed(str(path), "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))
         return _fresh_store(fsid, unread="store")
     _read_ok(str(path))
     return _finish_load(fsid, store)
@@ -4556,7 +4578,7 @@ def load_goals_shared(fsid):
         _shared_bump("corrupt")
         sys.stderr.write("goals-shared: %s: %s: %s (served as an empty store until the file changes)\n"
                          % (os.path.basename(path_s), type(e).__name__, e))
-        _read_failed(path_s, "store-unreadable", fsid, e)   # the row, once per failure episode (as load_goals)
+        _read_failed(path_s, "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))   # the row, once per episode
         with _SHARED_LOCK:
             _SHARED[path_s] = ((skey, jkey, akey0), data, _SHARED_BAD)
         return _fresh_store(fsid, unread="store")    # the file exists and is not this: marked, as load_goals marks it
@@ -4703,14 +4725,37 @@ def load_goal_archive(fsid):
     subtrees moved out of the live store by the kernel's compaction sweep. Same shape as the live store
     (nodes/status). The judge reads this ONLY as read-only context (_cleared_context, for the live re-plan's
     <recently-cleared> block) — its placements dedup + view-cleared sealing keep it from ever re-minting an
-    archived node; the kernel's undo-clear restore and the ledger merge are the mutating readers."""
+    archived node; the kernel's undo-clear restore and the ledger merge are the mutating readers.
+
+    A file that exists and cannot be read or parsed answers the same empty shape marked `_unread` = "archive"
+    (one archive-unreadable row per failure episode, as load_goals' store-unreadable): save_goal_archive refuses
+    to publish it and the undo-clear restore stands down on it, so a failed read never costs the archived
+    history (the same shape save_goals closes for the live store, 2026-09-07). An absent file answers unmarked:
+    empty IS its content."""
+    path = GOALARCHDIR / (fsid + ".json")
     try:
-        return _guard_nodes(json.loads((GOALARCHDIR / (fsid + ".json")).read_text()))
-    except Exception:
+        arch = _guard_nodes(json.loads(path.read_text()))
+    except FileNotFoundError:
         return {"rompUuid": fsid, "nodes": {}, "status": {}}
+    except Exception as e:
+        _read_failed(str(path), "archive-unreadable", fsid, e,
+                     note="cleared-card archive unreadable: %r — nothing is archived or restored for this session "
+                          "until it reads" % (e,))
+        return {"rompUuid": fsid, "nodes": {}, "status": {}, "_unread": "archive"}
+    _read_ok(str(path))
+    return arch
 
 
 def save_goal_archive(fsid, store):
+    """Publish the cleared-card archive. Refuses an archive that loaded as a fallback (load_goal_archive's
+    `_unread`): the compaction sweep would otherwise publish the empty fallback plus the tops it just moved
+    over the file that did not read, and the archived history with it."""
+    if store.get("_unread"):
+        _log_judge_error("romp", fsid, "unread-store-save",
+                         note="the cleared-card archive exists and did not read or parse when it was loaded; publishing "
+                              "the empty fallback would replace it — nothing was published and the file is left as it is")
+        raise UnreadStoreError("save_goal_archive refuses to publish an archive that loaded as a fallback for a file "
+                               "that exists and did not read or parse; the file is left as it is")
     GOALARCHDIR.mkdir(parents=True, exist_ok=True)
     tmp = _publish_tmp(GOALARCHDIR, fsid)
     tmp.write_text(json.dumps(store))
@@ -9877,8 +9922,11 @@ def fast_forward_placements(fsid, path=None, now=None):
         if not hit:
             return 0
         path = str(hit[1])
-    session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                      # the file did not read: nothing to seal, and save_goals would refuse
+        #                                               (see _fallback_store; the kernel's un-mute keeps the mute, below)
+    session = parsed_session(fsid, [path], now)
     placements = store["placements"]
     n = 0
     for u in plan_units(session, store):

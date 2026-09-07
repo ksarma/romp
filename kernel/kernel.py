@@ -226,6 +226,10 @@ class _PerfStats:
                                    no discovered session owns (answered from the memo; loaded and
                                    evaluated because the store, its override journal or its archive
                                    changed or was new)
+                                   unreadable_stores: a gauge, not a counter: the goals files in a
+                                   read-failure episode (the file exists and did not read or parse on
+                                   its last read; load_goals answers a fallback, the stages stand down
+                                   and save_goals refuses to publish over it until it reads)
       judge                       passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -27996,17 +28000,33 @@ def _clear_all(item_ids):
 
 def _undo_clear():
     """Restore the most-recent clear BATCH — every id cleared at the latest timestamp. So one
-    UndoClear undoes a Clear-all as a unit, and a single-card clear restores just that card."""
+    UndoClear undoes a Clear-all as a unit, and a single-card clear restores just that card.
+
+    Order (2026-09-07): the archive restore FIRST, the cleared.jsonl undo rows only after it returned. The rows
+    came first, so a restore that could not land (the live goals file did not read or parse, and save_goals
+    refuses to publish the fallback) consumed the batch and left the nodes in the archive behind an orphan
+    restore row: a second click found nothing to undo, and load_goals' replay defers to an archive that still
+    holds the node, so the card was gone for good from the UI (the fallback-refusal review, both lenses). Before
+    any side effect every restored sid's store and archive are read; a store that loaded as a fallback or an
+    archive that did not read stands the whole gesture down with UnreadStoreError (nothing written, the batch
+    still undoable), which the WebSocket handler reports to the pane."""
     cur = _cleared_ids()
     if not cur:
         return
     newest = max(cur.values())
     restored = [i for i, ct in cur.items() if ct == newest]
-    with (jd.STATE / "cleared.jsonl").open("a") as f:
+    for sid in sorted({iid.rsplit(":", 1)[0] for iid in restored}):
+        if jd._fallback_store(jd.load_goals(sid)):
+            raise jd.UnreadStoreError("the goal store for %s cannot be read right now (goals/%s.json); nothing was "
+                                      "undone. Try again once it reads." % (_name_of(sid) or sid[:8], sid))
+        if jd.load_goal_archive(sid).get("_unread"):
+            raise jd.UnreadStoreError("the cleared-card archive for %s cannot be read right now (goals-archive/%s.json); "
+                                      "nothing was undone. Try again once it reads." % (_name_of(sid) or sid[:8], sid))
+    _restore_goal_archive(restored)                   # pull the restored tops back OUT of the archive FIRST (a raise
+    with (jd.STATE / "cleared.jsonl").open("a") as f:  # here leaves the batch undoable), then consume the batch,
         for iid in restored:
             f.write(json.dumps({"id": iid, "t": time.time(), "op": "undo"}) + "\n")
-    _restore_goal_archive(restored)                   # pull the restored tops back OUT of the archive FIRST,
-    _mark_nodes_cleared(restored, False)              # so this finds the nodes → un-set the durable flag → real status
+    _mark_nodes_cleared(restored, False)              # then un-set the durable flag on the nodes the restore put back
 
 
 # ── goal-store compaction: archive dismissed (cleared) cards out of the live tree ──────────────────────────
@@ -28089,7 +28109,11 @@ def _compact_goal_stores():
             continue
         if _compact_seen.get(fsid) == mt:
             continue                                   # unchanged → nothing new to archive
-        moved += _compact_goal_store(fsid)
+        try:
+            moved += _compact_goal_store(fsid)
+        except jd.UnreadStoreError:
+            continue                                   # the archive did not read: save_goal_archive refused (its row
+            #                                            says so) before the live store was touched; retried next sweep
         try:                                           # record OUR write's mtime so we don't re-sweep it next pass
             _compact_seen[fsid] = os.path.getmtime(jd.GOALDIR / (fsid + ".json"))
         except OSError:
@@ -28107,6 +28131,8 @@ def _restore_goal_archive(item_ids):
     for sid, ids in by_sid.items():
         with jd._GOAL_ARCH_LOCK:                       # the archive is a blind RMW — see the lock's note
             arch = jd.load_goal_archive(sid)
+            if arch.get("_unread"):
+                raise jd.UnreadStoreError("goals-archive/%s.json exists and did not read: nothing restored" % sid)
             a_nodes = arch.get("nodes", {})
             if not a_nodes:
                 continue
@@ -28126,6 +28152,10 @@ def _restore_goal_archive(item_ids):
             if not move:
                 continue
             store = jd.load_goals(sid)
+            if jd._fallback_store(store):
+                # BEFORE the journal row below: a restore that cannot land (save_goals refuses to publish the
+                # fallback) must leave no row, or the replay would carry a restore the archive still holds
+                raise jd.UnreadStoreError("goals/%s.json exists and did not read: nothing restored" % sid)
             nodes = store.setdefault("nodes", {})
             status = store.setdefault("status", {})
             # Journal the payload FIRST (the user 2026-07-10): once the archive save below lands, these nodes
@@ -38191,6 +38221,35 @@ def _pusher_cycle():
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 
+_UNREADABLE_WARNED = set()      # sids whose goals-store read-failure episode has been said to the app; an episode
+#                                 that ends leaves the set, so a recurrence is said again
+
+
+def _unreadable_store_warns(now):
+    """Say, once per failure episode, that a listed session's goal store cannot be read. judge.load_goals answers
+    an empty fallback while a goals file exists and does not read or parse, so every reader (the feed, the
+    timeline, the judge tiers) shows the session with no cards and every writer stands down or is refused
+    (save_goals), and nothing on screen said why (the fallback-refusal review, 2026-09-07). The judge-errors row
+    carries no goal, so no card warn can hold it: this warn frame to the chat clients is the surface, and the
+    /perf goals gauge `unreadable_stores` (jd.goal_io_stats) counts the standing episodes for `romp perf`.
+    One frame per episode: jd.unreadable_store_sids lists the sids whose last read failed, _read_ok ends an
+    episode, and a sid the surfaces do not list waits (nothing shows it, so nothing needs explaining) until
+    it is listed."""
+    cur = set(jd.unreadable_store_sids())
+    _UNREADABLE_WARNED.intersection_update(cur)      # ended episodes leave; a recurrence warns again
+    new = cur - _UNREADABLE_WARNED
+    if not new:
+        return
+    listed = {s["sid"]: (s.get("name") or s["sid"][:8]) for s in _sessions(now)}
+    for sid in sorted(new):
+        if sid not in listed:
+            continue
+        _UNREADABLE_WARNED.add(sid)
+        _send_to_app("chat", {"type": "warn", "text": (
+            "The goal store for \u201c%s\u201d cannot be read (goals/%s.json). Its cards are hidden and nothing "
+            "is saved for it until the file reads again." % (listed[sid], sid))})
+
+
 def _pusher_cycle_jobs(now, tmux, any_client):
     _t_jobs = time.monotonic()            # /perf: this function minus the _push_all below is the `jobs` stage
     _t_push = 0.0
@@ -38227,6 +38286,10 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         except Exception:
             sys.stderr.write("tab-carry maintain: %s\n" % traceback.format_exc())
     # (the WS keepalive lives on its own _heartbeat thread — NOT here — so a slow push can't starve it)
+    try:                                  # a goals file that does not read hides a session's cards everywhere:
+        _unreadable_store_warns(now)      # say so once per episode (the judge-errors row reaches no surface)
+    except Exception:
+        sys.stderr.write("unreadable-store warn: %s\n" % traceback.format_exc())
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
         _lift_spent_awaiting(now, tmux)   # so the nudge tick below never wakes a wait that already ended
     except Exception:
@@ -44915,7 +44978,16 @@ class Handler(BaseHTTPRequestHandler):
             _send_to_app("chat", {"type": "dropCitationsAll"})   # every card cleared → drop every composer chip
             _mark_views_dirty()
         elif msg and msg.get("type") == "undoClear":
-            _undo_clear()
+            # the Undo click's failure path speaks (2026-09-07): _undo_clear stands down, with nothing written,
+            # when a restored session's goal store or archive cannot be read; the pane ends its working cue,
+            # reverts its optimistic restore, toasts the reason and keeps the batch undoable (undoClearResult).
+            # Success stays silent: the next feed payload carries the restored cards
+            try:
+                _undo_clear()
+            except Exception as _e:
+                sys.stderr.write("undoClear: %s\n" % traceback.format_exc())
+                _send_to_app("feed", {"type": "undoClearResult", "ok": False,
+                                      "error": (str(_e) or _e.__class__.__name__)})
             _mark_views_dirty()
         elif msg and msg.get("type") == "dismissLane" and msg.get("id"):
             # timeline: clear a DEAD lane's leftover row (the user 2026-07-02). DURABLE since 2026-08-14

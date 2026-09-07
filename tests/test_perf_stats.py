@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+import shutil
 import urllib.request
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
@@ -123,8 +124,8 @@ class Collector(unittest.TestCase):
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
-                                              "absent_hits", "absent_misses", "noop_hash_ms"},
-                         "read through jd.goal_io_stats")
+                                              "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores"},
+                         "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},
                          "one block per memo the kernel keeps (plan D4)")
@@ -163,6 +164,29 @@ class Collector(unittest.TestCase):
         self.assertGreaterEqual(snap["process"]["rss_kb"], 0)
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_the_goals_block_carries_the_unreadable_stores_gauge(self):
+        # the read-failure episodes standing now (a gauge), read through jd.goal_io_stats: a goals file that
+        # exists and does not read counts from its first failed read to its next good one, however many loads
+        saved = km.jd.STATE
+        td = tempfile.mkdtemp()
+        km.jd._rebind_state(Path(td))
+        try:
+            km.jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+            km.jd.save_goals(GOAL_SID, km.jd.load_goals(GOAL_SID))          # a first mint: the file exists
+            gp = km.jd.GOALDIR / (GOAL_SID + ".json")
+            good = gp.read_text()
+            self.assertEqual(km._PERF_STATS.snapshot()["goals"]["unreadable_stores"], 0)
+            gp.write_text("{ not the store")
+            km.jd.load_goals(GOAL_SID)
+            km.jd.load_goals(GOAL_SID)
+            self.assertEqual(km._PERF_STATS.snapshot()["goals"]["unreadable_stores"], 1, "one episode, two loads")
+            gp.write_text(good)
+            km.jd.load_goals(GOAL_SID)
+            self.assertEqual(km._PERF_STATS.snapshot()["goals"]["unreadable_stores"], 0, "a good read ends it")
+        finally:
+            km.jd._rebind_state(saved)
+            shutil.rmtree(td, ignore_errors=True)
 
     def test_pusher_counters(self):
         self.st.wake(); self.st.wake(); self.st.wake()
