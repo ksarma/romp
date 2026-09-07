@@ -35,10 +35,14 @@ setup() {
     # CPU per pass) woken by 6 producer sets of which 2 ended a wait (4 absorbed), the planner gate 2 ran /
     # 60 skipped and the closer's 3 ran / 59 skipped with one incomplete run, 5 /tick requests and 3 WebSocket
     # connects. B's lifetime figures (cycle_ms_max 900, ms_mean 1012.5) differ from the window's
-    # (ring max 700, mean 1200) so a line printing the wrong one is caught.
+    # (ring max 700, mean 1200) so a line printing the wrong one is caught. The memory gauges (M1-lite): rss
+    # 400 -> 410 MB over the window, 1000 more allocated blocks, one more gen-2 collection, malloc's free
+    # bytes 20 -> 30 MB; B alone carries the `caches` occupancy block (A predates it, as an older kernel
+    # would), and the caches line prints B's levels.
     cat > "$SNAP_A" <<'JSON'
 {"now": 1000.0, "since": 900.0, "uptime_s": 100.0, "log": false,
- "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242},
+ "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242, "rss_anon_kb": 380000, "hwm_kb": 420000, "source": "proc",
+             "allocated_blocks": 1000000, "gc_gen2": 10, "malloc": {"arena": 104857600, "hblkhd": 209715200, "uordblks": 83886080, "fordblks": 20971520}},
  "pusher": {"cycles": 100, "wakes": 300, "wakes_event": 250, "wakes_backstop": 50, "cycle_ms_sum": 30000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 200.0, "cycle_cpu_ms_sum": 10000.0,
             "cycle_ms_p50": 180.0, "cycle_ms_p90": 400.0, "cycle_ms_ring_max": 900.0, "ring_n": 100},
@@ -62,7 +66,13 @@ setup() {
 JSON
     cat > "$SNAP_B" <<'JSON'
 {"now": 1010.0, "since": 900.0, "uptime_s": 110.0, "log": false,
- "process": {"rss_kb": 419840, "threads": 41, "cpu_s": 60.5, "pid": 4242},
+ "process": {"rss_kb": 419840, "threads": 41, "cpu_s": 60.5, "pid": 4242, "rss_anon_kb": 390000, "hwm_kb": 425000, "source": "proc",
+             "allocated_blocks": 1001000, "gc_gen2": 11, "malloc": {"arena": 104857600, "hblkhd": 209715200, "uordblks": 83886080, "fordblks": 31457280}},
+ "caches": {"jsonl": {"entries": 120, "file_bytes": 62914560, "records": 35000}, "asm": {"entries": 31}, "asm_keylocks": {"entries": 40},
+            "trailing": {"entries": 5}, "judge_parse": {"entries": 75}, "judge_recon": {"entries": 60}, "judge_chain": {"entries": 70},
+            "parse": {"entries": 31}, "built_chat": {"entries": 31, "ms_bytes": 7340032}, "judge_usage": {"rows": 43000},
+            "img": {"entries": 3, "bytes": 629145}, "path_links": {"entries": 1200}, "space_paths": {"entries": 300},
+            "session_stamp": {"entries": 31}, "task_seg": {"entries": 200}, "session_tok": {"entries": 31}},
  "pusher": {"cycles": 120, "wakes": 360, "wakes_event": 300, "wakes_backstop": 60, "cycle_ms_sum": 36000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 250.0, "cycle_cpu_ms_sum": 10300.0,
             "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120},
@@ -127,6 +137,30 @@ teardown() { rm -rf "$TEST_DIR"; }
     [ "$status" -eq 0 ]
     # 0.5 s of process CPU in 10 s; 300 ms of it on the pusher thread, 50 ms in the judge threads
     [[ "$output" == *"cpu 5.0% of one core (pusher 3.0%, judge 0.5%, other 1.5%)"* ]]
+}
+
+@test "romp perf: the memory line carries the window's deltas beside the levels, and the caches line the levels" {
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"memory    rss 410 MB (+10 MB)   anon 380 MB   hwm 415 MB   blocks 1001000 (+1000)   gc2 11 (+1)   malloc arena 100 MB, in use 80 MB, free 30 MB (+10 MB), mmap 200 MB"* ]]
+    [[ "$output" == *"caches    jsonl 120 files / 60.0 MB / 35000 records   asm 31   judge parse 75, recon 60, chain 70   parse 31   chat 31 (7.0 MB)   usage 43000 rows   img 3 (0.6 MB)   links 1200 + 300   stamps 31   task segs 200   tok 31"* ]]
+}
+
+@test "romp perf: a kernel without the memory gauges prints neither line and nothing else changes" {
+    # an older kernel's snapshot: no allocated_blocks, no caches block
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    d["process"] = {k: d["process"][k] for k in ("rss_kb", "threads", "cpu_s", "pid")}
+    d.pop("caches", None)
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"memory    "* ]]
+    [[ "$output" != *"caches    "* ]]
+    [[ "$output" == *"rss 410 MB"* ]]
 }
 
 @test "romp perf: the cycle line's max is the ring's, and the parenthetical names the ring" {

@@ -1927,7 +1927,32 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 
 - `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
   seconds since the process started, and whether the `romp-perf` log is on.
-- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`.
+- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`, and the exact memory gauges:
+  `rss_anon_kb` and `hwm_kb` (the anonymous and the peak resident size from
+  `/proc/self/status`; null with `source` "unavailable" where `/proc` is
+  absent, since `rss_kb` there is a peak from `ru_maxrss` and is never passed
+  off as a current figure), `allocated_blocks` (the interpreter's live
+  allocations, `sys.getallocatedblocks`), `gc_gen2` (generation-2 collections
+  so far) and `malloc` with `arena`, `hblkhd`, `uordblks`, `fordblks` in bytes
+  (glibc's `mallinfo2`: the arena size, the bytes in mmap'd blocks, the bytes in
+  use and the free bytes the allocator holds; the malloc half of the heap only,
+  pymalloc's arenas being invisible to it; null where glibc 2.33 or newer is
+  absent). Two snapshots an hour apart answer where resident memory goes:
+  blocks flat while rss climbs points at the allocator, blocks climbing at an
+  object graph, a `caches` gauge climbing at that cache. `romp perf` prints
+  them on a `memory` line with the window's deltas beside the levels.
+- `caches`: one block per cache the kernel, the judge and the event model keep,
+  each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
+  lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
+  (the event model's incremental reader), `asm`, `asm_keylocks` and `trailing`
+  (the assembly cache, its per-key locks and the torn-tail memo), `judge_parse`,
+  `judge_recon` and `judge_chain` (the judge's per-session parse, reconciliation
+  and chain memos), `parse` (the kernel's parsed sessions), `built_chat` with
+  `entries` and `ms_bytes` (the cached chat payloads and their materialized
+  serializations), `judge_usage` with `rows`, `img` with `entries` and `bytes`
+  (the data-URL previews), `path_links`, `space_paths`, `session_stamp`,
+  `task_seg` and `session_tok`. `romp perf` prints them on a `caches` line. The
+  memos report their own occupancy under `memos`.
 - `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
   cycle), `wakes_event` and `wakes_backstop` (how the loop's wait ended),
   `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
@@ -2036,6 +2061,23 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cycle served from the cycle's rows against swept) and `wide_hit` and
   `wide_miss` (the wide walk taken for a live session idle longer than the
   caption window); the memo lives for one cycle, so it has no occupancy gauge.
+  `captions` is the memo behind the captioner-store reader every timeline lane,
+  the feed's held card and the postal join read, keyed on the file's identity
+  (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
+  from memory against read and parsed), `fail` (reads that failed after a
+  successful stat and were not memoized; the kernel's stderr names the file
+  once per episode), `evict` (entries dropped: a lane that left the timeline,
+  the 512-entry bound, or the pop of an entry whose file is now absent), and
+  the gauge `entries`. `states_overlay` is the states-log fold behind the
+  awaiting overlay: `hit` (the records were the cached ones), `append` (only
+  the appended rows were folded), `refold` (every row was folded: a rewrite, a
+  shrink, or the file's first fold), `fail` (a read that failed on a file that
+  exists; the fold answered no overlay, memoized nothing, and the kernel's
+  stderr names the file once per episode), `evict` (entries dropped for
+  sessions that left the alive set), and `entries`. `thread_reg` is the SDK
+  registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
+  `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
+  an absent file's entry.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

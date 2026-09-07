@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -151,17 +151,60 @@ def _set_perf_log(on):
     return _PERF
 
 
+# glibc's mallinfo2 through ctypes (perf round 4, M1-lite, 2026-09-07): the large-object half of the heap.
+# The return type MUST be the struct: without `.restype` ctypes returns an int and the first field read
+# segfaults the process (the refuted M1 crashed the kernel on its first report, exit 139). Resolved once
+# at import; None where the symbol is absent (glibc before 2.33, musl, macOS), and the gauge is null then.
+try:
+    import ctypes as _ctypes
+
+    class _MallInfo2(_ctypes.Structure):
+        _fields_ = [(n, _ctypes.c_size_t) for n in ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks",
+                                                     "fsmblks", "uordblks", "fordblks", "keepcost")]
+    _MALLINFO2 = _ctypes.CDLL(None).mallinfo2
+    _MALLINFO2.restype = _MallInfo2
+    _MALLINFO2.argtypes = ()
+except Exception:
+    _MallInfo2 = None
+    _MALLINFO2 = None
+
+
+def _malloc_stats():
+    """{arena, hblkhd, uordblks, fordblks} in bytes from glibc's mallinfo2, or None where it is absent: the
+    main arena's size, the bytes in mmap'd blocks (large objects, the multi-MB frame strings), the bytes in
+    use and the free bytes held by the allocator. pymalloc's arenas are mmap'd by the interpreter itself and
+    invisible here, so this is the malloc half of the heap only."""
+    if _MALLINFO2 is None:
+        return None
+    try:
+        m = _MALLINFO2()
+    except Exception:
+        return None
+    return {"arena": int(m.arena), "hblkhd": int(m.hblkhd), "uordblks": int(m.uordblks), "fordblks": int(m.fordblks)}
+
+
 def _process_stats():
-    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot. VmRSS from /proc is the CURRENT
-    resident size; where /proc is absent (macOS) ru_maxrss is the PEAK, in bytes there, so it is scaled
-    to KB and the field is still called rss_kb."""
-    rss = 0
+    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot, plus the exact memory gauges
+    (perf round 4, M1-lite): rss_anon_kb and hwm_kb (RssAnon and VmHWM from /proc/self/status, the
+    anonymous and the peak resident size), allocated_blocks (sys.getallocatedblocks, the interpreter's
+    live allocations), gc_gen2 (generation-2 collections so far) and malloc (_malloc_stats). Two
+    snapshots an hour apart answer the RSS question: blocks flat while rss climbs points at the
+    allocator, blocks climbing at an object graph, a `caches` gauge climbing at that cache.
+
+    VmRSS from /proc is the CURRENT resident size; where /proc is absent (macOS) ru_maxrss is the PEAK,
+    in bytes there, so it is scaled to KB and the field is still called rss_kb, and the two /proc gauges
+    are null with `source` "unavailable": a peak is never passed off as an anonymous or current figure."""
+    rss, anon, hwm, source = 0, None, None, "unavailable"
     try:
         with open("/proc/self/status") as fh:
             for line in fh:
                 if line.startswith("VmRSS:"):
                     rss = int(line.split()[1])
-                    break
+                elif line.startswith("RssAnon:"):
+                    anon = int(line.split()[1])
+                elif line.startswith("VmHWM:"):
+                    hwm = int(line.split()[1])
+        source = "proc"
     except Exception:
         try:
             import resource
@@ -169,8 +212,90 @@ def _process_stats():
             rss = int(r // 1024) if sys.platform == "darwin" else int(r)
         except Exception:
             rss = 0
-    return {"rss_kb": rss, "threads": threading.active_count(), "cpu_s": time.process_time(),
-            "pid": os.getpid()}
+    try:
+        blocks = int(sys.getallocatedblocks())
+    except Exception:
+        blocks = None
+    try:
+        gen2 = int(gc.get_stats()[2]["collections"])
+    except Exception:
+        gen2 = None
+    return {"rss_kb": rss, "rss_anon_kb": anon, "hwm_kb": hwm, "source": source,
+            "allocated_blocks": blocks, "gc_gen2": gen2, "malloc": _malloc_stats(),
+            "threads": threading.active_count(), "cpu_s": time.process_time(), "pid": os.getpid()}
+
+
+def _gauge_values(d, tries=3):
+    """A snapshot of a cache dict's values for a summed gauge. Under the GIL list(d.values()) is one C-level
+    pass and cannot see a concurrent resize; without it a resize raises RuntimeError, so the snapshot is
+    retried a few times and gives up as None (the count alone is then reported), never a guess."""
+    for _ in range(tries):
+        try:
+            return list(d.values())
+        except RuntimeError:
+            continue
+    return None
+
+
+def _gauge_bytes(d, pick):
+    """The summed length of the str/bytes values `pick` selects from a cache's entries, or None when the
+    snapshot could not be taken (see _gauge_values)."""
+    vals = _gauge_values(d)
+    if vals is None:
+        return None
+    n = 0
+    for v in vals:
+        try:
+            x = pick(v)
+        except Exception:
+            continue
+        if isinstance(x, (str, bytes)):
+            n += len(x)
+    return n
+
+
+def _cache_gauges():
+    """The `caches` block of the /perf snapshot (perf round 4, M1-lite): exact occupancy for every cache the
+    kernel, the judge and the event model keep, each a len() or a sum of len()s under the cache's own lock
+    where it has one, nothing estimated, O(entries) and always on. The event model's and the judge's
+    blocks come from their own cache_gauges(); the kernel's are: parse (_parse_cache, one parsed session
+    per transcript path), built_chat (the cached chat payloads and the bytes of their materialized
+    serializations), judge_usage (the judge-usage rows held), img (the data-URL previews and their bytes),
+    path_links and space_paths (the per-message link caches), session_stamp, task_seg and session_tok
+    (entries). A block whose accessor raises is left out, so the reader sees the gap instead of a number.
+    The memos keep their own occupancy under `memos`."""
+    out = {}
+    try:
+        out.update(em.cache_gauges())
+    except Exception:
+        pass
+    try:
+        out.update(jd.cache_gauges())
+    except Exception:
+        pass
+    kernel_blocks = (
+        ("parse", lambda: {"entries": len(_parse_cache)}),
+        ("built_chat", lambda: {"entries": len(_built_chat),
+                                "ms_bytes": _gauge_bytes(_built_chat, lambda v: v[2] if isinstance(v, tuple) and len(v) > 2 else None)}),
+        ("judge_usage", _judge_usage_rows_held),
+        ("img", lambda: {"entries": len(_img_cache), "bytes": _gauge_bytes(_img_cache, lambda v: v)}),
+        ("path_links", lambda: {"entries": len(_PATH_LINK_CACHE)}),
+        ("space_paths", lambda: {"entries": len(_SPACE_PATH_CACHE)}),
+        ("session_stamp", lambda: {"entries": len(_SESSION_STAMP_CACHE)}),
+        ("task_seg", lambda: {"entries": len(_task_seg_cache)}),
+        ("session_tok", lambda: {"entries": len(_session_tok_cache)}),
+    )
+    for name, fn in kernel_blocks:
+        try:
+            out[name] = fn()
+        except Exception:
+            pass
+    return out
+
+
+def _judge_usage_rows_held():
+    with _JUDGE_USAGE_LOCK:
+        return {"rows": len(_JUDGE_USAGE_CACHE["rows"])}
 
 
 class _PerfStats:
@@ -188,7 +313,22 @@ class _PerfStats:
     milliseconds of wall time, `*_s` seconds:
       now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
                                    since the process started; whether the romp-perf stderr log is on
-      process                      rss_kb, threads, cpu_s (time.process_time), pid
+      process                      rss_kb, threads, cpu_s (time.process_time), pid, and the exact
+                                   memory gauges (perf round 4, M1-lite): rss_anon_kb / hwm_kb (RssAnon
+                                   and VmHWM from /proc; null with source "unavailable" where /proc is
+                                   absent), allocated_blocks (sys.getallocatedblocks), gc_gen2
+                                   (generation-2 collections) and malloc {arena, hblkhd, uordblks,
+                                   fordblks} (glibc mallinfo2 in bytes, the malloc half of the heap;
+                                   null where glibc 2.33+ is absent)
+      caches                       one block per cache the kernel, the judge and the event model keep,
+                                   each an EXACT occupancy (a len() or a sum of len()s under the
+                                   cache's lock, nothing estimated): jsonl {entries, file_bytes,
+                                   records}, asm / asm_keylocks / trailing {entries} (event_model),
+                                   judge_parse / judge_recon / judge_chain {entries} (judge), parse
+                                   {entries}, built_chat {entries, ms_bytes}, judge_usage {rows}, img
+                                   {entries, bytes}, path_links / space_paths / session_stamp /
+                                   task_seg / session_tok {entries}; see _cache_gauges. The memos'
+                                   own occupancy stays under `memos`
       pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
                                    call; a burst coalesces into one cycle), wakes_event /
                                    wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
@@ -282,7 +422,21 @@ class _PerfStats:
                                    bars_sig_fallback (bars builds that could not be keyed and took
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
-                                   per encode; _wire_default says each type once on stderr)
+                                   per encode; _wire_default says each type once on stderr);
+                                   intr_marks (the _interrupt_marks memo) -> hit / miss / evict and
+                                   the gauge entries; sessions_scope (the cycle's discover memo) ->
+                                   hit / miss / wide_hit / wide_miss; the per-lane reader memos
+                                   (perf round 4, item C, 2026-09-07): captions (_captions, the
+                                   captioner store keyed on (inode, mtime_ns, size)) -> hit / miss /
+                                   fail (reads that failed after a good stat, not memoized) / evict
+                                   (a lane that left the timeline, the LRU bound, or the pop of an
+                                   entry whose file is absent) and the gauge entries; states_overlay
+                                   (_states_awaiting_overlay's fold through _fold_records) -> hit /
+                                   append / refold / fail (a read that failed on a file that exists,
+                                   not memoized) / evict (sessions that left the alive set) and
+                                   entries; thread_reg (_thread_reg, the SDK registry keyed like
+                                   captions) -> hit / miss / fail / evict (the LRU bound or the pop
+                                   of an absent file's entry) and entries
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -445,7 +599,9 @@ class _PerfStats:
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
-                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report)):
+                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
+                             ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
+                             ("thread_reg", _thread_reg_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -454,7 +610,7 @@ class _PerfStats:
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
                 "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
-                "memos": memos}
+                "memos": memos, "caches": _cache_gauges()}
 
 
 _PERF_STATS = _PerfStats()
@@ -8792,7 +8948,9 @@ def _interrupt_block_tick(now, tmux):
                 # every verdict about that turn, so their ruling outranks this lift on arrival order
                 _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0)
                 _set_intr_blocked(sid, None)
-    _intr_marks_forget({s["sid"] for s in alive})       # a sid that left the alive set releases its memo entries
+    _alive_sids = {s["sid"] for s in alive}
+    _intr_marks_forget(_alive_sids)                     # a sid that left the alive set releases its memo entries
+    _states_overlay_forget(_alive_sids)                 # and its states-overlay fold entry (perf round 4, item C3)
     # a flip's writer marked the views dirty and woke the pusher: the next cycle carries it (docstring)
 
 
@@ -12583,8 +12741,10 @@ def _seed_fork_stores(parent_sid, sid, path, cut_uuid):
                 o["id"] = sid + cid[len(parent_sid):]
                 rows.append(json.dumps(o))
         if rows:
-            jd.CAPDIR.mkdir(parents=True, exist_ok=True)
-            (jd.CAPDIR / (sid + ".jsonl")).write_text("\n".join(rows) + "\n")
+            # published through a temp + os.replace, never written in place: _captions memoizes the
+            # file on (inode, mtime_ns, size), and an in-place write of equal size inside one mtime tick
+            # would keep all three (perf round 4, item C1); the write_reg idiom, a new inode per publish
+            _atomic_write(jd.CAPDIR / (sid + ".jsonl"), "\n".join(rows) + "\n")
         # 3) the goal store: fresh skeleton whose placements are the parent's, sealed
         pstore = jd.load_goals(parent_sid)
         store = jd.load_goals(sid)                      # the fresh-skeleton path (rompUuid=sid, CAS base set)
@@ -12809,31 +12969,82 @@ def _comment_msg_text(rec):
     return "\n".join(p for p in parts if p).strip()
 
 
-_thread_reg_memo = {}   # tsid -> ((mtime_ns, size), reg dict) — see _thread_reg
+# The _thread_reg memo (perf round 4, item C4, 2026-09-07): tsid -> (key, reg). The key is
+# jd._file_key(STATE/sdk/<tsid>.json) = (st_ino, st_mtime_ns, st_size), taken BEFORE the read, so a file
+# that changes between the stat and the read is caught by the next call's stat (one extra miss, never a
+# stale serve). The key is complete against how the file is written: sdk_backend.write_reg is the one
+# writer of a registry file and publishes through a writer-unique temp + os.replace, so every write is a
+# new inode and an equal-size rewrite inside one mtime tick still changes the key (the round-3 review's
+# hazard with in-place rewrites; jd._reg_spawned_at and sdk_backend._REG_CACHE record the same rule; the
+# kernel's seed-pin migration rewrites regs through _atomic_write, also os.replace). An absent file is {}
+# and its entry is popped; a stat that fails otherwise is a sentinel key that matches nothing (read, not
+# memoized); a read or parse failure after a successful stat is not memoized (the `fail` counter, one
+# stderr line per episode), since a permission or descriptor failure is not a file version. Dict order is
+# LRU (a hit reinserts), one eviction per insert past the cap, never clear-at-cap: sweeps over dormant
+# sids read through this too, and a clear at the cap would drop the live sessions' entries every cycle
+# (the _JSONL_CACHE lesson, event_model.py). Callers read the returned dict and never write it (a
+# source-text test pins that); a hit still hands out a SHALLOW COPY, the rule the 2026-09-03 memo this
+# one replaces set (a caller's edit never reaches the memo, whatever a future caller does). Counters
+# ride /perf under memos.thread_reg; the lock covers the dict ops and the counters, never the read.
+_thread_reg_memo = {}
+_THREAD_REG_MEMO_MAX = 512
+_thread_reg_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
+_thread_reg_failed = set()      # paths whose last read after a good stat failed: one stderr line per episode
+_THREAD_REG_LOCK = threading.Lock()
+
+
+def _thread_reg_report():
+    """The memo's counters plus its occupancy, for /perf (memos.thread_reg)."""
+    with _THREAD_REG_LOCK:
+        out = dict(_thread_reg_stats)
+        out["entries"] = len(_thread_reg_memo)
+    return out
 
 
 def _thread_reg(tsid):
-    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when unreadable.
-    Memoized on the file's (mtime, size, inode) — thirteen callers, two of them per chat build, each decoded
-    the file afresh (2026-09-03). Returns a shallow copy so a caller's edit never leaks into the memo."""
-    p = jd.STATE / "sdk" / (tsid + ".json")
-    try:
-        st = p.stat()
-        key = (st.st_mtime_ns, st.st_size, st.st_ino)
-    except OSError:
-        _thread_reg_memo.pop(tsid, None)
+    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent or
+    unreadable. Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and
+    a shallow copy each call so a caller's edit never leaks into the memo."""
+    p = str(jd.STATE / "sdk" / (tsid + ".json"))
+    key = jd._file_key(p)
+    if key is None:                                       # absent: a state, not an entry
+        with _THREAD_REG_LOCK:
+            if _thread_reg_memo.pop(tsid, None) is not None:
+                _thread_reg_stats["evict"] += 1
         return {}
-    hit = _thread_reg_memo.get(tsid)
-    if hit is not None and hit[0] == key:
-        return dict(hit[1])
+    with _THREAD_REG_LOCK:
+        ent = _thread_reg_memo.get(tsid)
+        if ent is not None and ent[0] == key:
+            _thread_reg_memo.pop(tsid, None)              # a served entry is a USED entry (LRU reinsert)
+            _thread_reg_memo[tsid] = ent
+            _thread_reg_stats["hit"] += 1
+            return dict(ent[1])
+        _thread_reg_stats["miss"] += 1
     try:
-        d = json.loads(p.read_text())
-        d = d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
+        with open(p) as fh:
+            d = json.loads(fh.read())
+    except FileNotFoundError:
+        return {}                                         # unlinked between the stat and the read: the next stat pops it
+    except (OSError, ValueError) as e:
+        with _THREAD_REG_LOCK:
+            _thread_reg_stats["fail"] += 1
+            first = p not in _thread_reg_failed
+            _thread_reg_failed.add(p)
+        if first:
+            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered {} and not memoized\n"
+                             % (os.path.basename(p), e))
         return {}
-    if len(_thread_reg_memo) > 512:
-        _thread_reg_memo.pop(next(iter(_thread_reg_memo)))
-    _thread_reg_memo[tsid] = (key, d)
+    if _thread_reg_failed:
+        with _THREAD_REG_LOCK:
+            _thread_reg_failed.discard(p)                 # a good read ends the episode; the next failure logs again
+    d = d if isinstance(d, dict) else {}
+    if isinstance(key, tuple):                            # never under the sentinel of a failed stat
+        with _THREAD_REG_LOCK:
+            _thread_reg_memo.pop(tsid, None)
+            while len(_thread_reg_memo) >= _THREAD_REG_MEMO_MAX:
+                _thread_reg_memo.pop(next(iter(_thread_reg_memo)))   # the least recently used goes first
+                _thread_reg_stats["evict"] += 1
+            _thread_reg_memo[tsid] = (key, d)
     return dict(d)
 
 
@@ -22905,19 +23116,106 @@ def _states_awaiting_overlay(sid):
     chat off a stale awaiting:true from 08:57 — never cleared — while idle on the timeline; the chat's working
     signal is open_now OR awaiting, the timeline's is open_now alone, so a stale awaiting splits them). An
     idle/waiting state after an awaiting:true is consistent with awaiting (idle while the job runs) and does
-    NOT supersede it. State records carry "state", overlay records carry "awaiting"; the two never overlap."""
-    last = None
-    working_after = False
-    for o in _states_rows(sid):
-        if not isinstance(o, dict):
-            continue
-        if "awaiting" in o:
-            last, working_after = o, False             # a fresh overlay record resets the supersede flag
-        elif o.get("state") == "working":
-            working_after = True                       # a real work turn resumed since the last overlay record
+    NOT supersede it. State records carry "state", overlay records carry "awaiting"; the two never overlap.
+
+    Folded append-incrementally since 2026-09-07 (perf round 4, item C3) through _fold_records, the reader
+    `_state_intervals` and `_machine_cut` already use on the same file: the carried state is (the last
+    overlay row or None, working_after), and each row steps it through _states_overlay_step. The identity
+    gate is the shared reader's: (st_mtime, st_size) plus the 64-byte tail compare on growth, a full re-fold
+    on a shrink or a same-size new mtime. Every states writer appends (sdk_backend's append_* helpers, the
+    kernel's _record_idle and picker check, hooks/tmux-status.sh), so an append is the only change the
+    file sees and the gate is exact for it. A missing file folds to the empty state, the None the whole-file
+    scan answered on OSError; a read that fails on a file that exists answers the same None, counts under
+    `fail`, is logged once per episode and is never memoized (_states_overlay_on). The shared reader serves
+    an UNCHANGED file's records from its cache without opening it, so a permission flip shows as a failure
+    only once the file changes (or its reader entry was evicted): `fail` counts reads that were attempted
+    and failed. Counters ride /perf under memos.states_overlay."""
+    p = jd.STATE / "states" / ("%s.jsonl" % sid)
+    last, working_after = _fold_records(_states_overlay_cache, p, _states_overlay_init, _states_overlay_step,
+                                        on=functools.partial(_states_overlay_on, str(p)))
     if last is not None and last.get("awaiting") and working_after:
         return {"awaiting": False, "why": None}            # stale true — superseded by a later work turn
     return last
+
+
+_states_overlay_cache = {}    # str(states path) -> _fold_records entry over (last overlay row or None, working_after)
+_states_overlay_stats = {"hit": 0, "append": 0, "refold": 0, "fail": 0, "evict": 0}
+_states_overlay_failed = set()   # paths whose last read failed on a file that exists: one stderr line per episode
+_STATES_OVERLAY_LOCK = threading.Lock()   # the counters are bumped from the pusher, the chat's connect pushes on
+#                                           WS threads and GET /sessions at once: `+= 1` drifts low without the GIL
+
+
+def _states_overlay_init():
+    return (None, False)
+
+
+def _states_overlay_step(state, o):
+    """One states row into (last overlay row, working_after). Awaiting-first, the scan's if/elif order:
+    a row carrying an `awaiting` key is an overlay row whatever else it carries (it resets the supersede
+    flag and never sets it); a row whose `state` is "working" is a work turn (extra keys such as the
+    picker check's `tier` change nothing); every other row (idle/waiting states, retriesGaveUp,
+    orphanReply, cmdGesture, machineCut, resumeFork, effortApplied) leaves the state alone. Equal to the
+    whole-file scan for every row shape any states writer produces: the scan's substring tests matched a
+    quoted key, and a key's text inside a JSON string is escaped, so they never fired on a why or a
+    gesture's text. ONE deviation from that scan, stated here and pinned by a test: the scan set
+    working_after on an UNPARSEABLE line that happened to carry both substrings, without parsing it; the
+    fold sees parsed records only, so such a line changes nothing. No states writer produces one (every
+    row is one json.dumps and a newline), and a torn tail is the shared reader's business, not a substring
+    heuristic's."""
+    if "awaiting" in o:
+        return (o, False)
+    if o.get("state") == "working":
+        return (state[0], True)
+    return state
+
+
+def _states_overlay_bump(kind, n=1):
+    with _STATES_OVERLAY_LOCK:
+        _states_overlay_stats[kind] = _states_overlay_stats.get(kind, 0) + n
+
+
+def _states_overlay_on(path_s, kind):
+    """The fold's `on` for one states file: count the path the fold took, and on "fail" (the file exists and
+    could not be stat'ed, opened or read; the fold answered the empty state and memoized nothing) write one
+    stderr line per episode, so a failed read is told apart from a rewrite in /perf and in the log. A later
+    successful fold of the same file ends the episode."""
+    _states_overlay_bump(kind)
+    if kind == "fail":
+        with _STATES_OVERLAY_LOCK:
+            first = path_s not in _states_overlay_failed
+            _states_overlay_failed.add(path_s)
+        if first:
+            sys.stderr.write("states-overlay: %s unreadable (the file exists); answered no overlay and memoized nothing\n"
+                             % os.path.basename(path_s))
+    elif _states_overlay_failed:
+        with _STATES_OVERLAY_LOCK:
+            _states_overlay_failed.discard(path_s)
+
+
+def _states_overlay_forget(alive):
+    """Drop the fold entries for sessions outside `alive` (the interrupt tick's alive set, once per cycle):
+    the readers of this overlay are the session chips and lanes of live sessions, so a session leaving the
+    alive set is the event that retires its entry. The shared records stay in the event model's LRU reader;
+    a later read of a departed session's file re-folds them without re-reading the file."""
+    keep = {str(jd.STATE / "states" / ("%s.jsonl" % sid)) for sid in alive}
+    gone = [k for k in list(_states_overlay_cache) if k not in keep]
+    n = 0
+    for k in gone:
+        if _states_overlay_cache.pop(k, None) is not None:
+            n += 1
+    if n:
+        _states_overlay_bump("evict", n)
+
+
+def _states_overlay_report():
+    """The fold's counters plus its occupancy, for /perf (memos.states_overlay): hit (the records were the
+    cached ones), append (only the appended rows stepped), refold (every row stepped: a rewrite, a shrink, or
+    the first fold of a file), fail (a read that failed on a file that exists; not memoized), evict (entries
+    dropped for sessions that left the alive set), and the gauge entries."""
+    with _STATES_OVERLAY_LOCK:
+        out = dict(_states_overlay_stats)
+    out["entries"] = len(_states_overlay_cache)
+    return out
 
 
 def _session_retrying(sid, tm):
@@ -23902,14 +24200,146 @@ def _ask_poll_once():
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
 
+# The _captions memo (perf round 4, items C1 and C2, 2026-09-07): fsid -> (key, _Caps). The key is
+# jd._file_key(CAPDIR/<fsid>.jsonl) = (st_ino, st_mtime_ns, st_size), taken BEFORE the read, so a file that
+# changes between the stat and the read is caught by the next call's stat (one extra miss, never a stale
+# serve). The key is complete against how the file is written: jd.append_caption opens it in append mode
+# (every row grows st_size), and _seed_fork_stores publishes the forked child's file through a temp +
+# os.replace (a new inode). No writer rewrites a captions file in place, so there is no equal-size rewrite
+# inside one mtime tick for the three components to miss (the round-3 review's hazard; a source-text test
+# pins both writers). An absent file is an empty _Caps and its entry is popped; a stat that fails otherwise
+# is a sentinel key that matches nothing (read, not memoized); a read that fails after a successful stat is
+# not memoized (the `fail` counter, one stderr line per episode), since a permission or descriptor failure
+# is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
+# build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget).
+# The feed's held-card path reads live sessions, a subset of the lanes; the postal join (_msg_summaries)
+# reads _sessions(now), discover's 48 h window, a superset of the 12 h lane set, so an entry it made for a
+# session outside the lanes is released at the next full build and read again only when that session's
+# transcript changes (the join's own per-session mtime gate). `evict` counts all three drops: a lane that
+# left the timeline, the LRU bound, and the pop of an entry whose file is now absent. Every caller reads the
+# object and never writes it (a source-text test pins that), so a hit hands out the same _Caps, indexes
+# included. Counters ride /perf under memos.captions; the lock covers the dict ops and the counters, never
+# the read or the parse.
+_caps_memo = {}
+_CAPS_MEMO_MAX = 512
+_caps_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
+_caps_failed = set()            # paths whose last read after a good stat failed: one stderr line per episode
+_CAPS_LOCK = threading.Lock()
+
+
+class _Caps(dict):
+    """One transcript's captions, {id: row}, as _captions memoizes it, with two indexes built on first use
+    and never while the lines are parsed: they describe the FINAL dict, so a duplicate id (a live caption row
+    and then the final row) is indexed once, by the row the dict serves. `pidx` maps _seg_key(id) to the
+    row for the '#p' (message) rows, first inserted wins, which is what _seg_caption's scan (`next` in
+    dict order) returned. `sidx` maps _seg_key(id) to the grain-'segment' rows in insertion order, the
+    sequence _seg_work_caption's scan visited, so its strict '<' nearest-t pick resolves a tie to the same
+    row. Each index is built into a local and assigned once, so a concurrent reader sees None or a complete
+    index, never a partial one. Read-only by contract for every caller."""
+    __slots__ = ("_pidx", "_sidx")
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._pidx = None
+        self._sidx = None
+
+    @property
+    def pidx(self):
+        idx = self._pidx
+        if idx is None:
+            idx = {}
+            for k, v in self.items():
+                if k.endswith("#p"):
+                    idx.setdefault(_seg_key(k), v)
+            self._pidx = idx
+        return idx
+
+    @property
+    def sidx(self):
+        idx = self._sidx
+        if idx is None:
+            idx = {}
+            for k, v in self.items():
+                if v.get("grain") == "segment":
+                    idx.setdefault(_seg_key(k), []).append(v)
+            self._sidx = idx
+        return idx
+
+
+def _caps_memo_report():
+    """The memo's counters plus its occupancy, for /perf (memos.captions)."""
+    with _CAPS_LOCK:
+        out = dict(_caps_memo_stats)
+        out["entries"] = len(_caps_memo)
+    return out
+
+
+def _caps_forget(keep):
+    """Drop the memo entries for transcripts outside `keep`: build_timeline's lane set at a full build
+    (live sessions plus the dead lanes inside its 12 h window). The feed's callers read a subset of it; the
+    postal join reads discover's 48 h window, a superset, and an entry of its outside the lanes is dropped
+    here and read again only when that transcript changes. Iterates a key snapshot under the lock; a
+    connect-push build on another thread may insert concurrently."""
+    with _CAPS_LOCK:
+        gone = [k for k in _caps_memo if k not in keep]
+        for k in gone:
+            _caps_memo.pop(k, None)
+        if gone:
+            _caps_memo_stats["evict"] += len(gone)
+
+
 def _captions(fsid):
-    """{unit id -> caption row} from captions/<fsid>.jsonl — append-incremental like the states logs
-    (2026-09-03): the chat build, the feed and the timeline each re-read and re-decoded the whole file
-    per build. Rows are the cache's objects: read-only."""
-    out = {}
-    for o in em._read_jsonl_incremental(jd.CAPDIR / (fsid + ".jsonl")):
+    """{id: row} of the captioner's store for one transcript, the last row per id winning (a live caption
+    and then its final), MEMOIZED on the file's identity (see _caps_memo). A hit returns the same _Caps
+    object; an absent file is a fresh empty _Caps and is never memoized. A row that is not a JSON object
+    is skipped like an unparseable line."""
+    p = str(jd.CAPDIR / (fsid + ".jsonl"))
+    key = jd._file_key(p)
+    if key is None:                                       # absent: a state, not an entry
+        with _CAPS_LOCK:
+            if _caps_memo.pop(fsid, None) is not None:
+                _caps_memo_stats["evict"] += 1
+        return _Caps()
+    with _CAPS_LOCK:
+        ent = _caps_memo.get(fsid)
+        if ent is not None and ent[0] == key:
+            _caps_memo.pop(fsid, None)                    # a served entry is a USED entry (LRU reinsert)
+            _caps_memo[fsid] = ent
+            _caps_memo_stats["hit"] += 1
+            return ent[1]
+        _caps_memo_stats["miss"] += 1
+    out = _Caps()
+    try:
+        with open(p, errors="replace") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        return out                                        # unlinked between the stat and the read: the next stat pops it
+    except OSError as e:
+        with _CAPS_LOCK:
+            _caps_memo_stats["fail"] += 1
+            first = p not in _caps_failed
+            _caps_failed.add(p)
+        if first:
+            sys.stderr.write("captions: %s unreadable after a successful stat (%r); answered empty and not memoized\n"
+                             % (os.path.basename(p), e))
+        return out
+    if _caps_failed:
+        with _CAPS_LOCK:
+            _caps_failed.discard(p)                       # a good read ends the episode; the next failure logs again
+    for line in text.splitlines():
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
         if isinstance(o, dict) and o.get("id"):
             out[o["id"]] = o
+    if isinstance(key, tuple):                            # never under the sentinel of a failed stat
+        with _CAPS_LOCK:
+            _caps_memo.pop(fsid, None)
+            while len(_caps_memo) >= _CAPS_MEMO_MAX:
+                _caps_memo.pop(next(iter(_caps_memo)))    # the least recently used goes first, never the whole memo
+                _caps_memo_stats["evict"] += 1
+            _caps_memo[fsid] = (key, out)
     return out
 
 
@@ -33408,11 +33838,19 @@ def _seg_caption(caps, seg_id):
     """The captioner's MESSAGE caption for a segment (store id '<seg>#p'), resilient to the same seg-id
     timestamp drift as _seg_placed — the captioner keys its store from the JUDGE's parse. The drift made
     the provisional card silently fall back to the raw prompt instead of its 'Analyzing: <gist>' line, and
-    dropped timeline message-dot gists, for any queued/forwarded SDK message. '' when absent."""
+    dropped timeline message-dot gists, for any queued/forwarded SDK message. '' when absent.
+
+    On an exact miss a memoized _Caps answers from its `pidx` index (perf round 4, item C2: first
+    inserted wins, the same row the scan's `next` returned); a plain dict (the tests' fixtures) takes
+    the scan."""
     hit = caps.get(seg_id + "#p")
     if hit is None:
         want = _seg_key(seg_id + "#p")
-        hit = next((v for k, v in caps.items() if k.endswith("#p") and _seg_key(k) == want), None)
+        pidx = getattr(caps, "pidx", None)
+        if pidx is not None:
+            hit = pidx.get(want)
+        else:
+            hit = next((v for k, v in caps.items() if k.endswith("#p") and _seg_key(k) == want), None)
     return (hit or {}).get("caption", "")
 
 
@@ -33427,7 +33865,11 @@ def _seg_work_caption(caps, seg_id):
     _seg_key (em._segment_id anchors them on their atom uuid, the user 2026-07-22), so they no longer
     collide with each other; the nearest-t pick remains only to absorb a drifted t and to disambiguate
     the rare TWO segments that share real trigger text (e.g. two 'continue's) — drift runs seconds,
-    distinct segments sit minutes apart. '' when absent."""
+    distinct segments sit minutes apart. '' when absent.
+
+    On an exact miss a memoized _Caps answers from its `sidx` index (perf round 4, item C2: the
+    grain-'segment' rows under this key in insertion order, the rows the scan visited, so the strict '<'
+    below resolves a tie to the same row); a plain dict takes the scan."""
     hit = caps.get(seg_id)
     if hit is not None:
         return hit.get("caption", "")
@@ -33439,10 +33881,13 @@ def _seg_work_caption(caps, seg_id):
     except ValueError:
         return ""
     want = _seg_key(seg_id)
+    sidx = getattr(caps, "sidx", None)
+    if sidx is not None:
+        rows = sidx.get(want, ())
+    else:
+        rows = (v for k, v in caps.items() if v.get("grain") == "segment" and _seg_key(k) == want)
     best = None
-    for k, v in caps.items():
-        if v.get("grain") != "segment" or _seg_key(k) != want:
-            continue
+    for v in rows:
         d = abs((v.get("t") or 0) - seg_t)
         if best is None or d < best[0]:
             best = (d, v)
@@ -35161,6 +35606,15 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             judging = []
     else:                                                # SKELETON: the heavy time-plotted detail rides the {type:"bars"} message
         messages, judging = [], []
+    if with_bars and not live_only:
+        # The captions memo releases the lanes that left the timeline here (perf round 4, item C1): a full
+        # build's lane set (live sessions plus the dead lanes inside the 12 h window, dismissed dead lanes
+        # dropped) is the set this build read. The feed's held-card path reads live sessions, a subset; the
+        # postal join (_msg_summaries) reads discover's 48 h window, a superset, so an entry it made for a
+        # session outside the lanes goes here and is read again only when that session's transcript changes
+        # (the join's per-session mtime gate). A skeleton or live-only build reads a subset of the lanes and
+        # so must not evict on it.
+        _caps_forget(set(id2name))
     # compaction-sweep gradient (widest→narrowest): the timeline's scan-bar has no client-side colormap, so
     # ship the GLOBAL map sampled at the same scaleX stops the chat surface uses (render.ts applyCompactSweep),
     # letting the bar slide through the map's hues as it compresses — mirroring the context battery fill.

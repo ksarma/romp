@@ -562,6 +562,7 @@ class PerBuildReadersAreCached(_StateSandbox):
             self.assertEqual(c.n, 0)
         finally:
             em._JSONL_CACHE.pop(str(cap), None)
+            km._caps_memo.pop(self.SID, None)
             try: os.unlink(cap)
             except OSError: pass
 
