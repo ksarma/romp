@@ -67,11 +67,13 @@ class _EnvFile(unittest.TestCase):
         self.d = tempfile.mkdtemp()
         self.path = os.path.join(self.d, "service.env")
         self._before = {v: os.environ.get(v) for v in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV",
-                                                       "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF")}
+                                                       "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF",
+                                                       "ROMP_CREDENTIAL_COMMAND")}
         os.environ["ROMP_SERVICE_ENV_FILE"] = self.path
         os.environ["ROMP_SERVICE_ENV"] = self.path
         os.environ.pop("ANTHROPIC_API_KEY", None)
         os.environ.pop("ROMP_API_KEY_REF", None)
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
         self.write_env(OLD_KEY)
         ks._CACHE = ((), "")          # the stat-identity cache is module-global
 
@@ -219,6 +221,27 @@ class AtomicRewrite(_EnvFile):
         ks.write_key(NEW_KEY, p)
         self.assertEqual(ks.read_key(p), NEW_KEY)
         self.assertEqual(stat.S_IMODE(os.stat(p).st_mode), 0o600)
+
+    def test_a_command_profile_replaces_the_key_line_in_place_and_a_key_replaces_it_back(self):
+        # A profile may select a credential command (ROMP_CREDENTIAL_COMMAND=) the way it selects a
+        # reference: the one source line is rewritten in place, every other line survives, and a later
+        # swap to a key removes the command line (it would otherwise keep outranking the key).
+        cmd = 'test-credential-helper "$1"'
+        before = open(self.path).read().splitlines()
+        res = ks.write_source(ks.KeySource("command", cmd), self.path)
+        after = open(self.path).read().splitlines()
+        self.assertEqual((res["old"].kind, res["old"].value), ("file", OLD_KEY))
+        self.assertEqual(len(before), len(after))
+        for b, a in zip(before, after):
+            self.assertEqual(a, "%s=%s" % (ks.CMD_VAR, cmd) if b.startswith(ks.KEY_VAR + "=") else b)
+        self.assertEqual(ks.read_source(self.path), ks.KeySource("command", cmd))
+        self.assertEqual(ks.read_key(self.path), "", "a command is not a raw key")
+        self.assertEqual(open(ks.marker_path(self.path)).read(), "command\n")
+        ks.write_key(NEW_KEY, self.path)
+        body = open(self.path).read()
+        self.assertNotIn(ks.CMD_VAR, body, "a key selected over a command removes the command line")
+        self.assertEqual(ks.read_key(self.path), NEW_KEY)
+        self.assertFalse(os.path.exists(ks.marker_path(self.path)), "the marker follows the choice")
 
 
 class _Backend(_EnvFile):
@@ -867,6 +890,27 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(rc, 0)
         self.assertNotIn("ANTHROPIC_API_KEY=", open(self.path).read())
         self.assertEqual(ks.read_source(self.path), ks.KeySource("op", ref))
+
+    def test_selecting_a_command_profile_writes_the_line_and_never_prints_the_command(self):
+        # The profile mechanism is the reference's: a sibling file carrying a ROMP_CREDENTIAL_COMMAND= line
+        # selects the command kind, its stale key and reference lines are not copied, and the command
+        # text is never printed (a fingerprint stands for it).
+        cmd = 'test-credential-helper "$1" --format=env'
+        self.sibling("helper", "ANTHROPIC_API_KEY=%s\nROMP_API_KEY_REF=op://test-vault/test-item/api-key\n"
+                               "ROMP_CREDENTIAL_COMMAND=%s\n" % (NEW_KEY, cmd))
+        rc, said = self.run_cli("helper")
+        self.assertEqual(rc, 0)
+        body = open(self.path).read()
+        self.assertIn("ROMP_CREDENTIAL_COMMAND=" + cmd, body)
+        self.assertNotIn("ANTHROPIC_API_KEY=", body)
+        self.assertNotIn("ROMP_API_KEY_REF=", body)
+        self.assertEqual(ks.read_source(self.path), ks.KeySource("command", cmd))
+        for line in self.OTHER_LINES:
+            self.assertIn(line, body)
+        self.assertEqual(open(ks.marker_path(self.path)).read(), "command\n")
+        for hidden in (cmd, NEW_KEY, OLD_KEY):
+            self.assertNotIn(hidden, said)
+        self.assertIn("no manager restart needed", said)
 
     def test_changing_references_takes_effect_in_the_same_file(self):
         first = "op://test-vault/first/api-key"

@@ -50,8 +50,11 @@ os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
 # A runtime provider can also be selected directly from the manager's environment. Remove its
 # inherited reference before module loading, so an auth test cannot resolve a developer's vault
-# merely because the isolated service.env is absent. Tests set synthetic references explicitly.
+# merely because the isolated service.env is absent. Tests set synthetic references explicitly. The
+# credential command (keysource's command kind) is selected by the same door, and an empty value is an
+# explicit, invalid choice rather than an absent one, so the variable is removed rather than blanked.
 os.environ.pop("ROMP_API_KEY_REF", None)
+os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
 # Every shell under a romp-managed session inherits ROMP_SUPERVISED=1 from the kernel (the service
 # unit exports it), and keysource gives that variable authority: a supervised manager reads the env
 # file only and ignores a startup key. Twenty-five tests that stage a startup key went red when the
@@ -81,6 +84,7 @@ def _no_real_service_env():
     for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
         os.environ[var] = _NO_SERVICE_ENV
     os.environ.pop("ROMP_API_KEY_REF", None)
+    os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
     os.environ.pop("ROMP_SUPERVISED", None)
     _reset_keysource_state()
     yield

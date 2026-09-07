@@ -37,8 +37,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("ROMP_SERVICE_ENV_FILE", str(path))
     monkeypatch.setenv("ROMP_SERVICE_ENV", str(path))
     monkeypatch.delenv("ROMP_API_KEY_REF", raising=False)
+    monkeypatch.delenv("ROMP_CREDENTIAL_COMMAND", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("ROMP_SUPERVISED", raising=False)
+    # The command kind resolves through a hook the kernel wires; here it stays unwired unless a test
+    # sets it, so no test can run a command by accident.
+    monkeypatch.setattr(ks, "COMMAND_RESOLVER", None, raising=False)
     ks._CACHE = ((), "")
     ks._AUTHORITATIVE_PATHS.clear()
     ks._ENV_PROVIDER_PATHS.clear()
@@ -714,3 +718,204 @@ def test_op_read_gets_a_minimal_environment(env, tmp_path, monkeypatch):
     for present in ("PATH", "HOME", "XDG_CONFIG_HOME", "LC_ALL", "OP_SERVICE_ACCOUNT_TOKEN"):
         assert present in names, present
     assert not any(n.startswith("ROMP_") for n in names), "nothing of romp's reaches op"
+
+
+# --- the command kind: a configured command beside the reference, selected through the same doors ---
+# Never run here: these tests select, validate, fingerprint, remember and write the kind. The fixture
+# fails any subprocess, and the resolver hook stays unwired unless a test sets it.
+CMD = 'test-credential-helper "$1" --format=env'
+OTHER_CMD = "test-other-credential-helper"
+
+
+def test_a_command_line_outranks_the_reference_and_the_key_line(env):
+    env.path.write_text(f"ANTHROPIC_API_KEY={OLD_KEY}\nROMP_API_KEY_REF={REF}\nROMP_CREDENTIAL_COMMAND={CMD}\n")
+    source = ks.parse_source(env.path.read_text())
+    assert (source.kind, source.value) == ("command", CMD)
+    assert source.configured
+    source.validate()
+    assert ks.read_source(str(env.path)) == source
+    assert ks.read_key(str(env.path)) == "", "a command is never a raw key"
+    assert CMD not in repr(source)
+    # one layer of matching quotes is stripped (systemd does); an inner `=` and `$1` survive
+    assert ks.parse_source('ROMP_CREDENTIAL_COMMAND="%s"\n' % CMD).value == CMD
+    # the reference stays the default when no command is configured
+    assert ks.parse_source(f"ANTHROPIC_API_KEY={OLD_KEY}\nROMP_API_KEY_REF={REF}\n").kind == "op"
+    env.op.assert_not_called()
+
+
+def test_a_garbled_command_line_is_an_error_that_names_the_line_only(env):
+    env.path.write_bytes(b"ROMP_CREDENTIAL_COMMAND=helper-\xff\xfe\n")
+    src = ks.read_source(str(env.path))
+    assert src.kind == "error" and ks.CMD_VAR in src.error and "helper" not in src.error
+    assert src.configured
+
+
+@pytest.mark.parametrize("text", ["", "   ", "a\nb", "a\rb", "a\0b", "x" * 4097],
+                         ids=["empty", "blank", "newline", "return", "nul", "oversized"])
+def test_validate_refuses_an_empty_multi_line_or_oversized_command_without_echoing_it(env, text):
+    source = ks.KeySource("command", text)
+    assert source.configured, "an invalid command is still an explicit choice, never a login"
+    err = safe_failure(source.validate, text.strip() or "\0")
+    assert ks.CMD_VAR in str(err)
+    ks.KeySource("command", "x" * 4096).validate()
+    env.op.assert_not_called()
+
+
+def test_the_command_fingerprint_hashes_the_kind_and_the_text_and_never_shows_the_text(env):
+    source = ks.KeySource("command", CMD)
+    fp = source.fingerprint()
+    assert fp == ks.fingerprint("command:" + CMD)
+    assert fp != ks.fingerprint(CMD) and fp != ks.KeySource("op", CMD).fingerprint()
+    assert len(fp) == 12 and CMD not in fp
+    assert ks.KeySource("command", OTHER_CMD).fingerprint() != fp
+
+
+@pytest.mark.parametrize("supervised", [False, True])
+def test_the_file_line_selects_the_command_for_any_manager(env, monkeypatch, supervised):
+    if supervised:
+        monkeypatch.setenv("ROMP_SUPERVISED", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", BOOT_KEY)
+    monkeypatch.setenv("ROMP_API_KEY_REF", OTHER_REF)
+    env.path.write_text(f"ROMP_API_KEY_REF={REF}\nROMP_CREDENTIAL_COMMAND={CMD}\n")
+    source = ks.select_source(BOOT_KEY)
+    assert (source.kind, source.value) == ("command", CMD)
+    assert ks._AUTHORITATIVE_PATHS[str(env.path)] == "command"
+    assert ks.read_marker(str(env.path)) == "command"
+    env.op.assert_not_called()
+
+
+def test_the_environment_line_selects_the_command_for_a_foreground_manager_only(env, monkeypatch):
+    monkeypatch.setenv("ROMP_CREDENTIAL_COMMAND", CMD)
+    monkeypatch.setenv("ROMP_API_KEY_REF", REF)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", BOOT_KEY)
+    source = ks.select_source(BOOT_KEY)
+    assert (source.kind, source.value) == ("command", CMD), "command > op > file at the environment door too"
+    assert ks.select_source(BOOT_KEY) == source
+    # removing it is an error until another source is configured, as for the reference
+    monkeypatch.delenv("ROMP_CREDENTIAL_COMMAND")
+    monkeypatch.delenv("ROMP_API_KEY_REF")
+    removed = ks.select_source(BOOT_KEY)
+    assert removed.kind == "error" and removed.configured
+    assert "command was removed from the environment" in removed.error
+    safe_failure(removed.resolve, CMD)
+    # a reference put back in its place is a new explicit choice, and so is another command
+    monkeypatch.setenv("ROMP_API_KEY_REF", REF)
+    assert ks.select_source(BOOT_KEY).kind == "op"
+    monkeypatch.setenv("ROMP_CREDENTIAL_COMMAND", OTHER_CMD)
+    assert ks.select_source(BOOT_KEY).value == OTHER_CMD
+    env.op.assert_not_called()
+
+
+def test_a_supervised_manager_reads_an_environment_only_command_as_removed(env, monkeypatch):
+    monkeypatch.setenv("ROMP_SUPERVISED", "1")
+    monkeypatch.setenv("ROMP_CREDENTIAL_COMMAND", CMD)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", BOOT_KEY)
+    source = ks.select_source(BOOT_KEY)
+    assert source.kind == "error" and source.configured
+    assert "command was removed" in source.error and CMD not in source.error
+    safe_failure(source.resolve, CMD)
+    assert ks._AUTHORITATIVE_PATHS[str(env.path)] == "command"
+    env.path.write_text(f"ROMP_CREDENTIAL_COMMAND={CMD}\n")
+    assert ks.select_source(BOOT_KEY).value == CMD, "the file is the supervised door"
+    env.op.assert_not_called()
+
+
+def test_the_command_memory_survives_a_kernel_restart_and_follows_an_intentional_switch(env):
+    env.path.write_text("ROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=%s\n" % CMD)
+    assert ks.select_source().kind == "command"
+    marker = env.root / "service.env.source"
+    assert marker.read_text() == "command\n" and stat.S_IMODE(marker.stat().st_mode) == 0o600
+    # the restart: memory gone, line gone
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    env.path.write_text("ROMP_PERF=1\n")
+    src = ks.select_source(BOOT_KEY)
+    assert src.kind == "error" and "command was removed" in src.error and CMD not in src.error
+    safe_failure(src.resolve, CMD)
+    # an intentional swap to a static profile clears it, so the next restart is not an error
+    ks.write_source(ks.KeySource("file", NEW_KEY), str(env.path))
+    assert not marker.exists()
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    assert ks.select_source().value == NEW_KEY
+    # a swap to a reference and then to a command rewrites the word each time
+    ks.write_source(ks.KeySource("op", REF), str(env.path))
+    assert marker.read_text() == "op\n"
+    ks.write_source(ks.KeySource("command", CMD), str(env.path))
+    assert marker.read_text() == "command\n"
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    assert ks.select_source().value == CMD
+    env.op.assert_not_called()
+
+
+def test_a_command_profile_replaces_the_key_and_reference_lines_and_keeps_every_other_line(env):
+    env.path.write_text("# service\nROMP_PERF=1\nANTHROPIC_API_KEY=%s\nROMP_API_KEY_REF=%s\nROMP_EXPECTED_AUTH=key\n"
+                        % (OLD_KEY, REF))
+    res = ks.write_source(ks.KeySource("command", CMD), str(env.path))
+    assert env.path.read_text() == "# service\nROMP_PERF=1\nROMP_CREDENTIAL_COMMAND=%s\nROMP_EXPECTED_AUTH=key\n" % CMD
+    assert (res["old"].kind, res["new"].kind, res["lines"]) == ("op", "command", 4)
+    assert stat.S_IMODE(env.path.stat().st_mode) == 0o600
+    assert ks.read_source(str(env.path)) == ks.KeySource("command", CMD)
+    # an invalid command is refused before anything is written
+    before = env.path.read_bytes()
+    safe_failure(lambda: ks.write_source(ks.KeySource("command", "a\nb"), str(env.path)), "a\nb")
+    assert env.path.read_bytes() == before
+    # and the other way: a reference or a key selected over a command removes the command line, or the
+    # swap would be a no-op under command > op > file
+    ks.write_source(ks.KeySource("op", REF), str(env.path))
+    assert env.path.read_text() == "# service\nROMP_PERF=1\nROMP_API_KEY_REF=%s\nROMP_EXPECTED_AUTH=key\n" % REF
+    ks.write_source(ks.KeySource("file", NEW_KEY), str(env.path))
+    body = env.path.read_text()
+    assert ks.CMD_VAR not in body and ks.REF_VAR not in body and ks.parse_key(body) == NEW_KEY
+    assert sorted(p.name for p in env.root.iterdir()) == ["service.env"], "no temp file; the marker went with the static key"
+    env.op.assert_not_called()
+
+
+def test_resolve_for_the_command_kind_goes_through_the_kernels_hook_and_runs_nothing_here(env, monkeypatch):
+    source = ks.KeySource("command", CMD)
+    err = safe_failure(source.resolve, CMD)
+    assert "resolved by the kernel's command source" in str(err)
+    seen = []
+    monkeypatch.setattr(ks, "COMMAND_RESOLVER", lambda src: seen.append(src) or NEW_KEY)
+    assert source.resolve() == NEW_KEY and seen == [source]
+    safe_failure(ks.KeySource("command", "").resolve, "\0")
+    assert seen == [source], "validation comes first: an invalid command never reaches the hook"
+    env.op.assert_not_called()
+
+
+def test_romp_is_the_op_consumer_only_while_the_reference_is_the_selected_kind(env, monkeypatch):
+    monkeypatch.setenv("ROMP_API_KEY_REF", REF)
+    assert ks.op_consumer()
+    monkeypatch.setenv("ROMP_CREDENTIAL_COMMAND", CMD)
+    assert not ks.op_consumer(), "the command outranks the reference and may itself need op's credential"
+    monkeypatch.delenv("ROMP_CREDENTIAL_COMMAND"); monkeypatch.delenv("ROMP_API_KEY_REF")
+    env.path.write_text(f"ROMP_API_KEY_REF={REF}\n")
+    assert ks.op_consumer()
+    env.path.write_text(f"ROMP_API_KEY_REF={REF}\nROMP_CREDENTIAL_COMMAND={CMD}\n")
+    ks._CACHE = ((), "")
+    assert not ks.op_consumer()
+    monkeypatch.setenv("ROMP_API_KEY_REF", OTHER_REF)
+    assert not ks.op_consumer(), "the file's command line wins over an environment reference"
+    # nothing is claimed, stripped or scrubbed under the command kind: the command runs with the kernel's
+    # environment, and an apiKeyHelper box keeps op's names in every session
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "synthetic-op-token-value")
+    ks._OP_ENV.clear()
+    try:
+        assert ks.claim_op_env() == {} and "OP_SERVICE_ACCOUNT_TOKEN" in os.environ
+        child = {"OP_SERVICE_ACCOUNT_TOKEN": "x", "ANTHROPIC_API_KEY": "y", "PATH": "/bin"}
+        assert ks.strip_tmux_env(dict(child)) == child
+        env.tmux.assert_not_called()
+    finally:
+        ks._OP_ENV.clear()
+    env.op.assert_not_called()
+
+
+def test_the_reserved_names_rule_covers_the_command_kind_and_takes_the_launch_decision():
+    cmd = ks.KeySource("command", CMD); plain = ks.KeySource("file", "k")
+    all3 = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+    assert ks.runtime_reserved_names("key", cmd) == all3
+    assert ks.runtime_reserved_names("", cmd) == all3, "no pick with a configured source launches keyed"
+    assert ks.runtime_reserved_names("login", cmd) == ("ANTHROPIC_API_KEY",), "a login session keeps its own token"
+    # the launch decides `keyed` after taking the set: a key pick whose set carries no key injects nothing
+    assert ks.runtime_reserved_names("key", cmd, keyed=False) == ("ANTHROPIC_API_KEY",)
+    assert ks.runtime_reserved_names("login", cmd, keyed=True) == all3
+    assert ks.runtime_reserved_names("", ks.KeySource("op", REF), keyed=False) == ("ANTHROPIC_API_KEY",)
+    assert ks.runtime_reserved_names("key", plain, keyed=True) == (), "a static key is not a runtime source"

@@ -1,6 +1,6 @@
 """Live API-key configuration, separate from credential retrieval.
 
-The design, in four rules:
+The design, in five rules:
 
 * A SOURCE is configuration, not a secret: a static key line, or a 1Password reference
   (``ROMP_API_KEY_REF=op://vault/item/field``) that names where the key lives. Everything that
@@ -26,6 +26,14 @@ The design, in four rules:
 * An op source selected from the FILE is remembered on disk (``service.env.source``, beside the file),
   so a supervised restart after the reference line vanished still refuses to fall to a login
   (2026-09-06: the memory was process-local and a kernel restart forgot it).
+* A COMMAND (``ROMP_CREDENTIAL_COMMAND=<shell command>``, printing ``NAME=VALUE`` lines) is the general
+  runtime source, and the reference is its built-in default: a command line outranks a reference, which
+  outranks a key line, at the file door and the environment door alike. This module selects the kind,
+  remembers it (the marker holds the word ``command``), writes it in a profile swap and reserves the
+  same names for it. Running the command, holding the set it prints and injecting the values per child
+  belong to the kernel's command source, reached only through COMMAND_RESOLVER, so this module never
+  loads it and the set never enters os.environ. Nothing is claimed or scrubbed for a command: it runs
+  with the kernel's own environment and may itself call ``op`` with a credential it finds there.
 
 Legacy environment/file keys and Claude login remain supported without 1Password.
 """
@@ -39,6 +47,17 @@ from dataclasses import dataclass, field
 
 KEY_VAR = "ANTHROPIC_API_KEY"
 REF_VAR = "ROMP_API_KEY_REF"
+# The command kind: a configured command that prints NAME=VALUE lines. Selected by the same two doors as
+# the reference and outranking it. The text is configuration, not a secret, but it is rendered by
+# fingerprint only (an operator's command may embed a path or an account name).
+CMD_VAR = "ROMP_CREDENTIAL_COMMAND"
+CMD_MAX_BYTES = 4096
+RUNTIME_KINDS = ("op", "command")         # the kinds that retrieve at runtime and are remembered on the marker
+# resolve() for the command kind: a callable taking the KeySource and returning the set's ANTHROPIC_API_KEY
+# ("" when the set carries none). The kernel wires it at import; unwired, resolve() raises. A hook rather
+# than an import: the command source loads this module for service_env_path, and this module must never
+# load it back.
+COMMAND_RESOLVER = None
 OP_TIMEOUT = 15
 # The environment names the 1Password CLI authenticates from. Claimed out of the kernel's environment
 # once (claim_op_env) and given back to the `op read` subprocess only (resolve): a service-account
@@ -50,8 +69,8 @@ OP_ENV_PREFIX = "OP_SESSION_"
 _OP_ENV: dict[str, str] = {}
 _OP_CLAIM_SAID = False
 _TMUX_SCRUBBED: set = set()      # names already unset from the tmux server's globals by this process
-# The sibling file that remembers, across kernel restarts, that the env file's source was a 1Password
-# reference: `service.env.source` (sibling_path), containing the word `op` and never a value.
+# The sibling file that remembers, across kernel restarts, that the env file's source was a runtime one:
+# `service.env.source` (sibling_path), containing the kind word (`op` or `command`) and never a value.
 SOURCE_MARKER = "source"
 
 
@@ -69,12 +88,18 @@ def is_tmux_scrub_name(name: str) -> bool:
 
 
 def op_consumer() -> bool:
-    """Is romp itself the one running `op`? Only when a 1Password reference is selected (in the env file
-    or the manager's environment). A box whose SESSIONS fetch their key through Claude Code's apiKeyHelper
-    calling `op` needs op's credential in every session's environment, and romp then leaves it alone."""
-    if REF_VAR in os.environ:
+    """Is romp itself the one running `op`? Only while the op kind is the selected source: a 1Password
+    reference in the manager's environment with no credential command beside it, or a reference (or an
+    unreadable file) as the env file's source. A command outranks a reference wherever the two meet, and
+    a command may itself run `op` with the credential it finds in its environment, so nothing is claimed
+    for it. A box whose SESSIONS fetch their key through Claude Code's apiKeyHelper calling `op` needs
+    op's credential in every session's environment, and romp then leaves it alone."""
+    file_kind = read_source().kind if os.path.exists(service_env_path()) else "none"
+    if file_kind == "command":
+        return False
+    if REF_VAR in os.environ and CMD_VAR not in os.environ:
         return True
-    return read_source().kind in ("op", "error") if os.path.exists(service_env_path()) else False
+    return file_kind in ("op", "error")
 
 
 def claim_op_env() -> dict[str, str]:
@@ -151,22 +176,26 @@ def tmux_unset_global(names, socket: str = "") -> list:
 _TMUX_RUN = subprocess.run
 
 
-def runtime_reserved_names(auth: str, source) -> tuple:
+def runtime_reserved_names(auth: str, source, keyed=None) -> tuple:
     """The credential names a per-session environment may NOT carry while runtime retrieval governs.
     A per-session ANTHROPIC_API_KEY always competes with the selected source. A KEYED launch (an explicit
     key pick, or no pick with a configured source) must carry no token beside the key it resolves either;
     a LOGIN session's own token override bills the account the user chose for it and never touches the
-    key source, so it stays (review find, 2026-09-05). One rule for the doors, the launch and the fork."""
-    if source is None or source.kind not in ("op", "error"):
+    key source, so it stays (review find, 2026-09-05). One rule for the doors, the launch and the fork.
+    The command kind is a runtime source like the reference. `keyed` may be passed explicitly: under the
+    command kind the launch decides it after taking the set, since a key pick whose set carries no
+    ANTHROPIC_API_KEY injects nothing and then reserves the key name only."""
+    if source is None or source.kind not in ("op", "command", "error"):
         return ()
-    keyed = auth == "key" or (auth != "login" and source.configured)
+    if keyed is None:
+        keyed = auth == "key" or (auth != "login" and source.configured)
     return ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN") if keyed else ("ANTHROPIC_API_KEY",)
 
 # Cache file configuration only. ctime/mode also invalidate permission changes; a formerly
 # readable credential must not survive a chmod merely because its content did not change.
 _CACHE: tuple = ((), "")
 _AUTHORITATIVE_PATHS: dict[str, str] = {}
-_ENV_PROVIDER_PATHS: set[str] = set()
+_ENV_PROVIDER_PATHS: dict[str, str] = {}      # path -> the runtime kind a foreground environment selected
 
 
 class KeySourceError(RuntimeError):
@@ -182,7 +211,7 @@ class KeySource:
     @property
     def configured(self) -> bool:
         # An invalid provider remains an explicit choice, never permission to use a login.
-        return self.kind in ("op", "error") or bool(self.value)
+        return self.kind in ("op", "command", "error") or bool(self.value)
 
     def validate(self) -> None:
         if self.kind == "error":
@@ -192,21 +221,36 @@ class KeySource:
             if (len(parts) not in (3, 4) or not all(parts)
                     or any(c in self.value for c in ("\r", "\n", "\0"))):
                 raise KeySourceError("ROMP_API_KEY_REF must be an op://vault/item/[section/]field reference")
+        elif self.kind == "command":
+            # One line the shell can run; the text itself is never echoed (see the module comment on CMD_VAR).
+            if (not self.value.strip() or any(c in self.value for c in ("\r", "\n", "\0"))
+                    or len(self.value.encode("utf-8", "replace")) > CMD_MAX_BYTES):
+                raise KeySourceError("%s must be one non-empty line of at most %d bytes" % (CMD_VAR, CMD_MAX_BYTES))
         elif self.kind not in ("file", "environment", "none"):
             raise KeySourceError("Unknown API key source")
         elif any(c in self.value for c in ("\r", "\n", "\0")):
             raise KeySourceError("API keys must be a single line")
 
     def fingerprint(self) -> str:
-        """Configuration identity; for op this hashes the reference, never retrieves its value."""
+        """Configuration identity; for op this hashes the reference, never retrieves its value, and for a
+        command it hashes the command text, never the set the command prints."""
         if self.kind == "op":
             return fingerprint("op:" + self.value)
+        if self.kind == "command":
+            return fingerprint("command:" + self.value)
         if self.kind == "error":
             return ""
         return fingerprint(self.value)
 
     def resolve(self) -> str:
         self.validate()
+        if self.kind == "command":
+            # The kernel's command source answers from the set it holds: the last good set's key, or ""
+            # when the set carries none (a helper- or login-billed installation). A failed run is never
+            # raised here; the source keeps the last good set and says so on its own line.
+            if COMMAND_RESOLVER is None:
+                raise KeySourceError("the credential command is resolved by the kernel's command source")
+            return COMMAND_RESOLVER(self)
         if self.kind != "op":
             return self.value
         # op authenticates from the credential names claimed at startup; they ride into THIS subprocess
@@ -291,7 +335,7 @@ def _assignments(text: str) -> dict[str, str]:
         if not line or line.startswith("#"):
             continue
         name, sep, value = line.partition("=")
-        if not sep or name.strip() not in (KEY_VAR, REF_VAR):
+        if not sep or name.strip() not in (KEY_VAR, REF_VAR, CMD_VAR):
             continue
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
@@ -304,7 +348,7 @@ def _garbled(values: dict) -> str:
     """The name of a key/reference line that did not decode as UTF-8 (the read replaces bad bytes with
     U+FFFD, which no real key contains) — "" when both are clean. A garbled key must fail HERE, with a
     readable note, not at the API as an unexplained invalid-key error."""
-    for name in (REF_VAR, KEY_VAR):
+    for name in (CMD_VAR, REF_VAR, KEY_VAR):
         if "\ufffd" in values.get(name, ""):
             return name
     return ""
@@ -315,10 +359,14 @@ def parse_key(text: str) -> str:
 
 
 def parse_source(text: str) -> KeySource:
+    """command > op > file: an explicit command overrides the built-in default command (the reference),
+    which overrides a static key line."""
     values = _assignments(text)
     bad = _garbled(values)
     if bad:
         return KeySource("error", error="the %s line in the API key source configuration is not valid UTF-8" % bad)
+    if CMD_VAR in values:
+        return KeySource("command", values[CMD_VAR])
     if REF_VAR in values:
         return KeySource("op", values[REF_VAR])
     if KEY_VAR in values:
@@ -367,32 +415,47 @@ def select_source(startup_key: str = "") -> KeySource:
                 remember_file_source(path, source.kind)
             _AUTHORITATIVE_PATHS[path] = source.kind
         return source
-    # The op memory is DURABLE (2026-09-06): a supervised kernel restart forgot the process-local entry,
-    # and with the reference line gone from the file and none in the manager's environment every
+    # The runtime memory is DURABLE (2026-09-06): a supervised kernel restart forgot the process-local
+    # entry, and with the reference line gone from the file and none in the manager's environment every
     # session without an explicit pick launched on the login — the silent fallback this module exists
-    # to end. The marker beside the file says `op` until a non-op source is selected or written.
-    previous = _AUTHORITATIVE_PATHS.get(path) or ("op" if read_marker(path) == "op" else None)
-    if previous == "op":
-        return KeySource("error", error="The 1Password reference was removed; configure an API key source explicitly")
+    # to end. The marker beside the file holds the kind word (`op` or `command`) until a static source
+    # is selected or written. The command kind walks the same doors as the reference, ahead of it.
+    previous = _AUTHORITATIVE_PATHS.get(path)
+    if not previous:
+        marker = read_marker(path)
+        previous = marker if marker in RUNTIME_KINDS else None
+    if previous in RUNTIME_KINDS:
+        return KeySource("error", error=_removed_error(previous))
     if previous:
         return KeySource("file")
     if os.environ.get("ROMP_SUPERVISED") == "1":
-        if REF_VAR in os.environ:
-            _AUTHORITATIVE_PATHS[path] = "op"
-            return KeySource("error", error="The 1Password reference was removed; configure an API key source explicitly")
+        for kind, var in (("command", CMD_VAR), ("op", REF_VAR)):
+            if var in os.environ:
+                _AUTHORITATIVE_PATHS[path] = kind
+                return KeySource("error", error=_removed_error(kind))
         _AUTHORITATIVE_PATHS[path] = "file"
         return KeySource("file")
-    if REF_VAR in os.environ:
-        _ENV_PROVIDER_PATHS.add(path)
-        return KeySource("op", os.environ[REF_VAR].strip())
+    for kind, var in (("command", CMD_VAR), ("op", REF_VAR)):
+        if var in os.environ:
+            _ENV_PROVIDER_PATHS[path] = kind
+            return KeySource(kind, os.environ[var].strip())
     if path in _ENV_PROVIDER_PATHS:
-        return KeySource("error", error="The 1Password reference was removed from the environment; configure an API key source explicitly")
+        return KeySource("error", error=_removed_error(_ENV_PROVIDER_PATHS[path], "from the environment"))
     return KeySource("environment", startup_key) if startup_key else source
+
+
+_REMOVED_WHAT = {"op": "The 1Password reference", "command": "The credential command"}
+
+
+def _removed_error(kind: str, where: str = "") -> str:
+    """The one removal message per runtime kind: what was removed and from where, never a value."""
+    return "%s was removed%s; configure an API key source explicitly" % (_REMOVED_WHAT[kind], " " + where if where else "")
 
 
 def marker_path(path: str | None = None) -> str:
     """`service.env.source` beside the env file: the durable memory that the file's selected source was a
-    1Password reference. Holds the word `op` (never a reference, never a value); absent otherwise."""
+    runtime one. Holds the kind word, `op` or `command` (never a reference, a command or a value); absent
+    otherwise."""
     return sibling_path(SOURCE_MARKER, path)
 
 
@@ -405,23 +468,24 @@ def read_marker(path: str | None = None) -> str:
 
 
 def remember_file_source(path: str | None, kind: str) -> None:
-    """Mirror a source selected from (or written to) the env file onto the marker: `op` writes it, any
-    other kind removes it, so an operator's intentional switch to a static key is not an error at the
-    next restart. Atomic, 0600, same directory, like write_source. Best effort — a read-only config
-    directory must not fail the selection; the process-local memory still governs this process."""
+    """Mirror a source selected from (or written to) the env file onto the marker: a runtime kind (`op`,
+    `command`) writes its word, any other kind removes the file, so an operator's intentional switch to
+    a static key is not an error at the next restart. Atomic, 0600, same directory, like write_source.
+    Best effort: a read-only config directory must not fail the selection; the process-local memory
+    still governs this process."""
     mp = marker_path(path)
     try:
-        if kind != "op":
+        if kind not in RUNTIME_KINDS:
             if os.path.lexists(mp):
                 os.unlink(mp)
             return
-        if read_marker(path) == "op":
+        if read_marker(path) == kind:
             return
         d = os.path.dirname(mp) or "."
         fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(mp) + ".")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write("op\n")
+                fh.write(kind + "\n")
             os.chmod(tmp, 0o600)
             os.replace(tmp, mp)
         except BaseException:
@@ -474,8 +538,8 @@ def write_source(source: KeySource, path: str | None = None) -> dict:
     failure (the caller reports it).
     """
     source.validate()
-    if source.kind not in ("op", "file", "environment"):
-        raise KeySourceError("Select an API key or a 1Password reference")
+    if source.kind not in ("op", "command", "file", "environment"):
+        raise KeySourceError("Select an API key, a 1Password reference or a credential command")
     given = path or service_env_path()
     p = os.path.realpath(given) if os.path.islink(given) else given
     try:
@@ -487,12 +551,14 @@ def write_source(source: KeySource, path: str | None = None) -> dict:
     old = parse_source(body)
     lines = body.splitlines()
     trailing_nl = (not body) or body.endswith("\n")
-    # Which physical lines assign the key: the LAST one is rewritten in place, earlier ones drop.
+    # Which physical lines assign a source (a key, a reference or a command): the LAST one is rewritten
+    # in place, earlier ones drop. Every competing kind goes, or the higher-ranking line left behind
+    # would keep governing and the swap would change nothing.
     hits = [i for i, raw in enumerate(lines)
             if raw.strip() and not raw.strip().startswith("#")
             and raw.strip().partition("=")[1]
-            and raw.strip().partition("=")[0].strip() in (KEY_VAR, REF_VAR)]
-    new_line = "%s=%s" % (REF_VAR if source.kind == "op" else KEY_VAR, source.value)
+            and raw.strip().partition("=")[0].strip() in (KEY_VAR, REF_VAR, CMD_VAR)]
+    new_line = "%s=%s" % ({"op": REF_VAR, "command": CMD_VAR}.get(source.kind, KEY_VAR), source.value)
     if hits:
         lines[hits[-1]] = new_line
         for i in reversed(hits[:-1]):
@@ -527,9 +593,10 @@ def write_source(source: KeySource, path: str | None = None) -> dict:
         except OSError:
             pass
         raise
-    # The durable op memory follows the write: a swap to a reference arms it, a swap to a static key
-    # clears it, so the marker never outlives the choice it records (select_source consults it).
-    remember_file_source(given, "op" if source.kind == "op" else "file")
+    # The durable runtime memory follows the write: a swap to a reference or a command arms it with the
+    # kind word, a swap to a static key clears it, so the marker never outlives the choice it records
+    # (select_source consults it).
+    remember_file_source(given, source.kind if source.kind in RUNTIME_KINDS else "file")
     return {"path": given, "old": old, "new": source, "mode": mode, "tightened": tightened,
             "lines": len(lines), "target": p}
 
