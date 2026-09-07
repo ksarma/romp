@@ -83,14 +83,33 @@ while its section is folded, right-click the tab and pick **Show when folded** u
 the header's count and flag then leave that tab out; when every tab in a section is set to
 show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
 again to fold the tab with the rest. A tab set to show when folded keeps that setting when its
-group is renamed. The section of the tab you are reading never
-folds (its header says so, and a click there changes nothing), and the `archived` section
-starts folded. Drag a header to reorder the groups, which
+group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tab's current group tag, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser.
+
+**A section at a glance.** Clicking a header also shows the section in the transcript's place:
+one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
+prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,
+green waiting on background work, none while it is idle), a **needs you** or **waiting** word, a ⚑
+when it has asked you for something, what it is doing now in a few words, and how long ago it last
+did anything.
+**Needs you** appears when the feed shows one of the session's cards under Blocked, when the
+session is stopped on a prompt or an API error only you can clear, or when it has flagged a todo
+for you; **waiting**, when it is waiting on background work. A session that asked a question and
+went quiet shows the word with no dot: the dot follows the session's own state, the word follows
+the feed. What it is doing now comes from its current task, else from the headline of
+its work so far, else from the last task it had; a session that has published a note of what it is
+working on shows the note as a quieter second line. Hover a row for its last message, shown without
+its formatting; click one to open that session, which also opens its section. The rows update as
+the sessions work and change only when something about a session changes; the **needs you** word
+follows the feed, at most a moment behind it. The section of the tab you are reading folds like
+any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
+The transcript comes back when you pick a session, press Escape, or click that header again while
+its section is open and holds the tab you are reading. Sections, and this view with them, are for
+the desktop layout; the phone layout keeps its flat list.
 
 ### The feed
 

@@ -849,6 +849,153 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(m["ledger"]["summary"], "Fixing the feed")
         self.assertNotIn("bullets", m["ledger"], "the bullets list retired with its readers (2026-07-07 audit)")
 
+    def test_ledger_carries_the_working_note(self):
+        """The postal set_working note rides the per-session ledger (the chat's section snapshot shows it as
+        a row's own second line under the task; the ledgers attach carries it to the Outline for free).
+        Read from the backend-agnostic store (working/<sid>); "" when the session published none."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "no note → an empty string, never a missing key")
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("  editing the notes-api tests  \n")
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "editing the notes-api tests", "the note, stripped")
+            (km.WORKING_DIR / SID).unlink()
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "cleared → empty again")
+        finally:
+            km.WORKING_DIR = saved
+
+    def test_muted_session_keeps_its_working_note(self):
+        """hideFromFeed empties the ledger's task tracking (tree, current, recent) but NOT the note: the note
+        is the session's own statement of what it holds, not a goal the judges track. Pinned because the
+        hideFromFeed branch is the natural place to "empty the ledger", and moving the field inside it
+        would flip this with every other test green (review 2026-09-06)."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("editing the notes-api tests\n")
+            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
+            led = km.build_session(SID, NOW)["ledger"]
+            self.assertEqual((led["tree"], led["current"], led["recent"]), ([], None, []), "muted: out of task tracking")
+            self.assertEqual(led["workingNote"], "editing the notes-api tests", "…but the note stays: the session's claim, not a goal")
+        finally:
+            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
+            km.WORKING_DIR = saved
+
+    def test_a_working_note_write_busts_the_chat_build_cache(self):
+        """_chat_build_sig is (transcript, states, judge gen, stores…): a note write (set_working, a shell's
+        `romp mail working`, the kernel's own idle+done lift) touches NONE of them, so a background tab's
+        cached ledger kept the old note until the next producer pass ended (3 s plus the pass, minutes
+        while judges were calling the model; review 2026-09-06). The note is folded into the sig, so the
+        change reaches the row at the next push like every other ledger field."""
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        saved = (km._sdk, km.WORKING_DIR)
+        km._sdk = lambda: None
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            before = km._chat_build_sig(sess)
+            km._set_working_note(SID, "editing the notes-api tests")
+            with_note = km._chat_build_sig(sess)
+            self.assertNotEqual(before, with_note, "a note write busts the cache")
+            self.assertEqual(km._chat_build_sig(sess), with_note, "…and is byte-stable while unchanged (no rebuild per push)")
+            km._set_working_note(SID, "")
+            self.assertEqual(km._chat_build_sig(sess), before, "the lift (clear) busts it back")
+        finally:
+            km._sdk, km.WORKING_DIR = saved
+
+    def test_ledger_carries_the_feed_needs_you_verdict(self):
+        """ledger.needsInput is the FEED's per-session needs-you (review 2026-09-06): True when the last feed
+        build filed a card of this session under needs_input (here the fixture's judge-filed block, g2, on
+        an IDLE session, the case the tab's chip rule never sees), False when none, None before the first
+        feed build. Read from the feed build's own payload, never re-derived; a muted session has no cards.
+        The chat-build sig folds the bit so a background row follows a verdict flip at the next push."""
+        tmux = km._tmux_sessions()
+        saved = (list(km._built_feed), km._feed_needs_input[0], km._views_dirty[0], km._sdk)
+        km._built_feed[:] = [None, None, 0.0, 0.0]; km._feed_needs_input[0] = None; km._views_dirty[0] = 0.0
+        km._sdk = lambda: None
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        try:
+            self.assertIsNone(km.build_session(SID, NOW)["ledger"]["needsInput"], "no feed build yet → None, not a verdict")
+            feed = km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
+            self.assertTrue(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]),
+                            "the fixture's blocked goal files a needs_input card for the idle session")
+            self.assertEqual(tmux[SID]["state"], "idle", "…while the chip is idle: the tab's rule alone shows nothing")
+            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], True, "the row's needs-you = the feed's column")
+            sig_blocked = km._chat_build_sig(sess)
+            # the judges rule the block answered: the store now holds the goal working; a dirty mark bypasses
+            # the rebuild throttle the way the reply handler does
+            store = json.loads((jd.GOALDIR / (SID + ".json")).read_text())
+            g2 = "%s:g2" % SID
+            store["nodes"][g2]["blocked"] = False; store["status"][g2] = "working"
+            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+            km._mark_views_dirty()
+            feed = km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
+            self.assertFalse(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]))
+            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], False, "no card under needs-you → False")
+            self.assertNotEqual(km._chat_build_sig(sess), sig_blocked, "the flip busts the background tab's cached ledger")
+            # muted: out of the feed altogether → no cards → False, whatever the store says
+            store["nodes"][g2]["blocked"] = True; store["status"][g2] = "blocked"
+            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
+            km._mark_views_dirty()
+            km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
+            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], False, "a muted session is out of task tracking")
+        finally:
+            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
+            km._built_feed[:], km._feed_needs_input[0], km._views_dirty[0], km._sdk = saved
+
+    def test_the_first_feed_build_does_not_bust_every_chat_build(self):
+        """_chat_build_sig folds the feed's needs-you as a BOOL (review r2 2026-09-06). The set behind it is
+        None until the first feed build since start, and a push builds the chat sessions BEFORE the feed, so
+        a raw fold gave every tab a None sig on the first push and a False one on the next, a whole-strip
+        rebuild for a value the row reads the same (needsInput === true). None and False share a signature;
+        True (a card of THIS session under needs-you) differs from both, so a real verdict still busts."""
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        saved = (km._feed_needs_input[0], km._sdk)
+        km._sdk = lambda: None
+        try:
+            km._feed_needs_input[0] = None
+            before_feed = km._chat_build_sig(sess)
+            km._feed_needs_input[0] = frozenset()
+            self.assertEqual(km._chat_build_sig(sess), before_feed,
+                             "the first feed build, no card of this session under needs-you: nothing the row shows changed, no rebuild")
+            km._feed_needs_input[0] = frozenset(["99999999-8888-7777-6666-555555555555"])
+            self.assertEqual(km._chat_build_sig(sess), before_feed, "another session's card: still nothing of this row")
+            km._feed_needs_input[0] = frozenset([SID])
+            self.assertNotEqual(km._chat_build_sig(sess), before_feed, "a card of this session under needs-you is the verdict that busts")
+        finally:
+            km._feed_needs_input[0], km._sdk = saved
+
+    def test_ledgers_attach_carries_the_working_note_and_the_feed_verdict(self):
+        """The Outline's per-session `ledgers` (feed["ledgers"], built in _push from the chat sessions) carry
+        the whole ledger dict, so the Outline gets workingNote and needsInput with no new frame. Executed
+        through _push with an Outline client (app "fleet") and the REAL build_session (the source pin in
+        tests/test_kernel_fleet_ledgers.py covers the attach's shape, not its keys)."""
+        sent = []
+        saved = (km._chat_tab_sessions, km.build_feed, km.build_timeline, km._send_client, km.WORKING_DIR,
+                 list(km._built_feed), km._feed_needs_input[0])
+        km._chat_tab_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath), "anchor": ""}]
+        km.build_feed = lambda now, tmux: {"working": [], "awaiting": [], "asks": [
+            {"itemId": SID + ":g2", "sid": SID, "column": "needs_input"}]}
+        km.build_timeline = lambda now, tmux: None
+        km._send_client = lambda c, key, msg, pre=None, **kw: sent.append((key, msg))
+        km.WORKING_DIR = jd.STATE / "working"
+        km._built_feed[:] = [None, None, 0.0, 0.0]; km._feed_needs_input[0] = frozenset([SID])
+        try:
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("editing the notes-api tests\n")
+            km._push([{"app": "fleet", "alive": True}])
+        finally:
+            (km._chat_tab_sessions, km.build_feed, km.build_timeline, km._send_client, km.WORKING_DIR,
+             km._built_feed[:], km._feed_needs_input[0]) = saved
+        feeds = [msg for (key, msg) in sent if isinstance(msg, dict) and "ledgers" in msg]
+        self.assertTrue(feeds, "the Outline client received a feed frame with ledgers attached")
+        row = next(r for r in feeds[-1]["ledgers"] if r["sid"] == SID)
+        self.assertEqual(row["ledger"]["workingNote"], "editing the notes-api tests", "the note rides the attach")
+        self.assertIs(row["ledger"]["needsInput"], True, "…and so does the feed's verdict")
+        self.assertIn("archivedTops", row["ledger"], "beside the attach's own field")
+
     def test_ledger_tree_and_current(self):
         # The overview's goal TREE: top-level goals, done nodes kept as timed leaves, open nodes expanded.
         # Fixture: g1 done ("Fix the feed flicker"), g2 open+blocked ("Awaiting a decision"). An idle
