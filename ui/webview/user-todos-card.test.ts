@@ -170,13 +170,19 @@ test("a kernel warn re-syncs the active view only while an optimistic removal is
   // change, so the next push can dedup to nothing — the warn itself must repaint from events. The
   // frame carries no sid or todo id, so the one gate is "this client has a removal pending": a warn
   // about anything else (a bad name on create, an MCP error) repaints nothing.
-  assert.match(RENDER, /const utPendingRemoval = new Set<string>\(\)/);
-  assert.match(MODAL, /utPendingRemoval\.add\(todoId\)/, "Reply's send marks the id pending");
-  assert.match(CONFIRM, /utPendingRemoval\.add\(tid\)/, "Dismiss's confirm marks the id pending");
-  assert.equal((RENDER.match(/utPendingRemoval\.add\(/g) || []).length, 2, "the two removal sites, no other writer");
+  // keyed tid -> sid: the frame carries no sid, so the map is what says WHICH view holds the refused row
+  assert.match(RENDER, /const utPendingRemoval = new Map<string, string>\(\)/);
+  assert.match(MODAL, /utPendingRemoval\.set\(todoId, sid\)/, "Reply's send marks the id pending, with its session");
+  assert.match(CONFIRM, /utPendingRemoval\.set\(tid, sid\)/, "Dismiss's confirm marks the id pending, with its session");
+  assert.equal((RENDER.match(/utPendingRemoval\.set\(/g) || []).length, 2, "the two removal sites, no other writer");
   const warn = RENDER.slice(RENDER.indexOf('m.type === "warn"'), RENDER.indexOf('m.type === "err"'));
   assert.match(warn, /if \(utPendingRemoval\.size\) \{/, "gated on the pending set");
-  assert.match(warn, /wv\.stale = true; appendActive\(\)/, "the full-window rebuild from events");
+  // EVERY view holding a pending id goes stale, not only the active one: the user may have switched
+  // sessions inside the round-trip, and the refused row sits in the view they left — which used to
+  // keep its optimistic removal while the active view was rebuilt for nothing
+  assert.match(warn, /for \(const sid of new Set\(utPendingRemoval\.values\(\)\)\) \{ const v = views\.get\(sid\); if \(v\) v\.stale = true; \}/);
+  assert.match(warn, /appendActive\(\)/, "the active view rebuilds now; a hidden one rebuilds on its next switch (stale)");
+  assert.doesNotMatch(warn, /wv\.stale = true; appendActive\(\)/, "no longer the active view alone");
   assert.match(warn, /utPendingRemoval\.clear\(\)/, "the re-sync settles whatever was pending");
   // a push that no longer lists a pending id is the kernel confirming it: the gate closes for that id
   // without any warn — per session, since an id absent from ANOTHER session's frame says nothing
@@ -197,9 +203,30 @@ test("optimistic removal keeps the heading's count honest: one helper for both s
   assert.match(helper, /row\.remove\(\)/);
   assert.match(helper, /querySelectorAll\("\.ut-item"\)\.length/, "recounts the rows left in the same card");
   assert.match(helper, /head\.textContent = `Waiting on you · \$\{n\}`/, "rewrites the heading the way renderTodo paints it");
-  assert.match(helper, /else head\.remove\(\)/, "…and drops it with the last row");
+  assert.match(helper, /head\.remove\(\)/, "…and drops it with the last row");
   assert.equal((RENDER.match(/utDropRow\(/g) || []).length, 3, "the definition plus the two removal sites");
   assert.doesNotMatch(RENDER, /closest\("\.ut-item"\)\?\.remove\(\)/, "no site removes a row on its own");
+  // the last row of a card with no checklist: the bordered .todo-card and its rail dot stood empty until
+  // the next push (the kernel ships no todo event when both lists are empty). The turn is HIDDEN, never
+  // removed — syncViewInner keys on v.el.childNodes, so a removed node would shift every unit after it
+  assert.match(helper, /if \(!card\.childElementCount\) \(card\.closest\("\.turn-todo"\) as HTMLElement \| null\)\?\.style\.setProperty\("display", "none"\)/);
+  assert.doesNotMatch(helper, /turn-todo"\)[^\n]*\.remove\(\)/, "hidden, not removed");
+});
+
+test("a dismissed session takes its keyed user-todo state with it", () => {
+  // utArmed / utDisarmers / utPendingRemoval are settled by the SAME session's later frames
+  // (utSettlePending), which never arrive once the session is dismissed: a dead session's pending
+  // id held the warn gate open for the next unrelated warn, and a coarse-pointer arm's document
+  // pointerdown listener outlived it until the next tap anywhere
+  const forget = RENDER.slice(RENDER.indexOf("function utForgetSession("), RENDER.indexOf("\n}", RENDER.indexOf("function utForgetSession(")));
+  assert.ok(forget.length > 0, "utForgetSession exists");
+  assert.match(forget, /if \(utArmed\.has\(t\.id\)\) utDisarm\(t\.id\)/, "an arm goes with its one-shot");
+  assert.match(forget, /for \(const \[tid, owner\] of utPendingRemoval\) if \(owner === sid\) utPendingRemoval\.delete\(tid\)/,
+    "pending ids are dropped by their session, not by the rows the frame still lists");
+  const dismiss = RENDER.slice(RENDER.indexOf("function dismissSession("), RENDER.indexOf("\n}", RENDER.indexOf("function dismissSession(")));
+  assert.match(dismiss, /utForgetSession\(id, sessions\.get\(id\)\?\.userTodos\);/);
+  assert.ok(dismiss.indexOf("utForgetSession(") < dismiss.indexOf("sessions.delete(id)"),
+    "read before the map forgets the rows");
 });
 
 test("reply opens a modal (outside the rebuilt transcript) and posts one answer+stamp op", () => {

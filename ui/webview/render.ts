@@ -3677,8 +3677,10 @@ function utDisarm(tid: string): void {
 // the next push confirms. The ids awaiting that confirmation gate the warn-frame re-sync — a warn
 // carries no sid or todo id, so "this client has a removal pending" is the only gate it has — and a
 // push that no longer lists an id settles it (per session: an id absent from ANOTHER session's frame
-// says nothing about it).
-const utPendingRemoval = new Set<string>();
+// says nothing about it). Keyed todo id -> its SESSION id: the warn's re-sync must reach the view that
+// holds the refused row, and the user may have switched sessions inside the round-trip — a re-sync of
+// the active view alone rebuilt the wrong one and left the removal standing in the one they left.
+const utPendingRemoval = new Map<string, string>();
 function utSettlePending(before: UserTodo[] | undefined, now: UserTodo[] | undefined): void {
   if (!utPendingRemoval.size && !utArmed.size) return;
   const live = new Set((now || []).map((t) => t.id));
@@ -3688,9 +3690,21 @@ function utSettlePending(before: UserTodo[] | undefined, now: UserTodo[] | undef
     if (utArmed.has(t.id)) utDisarm(t.id);   // a row the kernel dropped mid-two-step takes its arm (and one-shot) with it
   }
 }
+// A dismissed session takes its keyed state with it: utSettlePending runs only from the SAME session's
+// later frames, which never arrive once it is gone — so a dead session's pending id held the warn gate
+// open for the next unrelated warn, and a coarse-pointer arm's document pointerdown listener outlived
+// the session until the next tap anywhere. Arms go by the rows the last frame listed; pending ids by
+// their owning session (a pending row may already be gone from that list).
+function utForgetSession(sid: string, rows: UserTodo[] | undefined): void {
+  for (const t of rows || []) if (utArmed.has(t.id)) utDisarm(t.id);
+  for (const [tid, owner] of utPendingRemoval) if (owner === sid) utPendingRemoval.delete(tid);
+}
 // One helper for both removal sites: the row goes NOW and the heading's count follows it — a
 // "Waiting on you · 3" over two rows read wrong until the next push. The heading goes with the last
-// row, as renderTodo paints it (the section auto-hides when empty).
+// row, as renderTodo paints it (the section auto-hides when empty) — and so does the card when that
+// heading was all it had: the kernel ships no todo event when both lists are empty, so an empty
+// bordered .todo-card and its rail dot stood until the next push. The turn is HIDDEN, never removed:
+// syncViewInner keys on v.el.childNodes, and the next push's render replaces the node either way.
 function utDropRow(row: Element | null): void {
   if (!row) return;
   const card = row.closest(".todo-card");
@@ -3699,7 +3713,9 @@ function utDropRow(row: Element | null): void {
   const head = card.querySelector(".ut-head");
   if (!head) return;
   const n = card.querySelectorAll(".ut-item").length;
-  if (n) head.textContent = `Waiting on you · ${n}`; else head.remove();
+  if (n) { head.textContent = `Waiting on you · ${n}`; return; }
+  head.remove();
+  if (!card.childElementCount) (card.closest(".turn-todo") as HTMLElement | null)?.style.setProperty("display", "none");
 }
 // The "more behind this" hint on a row WITH detail (the user 2026-09-02): "▸ details" trails the text,
 // "▾ details" while the fold is open; a bare row renders nothing, so the two read differently at a
@@ -8423,7 +8439,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
     // optimistic: the row goes NOW (answering clears it); the next push confirms — and a stale
     // click gets the kernel's loud warn instead of a silent nothing (the pending mark lets that
     // warn repaint the row)
-    utPendingRemoval.add(todoId);
+    utPendingRemoval.set(todoId, sid);
     utDropRow(document.querySelector(`.ut-item [data-tid="${todoId}"]`)?.closest(".ut-item") ?? null);
   };
   cancel.addEventListener("click", close);
@@ -16259,6 +16275,7 @@ function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string
   const wasActive = activeId === id;
   const name = sessions.get(id)?.name || tabMeta.get(id)?.name || id;   // read before the maps forget it
   if (wasActive) stashActiveDraft(id);   // FIRST: what is on screen belongs to this id, whatever happens next
+  utForgetSession(id, sessions.get(id)?.userTodos);   // its keyed Reply/Dismiss state, before the map forgets the rows
   sessions.delete(id);
   onDismiss(skeletonTabs, id);   // a tab that left the strip (✕, the kernel's omission, a host drop) has nothing left to load (2026-09-07)
   liveAsks.delete(id);
@@ -16493,10 +16510,13 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     // state didn't change on a refusal, so the next push can dedup to nothing and the optimistic
     // removal would otherwise stand until an unrelated repaint. GATED on the pending set: the frame
     // carries no sid or todo id, and a warn about anything else (a bad name on create, an MCP error)
-    // should repaint nothing. The re-sync settles whatever was pending.
+    // should repaint nothing. EVERY view holding a pending id goes stale, not only the active one: the
+    // user may have switched sessions inside the round-trip, and the refused row sits in the view they
+    // left — appendActive rebuilds the active one now, a hidden one rebuilds on its next switch (the
+    // full-window branch reads stale). The re-sync settles whatever was pending.
     if (utPendingRemoval.size) {
-      const wv = activeId ? views.get(activeId) : null;
-      if (wv) { wv.stale = true; appendActive(); }
+      for (const sid of new Set(utPendingRemoval.values())) { const v = views.get(sid); if (v) v.stale = true; }
+      if (activeId && views.get(activeId)?.stale) appendActive();
       utPendingRemoval.clear();
     }
   }
@@ -18491,7 +18511,7 @@ setupSettings();
       // retire it here (keyed, so a rebuilt node retires the listener the old one registered), or
       // it lingers on document and fires once more against the removed row
       utArmed.delete(tid); utRetireDisarmer(tid);
-      utPendingRemoval.add(tid);
+      utPendingRemoval.set(tid, sid);
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
       utDropRow(elx.closest(".ut-item"));
     },
