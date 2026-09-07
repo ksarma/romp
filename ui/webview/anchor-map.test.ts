@@ -474,7 +474,7 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   const anchor = makeAnchor(source, r.range);
   assert.deepEqual(locateComment(source, anchor, r.range.start), { state: "located", range: r.range });
   assert.deepEqual(locateComment(source, anchor), { state: "located", range: { start: first, end: first + needle.length } }, "without the hint the engine takes the earliest tie");
-  // the session inserted two lines above the passage between the selection and Enter
+  // the session inserted two lines above the passage between the selection and the save
   const inserted = "# reviewed\r\n# twice\r\n";
   const edited = source.slice(0, source.indexOf("def put_note")) + inserted + source.slice(source.indexOf("def put_note"));
   const loc = locateComment(edited, anchor, r.range.start);

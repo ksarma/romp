@@ -594,7 +594,7 @@ test("a write about a figure is fenced on its bytes: figure-changed is never ret
   assert.equal(h.last().verb, "comment");
   assert.equal(h.last().fence.figureHash, H1, "the hash the status holds for the picture");
   const n0 = asks();
-  // the figure was regenerated between the drag and Enter: the host hashed other bytes than the fence names
+  // the figure was regenerated between the drag and the save: the host hashed other bytes than the fence names
   await h.refuse("figure-changed", "docs/figure.png changed on disk since it was shown — reload to see it as it is now, then draw the region again; nothing was changed");
   assert.equal(writes(), 1, "never retried: a retry would stamp the new bytes with a rectangle drawn on the old ones");
   assert.equal(asks(), n0 + 1, "the comments are re-read, as after a figure the poll saw move");

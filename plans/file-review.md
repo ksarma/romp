@@ -951,29 +951,32 @@ small for the comments the loop needs. Every composer the panel offers (a passag
 region, a reply on a card, a comment bound to a change) is now one textarea: three rows to start,
 grown to its content up to twelve rows and scrolling past that, draggable taller or shorter
 (`resize: vertical`; a drag may pass the twelve rows, the cap being the panel's and not a sheet
-max-height, and a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter
-on macOS or Ctrl+Enter elsewhere (either modifier works on every platform, the chat composer's rule)
-or the Save button saves; Escape cancels as before, the re-place Escape included. A hint under the
-box says what saves, and its wording follows the device. With a keyboard it names the platform's
-chord: "Cmd+Enter saves; Enter adds a line" on macOS, Ctrl+Enter elsewhere, the modifier detected
-once by the editor's modifier rule. On a device whose primary pointer is coarse (a phone; a tablet
-with no trackpad) it names the button instead: "Enter adds a line; tap Save when done". A soft
-keyboard has no modifier to hold, so a chord would name a key the device lacks, and a person who
-pressed Return to save in the old one-line box got a newline with no explanation of what saves now
-(the composer review, 2026-09-07). The chord still saves from any hardware keyboard, whatever the
-hint says: a tablet with a keyboard and no trackpad shows the button hint and accepts the chord.
-Whether the pointer is coarse is read at each render, as the editor's decide words read it, because
-the primary pointer changes when a tablet docks to a trackpad; the chat composer's placeholder, which
-drops its key chart on a coarse pointer, follows the same rule. The draft (text, caret,
-chosen height) survives the poll's re-render and a refusal, since the box is one persistent node and
-the typed comment is never discarded; saving trims the blank ends and keeps the line breaks inside; a
-blank comment saves nothing. A card renders a multi-line body with its breaks (`white-space:
-pre-wrap`, both sheets), and the send message carries the body verbatim: the kernel's builder and the
-webview's are pinned to the same two-line text on both sides (`tests/test_file_comments.py`
-TheMessage, `ui/webview/file-comments.test.ts`). Tests: `ui/webview/file-comments-composer.test.ts`
-(driven) and `file-comments-composer-browser.test.ts` (the real cap and the real keys, Chromium and
-Firefox); `tools/file-review-plan-save-gesture.test.mjs` holds this plan to the one gesture: the plain
-key adds a line wherever the plan names it, and the four sentences that once anchored a moment to that
+max-height, and a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter on
+macOS or Ctrl+Enter elsewhere (either modifier works on every platform, the chat composer's rule) or
+the Save button saves; Escape cancels as before, the re-place Escape included; an Escape pressed
+while an IME is composing is the IME's and stops at the box, never the viewer's close over the typed
+comment. The box's measurement puts every scrolled ancestor back where it was, so a keystroke at the
+cap does not scroll the panel. A hint under the box says what saves, and its wording follows the
+device. With a keyboard it names the platform's chord: "Cmd+Enter saves; Enter adds a line" on
+macOS, Ctrl+Enter elsewhere, the modifier detected once by the editor's modifier rule. On a device
+whose primary pointer is coarse (a phone; a tablet with no trackpad) it names the button instead:
+"Enter adds a line; tap Save when done". A soft keyboard has no modifier to hold, so a chord would
+name a key the device lacks, and a person who pressed Return to save in the old one-line box got a
+newline with no explanation of what saves now (the composer review, 2026-09-07). The chord still
+saves from any hardware keyboard, whatever the hint says: a tablet with a keyboard and no trackpad
+shows the button hint and accepts the chord. Whether the pointer is coarse is read at each render,
+as the editor's decide words read it, because the primary pointer changes when a tablet docks to a
+trackpad; the chat composer's placeholder, which drops its key chart on a coarse pointer, follows
+the same rule. The draft (text, caret, chosen height) survives the poll's re-render and a refusal,
+since the box is one persistent node and the typed comment is never discarded; saving trims the
+blank ends and keeps the line breaks inside; a blank comment saves nothing. A card renders a
+multi-line body with its breaks (`white-space: pre-wrap`, both sheets), and the send message carries
+the body verbatim: the kernel's builder and the webview's are pinned to the same two-line text on
+both sides (`tests/test_file_comments.py` TheMessage, `ui/webview/file-comments.test.ts`). Tests:
+`ui/webview/file-comments-composer.test.ts` (driven) and `file-comments-composer-browser.test.ts`
+(the real cap and the real keys, Chromium and Firefox);
+`tools/file-review-plan-save-gesture.test.mjs` holds this plan to the one gesture: the plain key
+adds a line wherever the plan names it, and the four sentences that once anchored a moment to that
 key say the save.
 
 ### Slice 3: region comments on images

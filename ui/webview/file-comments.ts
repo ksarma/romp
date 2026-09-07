@@ -1422,7 +1422,7 @@ class Panel {
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
     // a write ABOUT a figure — `comment` with a target, `retarget` — is fenced on the figure's bytes too: the hash the
     // status holds for it (figureFenceHash), which the host compares with the bytes it stamps and refuses `figure-changed`
-    // when they differ. Without it a figure regenerated between the drag and Enter was stamped with the NEW bytes' hash,
+    // when they differ. Without it a figure regenerated between the drag and the save was stamped with the NEW bytes' hash,
     // which every reply then equalled, so a rectangle drawn on the old picture read as current on the new one — the one
     // write the hash exists to catch (the Slice 3 review, 2026-09-06; the host's fence stood unarmed until the panel sent this)
     const fh = FIGURE_VERBS.has(verb) && args.target ? figureFenceHash(s, args.target as Target) : null;
