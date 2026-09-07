@@ -256,6 +256,11 @@ test("the waiting-on-you styles reuse the todo card vocabulary", () => {
   assert.match(CSS, /\.ut-detail \{ display: none;/);
   assert.match(CSS, /\.ut-detail\.open \{ display: block; \}/);
   assert.match(CSS, /\.ut-dismiss\.armed \{ border-color: var\(--err\); color: var\(--err\); \}/);
+  // the reply box's "empty answer" red is the same --err token, never a hex the light theme can't re-ink
+  const bad = (CSS.match(/\.ut-reply-input\.bad \{[^}]*\}/) || [""])[0];
+  assert.ok(bad, ".ut-reply-input.bad rule exists");
+  assert.match(bad, /border-color: var\(--err\)/);
+  assert.doesNotMatch(bad, /#[0-9a-f]{3,8}\b/i, "tokens only");
   // the hint wears the row's chrome rung (.ut-btn / .todo-head) in the dim text color — a
   // disclosure cue, never the accent; inline-block keeps the text's dotted hover underline off it
   const rule = (CSS.match(/\.ut-more \{[^}]*\}/) || [""])[0];

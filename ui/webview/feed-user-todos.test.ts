@@ -32,6 +32,14 @@ test("the marker yields on the escalated card (the blocked badge carries the sto
 test("the marker is quiet, and click-safe via updateAskCard's per-push rewire", () => {
   assert.match(FEED_CSS, /\.fask-usertodo \{/);
   assert.match(FEED_CSS, /\.fask-usertodo[^}]*var\(--dim\)/, "dim by default — quiet, never an alarm");
+  // the pill's border is a theme token in both blocks (the tab glyph's rule, tab-usertodo.test.ts): a
+  // white alpha reads on the dark page and is invisible on the light one
+  const rule = (FEED_CSS.match(/\.fask-usertodo \{[^}]*\}/) || [""])[0];
+  const hover = (FEED_CSS.match(/\.fask-usertodo:hover \{[^}]*\}/) || [""])[0];
+  assert.ok(rule && hover, "both rules exist");
+  assert.match(rule, /border: 1px solid var\(--box-border\)/);
+  assert.match(hover, /border-color: var\(--dim\)/, "hover brightens through the same tokens");
+  assert.doesNotMatch(rule + hover, /rgba\(255, 255, 255/, "never hardcoded white");
   // the marker opens the owning session's chat (where the split card with Reply/Dismiss lives)
   const marker = FEED.slice(FEED.indexOf("const utn = userTodosMap"));
   assert.match(marker.slice(0, 900), /openSession/, "click lands on the session, live");

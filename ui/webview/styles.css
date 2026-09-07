@@ -2309,7 +2309,7 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   font: inherit; color: var(--fg); background: var(--code-bg);
   border: 1px solid var(--box-border); border-radius: 6px; outline: none; resize: vertical; }
 .ut-reply-input:focus { border-color: var(--accent); }
-.ut-reply-input.bad { border-color: #ff6a6a; }
+.ut-reply-input.bad { border-color: var(--err); }   /* the theme's error red, re-inked under body.theme-light */
 
 /* ---------- postal cards (romp peer mail) + teammate messages ---------- */
 /* Both are THE notice since 2026-09-08 (renderPostalService / renderTeammate): a peer's mail wears its
