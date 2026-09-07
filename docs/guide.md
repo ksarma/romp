@@ -201,7 +201,9 @@ tracked folder may hold figures.
 **Edit** works while changes are pending. The editor shows them inline, an insertion tinted
 and a deletion struck, and typing around them moves them with the text. Click a change to
 accept it; Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) rejects it; undo restores
-either, so nothing is final until you save. **Save** writes the file and the changes together.
+either, so nothing is final until you save. On a phone or a tablet, a tap on a change places the
+caret and decides nothing: Save or Cancel first, then accept or reject from the cards. **Save**
+writes the file and the changes together.
 A save that is refused, because the file or its changes moved on disk while you were editing,
 keeps your text and offers **Reload file**, which asks before discarding it; while you edit,
 the panel says when the file changed under you. The session's own track-edit keeps working
