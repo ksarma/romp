@@ -187,6 +187,71 @@ class StoreRoundTrip(_StoreSandbox):
             self.assertEqual(p.read_text(), junk, "the unreadable store is never replaced")
 
 
+class RegistrationCaps(_StoreSandbox):
+    """`text` and `detail` are agent-supplied and ride every chat payload and every chat-sig fold
+    of the owning session, so both are BOUNDED at the one writer that mints rows
+    (_USER_TODO_TEXT_CAP / _USER_TODO_DETAIL_CAP: a line and a page). Over the cap is REFUSED —
+    ValueError, the route's 400, and the tool tells the agent to keep the note to one line and put
+    the rest in its reply — never truncated: a silently cut note is a note the person reads wrong,
+    and the tool's contract is one short line in the first place."""
+
+    def setUp(self):
+        super().setUp()
+        self._push = (km._push_all, km._push_soon)
+        km._push_all = lambda *a, **k: (_ for _ in ()).throw(AssertionError("synchronous _push_all"))
+        km._push_soon = lambda: None
+
+    def tearDown(self):
+        km._push_all, km._push_soon = self._push
+        super().tearDown()
+
+    def _route(self, body):
+        code, out = _serve_post("/usertodo", body, {"X-Romp-Token": km.TOKEN})
+        return code, json.loads(out.decode() or "{}")
+
+    def test_the_caps_are_a_line_and_a_page(self):
+        self.assertEqual((km._USER_TODO_TEXT_CAP, km._USER_TODO_DETAIL_CAP), (500, 4000))
+
+    def test_a_100_kb_detail_is_refused_before_any_write(self):
+        with self.assertRaises(ValueError) as cm:
+            km._add_user_todo(SID, "Need the auth-scheme decision", "x" * 100_000)
+        self.assertIn("detail", str(cm.exception))
+        self.assertIn("one line", str(cm.exception))
+        self.assertFalse((jd.STATE / "user-todos.json").exists(), "nothing written")
+
+    def test_an_oversize_text_is_refused_too(self):
+        with self.assertRaises(ValueError) as cm:
+            km._add_user_todo(SID, "n" * (km._USER_TODO_TEXT_CAP + 1))
+        self.assertIn("text", str(cm.exception))
+        self.assertEqual(km._user_todos(), {})
+
+    def test_a_text_and_a_detail_at_the_cap_are_stored_whole(self):
+        text = "N" * km._USER_TODO_TEXT_CAP
+        detail = "d" * km._USER_TODO_DETAIL_CAP
+        tid = km._add_user_todo(SID, text, detail)
+        rec = km._user_todos()[SID][0]
+        self.assertEqual((rec["id"], rec["text"], rec["detail"]), (tid, text, detail), "at the cap: whole, never trimmed")
+        self.assertEqual(km._open_user_todos(SID)[0]["detail"], detail)
+
+    def test_the_route_answers_400_with_the_one_line_wording_and_writes_nothing(self):
+        code, res = self._route({"id": SID, "text": "Need the auth-scheme decision", "detail": "x" * 100_000})
+        self.assertEqual(code, 400)
+        self.assertFalse(res["ok"])
+        self.assertIn("one line", res["error"])
+        self.assertIn("rest in your reply", res["error"])
+        self.assertEqual(km._user_todos(), {})
+        code, res = self._route({"id": SID, "text": "n" * (km._USER_TODO_TEXT_CAP + 1)})
+        self.assertEqual((code, res["ok"]), (400, False))
+        # before any forward: the local kernel words the refusal and a remote never sees the bulk
+        with mock.patch.object(km, "_host_for_sid", lambda sid: {"host": "TESTHOST"}), \
+                mock.patch.object(km, "_remote_forward_status", side_effect=AssertionError("forwarded an oversize ask")):
+            self.assertEqual(self._route({"id": SID, "text": "Need the port", "detail": "x" * 100_000})[0], 400)
+        # at the cap the route stores it whole
+        code, res = self._route({"id": SID, "text": "N" * km._USER_TODO_TEXT_CAP, "detail": "d" * km._USER_TODO_DETAIL_CAP})
+        self.assertEqual((code, res["ok"]), (200, True))
+        self.assertEqual(km._user_todos()[SID][0]["detail"], "d" * km._USER_TODO_DETAIL_CAP)
+
+
 class ResolutionStamps(_StoreSandbox):
     """Resolution STAMPS rather than deletes — the record carries its own history."""
 

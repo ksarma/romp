@@ -6215,17 +6215,41 @@ def _user_todos_unreadable():
     return (st.st_mtime_ns, st.st_size) == bad
 
 
+# Bounds on the two agent-supplied strings a row carries (2026-09-07). Both ride every chat payload
+# of the owning session and every chat-sig fold (_user_todo_fp re-serializes the rows per build),
+# so an unbounded detail is a per-build cost and a per-push payload for as long as the row is open.
+# A line and a page: the tool's contract is "one short line", with detail only when the line can't
+# carry it. Over the cap is REFUSED, never truncated — a silently cut note is a note the person
+# reads wrong — and the refusal tells the agent what to do instead (the postal bus mirrors the
+# numbers by name, USER_TODO_TEXT_CAP / USER_TODO_DETAIL_CAP, so it can word them before posting).
+_USER_TODO_TEXT_CAP = 500
+_USER_TODO_DETAIL_CAP = 4000
+
+
+def _user_todo_check_size(text, detail=""):
+    """ValueError when `text` or `detail` is over its cap, worded for the agent (the route's 400 body
+    and the tool's refusal carry it): keep the note to one line, the rest goes in the reply."""
+    if len(str(text)) > _USER_TODO_TEXT_CAP:
+        raise ValueError("text is %d characters, over the %d-character cap: keep the note to one line "
+                         "and put the rest in your reply" % (len(str(text)), _USER_TODO_TEXT_CAP))
+    if len(str(detail or "")) > _USER_TODO_DETAIL_CAP:
+        raise ValueError("detail is %d characters, over the %d-character cap: keep the note to one line "
+                         "and put the rest in your reply" % (len(str(detail)), _USER_TODO_DETAIL_CAP))
+
+
 def _add_user_todo(sid, text, detail=""):
     """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
     for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
     optional longer context; empty means the short line carries it all and no key is stored.
-    REFUSES (ValueError, before any write) a sid the store's own reader rejects: this is the one
+    REFUSES (ValueError, before any write) a text or detail over its cap (_user_todo_check_size)
+    and a sid the store's own reader rejects: this is the one
     writer that mints a NEW top-level key, and one key that fails _user_todo_store_shaped flags the
     whole file — every open row then reads as empty on every surface and every later write (a
     register, an answer stamp, a dismiss, a withdraw, a reopen) is refused until the file is
     hand-edited. The stamp and reopen helpers touch existing keys only and need no such check."""
     if not _safe_id(sid):
         raise ValueError("user-todo sid must be a session id (a safe path component): %r" % (str(sid)[:80],))
+    _user_todo_check_size(text, detail)
     with _user_todos_lock:                           # full read-modify-write under the lock: a racing
         cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
@@ -55243,6 +55267,13 @@ class Handler(BaseHTTPRequestHandler):
                     # the bus asked, before any forward: the switch is per machine, and the remote
                     # kernel's own copy of this route applies its own answer to a forwarded ask.
                     return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
+                try:
+                    _user_todo_check_size(text, str(body.get("detail") or ""))
+                except ValueError as e:
+                    # over the caps (2026-09-07): a shape error worded for the agent, answered here
+                    # before any forward — the bulk never crosses a tunnel, and the remote's own
+                    # caps are not what the bus can word
+                    return self._send(400, json.dumps({"ok": False, "error": str(e)}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     st, res = _remote_forward_status(r, "/usertodo", {"id": sid, "text": text,
@@ -55280,6 +55311,8 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 try:
                     tid = _add_user_todo(sid, text, str(body.get("detail") or ""))
+                except ValueError as e:                             # the writer's own refusal (caps, sid)
+                    return self._send(400, json.dumps({"ok": False, "error": str(e)}), "application/json")
                 except RuntimeError:                                # the store went bad under the check
                     return self._send(503, json.dumps({"ok": False, "error": _USER_TODOS_UNREADABLE_ERR}),
                                       "application/json")

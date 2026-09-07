@@ -1235,6 +1235,11 @@ def _postal_off(sid):
         return False
 
 _user_todos_switch_bad = {}   # str(path) -> (mtime_ns, size) of a switch-file version already reported (below)
+# The kernel's bounds on a note (_USER_TODO_TEXT_CAP / _USER_TODO_DETAIL_CAP, kernel.py), mirrored by
+# name: the route answers 400 over them, but _kernel_post reads every non-2xx as None, so the tool
+# checks first and words the refusal itself — over the cap is refused, never trimmed (2026-09-07).
+USER_TODO_TEXT_CAP = 500
+USER_TODO_DETAIL_CAP = 4000
 
 def _user_todos_on():
     """The kernel's per-install USER TODOS switch (the user 2026-09-03: the feature is off by default
@@ -4845,8 +4850,14 @@ def _mcp_call(name, args):
         text = str(args.get("text") or "").strip()
         if not text:
             return "Need 'text' — one short line: what you need from them and why.", True
-        res = _kernel_post("/usertodo", {"id": mid, "text": text,
-                                         "detail": str(args.get("detail") or "").strip()})
+        detail = str(args.get("detail") or "").strip()
+        if len(text) > USER_TODO_TEXT_CAP or len(detail) > USER_TODO_DETAIL_CAP:
+            # the kernel's caps, refused HERE so the agent hears why (its 400 would reach this
+            # tool as None): the note is one short line, the rest belongs in the reply
+            return ("Not saved — that is too long for a note (the line holds %d characters, the "
+                    "detail %d). Keep the note to one line and put the rest in your reply."
+                    % (USER_TODO_TEXT_CAP, USER_TODO_DETAIL_CAP)), True
+        res = _kernel_post("/usertodo", {"id": mid, "text": text, "detail": detail})
         tid = res.get("todoId") if isinstance(res, dict) else None
         if not tid:
             # LOUD, never a silent drop: an unsaved need the agent believes is filed is exactly

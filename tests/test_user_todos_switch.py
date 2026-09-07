@@ -1132,6 +1132,26 @@ class BusWording(unittest.TestCase):
         self.assertNotIn("try again", text)
         self._no_machinery(text)
 
+    def test_an_oversize_note_is_refused_at_the_tool_with_the_one_line_advice(self):
+        # the kernel's caps, mirrored by name so the tool can word the refusal itself — the 400 the
+        # route would answer reaches the bus as None, which reads as "try again shortly"
+        pm = self.pm
+        self.assertEqual((pm.USER_TODO_TEXT_CAP, pm.USER_TODO_DETAIL_CAP), (500, 4000))
+        self.canned = {"ok": True, "todoId": "ut-9f2c1a34"}
+        text, is_err = pm._mcp_call("add_user_todo", {"text": "Need the port", "detail": "x" * 100_000})
+        self.assertTrue(is_err)
+        self.assertEqual(self.posts, [], "refused before any post")
+        self.assertIn("one line", text)
+        self.assertIn("rest in your reply", text)
+        self._no_machinery(text)
+        text, is_err = pm._mcp_call("add_user_todo", {"text": "n" * 501})
+        self.assertTrue(is_err)
+        self.assertEqual(self.posts, [])
+        text, is_err = pm._mcp_call("add_user_todo", {"text": "N" * 500, "detail": "d" * 4000})
+        self.assertFalse(is_err, "at the cap it posts and the note is filed")
+        self.assertEqual(len(self.posts), 1)
+        self.assertIn("Noted", text)
+
     def test_withdraw_against_an_unreadable_store_says_so_not_no_note_of_yours(self):
         self.canned = {"ok": False, "state": "unknown", "at": None, "owner": None,
                        "error": "the request store is unreadable (see the kernel log)"}
