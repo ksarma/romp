@@ -22666,6 +22666,10 @@ def _session_delegated_identities(sid):
     return sorted((_peer_identity(p) for p in peers), key=lambda d: d["name"])
 
 
+_LIVE_UNSET = object()   # "no row handed": _session_awaiting, _bg_live_norm and the awaited-task readers take
+#                          the liveness snapshot themselves
+
+
 # ── awaited ROWS (plans/subagent-transcripts.md slice 2, the user 2026-09-05) ─────────────────────────
 # _session_awaiting used to answer with ONE kind chosen by source precedence: live subagents, else the
 # pending background launches (kind agents only if EVERY pending row was an agent, else the generic
@@ -22791,7 +22795,7 @@ def _awaiting_live_rows(sid, path, live):
         if aid:
             seen_agent[str(aid)] = it
         agents.append(it)
-    tasks = _bg_live_norm(sid, path)
+    tasks = _bg_live_norm(sid, path, live=live)     # the caller's row, never a second snapshot read
     pending = _bg_pending(sid, path, tasks) if tasks else []
     pending_tids = {t.get("tid") for t in pending}
     meta = None   # the subagents sidecar map, read once and only if an agent launch lacks its agentId
@@ -22836,13 +22840,15 @@ def _awaiting_live_rows(sid, path, live):
     return agents, commands, _watch_awaiting(sid)
 
 
-def _session_background_items(sid, path):
+def _session_background_items(sid, path, live=_LIVE_UNSET):
     """Every row a session has in flight in the background — the SAME rows _session_awaiting groups for
     the idle Awaiting read (agents, commands, watches; _awaiting_join_items order), whether or not the turn
     is open. [] when nothing runs. This is what the session-scoped surfaces ship as awaitingItems while
     the session works (2026-09-06; see _awaiting_items_payload); peer waits and timers exist only through
-    the idle-gated arms, so they simply do not appear mid-turn."""
-    live = _tmux_sessions().get(str(sid))
+    the idle-gated arms, so they simply do not appear mid-turn. `live` is the session's row when the
+    caller holds one (the chat build's handed row — see _session_awaiting); else the snapshot is read."""
+    if live is _LIVE_UNSET:
+        live = _tmux_sessions().get(str(sid))
     agents, commands, watch = _awaiting_live_rows(sid, path, live)
     return _awaiting_join_items(agents, commands, watch)
 
@@ -22882,10 +22888,13 @@ def _awaiting_items_payload(aw, sid, path, tmux=None):
     if aw:
         return list(aw.get("items") or [])
     with _serve_live(tmux):
-        return _session_background_items(sid, path)
+        # the handed map's row, not a raw read (the review's should-fix 2, see _session_awaiting): the map
+        # _push hands the chat build carries the previous rows through a tmux collapse, and the signature
+        # keys the tab on that row, so the rows must derive from it too
+        return _session_background_items(sid, path, live=(tmux.get(str(sid)) if tmux is not None else _LIVE_UNSET))
 
 
-def _session_awaiting(sid, path, idle, stamp=False):
+def _session_awaiting(sid, path, idle, stamp=False, live=_LIVE_UNSET):
     """A session AWAITING dispatched/delegated background work (a WORKING flavor, the user 2026-06-22) →
     {"kind", "why", "since", "count", "items"}: the one-line 'why' for the ⏳ awaiting badge plus WHAT the wait is on
     (jd.AWAIT_KINDS, the user 2026-08-15 — kind rides as DATA so surfaces can word it and rules can scope
@@ -22944,10 +22953,18 @@ def _session_awaiting(sid, path, idle, stamp=False):
     The one remaining feed-only flavor is the blocked-card peer-wait flip (col blocked + _peer_wait in
     build_feed): it corrects a needs-you verdict against the wait-for graph, which requires the card's
     block context — a session-scoped mirror would light this badge for ANY unanswered peer ask, saying
-    MORE than the feed does. Postal peer-waits otherwise stay build_feed's."""
+    MORE than the feed does. Postal peer-waits otherwise stay build_feed's.
+
+    `live`: the session's liveness row when the caller holds one (None for a dormant session). The
+    chat build passes the row _push handed it — the GUARDED map, which carries the previous rows
+    through a tmux collapse — so the chip and the awaiting fields it caches under that row's key are
+    derived from that row, not from a raw read that may have collapsed to nothing in the same cycle
+    (the review's should-fix 2: a tab built during a collapse cached 'ready' under a key a recovered
+    read never busts). Every other caller takes the snapshot here, as before."""
     if not idle:
         return None
-    live = _tmux_sessions().get(str(sid))    # None = not a live CLI (dormant); {}-like = live snapshot
+    if live is _LIVE_UNSET:
+        live = _tmux_sessions().get(str(sid))    # None = not a live CLI (dormant); {}-like = live snapshot
     # Sources 0, 0.5/0.75 and 0.9 are COMBINED into rows (2026-09-05; see _awaiting_from_items): each
     # contributes what it knows, and the one answer is derived from all of them — the old first-source-
     # wins short-circuit is what made one situation read "agents" or "tasks" by accident of ordering.
@@ -23029,9 +23046,6 @@ def _agent_task_label(desc, kind):
     if _bg_is_agent(kind) and d.startswith("Running "):
         d = d[len("Running "):].strip()
     return d
-
-
-_LIVE_UNSET = object()
 
 
 def _bg_live_norm(sid, path, live=_LIVE_UNSET):
@@ -23128,21 +23142,21 @@ def _bg_split(sid, path, tasks):
     return awaited, services
 
 
-def _awaiting_task_descs(sid, path):
+def _awaiting_task_descs(sid, path, live=_LIVE_UNSET):
     """The AWAITED live background-task DESCRIPTIONS for a session — the feed's 'Waiting on task' pill
     expands them as a list (the user 2026-07-13). Judged-unawaited leftovers (a dev server the session
     keeps around) are SERVICES (_bg_service_descs, the session chip), never listed here. [] when no
     awaited tasks are live."""
-    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path))
+    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path, live=live))
     return [t["desc"] or "background task" for t in awaited]
 
 
-def _awaiting_task_ids(sid, path):
+def _awaiting_task_ids(sid, path, live=_LIVE_UNSET):
     """The AWAITED live background-task launch IDS — the same _bg_split set as _awaiting_task_descs,
     as tool_use ids, so the chat's #bg-tasks box can outline exactly the rows the await-green chip is
     waiting on (the user 2026-08-19). The box rows carry the same launching id (_bg_tasks "id" / the
     lifecycle set's toolUseId), so the match is exact — never a description-string guess."""
-    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path))
+    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path, live=live))
     return [t["tid"] for t in awaited if t.get("tid")]
 
 
@@ -27402,7 +27416,7 @@ def _session_chip(sid, path, session, tm, now):
     freshest parse the caller has (live-merged where available); `tm` the backend snapshot or None."""
     turns = session.get("turns", [])
     open_now = _session_working(turns)
-    awaiting_why = _session_awaiting(sid, path, not open_now, stamp=True)   # session-scoped chip → durable stamp too
+    awaiting_why = _session_awaiting(sid, path, not open_now, stamp=True, live=tm)   # session-scoped chip → durable stamp too; the caller's row
     aerr = _api_error(path) if not (open_now or awaiting_why) else None
     st = (tm or {}).get("state", "") or ""
     compacting = _compacting(sid, st, session, now, (tm or {}).get("since"))
@@ -30707,7 +30721,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # user 2026-06-22), the SAME signal _nudge + build_feed use. Only meaningful when the main turn is idle
     # (_session_awaiting returns None while open_now). Session-scoped chat-view chip → the durable stamp too,
     # so the composer's awaiting chip survives a kernel restart like the feed card.
-    _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True)
+    _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True, live=tm0)   # the handed row (see _session_awaiting)
     awaiting_why = _aw["why"] if _aw else None
     awaiting_kind = _aw["kind"] if _aw else None
     # The in-flight ROWS ride the payload in BOTH turn states (2026-09-06): _session_awaiting answers
@@ -31029,11 +31043,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   # idle-awaiting, everything running in the background otherwise; [] for a wait no
                   # source can enumerate (a judge stamp, a bare overlay row) and when nothing runs
                   "awaitingItems": _aw_items,
-                  "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"]) or
+                  "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"], live=tm) or
                                       (_aw or {}).get("tasks") or [])) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
                   # rows in the chip's await-green (the user 2026-08-19)
-                  "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"]) if awaiting_why else []),
+                  "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"], live=tm) if awaiting_why else []),
                   "apiTooLong": bool(aerr and aerr.get("tooLong")),
                   # a spend cap is on-you like tooLong (red tab, "raise your cap") AND never auto-retried:
                   # the client's apiRetryTick skips it, and the global pause it engages stops the loop too

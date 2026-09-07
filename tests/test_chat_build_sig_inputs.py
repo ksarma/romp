@@ -755,6 +755,28 @@ class RealBuildIdleBoard(_World):
         km._push([self.client])
         self.assertEqual(self._chat()["cached"] - c2["cached"], 1, "served again once nothing moves")
 
+    def test_a_tab_built_during_a_liveness_collapse_caches_the_chip_of_the_handed_row(self):
+        """The review's should-fix 2: _push hands the chat loop the GUARDED map (the previous rows carried
+        through a tmux collapse) and the key reads that row, but the chip's sources read the raw snapshot;
+        a tab built while the raw read had collapsed cached a 'ready' chip under a key the recovered read
+        never busts. The chip now derives from the handed row, so the served payload equals a fresh build's."""
+        self.row["bgTasks"] = [{"toolUseId": "t1", "desc": "the nightly batch", "since": NOW - 50, "type": "local_bash"}]
+        saved = km._tmux_sessions
+        km._tmux_sessions = lambda: {}                       # the raw read collapsed for this push…
+        try:
+            km._push([self.client], tmux=self.tmux)          # …while the handed map carries the row
+        finally:
+            km._tmux_sessions = saved
+        served = km._built_chat[SID][1]["status"]
+        fresh = km.build_session(SID, int(time.time()), self.tmux)["status"]
+        self.assertEqual(served["state"], "awaitingBg", "the handed row's pending task decides the chip")
+        self.assertEqual((served["state"], served["awaitingWhy"], served["awaitingTaskIds"]),
+                         (fresh["state"], fresh["awaitingWhy"], fresh["awaitingTaskIds"]),
+                         "what the collapse cycle cached is what a build after the read recovers produces")
+        c0 = self._chat()
+        km._push([self.client], tmux=self.tmux)
+        self.assertEqual(self._chat()["cached"] - c0["cached"], 1, "the same key: served, and correct")
+
     def _pusher_push(self, *clients):
         """A push as _pusher_cycle runs it: the cycle's scopes open on this thread."""
         km._live_scope.snapshot = self.tmux

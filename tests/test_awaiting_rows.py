@@ -39,7 +39,7 @@ class AwaitingRows(unittest.TestCase):
                         "_owned_yield_why", "_session_stamp_full", "_session_delegated_why",
                         "_session_delegated_identities", "_watches", "_pr_watches", "_peer_identity")}
         km._tmux_sessions = lambda: {SID: {}}
-        km._bg_live_norm = lambda sid, path: []
+        km._bg_live_norm = lambda sid, path, live=None: []
         km._bg_pending = lambda sid, path, tasks: tasks
         km._states_awaiting_overlay = lambda sid: None
         km._owned_yield_why = lambda sid, path: None
@@ -56,7 +56,7 @@ class AwaitingRows(unittest.TestCase):
 
     def test_all_three_sources_contribute_rows_and_several_kinds_read_mixed(self):
         km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "explore", "since": 100, "agentId": AID}]}}
-        km._bg_live_norm = lambda sid, path: [
+        km._bg_live_norm = lambda sid, path, live=None: [
             {"tid": "tu_agent2", "desc": "map the parser", "t": 120, "type": "local_agent", "agentId": "a1111111111111111"},
             {"tid": "tu_bash1", "desc": "build the docs", "t": 130, "type": "local_bash"}]
         km._watches = [{"id": "w1", "sid": SID, "cmd": "test -f /tmp/notes-api.done", "note": "the CI run", "at": 90}]
@@ -71,7 +71,7 @@ class AwaitingRows(unittest.TestCase):
 
     def test_a_shell_and_an_agent_pending_are_two_rows_never_the_collapse_word(self):
         # the exact defect: a background shell command plus a background agent read "Awaiting 2 tasks"
-        km._bg_live_norm = lambda sid, path: [
+        km._bg_live_norm = lambda sid, path, live=None: [
             {"tid": "tu_bash1", "desc": "build the docs", "t": 10, "type": "local_bash"},
             {"tid": "tu_agent1", "desc": "audit the sampler", "t": 11, "type": "local_agent"}]
         aw = km._session_awaiting(SID, "/tmp/x", True)
@@ -85,7 +85,7 @@ class AwaitingRows(unittest.TestCase):
         # the same agent is in BOTH the hook set (SubagentStart) and the task stream (the launch ack):
         # one row, wearing the launch's id (Stop's handle), its description, and the earliest start
         km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "explore", "since": 100, "agentId": AID}]}}
-        km._bg_live_norm = lambda sid, path: [
+        km._bg_live_norm = lambda sid, path, live=None: [
             {"tid": "tu_agent1", "desc": "map the parser", "t": 95, "type": "local_agent", "agentId": AID}]
         aw = km._session_awaiting(SID, "/tmp/x", True)
         self.assertEqual((aw["kind"], aw["count"]), ("agents", 1))
@@ -98,14 +98,14 @@ class AwaitingRows(unittest.TestCase):
     # ---- single-kind sentences (byte-identical to the pre-rows whys where the word did not change) ----
 
     def test_single_kind_sentences_wear_the_plain_words(self):
-        km._bg_live_norm = lambda sid, path: [{"tid": "b1", "desc": "build the docs", "t": 10, "type": "local_bash"}]
+        km._bg_live_norm = lambda sid, path, live=None: [{"tid": "b1", "desc": "build the docs", "t": 10, "type": "local_bash"}]
         aw = km._session_awaiting(SID, "/tmp/x", True)
         self.assertEqual((aw["kind"], aw["why"]), ("task", "waiting on a background command: build the docs"))
-        km._bg_live_norm = lambda sid, path: [{"tid": "b1", "desc": "build the docs", "t": 10, "type": "local_bash"},
+        km._bg_live_norm = lambda sid, path, live=None: [{"tid": "b1", "desc": "build the docs", "t": 10, "type": "local_bash"},
                                               {"tid": "b2", "desc": "run the suite", "t": 12, "type": "local_bash"}]
         aw = km._session_awaiting(SID, "/tmp/x", True)
         self.assertEqual((aw["kind"], aw["count"], aw["why"]), ("task", 2, "waiting on 2 background commands — build the docs, …"))
-        km._bg_live_norm = lambda sid, path: []
+        km._bg_live_norm = lambda sid, path, live=None: []
         km._watches = [{"id": "w1", "sid": SID, "cmd": "test -f /tmp/a", "note": "the CI run", "at": 90},
                        {"id": "w2", "sid": SID, "cmd": "test -f /tmp/b", "at": 91}]
         aw = km._session_awaiting(SID, "/tmp/x", True)
@@ -117,7 +117,7 @@ class AwaitingRows(unittest.TestCase):
         self.assertEqual(km._session_awaiting(SID, "/tmp/x", True)["why"], "2 background agents still working")
 
     def test_a_monitor_is_a_command_row(self):
-        km._bg_live_norm = lambda sid, path: [{"tid": "m1", "desc": "watch the deploy log", "t": 10, "type": "local_monitor"}]
+        km._bg_live_norm = lambda sid, path, live=None: [{"tid": "m1", "desc": "watch the deploy log", "t": 10, "type": "local_monitor"}]
         aw = km._session_awaiting(SID, "/tmp/x", True)
         self.assertEqual([it["kind"] for it in aw["items"]], ["commands"])
 
@@ -196,7 +196,7 @@ class RowsDoNotDependOnIdleness(unittest.TestCase):
                         "_session_delegated_identities", "_watches", "_pr_watches", "_peer_identity")}
         km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "general-purpose", "since": 100, "agentId": self.A1},
                                                          {"type": "general-purpose", "since": 105, "agentId": self.A2}]}}
-        km._bg_live_norm = lambda sid, path: [
+        km._bg_live_norm = lambda sid, path, live=None: [
             {"tid": "toolu_01", "desc": "Check the exporter for banned words", "t": 98, "type": "local_agent", "agentId": self.A1},
             {"tid": "toolu_02", "desc": "Rerun the notes-api harness", "t": 104, "type": "local_agent", "agentId": self.A2},
             {"tid": "toolu_03", "desc": "build the docs site", "t": 110, "type": "local_bash"}]
@@ -240,7 +240,7 @@ class RowsDoNotDependOnIdleness(unittest.TestCase):
 
     def test_a_stamp_wait_ships_its_own_rows_and_nothing_running_ships_none(self):
         km._tmux_sessions = lambda: {SID: {}}
-        km._bg_live_norm = lambda sid, path: []
+        km._bg_live_norm = lambda sid, path, live=None: []
         self.assertEqual(km._session_background_items(SID, "/tmp/x"), [])
         self.assertEqual(km._awaiting_items_payload(None, SID, "/tmp/x"), [], "nothing in flight → no rows, no box")
         km._peer_identity = lambda p: {"name": str(p), "host": "", "sid": str(p), "color": None}
@@ -279,7 +279,8 @@ class RowsDoNotDependOnIdleness(unittest.TestCase):
             km._live_scope.snapshot = None
             # no map at all → the read is fresh, as every un-scoped read is
             km._awaiting_items_payload(None, SID, None)
-            self.assertEqual(len(reads), 2, "no snapshot handed over → fresh reads (the row lookup and the normalizer's)")
+            self.assertEqual(len(reads), 1, "no snapshot handed over → one fresh read (the row lookup; the normalizer "
+                                            "takes the row it is handed, never a second read — the chat signature's rule)")
         finally:
             km.Sessions.live = saved_live
             km._live_scope.snapshot = saved_scope

@@ -73,7 +73,7 @@ class _Base(unittest.TestCase):
         km._mark_views_dirty = lambda *a, **k: None
         km._revivers_pending = lambda *a, **k: ""
         km._path_of = lambda sid, now=None: "/p"
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None
         self.gid = SID + ":g1"
         self.turns = [{"id": "t1", "ended": True, "end": 100, "t": 90, "atoms": []}]
         km.jd.parsed_session = lambda sid, paths, now: {"turns": self.turns}

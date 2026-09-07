@@ -32,7 +32,7 @@ class AwaitingCount(unittest.TestCase):
                         "_owned_yield_why", "_session_stamp_full", "_session_delegated_why",
                         "_session_delegated_identities", "_watch_awaiting", "_peer_identity")}
         km._tmux_sessions = lambda: {SID: {}}
-        km._bg_live_norm = lambda sid, path: []
+        km._bg_live_norm = lambda sid, path, live=None: []
         km._bg_pending = lambda sid, path, tasks: []
         km._states_awaiting_overlay = lambda sid: None
         km._owned_yield_why = lambda sid, path: None
@@ -64,7 +64,7 @@ class AwaitingCount(unittest.TestCase):
         a1, a2 = "a1111111111111111", "a2222222222222222"
         km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "general-purpose", "since": 100, "agentId": a1},
                                                          {"type": "general-purpose", "since": 105, "agentId": a2}]}}
-        km._bg_live_norm = lambda sid, path: [
+        km._bg_live_norm = lambda sid, path, live=None: [
             {"tid": "toolu_01", "desc": "check the exporter", "t": 98, "type": "local_agent", "agentId": a1},
             {"tid": "toolu_02", "desc": "rerun the harness", "t": 104, "type": "local_agent", "agentId": a2},
             {"tid": "toolu_03", "desc": "build the docs", "t": 110, "type": "local_bash"}]
@@ -76,7 +76,7 @@ class AwaitingCount(unittest.TestCase):
     def test_pending_tasks_count_the_pending_ones(self):
         tasks = [{"tid": "1", "desc": "watching CI", "t": 7, "type": "bash"},
                  {"tid": "2", "desc": "polling deploy", "t": 3, "type": "bash"}]
-        km._bg_live_norm = lambda sid, path: tasks
+        km._bg_live_norm = lambda sid, path, live=None: tasks
         km._bg_pending = lambda sid, path, ts: ts[:1]
         self.assertEqual(km._session_awaiting(SID, "/tmp/x", True)["count"], 1)
         km._bg_pending = lambda sid, path, ts: ts
@@ -167,7 +167,7 @@ class AwaitingCount(unittest.TestCase):
         a1, a2 = "a1111111111111111", "a2222222222222222"
         km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "general-purpose", "since": 100, "agentId": a1},
                                                          {"type": "general-purpose", "since": 105, "agentId": a2}]}}
-        km._bg_live_norm = lambda sid, path: [
+        km._bg_live_norm = lambda sid, path, live=None: [
             {"tid": "toolu_01", "desc": "check the exporter", "t": 98, "type": "local_agent", "agentId": a1},
             {"tid": "toolu_02", "desc": "rerun the harness", "t": 104, "type": "local_agent", "agentId": a2},
             {"tid": "toolu_03", "desc": "build the docs", "t": 110, "type": "local_bash"}]
