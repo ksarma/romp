@@ -1400,7 +1400,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   display: flex; align-items: center; justify-content: center; }
 .fileview { width: 95%; height: 95%; display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg, #1e1e1e); border: 1px solid var(--box-border); border-radius: var(--radius-modal);
-  box-shadow: var(--shadow-modal); }
+  box-shadow: var(--shadow-modal); container-type: inline-size; }
+/* container-type: the viewer's card is the query container the comments panel's narrow fold (`@container (max-width:
+   680px)` in the file-comments block) resolves against. A container query styles the DESCENDANTS of a container, never
+   the container itself, and .fileview-main — the row the fold stacks — is the container it declares: with no container
+   above it the stacking rule never applied, and a narrow column got the fold's aside rules alone (45% of the ROW, a top
+   border) beside an unstacked body (found by the margin layout's browser leg, 2026-09-07). */
 body.fileview-open { overflow: hidden; }
 .fileview-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
