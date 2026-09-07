@@ -4,12 +4,17 @@
 // list's shape); the last test touches the real data only for the seam the dialog relies on.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { EMOJI_GRID_COLS, EMOJI_RECENT_KEY, EMOJI_RECENT_MAX, emojiName, filterEmoji, gridSections,
-         moveInGrid, parseRecentEmoji, rememberEmoji } from "./emoji-picker";
+import { EMOJI_GRID_COLS, EMOJI_RECENT_KEY, EMOJI_RECENT_MAX, emojiKey, emojiName, filterEmoji, gridSections,
+         moveInGrid, parseRecentEmoji, rememberEmoji, sameEmoji } from "./emoji-picker";
 import type { EmojiCategory } from "./emoji-data";
 import { EMOJI_CATEGORIES } from "./emoji-data";
 
 const MOON = "\u{1F319}", SUN = "\u{2600}\u{FE0F}", ROCKET = "\u{1F680}", CAT = "\u{1F431}", DOG = "\u{1F436}";
+// the list's fully-qualified forms, and the minimally-qualified forms the kernel also accepts and stores as
+// typed: a keycap without U+FE0F, the rainbow flag without it, a presentation emoji WITH a redundant one
+const KEY1 = "\u{31}\u{FE0F}\u{20E3}", KEY1_BARE = "\u{31}\u{20E3}";
+const PRIDE = "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}", PRIDE_BARE = "\u{1F3F3}\u{200D}\u{1F308}";
+const CAT_VS = CAT + "\u{FE0F}", SUN_BARE = "\u{2600}";
 const CATS: EmojiCategory[] = [
   { id: "animals", label: "Animals & nature", icon: CAT, items: [
     [CAT, "cat face", "pet kitten"],
@@ -22,6 +27,10 @@ const CATS: EmojiCategory[] = [
     ["\u{1F697}", "automobile", "car red"],
     ["\u{1F30C}", "milky way", "night galaxy space"],
   ] },
+  { id: "symbols", label: "Symbols", icon: KEY1, items: [
+    [KEY1, "keycap 1", "one number"],
+    [PRIDE, "rainbow flag", "pride"],
+  ] },
 ];
 
 // ── the filter ──
@@ -33,6 +42,19 @@ test("the filter matches word prefixes of the name, is case-insensitive, and an 
   assert.deepEqual(filterEmoji("", CATS), [], "an empty query is the categories, not a match list");
   assert.deepEqual(filterEmoji("   ", CATS), []);
   assert.deepEqual(filterEmoji("zebra", CATS), [], "no match is an empty list, never a throw");
+});
+
+test("a query with no word in it (hyphens only) matches nothing, not everything", () => {
+  // words() splits on whitespace and hyphens, so these leave no token; every() over none is true, and
+  // before the guard the whole list came back and Enter in the search box set its first emoji
+  for (const q of ["-", "--", "- -", " - ", "\t-\n"]) assert.deepEqual(filterEmoji(q, CATS), [], JSON.stringify(q));
+  assert.deepEqual(filterEmoji("moo-", CATS).map((e) => e[0]), [MOON], "a trailing hyphen is dropped, the word still matches");
+  assert.deepEqual(filterEmoji("-moo", CATS).map((e) => e[0]), [MOON]);
+  // through the grid: a search, so one Results section, and it is EMPTY (the dialog's Enter picks
+  // sections[0].cells[0] whenever the box is non-blank; the categories here would hand it the first cell)
+  const secs = gridSections("-", [ROCKET], CATS);
+  assert.deepEqual(secs.map((s) => s.id), ["results"]);
+  assert.equal(secs[0].cells.length, 0, "nothing for Enter to pick");
 });
 
 test("keywords match too, ranked after name hits; every typed word must match somewhere", () => {
@@ -50,6 +72,43 @@ test("keywords match too, ranked after name hits; every typed word must match so
 
 test("pasting an emoji into the search finds its own entry", () => {
   assert.deepEqual(filterEmoji(MOON, CATS).map((e) => e[1]), ["crescent moon"]);
+  // with or without the presentation selector: many apps copy the bare base, and the kernel stores a
+  // minimally-qualified form as typed, so a tab's own emoji pasted back finds the list's entry
+  assert.deepEqual(filterEmoji(SUN_BARE, CATS).map((e) => e[1]), ["sun"], "a text-default base without U+FE0F");
+  assert.deepEqual(filterEmoji(KEY1_BARE, CATS).map((e) => e[1]), ["keycap 1"], "a keycap without U+FE0F");
+  assert.deepEqual(filterEmoji(PRIDE_BARE, CATS).map((e) => e[1]), ["rainbow flag"], "the rainbow flag without U+FE0F");
+  assert.deepEqual(filterEmoji(CAT_VS, CATS).map((e) => e[1]), ["cat face"], "a presentation emoji with a redundant U+FE0F");
+  assert.deepEqual(filterEmoji(KEY1, CATS).map((e) => e[1]), ["keycap 1"], "and the list's own form, still");
+});
+
+// ── one emoji, several spellings ──
+
+test("emojiKey drops every U+FE0F and sameEmoji compares by it; a different emoji stays different", () => {
+  assert.equal(emojiKey(KEY1), KEY1_BARE);
+  assert.equal(emojiKey(PRIDE), PRIDE_BARE);
+  assert.equal(emojiKey(CAT_VS), CAT);
+  assert.equal(emojiKey(MOON), MOON, "nothing to drop, nothing changes");
+  assert.ok(sameEmoji(KEY1, KEY1_BARE) && sameEmoji(KEY1_BARE, KEY1), "either way round");
+  assert.ok(sameEmoji(PRIDE, PRIDE_BARE));
+  assert.ok(sameEmoji(CAT, CAT_VS));
+  assert.ok(sameEmoji(SUN, SUN_BARE));
+  assert.ok(!sameEmoji(CAT, DOG));
+  assert.ok(!sameEmoji(KEY1, "\u{32}\u{FE0F}\u{20E3}"), "keycap 1 is not keycap 2");
+  assert.ok(!sameEmoji("\u{1F3F3}\u{FE0F}", PRIDE), "the white flag is not the rainbow flag built on it");
+  assert.ok(!sameEmoji("", CAT));
+  assert.ok(sameEmoji("", ""), "two empties (a cleared tab) agree");
+});
+
+test("the Recent row and the names see through the selector: one cell per emoji, the list's name for a bare form", () => {
+  assert.equal(emojiName(KEY1_BARE, CATS), "keycap 1", "a keycap set without U+FE0F still gets its name");
+  assert.equal(emojiName(PRIDE_BARE, CATS), "rainbow flag");
+  assert.equal(emojiName(CAT_VS, CATS), "cat face");
+  assert.equal(gridSections("", [KEY1_BARE], CATS)[0].cells[0][1], "keycap 1", "so the Recent tooltip is the name, not the emoji");
+  // the kernel accepted the bare form and it was filed; the user then picks the list's form: one cell, the newest spelling
+  assert.deepEqual(rememberEmoji([KEY1_BARE, MOON], KEY1), [KEY1, MOON], "no second, visually identical Recent cell");
+  assert.deepEqual(rememberEmoji([KEY1, MOON], KEY1_BARE), [KEY1_BARE, MOON]);
+  // a stored list that already holds both spellings (written before this) reads back as one
+  assert.deepEqual(parseRecentEmoji(JSON.stringify([PRIDE_BARE, MOON, PRIDE])), [PRIDE_BARE, MOON], "the first spelling stays");
 });
 
 // ── the Recent row ──
@@ -88,9 +147,9 @@ test("the stored list is parsed tolerantly: junk costs the row, never the dialog
 
 test("no query: the Recent row (when there is one) leads the categories; a query: one Results section", () => {
   const plain = gridSections("", [], CATS);
-  assert.deepEqual(plain.map((s) => s.id), ["animals", "travel"], "no recents, no Recent row");
+  assert.deepEqual(plain.map((s) => s.id), ["animals", "travel", "symbols"], "no recents, no Recent row");
   const withRecent = gridSections("", [ROCKET, "\u{1F984}"], CATS);
-  assert.deepEqual(withRecent.map((s) => s.id), ["recent", "animals", "travel"]);
+  assert.deepEqual(withRecent.map((s) => s.id), ["recent", "animals", "travel", "symbols"]);
   assert.equal(withRecent[0].label, "Recent");
   assert.deepEqual(withRecent[0].cells.map((c) => c[0]), [ROCKET, "\u{1F984}"], "in stored order");
   assert.equal(withRecent[0].cells[0][1], "rocket", "a known recent carries its curated name");
