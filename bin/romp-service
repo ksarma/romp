@@ -6,7 +6,8 @@
 #   romp-service install     write + load the agent (auto-start at login)
 #   romp-service uninstall    unload + remove it
 #   romp-service status       installed? running? which key source (the ANTHROPIC_API_KEY line,
-#                             the 1Password reference, or the credential command with its selector),
+#                             the 1Password reference, or the credential command with its selector;
+#                             `none` once a runtime source was removed and nothing replaced it),
 #                             whether ExecStart runs the manager through a shell, credential-shaped
 #                             NAMES a unit, drop-in, plist or service.env carries
 # Safe + idle-free: the kernel is hardened (Origin gate + token) and the producer is
@@ -220,13 +221,15 @@ audit_install() {
 # ---- `status`: the key source and the unit's shape ----
 # Non-secret configuration only, read the way the kernel reads it. The source is selected as
 # kernel/keysource.py selects it: a line in service.env first (command > reference > key, the LAST
-# assignment of a name winning, selected by the line's presence), then this shell's environment (a
-# foreground manager's door; a supervised manager reads the file only). The tuning values
-# (ROMP_CREDENTIAL_NAMES, ROMP_CREDENTIAL_SELECTOR_FILE) are read as kernel/envsource.py reads them:
-# this environment first, then service.env, one layer of matching quotes stripped. Nothing here prints
-# a value: `status` says WHICH source is in force and names the selector, and lists credential-shaped
-# NAMES (ANTHROPIC_API_KEY, *_API_KEY, *_TOKEN, the kernel's rule) that a unit, a drop-in, the plist
-# or service.env sets, never what they are set to.
+# assignment of a name winning, selected by the line's presence), then the marker beside the file
+# (service.env.source holds `op` or `command` once a runtime source selected from the file was removed:
+# the kernel refuses every launch until a source is configured again, and status says `none` and why),
+# then this shell's environment (a foreground manager's door; a supervised manager reads the file only).
+# The tuning values (ROMP_CREDENTIAL_NAMES, ROMP_CREDENTIAL_SELECTOR_FILE) are read as
+# kernel/envsource.py reads them: this environment first, then service.env, one layer of matching quotes
+# stripped. Nothing here prints a value: `status` says WHICH source is in force and names the selector,
+# and lists credential-shaped NAMES (ANTHROPIC_API_KEY, *_API_KEY, *_TOKEN, the kernel's rule) that a
+# unit, a drop-in, the plist or service.env sets, never what they are set to.
 _svc_cfg() {   # <NAME> -> its value, "" when set nowhere
     local name="$1" line v
     v="${!name:-}"                                 # a second statement: ${!name} must see name assigned
@@ -255,10 +258,25 @@ _svc_file_has() {   # <NAME> -> 0 when service.env assigns NAME (any value, empt
     return 1
 }
 
-_svc_source_kind() {   # command | reference | file, in keysource.select_source's order
+_svc_marker_kind() {   # -> op | command when service.env.source remembers a removed runtime source, else ""
+    # keysource.read_marker: the first 16 bytes of the sibling file, trimmed; only the two runtime kind
+    # words mean anything (a stale other word is ignored there, so it is ignored here)
+    local f="${SERVICE_ENV_FILE}.source" word
+    [[ -f "$f" ]] || return 0
+    word="$(head -c 16 "$f" 2>/dev/null | tr -d '\r')"
+    word="${word#"${word%%[![:space:]]*}"}"; word="${word%"${word##*[![:space:]]}"}"
+    case "$word" in op|command) printf '%s' "$word" ;; esac
+}
+
+_svc_source_kind() {   # command | reference | file | none-command | none-reference, in keysource.select_source's order
+    local marker
     if _svc_file_has ROMP_CREDENTIAL_COMMAND; then printf 'command'
     elif _svc_file_has ROMP_API_KEY_REF; then printf 'reference'
     elif _svc_file_has ANTHROPIC_API_KEY; then printf 'file'
+    elif marker="$(_svc_marker_kind)" && [[ -n "$marker" ]]; then
+        # the file once selected a runtime source and its line is gone: the kernel returns the error kind
+        # (keysource._removed_error) and refuses launches, before it looks at any environment
+        case "$marker" in op) printf 'none-reference' ;; *) printf 'none-command' ;; esac
     elif [[ -n "${ROMP_CREDENTIAL_COMMAND+x}" ]]; then printf 'command'
     elif [[ -n "${ROMP_API_KEY_REF+x}" ]]; then printf 'reference'
     else printf 'file'; fi
@@ -423,9 +441,11 @@ _status_key_source() {   # <unit|plist> [drop-in...]: the lines `status` adds af
     local kind shape names
     kind="$(_svc_source_kind)"
     case "$kind" in
-      command)   echo "key source: command $(_selector_word)" ;;
-      reference) echo "key source: reference" ;;
-      *)         echo "key source: file" ;;
+      command)        echo "key source: command $(_selector_word)" ;;
+      reference)      echo "key source: reference" ;;
+      none-command)   echo "key source: none (the credential command was removed; configure an API key source explicitly)" ;;
+      none-reference) echo "key source: none (the 1Password reference was removed; configure an API key source explicitly)" ;;
+      *)              echo "key source: file" ;;
     esac
     shape="$(_exec_start_shape "$@")"
     case "$shape" in

@@ -359,7 +359,8 @@ EOF2
 # selector), whether ExecStart runs the manager through a shell, and which credential-shaped NAMES a
 # unit, drop-in, plist or service.env carries. The source is selected as kernel/keysource.py selects
 # it: a line in service.env first (command > reference > key, the last assignment of a name winning),
-# then this shell's environment. The tuning values (ROMP_CREDENTIAL_NAMES, ROMP_CREDENTIAL_SELECTOR_FILE)
+# then the marker beside the file (service.env.source: a removed runtime source reads `none`), then
+# this shell's environment. The tuning values (ROMP_CREDENTIAL_NAMES, ROMP_CREDENTIAL_SELECTOR_FILE)
 # are read as kernel/envsource.py reads them: this environment, then service.env. Values are assembled
 # at run time and the assertions check none of them is printed.
 
@@ -456,6 +457,47 @@ EOF2
     [[ "$output" == *"key source: command (selector undeclared, 2 chars)"* ]]
     ROMP_CREDENTIAL_NAMES=lp ROMP_OS_OVERRIDE=Linux run "$SVC" status
     [[ "$output" == *"key source: command (selector lp)"* ]]
+}
+
+@test "status: a removed runtime source reads none, from the marker beside service.env, as the kernel selects it" {
+    # kernel/keysource.py select_source: once a runtime source (the reference or the command) was selected
+    # from the file, removing its line is an error until a source is configured again, remembered across
+    # kernel restarts in service.env.source (the kind word `op` or `command`, never a value). `status` reads
+    # the same marker, so the one state the marker exists for is not the state where status says `file`
+    # while every launch is refused. The marker word is not a secret, so the test writes it directly.
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf 'ROMP_EXPECTED_AUTH=key\n' > "$ROMP_SERVICE_ENV_FILE"
+    printf 'command\n' > "$ROMP_SERVICE_ENV_FILE.source"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: none (the credential command was removed; configure an API key source explicitly)"* ]]
+    [[ "$output" != *"key source: file"* ]]
+    printf 'op\n' > "$ROMP_SERVICE_ENV_FILE.source"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: none (the 1Password reference was removed; configure an API key source explicitly)"* ]]
+    # the marker outranks this shell's environment, as it does in the kernel: the environment door is
+    # closed once a source selected from the file was removed
+    ROMP_API_KEY_REF=op://vault/item/field ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: none"* ]]
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: none"* ]]
+    # a missing file with the marker beside it is the same removed state (the kernel reads the marker
+    # whenever the file has no source line)
+    rm -f "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: none (the 1Password reference was removed"* ]]
+    # a source line in the file outranks the marker: a source configured again is the source
+    printf 'ROMP_API_KEY_REF=op://vault/item/field\n' > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: reference"* ]]
+    [[ "$output" != *"key source: none"* ]]
+    # a marker holding any other word is not a removed runtime source: the kernel acts on `op` and
+    # `command` only, and a stale word beside a key line does not unseat the line
+    rm -f "$ROMP_SERVICE_ENV_FILE"
+    printf 'file\n' > "$ROMP_SERVICE_ENV_FILE.source"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: file"* ]]
+    [[ "$output" != *"key source: none"* ]]
 }
 
 @test "status (Linux): names credential-shaped lines a unit or drop-in carries (names only) and a shell-wrapped ExecStart" {
