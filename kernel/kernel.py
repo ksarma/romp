@@ -26386,6 +26386,11 @@ DEFAULT_MODEL_PRICES = {   # $/token: input, output, cache write (5m), cache rea
                            # the LiteLLM refresh overwrites these with the live feed (which carries the
                            # exact ids), so they just need to be sane when offline / before the first fetch.
     "claude-fable-5":            {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 1e-6},
+    "claude-fable-5-1":          {"in": 10e-6, "out": 50e-6, "cache_w": 12.5e-6, "cache_r": 0.25e-6},   # its
+    #   own row: without one the family fallback priced Fable 5.1's cache reads at Fable 5's $1/Mtok — 4x
+    #   the list rate. Rates read from Claude Code's baked-in model catalog (2.1.261, checked on 2.1.263),
+    #   where claude-fable-5-1 carries the tier `tier_10_50_cache_read_0_25` (10 / 50 / 12.5 / 0.25 $/Mtok;
+    #   1h cache writes are 20 and are folded into cache_w here at the 5m rate, a known simplification)
     "claude-opus-4-8":           {"in": 5e-6, "out": 25e-6, "cache_w": 6.25e-6, "cache_r": 0.5e-6},
     "claude-sonnet-5":           {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
     "claude-sonnet-4-6":         {"in": 3e-6, "out": 15e-6, "cache_w": 3.75e-6, "cache_r": 0.3e-6},
@@ -26461,11 +26466,17 @@ def _model_prices(now=None):
 
 
 def _price_for(model, prices):
-    """The price row for a model: exact id, else any priced model of the same family
-    (fable/opus/sonnet/haiku) so a differently-dated id still gets a sane rate, else None
-    (uncounted — defensive)."""
+    """The price row for a model: exact id, else the priced model with the same (family, major, minor)
+    signature (a dated `claude-fable-5-1-2026…` lands on the fable-5-1 row, not on whichever fable row
+    the table lists first — the two differ 4x on cache reads), else any priced model of the same family
+    (fable/opus/sonnet/haiku) so an unknown id still gets a sane rate, else None (uncounted — defensive)."""
     if model in prices:
         return prices[model]
+    sig = _price_sig(model)
+    if sig:
+        for k, v in prices.items():
+            if _price_sig(k) == sig:
+                return v
     m = (model or "").lower()
     for fam in ("fable", "opus", "sonnet", "haiku"):
         if fam in m:

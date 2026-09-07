@@ -456,6 +456,18 @@ class CostWeighting(unittest.TestCase):
         self.assertEqual(km._price_for("claude-fable-5", prices)["in"], 10e-6, "fable input is 2x opus")
         self.assertEqual(km._price_for("claude-opus-4-8", prices)["in"], 5e-6, "opus rate unchanged")
 
+    def test_fable_5_1_has_its_own_row_with_the_quarter_rate_cache_read(self):
+        # Before the row existed the family fallback handed Fable 5.1 Fable 5's $1/Mtok cache read — 4x
+        # its list rate (Claude Code 2.1.261's catalog: tier_10_50_cache_read_0_25), and the remote feed
+        # could never correct it because only exact (family, major, minor) signatures match.
+        prices = km._model_prices(NOW)
+        row = km._price_for("claude-fable-5-1", prices)
+        self.assertEqual((row["in"], row["out"], row["cache_w"], row["cache_r"]), (10e-6, 50e-6, 12.5e-6, 0.25e-6))
+        self.assertEqual(km._price_for("claude-fable-5", prices)["cache_r"], 1e-6, "Fable 5 keeps its own rate")
+        self.assertEqual(km._price_sig("claude-fable-5-1"), ("fable", "5", "1"), "signs distinctly, so the feed can reach it")
+        self.assertEqual(km._price_for("claude-fable-5-1-20261201", prices)["cache_r"], 0.25e-6,
+                         "…and a dated id of the same model lands on the fable-5-1 row by signature, not on the first fable row")
+
     def test_price_sig_signs_single_number_ids_and_ignores_date_suffixes(self):
         self.assertEqual(km._price_sig("claude-opus-4-8"), ("opus", "4", "8"), "X-Y pair still signs")
         self.assertEqual(km._price_sig("claude-haiku-4-5-20251001"), ("haiku", "4", "5"), "date after a minor")
