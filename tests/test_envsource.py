@@ -60,7 +60,7 @@ import threading
 import time
 import unittest
 import uuid
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -77,7 +77,7 @@ for _v in ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_
 os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-credential-selector")
 _SELECTOR_AT_IMPORT = os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"]   # what this import left for the modules after it
 
-es = SourceFileLoader("romp_envsource", os.path.join(ROOT, "kernel", "envsource.py")).load_module()
+es = load_source("romp_envsource", os.path.join(ROOT, "kernel", "envsource.py"))
 ks = es._keysrc
 
 

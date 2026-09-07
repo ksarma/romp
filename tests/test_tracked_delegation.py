@@ -15,7 +15,7 @@ import re
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -32,8 +32,8 @@ _SESS = os.path.join(os.environ["XDG_STATE_HOME"], "sessions.json")
 Path(_SESS).write_text(json.dumps([{"id": "sess-web", "name": "web", "dir": "/tmp/notes-api",
                                     "state": "waiting", "working": ""}]))
 os.environ["ROMP_SESSIONS_FILE"] = _SESS
-ps = SourceFileLoader("romp_postal_tracked", os.path.join(BIN, "romp-postal-service")).load_module()
-jd = SourceFileLoader("romp_judge_tracked", os.path.join(BIN, "romp-judge")).load_module()
+ps = load_source("romp_postal_tracked", os.path.join(BIN, "romp-postal-service"))
+jd = load_source("romp_judge_tracked", os.path.join(BIN, "romp-judge"))
 
 RECIP = "11111111-2222-3333-4444-555555555555"   # the worker (web)
 SENDER = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"  # the delegator (api)
@@ -132,12 +132,12 @@ class CourierTracked(unittest.TestCase):
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._discover_cache["fp"] = None
         jd._discover_cache["result"] = None
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.CAPDIR, jd.ARCHDIR, jd.PCACHE,
          jd.MESSAGES, jd.ERRORS, jd.courier_llm) = self.saved
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
         self.td.cleanup()
 
     def _run(self, tracked=True, sender_id=SENDER, both_transcripts=True):
@@ -155,7 +155,7 @@ class CourierTracked(unittest.TestCase):
                 json.dumps(uline(T0 - 60, "kick off the exporter", "s1")) + "\n")
         jd._PARSE_CACHE.clear(); jd._CHAIN_MEMO.clear()
         jd._discover_cache["fp"] = None
-        jd._postal_from_memo["key"] = None
+        jd._postal_from_memo[0] = (None, {})
         jd.run_courier(now=T0 + 100)
         rstore = jd.load_goals(RECIP)
         sstore = jd.load_goals(sender_id)

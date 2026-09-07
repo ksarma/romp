@@ -125,7 +125,10 @@ for the file named here":
 - **`[obsidian-diff]`** — a review-panel ping about a change or a comment: the file
   by ABSOLUTE path, the reviewer's message, and a THREAD id. One message may list
   several comments on the same file, each with its own thread id; address each one
-  and reply into each by its own id.
+  and reply into each by its own id. A message may also carry only the reviewer's
+  accept and reject decisions on your earlier changes, with no comment and so no
+  thread id to reply into: nothing needs an answer, and the file already reads as
+  decided.
 
 A thread ping can arrive in EITHER mode — answering a thread is a conversation,
 separate from how your edits land. Respond so it lands back in that same thread:

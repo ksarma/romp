@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from http.server import ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -32,13 +32,13 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 # a dead manager port, never popped: absent is the one unsafe state (see tests/conftest.py)
 os.environ["ROMP_MANAGER_PORT"] = "1"
-km = SourceFileLoader("romp_kernel_down", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_down", os.path.join(BIN, "romp-kernel"))
 
 
 class _FakeBackend:
@@ -291,7 +291,7 @@ class QuiesceLease(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.sb = SourceFileLoader("romp_sdk_backend_down", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        cls.sb = load_source("romp_sdk_backend_down", os.path.join(BIN, "romp_sdk_backend.py"))
 
     def _backend(self, d=None):
         return self.sb.SdkBackend(d or tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)

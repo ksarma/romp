@@ -34,12 +34,13 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 # <root>/postal (its parent is the root); idle-dots gives the root.
 CHILD = r"""
 import json, os, sys
-from importlib.machinery import SourceFileLoader
 root = sys.argv[1]
-em = SourceFileLoader("romp_event_model_xdg", os.path.join(root, "kernel", "event_model.py")).load_module()
-jd = SourceFileLoader("romp_judge_xdg", os.path.join(root, "kernel", "judge.py")).load_module()
-ps = SourceFileLoader("romp_postal_xdg", os.path.join(root, "postal", "postal_service.py")).load_module()
-idl = SourceFileLoader("romp_idle_dots_xdg", os.path.join(root, "cli", "idle_dots.py")).load_module()
+sys.path.insert(0, os.path.join(root, "tests"))   # tests/romp_load.py: the suite's file-path importer
+from romp_load import load_source
+em = load_source("romp_event_model_xdg", os.path.join(root, "kernel", "event_model.py"))
+jd = load_source("romp_judge_xdg", os.path.join(root, "kernel", "judge.py"))
+ps = load_source("romp_postal_xdg", os.path.join(root, "postal", "postal_service.py"))
+idl = load_source("romp_idle_dots_xdg", os.path.join(root, "cli", "idle_dots.py"))
 print(json.dumps({"event_model": str(em.STATE), "judge": str(jd.STATE),
                   "postal": str(ps.STATE.parent), "idle_dots": str(idl.STATE)}))
 """

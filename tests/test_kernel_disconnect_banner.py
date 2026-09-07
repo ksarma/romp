@@ -10,7 +10,7 @@ source pins here cover the pane shim (unchanged) and the shell's wiring of the c
 import inspect
 import os
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -21,7 +21,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
 
 class DisconnectBanner(unittest.TestCase):
@@ -76,10 +76,13 @@ class DisconnectBanner(unittest.TestCase):
         # force-closing its own healthy socket and re-raising the banner every ~45s over a dashboard
         # that was visibly working. A display:none iframe has a ZERO viewport — raiseStale checks that
         # at raise time (no event exists for a CSS display flip) and stays silent while hidden; a pane
-        # shown while genuinely stale re-raises within one watchdog tick, now visible.
+        # shown while genuinely stale re-raises within one watchdog tick, now visible. Since 2026-09-06
+        # the shim asks federation's published answer first (window.__rompPaneHidden, the shell's own
+        # on-screen word): a pane hidden AFTER a first show keeps its iframe size, so the zero-viewport
+        # probe alone read it as visible. The probe stays as the fallback for a page without federation.
         js = km._shim("feed")
-        self.assertIn("function paneHidden(){try{return window.parent!==window"
-                      "&&(window.innerWidth===0||window.innerHeight===0);}", js)
+        self.assertIn('function paneHidden(){try{if(typeof window.__rompPaneHidden==="function")return !!window.__rompPaneHidden();'
+                      "return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}", js)
         self.assertIn('function raiseStale(why){if(paneHidden()){staleDiag("stale-suppressed-hidden",why);return;}', js,
                       "the visibility gate is at RAISE time, so hidden panes reconnect silently")
 

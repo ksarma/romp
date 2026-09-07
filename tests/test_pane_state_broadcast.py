@@ -17,7 +17,7 @@ import os
 import re
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -26,11 +26,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-km = SourceFileLoader("romp_kernel_psb", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_psb", os.path.join(BIN, "romp-kernel"))
 
 
 def _collapse_js(html):
@@ -205,7 +205,8 @@ class Copy(unittest.TestCase):
     def test_gear_and_guide_say_the_open_pane_wins(self):
         ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
         gear = open(os.path.join(ui, "gear.js")).read()
-        self.assertIn("While the Files pane is open, file links open there. When it is closed:", gear)
+        # "both": a file and a folder, since the folder click joined the ladder (2026-09-07)
+        self.assertIn("While the Files pane is open, both open there. When it is closed, a file opens", gear)
         guide = open(os.path.join(os.path.dirname(HERE), "docs", "guide.md")).read()
         self.assertIn("While the pane is open, a file\nlink clicked in the chat opens here. When it is closed, the gear's **File\nlinks open in** setting decides where a link opens", guide)
         settings = open(os.path.join(ui, "settings.ts")).read()

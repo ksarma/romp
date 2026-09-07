@@ -7,7 +7,7 @@ global Colormap, lives under Colors now.)
 """
 import os
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -18,7 +18,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
 
 class SettingsSectionsTest(unittest.TestCase):
@@ -80,8 +80,13 @@ class SettingsSectionsTest(unittest.TestCase):
         # header sits between Chat and Timeline, so a Timeline upper bound passed with the row
         # filed in the wrong section
         self.assertTrue(h.index(">Chat<") < h.index("id=rs-filelink") < h.index(">Feed<"))
-        self.assertIn("<option value=chat>The pane you clicked</option>", h)
+        # the default's label names the folder exception (2026-09-07): a folder's listing never covers the
+        # chat, so with this option it opens in the Feed pane (ui/webview/file-route.ts browseRoute)
+        self.assertIn("<option value=chat>The pane you clicked (folders: the Feed pane)</option>", h)
         self.assertIn("<option value=feed>The Feed pane</option>", h)
+        # the row's description covers the folder click too, and says where the first option sends it
+        self.assertIn("Where a file or folder clicked in the chat opens.", h)
+        self.assertIn("it never covers the chat: with the first option it opens in the Feed pane.", h)
         # the third value (2026-09-03): the Files pane, the viewer as its own column
         self.assertIn("<option value=pane>The Files pane</option>", h)
         # a webview-local pref (the rs-backend route): persisted in romp:settings, no kernel op

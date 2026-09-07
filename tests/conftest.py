@@ -105,6 +105,16 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # but _run_main_update maps absent to the DEFAULT port — the live one — so only a dead value is
 # safe against every consumer. Import-time, so collection-time code is floored too.
 os.environ["ROMP_MANAGER_PORT"] = "1"
+# ...and no test may reach the REAL kernel either (2026-09-06): a shell of a romp session inherits the
+# live kernel's ROMP_KERNEL_PORT (and ROMP_SERVE_PORT, the same value under the manager's name), so
+# every reader of the kernel port that a test forgot to point elsewhere dialled the running kernel:
+# postal_service.py's KERNEL_BASE and kernel.py's PORT resolve it at import time; cli/keyswap.py's
+# _kernel_base reads either name per call. Same shape as the manager floor, for the same reason: a
+# dead value is the one state every consumer treats safely (absent means the default, the live
+# port), and import-time so collection-time code is floored too. Tests that need a kernel start
+# their own on an ephemeral port and pass it explicitly.
+os.environ["ROMP_KERNEL_PORT"] = "1"
+os.environ["ROMP_SERVE_PORT"] = "1"
 
 # No test may read the REAL service.env (2026-09-04): sdk_backend.work_api_key now reads the manager
 # env file LIVE (kernel/keysource.py) instead of popping os.environ once, so on a machine running a
@@ -136,8 +146,11 @@ def _dead_manager_port():
     """The import-time poison above covers collection, but a module-level env write in a test file
     ALSO executes during collection — so one module's write (or pop) would otherwise hold for the
     entire run phase, erasing the floor for every test after it. Re-assert per test: no
-    module-level write can outlive collection against this."""
+    module-level write can outlive collection against this. The kernel/serve port floor rides the
+    same fixture, for the same reason."""
     os.environ["ROMP_MANAGER_PORT"] = "1"
+    os.environ["ROMP_KERNEL_PORT"] = "1"
+    os.environ["ROMP_SERVE_PORT"] = "1"
     yield
 
 

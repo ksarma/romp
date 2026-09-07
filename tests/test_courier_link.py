@@ -10,7 +10,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -19,11 +19,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
 SENDER = "11111111-2222-3333-4444-555555555555"
 RECIP = "66666666-7777-8888-9999-000000000000"
@@ -156,6 +156,13 @@ class DormantHandoffConverts(unittest.TestCase):
         for f in (jd.STATE / "states").glob("*"):
             f.unlink()
         (jd.NAMES / SENDER).unlink(missing_ok=True)
+        # The sweep's dead-wait block JOURNALS a block row for SENDER:g1 (append_block) and records the
+        # nudge in auto-nudge.json. SENDER is the shared placeholder sid, so both outlive this test into
+        # every later goal-store test under that sid in the same process: load_goals replays the row
+        # onto their fresh g1 (blocked) and the distiller takes the staller path instead of distilling.
+        # Seventeen distiller tests went red once xdist placed them after this one (2026-09-07).
+        (jd._overrides_dir() / (SENDER + ".jsonl")).unlink(missing_ok=True)
+        (jd.STATE / "auto-nudge.json").unlink(missing_ok=True)
 
     def test_dormant_sender_handoff_blocks_with_the_dead_wait_why(self):
         km._dead_wait_sweep(set(), self.nudged, T + 900)

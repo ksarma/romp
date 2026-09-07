@@ -1,13 +1,15 @@
 ---
 title: The viewer's GitHub link says why when there is none: the `fileGitLink` reply carries `reason` beside `url` ("not in a git repository" / "not committed (untracked file)" / "not committed (no commits yet)" / "no origin remote" / "the origin remote is not on GitHub"), and a branch absent from origin keeps its url with a "branch X is not on origin" note. The local tracking ref answers first; only its absence pays one `ls-remote` (3 s timeout, no terminal prompt, in its own process group so the ssh it spawned dies with it), and that answer is memoized per (repo, branch) until the tracking ref changes; "could not check" when origin does not answer, asked again next time. The check trusts the local tracking ref: a branch deleted on GitHub reads as present until a `fetch --prune`. The branch name comes from `branch --show-current`, so a tag of the same name does not bend the ref to `heads/<branch>`. The viewer renders the action as one unit: no url is a real disabled button with the reason as a caption beside it and in its tooltip; a link with a note stays a dashed anchor with the note as its caption
-status: offered
+status: merged
 where: branch `ghreason`: `kernel/kernel.py` (`_file_github_link`, `_origin_has_branch` and its `_ORIGIN_MEMO` / `_ORIGIN_INFLIGHT`, `_git_net_out`, the `GH_*` phrases, the `fileGitLink` op; `_file_github_url` kept as the url-only wrapper), `ui/webview/file-view.ts` (`githubLinkAction`), both sheets, `docs/guide.md`; tests `tests/test_file_github.py` (a stand-in ssh serves origin from a local bare repo; the kernel's git environment pinned hermetic), `ui/webview/github-link.test.ts` (the three states run against a DOM stand-in), `fileview-parity.test.ts`
 added: 2026-09-05
 pr:
 tier: feature
 offered: their PR #947
-closed:
+closed: 2026-09-07
 ---
 Upstream ships the same silent verdict (their #543 plus the registry follow-on `fbc0a1b5`): an empty url hides the anchor, so a user cannot tell an uncommitted file from a broken feature; that confusion happened here on 2026-09-05. Wire contract is additive: `reason` rides beside `url`; an older client ignores it, and an older kernel's reasonless reply renders disabled with a caption saying the kernel predates link reasons. Reviewed adversarially 2026-09-05 (two refuters): two medium (the origin-backed tests ran the kernel's git under the developer's global config, so an insteadOf rewrite reached real github.com; the reason was reachable only by mouse hover) and nine low (`heads/<branch>` from a same-named tag, the ssh orphaned by the timeout, no memo across opens, no phrase for a missing origin, the stale-tracking-ref limit undocumented, aria on an hrefless anchor, kernel phrase literals pinned in the UI test, the guide's wording, the reasonless fallback text), all fixed on the branch.
 
 Status detail (migrated from the table): **offered** — their PR #947 (2026-09-06), label `feature`
+
+MERGED 2026-09-07T00:36Z as their PR #947 (merge `318cab03`; head `a5191671`) after two review fold rounds (the tracking-ref memo without a drop event, the caption's nowrap dead end, `git symbolic-ref -q HEAD` for git < 2.22, a staged-only verdict `GH_STAGED`, the first-match refspec rule, a pending placeholder with a reconnect re-ask). The askpass item the reviewer asked for is its own entry (`github-link-ls-remote-askpass`).

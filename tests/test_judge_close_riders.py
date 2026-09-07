@@ -26,7 +26,7 @@ import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -35,7 +35,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-jd = SourceFileLoader("romp_judge_close_riders", os.path.join(BIN, "romp-judge")).load_module()
+jd = load_source("romp_judge_close_riders", os.path.join(BIN, "romp-judge"))
 
 SID = "33333333-4444-5555-6666-777777777777"      # private synthetic sid — never the shared placeholder
 NOW = 1781100000
@@ -315,6 +315,71 @@ class SweepCutDrain(_Riders):
         self.assertEqual(jd.load_goals(SID).get("closeFails"), {tid: {"fp": 2, "fails": 1, "kind": "kill"}},
                          "a killed call is struck against the turn it died on")
         self.assertIn("kill 1 of %d" % jd.DISTILL_FAIL_CAP, cuts[0]["note"], "…and the row carries the class")
+
+
+class LazySegmentIndex(_Riders):
+    """_close_session builds its seam-aware segment index once, on the first turn the walk judges (P5b of
+    the judge perf plan, 2026-09-07), instead of before the walk for every session every pass. Pinned on
+    the OUTPUT the index feeds: the <goal-history> block handed to _judge_run equals the one the index
+    built before the walk would give (verdict equality alone proves nothing under a patched model, and
+    {} and None differ: _close_turn skips the block when handed None)."""
+
+    def _two_turn_fixture(self):
+        path = os.path.join(self.td, SID + ".jsonl")
+        recs = [_uline(T0, "look at the search index", "u1"),
+                _aline(T0 + 30, "Looked; nothing to change.", "a1", "u1"),
+                _uline(T0 + 200, "and the tests?", "u2", "a1"),
+                _aline(T0 + 230, "Suite green.", "a2", "u2")]
+        Path(path).write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        s = _store()
+        turns = jd.parsed_session(SID, [path], T0 + 5000)["turns"]
+        segs = [jd._segs(t, s)[0]["id"] for t in turns]
+        _node(s, "P", "Ship the notes-api search", trail=segs)          # both turns' work is P's history
+        s["placements"] = {segs[0]: SID + ":P", segs[1]: SID + ":P"}
+        return path, s, turns, segs
+
+    def test_the_index_is_never_built_for_an_all_swept_session(self):
+        path, s, turns, segs = self._two_turn_fixture()
+        s["closedTurns"] = sorted(t["id"] for t in turns)
+        s["closedSig"] = {t["id"]: len(t["atoms"]) for t in turns}
+        jd.save_goals(SID, s)
+        real, calls = jd._segs, []
+
+        def counting(turn, store):
+            calls.append(turn["id"])
+            return real(turn, store)
+        jd._segs = counting
+        try:
+            jd._close_session(SID, path, T0 + 5000)
+        finally:
+            jd._segs = real
+        self.assertEqual(calls, [], "every end-known turn already swept: no segment walk at all")
+        self.assertEqual(self.menus, [], "and no call")
+
+    def test_the_goal_history_block_equals_the_eager_index_and_covers_unjudged_turns(self):
+        # turn 1 is already swept, turn 2 is judged: the index is built at turn 2 over EVERY turn, so
+        # the history block carries turn 1's work as well, exactly as the pre-walk build did
+        path, s, turns, segs = self._two_turn_fixture()
+        s["closedTurns"] = [turns[0]["id"]]
+        s["closedSig"] = {turns[0]["id"]: len(turns[0]["atoms"])}
+        jd.save_goals(SID, s)
+        store = jd.load_goals(SID)
+        eager = {seg["id"]: seg for t in turns for seg in jd._segs(t, store)}
+        menu = jd._turn_menu(turns[1], store)
+        self.assertEqual([nd["id"] for nd in menu], [SID + ":P"], "fixture: the judged turn's menu is P")
+        expected = jd._menu_history_text(store, eager, menu, jd.CLOSE_HISTORY_CHARS)
+        self.assertIn("look at the search index", expected, "fixture: turn 1's work is in P's history")
+        self.assertIn("and the tests?", expected)
+        jd.closer_llm = self._llm                                        # the real helper: the block reaches _judge_run
+        saved, prompts = jd._judge_run, []
+        jd._judge_run = lambda model, sysp, user, **kw: (prompts.append(user) or '{"done": [], "block": []}')
+        try:
+            jd._close_session(SID, path, T0 + 5000)
+        finally:
+            jd._judge_run = saved
+        self.assertEqual(len(prompts), 1, "one call, for the unswept turn")
+        self.assertIn(expected, prompts[0], "the <goal-history> block handed to the model is the eager index's")
+        self.assertEqual(sorted(jd.load_goals(SID)["closedTurns"]), sorted(t["id"] for t in turns))
 
 
 if __name__ == "__main__":

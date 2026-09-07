@@ -18,7 +18,7 @@ import unittest
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -28,11 +28,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-km = SourceFileLoader("romp_kernel_emoji", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_emoji", os.path.join(BIN, "romp-kernel"))
 
 # a PRIVATE synthetic sid (the goal-store fixtures rule): still synthetic, never shared with other modules
 SID = "3e3e3e3e-0e0e-4e4e-8e8e-e0e0e0e0e0e1"
@@ -510,8 +510,8 @@ class BackendWritersCarryTheField(unittest.TestCase):
 
     def test_sdk_write_name_carries_an_existing_emoji_and_can_clear_it(self):
         import sys
-        sb = sys.modules.get("romp_sdk_backend") or SourceFileLoader(
-            "romp_sdk_backend_emoji", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        sb = sys.modules.get("romp_sdk_backend") or load_source(
+            "romp_sdk_backend_emoji", os.path.join(BIN, "romp_sdk_backend.py"))
         d = Path(tempfile.mkdtemp())
         sb.write_name(d, SID, "web", "/proj/TESTHOST/app", "#1EA1EB", "white")
         self.assertEqual((d / "names" / SID).read_text(), "web\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")
@@ -526,8 +526,8 @@ class BackendWritersCarryTheField(unittest.TestCase):
 
     def test_codex_write_name_carries_an_existing_emoji(self):
         import sys
-        cb = sys.modules.get("romp_codex_backend") or SourceFileLoader(
-            "romp_codex_backend_emoji", os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py")).load_module()
+        cb = sys.modules.get("romp_codex_backend") or load_source(
+            "romp_codex_backend_emoji", os.path.join(os.path.dirname(HERE), "kernel", "codex_backend.py"))
         tmp = Path(tempfile.mkdtemp())
         be = cb.CodexBackend(tmp, client_factory=lambda: None, log=lambda m: None)
         (tmp / "names").mkdir(exist_ok=True)

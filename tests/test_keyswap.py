@@ -44,7 +44,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -58,8 +58,8 @@ os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
 
-sb = SourceFileLoader("romp_sdk_backend_keyswap", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
-cli = SourceFileLoader("romp_keyswap_cli", os.path.join(BIN, "romp-keyswap")).load_module()
+sb = load_source("romp_sdk_backend_keyswap", os.path.join(BIN, "romp_sdk_backend.py"))
+cli = load_source("romp_keyswap_cli", os.path.join(BIN, "romp-keyswap"))
 # ONE keysource module object for the whole test, taken off the backend: the kernel, the CLI and
 # these tests must be patching and cache-resetting the same module, and a second SourceFileLoader
 # call under a different name would quietly give a second copy of it (with its own _CACHE).
@@ -1362,7 +1362,7 @@ class KeycycleRoute(unittest.TestCase):
     def setUpClass(cls):
         import threading
         from http.server import ThreadingHTTPServer
-        cls.km = SourceFileLoader("romp_kernel_keyswap", os.path.join(BIN, "romp-kernel")).load_module()
+        cls.km = load_source("romp_kernel_keyswap", os.path.join(BIN, "romp-kernel"))
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.km.Handler)
         cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()

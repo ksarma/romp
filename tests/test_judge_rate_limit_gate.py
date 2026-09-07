@@ -10,7 +10,7 @@ import shutil
 import tempfile
 import time
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 import os
 
@@ -20,7 +20,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-jd = SourceFileLoader("romp_judge_rategate", os.path.join(BIN, "romp-judge")).load_module()
+jd = load_source("romp_judge_rategate", os.path.join(BIN, "romp-judge"))
 
 
 class RateLimitGate(unittest.TestCase):
@@ -165,7 +165,7 @@ class SegKeyUnified(unittest.TestCase):
         import inspect
         os.environ.setdefault("ROMP_KERNEL_NO_OPEN", "1")
         os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-        km = SourceFileLoader("romp_kernel_segkey", os.path.join(BIN, "romp-kernel")).load_module()
+        km = load_source("romp_kernel_segkey", os.path.join(BIN, "romp-kernel"))
         self.assertIn("jd._seg_key(seg_id)", inspect.getsource(km._seg_key))
         for sid in ("u:123:h", "u:123:h#p", None, "", "plain", "a:b"):
             self.assertEqual(km._seg_key(sid), km.jd._seg_key(sid))

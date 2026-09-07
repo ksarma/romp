@@ -5,6 +5,9 @@
 // styles.css alone, so the browser mounted as UNSTYLED block flow at the document bottom. The
 // overlay family now mirrors in styles.css (the .romp-acted two-sheets precedent) and this test
 // pins the two byte-equal so they cannot drift.
+// Since 2026-09-06 (file-route.ts browseRoute) the chat shows this overlay only UNFRAMED, on standalone
+// /chat: framed, a browse goes to the Files pane or the feed pane through the shell. The mirror stays for
+// that host, and so do these pins.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";

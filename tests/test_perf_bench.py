@@ -16,7 +16,7 @@ import json
 import os
 import re
 import shutil
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from types import SimpleNamespace
 import subprocess
 import sys
@@ -287,7 +287,7 @@ class PerfBench(unittest.TestCase):
     def test_fake_client_labels_direct_delta_frames_by_their_slot(self):
         # the static fixture never changes between pushes, so no delta frame reaches a fake client in the
         # run above; this drives the client's send() directly with the three frame shapes it can see
-        pb = SourceFileLoader("perf_bench_under_test", TOOL).load_module()
+        pb = load_source("perf_bench_under_test", TOOL)
         c = pb.fake_client(SimpleNamespace(), "timeline")      # no _perf_slot: a keyed label is str(key)
         delta = '{"type": "delta", "slot": "bars", "base": 3, "rev": 4, "coll": {}}'
         c["send"](delta)                                        # _send_slot_delta: send() directly, no curSlot
@@ -385,7 +385,7 @@ class Tripwire(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.pb = SourceFileLoader("perf_bench_tripwire_under_test", TOOL).load_module()
+        cls.pb = load_source("perf_bench_tripwire_under_test", TOOL)
         cls.root = tempfile.mkdtemp(prefix="perf-bench-tripwire-")
         cls.repo = os.path.join(cls.root, "notes-api")
         os.makedirs(cls.repo)

@@ -90,10 +90,23 @@ body.scheme-solarized-dark {
   --err: #c0392b;   /* unified with the awaiting/blocked red (the user 2026-06-24): one "needs you" red. API-error (--st-blocked-bg #e5484d) stays distinct. */
   --warn: #d7a23a;  /* the heads-up amber — "attention, not an error". Was referenced with fallbacks but never
                        defined (a phantom token) until 2026-08-26; mirrored in feed.css (own :root). */
+  --warn-on-white: #9A6A00;  /* the same heads-up, for text on a surface that is WHITE in every theme (the viewer's
+                                PDF page sheet, .fileview-pdf-page): --warn is tuned for the pane's ground and reads
+                                at 2.3:1 on white; this is the light theme's own amber, 4.7:1 there. Identical in
+                                both theme blocks — white is white. (styles-pdf-page-err.test.ts) */
+  --dim-on-white: #5D574E;   /* the dim tier for the same white sheet (the per-page loader's wordmark, pdf-chunk.ts
+                                cue()): --dim is tuned for the pane's ground — 2.8:1 on white here, 2.0:1 under the
+                                high-contrast scheme, which lifts --dim for the DARK ground and so dims it further on
+                                white — and the chat schemes above re-tier --dim, never this. The light theme's own
+                                dim, 7.2:1 on white; identical in both theme blocks. (styles-pdf-page-load.test.ts) */
   /* THE romp accent — light blue (the user 2026-06-24). Use var(--accent) for accent/highlight chrome
      (selected toggles, in-progress loading dots, the Fleet pill, focus) — NOT for STATUS colors, which keep
      their own meaning (--st-working-bg yellow = working, --st-blocked-bg red, etc.). --accent-fg reads on it. */
   --accent: #9cd2ff; --accent-fg: #0c1a2e;
+  --accent-on-white: #C2410C;  /* the accent for chrome on the same white sheet (the per-page loader's dots): --accent
+                                  is tuned for the pane's ground and sits at 1.6:1 on white. The light theme's own
+                                  accent, 5.2:1 on white; identical in both theme blocks — the sheet wears the light
+                                  theme's tiers whatever the pane wears. (styles-pdf-page-load.test.ts) */
   /* THE faint accent wash — the one alpha behind every selected/hovered accent chrome (0.10 and 0.14
      variants drifted in before 2026-08-26). Mirrored in feed.css (own :root). */
   --accent-wash: rgba(156, 210, 255, 0.12);
@@ -219,6 +232,9 @@ body.theme-light {
   --cmt-hl: #FFDF70;
   --fast: #D45500;
   --warn: #9A6A00;
+  --warn-on-white: #9A6A00;   /* the white sheet's amber is the same in both themes */
+  --dim-on-white: #5D574E;    /* the white sheet's dim is the same in both themes — the light theme's own --dim */
+  --accent-on-white: #C2410C; /* the white sheet's accent is the same in both themes — the light theme's own --accent */
   --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
   --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
   --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
@@ -1783,6 +1799,42 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 /* the emoji dialog's reason line (2026-09-06), the same dress: empty and dim until the kernel refuses, then red */
 .emoji-hint { min-height: 1.2em; font-family: var(--sans); font-size: 0.82em; color: var(--dim); }
 .emoji-hint.bad { color: #e5484d; }
+/* The tab menu's emoji picker (render.ts showEmojiPrompt, 2026-09-07): a .ctx-menu card, so it wears the menu
+   tokens and floats where the menu stood; a fixed height so the grid scrolls inside it and the footer holds
+   still. Text wears the menu's sizes (0.82em sub-lines); the 19px and 15px are glyph sizes for the cells and
+   the category strip (rungs of the closed px set, css-vocab.test.ts), not text sizes. The grid's column count
+   mirrors EMOJI_GRID_COLS in emoji-picker.ts, which the keyboard model moves by. The footer's Set and Clear
+   wear .picker-action; their menu-footer sizing sits after that rule, below. */
+.emoji-picker { display: flex; flex-direction: column; gap: 6px; box-sizing: border-box; padding: 8px;
+  width: min(320px, calc(100vw - 8px)); height: min(460px, calc(100dvh - 8px)); }
+.emoji-title { font-size: 0.82em; opacity: 0.6; padding: 0 2px; }
+.emoji-picker .ctx-tag-input { width: auto; }
+.emoji-cats { display: flex; gap: 2px; }
+.emoji-cat { flex: 1 1 0; height: 26px; padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: inherit; cursor: pointer; font-size: 15px; line-height: 1; }
+.emoji-cat:hover, .emoji-cat.cur { background: var(--menu-hover); }
+.emoji-cat.cur { box-shadow: inset 0 -2px 0 var(--accent); }
+.emoji-cats.off { opacity: 0.4; pointer-events: none; }   /* searching: one Results section, nothing to jump to */
+.emoji-scroll { position: relative; flex: 1 1 auto; min-height: 96px; overflow-y: auto; overflow-x: hidden; }
+.emoji-sec-h { position: sticky; top: 0; z-index: 1; padding: 6px 2px 2px; background: var(--menu-bg);
+  font-size: 0.82em; opacity: 0.6; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.emoji-cell { height: 34px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: inherit;
+  cursor: pointer; font-size: 19px; line-height: 1; }
+.emoji-cell:hover { background: var(--menu-hover); }
+.emoji-cell:focus-visible { outline: none; background: var(--menu-hover); box-shadow: inset 0 0 0 2px var(--accent); }
+.emoji-cell.cur { box-shadow: inset 0 0 0 2px var(--accent); }        /* the tab's current emoji */
+.emoji-cell.busy { opacity: 0.5; }                                    /* the one picked, awaiting the kernel */
+.emoji-picker.waiting .emoji-cell, .emoji-picker.waiting .emoji-cat { pointer-events: none; }   /* a pick awaits the kernel */
+.emoji-none { padding: 12px 2px; font-size: 0.82em; opacity: 0.6; }
+.emoji-foot { display: flex; align-items: center; gap: 6px; }
+.emoji-foot .emoji-pick { flex: 1 1 auto; min-width: 0; }
+/* the field's refusal mark (Set with it empty, or the kernel refusing what it held): the .picker-dir-input.bad
+   pair, red border and a faint wash, on both themes. The one-field dialog's input wore .fork-name, whose .bad
+   rule this field no longer matches; without a rule of its own the mark was invisible (review round 1). Three
+   classes deep on purpose: it outranks .ctx-tag-input:focus, so the red holds while the field is focused. */
+.emoji-foot .emoji-pick.bad { border-color: #e5484d; background: rgba(229, 72, 77, 0.07); }
+.emoji-picker:focus { outline: none; }   /* the card parks focus while a submit waits; it is not a control */
 /* pending-rewind overlay: turns after an edited message belong to the branch being abandoned — they
    dim until the kernel's rewound payload replaces them (reconcileRewind retires the flag then). */
 .turn.rewound { opacity: 0.35; transition: opacity 0.2s ease; }
@@ -2810,6 +2862,13 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   border-color: var(--vscode-focusBorder, #4daafc);
   box-shadow: inset 2px 0 0 0 var(--vscode-focusBorder, #4daafc);
 }
+/* the emoji picker's footer Set and Clear (2026-09-07): the one button rest above, sized for a menu footer.
+   Placed after the base rule on purpose: served-theme.test.ts reads the FIRST `.picker-action {` as the rest. */
+.emoji-foot .picker-action { width: auto; flex: 0 0 auto; padding: 3px 10px; font-size: inherit; }
+/* the base hover above is a white wash, invisible on the light theme's cream card: on the menu card these two
+   wear the menu's own row wash, like the cells and the strip (review round 1). :not(:disabled) keeps the
+   disabled rule's transparent hover, which this rule would otherwise outrank by order. */
+.emoji-foot .picker-action:hover:not(:disabled) { background: var(--menu-hover); }
 
 /* ---- in-webview confirm dialog (showConfirm) — the no-native-modals path ---- */
 .confirm-overlay { display: flex; align-items: center; padding: 16px; }
@@ -3644,6 +3703,12 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg); }
 .fileview-md img { max-width: 100%; }
+/* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
+   heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
+   0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README
+   banner pattern, <h1><img></h1>; ui/CLAUDE.md, font sizes: nested em compounds). --fs is the body's own size, so the
+   chip lands where the aside's does; --sans is the body's face, where the prose face is mono in the light theme. */
+.fileview-md .fc-overlay { font-size: var(--fs); font-family: var(--sans); }
 
 /* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts) ── the viewer's ASIDE: the body row
    holds the body and the panel side by side, and folds the panel below the body when the column is narrower
@@ -3736,7 +3801,72 @@ body.filebrowse-open { overflow: hidden; }
   -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-float { position: fixed; z-index: 1300; user-select: none; -webkit-user-select: none; background: var(--surface-raised); box-shadow: var(--shadow-menu); }
 .fc-float[hidden] { display: none; }
+/* change marks, both views (Slice 2; painted by anchor-map.ts paintChangesRaw / paintChangesRendered): an insertion is
+   its new text under a tint; a deletion is a ZERO-WIDTH point whose struck label is generated from data-fc-text — no text
+   node enters a row, so the Raw walks' row verification, the selection mapping and unpaint are untouched, and, like the
+   row number, the label never enters a selection; a substitution is the point followed by the tint. Both wear the
+   author's session colour as a 2px underline (--fc-author, set inline per mark; the accent when no session matches).
+   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). */
+.fc-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
+  color: inherit; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }
+.fc-del::before { content: attr(data-fc-text); text-decoration: line-through; color: var(--dim);
+  background: color-mix(in srgb, var(--err) 9%, transparent); }
+/* region comments on images (Slice 3; file-comments-regions.ts): a wrapper hugs the <img> — inline-block, so it sits in the
+   flow where the picture was, the picture a block inside it so no line-height gap widens the box — an overlay the drawn
+   image's size takes the drag, and each rectangle is placed by PERCENTAGES of it, so it is right at any width. The author
+   chip is generated from data-label: no text node goes under the picture, or the rendered-markdown mapper would misalign
+   the paragraph holding the figure. A stale region (the image's bytes changed under it) is dashed, an unknown one dotted;
+   the author's session colour rides --fc-author as on the change marks, the comment ring's warn colour when no session
+   matches. A coarse pointer gets no drawing: the overlay takes no events there; the rectangles still open their cards, and
+   the viewer still pans under a finger: `touch-action: none` is for the ARMED layer, where a drag draws — a disarmed
+   layer gives it back. Touch-action composes by INTERSECTION from the touched element up to the scroll container, so a
+   rectangle (pointer-events: auto) could not opt back in on its own: with `none` left on the layer, a swipe that started
+   on a rectangle covering most of a picture left the phone's viewer unscrolled. */
+.fc-imgwrap { position: relative; display: inline-block; max-width: 100%; }
+.fc-imgwrap > img { display: block; }
+.fc-overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+.fc-overlay-off { pointer-events: none; cursor: default; }
+.fc-overlay-off .fc-region { pointer-events: auto; }
+.fc-overlay-off { touch-action: auto; }
+.fc-overlay.fc-replacing { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.fc-region { position: absolute; box-sizing: border-box; border: 2px solid var(--fc-author, var(--warn)); border-radius: 4px;
+  background: color-mix(in srgb, var(--fc-author, var(--warn)) 12%, transparent); cursor: pointer; }
+.fc-region:hover { background: color-mix(in srgb, var(--fc-author, var(--warn)) 24%, transparent); }
+.fc-region:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fc-region.fc-stale { border-style: dashed; }
+.fc-region.fc-unknown { border-style: dotted; }
+.fc-region-pending { border-color: var(--accent); background: var(--accent-wash); cursor: crosshair; }
+.fc-region-chip { position: absolute; left: -2px; bottom: 100%; margin-bottom: 2px; padding: 0 6px; border-radius: var(--radius-pill);
+  background: var(--fc-author, var(--warn)); color: var(--fc-author-fg, var(--accent-fg)); font-size: 0.72em; font-weight: 600;
+  line-height: 1.5; white-space: nowrap; pointer-events: none; }
+.fc-region-chip::after { content: attr(data-label); }
+.fc-crop { display: block; max-width: 100%; border-radius: 4px; border: 1px solid var(--card-border); }
+.fc-tag-stale { color: var(--warn); }
 /* ── end file comments panel ── */
+/* ── the change marks' author chip (Slice 2), OUTSIDE the panel block on purpose ── the plan's UX: the `▍web` after
+   the marked text in Raw, "each with the author's session chip in the session's color". Generated content on the LAST
+   element painted for a change (data-fc-chip, set by paintChangesRaw), so, like the struck label and the row number,
+   it is no node and never enters a selection or a walk. The pill's dress hangs on the marks' own classes with
+   `content: none`; the painter's attribute alone turns it on. Two reasons the rule is shaped and placed this way:
+   - The sheets' cascade resolvers (styles-fc-computed-sizes.test.ts over the panel block, styles-fileview-err-sizes.test.ts
+     over the whole sheet) read class and pseudo-element selectors, not attribute ones, so a font-size rule on
+     `[data-fc-chip]::after` aborted both. The size sits on the class selectors; the attribute rule sets content only.
+   - The panel block speaks panel em, and this chain does not: it runs through .fileview-pre's ABSOLUTE 12px (the code
+     face), where 0.72em is 8.64px, not the 9.36px the card chip (.fc-chip: 0.72em of the panel's inherited base,
+     var(--fs)) wears beside it. Labels match labels (ui/CLAUDE.md), so the size is written against var(--fs), as the
+     composer's buttons are: the card chip's 0.72 of the same base, whatever the code face is.
+   Weight, pill radius and clipping are the card chip's. The wash and the hairline are the mark's own author colour
+   (--fc-author, set inline per mark; the accent when no session matches) under the surface's ink: the mark carries the
+   session's background alone, and a dark or a light session colour as INK would fail against one theme. inline-block so
+   the pill has a box to cap and clip; middle, not baseline, because a box that clips its overflow puts its baseline on
+   its bottom edge. Rendered marks carry no chip (the plan gives the chip to Raw). */
+.fc-ins::after, .fc-del::after { content: none; display: inline-block; vertical-align: middle;
+  margin-left: 4px; padding: 0 6px; border-radius: var(--radius-pill); font-size: calc(0.72 * var(--fs)); font-weight: 600;
+  line-height: 1.3; color: var(--fg); background: color-mix(in srgb, var(--fc-author, var(--accent)) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--fc-author, var(--accent)); max-width: 10em; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.fc-ins[data-fc-chip]::after, .fc-del[data-fc-chip]::after { content: attr(data-fc-chip); }
 
 /* ── the viewer's image + PDF bodies (a .png used to open as line-numbered mojibake). The <img>
    wears the lightbox image's own treatment (.romp-lightbox-img: capped, object-fit contain, the
@@ -3748,6 +3878,35 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-img { max-width: 100%; max-height: 82vh; object-fit: contain; border-radius: 8px;
   box-shadow: var(--shadow-modal); }
 .fileview-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+/* the PDF's PAGES (plans/file-review.md Slice 4; pdf-chunk.ts draws them while the Comments panel is open, else
+   the frame above shows): the host pads like the image box, the pages stack with a gap, each page a white sheet
+   with the modal's shadow — a page to put a region rectangle on; the chunk's inline position: relative on each
+   page wrapper is what the overlay anchors to. The fallback column holds the notice over the frame, the frame
+   taking what is left, so the notice never pushes the frame past the body. The column's height: 100% is the
+   frame's height: .fileview-body is the plain overflow block above (the .fileview-editor note), so the frame's own
+   100% resolves against the column, and a column without one is auto-height — the frame sat at the UA's 150px
+   default (styles-pdffall-height.test.ts resolves the chain and measures it in chromium). */
+.fileview-pdfhost { padding: 14px; box-sizing: border-box; }
+.fileview-pdf { display: flex; flex-direction: column; gap: 14px; }
+.fileview-pdf-page { background: #fff; box-shadow: var(--shadow-modal); }
+.fileview-pdf-canvas { display: block; width: 100%; height: auto; }
+.fileview-pdffall { display: flex; flex-direction: column; height: 100%; }
+.fileview-pdffall .fileview-frame { flex: 1 1 auto; min-height: 0; }
+/* a page pdf.js could not draw carries its failure IN the sheet (pdf-chunk.ts fail(): the .fileview-err dress, plus
+   .fileview-pdf-page-err as a hook). The dress's --warn amber is tuned for the pane's ground and sat at 2.3:1 on the
+   white sheet in the dark theme, below the 4.5:1 the sheets hold reading text to. On the sheet the dress
+   wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio). */
+.fileview-pdf-page .fileview-err { color: var(--warn-on-white); }
+/* the per-page loader over a sheet whose draw is pending (pdf-chunk.ts cue(): the viewer's own loader markup,
+   div.fileview-load.fileview-pdf-page-load, inside the page wrapper) is the one viewer loader that sits on white,
+   and .fileview-load's --dim and .fileview-dot's --accent are both tuned for the pane's ground: the wordmark sat at
+   2.8:1 on the sheet in the dark theme (2.0:1 under the high-contrast scheme, whose lifted --dim is dimmer still on
+   white) and the accent dots at 1.6:1 — a cue put up so an undrawn page would not look blank, itself near-invisible.
+   On the sheet each wears its on-white twin — the light theme's own dim and accent, the tiers made for a light
+   ground — in every theme and scheme: 7.2:1 for the wordmark, 5.2:1 for the dots. The pane's loader outside a sheet
+   is untouched. (styles-pdf-page-load.test.ts) */
+.fileview-pdf-page .fileview-load { color: var(--dim-on-white); }
+.fileview-pdf-page .fileview-dot { background: var(--accent-on-white); }
 
 /* a MACHINE-sent message's notch (romp injections, ⚙-tagged sends — the same senderKind verdict the
    bubble wears): light gray, visibly quieter than the user's blue, so the scroll map separates "you

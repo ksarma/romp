@@ -423,14 +423,20 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
 
 # ── loading ─────────────────────────────────────────────────────────────────────────────────────
 def load_kernel(repo):
-    from importlib.machinery import SourceFileLoader
+    import importlib.util
     kpath = os.path.join(repo, "kernel", "kernel.py")
     if not os.path.isfile(kpath):
         raise BenchError("no kernel at %s" % kpath)
-    km = SourceFileLoader("romp_kernel_perf_bench", kpath).load_module()
+    # the repo's file-path importer (kernel/loadsource.py), loaded by path from the checkout under test
+    _spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(repo, "kernel", "loadsource.py"))
+    if _spec is None or not os.path.isfile(_spec.origin):
+        raise BenchError("this kernel predates kernel/loadsource.py; the harness does not know how to load it")
+    _ls = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_ls)
+    km = _ls.load_source("romp_kernel_perf_bench", kpath)
     sbmod = sys.modules.get("romp_sdk_backend")
     if sbmod is None:
-        sbmod = SourceFileLoader("romp_sdk_backend", os.path.join(repo, "kernel", "sdk_backend.py")).load_module()
+        sbmod = _ls.load_source("romp_sdk_backend", os.path.join(repo, "kernel", "sdk_backend.py"))
     for sym in ("_live_scope", "Sessions", "build_session", "build_feed", "build_timeline", "_push",
                 "_names_snapshot", "_sessions", "_parse", "_parse_cache", "_tmux_sessions", "_atomic_write",
                 "_built_feed", "_built_timeline", "em", "jd"):

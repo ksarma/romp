@@ -33,7 +33,7 @@ import subprocess
 import tempfile
 import time
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -46,7 +46,7 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-km = SourceFileLoader("romp_kernel_gsm", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_gsm", os.path.join(BIN, "romp-kernel"))
 
 GEAR = open(os.path.join(ROOT, "ui", "webview", "gear.js")).read()
 

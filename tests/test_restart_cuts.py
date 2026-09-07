@@ -17,7 +17,7 @@ import threading
 import unittest
 from unittest import mock
 from pathlib import Path
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -26,7 +26,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # Hermetic state BEFORE the loads — module import runs boot reconcile against the state root.
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-km = SourceFileLoader("romp_kernel_cuts", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_cuts", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-00000000c001"
