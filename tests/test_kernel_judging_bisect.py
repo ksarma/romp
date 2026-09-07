@@ -10,12 +10,17 @@ first row that can pass the horizon filter is the first with t >= t0 - 1 (bisect
 times), because the writer stamps t after recv, so every row's run end is at most t + 1.
 
 The horizon bisect needs three facts of the row list, and the READER verifies them as rows arrive
-instead of the consumer trusting the writer: every row's t is a number, the ts never decrease along
-the list, and no row's run end (recv, else sent, else t) exceeds t + 1. The result is the `monotone`
-flag on the snapshot _judge_usage_rows returns; a file that breaks any of the three takes today's
-full scan exactly. Reference for every equivalence check below: a private copy of the pre-bisect
-function. Synthetic rows only (placeholder ids); the fsids here are private to this module."""
+instead of the consumer trusting the writer: every row's t is a number, no t is more than S = 2 s
+below the largest t before it (the writer's pool threads can land two same-second rows in either
+order), and no row's run end (recv, else sent, else t) exceeds t + 1. With the bisect backed off by
+S, every row it leaves behind ended before t0. The result is the `monotone` flag on the snapshot
+_judge_usage_rows returns; a file that breaks any of the three takes today's full scan exactly, and
+the reader says so once on stderr. Reference for every equivalence check below: a private copy of
+the pre-bisect function. Synthetic rows only (placeholder ids); the fsids here are private to this
+module."""
 import bisect
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -183,9 +188,32 @@ class ReaderOrderFlag(_Base):
         self.assertIs(snap.monotone, True, "ties and increases keep the order fact")
         self.assertIs(km._JUDGE_USAGE_CACHE["monotone"], True)
 
-    def test_an_inverted_t_clears_the_flag(self):
-        self._write([_row(T0 - 100), _row(T0 - 101), _row(T0 + 5)])
-        self.assertIs(km._judge_usage_rows().monotone, False)
+    def test_disorder_within_the_slack_keeps_the_flag(self):
+        # the writer's race: two pool threads finishing in the same second append in either order
+        self._write([_row(T0 - 100), _row(T0 - 101), _row(T0 + 5), _row(T0 + 3), _row(T0 + 4)])
+        self.assertIs(km._judge_usage_rows().monotone, True, "1 s and 2 s below the running maximum")
+        self.assertEqual(km._JUDGE_USAGE_CACHE["hi"], T0 + 5, "the running maximum, not the tail's t")
+
+    def test_disorder_past_the_slack_clears_the_flag_and_says_so_once(self):
+        self._write([_row(T0 + 10), _row(T0 + 7)])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            snap = km._judge_usage_rows()
+        self.assertIs(snap.monotone, False, "3 s below the running maximum")
+        lines = [ln for ln in err.getvalue().splitlines() if "time-order fact" in ln]
+        self.assertEqual(len(lines), 1, err.getvalue())
+        self.assertIn("row 2 of the log", lines[0])
+        self.assertIn("3.0 s below the running maximum", lines[0])
+        self._write([_row(T0 + 6), _row(T0 + 20)], mode="a")          # more rows, in and out of order
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIs(km._judge_usage_rows().monotone, False)
+        self.assertEqual(err.getvalue(), "", "the line is written at the transition only")
+        self._write([_row(T0 + 1)])                                    # a rewrite: a new list, a new fact
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIs(km._judge_usage_rows().monotone, True)
+        self.assertEqual(err.getvalue(), "")
 
     def test_a_row_without_a_numeric_t_clears_the_flag(self):
         for bad in ({"judge": "captioner", "fsid": SID_A, "sent": T0 + 1.0, "recv": T0 + 2.0},
@@ -224,12 +252,16 @@ class ReaderOrderFlag(_Base):
         self._write([_row(T0 - 90), _row(T0 + 7)], mode="a")           # an append in order
         snap = km._judge_usage_rows()
         self.assertEqual((len(snap), snap.monotone), (4, True))
-        self._write([_row(T0 + 6)], mode="a")                          # a pool thread's 1 s inversion
+        self._write([_row(T0 + 6)], mode="a")                          # a pool thread's 1 s inversion: kept
         snap = km._judge_usage_rows()
-        self.assertEqual((len(snap), snap.monotone), (5, False))
+        self.assertEqual((len(snap), snap.monotone), (5, True))
+        self._write([_row(T0 + 3)], mode="a")                          # 4 s below the maximum: cleared
+        with contextlib.redirect_stderr(io.StringIO()):
+            snap = km._judge_usage_rows()
+        self.assertEqual((len(snap), snap.monotone), (6, False))
         self._write([_row(T0 + 8)], mode="a")                          # order resumes; the fact does not
         self.assertIs(km._judge_usage_rows().monotone, False,
-                      "one inversion anywhere in the list keeps the full scan for that list")
+                      "one break anywhere in the list keeps the full scan for that list")
         self._write([_row(T0 + 1), _row(T0 + 2)])                      # rotated / rewritten: a new list
         snap = km._judge_usage_rows()
         self.assertEqual((len(snap), snap.monotone), (2, True), "a reset re-derives the fact")
@@ -240,7 +272,8 @@ class ReaderOrderFlag(_Base):
         self._write([_row(T0 - 100), _row(T0 - 90)])
         earlier = km._judge_usage_rows()
         self._write([_row(T0 - 95)], mode="a")
-        later = km._judge_usage_rows()
+        with contextlib.redirect_stderr(io.StringIO()):
+            later = km._judge_usage_rows()
         self.assertEqual((earlier.monotone, len(earlier)), (True, 2))
         self.assertEqual((later.monotone, len(later)), (False, 3))
 
@@ -313,6 +346,8 @@ class RunJudgingBisect(_Base):
             with self.subTest(t0=t0):
                 km._JUDGE_USAGE_CACHE.update(path=None, size=-1, mtime=0.0, rows=[])
                 rows = [                                            # in t order, as the writer appends
+                    _row(int(t0) - 4, recv=int(t0) - 4 + 0.9998),   # below the bisect point t0 - 3: skipped
+                    _row(int(t0) - 3, recv=int(t0) - 3 + 0.9998),   # at the bisect point: examined, dropped
                     _row(int(t0) - 2, recv=int(t0) - 2 + 0.9998),   # the writer's measured max recv - t
                     _row(int(t0) - 1, recv=int(t0) - 1 + 0.9998),   # t = int(recv), recv just under t0
                     _row(int(t0) - 1, recv=float(int(t0))),         # t = int(recv), recv == int(t0)
@@ -324,8 +359,7 @@ class RunJudgingBisect(_Base):
                 ]
                 self._write(rows)
                 got = self._check(t0, [])
-                # the two rows below the bisect point are dropped by both; from t = int(t0) - 1 on, the
-                # filter decides
+                # the row below the bisect point is dropped by both; from there on the filter decides
                 self.assertTrue(all(m["t1"] >= t0 for m in got))
                 self.assertEqual(len(got), sum(1 for m in self._reference(t0, []) if m["t1"] >= t0))
 
@@ -344,11 +378,11 @@ class RunJudgingBisect(_Base):
 
     def test_a_non_monotone_file_takes_the_full_scan_and_matches(self):
         rows, marks = self._mixed_world()
-        rows.insert(6, _row(T0 + 8, judge="planner"))                # a late-landing row: t goes backwards
+        rows.insert(6, _row(T0 + 5, judge="planner"))                # a late-landing row: t 5 s below the maximum
         rows.append(_row(T0 + 9, sid=SID_B))                         # and again at the tail
         self._write(rows)
         got = self._check(T0, marks, expect_monotone=False)
-        self.assertIn(("planner", T0 + 8 + 0.5 - 3.25), {(m["judge"], m["sent"]) for m in got},
+        self.assertIn(("planner", T0 + 5 + 0.5 - 3.25), {(m["judge"], m["sent"]) for m in got},
                       "a late row inside the horizon is kept: the fallback is today's scan")
         # the file a bisect would get wrong: an in-horizon row at the head, older rows after it.
         # bisect_left on t at t0 - 1 over [T0+5, T0-100, T0-50, T0+6] lands at index 3 and would lose
@@ -357,6 +391,15 @@ class RunJudgingBisect(_Base):
         self._write([_row(T0 + 5), _row(T0 - 100), _row(T0 - 50), _row(T0 + 6)])
         got = self._check(T0, [], expect_monotone=False)
         self.assertEqual([m["t1"] for m in got], [T0 + 5.5, T0 + 6.5], "both in-horizon rows, in file order")
+
+    def test_disorder_within_the_slack_at_the_horizon_is_bisected_exactly(self):
+        # rows 2 s out of order straddling the horizon, the flag holding. bisect_left on t at t0 - 3 over
+        # [t0-2, t0-4, t0, t0-2, t0+3, t0+1] lands at index 2: the two rows it leaves behind both ended
+        # before t0, the late row at index 3 is examined and dropped, the late row at index 5 is kept
+        self._write([_row(T0 - 2, recv=T0 - 1.5), _row(T0 - 4, recv=T0 - 3.5), _row(T0, recv=T0 + 0.5),
+                     _row(T0 - 2, recv=T0 - 1.5), _row(T0 + 3, recv=T0 + 3.5), _row(T0 + 1, recv=T0 + 1.5)])
+        got = self._check(T0, [])
+        self.assertEqual([m["t1"] for m in got], [T0 + 0.5, T0 + 3.5, T0 + 1.5], "kept rows, in file order")
 
     def test_a_file_that_grows_between_two_calls(self):
         rows, marks = self._mixed_world()
