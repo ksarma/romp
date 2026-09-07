@@ -421,7 +421,7 @@ test("source: the decision gate runs before anything is asked of the kernel, and
   assert.match(SRC, /const DECIDES = new Set\(\["accept", "reject", "accept-all", "reject-all"\]\);/, "the four verbs that move records out of the sidecar");
   assert.match(SRC, /fcrejectall: \(\) => \{[^\n]*\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.refuseDecision\("changes"\); return; \}/, "Reject all answers at the first click, not after its confirm");
   const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
-  assert.match(send, /const pending = this\.ctx\.editing\(\) \? 0 : \(s\.hunks \|\| \[\]\)\.length;\n\s*const acceptAll = this\.sendOpts\.accept && pending > 0;/,
+  assert.match(send, /let pending = this\.ctx\.editing\(\) \? 0 : \(s\.hunks \|\| \[\]\)\.length;\n\s*const acceptAll = this\.sendOpts\.accept && pending > 0;/,
     "the send has no changes to accept on the way under an editor: acceptAll derives from that count");
   const conf = SRC.split("private renderSend(s: Status | null): HTMLElement {")[1].split("\n  }\n")[0];
   assert.match(conf, /const pending = this\.ctx\.editing\(\) \? 0 : \(s\.hunks \|\| \[\]\)\.length;\n(?:\s*\/\/[^\n]*\n)*\s*const counts = sendCounts\(parts, this\.sendOpts\.accept, pending\);/,

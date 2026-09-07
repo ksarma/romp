@@ -6,13 +6,13 @@ didn't inject — so the maildir-drain stays the backstop and the bus never shel
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-pm = SourceFileLoader("romp_postal_delivery", os.path.join(BIN, "romp-postal-service")).load_module()
+pm = load_source("romp_postal_delivery", os.path.join(BIN, "romp-postal-service"))
 
 
 class PushThroughKernel(unittest.TestCase):
@@ -65,20 +65,60 @@ class PushThroughKernel(unittest.TestCase):
         self.assertEqual(self.posted[0][0], "/deliver")
         self.assertEqual(self.posted[0][1]["id"], "sid-r")
 
+    # The bus's /heartbeat handler decides locality from ITS OWN listing (the kernel's GET /sessions,
+    # thread rows included) and answers with the bit, so a local session's MCP can stop beating
+    # (2026-09-06). The listing is stubbed at _kernel_sessions_checked, the seam every bus-side
+    # fetch goes through, so the tests also count fetches.
+    LOCAL, THREAD = "local-1", "22222222-3333-4444-5555-666666666666"
+    REMOTE = "11111111-2222-3333-4444-555555555555"
+
+    def _listing(self, rows, answered=True):
+        self.fetches = []
+        pm._kernel_sessions_checked = lambda threads=False: (self.fetches.append(threads), (rows, answered))[1]
+
+    def _with_bus_listing(self, rows, answered=True):
+        saved = pm._kernel_sessions_checked
+        self._listing(rows, answered)
+        pm.HEARTBEATS.clear()
+        self.addCleanup(lambda: (setattr(pm, "_kernel_sessions_checked", saved), pm.HEARTBEATS.clear()))
+
     def test_heartbeat_records_remote_but_ignores_local(self):
         # Only sids the local kernel does NOT own get remote-presence; a local session is already visible via
         # /sessions and must not linger as a phantom [remote] after it dies.
-        saved = pm.local_agents
-        pm.local_agents = lambda: [{"id": "local-1", "name": "mysess"}]
-        try:
-            pm.HEARTBEATS.clear()
-            pm._record_heartbeat("11111111-2222-3333-4444-555555555555", "remotetest")   # not local → recorded
-            pm._record_heartbeat("local-1", "mysess")                                    # local → ignored
-            self.assertIn("11111111-2222-3333-4444-555555555555", pm.HEARTBEATS)
-            self.assertNotIn("local-1", pm.HEARTBEATS)
-        finally:
-            pm.local_agents = saved
-            pm.HEARTBEATS.clear()
+        self._with_bus_listing([{"id": self.LOCAL, "name": "mysess"}])
+        self.assertFalse(pm._record_heartbeat(self.REMOTE, "remotetest"), "not local → recorded, answer False")
+        self.assertTrue(pm._record_heartbeat(self.LOCAL, "mysess"), "local → ignored, answer True")
+        self.assertIn(self.REMOTE, pm.HEARTBEATS)
+        self.assertNotIn(self.LOCAL, pm.HEARTBEATS)
+        self.assertEqual(self.fetches, [True, True], "one listing fetch per beat, thread rows included")
+
+    def test_heartbeat_unanswered_listing_is_not_local(self):
+        # A kernel mid-restart leaves the listing UNANSWERED: the bus must not tell anyone it is local
+        # (a remote session that heard that would stop beating for good), and it records the beat
+        # exactly as before, so presence survives the restart the way it always did.
+        # The rows are NON-empty and hold the sid on purpose: only the answered bit can make this
+        # False, so dropping the `answered and` guard fails here (the seam never returns rows with
+        # answered=False today; the guard is the docstring's promise, and this is its test).
+        self._with_bus_listing([{"id": self.LOCAL, "name": "mysess"}], answered=False)
+        self.assertFalse(pm._record_heartbeat(self.LOCAL, "mysess"),
+                         "the sid is in the rows, but the rows did not ANSWER: never local")
+        self.assertIn(self.LOCAL, pm.HEARTBEATS, "an unanswered listing records the beat, as before")
+
+    def test_heartbeat_from_a_thread_row_is_local(self):
+        # A comment thread heartbeats under its own row; the default listing hides thread rows, so the
+        # handler asks for them or it would file every live thread as a phantom remote peer.
+        self._with_bus_listing([{"id": self.LOCAL, "name": "mysess"},
+                                {"id": self.THREAD, "name": "mysess-t1", "thread": True, "parent": self.LOCAL}])
+        self.assertTrue(pm._record_heartbeat(self.THREAD, "mysess-t1"))
+        self.assertNotIn(self.THREAD, pm.HEARTBEATS)
+        self.assertEqual(self.fetches, [True], "the handler asks for thread rows")
+
+    def test_heartbeat_route_answers_the_locality_bit(self):
+        # The wire contract the MCP loop reads: {ok, local}. Pinned in source so an edit that drops
+        # the bit fails here, not as a remote session that never stops beating.
+        src = open(os.path.join(BIN, "romp-postal-service"), encoding="utf-8").read()
+        self.assertIn('local = _record_heartbeat(data.get("id"), data.get("name", "?"))', src)
+        self.assertIn('return self._send({"ok": True, "local": local})', src)
 
     def test_source_uses_the_kernel_deliver_not_a_tmux_inject(self):
         src = open(os.path.join(BIN, "romp-postal-service"), encoding="utf-8").read()

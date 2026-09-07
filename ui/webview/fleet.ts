@@ -10,13 +10,16 @@ import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./s
 import { SessionViews, viewTagUnion } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
+import { mintWriteId } from "./views-writes";
 import { fleetVisibleRoots } from "./fleet-roots";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { hostPrefix } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
 import { liveNow } from "./feed-age";
 import { TIP_GRACE_MS } from "./tip";
+import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
+import { listenForFrames } from "./frame-listener";
 
 type Color = { bg: string; fg: string } | null;
 interface LedgerNode {
@@ -34,6 +37,12 @@ interface FleetSession { sid: string; name: string; color: Color; status?: { sta
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
+// A `#123` in a goal row links to the PR page of the repository its session works in (pr-links.ts; the
+// user 2026-09-06). The repo per session rides the feed frame's `sessions` rows (owner/repo, or null).
+let repoBySid = new Map<string, string | null>();
+// The link opens the PR and nothing else: capture-phase on the document, so the row's delegated jump
+// under it never fires. Web → the viewer's browser; VS Code → the host's openExternal (view-routing.ts).
+installPrLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
 
 let sessions: FleetSession[] = [];
 // Whether the FIRST feed payload has arrived (the user 2026-06-29): before it has, the fleet must NOT claim
@@ -51,6 +60,15 @@ let pendingHosts: string[] = [];
 let pendingDead: string[] = [];
 let searchQuery = "";     // #fleet-search filter (the user 2026-06-29): show only sessions whose NAME matches
 let fleetViews: SessionViews | null = null;   // the rendered views blob off the feed payload — the outline lens reads it (2026-08-25)
+let outlineViewsWriteSeq = 0;                   // per-page counter behind this pane's lens-write ids (mintWriteId)
+// This pane's lens write: the frame copy it holds with only the outline lens changed, posted with a
+// writeId and `edited: []` (round 5 of the 2026-09-05 review) — the empty list is the kernel's word
+// that the write changes NO tag, so the tags the copy carries are never applied over a newer store;
+// only the lens lands. The pane ignores the viewsAck and settles from the next feed frame, as it
+// always has (docs/read-side.md, the views contract).
+function postOutlineLens(v: SessionViews) {
+  vscodeApi?.postMessage({ type: "setTimelineViews", views: v, writeId: mintWriteId(++outlineViewsWriteSeq), edited: [] });
+}
 let syncFleetTagBtn: (() => void) | null = null;   // re-dress the tag button per the shared convention on each render
 // Provisional cards (the user 2026-06-29): a session working a brand-new prompt the planner hasn't classified
 // into a goal yet has NO ledger node, so it's invisible in the fleet — exactly the "things about to appear" the
@@ -339,6 +357,7 @@ function renderFleetNode(ctx: SessCtx, n: LedgerNode, depth: number, container: 
   const txt = el("span", "ledger-ttext lz-nav");
   txt.dataset.sid = s.sid; txt.dataset.nid = n.id; txt.dataset.act = "goprompt";   // text → the asking message
   highlightInto(txt, n.text, curSearch);   // search: highlight the matched substring (plain text otherwise)
+  linkifyPrRefs(txt, repoBySid.get(s.sid) || null);   // `#123` in the goal → its PR page; a search hit span is walked, not skipped
   // (The ⊕ distiller-summary expander was removed 2026-06-27 — the user: show just the goals, not the
   //  distiller takeaway / decision brief.)
   const time = el("span", "ledger-ttime");
@@ -680,7 +699,8 @@ function mountControls() {
 
 // every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
 // minute, read by `romp perf client`); the handler itself is unchanged
-window.addEventListener("message", perfFrameHandler("fleet", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
+// …and handed the merged frames by direct call from federation.js when this page has it (frame-listener.ts)
+listenForFrames(perfFrameHandler("fleet", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   if (m.type === "feedDelta") {
@@ -707,6 +727,9 @@ window.addEventListener("message", perfFrameHandler("fleet", (m) => vscodeApi?.p
     hostNow = m.now;
     hostNowAt = typeof m.nowAt === "number" ? m.nowAt : Date.now();   // the pair travels together: the frame's clock, and when THAT frame arrived
   }
+  if (Array.isArray(m.sessions))
+    repoBySid = new Map(m.sessions.filter((s: any) => s && typeof s.sid === "string")
+      .map((s: any) => [s.sid as string, typeof s.githubRepo === "string" ? s.githubRepo : null] as const));
   if (!Array.isArray(m.ledgers)) return;
   loaded = true;
   sessions = m.ledgers as FleetSession[];
@@ -914,7 +937,7 @@ function showHoverCard(row: HTMLElement, sid: string, nid: string): void {
           const v = JSON.parse(JSON.stringify(fleetViews || { active: "all", tags: [] }));
           v.actives = Object.assign({}, v.actives, { outline: l });
           fleetViews = v;                                        // optimistic: the next feed push echoes it
-          vscodeApi?.postMessage({ type: "setTimelineViews", views: v });
+          postOutlineLens(v);
           render();
         },
         onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
@@ -930,7 +953,7 @@ function showHoverCard(row: HTMLElement, sid: string, nid: string): void {
       const v = JSON.parse(JSON.stringify(fleetViews || { active: "all", tags: [] }));
       v.actives = Object.assign({}, v.actives, { outline: l });
       fleetViews = v;
-      vscodeApi?.postMessage({ type: "setTimelineViews", views: v });
+      postOutlineLens(v);
       render();
     });
     syncFleetTagBtn();

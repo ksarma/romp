@@ -1486,8 +1486,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   //
   // What lands is applied in ONE step, headers and bytes together, under two guards — and a fetch that
   // fails either guard changes nothing, not even the mtime:
-  // - the newest fetch wins (fetchSeq): two reloads in flight land in any order, and the older one's
-  //   bytes must not replace the newer's;
+  // - the newest fetch wins (fetchSeq, the quote seed's own idiom): two reloads in flight answer in
+  //   any order, and an older response landing last would otherwise put ITS bytes in the body under
+  //   the newer response's mtime — a view that claims the new text and shows the old, which the
+  //   comments panel would then paint its marks over (it trusts mtimeNs() to say which text it sees).
+  //   An overtaken response changes nothing: not the body, not the mtime, not the Edit verdicts, and
+  //   no error row for a failure nobody awaits; one overtaken before its bytes were read reads none;
   // - the editor holds the truth while it is up (editing): its buffer is the text, and `mtimeNs` is the
   //   file the editor LOADED — the save fence's own value (plans/file-review.md Slice 5). The seam's
   //   reload() already stands down in edit mode, but a fetch started BEFORE Edit (the poll saw the file
@@ -1505,6 +1509,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // this fetch's verdicts off the headers, held here until its bytes land and applied with them below
     let v: Verdict | null = null;
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
+      if (my !== fetchSeq) return Promise.resolve("");   // a newer fetch is out: read nothing, set nothing
       // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
       // "not a type I serve" from "too big" from "not text after all", and that is exactly what the
       // person who clicked needs to know (a 413 names the size and the cap). The status rides along so

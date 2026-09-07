@@ -1,10 +1,12 @@
 // Pins for tools/file-comments-host.mjs from the Slice 5 review (plans/file-review.md, "The
 // comments log", "Security posture", "Consent, trace, routing"):
-//   * once a verb's primary write has landed, nothing after it fails the verb — a comments-log
-//     append that fails, or a log that cannot be read back, is reported in the reply (`logged`,
-//     `logWarning`) on an ok reply that carries the new mtimes, so the kernel still traces the
-//     write to the session and the client's fences are right; a `status` on the same file still
-//     fails loudly;
+//   * a decision is recorded before it lands, never after (the Slice 2 review's order for accept and
+//     reject, which `save` keeps for its edit entry and for the decisions taken in the editor): a
+//     log append that fails refuses with nothing changed; only what follows the landed write — the
+//     read-back for the reply, or set-tracked's append after its config write, a toggle being no
+//     decision — is reported in the reply (`logged`, `logWarning`) on an ok reply that carries the
+//     new mtimes, so the kernel still traces the write and the client's fences are right; a
+//     `status` on the same file still fails loudly;
 //   * nothing is written on a client's word that the kernel cannot carry back in one reply
 //     (REPLY_MAX_BYTES, the kernel's _FILE_COMMENTS_REPLY_MAX): an oversized record, decision or
 //     note refuses `too-large` before any write;
@@ -149,41 +151,40 @@ function trackedWithChange(w) {
 
 // ── a landed write is never reported as a failure ───────────────────
 
-test('save: a log append that fails after the file write answers ok with logged:false and logWarning; the file, the sidecar and the mtimes are the write\'s own, and the next save with those fences succeeds', skipAsRoot, () => {
+test('save: a log append that fails refuses unreadable before the file lands — the file, the sidecar and the log are as they were — and the same save goes through once the log is writable', skipAsRoot, () => {
   const w = world();
   const { st, lp, cur } = trackedWithChange(w);
   const { content, records } = typed(cur, st.store.suggestions, 0, 0, 'Preface.\n');
-  const logBefore = fileBytes(lp);
+  const before = snapshot(w, w.report);
   fs.chmodSync(lp, 0o444);
   let r;
   try {
-    r = ok(w, saveReq(w.report, st, content, records));
+    r = refused(w, saveReq(w.report, st, content, records), 'unreadable');
   } finally {
     fs.chmodSync(lp, 0o644);
   }
-  // The write landed and the reply says so, in the kernel's own terms: ok, the new mtimes, the
-  // remapped sidecar — and the append that failed, in words and with the OS text.
-  assert.equal(fs.readFileSync(w.report, 'utf8'), content, 'the file holds the saved text');
-  assert.equal(r.fileMtimeNs, statNs(w.report));
-  assert.equal(r.storeMtimeNs, statNs(st.storePath));
-  assert.equal(r.hunks.length, 1);
-  assert.ok(fits(content, r.hunks[0]), 'the record was remapped below the preface');
-  assert.equal(r.logged, false);
-  assert.match(r.logWarning, /^saved, but not written to the comments log for ~\/notes-api\/docs\/report\.md: /);
-  assert.match(r.logWarning, /EACCES|EPERM/);
-  assert.equal(r.logWarning.includes(w.home), false, 'the warning tilde-collapses the home path');
-  assert.equal(r.logWarning.includes('read back'), false, 'a readable log is read back as usual');
-  // The log itself is as it was — readable, so the reply's Log is the tail on disk, not empty.
-  assert.deepEqual(fileBytes(lp), logBefore);
-  assert.deepEqual(r.log.map((e) => e.kind), ['set-tracked']);
-  // The client applies the reply as its status: a save fenced on it goes through, and this one is
-  // logged (the log is writable again) with no warning.
-  const content2 = content + 'More.\n';
-  const r2 = ok(w, saveReq(w.report, r, content2, r.store.suggestions));
+  // The edit entry is appended before the rename that lands the file (the decisions' order, kept for
+  // the save): a failed append refuses, the staged file is discarded, the prior sidecar goes back and
+  // the buffer stays the client's. The refusal names the log and the OS text, and claims no record.
+  assert.match(r.error, /^cannot record the edit in the comments log for ~\/notes-api\/docs\/report\.md \(~\/notes-api\/\.trackchanges\/docs%2Freport\.md\.comments-log\.jsonl\): .*(EACCES|EPERM).*; the comments file was put back as it was and nothing was changed$/);
+  assert.equal(r.error.includes(w.home), false, 'the refusal tilde-collapses the home path');
+  assert.equal('logged' in r, false, 'nothing claims to be recorded');
+  untouched(w, w.report, before);
+  assert.deepEqual(fs.readdirSync(path.dirname(w.report)).sort(), ['report.md'], 'no staged file left beside it');
+  assert.deepEqual(readLogLines(lp).map((e) => e.kind), ['set-tracked']);
+  // Writable again: the same save lands, logged, with no warning; the record is remapped below the preface.
+  const st2 = status(w, w.report);
+  assert.deepEqual(st2.hunks, st.hunks, 'the change is still pending');
+  const r2 = ok(w, saveReq(w.report, st2, content, records));
   assert.equal(r2.logged, true);
   assert.equal('logWarning' in r2, false);
   assert.deepEqual(r2.log.map((e) => e.kind), ['set-tracked', 'edit']);
-  assert.equal(fs.readFileSync(w.report, 'utf8'), content2);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), content);
+  assert.equal(r2.fileMtimeNs, statNs(w.report));
+  assert.equal(r2.storeMtimeNs, statNs(st.storePath));
+  assert.equal(r2.hunks.length, 1);
+  assert.ok(fits(content, r2.hunks[0]), 'the record was remapped below the preface');
+  assert.equal(r2.log[1].mtimeAfterNs, r2.fileMtimeNs, 'the edit entry carries the landed file\'s mtime (staged before the rename, which keeps it)');
 });
 
 test('a log that cannot be read refuses unreadable BEFORE any write — save and status alike — naming the log, and the disk is left as it was', skipAsRoot, () => {
@@ -218,17 +219,18 @@ test('a log that cannot be read refuses unreadable BEFORE any write — save and
   assert.deepEqual(r2.log.map((e) => e.kind), ['set-tracked', 'edit']);
 });
 
-test('after the write lands, a sidecar or a log that cannot be read back is reported in logWarning beside the failed append, never a failure (in-process: the disk failing between the write and the reply)', () => {
+test('after the file lands, a sidecar or a log that cannot be read back is reported in logWarning, never a failure (in-process: the disk failing between the write and the reply)', () => {
   // A permission the test could set would refuse before the write (above); a disk that fails only
   // AFTER the write — a writer replacing the sidecar in the same instant, an I/O error — is driven
   // in-process through handle(), with fs failing exactly the reads that follow the write: the
-  // sidecar's third read (its load, the prior bytes, then the read-back) and the log's second (the
-  // estimate before the write, then the reply's), and every append.
+  // sidecar's third read (its load, the prior bytes, then the read-back) and the log's second open
+  // for reading (the estimate before the write, then the reply's; the log is opened O_NOFOLLOW and
+  // read through the descriptor). The append runs as written: the entry lands before the file does.
   const w = world();
   const { st, lp, cur } = trackedWithChange(w);
   const { content, records } = typed(cur, st.store.suggestions, 0, 0, 'Preface.\n');
   const realRead = fs.readFileSync;
-  const realAppend = fs.appendFileSync;
+  const realOpen = fs.openSync;
   const prevHome = process.env.FILE_COMMENTS_HOME;
   process.env.FILE_COMMENTS_HOME = w.home;
   let sidecarReads = 0;
@@ -236,30 +238,28 @@ test('after the write lands, a sidecar or a log that cannot be read back is repo
   const eacces = (p) => { const e = new Error(`EACCES: permission denied, open '${p}'`); e.code = 'EACCES'; return e; };
   fs.readFileSync = function (p, ...rest) {
     if (p === st.storePath && ++sidecarReads === 3) throw eacces(p);
-    if (p === lp && ++logReads === 2) throw eacces(p);
     return realRead.call(fs, p, ...rest);
   };
-  fs.appendFileSync = function (p, ...rest) {
-    if (p === lp) throw eacces(p);
-    return realAppend.call(fs, p, ...rest);
+  fs.openSync = function (p, flags, ...rest) {
+    if (p === lp && typeof flags === 'number' && !(flags & fs.constants.O_WRONLY) && ++logReads === 2) throw eacces(p);
+    return realOpen.call(fs, p, flags, ...rest);
   };
   let out;
   try {
     out = handle(saveReq(w.report, st, content, records));
   } finally {
     fs.readFileSync = realRead;
-    fs.appendFileSync = realAppend;
+    fs.openSync = realOpen;
     if (prevHome === undefined) delete process.env.FILE_COMMENTS_HOME; else process.env.FILE_COMMENTS_HOME = prevHome;
   }
   assert.equal(sidecarReads, 3, 'the read-back was the third read of the sidecar');
-  assert.equal(logReads, 2, 'the reply read the log after the estimate did');
+  assert.equal(logReads, 2, 'the reply opened the log for reading after the estimate did');
   assert.equal(out.ok, true);
   assert.equal(fs.readFileSync(w.report, 'utf8'), content, 'the file holds the saved text');
   assert.equal(out.fileMtimeNs, statNs(w.report));
   assert.equal(out.storeMtimeNs, statNs(st.storePath));
-  assert.equal(out.logged, false);
-  assert.match(out.logWarning, /^saved, but not written to the comments log for ~\/notes-api\/docs\/report\.md: .*EACCES/);
-  assert.match(out.logWarning, /; and the comments for ~\/notes-api\/docs\/report\.md could not be read back after the write: cannot read the comments for ~\/notes-api\/docs\/report\.md \(~\/notes-api\/\.trackchanges\/docs%2Freport\.md\.json\) — reload/);
+  assert.equal(out.logged, true, 'the edit entry landed before the file did');
+  assert.match(out.logWarning, /^saved, but the comments for ~\/notes-api\/docs\/report\.md could not be read back after the write: cannot read the comments for ~\/notes-api\/docs\/report\.md \(~\/notes-api\/\.trackchanges\/docs%2Freport\.md\.json\) — reload/);
   assert.match(out.logWarning, /; and the comments log for ~\/notes-api\/docs\/report\.md could not be read back: .*EACCES/);
   assert.equal(out.logWarning.includes(w.home), false);
   assert.equal(out.logWarning.includes('nothing was changed'), false, 'a landed write never claims nothing changed');
@@ -269,13 +269,13 @@ test('after the write lands, a sidecar or a log that cannot be read back is repo
   assert.equal(out.hunks.length, 1);
   assert.ok(fits(content, out.hunks[0]));
   assert.equal(out.store.suggestions.length, 1);
-  // The disk agrees with the reply once it answers again: the same sidecar, the log as it was.
+  // The disk agrees with the reply once it answers again: the same sidecar, the log with the edit.
   const again = status(w, w.report);
   assert.deepEqual(again.hunks, out.hunks);
-  assert.deepEqual(again.log.map((e) => e.kind), ['set-tracked']);
+  assert.deepEqual(again.log.map((e) => e.kind), ['set-tracked', 'edit']);
 });
 
-test('save: a tracked file with no log yet in a .trackchanges/ that cannot be written to (a folder entry covers it) is saved and reports the log it could not create', skipAsRoot, () => {
+test('save: a tracked file with no log yet in a .trackchanges/ that cannot be written to (a folder entry covers it) refuses unreadable naming the log it could not create, and nothing is written', skipAsRoot, () => {
   const w = world();
   writeTrackedPaths(w.root, ['docs/']);
   const other = path.join(w.root, 'docs', 'other.md');
@@ -284,68 +284,54 @@ test('save: a tracked file with no log yet in a .trackchanges/ that cannot be wr
   assert.deepEqual(st.trackedBy, { kind: 'folder', entry: 'docs/' });
   const lp = logPathFor(st.storePath);
   assert.equal(fs.existsSync(lp), false);
+  const before = snapshot(w, other);
   const tc = path.join(w.root, '.trackchanges');
   fs.chmodSync(tc, 0o555);
   let r;
   try {
-    r = ok(w, saveReq(other, st, 'Some text.\nMore.\n', []));
+    r = refused(w, saveReq(other, st, 'Some text.\nMore.\n', []), 'unreadable');
   } finally {
     fs.chmodSync(tc, 0o755);
   }
-  assert.equal(fs.readFileSync(other, 'utf8'), 'Some text.\nMore.\n');
-  assert.equal(r.fileMtimeNs, statNs(other));
-  assert.equal(r.logged, false);
-  assert.match(r.logWarning, /^saved, but not written to the comments log for ~\/notes-api\/docs\/other\.md: .*(EACCES|EPERM)/);
+  // The file is the log's business (the folder entry), so the edit entry must land before the file
+  // does; a log that cannot be created refuses with nothing changed — no sidecar to put back here.
+  assert.match(r.error, /^cannot record the edit in the comments log for ~\/notes-api\/docs\/other\.md \(~\/notes-api\/\.trackchanges\/docs%2Fother\.md\.comments-log\.jsonl\): .*(EACCES|EPERM).*; nothing was changed$/);
+  assert.equal('logged' in r, false);
+  untouched(w, other, before);
   assert.equal(fs.existsSync(lp), false);
-  assert.deepEqual(r.log, []);
+  assert.deepEqual(fs.readdirSync(path.dirname(other)).sort(), ['other.md', 'report.md'], 'no staged file left beside it');
 });
 
-test('reject-all and accept: a log append that fails after the write answers ok, names the decision, and still prunes the emptied sidecar', skipAsRoot, () => {
-  // reject-all: the file holds the baseline, the reply carries `rejected` (the kernel traces from
-  // it), and the sidecar is gone because nothing is pending.
+test('accept and reject-all: a log append that fails refuses before the decision lands (file-comments-host-decisions.test.mjs pins the order); the happy path says logged:true with no warning', skipAsRoot, () => {
   const w = world();
-  const { st, lp, cur } = trackedWithChange(w);
+  const { st, lp } = trackedWithChange(w);
+  const before = snapshot(w, w.report);
   fs.chmodSync(lp, 0o444);
   let r;
+  let r2;
   try {
-    r = ok(w, { verb: 'reject-all', path: w.report, args: {}, fence: fileFenceFor(st) });
+    // accept first: its failed append discards the staged sidecar and leaves the real one as it was,
+    // so the reject-all after it still meets the fence the status holds (reject-all lands the sidecar
+    // before its append and puts the prior bytes back on failure: same bytes, a new mtime)
+    r = refused(w, { verb: 'accept', path: w.report, args: { ids: [st.hunks[0].id] }, fence: fenceFor(st) }, 'unreadable');
+    r2 = refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: fileFenceFor(st) }, 'unreadable');
   } finally {
     fs.chmodSync(lp, 0o644);
   }
-  assert.deepEqual(r.rejected, [st.hunks[0].id]);
-  assert.equal(fs.readFileSync(w.report, 'utf8'), w.text, 'the file holds the baseline');
-  assert.notEqual(fs.readFileSync(w.report, 'utf8'), cur);
-  assert.equal(r.fileMtimeNs, statNs(w.report));
-  assert.equal(r.store, null);
-  assert.equal(r.storeMtimeNs, null);
-  assert.equal(fs.existsSync(st.storePath), false, 'the emptied sidecar is pruned');
-  assert.equal(r.logged, false);
-  assert.match(r.logWarning, /^the changes were rejected, but not written to the comments log for ~\/notes-api\/docs\/report\.md: .*(EACCES|EPERM)/);
-  assert.equal(r.logWarning.includes('read back'), false);
+  assert.match(r.error, /^cannot record the decision in the comments log for ~\/notes-api\/docs\/report\.md \(~\/notes-api\/\.trackchanges\/docs%2Freport\.md\.comments-log\.jsonl\): .*(EACCES|EPERM).*; nothing was changed$/);
+  assert.match(r2.error, /^cannot record the decision in the comments log for ~\/notes-api\/docs\/report\.md \(~\/notes-api\/\.trackchanges\/docs%2Freport\.md\.comments-log\.jsonl\): .*(EACCES|EPERM).*; the comments file was put back as it was and nothing was changed$/);
+  for (const x of [r, r2]) assert.equal('logged' in x, false, 'nothing claims to be recorded');
+  untouched(w, w.report, before);
   assert.deepEqual(readLogLines(lp).map((e) => e.kind), ['set-tracked']);
-  // accept: the sidecar write landed (the record is gone), the reply carries `accepted`.
-  const w2 = world();
-  const t2 = trackedWithChange(w2);
-  fs.chmodSync(t2.lp, 0o444);
-  let r2;
-  try {
-    r2 = ok(w2, { verb: 'accept', path: w2.report, args: { ids: [t2.st.hunks[0].id] }, fence: fenceFor(t2.st) });
-  } finally {
-    fs.chmodSync(t2.lp, 0o644);
-  }
-  assert.deepEqual(r2.accepted, [t2.st.hunks[0].id]);
-  assert.equal(fs.readFileSync(w2.report, 'utf8'), t2.cur, 'accept leaves the file alone');
-  assert.equal(r2.store, null);
-  assert.equal(fs.existsSync(t2.st.storePath), false);
-  assert.equal(r2.logged, false);
-  assert.match(r2.logWarning, /^the changes were accepted, but not written to the comments log for ~\/notes-api\/docs\/report\.md: .*(EACCES|EPERM)/);
+  const s3 = status(w, w.report);
+  assert.deepEqual(s3.hunks, st.hunks, 'the change is still pending');
   // The happy path says logged:true and carries no warning at all.
-  const w3 = world();
-  const t3 = trackedWithChange(w3);
-  const r3 = ok(w3, { verb: 'accept-all', path: w3.report, args: {}, fence: fenceFor(t3.st) });
+  const r3 = ok(w, { verb: 'accept-all', path: w.report, args: {}, fence: fenceFor(s3) });
+  assert.deepEqual(r3.accepted, [st.hunks[0].id]);
   assert.equal(r3.logged, true);
   assert.equal('logWarning' in r3, false);
-  assert.deepEqual(readLogLines(t3.lp).map((e) => e.kind), ['set-tracked', 'accept']);
+  assert.deepEqual(readLogLines(lp).map((e) => e.kind), ['set-tracked', 'accept']);
+  assert.equal(fs.existsSync(st.storePath), false, 'the emptied sidecar is pruned');
 });
 
 test('set-tracked: a log append that fails after config.json was written answers ok with the new verdict and the warning', skipAsRoot, () => {

@@ -83,7 +83,7 @@ import threading
 import time
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -92,11 +92,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-em = SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"
-km = SourceFileLoader("romp_kernel_ut", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_ut", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -1032,7 +1032,7 @@ class DeliveryKeyedStamp(_StoreSandbox):
 
     def test_the_drain_delivers_and_stamps(self):
         tid, _ = self._park_an_answer()
-        km._compacting_now = lambda sid: False        # compaction ended — the FIFO may drain
+        km._compacting_now = lambda sid, **k: False        # compaction ended — the FIFO may drain
         be = _FakeBackend()
         saved = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: be)
@@ -1047,7 +1047,7 @@ class DeliveryKeyedStamp(_StoreSandbox):
 
     def test_a_dropped_dead_session_queue_leaves_the_todo_open(self):
         tid, _ = self._park_an_answer()
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, **k: False
         saved = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(
             lambda sid: (_ for _ in ()).throw(RuntimeError("session is gone")))
@@ -1237,6 +1237,17 @@ class LostAnswerReopens(_StoreSandbox):
                                       {"type": "text", "text": body}]}}]}]
         km._user_todo_answer_lost(SID, tid, body, wait=True)
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
+
+    def test_an_edge_whitespace_answer_reads_as_landed(self):
+        # the CLI records user text verbatim, edge whitespace included, and _atom_user_texts keys it
+        # under echo_text_key (strip). A match set built from the raw text never met such a key, so a
+        # delivered answer whose send carried a trailing newline was reopened at every boot
+        # (2026-09-06 review, round 4): the landed check's forms start from the same key
+        tid, body = self._stamped()
+        self._land(body + "\n")
+        km._user_todo_answer_lost(SID, tid, body + "\n", wait=True)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered",
+                         "one key on both sides — delivered, the stamp stands")
 
     def test_the_loss_path_never_lifts_a_dismiss(self):
         tid = km._add_user_todo(SID, "Need the staging port")
@@ -1493,7 +1504,7 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         # never lands, so the seam's landed check must find no delivery and reopen
         km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
         km._parse = lambda path, sid, now: {"turns": []}
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, **k: False
         km._pending_ops.clear()
         km._pane_io_locks.clear()
 
@@ -1730,7 +1741,7 @@ class _TmuxPasteHarness(_StoreSandbox):
         self.turns = []
         km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
         km._parse = lambda path, sid, now: {"turns": self.turns}
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, **k: False
         km._pending_ops.clear()
         km._pane_io_locks.clear()
 
@@ -2537,8 +2548,8 @@ class EscalationFloorPredicate(_StoreSandbox):
             mock.patch.object(km, "_last_state", lambda s: last_state),
             mock.patch.object(km, "_backend_queued", lambda s: queued),
             mock.patch.object(km, "_backend_rewind_pending", lambda s: rewind),
-            mock.patch.object(km, "_compacting_now", lambda s: compacting),
-            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="": interrupted),
+            mock.patch.object(km, "_compacting_now", lambda s, **k: compacting),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: interrupted),
             mock.patch.dict(km._pending_ops, pending_ops or {}, clear=True),
         ]
         for p in patches:
@@ -2656,7 +2667,7 @@ class EscalationFloorWiring(_StoreSandbox):
         # review 2026-08-22: the predicate's peer-wait input comes from the SAME wait-for graph
         # the nudge tick and the waitingOn chip consult — never a second derivation
         src = inspect.getsource(km.build_feed)
-        self.assertIn("aerr, wmap.get(fsid))", src)
+        self.assertIn("aerr, wmap.get(fsid),", src)   # the edge, then the badge read (P2 S2)
 
     def test_the_provisional_chain_treats_a_floored_card_as_working(self):
         # review 2026-08-22: a todo-floored focus card reports needs_input, so without this the
@@ -3157,7 +3168,7 @@ class NudgeStandsDownForOpenTodos(_StoreSandbox):
             mock.patch.object(jd, "parsed_session",
                               lambda sid, paths, now: {"turns": list(self.TURNS)}),
             mock.patch.object(km, "_session_working", lambda turns: False),
-            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="": False),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: False),
             mock.patch.object(km, "_backend_queued", lambda s: False),
             mock.patch.object(km, "_backend_rewind_pending", lambda s: False),
             mock.patch.object(km, "_last_state", lambda s: ("waiting", 0)),

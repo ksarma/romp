@@ -780,7 +780,7 @@ test("while the editor is up (Slice 5): a moved file never reloads the view — 
   assert.equal(w.reloads, 1, "the first paint after the edit re-reads the file the session rewrote");
   assert.equal(aside.querySelector(".fc-sec-head .fc-err"), null, "…and the row is gone");
   // the same row after a reject from a card while editing: the second call site, pinned at source
-  assert.match(SRC, /this\.ctx\.reload\(\);\n\s*this\.noteMovedUnderEdit\(\);\s*\/\/ a reject from a card while the editor is up/);
+  assert.match(SRC, /this\.applyStatus\(r\);\n\s*this\.noteMovedUnderEdit\(\);\s*\/\/ a reject from a card while the editor is up/, "after the reply is applied (syncBytes stands down in edit mode, so the note is the one word about the moved bytes)");
   assert.match(SRC, /await this\.refresh\(\);[^\n]*\n\s*this\.noteMovedUnderEdit\(\);/, "…and the poll's, after its refresh");
   assert.match(SRC, /if \(!this\.ctx\.editing\(\) \|\| !s \|\| !laterNs\(s\.fileMtimeNs, this\.ctx\.mtimeNs\(\)\)\) return;/, "keyed on the clocks: the status read a later file than the editor loaded");
 });

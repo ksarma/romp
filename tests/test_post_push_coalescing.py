@@ -14,23 +14,25 @@ import threading
 import time
 import unittest
 from http.server import ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-km = SourceFileLoader("romp_kernel_postpush", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_postpush", os.path.join(BIN, "romp-kernel"))
 
-# The ONLY functions allowed to build inline: the pusher's own cycle and the tick jobs that run ON
-# the pusher thread (see _pusher_cycle_jobs). Everything request-side pokes instead.
-PUSHER_THREAD_FNS = {"_push_all", "_pusher_cycle_jobs", "_auto_pause_on_limit",
-                     "_auto_pause_on_spend_limit", "_auto_resume_retry", "_interrupt_block_tick"}
+# The ONLY functions allowed to build inline: the pusher's own cycle. Everything request-side pokes
+# instead, and since perf batch 2 P1 (2026-09-06) so do the tick jobs that run ON the pusher thread:
+# their writers mark the views dirty and wake the pusher, whose next cycle carries the change (the
+# interrupt tick's inline push rebuilt nothing the next cycle would not, and the retry-pause flag is
+# read by no view). A tick job that builds inline is the regression this census now catches.
+PUSHER_THREAD_FNS = {"_push_all", "_pusher_cycle_jobs"}
 
 
 class PushCallerCensus(unittest.TestCase):

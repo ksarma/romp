@@ -26,7 +26,7 @@ Auxiliary inputs the file adapter may read (same category as the transcript):
                                transcript lost to an API-errored try; judge parse only)
   timeline/messages.jsonl   -> peer rompUuid for a postal atom (join on the msg id)
 """
-import copy, json, os, re, sys, time, hashlib, threading
+import bisect, copy, json, os, re, sys, time, hashlib, threading
 from datetime import datetime
 from pathlib import Path
 
@@ -886,6 +886,9 @@ class FileAdapter:
                                  #   text (full prompt, markers intact), seq}
         self.leaf_uuid = None
         self._seq = 0            # global read-order counter — continued by assembly folds
+        self._seq_ts = []        # (seq, repaired ts) per uuid-bearing record, in read order — sorted by
+        #                          construction, so _landing_t bisects it for a record's file-order
+        #                          predecessor without a per-lookup scan or a per-fold sort
         self.ts_of = {}          # uuid -> repaired epoch seconds — THE timestamp every consumer
         #                          reads (_chrono, the emit, the boundary splice). A record whose
         #                          stamp does not parse borrows the last good stamp seen in file
@@ -952,7 +955,7 @@ class FileAdapter:
                         if len(_TS_REPAIRED_SEEN) >= 4096:
                             _TS_REPAIRED_SEEN.clear()
                         _TS_REPAIRED_SEEN.add(u)
-                        _ASM_STATS["ts-repair"] = _ASM_STATS.get("ts-repair", 0) + 1
+                        _asm_count("ts-repair")
                     if fsid not in _TS_REPAIR_NOTED:
                         if len(_TS_REPAIR_NOTED) >= 64:
                             _TS_REPAIR_NOTED.clear()   # re-arm — capped silence must not become
@@ -964,6 +967,11 @@ class FileAdapter:
                 else:
                     self._last_ts = ts
                 self.ts_of[u] = ts
+                if t != "attachment":
+                    # an attachment is never a landing WITNESS (a queued_command IS the spliced item,
+                    # stamped with its send time): several sends spliced at one boundary must all
+                    # read that boundary, not each other — see _landing_t
+                    self._seq_ts.append((seq, ts))
                 # parentUuid normally; compact_boundary carries parentUuid:null +
                 # logicalParentUuid:<pre-compaction leaf> — follow that so the active
                 # path survives compaction instead of orphaning every pre-compaction turn.
@@ -1539,9 +1547,43 @@ class FileAdapter:
             #                     PLACEMENTS_V bump).
             "_seq": seq,
         }
+        landed_t = self._landing_t(seq)
+        if landed_t is not None:
+            if landed_t < t:
+                # The witness (the attachment's file-order predecessor) is stamped BEFORE the
+                # attachment's own ENQUEUE stamp. Real transcripts do this only by clock granularity
+                # (the live corpus's worst case is -0.2 s, which whole-second stamps can turn into a
+                # 1 s inversion); anything larger is a shape the CLI does not write. No truthful
+                # landing precedes the send, and the chat's cue must never read "took it at" a time
+                # before the bubble's own send time — so clamp to the send, and COUNT it: parse stats
+                # (`landedT-clamp`, beside ts-repair, served on the version route) are where a run of
+                # these would show up, since a silent clamp would hide a CLI write-order change. (The
+                # 2026-09-06 review: two goldens had pinned a landedT 30-40 s before the send, from a
+                # synthetic shape with no tool_result before the attachment.)
+                _asm_count("landedT-clamp")
+                landed_t = t
+            atom["landedT"] = landed_t   # when the CLI TOOK it (metadata, like `absorbed`; see _landing_t)
         if ROMP_AUTO_RE.search(full):   # an AUTO-nudge → flag it, mirroring the native user-record path
             atom["rompAuto"] = True
         return atom
+
+    def _landing_t(self, seq):
+        """When the CLI TOOK a mid-turn prompt: the repaired stamp of the record written just BEFORE
+        the queued_command attachment in file order. The attachment's own stamp is the ENQUEUE time
+        (the moment the user sent it — where the atom is placed, above the steps that ran while it
+        waited), but the CLI writes the record at the splice, right after the tool boundary it waited
+        for, so that boundary's own record — the file-order predecessor — is the landing moment to
+        within the boundary's latency. The chat's mid-turn cue reads it (kernel `landedAt`): "the
+        session took this at HH:MM" is a different fact from "sent at HH:MM", and the rail already
+        shows the latter. The PREDECESSOR, not the successor, on purpose: it is always ingested when
+        the atom is emitted, so a fold that sees the attachment as the newest record still stamps
+        it — a successor read would find nothing there, and no later fold re-emits the atom (the
+        (ts, text) dedup). Attachment records are skipped as witnesses (a run of splices at one
+        boundary all read that boundary). None only when nothing precedes the attachment in the
+        read. The caller clamps the result to the atom's own send time (never earlier — see
+        _absorbed_atom). Metadata only: no atom-set or seg-id change, no PLACEMENTS_V bump."""
+        i = bisect.bisect_left(self._seq_ts, (seq,)) - 1
+        return self._seq_ts[i][1] if i >= 0 else None
 
     def _absorbed(self, qatts, kept, st, rompuuid, postal_index):
         """Mid-turn prompts spliced into a running turn. The witness is the queued_command
@@ -2378,6 +2420,20 @@ _ASM_LOCK = threading.Lock()       # guards the cache dict + the per-key lock re
 _ASM_KEYLOCKS = {}                 # key -> Lock; never pruned (a Lock is tiny, and swapping a
 #                                    key's lock mid-flight would let two folds interleave)
 _ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # observability + tests
+_ASM_STATS_LOCK = threading.Lock()   # `+= 1` is a read-modify-write: parses run on the pusher, the judge tiers'
+#                                      pools and connect pushes at once, and the counts drift low without the
+#                                      GIL (tests assert exact deltas; the 2026-09-06 free-threading review).
+#                                      Held for the increment only. It may be taken while a key lock is held
+#                                      (_assemble counts full parses, folds and serves inside _asm_key_lock)
+#                                      and never acquires another lock itself, so no ordering cycle exists.
+
+
+def _asm_count(key, n=1):
+    """Add `n` to one assembly counter and return its new value."""
+    with _ASM_STATS_LOCK:
+        v = _ASM_STATS.get(key, 0) + n
+        _ASM_STATS[key] = v
+        return v
 _ASM_WARNED = [False]
 _TS_REPAIR_NOTED = set()     # file stems already warned about a garbled stamp — once per file;
 #                              the cap CLEARS and re-arms (an occasional repeat note beats silence)
@@ -2388,8 +2444,7 @@ _TS_REPAIRED_SEEN = set()    # record uuids already counted in ts-repair — dis
 def _asm_demote(reason):
     """Count WHY a fold demoted to a full parse (g:<reason> in _ASM_STATS) and return None —
     the hit-rate diagnosis this cache lives or dies by, in prod and in the corpus replay."""
-    k = "g:" + reason
-    _ASM_STATS[k] = _ASM_STATS.get(k, 0) + 1
+    _asm_count("g:" + reason)
     return None
 
 
@@ -2428,7 +2483,7 @@ def _asm_full(key, leaf_path, candidate_files, links, rompuuid, postal_index, sd
         while len(_ASM_CACHE) >= _ASM_CACHE_MAX:
             _ASM_CACHE.pop(next(iter(_ASM_CACHE)))   # oldest-used first; hot entries survive floods
         _ASM_CACHE[key] = entry
-    _ASM_STATS["full"] += 1
+    _asm_count("full")
     return _asm_serve(entry)
 
 
@@ -2595,7 +2650,7 @@ def _asm_fold(entry, delta, leaf_recs, leaf_key, leaf_stem, rompuuid, postal_ind
     entry["n_qatts"] = len(ad.qatts)
     entry["recs"][leaf_key] = leaf_recs           # commit LAST: a bail above re-slices the same
     ad._src[leaf_key] = leaf_recs                 #  delta next visit and the uuid gate demotes it
-    _ASM_STATS["fold"] += 1
+    _asm_count("fold")
     return _asm_serve(entry)
 
 
@@ -2614,7 +2669,7 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
     if leaf_override:
         # A pending cut changes the walk anchor and is transient: always a plain full parse,
         # never cached — a cut parse's truncated emit state must not seed later folds.
-        _ASM_STATS["bypass"] += 1
+        _asm_count("bypass")
         _mode("bypass")
         ad = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
         ad.sdk_human = sdk_human
@@ -2636,7 +2691,7 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
                     delta, leaf_recs = got
                     _asm_heal(entry, rompuuid, postal_index)
                     if not delta:
-                        _ASM_STATS["serve"] += 1
+                        _asm_count("serve")
                         _mode("serve")
                         return _asm_serve(entry)
                     served = _asm_fold(entry, delta, leaf_recs, str(leaf_path),
@@ -2650,9 +2705,9 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
             return _asm_full(key, leaf_path, candidate_files, links, rompuuid,
                              postal_index, sdk_human)
     except Exception as e:
-        _ASM_STATS["fallback"] += 1
+        nfb = _asm_count("fallback")
         _mode("fallback")
-        if not _ASM_WARNED[0] or _ASM_STATS["fallback"] in (10, 100, 1000, 10000):
+        if not _ASM_WARNED[0] or nfb in (10, 100, 1000, 10000):
             _ASM_WARNED[0] = True    # once, then at count milestones — a PERSISTENT fold bug
             #                          must not hide behind a single line in an old log
             print("romp-event-model: assembly fold failed (%r) — serving plain full parses "

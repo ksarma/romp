@@ -184,6 +184,21 @@ test("routeOutbound: a global message (no session id) goes local", () => {
   assert.deepEqual(routes, [{ host: "", msg: { type: "setColormap", name: "viridis" } }]);
 });
 
+test("routeOutbound: a views write goes to the LOCAL kernel whatever it carries — the views store is per kernel", () => {
+  const hosts = new Set(["gpu1"]);
+  // the tag op rides NESTED under `edit`; even a tag named like a remote lane cannot take the name-addressed route
+  const edit = { type: "tagEdit", writeId: "w1", edit: { op: "rename", tid: "g7", newName: "gpu1:api" } };
+  assert.deepEqual(routeOutbound(edit, hosts), [{ host: "", msg: edit }]);
+  // and the router routes the TYPE local explicitly: a flat legacy shape with a remote-looking name stays local too
+  const flat = { type: "tagEdit", writeId: "w2", name: "gpu1:api", newName: "x" };
+  assert.deepEqual(routeOutbound(flat, hosts), [{ host: "", msg: flat }], "tag names and session names share a field name, not a meaning");
+  const whole = { type: "setTimelineViews", writeId: "w3", views: { active: "all", tags: [] } };
+  assert.deepEqual(routeOutbound(whole, hosts), [{ host: "", msg: whole }]);
+  // …while a remote session's edit inside a LOCAL tag keeps its viewer-relative id: the local kernel stores the pair as-is
+  const member = { type: "tagEdit", writeId: "w4", edit: { op: "addMember", tid: "g7", sids: ["gpu1:" + U] } };
+  assert.deepEqual(routeOutbound(member, hosts), [{ host: "", msg: member }]);
+});
+
 test("routeOutbound: a cross-host reorder fans out one route per host with its own sids", () => {
   const order = [U, "gpu1:" + V, "gpu1:" + U, V]; // local U, gpu1 V, gpu1 U, local V
   const routes = routeOutbound({ type: "reorderTabs", order });
@@ -594,6 +609,23 @@ function withManager(fn: (fm: FederationManager, emitted: any[], store: Map<stri
   }
 }
 const lastOrder = (emitted: any[]) => emitted.filter((m) => m && m.type === "tabOrder").pop()!.order;
+
+test("the merged tabOrder frame carries the LOCAL kernel's own name (selfHost), never a remote kernel's, and keeps it on a re-emit", () => {
+  // the chat reads a postal card's sender host against its kernel's own name, learned from the tabOrder
+  // frame every chat receives first; the manager re-emits a MERGED frame in place of each host's own, so the
+  // field has to be carried the way the views blob is — and a remote kernel's frame names ITSELF
+  const lastSelf = (emitted: any[]) => emitted.filter((m) => m && m.type === "tabOrder").pop()!.selfHost;
+  withManager((fm, emitted) => {
+    fm.inbound("TESTHOST", { type: "tabOrder", order: [V], tabs: [{ id: V, name: "tests" }], selfHost: "TESTHOST" });
+    assert.equal(lastSelf(emitted), undefined, "a remote kernel's own name is not this dashboard's");
+    fm.inbound("", { type: "tabOrder", order: ["a"], tabs: [{ id: "a", name: "web" }], selfHost: "SELFHOST" });
+    assert.equal(lastSelf(emitted), "SELFHOST");
+    fm.inbound("TESTHOST", { type: "tabOrder", order: [V], tabs: [{ id: V, name: "tests" }], selfHost: "TESTHOST" });
+    assert.equal(lastSelf(emitted), "SELFHOST", "a remote host's report re-emits the merge with the local name still on it");
+    fm.inbound("", { type: "tabOrder", order: ["a"], tabs: [{ id: "a", name: "web" }] });
+    assert.equal(lastSelf(emitted), "SELFHOST", "an older local frame without the field does not unlearn it");
+  });
+});
 
 test("a session created after a remote host attached lands at the END of the merged strip", () => {
   // The 2026-08-10 report: the new session's provisional tab rendered last, then the merged push

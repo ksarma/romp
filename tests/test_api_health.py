@@ -24,7 +24,7 @@ import tempfile
 import threading
 import time
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -34,7 +34,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-sb = SourceFileLoader("romp_sdk_backend_apihealth", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+sb = load_source("romp_sdk_backend_apihealth", os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-555555555555"
 SID2 = "11111111-2222-3333-4444-666666666666"
@@ -1429,6 +1429,49 @@ class StateFile(unittest.TestCase):
         self.assertEqual(len(moves(boot)), 1, boot)
         self.assertIn(KEY + " thrashing -> unknown", moves(boot)[0])
         self.assertIn("restart", moves(boot)[0])
+
+
+class KeySourceBlock(unittest.TestCase):
+    """The `keySource` block beside `cliScope` (2026-09-05): the boot verdict's facts plus what is live
+    now. Additive — API_HEALTH_SCHEMA stays 1 — and value-free: fingerprints, names, reasons with
+    counts. The default (file mode, no command) is what every other test here sees."""
+
+    def setUp(self):
+        self._stash = sb._WORK_KEY
+        sb._WORK_KEY = ""
+
+    def tearDown(self):
+        sb._WORK_KEY = self._stash
+
+    def test_the_block_is_present_with_the_documented_fields(self):
+        be = _backend()
+        snap = be.api_health_snapshot()
+        self.assertEqual(snap["schema"], sb.API_HEALTH_SCHEMA)
+        self.assertEqual(sb.API_HEALTH_SCHEMA, 1)
+        ks = snap["keySource"]
+        self.assertEqual(set(ks), {"mode", "selector", "sessionKeyPath", "expectedAuth", "helperConfigured",
+                                   "execStartShell", "credentialNamesFound", "lastRun", "fingerprint",
+                                   "fingerprintKind", "setFingerprint", "names", "sessionsByFingerprint"})
+        self.assertEqual(ks["mode"], "file")
+        self.assertIn(ks["sessionKeyPath"], ("injected", "helper", "login"))
+        self.assertIsNone(ks["lastRun"], "file mode: no command ran")
+        self.assertEqual(ks["fingerprint"], "", "a keyless manager: nothing to fingerprint")
+        self.assertEqual(ks["sessionsByFingerprint"], {})
+        self.assertEqual(set(ks["credentialNamesFound"]), {"serviceEnv", "unit", "environment"})
+        json.dumps(snap)
+        self.assertIn("cliScope", snap, "the sibling block is untouched")
+
+    def test_live_sessions_are_counted_by_the_credential_they_launched_on(self):
+        be = _backend()
+        a, b, c = _session(be, sid=SID), _session(be, sid=SID[:-1] + "1"), _session(be, sid=SID[:-1] + "2")
+        a._launched_key_fp = b._launched_key_fp = "abcdefabcdef"
+        c._launched_key_fp = ""
+        for s in (a, b, c):
+            s.ended = False
+            be.sessions[s.sid] = s
+        self.assertEqual(be.api_health_snapshot()["keySource"]["sessionsByFingerprint"], {"abcdefabcdef": 2, "": 1})
+        c.ended = True
+        self.assertEqual(be.api_health_snapshot()["keySource"]["sessionsByFingerprint"], {"abcdefabcdef": 2})
 
 
 class Diagnostics(unittest.TestCase):

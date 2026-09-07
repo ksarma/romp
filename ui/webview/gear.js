@@ -1172,6 +1172,14 @@ function initGear(post) {
   function raVal(o) { return raCost() ? (o.cost || 0) : ((o.in || 0) + (o.out || 0)); }
   function raFmt(v) { return raCost() ? fmtUsd(v) : fmtTok(v); }
   function raEsc(s) { return (s == null ? '' : '' + s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function raWhen(epoch) {   // an HOUR edge is an instant, shown in the browser's own clock: '13:00' today, 'Sep 5, 13:00' before
+    var t = new Date(epoch * 1000), hm = t.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return (t.toDateString() === new Date().toDateString() ? '' : t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ', ') + hm; }
+  function raDate(iso) {   // a DAY edge is the kernel's own local date ('2026-09-05' → 'Sep 5'), formatted from the string, never from
+    //   an epoch: day buckets are the kernel's dates, and the midnight epoch rendered in a browser west of the kernel named the
+    //   day before the period's first date (2026-09-06). Noon keeps the local Date on that date in every zone. '' when absent.
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], 12).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''; }
   function raSegments() { var j = (raState.data && raState.data.judges) || { byJudge: {}, byTier: {} }; var segs = [];
     if (raState.group === 'tier') { ['index', 'triage'].forEach(function (k) { var bt = (j.byTier || {})[k] || {};
       segs.push({ label: k === 'index' ? 'index (captioner+archiver)' : 'triage (planner/grouper/closer/distiller/courier)', color: TIERCOL[k], in: bt.in || 0, out: bt.out || 0, calls: bt.calls || 0, cost: bt.cost || 0 }); }); }
@@ -1181,7 +1189,20 @@ function initGear(post) {
   function raRender() {
     if (raState.loading) { raChart.innerHTML = '<div class=ra-empty>loading…</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; return; }
     var d = raState.data; if (!d) { raChart.innerHTML = '<div class=ra-empty>no data</div>'; return; }
-    var sess = d.sessions || { in: 0, out: 0, cost: 0 }, sessTot = raVal(sess);
+    var sess = d.sessions || { in: 0, out: 0, cost: 0 };
+    // Two session-dollar figures can arrive: `ledger` is the CLI's own per-turn cost as the rail's
+    // recorder folded it (spend.json), `cost` is tokens × a price table over the whole period. The CLI's
+    // figure is the measurement; the table is the estimate. Where the ledger began inside the period,
+    // `ledger.estBefore` is the estimate for the time before its first bucket, and the bar shows the two
+    // added, each labelled; the estimate stands alone only where the ledger has nothing at all.
+    var led = (sess.ledger && typeof sess.ledger.usd === 'number') ? sess.ledger : null;
+    var est = sess.cost || 0;
+    var before = (led && typeof led.estBefore === 'number') ? led.estBefore : 0;
+    var sessCost = led ? led.usd + before : est;
+    var sessTot = raCost() ? sessCost : raVal(sess);
+    var dayB = d.buckets === 'days';   // day buckets: the edges are the kernel's dates (fromDate / sinceDate); hour buckets: instants
+    var fromTxt = dayB ? raDate(d.fromDate) : ((typeof d.from === 'number') ? raWhen(d.from) : '');                              // the period's real start (whole buckets)
+    var ledFrom = led ? (dayB ? raDate(led.sinceDate) : ((typeof led.sinceT === 'number') ? raWhen(led.sinceT) : '')) : '';  // where a young ledger begins
     var segs = raSegments(), judgeTot = segs.reduce(function (a, s) { return a + raVal(s); }, 0);
     var maxV = Math.max(sessTot, judgeTot, 1);
     var W = 480, H = 250, top = 24, bot = 30, chartH = H - top - bot, baseY = top + chartH, barW = 92, cx1 = W * 0.30, cx2 = W * 0.70;
@@ -1189,7 +1210,9 @@ function initGear(post) {
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet">';
     svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" style="stroke:var(--hairline, #3a3a3a)"/>';
     var sh = sessTot / maxV * chartH;
-    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
+    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sessCost)
+      + (led ? ' (the CLI\'s own cost' + (ledFrom ? ' from ' + ledFrom + ', ' + fmtUsd(led.usd) + ', plus ' + fmtUsd(before) + ' estimated from token prices for the time before ' + ledFrom : '')
+                 + (led.keyed ? '; key-billed turns only' : '') + '; token-price estimate for the whole period ' + fmtUsd(est) + ')' : ''));
     svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(sessTot) + '</text>';
     svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Sessions</text>';
     var cum = 0; segs.forEach(function (s) { var st = raVal(s), h = st / maxV * chartH, y = baseY - cum - h; cum += h;
@@ -1200,14 +1223,24 @@ function initGear(post) {
     var lg = segs.map(function (s) { return '<span class=ra-li><span class=ra-sw style="background:' + s.color + '"></span>' + raEsc(s.label) + ' <b>' + raFmt(raVal(s)) + '</b></span>'; }).join('');
     raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;
     var ratio = sessTot ? (judgeTot / sessTot * 100) : 0;
-    raNote.textContent = 'last ' + raState.periodLabel + ' · judges = ' + (sessTot ? ratio.toFixed(1) : '0') + '% of session ' + (raCost() ? 'cost' : 'tokens') + ' · combined ' + raFmt(sessTot + judgeTot)
-      // Say what the session dollars are, because they are not measured the way the judge dollars are:
-      // judges log claude -p's exact total_cost_usd, while sessions carry tokens only and get priced
-      // tokens × a per-model table. Fast mode is invisible to that table — it changes no model id — so a
-      // fast session's real draw is HIGHER than what this shows (the user 2026-08-08 asked that the gap be
-      // written down where someone would meet it). The rail's spend figure has no such gap: it passes the
-      // CLI's own per-turn cost through.
-      + (raCost() ? ' · session $ estimated from token prices; fast mode draws more than shown' : ''); }
+    // The period is whole buckets — this hour and the ones before it, or whole local dates — the rail's
+    // own rule, so the ledger figure here IS the rail cell's; the footnote names the real start rather
+    // than promising an exact hour. Every figure on the chart is cut at that same start.
+    raNote.textContent = (fromTxt ? raState.periodLabel + ' · from ' + fromTxt : 'last ' + raState.periodLabel) + ' · judges = ' + (sessTot ? ratio.toFixed(1) : '0') + '% of session ' + (raCost() ? 'cost' : 'tokens') + ' · combined ' + raFmt(sessTot + judgeTot)
+      // Say what the session dollars are. With the ledger they are the CLI's own per-turn cost, the same
+      // figure the rail's spend cell shows (fast mode and web search included) — key-billed turns only
+      // where a key runs beside a login, as the rail counts them (the user 2026-08-08), and the footnote
+      // says so; a ledger younger than the period says where it begins, what was estimated for the time
+      // before it, and that its first hour or day is partial (recording began partway through it, so turns
+      // earlier in it are in neither figure). Without any ledger they are tokens × a per-model table, and that is not measured
+      // the way the judge dollars are (judges log claude -p's exact total_cost_usd): fast mode is
+      // invisible to the table — it changes no model id — so a fast session's real draw is HIGHER than
+      // the estimate (the user 2026-08-08 asked that the gap be written down where someone would meet it).
+      + (raCost() ? (led ? ' · session $ is the CLI\'s own per-turn cost'
+                             + (ledFrom ? ' from ' + ledFrom + ' (' + fmtUsd(led.usd) + ') plus a token-price estimate for the time before ' + ledFrom + ' (' + fmtUsd(before) + '); recording began partway through that ' + (dayB ? 'day' : 'hour') + ', so turns earlier in it are in neither figure' : '')
+                             + (led.keyed ? '; key-billed turns only, login turns left out' : '')
+                             + (led.preFix ? '; includes days recorded before the per-turn fix' : '')
+                         : ' · session $ estimated from token prices; fast mode draws more than shown') : ''); }
   function raFetch() { raState.loading = true; raRender();
     fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; }); }
   if (raOpen) raOpen.onclick = function (e) { e.stopPropagation(); raBack.hidden = false; p.hidden = true; raFetch(); };

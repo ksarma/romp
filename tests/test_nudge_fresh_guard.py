@@ -20,7 +20,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -31,7 +31,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_freshg", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_freshg", os.path.join(BIN, "romp-kernel"))
 jd = km.jd                                        # the kernel's OWN judge instance — patches must land
 #                                                   where the walk reads them (a same-named reload would
 #                                                   be a different module object)
@@ -67,7 +67,7 @@ class FreshGuard(unittest.TestCase):
         km._compacting_now = lambda sid: False
         km._api_error = lambda path: None
         km._session_working = lambda turns: False
-        km._interrupt_suppresses_nudge = lambda turns, sid="": False
+        km._interrupt_suppresses_nudge = lambda turns, sid="", **k: False
         km._backend_queued = lambda sid: False
         km._backend_rewind_pending = lambda sid: False
         km._last_state = lambda sid: ("", 0)

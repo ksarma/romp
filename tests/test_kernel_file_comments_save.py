@@ -289,6 +289,35 @@ class TheSaveTraceNamesTheRejectedCount(_SaveWorld):
         self.assertEqual(self.reached, [])
         self.assertEqual(self.traced, [])
 
+    def test_a_host_that_wrote_the_file_and_then_died_still_tells_the_session_the_count(self):
+        # the host landed the sidecar (the decisions applied) and the file, then died before its reply —
+        # killed after the rename, or failing inside the status it builds after the writes: the kernel
+        # answers host-error with `fileChanged` (_file_comments_op stats the file before and after, save
+        # being a traced verb), and the session hears the save trace with the request's own count, since
+        # for this verb the request is the record (the reject's sibling case hears a count-less body:
+        # tests/test_file_comments.py). No decisions: the direct-edit body, as after a successful save.
+        real = os.path.realpath(self.fp)
+        r = self.verb("save", REJECT_TWO, fence=FENCE, exit=1, write="# Findings\n\nreverted\n")
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"))
+        self.assertIs(r["fileChanged"], True, "the failure says the file moved under it")
+        self.assertIn("The file itself changed on disk during the request", r["error"])
+        self.assertEqual([sid for sid, _ in self.reached], [SID], "one trace, to the owning session")
+        self.assertEqual(self.reached[0][1], km._save_trace_body(real, 2))
+        self.assertEqual(self.reject_traced, [], "not the reject trace: the person edited too")
+        self.assertEqual(self.order, ["reply", "trace"], "the failure is on the wire before the trace goes")
+        r2 = self.verb("save", PLAIN, fence=FENCE, exit=1, write="# Findings\n\nreverted again\n")
+        self.assertIs(r2["fileChanged"], True)
+        self.assertEqual([b for _, b in self.reached][1], km._edit_trace_body(real))
+        self.assertEqual(self.traced, [(real, SID)], "through _edit_trace, as a save that rejected nothing")
+
+    def test_a_host_that_died_without_writing_tells_nothing(self):
+        # the file is as the session left it: nothing to tell, and the failure carries no fileChanged
+        r = self.verb("save", REJECT_TWO, fence=FENCE, exit=1)
+        self.assertEqual((r["type"], r["code"]), ("fileCommentsFailed", "host-error"))
+        self.assertNotIn("fileChanged", r)
+        self.assertEqual(self.reached, [])
+        self.assertEqual(self.traced, [])
+
     def test_a_file_outside_every_live_tree_is_nobodys_to_tell(self):
         km._cwd_of = lambda s: os.path.join(self.tmp, "elsewhere")
         r = self.save(self.fp, args=REJECT_TWO)

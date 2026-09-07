@@ -24,7 +24,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -34,8 +34,8 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-sb = SourceFileLoader("romp_sdk_backend_expected", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
-km = SourceFileLoader("romp_kernel_expected", os.path.join(BIN, "romp-kernel")).load_module()
+sb = load_source("romp_sdk_backend_expected", os.path.join(BIN, "romp_sdk_backend.py"))
+km = load_source("romp_kernel_expected", os.path.join(BIN, "romp-kernel"))
 
 
 class _Declared(unittest.TestCase):
@@ -454,6 +454,52 @@ class RefreshUsageAllKeyed(_Declared):
         self.be.sessions = {dormant.sid: dormant}
         self.be.refresh_usage()
         self.assertEqual(self._lines(), [], "nothing connected — nothing to say")
+
+
+class DeclarationInTheKeySourceVerdict(unittest.TestCase):
+    """The declaration's two new readers in the boot verdict (sdk_backend.key_source_verdict, 2026-09-05):
+    =login while the credential command prints a key, and =key with nothing to inject and no
+    apiKeyHelper. Pure calls on an explicit environ; the developer's shell never reaches them."""
+
+    CMD = {"ROMP_CREDENTIAL_COMMAND": "credential-cmd \"$1\""}
+
+    def _snap(self, has_key):
+        return {"configured": True, "ok": True, "reason": "", "at": 1.0, "exitCode": 0, "durationS": 0.1,
+                "names": ["ANTHROPIC_API_KEY"] if has_key else ["A_TOKEN"], "dropped": [], "setFp": "0123456789ab",
+                "keyFp": "abcdefabcdef" if has_key else "", "hasKey": has_key, "stale": False, "selector": ""}
+
+    def _problems(self, v):
+        return [ln["text"] for ln in v["lines"] if ln["problem"]]
+
+    def test_login_declared_while_the_command_prints_a_key_rings(self):
+        v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="login"), snapshot=self._snap(True))
+        hit = [t for t in self._problems(v) if "ROMP_EXPECTED_AUTH=login while" in t]
+        self.assertEqual(len(hit), 1, self._problems(v))
+        self.assertIn("sha256:abcdefabcdef", hit[0])
+        v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="login"), snapshot=self._snap(False))
+        self.assertEqual([t for t in self._problems(v) if "while" in t], [], "no key printed: the declaration holds")
+        v = sb.key_source_verdict(dict(self.CMD, ROMP_EXPECTED_AUTH="key"), snapshot=self._snap(True), work_key_present=True)
+        self.assertEqual(self._problems(v), [], "key declared and a key printed: the intended, quiet state")
+
+    def test_key_declared_with_nothing_to_inject_needs_a_helper_in_command_mode(self):
+        env = dict(self.CMD, ROMP_EXPECTED_AUTH="key")
+        v = sb.key_source_verdict(env, snapshot=self._snap(False))
+        hit = [t for t in self._problems(v) if "names no apiKeyHelper" in t]
+        self.assertEqual(len(hit), 1, self._problems(v))
+        self.assertIn("land on the login", hit[0])
+        v = sb.key_source_verdict(env, snapshot=self._snap(False), helper_command="the-helper")
+        self.assertEqual([t for t in self._problems(v) if "apiKeyHelper" in t], [])
+        self.assertEqual(v["sessionKeyPath"], "helper")
+        # file mode says nothing new at boot: the init-time mismatch line (this file's other classes)
+        # already covers a declaration the live auth does not meet
+        v = sb.key_source_verdict({"ROMP_EXPECTED_AUTH": "key"})
+        self.assertEqual(self._problems(v), [])
+        self.assertEqual(v["sessionKeyPath"], "login")
+
+    def test_undeclared_or_login_declared_says_nothing_about_the_helper(self):
+        for env in ({}, {"ROMP_EXPECTED_AUTH": "login"}, {"ROMP_EXPECTED_AUTH": "junk"}):
+            v = sb.key_source_verdict(env)
+            self.assertEqual([t for t in self._problems(v) if "apiKeyHelper" in t], [], env)
 
 
 class UsageTelemetryUnavailable(unittest.TestCase):

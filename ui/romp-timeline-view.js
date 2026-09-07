@@ -39,6 +39,129 @@ function _rompOnlyTag() {
 // record; this is its mirror for the lanes. The kernel emits `tags`; `groups` is honored as the
 // pre-rename key an un-updated kernel still pushes, in ONE place so every rule reads through it.
 function viewTags(views) { return (views && (views.tags || views.groups)) || []; }
+// the views blob's write sequence (the kernel stamps one per accepted write, 2026-09-05), or null for a
+// blob from a kernel that does not — and whether an incoming blob may replace the held one: yes when
+// its seq is at least the held seq, or when either side carries none, or when its seq is the one the
+// kernel ANNOUNCED as its current store at connect (`announced`, the slot setCaps fills; a blob
+// carrying it IS that store, not a stale frame, however far below the held seq). The hand-mirror of
+// views-writes.ts seqOf/adoptViews (this file cannot import TS; timeline-views-ack.test.ts pins them).
+function viewsSeq(v) { const s = v && v.seq; return (typeof s === 'number' && isFinite(s)) ? s : null; }
+// a union's stable key for the dialog's open rename editor: its first tag id (the local tag's when one
+// exists — the id a create's ack hands back), else its name (a remote-only union). An id survives the
+// rename the editor exists to make; the name it replaced would not.
+function unionKey(g) { return (g && g.ids && g.ids[0]) || (g && g.name) || ''; }
+function viewsAdopts(held, incoming, announced) {
+  if (!incoming) return false;
+  const h = viewsSeq(held), i = viewsSeq(incoming);
+  return h === null || i === null || i >= h || (typeof announced === 'number' && i === announced);
+}
+// whether the kernel's `caps` frame, the reconnect event, adopts the blob the gate last REJECTED since
+// its last adoption — the hand-mirror of views-writes.ts capsAdopts (rounds 6 and 7 of the 2026-09-05
+// review). The connect push precedes the caps frame and `served` is the frame's viewsSeq, the seq of the
+// views blob that push put on this socket (null when it carried none; undefined on a frame from a kernel
+// before the field). A push a restarted kernel served under an OLDER seq (a store restored while it was
+// down; its seq floor lives for its process) was turned away a frame ago and is the kept blob: its seq
+// matches, it is adopted. A pusher-thread frame built before a concurrent write and kept because it
+// arrived between the push and the caps frame carries an older seq: no match, discarded, the gate stands.
+// A frame without the field adopts the kept blob outright (the round-6 rule).
+function viewsCapsAdopts(rejected, served) {
+  if (!rejected) return false;
+  if (served === undefined) return true;
+  return typeof served === 'number' && isFinite(served) && viewsSeq(rejected) === served;
+}
+// the seq a caps frame ANNOUNCES as the kernel's current store, remembered when the frame adopted no kept
+// blob — the hand-mirror of views-writes.ts announcedSeq (round 8 of the 2026-09-05 review): its viewsSeq
+// when a number (the served blob's seq, or the store's current seq when the push carried no views frame),
+// null when null (no store at all) or absent (a kernel from before the field). Kept in one slot per store
+// (_announcedViewsSeq), overwritten by each caps frame and cleared by the next adoption that changes the
+// held blob (viewsAnnouncedAfter); a LATER blob at exactly that seq is adopted below the held one (_takeViews). Without it, a restart over a store restored
+// from an older copy, met by a reconnect whose push carried no blob, left nothing kept for the caps frame
+// to match: the pusher's next frame was turned away and no second caps frame comes.
+function viewsAnnouncedSeq(served) { return (typeof served === 'number' && isFinite(served)) ? served : null; }
+// the slot AFTER an adoption — the hand-mirror of views-writes.ts announcedAfter (round 9 of the review):
+// cleared only by an adoption that CHANGES the held blob (a seq other than the held one — a newer write, or
+// the announced seq itself below it — a seq-less side, or the announced seq arriving at the held seq), and
+// left standing through a re-arrival of the blob already held, which is no new information. The federation
+// router replays its stored blob into the merged lanes payload on every re-emit (a remote host's lanes, a
+// view-order storage event, a host drop); round 8's clear on ANY adoption let such a re-emit, landing between
+// the caps frame and the pusher's next frame, spend the slot, and the restored store the router then adopted
+// and re-emitted at the announced seq was turned away here: router and pane silently diverged until the next
+// write.
+function viewsAnnouncedAfter(held, incoming, announced) {
+  if (typeof announced !== 'number') return null;
+  const h = viewsSeq(held), i = viewsSeq(incoming);
+  return (i !== null && i === h && i !== announced) ? announced : null;
+}
+// The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
+// review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
+// an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
+// plus the writes still in flight, oldest first — a whole-blob write IS the state it posted, a
+// targeted op applies on top — so a refusal of ONE write reverts only that write's change. Null
+// when nothing is in flight: the base itself is what shows.
+function applyTagEditOp(v, edit, newId) {
+  const nv = JSON.parse(JSON.stringify(v || {}));
+  const tags = viewTags(nv).slice(); delete nv.groups;
+  const byId = (tid) => tags.find((t) => t.id === tid);
+  const sids = (edit.sids || []).concat(edit.sid ? [edit.sid] : []);
+  let t;
+  switch (edit.op) {
+    case 'create': tags.push({ id: newId || 'pending-' + Date.now().toString(36), name: edit.name || '', color: edit.color || '', members: sids.slice() }); break;
+    case 'rename': t = byId(edit.tid); if (t && edit.newName) t.name = edit.newName; break;
+    case 'recolor': t = byId(edit.tid); if (t && edit.color) t.color = edit.color; break;
+    case 'delete': { const i = tags.findIndex((x) => x.id === edit.tid); if (i >= 0) tags.splice(i, 1); if (nv.active === edit.tid) nv.active = 'all'; break; }
+    case 'addMember': t = byId(edit.tid); if (t) t.members = Array.from(new Set((t.members || []).concat(sids))); break;
+    case 'removeMember': t = byId(edit.tid); if (t) t.members = (t.members || []).filter((m) => sids.indexOf(m) < 0); break;
+    case 'move': {
+      const from = byId(edit.tid_from), to = byId(edit.tid_to);
+      if (from) from.members = (from.members || []).filter((m) => sids.indexOf(m) < 0);
+      if (to) to.members = Array.from(new Set((to.members || []).concat(sids)));
+      break;
+    }
+  }
+  nv.tags = tags;
+  return nv;
+}
+function rederiveViews(base, writes) {
+  if (!writes || !writes.length) return null;
+  let p = JSON.parse(JSON.stringify(base || { active: 'all', tags: [] }));
+  for (const w of writes) {
+    if (w.lens) p = applyLensFields(p, w.lens);
+    else if (w.blob) p = JSON.parse(JSON.stringify(w.blob));
+    else if (w.edit) p = applyTagEditOp(p, w.edit, w.newId);
+  }
+  return p;
+}
+// The placeholder id an optimistic create's row wears until the kernel's ack names the real one
+// (views-writes.ts isPlaceholderId): such a row takes no gesture — an op addressed by it is
+// refused as a tag that does not exist (round 4 of the 2026-09-05 review).
+function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(id); }
+// A lens or order write's own content — {active?, actives?, tagOrder?} — applied to a blob (a copy),
+// and the blob such a write POSTS: the STORE's blob (the last one adopted, never the pending copy)
+// with the fields set, the tags array re-sorted to a given order — the pill-drag contract that the
+// stored array reads in the dragged order too: over the socket the kernel's door orders the stored
+// array by the write's tagOrder itself; on the Electron path, where the posted blob IS the file,
+// this re-sort does it. The
+// hand-mirrors of views-writes.ts applyLensFields / lensBlob (round 4 of the 2026-09-05 review: a
+// whole-blob write built from the pending copy carried every targeted edit still in flight as this
+// page's claim on those tags, and a rename the kernel had refused landed through a lens toggle).
+function applyLensFields(v, fields) {
+  const nv = JSON.parse(JSON.stringify(v || { active: 'all', tags: [] }));
+  nv.tags = viewTags(nv).slice(); delete nv.groups;
+  if (fields.active !== undefined) nv.active = fields.active;
+  if (fields.actives !== undefined) nv.actives = JSON.parse(JSON.stringify(fields.actives));
+  if (fields.tagOrder !== undefined) nv.tagOrder = fields.tagOrder.slice();
+  return nv;
+}
+function lensBlob(base, fields) {
+  const v = applyLensFields(base, fields);
+  if (fields.tagOrder) {
+    const pos = Object.create(null);           // null-prototype (the prototype-key name hazard)
+    fields.tagOrder.forEach((n, i) => { if (!(n in pos)) pos[n] = i; });
+    const n = fields.tagOrder.length;
+    v.tags = v.tags.slice().sort((a, b) => ((a.name in pos) ? pos[a.name] : n) - ((b.name in pos) ? pos[b.name] : n));
+  }
+  return v;
+}
 // A tag IS its NAME, everywhere (user ruling 2026-08-24: "if the UX requires understanding that
 // tags exist across different kernels, it is not good"): one name = one identity, membership the
 // UNION across every kernel defining that name, the LOCAL store's color winning the render. The
@@ -53,7 +176,9 @@ function viewTagUnion(views) {
   for (const t of viewTags(views)) {
     const g = byName[t.name] || (byName[t.name] = { name: t.name || 'tag', color: '', members: [],
                                                     ids: [], localId: null, homes: [], remotes: [] });
-    if (!g.localId) { g.localId = t.id; g.color = t.color || g.color; }
+    // `pending`: the local tag is a create still in flight (its placeholder id) — the union renders
+    // and takes no gesture until the ack (isPendingTagId); every action builder checks it
+    if (!g.localId) { g.localId = t.id; g.color = t.color || g.color; if (isPendingTagId(t.id)) g.pending = true; }
     g.ids.push(t.id);
     for (const m of (t.members || [])) if (g.members.indexOf(m) < 0) g.members.push(m);
     if (out.indexOf(g) < 0) out.push(g);
@@ -324,9 +449,9 @@ function niceStep(W) { for (const s of NICE) if (W / s <= 8) return s; return 17
 // Clamp the advance to [0, maxAheadSec]: never run backward (a clock hiccup), and never fling the edge
 // far ahead if the tab was backgrounded (rAF paused → huge elapsed) or the kernel went quiet.
 const MAX_INTERP_AHEAD = 30;   // seconds the edge may glide past the last data.now before it just waits
-const LIVE_MIN_PX = 0.15;      // live-tick repaints once the edge would move ≥ this many px — small so the
-                               // glide stays smooth at high zoom (effectively native rAF), but >0 so a
-                               // near-static (zoomed-out) edge idles instead of repainting for nothing
+const LIVE_MIN_PX = 0.15;      // the live tick writes its translate once the edge would move at least this many
+                               // px; below it the frame is a no-op — small so the glide stays smooth at high zoom
+                               // (effectively native rAF), but >0 so a near-static (zoomed-out) edge idles
 function perfNow() { return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(); }
 function interpNow(baseSec, baseMs, nowMs, live, maxAheadSec) {
   if (!live || baseMs == null) return baseSec;
@@ -864,10 +989,15 @@ class TimelinePanel {
     this._pendingFlags = {};     // sid → {flag: value}: an optimistic eye-toggle held STICKY across pushes until the kernel's data confirms it (no flicker-back)
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
-    this._pendingViews = null;   // an optimistic edit held sticky until a push echoes it (see _reconcileViews)
+    this._rejectedViews = null;  // the last blob the seq gate turned away since it last adopted one — what the caps frame adopts (setCaps)
+    this._announcedViewsSeq = null; // the seq the last caps frame announced as the kernel's current store when it adopted no kept blob — a LATER blob at exactly that seq is adopted below the held one (_takeViews); cleared by the next adoption that changes the held blob (viewsAnnouncedAfter)
+    this._pendingViews = null;   // an optimistic edit held until the kernel ACKS the write (viewsAck) or echoes it exactly (_reconcileViews)
+    this._viewsWrites = [];      // the writes in flight, oldest first: {id, name, tid, op, openRename} — the pending copy clears when the LAST one is acked
+    this._viewsWriteSeq = 0;     // writeId mint — a per-page counter beside the ms stamp, so two same-ms gestures never share one
+    this._legacyViewsAge = 0;    // LEGACY kernels only (no `seq`, no acks): frames since the write — the old three-frame yield (_reconcileViews)
+    this._caps = new Set();      // what the LOCAL kernel announced at `ready` ({type:"caps"}); 'tagEdit' = targeted ops, acks, seq (setCaps)
     this._pendingTagEdits = {};  // remote-tag edits held optimistically until the owner's poll echoes (federation v1): id → {tag: shape|null(=deleted), age}
-    this._tagEditErr = null;     // the LOUD failure of the last remote-tag edit ({host, name, error}), shown in the dialog until dismissed
-    this._pendingViewsAge = 0;   // pushes since the edit — the kernel is authoritative, so a stale pending yields
+    this._tagEditErr = null;     // the LOUD failure of the last tag edit ({host, name, error}), shown in the dialog until dismissed
     this._viewsMenu = null;      // the Show-dropdown element, when open
     this._viewsDialog = null;    // the sessions/group dialog backdrop, when open
     this._viewsDialogKey = null; // its Escape hook {doc, fn}, removed on every close path
@@ -898,10 +1028,11 @@ class TimelinePanel {
     // time-baseline (epoch sec + the monotonic ms when it was observed); the edge FREE-RUNS off this fixed
     // pair and shouldReanchorEdge re-snaps it only on a genuine step, so per-poll arrival jitter no longer
     // hiccups the edge. _wasLive = were we live-following at the last poll (→ re-anchor on re-entry).
-    // _lastLiveNow = effective-now of the last live repaint (sub-pixel guard so we only repaint when the
-    // edge would actually move). Re-armed each poll; self-stops when not live.
+    // _lastLiveNow = effective-now of the last live move. _tickPlot = the last full build's handle for the
+    // tick (its plot group, live-edge riders and scale; draw()): the tick moves that group by a transform
+    // instead of rebuilding the svg (_tickTranslate, 2026-09-06). Re-armed each poll; self-stops when not live.
     this._nowBaseSec = null; this._nowBaseMs = null; this._wasLive = false;
-    this._liveRAF = null; this._lastLiveNow = null;
+    this._liveRAF = null; this._lastLiveNow = null; this._tickPlot = null;
     // Newest data.now sample ever seen this page-lifetime (see isFreshNowSample): a push carrying an
     // OLDER now is a RE-EMISSION — federation re-emits the STORED local payload whenever a remote host
     // pushes, and _cached_timeline re-serves its build-time now — never a fresh clock sample, so it must
@@ -1629,13 +1760,42 @@ class TimelinePanel {
     // but keep the loop alive so the edge resumes gliding the moment the pointer releases. See the constructor.
     if (this._pointerHeld) { this._liveRAF = requestAnimationFrame(() => this._tickLive()); return; }
     const g = this._geom;
-    // Only repaint when the edge would actually move ≥ LIVE_MIN_PX since the last live draw — a wide
-    // (zoomed-out) window where the edge barely creeps costs ~nothing, a zoomed-in one repaints every
-    // native frame. Keep looping either way so we catch the moment it does move.
-    if (!g || this._lastLiveNow == null || ((this._liveNow() - this._lastLiveNow) / g.winSec * g.plotW) >= LIVE_MIN_PX) {
-      this.draw();
-    }
+    // The tick MOVES THE VIEW, it does not rebuild it (2026-09-06): the last full build left a plot group and its
+    // live-edge riders (draw(), `_tickPlot`), and advancing the edge is one transform write on that group plus a
+    // width write per rider — _tickTranslate. It also owns the sub-pixel guard, in COMPRESSED movement (inside a
+    // collapsed trailing gap the edge does not move on screen at all, where the old real-seconds guard redrew
+    // two or three times a second for nothing). The full draw() stays for what a translate cannot express — no
+    // build yet, a message glyph riding the live edge, a drift into the gutter — never for the clock's advance.
+    if (!g || this._lastLiveNow == null || !this._tickTranslate(this._liveNow())) this.draw();
     this._liveRAF = requestAnimationFrame(() => this._tickLive());
+  }
+  // Advance the live edge to `nowS` by moving the plot group (see draw()'s plot group and `_tickPlot`). Returns
+  // true when the frame is expressed — including the no-op of a sub-LIVE_MIN_PX move, or no movement in
+  // compressed time (a collapsed trailing gap) — and false when only a full draw() can: no handle (the loader,
+  // or a glyph riding the live edge was drawn), or the drift since the build has reached the gutter gap (no
+  // frame has rebuilt since — a quiet or disconnected kernel; a frame every ≤5 s keeps it far below that at
+  // any window of a quarter hour or more). The window geometry the handlers read (_geom's cT0/t0/t1, the held
+  // right edge) follows the move, so a pan or a focus jump begun between builds starts from what is on screen,
+  // and the hover re-arms as after a rebuild: the content moved under a pointer that did not.
+  _tickTranslate(nowS) {
+    const tp = this._tickPlot, g = this._geom;
+    if (!tp || !g || !tp.g || !tp.g.parentNode) return false;
+    const dc = tp.trailing ? 0 : (g.compress(nowS) - tp.cNow);   // compressed seconds the edge moved since the build
+    const px = dc * tp.k;
+    if (px < 0 || px >= tp.maxDrift) return false;
+    this._lastLiveNow = nowS;
+    if (Math.abs(px - tp.applied) < LIVE_MIN_PX) return true;   // the sub-pixel guard: nothing visible to write yet
+    tp.applied = px;
+    tp.g.setAttribute('transform', 'translate(' + (-px) + ' 0)');
+    for (const r of tp.riders) { if (r.fn) r.fn(px); else r.el.setAttribute(r.attr, Math.max(r.min || 0, r.base + px)); }   // the build's floor applies to the grown extent, so the frame matches a full draw
+    for (const e of tp.edge) {   // an anchored glyph whose anchor crossed the left edge: hidden, as a full draw culls it (inWin) — and hidden takes no pointer
+      const out = e.x - px < tp.left;
+      if (out !== !!e.out) { e.out = out; if (out) e.el.setAttribute('visibility', 'hidden'); else e.el.removeAttribute('visibility'); }
+    }
+    g.cT0 = tp.cT0 + dc; g.t0 = g.decompress(g.cT0); g.t1 = g.decompress(g.cT0 + g.winSec);
+    this._holdReal = g.t1;
+    this._rehover();
+    return true;
   }
   _stopLiveTick() { if (this._liveRAF != null) { cancelAnimationFrame(this._liveRAF); this._liveRAF = null; } }
 
@@ -1783,7 +1943,7 @@ class TimelinePanel {
     }
     this.data = data;
     if (data.cmapGrad) this._cmapGrad = data.cmapGrad;   // compaction-sweep colormap gradient (persists across the lighter {type:bars} pushes)
-    if (data.views) this._views = data.views;            // the views blob rides every push (skeleton included)
+    if (data.views) this._takeViews(data.views);         // the views blob rides every push (skeleton included) — adopted in store order, never wire order
     if (Array.isArray(data.palette) && data.palette.length) this._palette = data.palette;
     this._reconcilePendingFlags();   // hold an optimistic eye-toggle sticky until THIS push (or a later one) confirms it
     this._reconcileDismissed();      // ...and a Cleared dead lane, so a stale/merged push can't pop it back
@@ -2276,7 +2436,15 @@ class TimelinePanel {
     const i = (this._vis || []).findIndex((s) => s.id === sid);
     if (i < 0) return;
     const y = g.top + i * LANE_GAP + LANE_GAP * 0.5;
-    const X = (tt) => g.ml + ((g.compress ? g.compress(tt) : tt) - g.cT0) / g.winSec * g.plotW;   // compressed-time x
+    // The outline goes INTO the live plot group when the last build left one (_tickPlot): the tick translates
+    // that group, so the outline rides along with its target instead of drifting off it. It is positioned in
+    // the group's own frame (the build's cT0), the translate carrying the rest; with no group (the loader, or
+    // a build with a glyph riding the live edge) it goes on the svg in the screen frame, as before.
+    const tp = this._tickPlot, grp = (tp && tp.g && tp.g.parentNode) ? tp : null;
+    const host = grp ? grp.g : this.svg;
+    const cT0 = grp ? grp.cT0 : g.cT0;
+    const X = (tt) => g.ml + ((g.compress ? g.compress(tt) : tt) - cT0) / g.winSec * g.plotW;   // compressed-time x, in the host's frame
+    const gone = (node) => !node.parentNode || (node.parentNode !== this.svg && !node.parentNode.parentNode);   // detached, or its group left the svg (a rebuild)
     const startMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : null;
     const DUR = 1400;
     if (workTurn) {
@@ -2284,10 +2452,10 @@ class TimelinePanel {
       const xs = X(workTurn.t), xe = X(workTurn.end != null && workTurn.end > workTurn.t ? workTurn.end : workTurn.t);
       const bw = Math.max(6, xe - xs), h = BAR_H + 6;
       const box = el('rect', { x: xs - 3, y: y - h / 2, width: bw + 6, height: h, rx: h / 2, fill: 'none', stroke: '#ffd166', 'stroke-width': 2.5, opacity: 0.95 });
-      this.svg.appendChild(box);
+      host.appendChild(box);
       try { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
       const step = (nowMs) => {
-        if (!box.parentNode) return;
+        if (gone(box)) return;
         const p = startMs != null ? Math.min(1, (nowMs - startMs) / DUR) : 1;
         const ph = (p * 2) % 1;                        // two pulses
         box.setAttribute('stroke-width', String(2.5 + ph * 2.5));
@@ -2300,10 +2468,10 @@ class TimelinePanel {
     }
     const cx = X(t);
     const ring = el('circle', { cx, cy: y, r: 5, fill: 'none', stroke: '#ffd166', 'stroke-width': 2.5, opacity: 0.95 });
-    this.svg.appendChild(ring);
+    host.appendChild(ring);
     try { ring.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {}
     const step = (nowMs) => {
-      if (!ring.parentNode) return;                  // a poll redraw cleared it → stop
+      if (gone(ring)) return;                        // a poll redraw cleared it → stop
       const p = startMs != null ? Math.min(1, (nowMs - startMs) / DUR) : 1;
       const ph = (p * 2) % 1;                         // two expanding pulses
       ring.setAttribute('r', String(5 + ph * 16));
@@ -2315,6 +2483,7 @@ class TimelinePanel {
   }
 
   drawMessage(msg) {
+    this._tickPlot = null;   // the plot group goes with the wipe; the tick has nothing to move until the next build
     while (this.svg.firstChild) this.svg.removeChild(this.svg.firstChild);
     this.svg.setAttribute('height', '60');
     const t = el('text', { x: 14, y: 34, fill: 'var(--text-muted)', 'font-size': 13 }); t.textContent = msg; this.svg.appendChild(t);
@@ -2748,7 +2917,13 @@ class TimelinePanel {
     this._metaMenu = menu;
   }
 
-  _closeLaneMenu() { if (this._laneMenu) { this._laneMenu.remove(); this._laneMenu = null; } }
+  // closing a surface that held the join menu drops its new-tag draft (round 4 of the 2026-09-05
+  // review: the draft outlived the menu and reappeared in the next one opened for the same rows)
+  _closeLaneMenu() {
+    if (!this._laneMenu) return;
+    this._laneMenu.remove(); this._laneMenu = null;
+    this._tagNewDraft = null; this._tagNewInput = null;
+  }
 
   // The per-lane settings drop-down is BACK (the user 2026-07-28, superseding their 2026-06-22 removal:
   // that rule held for ONE flag, where a direct icon beat a menu — at THREE flags the icons crowded the
@@ -2846,7 +3021,7 @@ class TimelinePanel {
     for (const id of Object.keys(this._pendingTagEdits || {}))
       if (id.split(':')[0] === m.host) delete this._pendingTagEdits[id];   // edits are name-addressed per host — revert them all
     this._tagEditErr = { host: m.host || '', name: m.name || '', error: m.error || 'refused' };
-    if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    this._repaintTagSurfaces();
     this.draw();
   }
 
@@ -2854,14 +3029,27 @@ class TimelinePanel {
   // One union group = one tag identity. Edits stay routed under the hood: an ADD lands on the LOCAL
   // store when the name exists locally, else the tag's single home; a REMOVE removes the
   // (name, member) pair from EVERY store holding it — a removal never half-works; rename/recolor/
-  // delete fan out to every home the same way. Local writes post the whole blob (unchanged);
-  // remote writes ride _editRemoteTag (optimistic overlay + loud tagEditFailed, federation v1).
+  // delete fan out to every home the same way. Local writes are TARGETED ops addressed by the local
+  // tag's stored id (_postTagEdit — the user 2026-09-05: posting the whole blob from the un-echoed
+  // copy made the kernel judge a create-then-rename burst stale against this dialog's own first
+  // write, and the renames and assignments were lost; by NAME, a recolor queued behind a refused
+  // rename went looking for the name the rename would have given the tag and found the other tag
+  // that already had it); remote writes ride _editRemoteTag (optimistic overlay + loud
+  // tagEditFailed, federation v1).
   _editTagUnion(g, edit) {
+    // a create still in flight has no id to address (its row wears the placeholder the ack
+    // replaces): the builders offer no gesture on it, and one that arrives anyway does nothing
+    // rather than posting a tid the kernel refuses as a tag that does not exist (round 4)
+    if (g.pending) return;
+    const meta = { name: g.name, tid: g.localId };
     if (edit.add && edit.add.length) {
       if (g.localId) {
         const nv = JSON.parse(JSON.stringify(this._curViews()));
         const t = viewTags(nv).find((x) => x.id === g.localId);
-        if (t) { t.members = Array.from(new Set((t.members || []).concat(edit.add))); this._setViews(nv); }
+        if (t) {
+          t.members = Array.from(new Set((t.members || []).concat(edit.add)));
+          this._postTagEdit(nv, { op: 'addMember', tid: g.localId, sids: edit.add.slice() }, meta);
+        }
       } else if (g.remotes.length) this._editRemoteTag(g.remotes[0], { add: edit.add.slice() });
     }
     if (edit.remove && edit.remove.length) {
@@ -2870,7 +3058,7 @@ class TimelinePanel {
         const t = viewTags(nv).find((x) => x.id === g.localId);
         if (t && (t.members || []).some((m) => edit.remove.indexOf(m) >= 0)) {
           t.members = (t.members || []).filter((m) => edit.remove.indexOf(m) < 0);
-          this._setViews(nv);
+          this._postTagEdit(nv, { op: 'removeMember', tid: g.localId, sids: edit.remove.slice() }, meta);
         }
       }
       for (const rt of g.remotes)
@@ -2883,11 +3071,16 @@ class TimelinePanel {
         if (edit.delete) {
           nv.tags = viewTags(nv).filter((x) => x.id !== g.localId); delete nv.groups;
           if (nv.active === g.localId) nv.active = 'all';
+          this._postTagEdit(nv, { op: 'delete', tid: g.localId }, meta);
         } else {
           const t = viewTags(nv).find((x) => x.id === g.localId);
-          if (t) { if (edit.rename) t.name = edit.rename; if (edit.color) t.color = edit.color; }
+          if (t) {
+            // two ops when both arrive (the kernel applies them in order on one socket), each by
+            // the tag's id — a refused rename leaves the recolor addressing the SAME tag
+            if (edit.rename) { t.name = edit.rename; this._postTagEdit(nv, { op: 'rename', tid: g.localId, newName: edit.rename }, meta); }
+            if (edit.color) { t.color = edit.color; this._postTagEdit(nv, { op: 'recolor', tid: g.localId, color: edit.color }, meta); }
+          }
         }
-        this._setViews(nv);
       }
       for (const rt of g.remotes)
         this._editRemoteTag(rt, { rename: edit.rename, color: edit.color, delete: !!edit.delete });
@@ -2907,6 +3100,14 @@ class TimelinePanel {
       ch.addEventListener('mouseenter', () => { ch.style.background = HOVER_BG; });
       ch.addEventListener('mouseleave', () => { ch.style.background = 'transparent'; });
       ch.createSpan({ text: g.name });
+      if (g.pending) {
+        // a create still in flight: the chip shows, with no ✕ and no click, until the ack names the
+        // tag (round 4 of the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
+        ch.style.cursor = 'default';
+        ch.setAttribute('title', 'creating "' + g.name + '"…');
+        ch.setAttribute('aria-disabled', 'true');
+        continue;
+      }
       const chx = ch.createSpan({ text: '✕' });
       chx.setAttribute('style', 'color:' + MODEL_FG + ';opacity:0.75;font-size:0.9em;');
       ch.setAttribute('title', 'tagged "' + g.name + '"'
@@ -2917,9 +3118,13 @@ class TimelinePanel {
   }
 
   // the join menu for one-or-many sessions: one option per union tag some rowId lacks, plus the
-  // new-tag input (a new tag mints LOCALLY, as always)
-  _tagJoinMenu(box, rowIds, rebuild) {
+  // new-tag input (a new tag mints LOCALLY, as always). `menuKey` is the menu's identity for the
+  // new-tag draft below: which [+] is open (this._tagAddFor — a sid, or '*' for the bulk bar),
+  // stable across repaints however the row set changes; callers that build the menu for other
+  // rows name their own.
+  _tagJoinMenu(box, rowIds, rebuild, menuKey) {
     for (const g of viewTagUnion(this._curViews())) {
+      if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address (round 4)
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
       const tc = g.color || MENU_FG;
       const opt = box.createSpan({ text: g.name });
@@ -2928,48 +3133,261 @@ class TimelinePanel {
       opt.addEventListener('mouseenter', () => { opt.style.background = HOVER_BG; });
       opt.addEventListener('mouseleave', () => { opt.style.background = 'transparent'; });
       opt.addEventListener('click', () => {
-        this._tagAddFor = null;
+        this._tagAddFor = null; this._tagNewDraft = null;
         this._editTagUnion(g, { add: rowIds.filter((id) => g.members.indexOf(id) < 0) }); rebuild();
       });
     }
+    // The new-tag input's text and caret SURVIVE a repaint (round 3 of the 2026-09-05 review — the
+    // rename draft did not cover it): an ack or refusal for some other write rebuilds the whole
+    // surface while the user is typing here. The draft is kept on the instance per MENU (the [+]
+    // that is open, not the rows it lists — round 4: keyed by the row set, the bulk menu's draft
+    // hid whenever the search filter or a session's liveness changed the rows, and came back when
+    // they changed back); the live input is read before the rebuild tears it down, and the rebuilt
+    // input restores text and caret. Submitting, or closing the menu or the dialog, drops it.
+    const key = menuKey !== undefined ? String(menuKey) : String(this._tagAddFor);
+    const live = this._tagNewInput && this._tagNewInput.key === key ? this._tagNewInput.el : null;   // another row's input says nothing about this draft
+    if (live && this._tagNewDraft && this._tagNewDraft.key === key) {
+      this._tagNewDraft.value = live.value;
+      if (typeof live.selectionStart === 'number') { this._tagNewDraft.selStart = live.selectionStart; this._tagNewDraft.selEnd = live.selectionEnd; }
+    }
+    this._tagNewInput = null;
+    const draft = this._tagNewDraft && this._tagNewDraft.key === key ? this._tagNewDraft : null;
     const ni = document.createElement('input');
     ni.placeholder = 'new tag…'; ni.maxLength = 40;
     ni.setAttribute('style', 'width:90px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';border:1px solid ' + HAIRLINE + ';'
       + 'border-radius:9px;padding:1px 7px;font:inherit;font-size:0.82em;');
+    if (draft) ni.value = draft.value;
+    // one create at a time: while one is in flight the input is disabled and says so; the ack's
+    // repaint re-arms it (a second Enter before the ack made a second tag)
+    if (this._createInFlight()) { ni.disabled = true; ni.placeholder = 'creating…'; }
+    ni.addEventListener('input', () => {
+      this._tagNewDraft = { key, value: ni.value, selStart: ni.selectionStart, selEnd: ni.selectionEnd };
+    });
     ni.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter' || !ni.value.trim()) return;
+      if (e.key !== 'Enter' || !ni.value.trim() || ni.disabled || this._createInFlight()) return;
       const nv = JSON.parse(JSON.stringify(this._curViews()));
       const used = new Set(viewTags(nv).map((t) => t.color));
       const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
-      nv.tags = viewTags(nv).concat([{ id: 'g' + Date.now().toString(36),
-        name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() }]);
+      // the optimistic row wears a PLACEHOLDER id: the kernel mints the tag's id, and the ack's blob
+      // (which carries it) replaces this copy — no client-minted id can collide with a store it has
+      // not read (the legacy path re-ids it: _postTagEdit)
+      const tg = { id: 'pending-' + Date.now().toString(36), name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() };
+      nv.tags = viewTags(nv).concat([tg]);
       delete nv.groups;
-      this._tagAddFor = null;
-      this._setViews(nv); rebuild();
+      this._tagAddFor = null; this._tagNewDraft = null; this._tagNewInput = null;
+      ni.disabled = true; ni.placeholder = 'creating…';
+      // ONE targeted create carrying the first members — the tag and its membership land together
+      this._postTagEdit(nv, { op: 'create', name: tg.name, color, sids: rowIds.slice() }, { name: tg.name, newId: tg.id }); rebuild();
     });
     box.appendChild(ni);
+    this._tagNewInput = { key, el: ni };   // the live input, read at the next repaint of the SAME menu for its text and caret
     ni.focus();
+    if (draft && typeof draft.selStart === 'number' && typeof draft.selEnd === 'number') {
+      try { ni.setSelectionRange(draft.selStart, draft.selEnd); } catch (e) {}
+    }
   }
 
+  // An arriving views blob (a frame's or an ack's) becomes the base only if its write sequence is at
+  // least the held one (the hand-mirror of views-writes.ts adoptViews, 2026-09-05): the pusher builds
+  // frames from a warmed cache that can predate a write whose ack already arrived, and federation
+  // re-emits stored blobs, so wire order decides nothing — the store's own order does. An ignored
+  // blob logs once per page, so a kernel serving stale frames is a visible fact. The last ignored blob
+  // is KEPT (and let go by the next adoption): a kernel restarted over a store restored from an older
+  // copy serves it under the old seq, so its connect push is turned away here — and the caps frame
+  // that follows it adopts it (setCaps; round 6 of the 2026-09-05 review). When that push carried no
+  // blob to keep, the caps frame's viewsSeq is remembered instead (_announcedViewsSeq) and the later
+  // blob carrying exactly that seq is adopted below the held one (round 8; viewsAnnouncedSeq). The slot
+  // clears when an adoption CHANGES the held blob, never on a re-arrival of the blob already held — the
+  // federation router replays its stored blob into the merged lanes payload on every re-emit, and a slot
+  // spent on one of those missed the restored store the router adopted next (round 9; viewsAnnouncedAfter).
+  _takeViews(v) {
+    if (!v) return false;
+    if (viewsAdopts(this._views, v, this._announcedViewsSeq)) { this._announcedViewsSeq = viewsAnnouncedAfter(this._views, v, this._announcedViewsSeq); this._views = v; this._rejectedViews = null; return true; }
+    this._rejectedViews = v;
+    if (!this._staleViewsLogged) {
+      this._staleViewsLogged = true;
+      try { console.warn('romp timeline: ignored a views blob older than the one held (seq ' + viewsSeq(v) + ' < ' + viewsSeq(this._views) + ')'); } catch (e) {}
+    }
+    return false;
+  }
+
+  // LEGACY kernels only — a blob without a write sequence comes from a kernel that acks nothing, so
+  // the PRE-2026-09-05 reconciliation stays for that path alone: the write's own exact echo clears the
+  // copy, and three silent frames yield it (with no ack ever coming, an unechoed copy would otherwise
+  // pin forever). A kernel that stamps `seq` answers every write (viewsAck below), and the ack is the
+  // event that settles the copy: a frame, matching or not, says nothing about a write it cannot name —
+  // a net-zero burst (add, then remove) leaves frames equal to the copy while its writes are still in
+  // flight, so an exact match there cleared them early (the user 2026-09-05) — and a count of frames
+  // is not information: it dropped good edits and kept refused ones alike.
   _reconcileViews() {
     if (!this._pendingViews) return;
-    if (this._views && this._viewsKey(this._views) === this._viewsKey(this._pendingViews)) {
-      this._pendingViews = null; this._pendingViewsAge = 0; return;
+    if (this._views && viewsSeq(this._views) === null
+        && (this._viewsKey(this._views) === this._viewsKey(this._pendingViews)
+            || (this._legacyViewsAge = (this._legacyViewsAge || 0) + 1) >= 3)) {
+      this._pendingViews = null; this._viewsWrites = []; this._legacyViewsAge = 0;
     }
-    // the kernel is authoritative: if three pushes came back without echoing the edit (it normalized
-    // differently, or another dashboard overwrote it), adopt the kernel's blob rather than pinning
-    // a stale optimistic view forever
-    if (++this._pendingViewsAge >= 3) { this._pendingViews = null; this._pendingViewsAge = 0; }
   }
 
-  // Persist the whole views blob. Web/VS Code: the host WS hook (→ kernel setTimelineViews, which
-  // normalizes + rebroadcasts). Obsidian/headless fallback: write the same timeline-views.json the
-  // kernel reads (it re-normalizes on read). Optimistic + sticky, like the lane flags.
-  _setViews(v) {
-    this._pendingViews = v; this._pendingViewsAge = 0;
+  // The LOCAL kernel's capabilities ({type:"caps", caps:[...]}), sent on every `ready` — the page's
+  // own at load, and the shim's re-send on a reconnected socket. A reconnect is the one event that
+  // can lose an ack (the socket died between the write and its answer), so writes still in flight
+  // when this frame arrives are unknowable: they are dropped, the copy reverts to what the kernel's
+  // frames show, and the dialog says so — never a pinned copy faking success, never a silent revert.
+  // It is also the event that adopts the blob the gate last turned away, when the frame names it
+  // (viewsCapsAdopts, on its `viewsSeq`): the connect push a restarted kernel served under an OLDER
+  // seq (a store restored while it was down) was rejected a frame ago and is adopted here, the gate
+  // re-arming at its seq; a healthy reconnect's push was adopted, nothing is kept, and the gate stands;
+  // a pusher frame kept because it arrived between the push and this frame carries a seq the frame
+  // does not name and is discarded. When nothing kept matches, viewsSeq (a number: the served blob's
+  // seq, or the store's current seq when the push carried no views frame) is remembered as the
+  // kernel's announced store and _takeViews adopts the later blob that carries it even below the held
+  // seq (round 8; viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared by the next
+  // adoption that changes the held blob; null (no store at all) and a missing field announce nothing. A write in flight is
+  // dropped whatever the base became: its ack cannot reach this socket, and one that somehow did is
+  // an ack for a write this page no longer tracks — its blob meets the gate like any other arrival,
+  // and nothing is re-pinned (viewsAck).
+  setCaps(m) {
+    this._caps = new Set((m && Array.isArray(m.caps)) ? m.caps.filter((c) => typeof c === 'string') : []);
+    const served = m ? m.viewsSeq : undefined;
+    const adopted = viewsCapsAdopts(this._rejectedViews, served);
+    if (adopted) this._views = this._rejectedViews;
+    this._announcedViewsSeq = adopted ? null : viewsAnnouncedSeq(served);
+    this._rejectedViews = null;
+    if (this._viewsWrites.length) {
+      this._viewsWrites = []; this._pendingViews = null;
+      this._tagEditErr = { host: '', name: '', error: 'the connection was re-established; an edit made just before it may not have landed — check the list' };
+    } else if (!adopted) return;   // nothing in flight, nothing adopted: the caps changed, nothing shown did
+    this._repaintTagSurfaces();
+    this.draw();
+  }
+
+  // the two surfaces that show a tag-edit notice, repainted in place when one arrives or clears: the
+  // dialog (its build closure) and the lane gear menu (menu._build) — whichever is open
+  _repaintTagSurfaces() {
+    if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    if (this._laneMenu && typeof this._laneMenu._build === 'function') this._laneMenu._build();
+  }
+
+  // the kernel does not know an op this page posted (a dashboard newer than its kernel): the write is
+  // refused — the copy reverts and the dialog says why — and the capability is withdrawn, so the next
+  // gesture takes the path that kernel does know (the whole-blob write, below)
+  unknownOp(m) {
+    if (!m) return;
+    if (typeof m.op === 'string' && this._caps) this._caps.delete(m.op);
+    if (typeof m.writeId === 'string' && this._viewsWrites.some((w) => w.id === m.writeId))
+      this.viewsAck({ type: 'unknownOp', writeId: m.writeId, ok: false,
+                      error: 'the kernel does not know the ' + m.op + ' operation, so the edit was not applied — try again; this dialog now uses the older path' });
+  }
+
+  // targeted tag ops need both the kernel's `tagEdit` capability and a host bridge to carry them; with
+  // either missing (an older kernel; an Obsidian panel writing the file) a gesture takes the whole-blob path
+  _tagEditsTargeted() {
+    return !!(this._caps && this._caps.has('tagEdit')
+      && typeof window !== 'undefined' && typeof window.__rompTimelineTagEdit === 'function');
+  }
+
+  // One TARGETED tag edit: `nv` is the optimistic copy (the gesture already applied) shown until
+  // the kernel answers — null when there is nothing to show yet (a create the kernel names and
+  // ids); `edit` is the op — {op: create|rename|recolor|addMember|removeMember|delete, tid?, name?,
+  // newName?, color?, sids?} — which the kernel applies by the tag's stored id through its /tag
+  // merge, so it is never judged stale against this dialog's own earlier writes (the 2026-09-05
+  // loss); `meta` rides on the in-flight record: {name, tid} for the refusal notice, `openRename`
+  // to open the rename input on the tid the create's ack returns, `newId` a create's optimistic row
+  // id (the `pending-…` placeholder the ack's blob replaces). The record keeps the op itself, so a
+  // refusal of some OTHER write can rebuild the copy without it (rederiveViews). Answered on this
+  // socket by tagEditAck → viewsAck below. No `tagEdit` capability or no targeted bridge (an older
+  // kernel; an Obsidian panel writing the file; a headless run) → the PRE-2026-09-05 whole-blob
+  // write, reconciled by _reconcileViews's legacy branch (_tagEditsTargeted).
+  _postTagEdit(nv, edit, meta) {
+    if (!this._tagEditsTargeted()) {
+      if (!nv) return;
+      // LEGACY: the whole blob IS the store write here, so a create's placeholder id would be
+      // persisted as-is (round 3 of the 2026-09-05 review) — the row takes a client-minted `g…` id,
+      // the scheme the dialog's own pre-2026-09-05 create used, and the write names it as edited,
+      // which a kernel that reads `edited` needs to tell a create from a stale copy re-creating a
+      // deleted tag
+      const edited = [edit.tid, edit.tid_from, edit.tid_to].filter(Boolean);
+      const row = meta && meta.newId ? viewTags(nv).find((t) => t.id === meta.newId) : null;
+      if (row) { if (/^pending-/.test(row.id)) row.id = 'g' + Date.now().toString(36); edited.push(row.id); }
+      this._setViews(nv, edited);
+      return;
+    }
+    if (nv) this._pendingViews = nv;
+    const writeId = this._mintWriteId();
+    this._viewsWrites.push(Object.assign({ id: writeId, name: '', op: edit.op, edit }, meta || {}));
+    try { window.__rompTimelineTagEdit(writeId, edit); } catch (e) { /* the host hook threw — the ack never comes; the reconnect's caps frame clears what is left in flight */ }
+    this.draw();
+  }
+
+  // a create is in flight: the gate on a second [+ New tag] or new-tag Enter before the first is
+  // answered (round 3 of the 2026-09-05 review: two clicks before the ack made two tags)
+  _createInFlight() {
+    return this._viewsWrites.some((w) => w.edit && w.edit.op === 'create');
+  }
+
+  _mintWriteId() {
+    this._viewsWriteSeq = (this._viewsWriteSeq || 0) + 1;
+    return 'w' + Date.now().toString(36) + '-' + this._viewsWriteSeq.toString(36);
+  }
+
+  // The kernel's answer to ONE of this page's writes — {type: tagEditAck|viewsAck, writeId, ok,
+  // views, seq, error?, refused?: [{tid, name, reason}], tid?, name?}. `views` is the post-write
+  // client blob: adopted as the base whatever the verdict, unless a newer frame already overtook it
+  // (the seq decides). ok → this write is settled; the optimistic copy clears once NOTHING is in
+  // flight (a later gesture may still be pending); a create's ack names the kernel-minted tag, and
+  // a [+ New tag] create opens the rename input on that id — unless the user is already renaming
+  // some other row, whose editor is left alone. Refused → THIS write's change reverts AT ONCE: with
+  // nothing else in flight the store's blob is what stands; with other writes still pending the copy
+  // is rebuilt from that blob plus them (rederiveViews), so a later gesture never flaps off and back
+  // on (round 3 of the 2026-09-05 review: a refusal cleared the whole list). The reason shows in the
+  // dialog, rebuilt in place if open (the tagEditFailed door's rendering).
+  viewsAck(m) {
+    if (!m) return;
+    const i = this._viewsWrites.findIndex((w) => w.id === m.writeId);
+    const mine = i >= 0 ? this._viewsWrites.splice(i, 1)[0] : null;
+    this._takeViews(m.views);
+    if (m.ok === false) {
+      this._pendingViews = this._viewsWrites.length ? rederiveViews(this._views, this._viewsWrites) : null;
+      const names = (m.refused || []).map((r) => r && r.name).filter(Boolean);
+      this._tagEditErr = { host: '', name: names.join(', ') || (mine && mine.name) || '',
+                           error: m.error || (m.refused || []).map((r) => r.reason).filter(Boolean).join('; ') || 'refused' };
+      this._repaintTagSurfaces();
+    } else {
+      if (!this._viewsWrites.length) this._pendingViews = null;
+      if (mine && mine.op === 'create' && typeof m.tid === 'string') {
+        if (mine.openRename && !this._tagEditorFor) this._tagEditorFor = m.tid;   // the new row opens straight into its rename input
+        this._repaintTagSurfaces();   // the row exists now; a [+ New tag] or join input gated on the create re-arms
+      }
+    }
+    this.draw();
+  }
+
+  // Persist the whole views blob — the lens and order edits, which have no targeted op. Web/VS
+  // Code: the host WS hook (→ kernel setTimelineViews, which normalizes + rebroadcasts, and answers
+  // viewsAck with the stale-writer guard's refusals, if any). Obsidian/headless fallback: write the
+  // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
+  // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
+  // A LENS or ORDER write — {active?, actives?, tagOrder?}: the whole blob is built from the STORE's
+  // blob (this._views, the last one adopted) plus these fields, never from the pending copy (round
+  // 4 of the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
+  // dialog's claim on those tags, and a rename the kernel had refused as a duplicate landed through
+  // the next lens toggle). The pending copy SHOWN is the current one with the same fields applied,
+  // so in-flight edits stay visible; the in-flight record keeps the fields for rederiveViews.
+  _setLens(fields) {
+    this._setViews(lensBlob(this._views, fields), [], fields);
+  }
+
+  _setViews(v, edited, lens) {
+    this._pendingViews = lens ? applyLensFields(this._curViews(), lens) : v; this._legacyViewsAge = 0;
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
-        window.__rompTimelineSetViews(v);
+        const writeId = this._mintWriteId();
+        // the record is what this write DID: its lens/order fields, else the blob IS its state (rederiveViews)
+        this._viewsWrites.push(lens ? { id: writeId, name: '', lens } : { id: writeId, name: '', blob: v });
+        // `edited`: the tag ids this write CHANGED — none for a lens or order edit — so the kernel acks a
+        // refusal on a tag this dialog never touched (a stale copy of it) as ok, with the refusal listed:
+        // the newer blob is adopted and no notice shows, since nothing the user did was refused
+        window.__rompTimelineSetViews(v, writeId, Array.isArray(edited) ? edited : []);
       } else if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
         // Obsidian only — the Electron guard keeps a bare-node test run from ever touching the real
         // file (the 2026-07-02 _persistOrder lesson). Resolve the state root the way the kernel does
@@ -2982,6 +3400,7 @@ class TimelinePanel {
         const fp = path.join(root, 'timeline-views.json');
         fs.writeFileSync(fp + '.tmp', JSON.stringify(v));
         fs.renameSync(fp + '.tmp', fp);
+        this._views = v; this._pendingViews = null;   // the file IS the store: the write settled, no ack to wait for
       }
     } catch (e) { /* no host hook + no Node fs → session-local only */ }
     this.draw();
@@ -3080,9 +3499,7 @@ class TimelinePanel {
       x.title = 'remove \u201c' + c.label + '\u201d from this timeline\u2019s filter';
       x.addEventListener('pointerdown', (e) => {
         e.preventDefault(); e.stopPropagation();
-        const nv = JSON.parse(JSON.stringify(v));
-        nv.actives = Object.assign({}, nv.actives, { timeline: lensToggle(lens, c.pick) });
-        this._setViews(nv);
+        this._setLens({ actives: Object.assign({}, v.actives, { timeline: lensToggle(lens, c.pick) }) });
       });
       x.addEventListener('click', (e) => e.stopPropagation());
       chip.appendChild(x);
@@ -3106,6 +3523,7 @@ class TimelinePanel {
   _closeViewsDialog() {
     if (!this._viewsDialog) return;
     this._viewsDialog.remove(); this._viewsDialog = null; this._viewsDialogBuild = null;
+    this._tagNewDraft = null; this._tagNewInput = null;   // the join menu's draft dies with the dialog (_closeLaneMenu's rule)
     if (this._viewsDialogKey) {   // the Escape hook dies with the dialog on EVERY close path, not just Escape
       try { this._viewsDialogKey.doc.removeEventListener('keydown', this._viewsDialogKey.fn); } catch (e) {}
       this._viewsDialogKey = null;
@@ -3158,9 +3576,7 @@ class TimelinePanel {
       const v = this._curViews();
       const lens = timelineLens(v);
       const apply = (nl, close) => {
-        const nv = JSON.parse(JSON.stringify(v));
-        nv.actives = Object.assign({}, nv.actives, { timeline: nl });
-        this._setViews(nv);
+        this._setLens({ actives: Object.assign({}, v.actives, { timeline: nl }) });
         if (close) this._closeViewsMenu(); else build();
       };
       item('All', { current: lensAll(lens) }).addEventListener('click', () => apply({ all: true }, true));
@@ -3274,6 +3690,14 @@ class TimelinePanel {
       return [null, s.name || String(s.id || '').slice(0, 8)];
     };
     const build = () => {
+      // the open rename input's text and caret, read from the live element before it is torn down —
+      // the `input` listener keeps the text current, but the caret can move without one (arrow keys)
+      const live = this._tagRenameInput;
+      if (live && this._tagRenameDraft && this._tagRenameDraft.key === this._tagEditorFor) {
+        this._tagRenameDraft.value = live.value;
+        if (typeof live.selectionStart === 'number') { this._tagRenameDraft.selStart = live.selectionStart; this._tagRenameDraft.selEnd = live.selectionEnd; }
+      }
+      this._tagRenameInput = null;
       card.textContent = '';
       const v = this._curViews();
       // NAME-KEYED (user ruling 2026-08-24): whichever store's id opened this, the header is the
@@ -3317,18 +3741,22 @@ class TimelinePanel {
           return a;
         };
         for (const tg of viewTagUnion(v)) {
-          const editable = tg.localId || canEdit;
+          // a create still in flight (`pending`) is not editable and not draggable: its row wears
+          // the placeholder id the ack replaces, and an op addressed by it would be refused as a tag
+          // that does not exist (round 4 of the 2026-09-05 review) — it reads "creating…" instead
+          const editable = !tg.pending && (tg.localId || canEdit);
           const tc = tg.color || MODEL_FG;
           // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
           // DRAGGABLE (the user 2026-08-25): grab a pill to reorder the tags — the drop writes
-          // tagOrder (the union display order, viewer-side) AND re-sorts the local tags array to
-          // match (the natural store for local-only readers). The membership drag's discipline:
+          // tagOrder (the union display order, viewer-side); the kernel orders the stored tags
+          // array by it, so a reader without this tagOrder sees the same order. The membership
+          // drag's discipline:
           // pointer capture, an accent border cue that moves WITHOUT rebuilding mid-drag (the
           // redraw-eats-pointer rule); the rebuild and the write happen on the drop. The rename
           // input keeps the cell — no drag while editing.
           const pillCell = tgrid.createDiv();
           pillCell._tname = tg.name;
-          if (this._tagEditorFor !== tg.name || !editable) {
+          if (!tg.pending && (this._tagEditorFor !== unionKey(tg) || !editable)) {
             pillCell.style.cursor = 'grab';
             pillCell.addEventListener('pointerdown', (e) => {
               e.preventDefault();
@@ -3358,14 +3786,10 @@ class TimelinePanel {
                 if (toIdx === fromIdx) return;
                 const names = cells.map((c) => c._tname);
                 names.splice(toIdx, 0, names.splice(fromIdx, 1)[0]);
-                const nv = JSON.parse(JSON.stringify(this._curViews()));
-                nv.tagOrder = names;                       // the union display order, remote-homed names included
-                const pos = Object.create(null);           // null-prototype (the prototype-key name hazard)
-                names.forEach((n, i) => { pos[n] = i; });
-                nv.tags = viewTags(nv).slice().sort((a, b) =>
-                  ((a.name in pos) ? pos[a.name] : names.length) - ((b.name in pos) ? pos[b.name] : names.length));
-                delete nv.groups;
-                this._setViews(nv);
+                // the union display order, remote-homed names included; the kernel orders the
+                // stored tags array by it (lensBlob's own re-sort matters on the Electron path,
+                // where the posted blob is the file)
+                this._setLens({ tagOrder: names });
                 build();
               };
               pillCell.addEventListener('pointermove', onMove);
@@ -3373,20 +3797,38 @@ class TimelinePanel {
               pillCell.addEventListener('pointercancel', onUp);
             });
           }
-          if (this._tagEditorFor === tg.name && editable) {
+          if (this._tagEditorFor === unionKey(tg) && editable) {
             const nameIn = document.createElement('input');
-            nameIn.value = tg.name; nameIn.maxLength = 40;
+            // an in-progress rename SURVIVES a repaint (the 2026-09-05 review): a refusal or an ack for
+            // some other row rebuilds the whole dialog while the user is typing here, and a fresh input
+            // seeded with the stored name would throw the typed text away. The draft (text and caret)
+            // is kept on the instance per editor key; a rebuild restores it and puts the caret back
+            // rather than selecting all, which the NEXT keystroke would have replaced.
+            const draft = this._tagRenameDraft && this._tagRenameDraft.key === unionKey(tg) ? this._tagRenameDraft : null;
+            nameIn.value = draft ? draft.value : tg.name; nameIn.maxLength = 40;
             nameIn.setAttribute('style', 'width:130px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';'
               + 'border:1px solid ' + HAIRLINE + ';border-radius:5px;padding:2px 6px;font:inherit;');
+            const noteDraft = () => {
+              this._tagRenameDraft = { key: unionKey(tg), value: nameIn.value,
+                                       selStart: nameIn.selectionStart, selEnd: nameIn.selectionEnd };
+            };
+            nameIn.addEventListener('input', noteDraft);
             nameIn.addEventListener('change', () => {
               const nv2 = nameIn.value.slice(0, 40).trim();
-              this._tagEditorFor = null;
+              this._tagEditorFor = null; this._tagRenameDraft = null; this._tagRenameInput = null;
               if (nv2 && nv2 !== tg.name) this._editTagUnion(tg, { rename: nv2 });
               build();
             });
-            nameIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this._tagEditorFor = null; build(); } });
+            nameIn.addEventListener('keydown', (e) => { if (e.key === 'Escape') { this._tagEditorFor = null; this._tagRenameDraft = null; this._tagRenameInput = null; build(); } });
             pillCell.appendChild(nameIn);
-            setTimeout(() => { try { nameIn.focus(); nameIn.select(); } catch (e) {} }, 0);
+            this._tagRenameInput = nameIn;   // the live input, read at the next repaint for its caret
+            setTimeout(() => {
+              try {
+                nameIn.focus();
+                if (draft && typeof draft.selStart === 'number' && typeof draft.selEnd === 'number') nameIn.setSelectionRange(draft.selStart, draft.selEnd);
+                else nameIn.select();
+              } catch (e) {}
+            }, 0);
           } else {
             const pill = pillCell.createSpan({ text: tg.name });
             pill.setAttribute('style', 'display:inline-flex;align-items:center;padding:2px 9px;'
@@ -3402,6 +3844,12 @@ class TimelinePanel {
                 text: pend.map((rt) => 'pending ' + rt.pending + ' on ' + (rt.host || '?')).join(', ') });
               note.setAttribute('style', 'margin-left:6px;font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
             }
+            if (tg.pending) {
+              // the create is in flight: the row shows the tag and says so, with no actions beside
+              // it until the ack (the same words the [+ New tag] row and the inputs use)
+              const note = pillCell.createSpan({ text: 'creating…' });
+              note.setAttribute('style', 'margin-left:6px;font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
+            }
           }
           // delete — the destructive convention: dim at rest, red on hover
           const del = tgrid.createDiv();
@@ -3410,7 +3858,7 @@ class TimelinePanel {
             d.addEventListener('mouseenter', () => { d.style.color = '#F85B5A'; d.style.opacity = '1'; });
             d.addEventListener('mouseleave', () => { d.style.color = MENU_FG; d.style.opacity = '0.7'; });
             d.addEventListener('click', () => {
-              if (this._tagEditorFor === tg.name) this._tagEditorFor = null;
+              if (this._tagEditorFor === unionKey(tg)) { this._tagEditorFor = null; this._tagRenameDraft = null; }
               this._editTagUnion(tg, { delete: true });
               build();
             });
@@ -3421,7 +3869,7 @@ class TimelinePanel {
             const r = action(ren, 'rename', 'rename this tag (everywhere it is defined)');
             r.addEventListener('mouseenter', () => { r.style.opacity = '1'; });
             r.addEventListener('mouseleave', () => { r.style.opacity = '0.7'; });
-            r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === tg.name ? null : tg.name; build(); });
+            r.addEventListener('click', () => { this._tagEditorFor = this._tagEditorFor === unionKey(tg) ? null : unionKey(tg); this._tagRenameDraft = null; build(); });
           }
           // the color — the identity-palette swatches inline in the row's last column
           const colCell = tgrid.createDiv();
@@ -3440,23 +3888,47 @@ class TimelinePanel {
             }
           }
         }
-        // [+ New tag] — the table's final row, at the dialog's own scale
+        // [+ New tag] — the table's final row, at the dialog's own scale. While a create is in flight
+        // the row reads "creating…" and takes no click (round 3 of the 2026-09-05 review: a second
+        // click before the ack made a second tag); the ack's repaint brings the button back.
         const ntRow = tgrid.createDiv();
         ntRow.setAttribute('style', 'grid-column:1 / -1;');
+        if (this._createInFlight()) {
+          const busy = ntRow.createSpan({ text: 'creating…' });
+          busy.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 9px;'
+            + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.45;cursor:default;background:transparent;');
+          busy.setAttribute('aria-disabled', 'true');
+        } else {
         const ntBtn = ntRow.createSpan({ text: '+ New tag' });
         ntBtn.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 9px;'
           + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
         hover(ntBtn, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
         ntBtn.addEventListener('click', () => {
-          const nv = JSON.parse(JSON.stringify(this._curViews()));
-          const used = new Set(viewTags(nv).map((t) => t.color));
+          if (this._createInFlight()) return;   // a click that beat the repaint
+          const used = new Set(viewTags(v).map((t) => t.color));
           const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
-          const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + (viewTags(nv).length + 1), color, members: [] };
+          // a TARGETED create the KERNEL names and ids: the ack returns the minted tid and name, and
+          // the row opens straight into its rename input on that tid (openRename). Nothing is drawn
+          // optimistically — there is no id to draw it under, and a dialog-minted "tag N" from a row
+          // count collided with a leftover default-named tag (the 2026-09-05 review). The name
+          // typed next is a rename by tid — never a whole-blob post the kernel could judge stale
+          // against this very create (the 2026-09-05 loss).
+          if (this._tagEditsTargeted()) { this._postTagEdit(null, { op: 'create', color }, { openRename: true }); build(); return; }
+          // LEGACY (no `tagEdit` capability, or no bridge — an older kernel, an Obsidian panel): the
+          // pre-2026-09-05 whole-blob create, named and id'd here, the row opened for renaming. The
+          // name skips the ones in use rather than counting rows. The write names the new id as
+          // edited: a kernel that reads `edited` takes an unnamed unknown tag for a stale copy
+          // re-creating a deleted one.
+          const nv = JSON.parse(JSON.stringify(v));
+          const names = new Set(viewTags(nv).map((t) => t.name));
+          let n = 1; while (names.has('tag ' + n)) n++;
+          const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + n, color, members: [] };
           nv.tags = viewTags(nv).concat([tg]); delete nv.groups;
-          this._tagEditorFor = tg.name;   // a new tag opens straight into its rename input
-          this._setViews(nv);
+          this._tagEditorFor = tg.id;
+          this._setViews(nv, [tg.id]);
           build();
         });
+        }
       }
       // ── PANE FILTERS — five rows (the user 2026-08-25 redesign, superseding the one-line
       // strip): All surfaces, then Chat / Sessions / Outline / Feed — the pane names. Each row is
@@ -3485,11 +3957,9 @@ class TimelinePanel {
         };
         const applyFor = (key, lens) => {
           if (key === '*' || key !== 'feed') {
-            const nv = JSON.parse(JSON.stringify(this._curViews()));
             const upd = key === '*' ? { chat: lens, timeline: lens, outline: lens } : {};
             if (key !== '*') upd[key] = lens;
-            nv.actives = Object.assign({}, nv.actives, upd);
-            this._setViews(nv);
+            this._setLens({ actives: Object.assign({}, this._curViews().actives, upd) });
           }
           if (key === '*' || key === 'feed') {
             try { localStorage.setItem('romp:feedTags-set', JSON.stringify({ lens, t: Date.now() })); } catch (e) {}
@@ -3556,7 +4026,7 @@ class TimelinePanel {
       tagAll.setAttribute('style', btnStyle);
       hover(tagAll, 'background:' + HOVER_BG + ';', 'background:transparent;');
       tagAll.setAttribute('title', 'add a tag to every session the search shows');
-      tagAll.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === '*' ? null : '*'; renderRows(); });
+      tagAll.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === '*' ? null : '*'; this._tagNewDraft = null; renderRows(); });
       // (the mute-feed-for-all control left with the feed column, the user 2026-08-25 — the
       // per-session flag lives on in the lane gear)
       const gridBox = card.createDiv();
@@ -3643,7 +4113,7 @@ class TimelinePanel {
             + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
           hover(plus, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
           plus.setAttribute('title', 'add a tag');
-          plus.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === s.id ? null : s.id; renderRows(); });
+          plus.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === s.id ? null : s.id; this._tagNewDraft = null; renderRows(); });
           // TAGS — one solid chip per union tag holding this session (user ruling 2026-08-24:
           // a tag is its NAME; kernels are plumbing — the twin dashed/solid render is gone), ✕ =
           // remove-everywhere. The shared builder; the lane gear renders the identical editor.
@@ -3730,15 +4200,28 @@ class TimelinePanel {
       plus.setAttribute('title', 'add a tag');
       plus.addEventListener('click', (e) => {
         e.stopPropagation();
-        this._tagAddFor = this._tagAddFor === s.id ? null : s.id; build();
+        this._tagAddFor = this._tagAddFor === s.id ? null : s.id; this._tagNewDraft = null; build();
       });
       if (this._tagAddFor === s.id) {
         const am = menu.createDiv();
         am.setAttribute('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:2px 10px 6px 24px;');
         this._tagJoinMenu(am, [s.id], build);
       }
+      // a refused tag edit made FROM this menu shows here too (the 2026-09-05 review): the dialog's
+      // notice, in the menu's compact idiom — the reason, ✕ to dismiss. viewsAck and setCaps repaint
+      // the open menu (menu._build) the way they repaint the open dialog.
+      if (this._tagEditErr) {
+        const er = menu.createDiv();
+        er.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:2px 8px 4px;padding:3px 8px;'
+          + 'border:1px solid #F85B5A;border-radius:5px;color:#F85B5A;font-size:0.82em;');
+        er.createSpan({ text: '⚠ ' + (this._tagEditErr.host ? this._tagEditErr.host + ': ' : '') + this._tagEditErr.error });
+        const ex = er.createSpan({ text: '✕' });
+        ex.setAttribute('style', 'margin-left:auto;cursor:pointer;opacity:0.7;');
+        ex.addEventListener('click', (e) => { e.stopPropagation(); this._tagEditErr = null; build(); });
+      }
     };
     build();
+    menu._build = build;   // viewsAck / setCaps / tagEditFailed repaint the open menu with a refusal
     const h = this._menuHost(anchorEl.getBoundingClientRect());
     h.doc.body.appendChild(menu);   // a cross-document append ADOPTS the node; its listeners are kept
     const left = Math.min(Math.round(h.rect.left), (h.win.innerWidth || 9999) - 300);   // clamp on-screen
@@ -3840,6 +4323,7 @@ class TimelinePanel {
     applyPal();   // refresh the theme palette bindings — a body.theme-light flip lands on this repaint
     if (this.controls) this.controls.style.color = MODEL_FG;   // persistent controls row re-inks per theme (dark: the same #9aa0a6 it was built with)
     this._drawSeq = (this._drawSeq || 0) + 1;   // per-paint nonce: memoizes the overlay scale reflow (_ovScaleNow)
+    this._tickPlot = null;                       // the live tick's translate target — set at the end of a full build (below)
     // LOADING (the user 2026-06-26): until the heavy bars arrive, show ONLY the romp wordmark loader (R +
     // spinning swirl-o + m + p + dots) — NO lanes, NO gridlines. Partial data + empty gridlines read as
     // "broken", so suppress the SVG entirely and show the loader until applyBars sets _barsLoaded. (Data that
@@ -3864,6 +4348,30 @@ class TimelinePanel {
     // that breathes between two tones on a sine ease. That's a per-<text> SMIL `<animate fill>` (added
     // where the chip is drawn below), so no gradient def is needed here.
     svg.appendChild(defs);
+    // THE PLOT GROUP (2026-09-06, the live tick as a transform write). Every element positioned by TIME through
+    // x() below goes into this one <g> — bars and their hits, the awaiting/compacting spans, clear seams, branch
+    // and message connectors, arrival and prompt dots, comment squares, the judging runs, the axis gridlines,
+    // clocks and gap squiggles — while the chrome that sits at the window's edges or in the gutter (row hits,
+    // lane lines, names, gear, chips, batteries, the judge rails, the now line, the lock) stays on the svg.
+    // Between builds the live edge advances with the clock, and moving the view by Δc compressed seconds is
+    // one attribute write on this group (translate(-Δc·plotW/winSec, 0)) plus a width write on each element
+    // whose right edge rides the live now (`riders`): the tick (_tickLive → _tickTranslate) does exactly that
+    // and nothing else, where it used to wipe and rebuild the whole svg up to sixteen times a second at a
+    // zoomed-in window. The group is APPENDED after the lane chrome so its paint order matches the old one:
+    // over the rows' hit rects and lane lines (a bar must take the hover), under the lock and the jump button.
+    // Clipping stays arithmetic (this file has no clipPath; see the stub comment): content the build clamped
+    // at the window's left edge pokes into the gutter gap by the drift since that build, which the next frame's
+    // rebuild resets — the skeleton the kernel re-sends every 5 s bounds it — and _tickTranslate hands the tick
+    // back to a full draw() before the drift reaches the battery column. Glyphs are anchored rather than clamped
+    // and overhang their anchor, so the ones anchored within that cap of the edge are listed (`edge`) and the
+    // tick hides each once its anchor crosses the edge, where a full draw would have culled it. Nothing is
+    // painted over the gutter either way. The tick only moves what the build drew: a gridline or clock whose
+    // tick enters the window between builds, or a lane aging out, waits for the next full draw — there is no
+    // clip, so nothing is pre-drawn outside the window — a lag the kernel's 5 s skeleton rebuild bounds.
+    const plot = el('g', { 'data-tl-plot': '1' });
+    const riders = [];          // {el, attr, base, min} or {el, fn}: the live-edge riders — an open bar's/span's/run's width (or x2) is max(min, base + the drift), base the UN-clamped extent so the floor applies to the grown value; fn re-derives a placement the build centred
+    const edge = [];            // {el, x}: glyphs anchored within the drift cap of the plot's left edge — the tick hides one once its anchor crosses the edge (_tickTranslate), the event a full draw culls it on
+    let liveRiders = false;     // a message glyph or a pending prompt drawn AT the live edge — a path the translate cannot express; the tick then keeps its full draw
     // Pan: the window's RIGHT edge is `now` minus the offset slider; the actual live `now` (nowS)
     // is separate, so pending events still ride the true now (off-screen to the right when panned back).
     const nowS = this._liveNow(), winSec = this.winSec();   // effective now: glides between polls while live-following
@@ -3889,6 +4397,7 @@ class TimelinePanel {
     const cT1 = cNow - off, cT0 = cT1 - winSec;
     const t1 = decompress(cT1), t0 = decompress(cT0);         // real-time window edges (for clip filters)
     this._holdReal = t1;                                      // remember the absolute right edge for the next poll's hold
+    const edgeLive = off === 0;                               // the window's right edge IS the live now: open spans end there and their width rides the tick (riders)
 
     const inWin = (t) => t >= t0 && t <= t1;
     const overlaps = (a, b) => b >= t0 && a <= t1;
@@ -4026,6 +4535,7 @@ class TimelinePanel {
     const chipColX = modelColX + (maxModel > 0 ? Math.ceil(maxModel) + COLGAP : 0);
     const ctxColX = chipColX + (maxChip > 0 ? Math.ceil(maxChip) + COLGAP : 0);
     M.left = ctxColX + (maxCtx > 0 ? Math.ceil(maxCtx) + COLGAP : 4);
+    const maxDrift = Math.max(2, (maxCtx > 0 ? COLGAP : 4) - 1);   // how far the tick may translate the plot before a full draw (_tickPlot, below): the gutter gap left of it, less a pixel
     // (the compacting cue is now a solid teal "compression" rect drawn per-lane below — no shared gradient)
 
     // judging band height: a compact judge row per JUDGES entry, shown only when there's judging
@@ -4052,6 +4562,10 @@ class TimelinePanel {
     // x is LINEAR in compressed time → smooth pan (only zoom rescales). Identity compress = plain linear.
     const x = (t) => M.left + (compress(t) - cT0) / winSec * plotW;
     const laneY = (i) => M.top + i * LANE_GAP + LANE_GAP * 0.5;
+    // A glyph is ANCHORED at its x, not clamped at the edge — a dot overhangs by DOT_R, a comment square by half its
+    // side, a seam or a branch bar by its hit — so the drift cap alone does not keep one anchored just inside the
+    // edge off the battery column: the tick hides each listed glyph once its anchor crosses M.left (`edge`).
+    const nearEdge = (node, ax) => { if (ax - M.left < maxDrift) edge.push({ el: node, x: ax }); return node; };
     this._geom = { ml: M.left, plotW, W, H, top: M.top, t0, t1, cT0, winSec, compress, decompress };
 
     // axis — gridlines + time labels. Ticks at real nice intervals, drawn at their compressed x (evenly
@@ -4070,11 +4584,11 @@ class TimelinePanel {
     placedLabels.push([lockCx - lockHalf, lockCx + lockHalf]);
     for (let tk = Math.ceil(t0 / step) * step; tk <= t1; tk += step) {
       if (inGap(tk)) continue;
-      svg.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1 }));
+      nearEdge(plot.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1 })), x(tk));
       this._mc.font = '10px ' + this._fontFace();
       const hw = this._mc.measureText(clock(tk)).width / 2;
       if (!placeLabel(x(tk) - hw, x(tk) + hw)) continue;
-      const tx = el('text', { x: x(tk), y: axisY + 14, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 10 }); tx.textContent = clock(tk); svg.appendChild(tx);
+      const tx = el('text', { x: x(tk), y: axisY + 14, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 10 }); tx.textContent = clock(tk); nearEdge(plot.appendChild(tx), x(tk));
     }
     svg.appendChild(el('line', { x1: x(t1), y1: M.top, x2: x(t1), y2: axisY, stroke: PAL().gridStrong, 'stroke-width': 1 }));
     // broken-axis squiggle(s): one per collapsed gap visible in the window (real edges → compressed x).
@@ -4085,7 +4599,7 @@ class TimelinePanel {
       for (const g of cmap.gaps) if (g.rb > t0 && g.ra < t1) {
         const rx0 = x(g.ra), rx1 = x(g.rb);
         const gx0 = Math.max(M.left, rx0), gx1 = Math.min(plotR, rx1);
-        if (gx1 > gx0 + 0.5) this._drawGapBreak(svg, gx0, gx1, g.ra, g.rb, M.top, axisY, rx0 >= M.left - 0.5, !g.trailing && rx1 <= plotR + 0.5, placeLabel);
+        if (gx1 > gx0 + 0.5) this._drawGapBreak(plot, gx0, gx1, g.ra, g.rb, M.top, axisY, rx0 >= M.left - 0.5, !g.trailing && rx1 <= plotR + 0.5, placeLabel);
       }
     }
     if (!vis.length) { const tx = el('text', { x: M.left, y: M.top + 16, fill: 'var(--text-muted)', 'font-size': 12 }); tx.textContent = 'no romp activity in this window'; svg.appendChild(tx); }
@@ -4159,14 +4673,15 @@ class TimelinePanel {
         // (same ask before & after), so it does NOT split the work — it's an overlay (candy-stripe
         // below). Only a new ASK (typed/queued/absorbed/drain) starts a new period. The bar's color
         // also backs the candy-stripe.
-        const bx = x(a), bw = Math.max(2, x(b) - x(a)), eh = BAR_H + 5;
+        const bx = x(a), bwRaw = x(b) - x(a), bw = Math.max(2, bwRaw), eh = BAR_H + 5;
         // Cross-hover focus on this work period — a DAG journey event (card hover) or the single event
         // hovered in the feed modal — draws EXACTLY like the native bar hover below: the bar itself
         // grown to eh and fully opaque, in its own color. No white outline (the user 2026-07-17).
         const lit = barLit(t, dagOrHover);
         const bh = lit ? eh : BAR_H;
         const bar = el('rect', { x: bx, y: y - bh / 2, width: bw, height: bh, rx: bh / 2, fill: s.color, opacity: lit ? 1 : 0.9 });
-        svg.appendChild(bar);
+        plot.appendChild(bar);
+        const liveEdge = barEndT(t, nowS, data.now) >= t1;   // an OPEN bar ends at the live edge → its width rides the tick (riders, below)
         const act = s.state === 'working' || s.state === 'permission' || s.state === 'needsInput' || s.state === 'awaiting' || s.state === 'awaitingBg' || s.state === 'compacting' || s.state === 'clearing';
         const ongoing = s.live && act && t.end > t.start && (data.now - t.end) <= 5;
         const hit = el('rect', { x: bx, y: y - 7, width: bw, height: 14, fill: 'transparent' }); hit.style.cursor = 'pointer';
@@ -4180,7 +4695,8 @@ class TimelinePanel {
         // work-bar click visibly did nothing while prompt-dot clicks worked (the user, 2026-06-12).
         // The prompt dot keeps the prompt-line uuid.
         hit.addEventListener('click', () => { this._select(s.id); this.openChat(t.tid || this._laneTid(s), workAnchorOf(t), false, false, t.start); });
-        svg.appendChild(hit);
+        plot.appendChild(hit);
+        if (liveEdge) riders.push({ el: bar, attr: 'width', base: bwRaw, min: 2 }, { el: hit, attr: 'width', base: bwRaw, min: 2 });   // the un-clamped extent with the 2 px floor: a just-opened bar grows as a full draw would draw it
       });
       // AWAITING a background task while the main thread is idle (the user 2026-07-13): a full-thickness
       // segment (BAR_H, the work-bar reference) in the lane color from the last work period's end to the
@@ -4196,7 +4712,7 @@ class TimelinePanel {
         if (lx2 - lx1 > 3) {
           const ln = el('line', { x1: lx1, y1: y, x2: lx2, y2: y, stroke: s.color, 'stroke-width': BAR_H,
             'stroke-linecap': 'round', opacity: 0.4, 'pointer-events': 'none' });
-          svg.appendChild(ln);
+          plot.appendChild(ln);
           const rows = ((s.awaitingTasks && s.awaitingTasks.length) ? s.awaitingTasks : [s.awaitingBg])
             .map((d) => '<div class="b" style="opacity:.85">' + esc(d) + '</div>').join('');
           const tip = '<div class="r"><span class="chip" style="background:' + s.color + '"></span><span class="who" style="color:' + s.color + '">' + esc(s.name)
@@ -4211,7 +4727,8 @@ class TimelinePanel {
             if (this._suppressClick) { this._suppressClick = false; return; }
             this._select(s.id); this.openChat(this._laneTid(s), null, true);
           });
-          svg.appendChild(wh);
+          plot.appendChild(wh);
+          if (edgeLive) riders.push({ el: ln, attr: 'x2', base: lx2 }, { el: wh, attr: 'width', base: lx2 - lx1 });
         }
       }
       // AWAITING (permission) → candy-stripe every span the session sat blocked on your
@@ -4220,7 +4737,12 @@ class TimelinePanel {
       const aw = (s.awaiting && s.awaiting.length) ? s.awaiting
                  : ((s.live && (s.state === 'permission' || s.state === 'needsInput' || s.state === 'awaiting') && s.since != null) ? [[s.since, t1]] : []);
       for (const span of aw) {
-        const a0 = span[0], b0 = span[1];
+        // OPEN = the session is STILL in the state: the kernel (_state_intervals) ends such a span at the
+        // payload's own clock, so an end within 2 s of data.now (or a null one) means open. Draw it to the
+        // live edge, the way barEndT draws an open work bar, so the stripe glides with the edge instead of
+        // sitting at the build clock until the next kernel rebuild (2026-09-06).
+        const open = span[1] == null || span[1] >= data.now - 2;
+        const a0 = span[0], b0 = open ? Math.max(nowS, a0) : span[1];
         const sa = Math.max(a0, t0), sb = Math.min(b0, t1); if (sb <= sa) continue;
         // The awaiting interval (state log) and the work bars (transcript) come from different
         // sources, so a bar can end a few seconds BEFORE the permission prompt → a gap (made worse by
@@ -4239,19 +4761,20 @@ class TimelinePanel {
         const eh = BAR_H + 5;
         // colored backing bridges the gap (square caps so it merges with the rounded bars on either side)
         const back = el('rect', { x: bx0, y: y - BAR_H / 2, width: Math.max(2, bx1 - bx0), height: BAR_H, fill: s.color, opacity: 0.9 });
-        svg.appendChild(back);
+        plot.appendChild(back);
         // candy-cane stripes over the ACTUAL awaiting span (shows the session color THROUGH the stripes)
         const stripe = el('rect', { x: x(sa), y: y - BAR_H / 2, width: Math.max(2, x(sb) - x(sa)), height: BAR_H, fill: 'url(#vault-await-hatch)' });
-        svg.appendChild(stripe);
+        plot.appendChild(stripe);
         const sh = el('rect', { x: bx0, y: y - 7, width: Math.max(2, bx1 - bx0), height: 14, fill: 'transparent' }); sh.style.cursor = 'pointer';
-        const end = b0 >= data.now - 2 ? 'now' : clock(b0);
+        const end = open ? 'now' : clock(b0);
         const shtml = () => '<div class="r"><span class="chip" style="background:' + BADGE.attention.bg + '"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="k">blocked</span></div><div class="b">blocked on your input · ' + clock(a0) + '–' + end + '</div>';
         const grow = (h) => { for (const r of [back, stripe]) { r.setAttribute('y', y - h / 2); r.setAttribute('height', h); } };
         sh.addEventListener('mouseenter', (e) => { grow(eh); this.showTip(shtml(), e); });
         sh.addEventListener('mousemove', (e) => this.moveTip(e));
         sh.addEventListener('mouseleave', () => { grow(BAR_H); this.hideTip(); });
         sh.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
-        svg.appendChild(sh);
+        plot.appendChild(sh);
+        if (open && edgeLive) riders.push({ el: back, attr: 'width', base: bx1 - bx0, min: 2 }, { el: stripe, attr: 'width', base: x(sb) - x(sa), min: 2 }, { el: sh, attr: 'width', base: bx1 - bx0, min: 2 });
       }
       // CONTEXT COMPACTING (LIVE) → cyan cross-hatch over the session color for every span the session
       // sat compacting (PreCompact→PostCompact from the state log), plus the current open one if it's
@@ -4260,15 +4783,16 @@ class TimelinePanel {
       const comp = (s.compacting && s.compacting.length) ? s.compacting
                    : ((s.live && s.state === 'compacting' && s.since != null) ? [[s.since, t1]] : []);
       for (const span of comp) {
-        const a0 = span[0], b0 = span[1];
+        const open = span[1] == null || span[1] >= data.now - 2;   // still compacting: to the live edge (see the awaiting loop)
+        const a0 = span[0], b0 = open ? Math.max(nowS, a0) : span[1];
         const sa = Math.max(a0, t0), sb = Math.min(b0, t1); if (sb <= sa) continue;
-        const eh = BAR_H + 5, cx = x(sa), cw = Math.max(2, x(sb) - x(sa));
+        const eh = BAR_H + 5, cx = x(sa), cwRaw = x(sb) - x(sa), cw = Math.max(2, cwRaw);
         const cback = el('rect', { x: cx, y: y - BAR_H / 2, width: cw, height: BAR_H, rx: 2, fill: s.color, opacity: 0.9 });
-        svg.appendChild(cback);
+        plot.appendChild(cback);
         const chx = el('rect', { x: cx, y: y - BAR_H / 2, width: cw, height: BAR_H, rx: 2, fill: 'url(#vault-compact-hatch)' });
-        svg.appendChild(chx);
+        plot.appendChild(chx);
         const ch = el('rect', { x: cx, y: y - 7, width: cw, height: 14, fill: 'transparent' }); ch.style.cursor = 'pointer';
-        const live = b0 >= data.now - 2;
+        const live = open;
         const cw2 = live ? 'compacting' : 'compacted';
         const chtml = () => '<div class="r"><span class="chip" style="background:#86e1ff"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="k">' + cw2 + '</span></div><div class="b">context ' + cw2 + ' · ' + clock(a0) + '–' + (live ? 'now' : clock(b0)) + '</div>';
         const cgrow = (h) => { for (const r of [cback, chx]) { r.setAttribute('y', y - h / 2); r.setAttribute('height', h); } };
@@ -4276,7 +4800,8 @@ class TimelinePanel {
         ch.addEventListener('mousemove', (e) => this.moveTip(e));
         ch.addEventListener('mouseleave', () => { cgrow(BAR_H); this.hideTip(); });
         ch.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
-        svg.appendChild(ch);
+        plot.appendChild(ch);
+        if (open && edgeLive) riders.push({ el: cback, attr: 'width', base: cwRaw, min: 2 }, { el: chx, attr: 'width', base: cwRaw, min: 2 }, { el: ch, attr: 'width', base: cwRaw, min: 2 });
       }
       // CONTEXT COMPACTION → a cyan cross-hatch SPAN over the session color (same figure-ground as the
       // awaiting candy-cane: identity color behind, texture in front). The span runs from compaction
@@ -4289,9 +4814,9 @@ class TimelinePanel {
         const ce = Math.min(cp.t, t1);
         const cx = x(cs), cw = Math.max(6, x(ce) - cx), eh = BAR_H + 5;
         const cback = el('rect', { x: cx, y: y - BAR_H / 2, width: cw, height: BAR_H, rx: 2, fill: s.color, opacity: 0.9 });
-        svg.appendChild(cback);
+        plot.appendChild(cback);
         const chx = el('rect', { x: cx, y: y - BAR_H / 2, width: cw, height: BAR_H, rx: 2, fill: 'url(#vault-compact-hatch)' });
-        svg.appendChild(chx);
+        plot.appendChild(chx);
         const ch = el('rect', { x: cx, y: y - 7, width: cw, height: 14, fill: 'transparent' }); ch.style.cursor = 'pointer';
         const chtml = () => '<div class="r"><span class="chip" style="background:#86e1ff"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="k">compacted</span></div><div class="b">context compacted · ' + clock(cp.t) + '</div>';
         const cgrow = (h) => { for (const r of [cback, chx]) { r.setAttribute('y', y - h / 2); r.setAttribute('height', h); } };
@@ -4299,7 +4824,7 @@ class TimelinePanel {
         ch.addEventListener('mousemove', (e) => this.moveTip(e));
         ch.addEventListener('mouseleave', () => { cgrow(BAR_H); this.hideTip(); });
         ch.addEventListener('click', () => { this._select(s.id); this.openChat(this._laneTid(s), null, true); });
-        svg.appendChild(ch);
+        plot.appendChild(ch);
       }
       // A /CLEAR SEAM — an episode boundary: the conversation ended here and a blank one began. Drawn
       // as a film-splice cut through the lane (two short slanted strokes), quiet by default with the
@@ -4309,15 +4834,15 @@ class TimelinePanel {
         if (cl.t < t0 || cl.t > t1) continue;
         const sx = x(cl.t), sh = BAR_H + 6;
         for (const dx of [-1.6, 1.6]) {
-          svg.appendChild(el('line', { x1: sx + dx - 2, y1: y + sh / 2, x2: sx + dx + 2, y2: y - sh / 2,
-                                       stroke: '#ffffff', 'stroke-width': 1.2, opacity: 0.55, 'pointer-events': 'none' }));
+          nearEdge(plot.appendChild(el('line', { x1: sx + dx - 2, y1: y + sh / 2, x2: sx + dx + 2, y2: y - sh / 2,
+                                                stroke: '#ffffff', 'stroke-width': 1.2, opacity: 0.55, 'pointer-events': 'none' })), sx);
         }
         const hh = el('rect', { x: sx - 6, y: y - 10, width: 12, height: 20, fill: 'transparent' });
         const html = () => '<div class="r"><span class="chip" style="background:#9cd2ff"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="k">cleared</span></div><div class="b">conversation cleared · a fresh one starts here · ' + clock(cl.t) + '</div>';
         hh.addEventListener('mouseenter', (e) => this.showTip(html(), e));
         hh.addEventListener('mousemove', (e) => this.moveTip(e));
         hh.addEventListener('mouseleave', () => this.hideTip());
-        svg.appendChild(hh);
+        nearEdge(plot.appendChild(hh), sx);
       }
       // name left-aligned; status chip in the shared chip column to its right. ENDED or idle >1h
       // (s.faded) → name/chip/ctx blended toward the surface bg to a uniform low luminance (perceptual
@@ -4613,6 +5138,7 @@ class TimelinePanel {
     this._reapCompactBars(compactSeen);   // drop overlay scan-bars for lanes no longer compacting / off-screen
     this._reapWorkLabels(workSeen);        // drop overlay WORKING labels for lanes no longer working / off-screen
     this._reapMetaDots(metaSeen);          // drop switching-dots overlays for lanes whose /model pick has landed / off-screen
+    svg.appendChild(plot);   // the plot group takes its place now: over every row's hit rect and lane line, under the lock and the jump button (drawn last)
 
     // ── branch connectors (the user 2026-08-14): a fork drawn like a git graph — one thick
     // perpendicular bar, work-bar weight (BAR_H), from the parent's lane to the child's at the fork
@@ -4627,7 +5153,7 @@ class TimelinePanel {
       if (y1 === y2) return;
       const bTop = Math.min(y1, y2), bH = Math.abs(y2 - y1);
       const bbar = el('rect', { x: bx - BAR_H / 2, y: bTop, width: BAR_H, height: bH, rx: BAR_H / 2, fill: s.color, opacity: 0.85 });
-      svg.appendChild(bbar);
+      nearEdge(plot.appendChild(bbar), bx);
       const bhit = el('rect', { x: bx - 9, y: bTop - 4, width: 18, height: bH + 8, fill: 'transparent' });
       bhit.style.cursor = 'pointer';
       const pname = (data.sessions.find((p) => p.id === br.fromId) || {}).name || '';
@@ -4638,7 +5164,7 @@ class TimelinePanel {
       bhit.addEventListener('mousemove', (e) => this.moveTip(e));
       bhit.addEventListener('mouseleave', () => { bbar.setAttribute('opacity', '0.85'); this.hideTip(); });
       bhit.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, br.cut ? 'branch:' + br.cut : '', false, false, br.t); });
-      svg.appendChild(bhit);
+      nearEdge(plot.appendChild(bhit), bx);
     });
 
     // obstacles for routing — at each event's process-start (a pending event rides `now` via execAt/startAt)
@@ -4791,14 +5317,15 @@ class TimelinePanel {
       const attrs = { d, fill: 'none', stroke: col, 'stroke-width': STUB_W, opacity: 0.45,
                       'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' };
       if (!arrived) attrs['stroke-dasharray'] = '1 4';   // in flight — the pending-connector dash (same key as the span)
-      svg.appendChild(el('path', attrs));
+      if (!arrived && !mm.toThreadT) liveRiders = true;   // an un-arrived stub spans to the live edge: the tick cannot translate that
+      plot.appendChild(el('path', attrs));
       // same affordances as a full connector: own-color highlight overlay + wide transparent hit —
       // the SAME path each, so highlight and hover cover the whole half-elbow as one unit —
       // co-lit with the arrival dot (PASS 2 links via msgUI), tooltip + click → where it landed
       const msgLit = dagOrHoverMsg(mm.id);
       const hl = el('path', { d, fill: 'none', stroke: col, 'stroke-width': STUB_W + 3, opacity: msgLit ? 0.95 : 0,
                               'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none' });
-      svg.appendChild(hl);
+      plot.appendChild(hl);
       const u = (msgUI[i] = { hl, dot: null, lit: msgLit });
       const hit = el('path', { d, fill: 'none', stroke: 'transparent', 'stroke-width': MSG_HIT_W,
                                'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
@@ -4840,13 +5367,14 @@ class TimelinePanel {
       const arrived = mm.hasExec || mm.exec !== mm.sent;
       const lineAttr = { d, fill: 'none', stroke: col, 'stroke-width': MSG_W0, opacity: arrived ? 0.5 : 0.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
       if (!arrived) lineAttr['stroke-dasharray'] = '1 4';
-      svg.appendChild(el('path', lineAttr));
+      if (mm.pending && !mm.toThreadT) liveRiders = true;   // a pending message lands AT the live edge (execAt): not a translate
+      plot.appendChild(el('path', lineAttr));
       // A connector in the focused journey (DAG card hover) or the hovered subtree's delegation messages
       // lights EXACTLY like its native hover: the own-color highlight overlay at full strength — no white
       // casing (the user 2026-07-17). msgLit remembers the drawn state so a local mouseleave restores it.
       const msgLit = dagOrHoverMsg(mm.id);
       const hl = el('path', { d, fill: 'none', stroke: col, 'stroke-width': MSG_W0 + 3, opacity: msgLit ? 0.95 : 0, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
-      svg.appendChild(hl);
+      plot.appendChild(hl);
       const u = (msgUI[i] = { hl, dot: null, lit: msgLit });
       // The hit target is BUILT here but APPENDED in a final pass below, after the arrival dots
       // (the user 2026-07-21, who found that hovering the vertical part didn't pop up the tooltip and they had to hit
@@ -4885,7 +5413,7 @@ class TimelinePanel {
         ? () => { const u0 = msgUI[msgI]; msgSetLight((u0 && u0.hoverSet) || [msgI], false); if (u0) u0.hoverSet = null; c.setAttribute('r', lit ? DOT_R + 2 : DOT_R); this.hideTip(); }
         : () => { c.setAttribute('r', lit ? DOT_R + 2 : DOT_R); if (linkedHl) linkedHl.setAttribute('opacity', lit ? '0.95' : '0'); this.hideTip(); });
       if (onClick) c.addEventListener('click', onClick);
-      svg.appendChild(c);
+      nearEdge(plot.appendChild(c), cx);
       return c;
     };
 
@@ -4896,6 +5424,7 @@ class TimelinePanel {
       if (vidx[mm.toId] == null || !inWin(landXT(mm))) return;
       const col = colorOf(mm.fromId), cy = laneY(vidx[mm.toId]);
       const u = msgUI[i];
+      if (mm.pending && !mm.toThreadT) liveRiders = true;   // its arrival dot rides the live edge (execAt)
       const c = dot(x(landXT(mm)), cy, col, msgHtml(mm), msgNav(mm), u && u.hl, dagOrHoverMsg(mm.id), i);
       if (u) u.dot = c;
     });
@@ -4905,7 +5434,7 @@ class TimelinePanel {
     // Nothing is lost by sitting over a message dot: the dot's tooltip, growth and click are the same
     // message's, and mEnter grows the linked dot too. Prompt dots are drawn after this pass, so they
     // keep their own hover.
-    Object.keys(msgUI).forEach((k) => { const u = msgUI[k]; if (u && u.hit) svg.appendChild(u.hit); });
+    Object.keys(msgUI).forEach((k) => { const u = msgUI[k]; if (u && u.hit) plot.appendChild(u.hit); });
 
     // turn process-start (prompt) dots — at startAt; CLICKABLE → jump to the prompt that started
     // the period. Skipped where a PROCESSED message dot coincides (the message dot stands in).
@@ -4914,6 +5443,7 @@ class TimelinePanel {
       turnsOf(s.id).forEach((t) => {
         if (t.cont) return;                  // a post-sleep continuation piece of one segment: its prompt dot belongs to the FIRST piece, not here
         if (!inWin(startAt(t))) return;
+        if (t.pending) liveRiders = true;    // a pending prompt's dot rides the live edge (startAt): not a translate
         if (data.messages.some((mm) => mm.toId === s.id && !mm.pending && Math.abs(execAt(mm) - startAt(t)) <= 1)) return;
         const dx = x(startAt(t));
         // cross-hover focus (dot GROWN in place, via dot()'s lit param): DAG journey node, a coarse card
@@ -4935,7 +5465,7 @@ class TimelinePanel {
         dot(dx, y, isRomp ? '#000' : s.color, tip, () => { this._select(s.id); this.openChat(t.tid || s.id, t.uuid, false, false, startAt(t), 'user'); }, null, dotLit(t, dagOrHover));   // romp message → a black dot (the swirl reads on it); prompt-intent → time fallback restricted to user turns
         if (isRomp) {                                    // the romp favicon swirl INSIDE the black dot; pointer-events:none → the dot keeps its hover/click
           const sz = DOT_R * 1.9;
-          svg.appendChild(el('image', { x: dx - sz / 2, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' }));
+          nearEdge(plot.appendChild(el('image', { x: dx - sz / 2, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' })), dx);
         }
       });
     });
@@ -4962,7 +5492,7 @@ class TimelinePanel {
         sq.addEventListener('mousemove', (e) => this.moveTip(e));
         sq.addEventListener('mouseleave', () => { qGrow(0); this.hideTip(); });
         sq.addEventListener('click', () => { this._select(s.id); this.openChat(s.id, c.uuid, false, false, c.t); });
-        svg.appendChild(sq);
+        nearEdge(plot.appendChild(sq), cx);
       });
     });
 
@@ -4974,16 +5504,16 @@ class TimelinePanel {
       const jY = (i) => jb0 + i * JROW + JROW * 0.5;
       const nameOf = (sid) => { const s = data.sessions.find((z) => z.id === sid); return s ? s.name : sid; };
       const sepY = jb0 - JB_TOPGAP * 0.5;
-      svg.appendChild(el('line', { x1: M.left, y1: sepY, x2: x(t1), y2: sepY, stroke: '#ffffff14', 'stroke-width': 1, 'pointer-events': 'none' }));
+      svg.insertBefore(el('line', { x1: M.left, y1: sepY, x2: x(t1), y2: sepY, stroke: '#ffffff14', 'stroke-width': 1, 'pointer-events': 'none' }), plot);   // the band's fixed chrome goes UNDER the plot group, where it painted before
       // vertical "judges" section label in the freed gutter space, just left of the right-justified judge names
       const jcx = Math.max(12, M.left - 72), jcy = (jY(0) + jY(shownJudges.length - 1)) / 2;
-      const hd = el('text', { x: jcx, y: jcy, fill: 'var(--text-faint)', 'font-size': 9, 'font-weight': 700, 'letter-spacing': '.08em', 'text-anchor': 'middle', transform: 'rotate(-90 ' + jcx + ' ' + jcy + ')' }); hd.textContent = 'judges'; svg.appendChild(hd);
+      const hd = el('text', { x: jcx, y: jcy, fill: 'var(--text-faint)', 'font-size': 9, 'font-weight': 700, 'letter-spacing': '.08em', 'text-anchor': 'middle', transform: 'rotate(-90 ' + jcx + ' ' + jcy + ')' }); hd.textContent = 'judges'; svg.insertBefore(hd, plot);
       shownJudges.forEach((J, ji) => {
         const y = jY(ji);
         // baseline rail through the row, faintly tinted in the judge's colour so each row is identifiable
-        svg.appendChild(el('line', { x1: M.left, y1: y, x2: x(t1), y2: y, stroke: J.color, 'stroke-opacity': 0.28, 'stroke-width': 2, 'stroke-linecap': 'round', 'pointer-events': 'none' }));
+        svg.insertBefore(el('line', { x1: M.left, y1: y, x2: x(t1), y2: y, stroke: J.color, 'stroke-opacity': 0.28, 'stroke-width': 2, 'stroke-linecap': 'round', 'pointer-events': 'none' }), plot);
         // judge name right-justified so it sits right beside the start of its rail
-        const lbl = el('text', { x: M.left - 6, y: y + 3, 'text-anchor': 'end', fill: J.color, 'font-size': 10, 'font-weight': 600 }); lbl.textContent = J.key; svg.appendChild(lbl);
+        const lbl = el('text', { x: M.left - 6, y: y + 3, 'text-anchor': 'end', fill: J.color, 'font-size': 10, 'font-weight': 600 }); lbl.textContent = J.key; svg.insertBefore(lbl, plot);
         // merge this judge's in-window marks into same-session blocks (a stretch of attention)
         // each mark is a RUN SPAN [t, t1] = [sent, recv] (g70): the real wall-clock the judge call ran, not
         // a point back-placed onto the work. Merge adjacent same-session spans into a stretch of attention.
@@ -5001,9 +5531,10 @@ class TimelinePanel {
         for (const b of blocks) {
           // an OPEN run (still in flight) has no recv yet — grow its bar to the live edge so it appears WHEN
           // it starts and advances with the axis, instead of popping in (back-dated) only once it ends.
-          let bx1 = x(b.start), bx2 = x(b.open ? Math.max(b.end, nowS) : b.end);
+          const rx1 = x(b.start), rx2 = x(b.open ? Math.max(b.end, nowS) : b.end);   // the run's own extent; a narrow one draws centred at JMARK_MINW
+          let bx1 = rx1, bx2 = rx2;
           if (bx2 - bx1 < JMARK_MINW) { const c = (bx1 + bx2) / 2; bx1 = c - JMARK_MINW / 2; bx2 = c + JMARK_MINW / 2; }
-          b._x1 = bx1; b._x2 = bx2;
+          b._x1 = bx1; b._x2 = bx2; b._rx1 = rx1; b._rw = rx2 - rx1;
           let lane = laneEnds.findIndex((endX) => bx1 >= endX);
           if (lane === -1) { lane = laneEnds.length; laneEnds.push(bx2); } else laneEnds[lane] = bx2;
           b._lane = lane;
@@ -5021,7 +5552,7 @@ class TimelinePanel {
           // opaque bar; a settled one is slightly dimmed — that's the only cue, no stroke.
           const r = el('rect', { x: x1, y: by - barH / 2, width: x2 - x1, height: barH, rx: Math.min(2.5, barH / 2),
             fill: col, 'fill-opacity': active ? 1 : 0.82, 'data-judge': J.key });
-          svg.appendChild(r);
+          plot.appendChild(r);
           const html = () => {
             const span = b.open ? clock(b.start) + '– running…' : (b.start === b.end ? clock(b.start) : clock(b.start) + '–' + clock(b.end));
             // elapsed (total judge compute) + tokens for this stretch, summed from each mark's matched run
@@ -5039,12 +5570,32 @@ class TimelinePanel {
           hit.addEventListener('mouseenter', (e) => this.showTip(html(), e));
           hit.addEventListener('mousemove', (e) => this.moveTip(e));
           hit.addEventListener('mouseleave', () => this.hideTip());
-          svg.appendChild(hit);
+          plot.appendChild(hit);
+          if (b.open && edgeLive) {   // an open run grows to the live edge: the rider re-derives the full draw's placement from the un-centred extent, so the centring goes once the run is wider than JMARK_MINW
+            const rx1 = b._rx1, rw = b._rw;
+            riders.push({ el: r, base: rw, x0: rx1, fn: (px) => {
+              const w = rw + px, narrow = w < JMARK_MINW, ax = narrow ? rx1 + (w - JMARK_MINW) / 2 : rx1, aw = narrow ? JMARK_MINW : w;
+              r.setAttribute('x', ax); r.setAttribute('width', aw); hit.setAttribute('x', ax - 2); hit.setAttribute('width', aw + 4);
+            } });
+          }
         }
       });
       // (auto-nudge ⚡ marks were removed from the judge band entirely — the user 2026-06-23. An auto-nudge
       // still surfaces as a romp-logo dot on its own lane; the band is now judge run-spans only.)
     }
+
+    // The live tick's handle on this build (see the plot group above and _tickTranslate): the group, its riders,
+    // the compressed now the build stood at and the px-per-compressed-second scale. A message glyph riding the
+    // live edge leaves it null — the tick then does the full draw it always did. The drift cap is the gutter gap
+    // left of the plot (COLGAP past the battery column, 4 px without one): content the build clamped at the
+    // window's left edge may poke that far into the gap before the tick hands back to a full draw; the glyphs
+    // anchored within the cap of the edge (`edge`, nearEdge) overhang their anchor, and the tick hides each once
+    // its anchor crosses the edge (`left`), so none reaches the battery column either.
+    this._tickPlot = liveRiders ? null : {
+      g: plot, riders, edge, left: M.left, cNow, cT0, winSec, k: plotW / winSec, applied: 0,
+      trailing: !!(cmap && cmap.gaps.length && cmap.gaps[cmap.gaps.length - 1].trailing),
+      maxDrift,
+    };
 
     // far-right ⟩⟩ jump-to-now button — only when held back off the live edge (unpinned)
     if (!this._pinned) this._drawNowButton(svg);

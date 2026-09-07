@@ -10,11 +10,13 @@ save_goals now compares the revision it loaded at against the one on disk and RE
 logs) instead of clobbering. The store is an append-only event log, so two writers appending different
 events never really conflicted: the right answer is both sets. All fixtures SYNTHETIC.
 """
+import contextlib
+import errno
 import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
@@ -22,7 +24,7 @@ BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 
 SID = "11111111-2222-3333-4444-555555555555"
 NOW = 1781100000
@@ -69,6 +71,51 @@ class StoreCas(unittest.TestCase):
         jd.save_goals(SID, s)
         self.assertNotIn("_baseRev", json.loads((jd.GOALDIR / (SID + ".json")).read_text()),
                          "the transient base revision is never written to disk")
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _reads_raise(target):
+        """Inside the block, every Path.read_text of `target` raises OSError (the EMFILE/EIO shape a
+        busy kernel meets); other paths read normally."""
+        real = Path.read_text
+        def boom(p, *a, **k):
+            if p == target:
+                raise OSError(errno.EMFILE, "synthetic: too many open files")
+            return real(p, *a, **k)
+        Path.read_text = boom
+        try:
+            yield
+        finally:
+            Path.read_text = real
+
+    def test_a_fallback_load_is_marked_unread_and_the_mark_is_never_serialized(self):
+        # load_goals swallows a read failure and answers an EMPTY store. Readers that cache "what the
+        # file holds" by its identity (the kernel's awaiting-lift gate) must be able to tell that answer
+        # from a parsed one, so the fallback carries a transient `_unread` mark — beside `_baseRev`,
+        # popped before a publish and outside the content hash. An ABSENT file is not marked: empty is
+        # its content, and a fresh session's store is born that way.
+        self.assertNotIn("_unread", jd.load_goals(SID), "no file: an empty store IS the truth")
+        self._seed()
+        self.assertNotIn("_unread", jd.load_goals(SID), "a parsed store is what the file says")
+        gp = jd.GOALDIR / (SID + ".json")
+        with self._reads_raise(gp):
+            s = jd.load_goals(SID)
+        self.assertTrue(s.get("_unread"), "the file exists and was not read: a fallback, marked")
+        self.assertEqual(s["nodes"], {})
+        self.assertNotIn("_unread", json.loads(jd._store_content(s)), "not store content")
+        jd.save_goals(SID, s)                       # base 0 vs disk 1: rebases onto the file, then publishes
+        raw = json.loads(gp.read_text())
+        self.assertNotIn("_unread", raw, "the mark is never written to disk")
+        self.assertIn(self._nid(1), raw["nodes"], "…and the rebase kept the file's node")
+
+    def test_an_unreadable_journal_marks_the_store_unread(self):
+        self._seed()
+        jd.append_override(SID, self._nid(1), "resolve", T0 + 60)
+        with self._reads_raise(jd._overrides_dir() / (SID + ".jsonl")):
+            s = jd.load_goals(SID)
+        self.assertIn(self._nid(1), s["nodes"], "the store itself was read")
+        self.assertTrue(s.get("_unread"), "…but the journal was not: the store is not what its files say")
+        self.assertEqual(s["_baseRev"], jd._disk_rev(SID), "the CAS base is the parsed store's, as before")
 
     def test_a_stale_pass_no_longer_erases_a_concurrent_block(self):
         # THE BUG: pass A loads, goes off to its model call; the nudge tick blocks the card and publishes;
@@ -177,6 +224,30 @@ class StoreCas(unittest.TestCase):
         log = jd.load_goals(SID)["nodes"][gid].get("log") or []
         blocks = [e for e in log if e.get("kind") == "block" and int(e.get("ev_t") or 0) == T0 + 100]
         self.assertEqual(len(blocks), 1, "the same verdict from both writers folds to one entry")
+
+    def test_a_second_save_of_the_same_store_still_rebases(self):
+        # One holder saving the SAME store twice (the planner saves its store several times per pass;
+        # the distiller saves after titling and again after distilling): the first publish popped the
+        # base and nothing restored it, so every later save of the object took the unconditional branch
+        # and wrote over whatever a concurrent writer published in between (review 2026-09-06).
+        self._seed()
+        gid = self._nid(1)
+        s = jd.load_goals(SID)
+        jd.record_verdict(s, s["nodes"][gid], "planner", "done", T0 + 30, why="shipped")
+        jd.save_goals(SID, s)                        # our first publish
+        other = jd.load_goals(SID)                   # a kernel-side writer, between our two saves
+        jd.apply_plan(other, "s2", T0 + 40, [{"do": "mint", "why": "x", "text": "Their new goal"}],
+                      jd.open_menu(other))
+        jd.save_goals(SID, other)
+        s["nodes"][gid]["summary"] = "Shipped the exporter end to end."   # our second change, SAME object
+        s["nodes"][gid]["distilledMt"] = T0 + 500
+        jd.save_goals(SID, s)                        # must rebase onto their publish, not clobber it
+        after = jd.load_goals(SID)
+        self.assertIn(self._nid(2), after["nodes"], "the other writer's node survives our second save")
+        self.assertEqual(after["nodes"][gid].get("summary"), "Shipped the exporter end to end.",
+                         "and our second change landed too")
+        self.assertNotIn("_baseRev", json.loads((jd.GOALDIR / (SID + ".json")).read_text()),
+                         "the re-stamped base is still never written to disk")
 
     def test_an_uncontended_save_does_not_rebase(self):
         self._seed()

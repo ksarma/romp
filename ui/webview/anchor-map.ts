@@ -18,7 +18,8 @@
 //   - paintRaw / paintRendered wrap exactly the text nodes of a source range in mark elements.
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
-//     content, so no text node is ever added under a row and every Raw walk above stays exact.
+//     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
+//     so no text node is ever added under a row and every Raw walk above stays exact.
 //
 // Everything walks a MINIMAL structural DOM (nodeType, childNodes, parentNode, data, splitText,
 // ownerDocument.createElement/createTextNode, getAttribute/setAttribute, insertBefore/appendChild/
@@ -919,22 +920,87 @@ function wrapBetween(root: DNode, s: { t: DText; off: number }, e: { t: DText; o
   return wrapSlices(nodes, a, b, className, data, skipBlockWs);
 }
 
-/** Inline markup a source slice carries that the rendered text does not (for the fallback matcher). */
-function stripMarkup(q: string): string {
-  return q.split("\n").map((ln) => {
-    let l = ln.replace(/^\s{0,3}(?:>\s?)+/, "");
-    l = l.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "");
-    l = l.replace(/^\s*#{1,6}\s+/, "").replace(/\s+#+\s*$/, "");
-    if (/^\s*(`{3,}|~{3,})/.test(l)) return "";
-    l = l.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
-    l = l.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]*)\]\[[^\]]*\]/g, "$1");
-    l = l.replace(/<(https?:\/\/[^>]+)>/g, "$1");
-    l = l.replace(/\*\*(.+?)\*\*/g, "$1").replace(/(?<!\w)__(.+?)__(?!\w)/g, "$1").replace(/\*(.+?)\*/g, "$1")
-         .replace(/(?<!\w)_(.+?)_(?!\w)/g, "$1").replace(/~~(.+?)~~/g, "$1");
-    l = l.replace(/`+/g, "").replace(/\\([\\`*_{}[\]()#+\-.!>~|])/g, "$1");
-    return l.replace(/(\s{2,}|\\)$/, "");
-  }).join("\n");
+/** A string and, for each of its characters, the index in the string it was derived from: `text[i]` is
+ *  `origin[map[i]]`, and `map` is strictly increasing. */
+export type Mapped = { text: string; map: number[] };
+/** One markup rule for stripMarkupMapped: every match is dropped, or, with `keep`, replaced by its first
+ *  group, which begins `keep` characters into the match (the opening delimiter's length, so the group's
+ *  characters keep their source indexes). All rules are global; the line-anchored ones match at most once. */
+type MarkupRule = { re: RegExp; keep?: number };
+/** Line-leading constructs the renderer consumes: blockquote markers, list bullets and task boxes, heading
+ *  hashes (leading and closing). */
+const MARKUP_LEAD: MarkupRule[] = [
+  { re: /^\s{0,3}(?:>\s?)+/g },
+  { re: /^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/g },
+  { re: /^\s*#{1,6}\s+/g },
+  { re: /\s+#+\s*$/g },
+];
+/** A fence line renders nothing of its own. */
+const MARKUP_FENCE = /^\s*(`{3,}|~{3,})/;
+/** Inline constructs: images (dropped whole), link labels, autolinks, emphasis pairs, code backticks,
+ *  escapes, and a hard break's trailing blanks or backslash. */
+const MARKUP_INLINE: MarkupRule[] = [
+  { re: /!\[[^\]]*\]\([^)]*\)/g },
+  { re: /\[([^\]]*)\]\([^)]*\)/g, keep: 1 },
+  { re: /\[([^\]]*)\]\[[^\]]*\]/g, keep: 1 },
+  { re: /<(https?:\/\/[^>]+)>/g, keep: 1 },
+  { re: /\*\*(.+?)\*\*/g, keep: 2 },
+  { re: /(?<!\w)__(.+?)__(?!\w)/g, keep: 2 },
+  { re: /\*(.+?)\*/g, keep: 1 },
+  { re: /(?<!\w)_(.+?)_(?!\w)/g, keep: 1 },
+  { re: /~~(.+?)~~/g, keep: 2 },
+  { re: /`+/g },
+  { re: /\\([\\`*_{}[\]()#+\-.!>~|])/g, keep: 1 },
+  { re: /(\s{2,}|\\)$/g },
+];
+/** `m` with one rule applied, its map carried through: what String.replace does, keeping every surviving
+ *  character's origin. */
+function applyMarkupRule(m: Mapped, rule: MarkupRule): Mapped {
+  let text = "";
+  const map: number[] = [];
+  const take = (a: number, b: number) => { text += m.text.slice(a, b); for (let i = a; i < b; i++) map.push(m.map[i]); };
+  let last = 0;
+  for (const hit of m.text.matchAll(rule.re)) {
+    const at = hit.index as number;
+    take(last, at);
+    if (rule.keep !== undefined) {
+      const g = hit[1], gs = at + rule.keep;
+      // the group must sit right after the opening delimiter, else the map would lie about its origin
+      if (m.text.slice(gs, gs + g.length) !== g) throw new Error("anchor-map: a markup rule's group is not at its delimiter's length");
+      take(gs, gs + g.length);
+    }
+    last = at + hit[0].length;
+  }
+  take(last, m.text.length);
+  return { text, map };
 }
+
+/**
+ * Inline markup a source slice carries that the rendered text does not (for the fallback matcher), applied
+ * line by line, with every surviving character mapped back to its index in `s`. The text is what
+ * stripMarkup returns; the map is what lets the fallback tell WHICH occurrence of a stripped quote in a
+ * block's source is the one the comment's or change's range covers, when the quote carries markup of its
+ * own (a code span in a table cell, a bold word) and its plain text recurs in the block.
+ */
+export function stripMarkupMapped(s: string): Mapped {
+  let text = "";
+  const map: number[] = [];
+  const lines = s.split("\n");
+  let lineStart = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (i > 0) { text += "\n"; map.push(lineStart - 1); }   // the line ending the split consumed
+    let m: Mapped = { text: ln, map: Array.from({ length: ln.length }, (_, j) => lineStart + j) };
+    for (const r of MARKUP_LEAD) m = applyMarkupRule(m, r);
+    if (MARKUP_FENCE.test(m.text)) m = { text: "", map: [] };
+    else for (const r of MARKUP_INLINE) m = applyMarkupRule(m, r);
+    text += m.text;
+    for (const x of m.map) map.push(x);
+    lineStart += ln.length + 1;
+  }
+  return { text, map };
+}
+const stripMarkup = (q: string): string => stripMarkupMapped(q).text;
 
 export function paintRendered(renderedRoot: Element, source: string, range: SourceRange, className: string,
                               data?: Record<string, string>): Element[] | null {
@@ -964,21 +1030,74 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   }
   // ── the fallback: a whitespace-tolerant match of the quote stripped of its markup, inside the blocks
   //    the range overlaps (a refused block, typically), else anywhere in the rendered text
-  const quote = stripMarkup(source.slice(range.start, range.end));
+  const raw = source.slice(range.start, range.end);
+  const quote = stripMarkup(raw);
   if (stripWs(quote) === "") return null;
   let scope: DNode[] = [];
+  let scopeStart = source.length, scopeEnd = 0;   // the source span the scope's blocks cover
   for (const blk of idx.blocks) {
     const bs = nOf(idx, blk.startN), be = nOf(idx, blk.endN);
-    if (be > range.start && bs < range.end) scope.push(...blk.dom);
+    if (be > range.start && bs < range.end) {
+      scope.push(...blk.dom);
+      scopeStart = Math.min(scopeStart, bs); scopeEnd = Math.max(scopeEnd, be);
+    }
   }
-  if (!scope.length) scope = idx.topNodes.slice();
+  if (!scope.length) { scope = idx.topNodes.slice(); scopeStart = 0; scopeEnd = source.length; }
   const nodes: DText[] = [];
   for (const n of scope) { if (isText(n)) nodes.push(n); else nodes.push(...textNodes(n)); }
   const hay = nodes.map((t) => t.data).join("");
-  const hit = findExact(hay, quote);
-  if (!hit) return null;
+  const hits = occurrences(hay, quote);
+  if (!hits.length) return null;
+  // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's
+  // source stripped the same way (stripMarkupMapped). A change's text is short (a word, a number), and a
+  // table or a code block repeats such tokens; the first occurrence would mark an unchanged cell and report
+  // it painted, the wrong passage under "Scroll to the change". The count is taken over the STRIPPED source,
+  // not the raw slice: a comment's quote may carry markup of its own (`` `GET /notes` `` in a table cell,
+  // `**cache**`) whose plain text recurs in the block, and the raw slice occurs once where the rendering
+  // shows its text twice. The ordinal is exact when the rendering shows the text as many times as the
+  // stripped source holds it, so the counts must agree, else nothing is painted and the comment or change
+  // keeps its card (and Reveal). The range's own occurrence is the one whose characters map back inside it.
+  const scopeSrc = stripMarkupMapped(source.slice(scopeStart, scopeEnd));
+  const srcHits = occurrences(scopeSrc.text, quote);
+  if (srcHits.length !== hits.length) return null;
+  const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);
+  if (k < 0) return null;
+  const hit = hits[k];
   const marks = wrapSlices(nodes, hit.start, hit.end, className, data, skipBlockWs);
   return marks.length ? (marks as unknown as Element[]) : null;
+}
+
+/** `s` with every whitespace run collapsed to one space and its edges trimmed, and `map[i]` the index in `s`
+ *  of normalized character i (a run's space sits at the run's end). This is findExact's own view of a
+ *  string (comments.ts), so the fallback keeps the tolerance it had; local because comments.ts keeps the
+ *  helper private, and one pass per string keeps the enumeration below linear in the occurrences. */
+function wsView(s: string): { norm: string; map: number[] } {
+  let norm = "";
+  const map: number[] = [];
+  let inWs = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (isWs(c)) { inWs = true; continue; }
+    if (inWs && norm.length) { norm += " "; map.push(i); }
+    inWs = false;
+    norm += c;
+    map.push(i);
+  }
+  return { norm, map };
+}
+
+/** Every whitespace-tolerant occurrence of `needle` in `hay`, as [start, end) in `hay`, in order; a start is
+ *  the match's first non-blank character, and overlapping matches count separately. The first one is what
+ *  findExact(hay, needle) returns. */
+function occurrences(hay: string, needle: string): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  const target = wsView(needle).norm;
+  if (!target) return out;
+  const { norm, map } = wsView(hay);
+  for (let at = norm.indexOf(target); at >= 0; at = norm.indexOf(target, at + 1)) {
+    out.push({ start: map[at], end: map[at + target.length - 1] + 1 });
+  }
+  return out;
 }
 
 // ── change marks (plans/file-review.md Slice 2; contract D4) ───────────────────────────────────────
@@ -994,6 +1113,15 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
 // the rows' text nodes as the source line. A deletion is therefore an EMPTY inline element at its offset
 // whose visible label is CSS-generated from `data-fc-text` (`.fc-del::before { content: attr(...) }`);
 // generated content is not a node and never enters a selection, the same way the row number is drawn.
+//
+// The author's chip (the plan's UX: in Raw, each change carries the author's session chip in the
+// session's colour, the `▍web` beside the marked text) is drawn the same way: the LAST element painted
+// for a change in Raw carries `data-fc-chip="<label>"`, for the sheet's `::after` to draw as generated
+// content beside the text, coloured by the same `--fc-author`. One chip per change, after its text,
+// whatever the change's shape: after the last row's slice of an insertion, on a deletion's point, after
+// a substitution's new text. No element is added for it and it carries no data-act of its own, so the
+// panel's count of `[data-act="fcchange"]` elements per change is unchanged and the mark beside it stays
+// the one control. Rendered marks carry no chip (the plan gives the chip to Raw).
 
 export type ChangePaint = {
   id: string;
@@ -1001,7 +1129,12 @@ export type ChangePaint = {
   curFrom: number;
   curTo: number;
   oldText: string;
+  /** The sidecar's author label (the session's name when it wrote the change). */
   author: string;
+  /** The chip's label when the caller has a better one than `author`: the session's CURRENT name from the
+   *  panel's colour map (a renamed session), or the neutral label the plan gives an author with no live
+   *  match. Absent, the chip reads `author`. */
+  label?: string;
   /** The change's new text, when the caller has it (a hunk's `newText`). With it present the painters
    *  verify the source slice at [curFrom, curTo) equals it before painting anything: hunks are computed
    *  over the host's string, and a file whose bytes the browser decodes differently (a BOM the fetch
@@ -1011,10 +1144,17 @@ export type ChangePaint = {
 
 /** The struck label of a deletion: the old text with the line endings the rows themselves show (the HTML
  *  parser turns a CR into an LF), capped at 80 characters with an ellipsis when cut; the card carries the
- *  whole text. */
+ *  whole text. A text with no visible character — a removed blank line, `track-edit --old $'\n\n' --new ''` —
+ *  would hand the sheet's `::before` a string of line feeds and nothing to draw: the point sat there with a
+ *  2px underline and no glyph, and the row grew by a blank visual line (the review, 2026-09-06). Such a
+ *  label shows one ¶ per line ending instead, the mark a text editor draws for the same thing; spaces and
+ *  tabs keep their own width and are left as they are. A label with any visible character keeps its line
+ *  endings: the rows below show what was removed as it read. */
 export const DEL_LABEL_MAX = 80;
+export const PILCROW = "¶";
 export function deletionLabel(oldText: string): string {
-  const t = oldText.replace(/\r\n?/g, "\n");
+  let t = oldText.replace(/\r\n?/g, "\n");
+  if (!/\S/.test(t)) t = t.replace(/\n/g, PILCROW);
   if (t.length <= DEL_LABEL_MAX) return t;
   let cut = DEL_LABEL_MAX - 1;
   if (/[\uD800-\uDBFF]/.test(t[cut - 1])) cut--;   // never split a surrogate pair
@@ -1110,14 +1250,21 @@ export function paintRawPoint(codeRoot: Element, source: string, offset: number,
   return m as unknown as Element;
 }
 
+/** The author chip's label (the panel's own fallback order: the caller's label, the sidecar's author, else
+ *  the neutral word). */
+export const chipLabel = (c: ChangePaint): string => c.label || c.author || "unknown";
+const CHIP_ATTR = "data-fc-chip";
+
 /**
  * Paint pending changes over the Raw rows. `ins`: the new text wrapped in `mark.fc-ins`, one mark per
  * text-node slice, so a range crossing rows paints each row's slice. `del`: a `span.fc-del` point at
  * curFrom labelled with the old text (deletionLabel). `sub`: the point first, then the wrap. Every
  * painted element carries data-act="fcchange", data-id, data-author, and the inline styles `stylesFor`
- * returns for the change (`{"--fc-author": colour}` colours the mark by session). Returns every element
- * painted, so the caller reads which ids got paint from the elements' data-id; a batch whose offsets do
- * not index `source` (offsetsIndex) paints nothing and returns [].
+ * returns for the change (`{"--fc-author": colour}` colours the mark by session); the LAST element of
+ * each change also carries `data-fc-chip` with the author's chip label (chipLabel), the sheet's generated
+ * content beside the text. Returns every element painted, so the caller reads which ids got paint from
+ * the elements' data-id; a batch whose offsets do not index `source` (offsetsIndex) paints nothing and
+ * returns [].
  */
 export function paintChangesRaw(codeRoot: Element, source: string, changes: ChangePaint[],
                                 stylesFor: (c: ChangePaint) => Record<string, string>): Element[] {
@@ -1126,14 +1273,17 @@ export function paintChangesRaw(codeRoot: Element, source: string, changes: Chan
   for (const c of changes) {
     const data = changeData(c);
     const styles = stylesFor(c);
+    const mine: Element[] = [];
     if (c.kind === "del" || c.kind === "sub") {
       const p = paintRawPoint(codeRoot, source, c.curFrom, "fc-del", data, deletionLabel(c.oldText), styles);
-      if (p) out.push(p);
+      if (p) mine.push(p);
     }
     if (c.kind === "ins" || c.kind === "sub") {
       const marks = paintRaw(codeRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", data);
-      for (const m of marks) { applyStyles(m as unknown as DElement, styles); out.push(m); }
+      for (const m of marks) { applyStyles(m as unknown as DElement, styles); mine.push(m); }
     }
+    if (mine.length) (mine[mine.length - 1] as unknown as DElement).setAttribute(CHIP_ATTR, chipLabel(c));
+    for (const m of mine) out.push(m);
   }
   return out;
 }

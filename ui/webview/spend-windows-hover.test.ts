@@ -14,7 +14,7 @@ const STRIP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview",
 
 test("the hover renders both rows: rolling '1 month' and calendar 'this month'", () => {
   assert.match(KERNEL, /var SPEND_WINS=\[\['hour','1 hour'\],\['day','1 day'\],\['week','1 week'\],\['month','1 month'\],\['monthToDate','this month'\]\];/);
-  assert.match(KERNEL, /"month": rolling_month,\s*\n\s*"monthToDate": _sum\(v for k, v in days\.items\(\) if isinstance\(k, str\) and k\.startswith\(month\)\)/,
+  assert.match(KERNEL, /"month": rolling_month,\s*\n\s*"monthToDate": _sum\(\(k, v\) for k, v in days\.items\(\) if isinstance\(k, str\) and k\.startswith\(month\)\)/,
     "the kernel ships both keys — rolling under the old name, the bill figure under its own");
   assert.match(KERNEL, /win\["monthToDate" if k == "month" else k\]\["budget"\] = v/, "the bill-cycle budget rides the bill figure, never the rolling window");
 });

@@ -25,6 +25,7 @@ as a delta — federation.js applies them for fleet.ts, which keeps reading whol
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids.
 """
 import base64
+import io
 import json
 import os
 import socket
@@ -33,8 +34,9 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -44,7 +46,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_feeddelta", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_feeddelta", os.path.join(BIN, "romp-kernel"))
 
 KSRC = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
 SID = "11111111-2222-3333-4444-555555555555"
@@ -83,13 +85,26 @@ def _feed(n=300, now=NOW, build_id=1, asks=None, ledgers=True):
 
 
 def _wire(feed):
-    ms = json.dumps(feed)
-    return ms, km._dedup_sig(feed, ms), km._feed_parts(feed)
+    """The pusher's wire forms for `feed`: the whole serialization, the dedup signature as the pusher mints it
+    (P5's tuple of the per-entry strings, 2026-09-06) and the delta parts."""
+    parts = km._feed_parts(feed)
+    return json.dumps(feed), km._feed_sig(parts), parts
+
+
+def _lazy_body(feed, parts):
+    """The wire tuple's body member as the pusher installs it: a _LazyWire of _feed_body, unmade until a whole frame goes."""
+    return km._LazyWire(lambda: km._feed_body(feed), km._feed_est(parts))
 
 
 def _client(caps=("feedDelta",), app="feed"):
     sent = []
-    c = {"app": app, "alive": True, "wid": "w1", "qbytes": 0, "send": sent.append, "caps": set(caps)}
+    # the {type:"caps"} frame the ready handler adds after its pushes (2026-09-05) is dropped here:
+    # these tests count the FEED frames a `ready` serves, and that frame is neither a feed frame nor
+    # a push. test_tag_edit_ack.py (Capability) pins the caps frame and its place in the order.
+    def send(s):
+        if not s.startswith('{"type": "caps"'):
+            sent.append(s)
+    c = {"app": app, "alive": True, "wid": "w1", "qbytes": 0, "send": send, "caps": set(caps)}
     return c, sent
 
 
@@ -104,7 +119,7 @@ def _warm(feed):
     rebuilding); returns the saved state for the finally."""
     saved = (km._feed_wire, list(km._built_feed))
     ms, sig, parts = _wire(feed)
-    km._feed_wire = (feed, feed.get("ledgers"), feed, km._feed_body(feed), sig, parts)
+    km._feed_wire = (feed, feed.get("ledgers"), feed, _lazy_body(feed, parts), sig, parts)
     km._built_feed[:] = [None, feed, time.time(), time.time()]
     return saved, ms, parts
 
@@ -536,6 +551,7 @@ class ReadyHandshake(unittest.TestCase):
                         frames.append(json.loads(payload.decode("utf-8")))
             except (socket.timeout, TimeoutError):
                 pass
+            frames = [fr for fr in frames if fr.get("type") != "caps"]   # the ready handler's caps frame: not a feed frame (test_tag_edit_ack.py pins it)
             types = [fr.get("type") for fr in frames]
             self.assertEqual(types.count("feed"), 1, "exactly one full frame per `ready`: %s" % types)
             self.assertIn("_keys", frames[types.index("feed")], "…the keyed one, the slot's base")
@@ -594,7 +610,7 @@ class ReadyHandshake(unittest.TestCase):
             c2, sent2 = _client(caps=())
             c2["ready"] = km.READY_GATE_CAP not in c2["caps"]
             self.assertIs(c2["ready"], True)
-            km._send_feed(c2, f, ms, km._dedup_sig(f, ms), parts)   # the pusher's cycle landed first
+            km._send_feed(c2, f, ms, km._feed_sig(parts), parts)   # the pusher's cycle landed first
             self.assertEqual(len(sent2), 1)
             h._dispatch_ws({"type": "ready"}, c2)
             self.assertEqual(len(sent2), 1, "the first `ready` of a never-announcing socket re-serves nothing")
@@ -635,7 +651,7 @@ class ConnectTimeFrame(unittest.TestCase):
             _served_fresh(self, sent[0], f, t0)   # the cached frame — no build, no wait
             self.assertIs(c["efeed"], parts, "…and it is the delta stream's base")
             # the pusher's next cycle then has nothing to add
-            km._send_feed(c, f, ms, km._dedup_sig(f, ms), parts)
+            km._send_feed(c, f, ms, km._feed_sig(parts), parts)
             self.assertEqual(len(sent), 1)
         finally:
             _restore(saved)
@@ -658,8 +674,10 @@ class ConnectTimeFrame(unittest.TestCase):
             card_t = got["asks"][3]["t"]                       # what the pane computes for the card's age…
             self.assertAlmostEqual(got["now"] - card_t, time.time() - card_t, delta=2,
                                    msg="…is the card's TRUE age, not its age as of the build")
-            # the stamp is a splice, not a re-serialization: the cached body is `now`-less and reused
-            body = km._feed_wire[3]
+            # the stamp is a splice, not a re-serialization: the cached body is `now`-less and reused — made ONCE,
+            # by this serve (the cell was installed unmade), and kept in the wire tuple for the next socket
+            self.assertTrue(km._feed_wire[3].materialized(), "the serve made the body")
+            body = km._feed_wire[3].text()
             self.assertNotIn('"now"', body)
             self.assertEqual(km._feed_ms(body, 7), '{"now": 7, ' + body[1:])
             self.assertEqual(json.loads(km._feed_ms(body, 7))["now"], 7)
@@ -688,12 +706,14 @@ class ConnectTimeFrame(unittest.TestCase):
         try:
             old = _feed(build_id=1); new = _feed(build_id=2, asks=[_card(0, text="newest")])
             ms, sig, parts = _wire(old)
-            km._feed_wire = (old, old.get("ledgers"), old, km._feed_body(old), sig, parts)
+            km._feed_wire = (old, old.get("ledgers"), old, _lazy_body(old, parts), sig, parts)
             km._built_feed[:] = [None, new, 0.0, 0.0]
             c, sent = _client()
             self.assertTrue(km._send_feed_now(c))
             self.assertEqual(json.loads(sent[-1])["buildId"], 2)
             self.assertIs(km._feed_wire[0], new, "…and cached for the next socket")
+            self.assertEqual(km._feed_wire[4], km._feed_sig(km._feed_wire[5]), "with P5's tuple signature")
+            self.assertTrue(km._feed_wire[3].materialized(), "its body made by this serve, once")
         finally:
             _restore(saved)
 
@@ -792,6 +812,7 @@ class OutlineDeltaStream(unittest.TestCase):
             except (socket.timeout, TimeoutError):
                 self.fail("no delta carrying the renamed card within 5 s; frames seen: %r"
                           % [(x.get("type"), x.get("buildId")) for x in frames])
+            frames = [x for x in frames if x.get("type") != "caps"]   # the ready handler's caps frame is not a feed frame (test_tag_edit_ack.py pins it)
             self.assertEqual([d["type"] for d in frames], ["feedDelta"] * len(frames), "never another full frame")
             self.assertEqual(d["buildId"], f2["buildId"], "the build the pusher ran (the kernel mints its id at build start)")
             self.assertEqual([a["itemId"] for a in d["asks"]], ["%s:g3" % SID], "the one card that changed, by itemId")
@@ -1073,6 +1094,103 @@ class StripTrgbIsExact(unittest.TestCase):
         f = _feed(n=3); f["asks"][1]["trgb"] = [0, 0, 0]; f["asks"][1]["tree"][2]["trgb"] = [0, 0, 0]
         self.assertEqual(km._dedup_sig(f, json.dumps(f)), sig0)
         self.assertEqual(km._feed_parts(f)[0], cards0)
+
+
+class TupleSignatureDedupsTheFeed(unittest.TestCase):
+    """P5 (2026-09-06): the pusher dedups the feed on _feed_sig — a tuple of the per-entry strings _feed_parts
+    already made — not on a second sort_keys dump of the tint-stripped frame (_dedup_sig stays as the fallback
+    for a caller that passes no sig; test_payload_dedup_invariant.py drives that path). Equal tuples mean equal
+    bytes outside now/buildId/trgb, so a suppressed change is impossible; the one behaviour change is towards
+    more sends (an equal-content key reorder re-sends once), never a stale client."""
+
+    def test_the_tuple_ignores_the_clock_the_build_id_and_the_tint_and_nothing_else(self):
+        a = _feed(); b = _feed(now=NOW + 3600, build_id=2)
+        self.assertNotEqual(a["asks"][9]["trgb"], b["asks"][9]["trgb"], "the fixture steps the tint")
+        self.assertEqual(km._feed_sig(km._feed_parts(a)), km._feed_sig(km._feed_parts(b)))
+        c = _feed(build_id=3); c["asks"][9]["tree"][0]["text"] = "a real change"
+        self.assertNotEqual(km._feed_sig(km._feed_parts(a)), km._feed_sig(km._feed_parts(c)))
+        sig0 = km._feed_sig(km._feed_parts(_feed(n=3)))
+        for k in _card(1):                                           # every top-level card field but the tint
+            if k == "trgb":
+                continue
+            f = _feed(n=3); f["asks"][1][k] = [] if k == "tree" else "changed"
+            self.assertNotEqual(km._feed_sig(km._feed_parts(f)), sig0, "card field %r" % k)
+        for k in _card(1)["tree"][0]:                                # every tree-node field but the tint
+            if k == "trgb":
+                continue
+            f = _feed(n=3); f["asks"][1]["tree"][2][k] = [{"id": "x"}] if k == "children" else "changed"
+            self.assertNotEqual(km._feed_sig(km._feed_parts(f)), sig0, "node field %r" % k)
+        for k in _feed(n=3):                                         # every top-level frame field but the clock
+            if k in ("type", "asks", "ledgers") or k in km._DEDUP_VOLATILE:
+                continue
+            f = _feed(n=3); f[k] = "changed"
+            self.assertNotEqual(km._feed_sig(km._feed_parts(f)), sig0, "frame field %r" % k)
+        f = _feed(n=3); f["ledgers"][0]["status"] = {"state": "waiting"}
+        self.assertNotEqual(km._feed_sig(km._feed_parts(f)), sig0, "a ledger's status")
+        f = _feed(n=3); f["asks"][1]["trgb"] = [0, 0, 0]; f["asks"][1]["tree"][2]["trgb"] = [0, 0, 0]
+        self.assertEqual(km._feed_sig(km._feed_parts(f)), sig0, "the tint alone, at the top or in a node, moves nothing")
+        f = _feed(n=3, ledgers=False)
+        self.assertNotEqual(km._feed_sig(km._feed_parts(f)), sig0, "a build without ledgers differs from one with")
+        self.assertIsNone(km._feed_sig(km._feed_parts(f))[2])
+
+    def test_every_producer_mints_the_tuple_and_the_send_paths_dedup_on_it(self):
+        c, sent = _client(caps=())                                   # the legacy whole-frame path (_send_client)
+        _send(c, _feed())
+        self.assertEqual(c["sent"][("feed",)][0], km._feed_sig(km._feed_parts(_feed())), "the slot holds P5's tuple")
+        _send(c, _feed(now=NOW + 3600, build_id=2))                  # a clock and tint step: nothing
+        self.assertEqual(len(sent), 1)
+        asks = [_card(i) for i in range(300)]; asks[5] = _card(5, text="changed")
+        _send(c, _feed(asks=asks, build_id=3))
+        self.assertEqual(len(sent), 2, "a text change moves the tuple and the frame goes")
+        # the cached serve (_feed_wire_now) is the other producer: the same tuple, from the same parts
+        saved = (km._feed_wire, list(km._built_feed))
+        try:
+            km._feed_wire = None; km._built_feed[:] = [None, _feed(), 0.0, 0.0]
+            w = km._feed_wire_now()
+            self.assertEqual(w[4], km._feed_sig(w[5]))
+            self.assertEqual(w[4], km._feed_sig(km._feed_parts(_feed())))
+            self.assertFalse(w[3].materialized(), "the body waits for a serve")
+        finally:
+            _restore(saved)
+        # the pusher's own fill is the third; tests/test_wire_once_per_build.py drives it through _push
+        push = KSRC[KSRC.index("def _push(targets"):]
+        push = push[:push.index("\ndef ")]
+        self.assertIn("feed_sig = _feed_sig(feed_parts)", push)
+        self.assertIn("bars_sig = _bars_sig(bars_parts)", push)
+        self.assertNotIn("_dedup_sig(feed", push, "no whole re-dump of the feed for its signature")
+
+    def test_a_card_with_reordered_nested_keys_re_sends_once_then_dedups(self):
+        # the sort_keys form was key-order-insensitive at every level; the tuple compares the strings a client
+        # receives, so an equal-content reorder is one spurious full frame (never a stale client), then deduped
+        c, sent = _client(caps=())
+        f1 = _feed(n=3)
+        _send(c, f1)
+        f2 = _feed(n=3, build_id=2)
+        f2["asks"][1] = dict(reversed(list(f2["asks"][1].items())))
+        self.assertEqual(km._dedup_sig(f1, json.dumps(f1)), km._dedup_sig(f2, json.dumps(f2)), "the old sig deduped this")
+        _send(c, f2)
+        self.assertEqual(len(sent), 2, "the tuple re-sends the reordered card once")
+        _send(c, _feed(n=3, build_id=3, asks=[dict(a) for a in f2["asks"]]))
+        self.assertEqual(len(sent), 2, "…and dedups the same order after")
+
+    def test_item_ids_are_unique_by_construction_and_a_duplicate_is_said_once(self):
+        # the tuple reads the cards through the itemId dict (as the delta path does), so a duplicate would
+        # collapse. Every itemId the builder mints is distinct by construction: goal cards carry the node id
+        # (`<uuid>:g<seq>`, minted with a collision loop in judge.py), every other kind its own prefix.
+        for mint in ('"itemId": "provisional:" + fsid', '"itemId": "awaiting:" + fsid', '"itemId": "blocked:" + fsid',
+                     '"itemId": "usertodo:" + fsid', '"itemId": nid,', 'item_id = "parked:" + ', 'item_id = "quarantine:" + '):
+            self.assertIn(mint, KSRC, mint)
+        f = _feed(n=4)
+        self.assertEqual(len({a["itemId"] for a in f["asks"]}), 4)
+        # …and a build that breaks it is reported once, not silently folded (the parts hold one card per id)
+        f["asks"][3] = _card(1, text="a second card claiming g1")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            parts = km._feed_parts(f)
+            km._feed_parts(_feed(n=4, asks=[dict(a) for a in f["asks"]]))     # the same duplicate in a later build
+        self.assertEqual(len(parts[0]), 3, "one card per id")
+        self.assertEqual(err.getvalue().count("duplicate itemId"), 1, "said once per id")
+        self.assertIn("%s:g1" % SID, err.getvalue())
 
 
 if __name__ == "__main__":

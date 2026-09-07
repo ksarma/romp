@@ -20,10 +20,12 @@ import { delegate } from "./actions";
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { hostNameNodes } from "./host-prefix";
-import { liveNow, stampAge, refreshAges } from "./feed-age";
+import { liveNow, liveRefresher, stampAge, refreshAges } from "./feed-age";
 import { ageColorReadable } from "./age-color";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
+import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
+import { listenForFrames } from "./frame-listener";
 import { linkifyPathTokens } from "./path-links";
 
 type Color = { bg: string; fg: string } | null;
@@ -33,6 +35,12 @@ interface Waiting { sid: string; name: string; color: Color; todo: UserTodo }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
+// A `#123` in an ask links to the PR page of the repository its session works in (pr-links.ts; the user
+// 2026-09-06). The repo per session rides the feed frame's `sessions` rows (owner/repo, or null). The
+// link opens the PR and nothing else: capture-phase on the document, so the row's delegated toggle
+// under it never fires. Web → the viewer's browser; VS Code → the host's openExternal (view-routing.ts).
+let repoBySid = new Map<string, string | null>();
+installPrLinkOpener(document, vscodeApi ? (m) => vscodeApi.postMessage(m) : undefined);
 
 // Whether a frame CARRYING userTodoRows has arrived (the Outline pane's `loaded` idiom): until then the list
 // stays empty and the romp loader holds — a feed push can reach us from a kernel that never built the
@@ -243,6 +251,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   // the one-line ask; detail one click away, and the row SAYS there is more (user-todo-hint.ts)
   const txt = el("span", "ut-text");
   txt.textContent = w.todo.text;
+  linkifyPrRefs(txt, repoBySid.get(w.sid) || null);
   const key = foldKey(w.sid, w.todo.id);
   const hint = utDetailHint(w.todo.detail, openDetail.has(key));
   if (hint) {
@@ -275,6 +284,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
     const d = el("div", "ut-detail" + (openDetail.has(key) ? " open" : ""));
     d.textContent = w.todo.detail || "";
     linkDetailPaths(d, w.sid);   // a path in the note opens in the Files pane (the delegate's openpath)
+    linkifyPrRefs(d, repoBySid.get(w.sid) || null);   // then `#123` → its PR page; each linker skips the other's anchors
     item.appendChild(d);
   }
   return item;
@@ -355,6 +365,9 @@ function applyFrame(m: any): void {
   localOn = typeof m.userTodosOn === "boolean" ? m.userTodosOn : null;
   // "loaded" means the kernel actually BUILT the rows (the key is present, even if []) — not merely
   // that some feed frame arrived. Until then the loader holds (render() bails on !loaded).
+  if (Array.isArray(m.sessions))
+    repoBySid = new Map(m.sessions.filter((s: any) => s && typeof s.sid === "string")
+      .map((s: any) => [s.sid as string, typeof s.githubRepo === "string" ? s.githubRepo : null] as const));
   if (!Array.isArray(m.userTodoRows)) return;
   loaded = true;
   rows = (m.userTodoRows as any[])
@@ -371,7 +384,8 @@ function applyFrame(m: any): void {
 
 // every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
 // minute, read by `romp perf client`); the handler itself is unchanged
-window.addEventListener("message", perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
+// …and handed the merged frames by direct call from federation.js when this page has it (frame-listener.ts)
+listenForFrames(perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   if (m.type === "feed") { applyFrame(m); return; }   // this pane rides the FEED payload (reads userTodoRows / userTodosOn)
@@ -472,10 +486,17 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
 })();
 
 // keep every "Xm ago" honest between frames: a quiet board sends a delta client nothing, so the ages
-// move on the local clock's deltas (feed-age.ts), on the feed's own cadence
-setInterval(() => {
+// move on the local clock's deltas (feed-age.ts), on the feed's own cadence. paintAge writes only the
+// labels whose text changed; a pane nobody can see (a hidden tab, or the zero viewport of an iframe the
+// shell has display:none'd — this pane is hidden by default on desktop) skips the pass and catches up
+// once when shown (liveRefresher, the Outline pane's pattern).
+const paneHidden = () => document.hidden || window.innerWidth === 0 || window.innerHeight === 0;
+const live = liveRefresher({ hidden: paneHidden, pass: () => {
   refreshAges(document.querySelectorAll<HTMLElement>("[data-age-t]"), nowSec(), relAge, ageColorReadable);
-}, 15000);
+} });
+setInterval(live.tick, 15000);
+document.addEventListener("visibilitychange", live.catchUp);
+window.addEventListener("resize", live.catchUp);
 
 render();
 vscodeApi?.postMessage({ type: "ready" });   // the kernel serves the cached feed frame at once (the ready handshake)

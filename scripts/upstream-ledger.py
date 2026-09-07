@@ -1,0 +1,947 @@
+#!/usr/bin/env python3
+"""The fork's upstream ledger: one file per candidate under `upstream/`, rendered on demand.
+
+UPSTREAM.md used to hold one Markdown table and every branch that landed something upstream-worthy
+appended a row, so any two such PRs conflicted on the ledger, and the merges that resolved the
+conflicts duplicated rows (2026-09-06). Now each candidate is its own file,
+`upstream/<YYYY-MM-DD>-<slug>.md`, UPSTREAM.md holds prose only, and this script renders the table
+when someone wants to read it. Nothing shared is edited per change, so unrelated PRs cannot conflict
+on the ledger; two writers touching the SAME entry conflict on that one file, which is a real
+disagreement and should.
+
+Entry format: a strict subset of YAML that this file parses without PyYAML (not in the test venv).
+`key: value`, one pair per line, between `---` lines, no nesting, no multi-line values; the body is
+Markdown and its first paragraph is the rendered Notes cell.
+
+    ---
+    title: Kernel performance counters and `romp perf`
+    status: candidate
+    where: fork PR #199 (`romp-perf`): `kernel/kernel.py` (`_PerfStats`), `bin/romp` (`perf`)
+    added: 2026-09-06
+    pr: 199
+    tier: feature
+    offered:
+    closed:
+    ---
+    Why upstream wants it, in one paragraph.
+
+    Anything longer goes here. The upstream session appends a dated line whenever it acts on the entry.
+
+Commands (stdlib only):
+    new <slug> --title T --where W [--pr N] [--tier t] [--status s] [--notes text]
+    check                        every rule the guard test runs; exit 1 with the problems
+    render [--active] [--link-base URL]
+    list [--status a,b]          one JSON object per line
+    set <slug> <key> <value>     rewrites one header line, leaves the body alone
+    import <UPSTREAM.md> <dir>   the migration: one file per table row, re-runnable
+    import --row '<row>' [<dir>] the straggler fix for a branch that still appended a row; refuses to
+                                 touch an existing entry unless --replace (the row's title, where and
+                                 first paragraph; the entry's non-blank header values are kept) or
+                                 --force (the row wins wherever it says something)
+"""
+import argparse
+import json
+import re
+import signal
+import subprocess
+import sys
+from collections import Counter
+from datetime import date
+from pathlib import Path
+
+REQUIRED = ("title", "status", "where", "added")
+OPTIONAL = ("pr", "tier", "offered", "closed", "supersedes")
+KEYS = REQUIRED + OPTIONAL
+TIERS = ("fix", "tests-only", "feature", "major-feature")
+
+# The status vocabulary. `approved` is the maintainer's word: offer it. The four terminal statuses
+# collapse in the rendering; divergence and keep-private get a short table of their own.
+OPEN = ("approved", "candidate", "waiting", "follow-up", "offered")
+SIDE = ("divergence", "keep-private")
+TERMINAL = ("merged", "landed", "resolved-upstream", "declined")
+STATUSES = OPEN + SIDE + TERMINAL
+
+DIR = "upstream"
+FRONT = "UPSTREAM.md"
+TITLE_PREFIX = 60     # two versions of one entry agree on how the title starts
+NOTES_CUT = 200       # the rendered title, Where and Notes cells; the link carries the reader to the full text
+FILENAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-([a-z0-9-]{3,60})\.md$")
+SLUG = re.compile(r"^[a-z0-9-]{3,60}$")
+ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+HEADER_LINE = re.compile(r"^([a-z]+):(?: (.*))?$")
+CONFLICT = re.compile(r"^(?:<{7}|>{7})(?: |$)|^={7}$")
+CODE_SPAN = re.compile(r"`[^`]*`")
+STATUS_DETAIL = "Status detail (migrated from the table): "
+ROW_HINT = "a table row; entries live in upstream/ now: run scripts/upstream-ledger.py import --row"
+TABLE_HEADER = "| What | Where it lives here | Status | Notes |"
+TABLE_SEPARATOR = "|---|---|---|---|"
+
+
+# ---------------------------------------------------------------- parsing and checking
+
+class Entry:
+    """One ledger file: its header pairs (in file order), its body, and where it came from."""
+
+    def __init__(self, name, header, body, path=None):
+        self.name = name          # the filename, e.g. 2026-09-06-romp-perf.md
+        self.header = header      # dict, insertion-ordered
+        self.body = body          # text after the closing ---, verbatim
+        self.path = path
+
+    def get(self, key, default=""):
+        return self.header.get(key, default) or default
+
+    @property
+    def slug(self):
+        m = FILENAME.match(self.name)
+        return m.group(2) if m else self.name
+
+    @property
+    def notes(self):
+        """The body's first paragraph, joined onto one line."""
+        return first_paragraph(self.body)
+
+    @property
+    def status_detail(self):
+        for line in self.body.split("\n"):
+            if line.startswith(STATUS_DETAIL):
+                return line[len(STATUS_DETAIL):]
+        return ""
+
+
+def calendar_date(s):
+    """True when `s` is YYYY-MM-DD and names a real day (the shape alone let 2026-02-30 through)."""
+    if not ISO_DATE.match(s):
+        return False
+    try:
+        date.fromisoformat(s)
+    except ValueError:
+        return False
+    return True
+
+
+def first_paragraph(body):
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    out = []
+    while i < len(lines) and lines[i].strip():
+        out.append(lines[i].strip())
+        i += 1
+    para = " ".join(out)
+    return "" if para.startswith(STATUS_DETAIL) else para
+
+
+def split_entry(text):
+    """(header_lines, body, problems) for an entry's text. Never raises; problems are strings."""
+    lines = text.split("\n")
+    if not lines or lines[0].rstrip() != "---":
+        return None, None, ["line 1: expected the opening `---`"]
+    end = next((i for i, l in enumerate(lines[1:], 1) if l.rstrip() == "---"), None)
+    if end is None:
+        return None, None, ["no closing `---` after the header"]
+    return lines[1:end], "\n".join(lines[end + 1:]), []
+
+
+def header_pairs(name, header_lines):
+    """(header dict of the known keys in file order, problems) from the lines between the `---`s."""
+    header, problems = {}, []
+    for i, line in enumerate(header_lines, 2):
+        hm = HEADER_LINE.match(line)
+        if not hm:
+            problems.append(f"{name}:{i}: header line is not `key: value`: {line[:60]!r}")
+            continue
+        key, value = hm.group(1), (hm.group(2) or "").strip()
+        if key not in KEYS:
+            problems.append(f"{name}: unknown key `{key}` (known: {', '.join(KEYS)})")
+            continue
+        if key in header:
+            problems.append(f"{name}: key `{key}` appears twice")
+            continue
+        header[key] = value
+    return header, problems
+
+
+def parse_entry(name, text, path=None):
+    """(Entry or None, problems). Problems name the file and the key or line."""
+    problems = []
+    for n, line in enumerate(text.split("\n"), 1):
+        if CONFLICT.match(line):
+            problems.append(f"{name}:{n}: git conflict marker: {line[:40]!r}")
+    m = FILENAME.match(name)
+    if not m:
+        problems.append(f"{name}: filename must match YYYY-MM-DD-<slug>.md with a slug of 3 to 60 [a-z0-9-]")
+    header_lines, body, split_problems = split_entry(text)
+    if split_problems:
+        return None, problems + [f"{name}: {p}" for p in split_problems]
+    header, header_problems = header_pairs(name, header_lines)
+    problems += header_problems
+    for key in REQUIRED:
+        if key not in header:
+            problems.append(f"{name}: missing required key `{key}`")
+        elif not header[key]:
+            problems.append(f"{name}: required key `{key}` is blank")
+    if header.get("status") and header["status"] not in STATUSES:
+        problems.append(f"{name}: status {header['status']!r} is not one of {', '.join(STATUSES)}")
+    for key in ("added", "closed"):
+        if header.get(key) and not ISO_DATE.match(header[key]):
+            problems.append(f"{name}: {key} must be an ISO date (YYYY-MM-DD), got {header[key]!r}")
+        elif header.get(key) and not calendar_date(header[key]):
+            problems.append(f"{name}: {key} {header[key]} is not a calendar date")
+    if m and not calendar_date(m.group(1)):
+        problems.append(f"{name}: the filename date {m.group(1)} is not a calendar date")
+    if header.get("pr") and not header["pr"].isdigit():
+        problems.append(f"{name}: pr must be blank or an integer, got {header['pr']!r}")
+    if header.get("tier") and header["tier"] not in TIERS:
+        problems.append(f"{name}: tier {header['tier']!r} is not one of {', '.join(TIERS)}")
+    if m and header.get("added") and ISO_DATE.match(header["added"]) and header["added"] != m.group(1):
+        problems.append(f"{name}: added {header['added']} does not match the filename date {m.group(1)}")
+    if problems:
+        return None, problems
+    return Entry(name, header, body, path), []
+
+
+def load_entries(dir_path):
+    """(entries, problems) for every file under `dir_path`, sorted by filename."""
+    dir_path = Path(dir_path)
+    entries, problems = [], []
+    if not dir_path.is_dir():
+        return entries, [f"{dir_path}: not a directory"]
+    for p in sorted(dir_path.iterdir()):
+        if p.name.startswith("."):
+            continue
+        if p.is_dir() or not p.name.endswith(".md"):
+            problems.append(f"{p.name}: only YYYY-MM-DD-<slug>.md entry files belong under {dir_path.name}/")
+            continue
+        e, ps = parse_entry(p.name, p.read_text(encoding="utf-8"), p)
+        problems.extend(ps)
+        if e:
+            entries.append(e)
+    return entries, problems
+
+
+def read_entry_loose(path):
+    """The Entry a file holds whether or not it parses: the known `key: value` header lines (the first
+    of a repeated key) and the body verbatim; None when the file has no `---` header block or no
+    title. The refusal, rewrite and duplicate keys read entries this way, because an entry that
+    fails `check` is still the entry: read strictly, one with a blank status (the outcome of a
+    no-keyword straggler row) vanished, so a re-run wrote `<slug>-2.md` beside it with exit 0 and
+    `new` wrote a second file under the same title (2026-09-06)."""
+    path = Path(path)
+    header_lines, body, problems = split_entry(path.read_text(encoding="utf-8"))
+    if problems:
+        return None
+    header, _ = header_pairs(path.name, header_lines)
+    if not header.get("title"):
+        return None
+    return Entry(path.name, header, body, path)
+
+
+def load_entries_loose(dir_path):
+    """Every file under `dir_path` that `read_entry_loose` reads as an entry, sorted by filename."""
+    dir_path = Path(dir_path)
+    if not dir_path.is_dir():
+        return []
+    out = []
+    for p in sorted(dir_path.iterdir()):
+        if p.name.startswith(".") or p.is_dir() or not p.name.endswith(".md"):
+            continue
+        e = read_entry_loose(p)
+        if e is not None:
+            out.append(e)
+    return out
+
+
+def duplicate_problems(entries):
+    """No two entries share the first 60 characters of `title`: one candidate written twice, or
+    imported twice, or one entry in two versions after a merge."""
+    seen = {}
+    out = []
+    for e in entries:
+        head = e.get("title")[:TITLE_PREFIX]
+        if head in seen:
+            out.append(f"{e.name}: title shares its first {TITLE_PREFIX} characters with {seen[head]} (one entry in two versions?)")
+        else:
+            seen[head] = e.name
+    return out
+
+
+def duplicate_of(dir_path, entry):
+    """The entry under dir_path, other than `entry`'s own file, whose title shares its first 60
+    characters, or None. `new` and `set title` refuse on a hit, so the moment a candidate is written
+    twice is the moment it is caught, not the later `check`. Entries that do not parse count too."""
+    head = entry.get("title")[:TITLE_PREFIX]
+    return next((e for e in load_entries_loose(dir_path) if e.name != entry.name and e.get("title")[:TITLE_PREFIX] == head), None)
+
+
+def is_row(line):
+    s = line.rstrip()
+    return s.startswith("|") and s.endswith("|") and len(s) >= 2
+
+
+def documented_statuses(text):
+    """The bold tokens of UPSTREAM.md's status paragraph (the one that starts `Status meanings:`)."""
+    paras = re.split(r"\n\s*\n", text)
+    for para in paras:
+        if para.lstrip().startswith("Status meanings:"):
+            return re.findall(r"\*\*([a-z][a-z-]*)\*\*", para)
+    return []
+
+
+def front_problems(text, name=FRONT):
+    """UPSTREAM.md holds prose only: no table row, no conflict marker, the offering tail, and the
+    status vocabulary exactly as the parser accepts it."""
+    out = []
+    lines = text.split("\n")
+    for n, line in enumerate(lines, 1):
+        if CONFLICT.match(line):
+            out.append(f"{name}:{n}: git conflict marker: {line[:40]!r}")
+        elif is_row(line):
+            out.append(f"{name}:{n}: {ROW_HINT} {json.dumps(line.strip()[:60] + ('…' if len(line.strip()) > 60 else ''), ensure_ascii=False)}")
+    if "When offering:" not in text:
+        out.append(f"{name}: the `When offering:` paragraph is gone; the offering guidance lives here")
+    documented = documented_statuses(text)
+    if not documented:
+        out.append(f"{name}: no `Status meanings:` paragraph with bold status words")
+    else:
+        missing = [s for s in STATUSES if s not in documented]
+        extra = [s for s in documented if s not in STATUSES]
+        if missing:
+            out.append(f"{name}: statuses the parser accepts but the prose does not document: {', '.join(missing)}")
+        if extra:
+            out.append(f"{name}: statuses the prose documents but the parser refuses: {', '.join(extra)}")
+    return out
+
+
+def check(root):
+    """Every problem in `root`'s ledger: the entries, their titles, and UPSTREAM.md."""
+    root = Path(root)
+    entries, problems = load_entries(root / DIR)
+    problems += duplicate_problems(load_entries_loose(root / DIR))   # a broken entry's twin is reported beside it, not after its fix
+    front = root / FRONT
+    if front.exists():
+        problems += front_problems(front.read_text(encoding="utf-8"))
+    else:
+        problems.append(f"{FRONT}: missing")
+    return entries, problems
+
+
+# ---------------------------------------------------------------- rendering
+
+def escape_cell(text):
+    """One table cell: no newlines; `&` and `<` outside code spans escaped (GitHub reads a title's
+    `<pre-compact leaf>` as an HTML tag and drops it); pipes escaped everywhere (GitHub splits on a
+    pipe even inside a code span)."""
+    text = text.replace("\n", " ")
+    out, pos = [], 0
+    for m in CODE_SPAN.finditer(text):
+        out.append(text[pos:m.start()].replace("&", "&amp;").replace("<", "&lt;"))
+        out.append(m.group())
+        pos = m.end()
+    out.append(text[pos:].replace("&", "&amp;").replace("<", "&lt;"))
+    return re.sub(r"(?<!\\)\|", r"\\|", "".join(out))
+
+
+def cut(text, limit=NOTES_CUT):
+    """The first `limit` characters, ending on a word boundary and never inside a code span (an
+    unbalanced backtick would let the next cell's backtick pair with it and swallow a separator)."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    sp = head.rfind(" ")
+    if sp > limit // 2:
+        head = head[:sp]
+    if head.count("`") % 2:
+        head = head[:head.rfind("`")]
+    return head.rstrip() + "…"
+
+
+def _sort_key(e):
+    return (e.get("added"), e.name)
+
+
+def status_cell(e):
+    status = e.get("status")
+    bits = [status]
+    if status == "offered":
+        if e.get("offered"):
+            bits = [f"offered — {e.get('offered')}"]
+    elif status in TERMINAL:
+        ref = e.get("offered")
+        when = e.get("closed")
+        if ref and when:
+            bits = [f"{status} — {ref} ({when})"]
+        elif ref:
+            bits = [f"{status} — {ref}"]
+        elif when:
+            bits = [f"{status} ({when})"]
+    if e.get("tier") and status in OPEN:
+        bits.append(e.get("tier"))
+    return ", ".join(bits)
+
+
+def title_cell(e, link_base=""):
+    title = cut(e.get("title"))
+    if link_base and not link_base.endswith("/"):   # `.../blob/main` and `.../blob/main/` both mean the tree
+        link_base += "/"
+    target = f"{link_base}{DIR}/{e.name}"
+    if "[" in title or "]" in title:   # brackets inside link text break the link; link beside the title instead
+        return f"{escape_cell(title)} ([entry]({target}))"
+    return f"[{escape_cell(title)}]({target})"
+
+
+def table(entries, link_base=""):
+    rows = [TABLE_HEADER, TABLE_SEPARATOR]
+    for e in entries:
+        rows.append("| " + " | ".join([
+            title_cell(e, link_base),
+            escape_cell(cut(e.get("where"))),
+            escape_cell(status_cell(e)),
+            escape_cell(cut(e.notes)),
+        ]) + " |")
+    return "\n".join(rows)
+
+
+def render_sections(entries, link_base=""):
+    """[(heading, entries in rendered order)] for the three tables."""
+    by = {s: sorted((e for e in entries if e.get("status") == s), key=_sort_key, reverse=True) for s in STATUSES}
+    open_rows = [e for s in OPEN for e in by[s]]
+    side_rows = [e for s in SIDE for e in by[s]]
+    closed_rows = [e for s in TERMINAL for e in by[s]]
+    return [
+        (f"Open ({len(open_rows)}): " + ", ".join(OPEN), open_rows),
+        (f"Divergence and keep-private ({len(side_rows)})", side_rows),
+        (f"Closed ({len(closed_rows)}): " + ", ".join(TERMINAL), closed_rows),
+    ]
+
+
+def render(entries, active=False, link_base=""):
+    sections = render_sections(entries, link_base)
+    out = ["# Upstream ledger", ""]
+    out.append(f"{len(entries)} entries, rendered from `{DIR}/*.md` by `scripts/upstream-ledger.py render`. "
+               "Edit an entry file (or run `set`), never this table: it is generated on every push to main.")
+    out.append("")
+    for i, (heading, rows) in enumerate(sections):
+        if active and i > 0:
+            break
+        body = table(rows, link_base) if rows else "(none)"
+        if i == 2:
+            out += [f"<details><summary>{heading}</summary>", "", body, "", "</details>", ""]
+        else:
+            out += [f"## {heading}", "", body, ""]
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------- writing
+
+def format_entry(header, body):
+    lines = ["---"]
+    for key in KEYS:
+        if key in header and (header[key] or key != "supersedes"):
+            lines.append(f"{key}: {header[key]}".rstrip())
+    lines.append("---")
+    text = "\n".join(lines) + "\n"
+    if body:
+        text += body.rstrip("\n") + "\n"
+    return text
+
+
+def today():
+    return date.today().isoformat()
+
+
+def new_entry(dir_path, slug, title, where, status="candidate", pr="", tier="", notes="", added=None):
+    if not SLUG.match(slug):
+        raise SystemExit(f"slug {slug!r} must be 3 to 60 characters of [a-z0-9-]")
+    added = added or today()
+    path = Path(dir_path) / f"{added}-{slug}.md"
+    if path.exists():
+        raise SystemExit(f"{path} exists; pick another slug or edit that file")
+    header = {"title": title.strip(), "status": status, "where": where.strip(), "added": added,
+              "pr": str(pr) if pr else "", "tier": tier or "", "offered": "", "closed": ""}
+    entry, problems = parse_entry(path.name, format_entry(header, notes))
+    if problems:
+        raise SystemExit("\n".join(problems))
+    dup = duplicate_of(dir_path, entry)
+    if dup is not None:
+        raise SystemExit(f"{DIR}/{dup.name} already carries this title (the first {TITLE_PREFIX} characters agree); "
+                         f"edit that entry (`set {dup.slug} <key> <value>`) or give this one a distinct title")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(format_entry(header, notes), encoding="utf-8")
+    return path
+
+
+def resolve(dir_path, ref):
+    """An entry by slug, filename, or path. Refuses an ambiguous slug by naming the candidates."""
+    dir_path = Path(dir_path)
+    p = Path(ref)
+    if p.is_file():
+        return p
+    if (dir_path / ref).is_file():
+        return dir_path / ref
+    hits = [q for q in sorted(dir_path.glob("*.md")) if FILENAME.match(q.name) and FILENAME.match(q.name).group(2) == ref]
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        raise SystemExit(f"no entry {ref!r} under {dir_path}/")
+    raise SystemExit(f"{ref!r} names {len(hits)} entries; use the filename: " + ", ".join(h.name for h in hits))
+
+
+def set_key(path, key, value):
+    """Rewrite one header line (adding the key if the header lacks it); the body stays byte-identical."""
+    path = Path(path)
+    if key not in KEYS:
+        raise SystemExit(f"unknown key `{key}` (known: {', '.join(KEYS)})")
+    if key == "added":
+        raise SystemExit("`added` is the filename's date; rename the file instead")
+    text = path.read_text(encoding="utf-8")
+    header_lines, body, problems = split_entry(text)
+    if problems:
+        raise SystemExit(f"{path.name}: " + "; ".join(problems))
+    value = value.strip()
+    new_line = f"{key}: {value}".rstrip()
+    out, done = [], False
+    for line in header_lines:
+        hm = HEADER_LINE.match(line)
+        if hm and hm.group(1) == key and not done:
+            out.append(new_line)
+            done = True
+        else:
+            out.append(line)
+    if not done:
+        out.append(new_line)
+    new_text = "---\n" + "\n".join(out) + "\n---\n" + body
+    entry, problems = parse_entry(path.name, new_text)
+    if problems:
+        raise SystemExit("\n".join(problems))
+    if key == "title":
+        dup = duplicate_of(path.parent, entry)
+        if dup is not None:
+            raise SystemExit(f"{DIR}/{dup.name} already carries this title (the first {TITLE_PREFIX} characters agree); "
+                             "one entry in two versions? edit that one, or give this one a distinct title")
+    path.write_text(new_text, encoding="utf-8")
+    return path
+
+
+# ---------------------------------------------------------------- the table import
+
+_ESCAPED_PIPE = re.compile(r"\\\|")
+_CODE_SPAN = CODE_SPAN
+
+
+def row_cells(row):
+    """The four cells of an old-table row, verbatim, with escaped and code-span pipes ignored as
+    separators (the old checker's rule; three rows carry `\\|`, one of them outside a code span)."""
+    s = row.strip()
+    masked = _ESCAPED_PIPE.sub("__", s)
+    masked = _CODE_SPAN.sub(lambda m: "`" + "_" * (len(m.group()) - 2) + "`", masked)
+    idx = [i for i, c in enumerate(masked) if c == "|"]
+    return [s[a + 1:b].strip() for a, b in zip(idx, idx[1:])]
+
+
+def unescape_cell(cell):
+    """A cell's text as an entry holds it: `\\|` was the table's escape for a pipe and means nothing
+    in a file (inside a code span it would even display the backslash); `escape_cell` puts the
+    escape back at render time. Four migrated cells carried one (2026-09-06)."""
+    return _ESCAPED_PIPE.sub("|", cell)
+
+
+def entry_cells(row):
+    """The four cells of a row as they are written into an entry, or None when the row has not four."""
+    cells = row_cells(row)
+    return [unescape_cell(c) for c in cells] if len(cells) == 4 else None
+
+
+def table_rows(text):
+    """[(line_number, row_text)] of the old UPSTREAM.md table: every row under the separator."""
+    lines = text.split("\n")
+    try:
+        head = next(i for i, l in enumerate(lines) if l.rstrip() == TABLE_HEADER)
+    except StopIteration:
+        return []
+    rows = []
+    n = head + 2
+    while n < len(lines) and is_row(lines[n]):
+        rows.append((n + 1, lines[n]))
+        n += 1
+    return rows
+
+
+# Keyword forms of the vocabulary as they appear in the old Status cells. The plan's derivation
+# order (merged, landed, resolved upstream, declined, keep-private, divergence, offered, waiting,
+# follow-up, candidate; first match wins) is kept as PLAN_ORDER and printed beside the result when
+# it disagrees; the derivation itself takes the keyword that appears EARLIEST in the cell, because a
+# cell like `waiting: gated on X being offered first` leads with its status and the plan's order
+# would have read it as offered.
+KEYWORDS = [
+    ("merged", re.compile(r"\bmerged\b", re.I)),
+    ("landed", re.compile(r"\blanded\b", re.I)),
+    ("resolved-upstream", re.compile(r"\bresolved[ -]upstream\b", re.I)),
+    ("declined", re.compile(r"\bdeclined\b", re.I)),
+    ("keep-private", re.compile(r"\bkeep[ -]private\b", re.I)),
+    ("divergence", re.compile(r"\bdivergence\b", re.I)),
+    ("offered", re.compile(r"\boffered\b", re.I)),
+    ("waiting", re.compile(r"\bwaiting\b", re.I)),
+    ("follow-up", re.compile(r"\bfollow[ -]up\b", re.I)),
+    ("candidate", re.compile(r"\bcandidate\b", re.I)),
+]
+UPSTREAM_REF = re.compile(r"\b(?:their (?:PR )?#(\d+)|upstream PR #(\d+)|romp-on/romp#(\d+))")
+FORK_PR = re.compile(r"\bfork PR #(\d+)")
+TIER_WORD = re.compile(r"label `?(fix|tests-only|feature|major-feature)`?|\b(major-feature|tests-only)\b")
+ANY_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+
+
+def derive_status(cell):
+    """(status by earliest keyword, status by the plan's order); either may be None."""
+    hits = [(m.start(), status) for status, rx in KEYWORDS for m in [rx.search(cell)] if m]
+    earliest = min(hits)[1] if hits else None
+    plan_order = hits[0][1] if hits else None   # KEYWORDS is in the plan's order
+    return earliest, plan_order
+
+
+def slugify(title):
+    s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    if len(s) > 60:
+        s = s[:60]
+        if "-" in s:
+            s = s[:s.rfind("-")]
+    s = s.strip("-")
+    return s if len(s) >= 3 else "entry"
+
+
+def derive(what, where, status_cell, notes):
+    """The header an old row becomes, plus the derivation facts for the report."""
+    status, plan_status = derive_status(status_cell)
+    ref = UPSTREAM_REF.search(status_cell)
+    offered = f"their PR #{next(g for g in ref.groups() if g)}" if ref else ""
+    closed = ""
+    if status in TERMINAL:
+        d = ANY_DATE.search(status_cell)
+        closed = d.group(1) if d else ""
+    tier_m = TIER_WORD.search(status_cell)
+    tier = (tier_m.group(1) or tier_m.group(2)) if tier_m else ""
+    pr_m = FORK_PR.search(where)
+    pr = pr_m.group(1) if pr_m else ""
+    header = {"title": what, "status": status or "", "where": where, "added": "",
+              "pr": pr, "tier": tier, "offered": offered, "closed": closed}
+    body = (notes + "\n\n" if notes else "") + STATUS_DETAIL + status_cell + "\n"
+    return header, body, plan_status
+
+
+def added_date(root, row, fallback=None):
+    """(date, how): the author date of the first commit whose diff introduced the row's first 60
+    characters, with how="git"; or today's date and the reason when no commit did. `-m` diffs a
+    merge against each parent, so a row first written while resolving a merge is found: without it
+    three of the 113 migrated rows matched nothing and fell back to today() unreported (2026-09-06)."""
+    prefix = row.strip()[:60]
+    try:
+        out = subprocess.run(["git", "-C", str(root), "log", "--format=%as", "--reverse", "-m", "-S" + prefix, "--", FRONT],
+                             capture_output=True, text=True, check=False).stdout.split()
+    except OSError:
+        out = []
+    return (out[0], "git") if out else (fallback or today(), "today (no commit introduced this row)")
+
+
+def body_tail(body):
+    """What a person appended to an entry's body: everything after its first paragraph, minus the
+    Status detail line. The importer regenerates the first paragraph and that line from the row;
+    these lines (dated notes, rebase notes) have no row to come from."""
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    while i < len(lines) and lines[i].strip():
+        i += 1
+    return "\n".join(l for l in lines[i:] if not l.startswith(STATUS_DETAIL)).strip("\n")
+
+
+def existing_entry(dir_path, row):
+    """The entry under dir_path whose title shares the row's title prefix, parsed or not, or None."""
+    cells = entry_cells(row)
+    if cells is None:
+        return None
+    head = cells[0][:TITLE_PREFIX]
+    return next((e for e in load_entries_loose(dir_path) if e.get("title")[:TITLE_PREFIX] == head), None)
+
+
+def show(value):
+    """A header value in a derivation line: `(blank)` for none, cut at 60 characters."""
+    return cut(value, 60) if value else "(blank)"
+
+
+def import_rows(rows, dir_path, root, report, mode="force"):
+    """Write one entry per row into dir_path; returns the row numbers that need attention.
+
+    Re-runnable: a row whose title prefix already has an entry rewrites that file in place, keeping
+    its filename (so a rename sticks), `added`, and every header value the cells derive nothing for
+    (so a hand-set status, tier, offered, closed, pr or supersedes sticks). The match reads the files
+    loosely: an entry that fails `check` (a blank status after a no-keyword row) is still the entry,
+    and a strict read once let a re-run write `<slug>-2.md` beside it (2026-09-06). `mode="force"`
+    is the migration's rule: the row wins wherever it says something and the body is rebuilt from
+    the cells. `mode="replace"` is `import --row --replace`, for a row that is older than the entry:
+    the row supplies the title, where and first paragraph and fills blank header values, every
+    header value the file already carries stands, and the lines a person appended to the body come
+    back after the rebuilt first paragraph and Status detail line. Either way the derivation line
+    says the entry was rewritten, names each value kept over the row, and names each value that
+    changed (old -> new), so a rewrite that resets a hand-set value never reads like a no-op."""
+    dir_path = Path(dir_path)
+    dir_path.mkdir(parents=True, exist_ok=True)
+    by_prefix = {e.get("title")[:TITLE_PREFIX]: e for e in load_entries_loose(dir_path)}
+    taken = {p.name for p in dir_path.glob("*.md")}
+    unmatched, disagree, guessed, written = [], [], [], []
+    for i, (line_no, row) in enumerate(rows, 1):
+        cells = entry_cells(row)
+        if cells is None:
+            report.append(f"{i:04d}: line {line_no}: {len(row_cells(row))} cells, expected 4; skipped: {row[:60]!r}")
+            continue
+        what, where, status_cell, notes = cells
+        header, body, plan_status = derive(what, where, status_cell, notes)
+        prev = by_prefix.get(what[:TITLE_PREFIX])
+        kept = ""
+        tail = []
+        if prev is not None:
+            path = prev.path
+            fm = FILENAME.match(prev.name)   # the file stays where it is, so its date is the filename's
+            header["added"] = (fm.group(1) if fm else prev.get("added")) or added_date(root, row)[0]
+            derived = dict(header)
+            if not header["status"] and prev.get("status"):
+                header["status"] = kept = prev.get("status")
+            for key in OPTIONAL:
+                if not header.get(key) and prev.get(key):
+                    header[key] = prev.get(key)
+            tail.append("rewrote the existing entry")
+            appended = body_tail(prev.body)
+            if mode == "replace":
+                for key in ("status",) + OPTIONAL:
+                    if prev.get(key) and derived.get(key) and derived[key] != prev.get(key):
+                        header[key] = prev.get(key)
+                        tail.append(f"kept {key} {show(prev.get(key))} (row: {show(derived[key])})")
+                if appended:
+                    body += "\n" + appended + "\n"
+                    tail.append(f"kept {appended.count(chr(10)) + 1} appended body lines")
+            elif appended:
+                tail.append(f"dropped {appended.count(chr(10)) + 1} appended body lines")
+            for key in KEYS:
+                if prev.get(key) != header.get(key, ""):
+                    tail.append(f"changed {key} {show(prev.get(key))} -> {show(header.get(key, ''))}")
+        else:
+            header["added"], how = added_date(root, row)
+            if how != "git":
+                tail.append(f"added = {how}")
+                guessed.append(i)
+            slug = slugify(what)
+            name = f"{header['added']}-{slug}.md"
+            k = 2
+            while name in taken:
+                name = f"{header['added']}-{slug[:57]}-{k}.md"
+                k += 1
+            taken.add(name)
+            path = dir_path / name
+        path.write_text(format_entry(header, body), encoding="utf-8")
+        written.append(path)
+        shown = status_cell[:60].replace('"', "'")
+        if not header["status"]:
+            tail.append("SET BY HAND")
+            unmatched.append(i)
+        elif kept:
+            tail.append(f"no keyword; kept the file's hand-set {kept}")
+            unmatched.append(i)
+        if plan_status and header["status"] and plan_status != header["status"]:
+            tail.append(f"plan order: {plan_status}")
+            disagree.append(i)
+        facts = " ".join(f"{k}={header[k]}" for k in ("offered", "closed", "tier", "pr") if header[k])
+        report.append(f'{i:04d}: "{shown}" -> {header["status"] or "(none)"}'
+                      + (f" [{facts}]" if facts else "") + (f" ({'; '.join(tail)})" if tail else "")
+                      + f" {DIR}/{path.name}")
+    return written, unmatched, disagree, guessed
+
+
+def round_trip(rows, dir_path, only=None):
+    """The multiset of (title, where, status detail, notes) read back from the files (every migrated
+    file under dir_path, or just the paths in `only`) must equal the table's."""
+    want = Counter()
+    for _, row in rows:
+        c = entry_cells(row)
+        if c is not None:
+            want[tuple(c)] += 1
+    if only is None:
+        entries, problems = load_entries(dir_path)
+    else:
+        entries, problems = [], []
+        for p in only:
+            e, ps = parse_entry(p.name, p.read_text(encoding="utf-8"), p)
+            problems += ps
+            if e:
+                entries.append(e)
+    got = Counter((e.get("title"), e.get("where"), e.status_detail, e.notes) for e in entries if e.status_detail)
+    missing = want - got
+    extra = got - want
+    lines = [f"round-trip: {sum(want.values())} rows, {sum(got.values())} migrated files, "
+             + ("diff empty" if not missing and not extra else f"{sum(missing.values())} missing, {sum(extra.values())} extra")]
+    for k, n in missing.items():
+        lines.append(f"  only in the table ×{n}: {k[0][:60]!r}")
+    for k, n in extra.items():
+        lines.append(f"  only in the files ×{n}: {k[0][:60]!r}")
+    for p in problems:
+        lines.append(f"  entry problem: {p}")
+    return lines, not missing and not extra
+
+
+def import_file(front_path, dir_path, root):
+    front_path = Path(front_path)
+    text = front_path.read_text(encoding="utf-8")
+    rows = table_rows(text)
+    report = [f"import: {len(rows)} rows from {front_path} into {dir_path}/", ""]
+    written, unmatched, disagree, guessed = import_rows(rows, dir_path, root, report)
+    report.append("")
+    report.append(f"{len(written)} files written; {len(unmatched)} rows matched no status keyword"
+                  + (": " + ", ".join(f"{i:04d}" for i in unmatched) + " (status blank until set by hand; a re-run rewrites the file in place and keeps the status once set)" if unmatched else ""))
+    if disagree:
+        report.append(f"{len(disagree)} rows where the plan's keyword order would differ: " + ", ".join(f"{i:04d}" for i in disagree))
+    if guessed:
+        report.append(f"{len(guessed)} rows whose first commit the pickaxe could not find (added = today; set the date by hand): "
+                      + ", ".join(f"{i:04d}" for i in guessed))
+    report.append("")
+    lines, ok = round_trip(rows, dir_path)
+    report += lines
+    blank = [e for e in load_entries(dir_path)[1] if "`status` is blank" in e]
+    return report, ok and not blank
+
+
+def import_row(row, dir_path, root, replace=False, force=False):
+    """The straggler fix: one row into dir_path; (report lines, path, ok). A row whose title already
+    has an entry is refused, naming the file: after the migration an entry can carry what the row
+    does not (a status someone set, an upstream reference, dated body lines), and a stale row must
+    not take it back silently. The refusal and the rewrite see the entry whether or not it parses:
+    one left with a blank status by a no-keyword row is still the entry. `replace` takes the row's
+    title, where and first paragraph and fills blank header values; every value the entry carries
+    stands, and the derivation line names each one kept over the row. `force` rewrites the entry
+    whole (the migration's rule: the row wins wherever it says something). `ok` is False when the
+    written entry does not parse (a Status cell with no keyword leaves `status` blank) or its cells
+    do not round-trip."""
+    dir_path = Path(dir_path)
+    if not (replace or force):
+        prev = existing_entry(dir_path, row)
+        if prev is not None:
+            raise SystemExit(f"{DIR}/{prev.name} already holds this entry (the titles agree on their first {TITLE_PREFIX} "
+                             f"characters); change it with `set {prev.slug} <key> <value>`, or run `import --row --replace` "
+                             "to take the row's title, where and first paragraph and keep the entry's non-blank header "
+                             "values, or `--force` to rewrite it whole from the row")
+    rows = [(0, row)]
+    report = []
+    written, _, _, _ = import_rows(rows, dir_path, root, report, mode="force" if force else "replace")
+    if not written:
+        raise SystemExit("\n".join(report))
+    path = written[0]
+    lines, ok = round_trip(rows, dir_path, only=written)
+    _, problems = parse_entry(path.name, path.read_text(encoding="utf-8"), path)   # round_trip printed them
+    written_entry = read_entry_loose(path)
+    if written_entry is not None and not written_entry.get("status"):   # not when the file's hand-set status was kept
+        lines.append(f"the Status cell matched no keyword: run `set {path.stem[11:]} status <value>` before `check` will pass")
+    front = Path(root) / FRONT
+    if front.exists() and row.strip() in front.read_text(encoding="utf-8"):
+        report.append(f"now delete the row from {FRONT}")
+    return report + lines, path, ok and not problems
+
+
+# ---------------------------------------------------------------- CLI
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="upstream-ledger.py", description=__doc__.split("\n\n")[0])
+    ap.add_argument("--root", default=None, help="repository root (default: this script's grandparent directory)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("new", help="write upstream/<today>-<slug>.md")
+    p.add_argument("slug")
+    p.add_argument("--title", required=True)
+    p.add_argument("--where", required=True)
+    p.add_argument("--pr", default="")
+    p.add_argument("--tier", default="", choices=("",) + TIERS)
+    p.add_argument("--status", default="candidate", choices=STATUSES)
+    p.add_argument("--notes", default="", help="the body's first paragraph (the rendered Notes cell)")
+
+    sub.add_parser("check", help="every rule the guard test runs")
+
+    p = sub.add_parser("render", help="the ledger as Markdown tables")
+    p.add_argument("--active", action="store_true", help="the open table only")
+    p.add_argument("--link-base", default="", help="prefix for entry links, e.g. https://github.com/o/r/blob/main/")
+
+    p = sub.add_parser("list", help="one JSON object per entry")
+    p.add_argument("--status", default="", help="comma-separated statuses to keep")
+
+    p = sub.add_parser("set", help="rewrite one header line")
+    p.add_argument("slug")
+    p.add_argument("key")
+    p.add_argument("value")
+
+    p = sub.add_parser("import", help="the table migration, or one straggler row")
+    p.add_argument("paths", nargs="*", metavar="PATH",
+                   help="the migration: <UPSTREAM.md> <dir>; with --row: at most one, the entry directory (default: the root's upstream/)")
+    p.add_argument("--row", default=None, help="one table row's text")
+    p.add_argument("--replace", action="store_true",
+                   help="with --row, when an entry with this title exists: take the row's title, where and first paragraph, fill the entry's blank header values, keep its non-blank ones")
+    p.add_argument("--force", action="store_true", help="with --row: rewrite an existing entry whole from the row")
+
+    a = ap.parse_args(argv)
+    root = Path(a.root) if a.root else Path(__file__).resolve().parents[1]
+    entries_dir = root / DIR
+
+    if a.cmd == "new":
+        print(new_entry(entries_dir, a.slug, a.title, a.where, a.status, a.pr, a.tier, a.notes))
+    elif a.cmd == "check":
+        entries, problems = check(root)
+        if problems:
+            print("\n".join(problems))
+            return 1
+        print(f"ok: {len(entries)} entries under {DIR}/, {FRONT} holds no table")
+    elif a.cmd == "render":
+        entries, problems = check(root)
+        if problems:
+            print("\n".join(problems), file=sys.stderr)
+            return 1
+        print(render(entries, active=a.active, link_base=a.link_base))
+    elif a.cmd == "list":
+        entries, problems = load_entries(entries_dir)
+        if problems:
+            print("\n".join(problems), file=sys.stderr)
+            return 1
+        keep = {s for s in a.status.split(",") if s}
+        unknown = sorted(keep - set(STATUSES))
+        if unknown:   # a typo must not read as "nothing approved"
+            print(f"list: unknown status {', '.join(repr(s) for s in unknown)} (known: {', '.join(STATUSES)})", file=sys.stderr)
+            return 2
+        for e in entries:
+            if keep and e.get("status") not in keep:
+                continue
+            print(json.dumps({"file": f"{DIR}/{e.name}", "title": e.get("title"), "status": e.get("status"),
+                              "where": e.get("where"), "pr": int(e.get("pr")) if e.get("pr") else None,
+                              "tier": e.get("tier") or None, "offered": e.get("offered") or None,
+                              "added": e.get("added"), "closed": e.get("closed") or None}, ensure_ascii=False))
+    elif a.cmd == "set":
+        print(set_key(resolve(entries_dir, a.slug), a.key, a.value))
+    elif a.cmd == "import":
+        if a.row is not None:
+            if len(a.paths) > 1:   # `source` used to take the first and the named directory was ignored (2026-09-06)
+                ap.error(f"import --row takes at most one PATH, the entry directory; got {len(a.paths)}: {' '.join(a.paths)}")
+            report, path, ok = import_row(a.row, Path(a.paths[0]) if a.paths else entries_dir, root, replace=a.replace, force=a.force)
+            print("\n".join(report))
+            print(path)
+            return 0 if ok else 1
+        if a.replace or a.force:
+            ap.error("--replace and --force need --row")
+        if len(a.paths) != 2:
+            ap.error(f"import needs <UPSTREAM.md> <dir>, or --row '<row text>' [<dir>]; got {len(a.paths)} PATH{'' if len(a.paths) == 1 else 's'}")
+        report, ok = import_file(a.paths[0], a.paths[1], root)
+        print("\n".join(report))
+        return 0 if ok else 1
+    return 0
+
+
+if __name__ == "__main__":
+    # Only the command-line entry changes the process's SIGPIPE disposition (`render | head` ends
+    # quietly). A test that calls main() in-process must not inherit it: with SIG_DFL installed, the
+    # host's next write to a closed pipe kills the host instead of raising (CI's pytest died with 141).
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    sys.exit(main())

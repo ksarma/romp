@@ -17,7 +17,7 @@ import os
 import sys
 import tempfile
 import time
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -25,8 +25,8 @@ ROOT = os.path.dirname(HERE)
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-cb = SourceFileLoader("romp_codex_backend_live", os.path.join(ROOT, "kernel", "codex_backend.py")).load_module()
-em = SourceFileLoader("romp_event_model_live", os.path.join(ROOT, "bin", "romp-event-model")).load_module()
+cb = load_source("romp_codex_backend_live", os.path.join(ROOT, "kernel", "codex_backend.py"))
+em = load_source("romp_event_model_live", os.path.join(ROOT, "bin", "romp-event-model"))
 
 
 def until(fn, timeout, step=0.25, what=""):

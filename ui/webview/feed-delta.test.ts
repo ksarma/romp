@@ -114,13 +114,14 @@ test("the recency tint is computed client-side from `t` on a live clock; deltas 
   assert.equal(/\.trgb\b|trgb[?]?:/.test(FEED), false, "no reader or type of a per-card colour remains — present or absent on the wire, it is ignored");
   assert.ok(KERNEL.includes('"trgb": list(cm.age_rgb('), "full frames keep the tint: an older bundle destructures it unguarded");
   assert.match(KERNEL, /def _strip_trgb\(card\):/);
-  assert.match(KERNEL, /cards = \{a\["itemId"\]: json\.dumps\(_strip_trgb\(a\), default=str\)/, "deltas are built from tint-less cards");
+  assert.match(KERNEL, /cards = \{a\["itemId"\]: json\.dumps\(_strip_trgb\(a\), default=dflt\)/, "deltas are built from tint-less cards");
+  assert.match(KERNEL, /dflt = _wire_default_in\("_feed_parts"\)/, "…encoded through the wire default that counts a non-JSON value and names its type once, not a bare str");
   assert.match(KERNEL, /stable\["asks"\] = \[_strip_trgb\(a\) for a in stable\["asks"\]\]/, "…and the dedup signature ignores the tint");
-  assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - it\.t\);/);
-  assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - g\.t\);/);
+  assert.match(FEED, /applyTint\(card, nowSec\(\) - it\.t\);/);
+  assert.match(FEED, /applyTint\(card, nowSec\(\) - g\.t\);/);
   assert.match(FEED, /stampAge\(meta, node\.last, "paren", true, nowSec\(\), relAge, ageTint\);/);
   // the 15s tick moves the wash too — the host no longer reposts for the fade (feed-age.test.ts pins the rest)
-  assert.match(FEED, /if \(it\) card\.style\.background = cardTint\(now - it\.t\);/);
+  assert.match(FEED, /applyTint\(card, now - it\.t\);/);
   // a colourless card's border falls back to the age ramp — it used to read the removed trgb destructure
   assert.match(FEED, /setCardChannels\(card, \(it\.color && hexToRgb\(it\.color\.bg\)\) \|\| ageRgb\(nowSec\(\) - it\.t\)\);/);
   assert.match(FEED, /setCardChannels\(card, \(g\.color && hexToRgb\(g\.color\.bg\)\) \|\| ageRgb\(nowSec\(\) - g\.t\)\);/);

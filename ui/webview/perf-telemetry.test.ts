@@ -601,6 +601,48 @@ test("federation times its inbound work as fed:<wire type> around the pane's han
   }
 });
 
+test("the direct delivery path records the same two levels as the window path: fed:<type> around the pane's nested bracket", () => {
+  // federation hands a merged frame to the registered handler by direct call (federation.ts emit); the pane registers the
+  // perf-wrapped handler it also puts on window, so the call stack is fed:<type> > <type> exactly as through dispatchEvent
+  const g: any = globalThis;
+  const hadWindow = "window" in g, prevWindow = g.window;
+  const hadLS = "localStorage" in g, prevLS = g.localStorage;
+  const emitted: any[] = [];
+  g.window = { dispatchEvent: (ev: any) => { if (ev && ev.data) emitted.push(ev.data); } };
+  g.localStorage = { getItem: () => null, setItem: () => {} };
+  try {
+    const h = harness();
+    const p = createPerfTelemetry("feed", h.deps);
+    const fm = new FederationManager();
+    fm.perf = p;
+    const seen: string[] = [];
+    fm.onFrame(p.wrapFrameHandler((e) => { seen.push(e.data.type); h.clock.t += 4; }));
+    // federation's own work costs 1 ms on the fake clock: a timed stand-in around inboundNow is not reachable, so the
+    // layer's own time shows as the outer bracket's total minus the pane's; the clock only moves inside the pane here
+    fm.inbound("", { type: "feed", asks: [], now: 1 });
+    fm.inbound("", { type: "feedDelta", asks: [], removeAsks: [] });
+    assert.deepEqual(seen, ["feed", "feed"], "both frames reached the handler directly");
+    assert.deepEqual(emitted, [], "and none was dispatched on window");
+    const frames = (p.snapshot() as any).frames;
+    assert.equal(frames["feed"].n, 2);
+    assert.equal(frames["feed"].ms_sum, 8, "the pane's bracket: its own 4 ms per frame");
+    assert.equal(frames["fed:feed"].n, 1);
+    assert.equal(frames["fed:feed"].ms_sum, 0, "the layer's own time: the total minus the nested pane bracket");
+    assert.equal(frames["fed:feedDelta"].n, 1);
+    assert.equal(frames["fed:feedDelta"].ms_sum, 0);
+    // a slow frame is attributed to the wire type at the outermost bracket, as on the window path
+    fm.onFrame(() => { h.clock.t += 120; });
+    fm.inbound("", { type: "feed", asks: [], now: 2 });
+    const rows = h.posted.filter((m) => m.what === "slowframe");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].data.type, "feed");
+    assert.equal(rows[0].data.ms, 124, "the whole synchronous handling, both handlers, federation's bracket included");
+  } finally {
+    if (hadWindow) g.window = prevWindow; else delete g.window;
+    if (hadLS) g.localStorage = prevLS; else delete g.localStorage;
+  }
+});
+
 test("federation installs no collector on the Files pane (no frames are pushed to it), and the page's collector elsewhere", () => {
   const g: any = globalThis;
   const win: any = new EventTarget();

@@ -13,7 +13,7 @@ import threading
 import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -23,11 +23,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-km = SourceFileLoader("romp_kernel_gr", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_gr", os.path.join(BIN, "romp-kernel"))
 
 SID = "11111111-2222-3333-4444-555555555555"
 SID2 = "22222222-3333-4444-5555-666666666666"
@@ -141,9 +141,12 @@ class TagRoute(unittest.TestCase):
         self.assertEqual(v["tags"], [], "a refused edit writes nothing — no member no session matches")
 
     def test_two_same_named_tags_refuse_any_edit(self):
-        km._set_timeline_views({"active": "all", "hidden": [], "tags": [
+        # a store ALREADY holding twins, written to the file: since round 4 of the 2026-09-05 review
+        # the write door refuses a second tag under a taken name, so twins come only from an older
+        # kernel's store (or a hand edit)
+        km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [
             {"id": "g1", "name": "dup", "color": "", "members": []},
-            {"id": "g2", "name": "dup", "color": "", "members": []}]})
+            {"id": "g2", "name": "dup", "color": "", "members": []}]}))
         km._flags_cache.clear()
         st, r = self._post({"name": "dup", "add": ["web"]})
         self.assertFalse(r.get("ok"))

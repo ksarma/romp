@@ -552,7 +552,7 @@ test('too-large content, content UTF-8 cannot hold, and a file that is not UTF-8
   assert.equal(fs.existsSync(logPathFor(sp)), false);
 });
 
-test('a save whose file write fails puts the prior sidecar bytes back, changes nothing, logs nothing, and refuses unreadable with the OS text',
+test('a save whose file write fails before anything lands touches neither the sidecar nor the log, and refuses unreadable with the OS text',
   { skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root ignores directory modes' : false }, () => {
     const w = world();
     writeTrackedPaths(w.root, ['docs/report.md']);
@@ -563,8 +563,8 @@ test('a save whose file write fails puts the prior sidecar bytes back, changes n
     const sidecarBytes = fileBytes(st.storePath);
     const docs = path.dirname(w.report);
     const listing = fs.readdirSync(docs).sort();
-    // writeFileAtomic creates its temp file beside the file, so a read-only directory fails the
-    // file write after the sidecar was saved: the case the rollback exists for.
+    // prepareFileWrite stages the temp file beside the file first, so a read-only directory refuses
+    // before the sidecar or the log is touched: nothing to roll back, and the refusal says so.
     fs.chmodSync(docs, 0o555);
     let r;
     try {
@@ -575,8 +575,9 @@ test('a save whose file write fails puts the prior sidecar bytes back, changes n
     assert.match(r.error, /EACCES|EPERM/);
     assert.ok(r.error.includes('~/notes-api/docs/report.md'), r.error);
     assert.equal(r.error.includes(w.home), false);
-    assert.match(r.error, /put back/);
-    assert.deepEqual(fileBytes(st.storePath), sidecarBytes, 'the prior sidecar bytes are back');
+    assert.match(r.error, /; nothing was changed: the comments file was not touched, so there was nothing to put back$/);
+    assert.deepEqual(fileBytes(st.storePath), sidecarBytes, 'the sidecar is as it was');
+    assert.equal(statNs(st.storePath), st.storeMtimeNs, 'not even its mtime moved');
     assert.equal(fs.readFileSync(w.report, 'utf8'), cur, 'the file is untouched');
     assert.deepEqual(fs.readdirSync(docs).sort(), listing, 'no temp file left beside the file');
     assert.equal(fs.existsSync(logPathFor(st.storePath)), false, 'a refused save logs nothing');

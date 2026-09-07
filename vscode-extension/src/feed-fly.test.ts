@@ -13,9 +13,12 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 
 test("render() captures rects BEFORE the reconcile and flies changed cards AFTER", () => {
   // capture must precede the column reconciles…
-  assert.match(FEED, /const flipFirst = captureCardRects\(cols\);[\s\S]*?reconcileCol\(cols\.asks/);
+  // …over the columns whose planned key sequence differs from the DOM's (feed-card-gate.ts sameKeySeq): a
+  // column where nothing enters, leaves or changes place has nothing that can glide, so its rects go unread
+  assert.match(FEED, /const differing = FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), buckets\[k\]\.map\(\(e\) => entryKey\(e, cols\[k\]\)\)\)\);\n\s*const flipCols = differing\.length && \(stackForced \|\| gprefs\.stacked\) \? FLY_COLS : differing;\n\s*const flipFirst = captureCardRects\(cols, flipCols\);[\s\S]*?reconcileCol\(cols\.asks/,
+    "…and in the stacked layout a move anywhere reads every column: the sections below the move all shift");
   // …and the fly runs after the DOM (and scroll) settle (the identity-alias step sits just before it)
-  assert.match(FEED, /list\.scrollTop = prevScroll;[\s\S]*?\/\/ FLIP step 2[\s\S]*?flyColumnChanges\(flipFirst, cols\);/);
+  assert.match(FEED, /list\.scrollTop = prevScroll;[\s\S]*?\/\/ FLIP step 2[\s\S]*?flyColumnChanges\(flipFirst, cols, flipCols\);/);
 });
 
 test("FLIP-across-identity: a new-key card aliases to its predecessor's rect so it slides, not pops", () => {
@@ -39,16 +42,34 @@ test("flyColumnChanges FLIPs any moved card (not new cards / non-movers); only c
   // staying in the same column NO LONGER aborts — an in-column shifter must glide too (the user 2026-06-29)
   assert.doesNotMatch(FEED, /prev\.col === colEl\.id\) continue/);
   // a column-crosser gets the back layer; an in-column shifter glides in normal flow
-  assert.match(FEED, /const crossed = prev\.col !== colEl\.id;/);
+  assert.match(FEED, /moves\.push\(\{ c, dx, dy, crossed: prev\.col !== colEl\.id \}\);/);
   assert.match(FEED, /if \(crossed\) c\.classList\.add\("fitem-flying"\);/);
+  // every Last rect is READ before any transform is WRITTEN: a transform write dirties layout, so the old
+  // per-card read/write interleave forced a layout per shifted card (about 60 per delta, measured)
+  const fly = FEED.slice(FEED.indexOf("function flyColumnChanges("), FEED.indexOf("// ── Absorb:"));
+  const at = (s: string) => { const i = fly.indexOf(s); assert.ok(i >= 0, "present: " + s); return i; };
+  assert.ok(at("moves.push(") < at("// WRITE phase") && at("// WRITE phase") < at("c.style.transform ="), "every read (into `moves`) precedes the first write");
+  assert.equal((fly.match(/getBoundingClientRect/g) || []).length, 1, "one read per card, all in the read phase");
+  // a target with a zero rect (its column folded to the header) gets no fly: nothing runs a transition on a
+  // display:none element, so the fly would never end and the card would keep pointer-events:none (2026-09-06)
+  assert.match(fly, /if \(!now\.width && !now\.height\) continue;/);
+  // …and a fly that does start ends on end OR cancel, with a backstop, never leaving the class behind
+  assert.match(fly, /c\.addEventListener\("transitionend", done\);\n\s*c\.addEventListener\("transitioncancel", done\);\n\s*window\.setTimeout\(done, 650\);/);
 });
 
 test("FLIP: invert to the old spot instantly, then release with a transition (two rAFs)", () => {
   assert.match(FEED, /c\.style\.transition = "none";\s*\n\s*c\.style\.transform = `translate\(\$\{dx\}px, \$\{dy\}px\)`;/);
   assert.match(FEED, /requestAnimationFrame\(\(\) => requestAnimationFrame\(\(\) => \{[\s\S]*?c\.style\.transform = "translate\(0, 0\)";/);
-  // cleans up on transitionend so the card returns to normal flow + stacking (the back-layer class only on a crosser)
+  // cleans up on transitionend so the card returns to normal flow + stacking; the back-layer class comes off
+  // whichever fly added it (a superseded crossing fly leaves it to the fly that replaced it — 2026-09-06)
   assert.match(FEED, /ev\.propertyName !== "transform"/);
-  assert.match(FEED, /if \(crossed\) c\.classList\.remove\("fitem-flying"\)/);
+  assert.match(FEED, /c\.classList\.remove\("fitem-flying"\);\s*\/\/ whichever fly added it/);
+  // ONE fly owns an element at a time: a per-element token makes a superseded fly's end/cancel/backstop a
+  // no-op, and `played` makes a fly ignore the cancel of the transition its own Invert interrupted
+  assert.match(FEED, /const mine = \+\+flySeq;\n\s*\(c as any\)\._flySeq = mine;/);
+  assert.match(FEED, /if \(ev && \(ev\.propertyName !== "transform" \|\| !played\)\) return;/);
+  assert.match(FEED, /if \(\(c as any\)\._flySeq !== mine\) return;/);
+  assert.match(FEED, /if \(flown \|\| \(c as any\)\._flySeq !== mine\) return;\n\s*played = true;/);
 });
 
 test("respects prefers-reduced-motion", () => {

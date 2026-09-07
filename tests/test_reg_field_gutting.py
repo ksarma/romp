@@ -12,11 +12,12 @@ here against a CORRUPT reg file and pinned: the file's bytes survive untouched. 
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -25,7 +26,7 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-sb = SourceFileLoader("romp_sdk_backend_gut", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+sb = load_source("romp_sdk_backend_gut", os.path.join(BIN, "romp_sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-000000000099"
 CORRUPT = b'{"sid": "trunca'          # a torn read: exists, does not parse
@@ -34,6 +35,7 @@ CORRUPT = b'{"sid": "trunca'          # a torn read: exists, does not parse
 class ReadRegForRmw(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
 
     def test_absent_reg_is_a_writable_empty(self):
         self.assertEqual(sb.read_reg_for_rmw(self.d, SID), {},
@@ -57,6 +59,7 @@ class _Hooked(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, ignore_errors=True)
         self.logs = []
         self.be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=self.logs.append)
         sb.write_reg(Path(self.d), SID, {"sid": SID, "name": "gut", "cwd": "/tmp", "alive": True,

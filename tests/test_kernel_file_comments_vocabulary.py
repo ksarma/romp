@@ -1,108 +1,92 @@
 #!/usr/bin/env python3
-"""The kernel's comments-log code speaks CONTEXT.md's vocabulary for the decisions it traces
-(plans/file-review.md, Slice 5; the review of 2026-09-06).
+"""File comments (plans/file-review.md) — the kernel's file-comments code speaks CONTEXT.md's words.
 
-The `save` verb carries the decisions taken in the editor — `accepted` and `rejected`, each
-{id, oldText, newText} (plans/file-review.md, Slice 5) — and the host writes them into the comments
-log. CONTEXT.md lists "ledger" under _Avoid_ for the comments log, and the editor chunk's contract
-was renamed to `decisions` for that reason (ui/webview/editor-chunk-decisions.test.ts), but the
-kernel's save trace and its file-comments door kept calling the same lists a ledger — nine times
-across the docstrings of _save_trace, _file_comments_call and _file_comments_after, and once as a
-local — so a reader of a save trace met "the ledger" and "the log" side by side for one set of
-decisions, told apart only by the word the glossary bans for one of them. The kernel now says
-`decisions`, the plan's word, or names the field (`rejected`).
-
-This file pins it. The avoid-words are read from CONTEXT.md's Comments log entry rather than
-hard-coded, so a new avoid-word fails here too; the scan covers the kernel's whole comments-log
-region — the trace functions and every _file_comments_* function — and checks that region holds
-every such function, so a reordering widens the scan instead of silently shrinking it. The kernel's
-OTHER ledgers (the per-session goal ledgers, the restart-cut ledger) are a different
-thing and are outside the region on purpose. Synthetic: only the repo's own text.
+CONTEXT.md's File comment entry lists "thread" under Avoid: in this codebase a comment thread is a
+forked side session anchored to the chat (kernel.py's _comment_thread and the comment-thread section),
+so a file comment called a thread reads as a side session. The webview holds file-comments.ts and
+file-comments-model.ts to that rule (ui/webview/file-comments.test.ts, "vocabulary and privacy"), and
+the guide's Files section is checked against the entry's Avoid list (tests/test_guide_files_comments_log.py);
+nothing read the kernel, and the send builder's docstring described the retired zero-comments message as
+a pointer at "a thread that does not exist" (the review, 2026-09-06). This module reads kernel/kernel.py
+as TEXT — no kernel import, so no state root and no side effects — and holds the FILE COMMENTS section to
+the same rule: the only "thread" is the `--thread` CLI flag (the format's word, which plans/file-review.md
+keeps), except inside the functions where the word is the stdlib's and means a Python thread.
 """
 import os
 import re
 import unittest
 
-from tests.test_guide_waiting_on_you_hidden_todos import _avoid_words
-
 HERE = os.path.dirname(os.path.realpath(__file__))
-ROOT = os.path.dirname(HERE)
+REPO = os.path.dirname(HERE)
+KERNEL = os.path.join(REPO, "kernel", "kernel.py")
+
+# The section: its header comment through the last direct-edit log function, up to the git helpers
+# that follow it. A moved header or a renamed neighbour fails loudly in setUpClass rather than
+# shrinking the scan to nothing.
+SECTION_START = "# ---- FILE COMMENTS ("
+SECTION_END = "\ndef _git_out("
+# The functions whose "thread" is a Python thread (a threading.Thread per frame, the reply on its own
+# thread). Listed by name so a new function in the section is scanned by default; a stale name fails.
+PYTHON_THREAD = ("_file_comments_call", "_file_comments_reply")
+# "thread" as a word, but not the `--thread` flag: the "-" before it is the format's own spelling.
+BARE_THREAD = re.compile(r"(?<!-)\bthreads?\b", re.I)
+OTHER_AVOID = re.compile(r"\b(suggestion|annotation)s?\b", re.I)
 
 
-def _read(*parts):
-    with open(os.path.join(ROOT, *parts), encoding="utf-8") as f:
-        return f.read()
+def _blocks(section):
+    """{name: text} for the header comment ("header") and each top-level def in the section."""
+    out, name, buf = {}, "header", []
+    for line in section.split("\n"):
+        m = re.match(r"def (\w+)\(", line)
+        if m:
+            out[name] = "\n".join(buf)
+            name, buf = m.group(1), []
+        buf.append(line)
+    out[name] = "\n".join(buf)
+    return out
 
 
-KERNEL = _read("kernel", "kernel.py")
-FIRST, LAST = "_edit_trace_sid", "_file_comments_after"
-# every def the comments-log code consists of: the three traces (their bodies, sids and senders) and
-# the file-comments door, from the node lookup to what follows a reply
-COMMENTS_LOG_DEFS = re.compile(r"^def (_file_comments\w*|_(?:edit|reject|save)_trace(?:_\w+)?)\(", re.M)
+def _hits(pattern, text):
+    return ["%d: %s" % (i + 1, l.strip()) for i, l in enumerate(text.split("\n")) if pattern.search(l)]
 
 
-def _region():
-    """The kernel source from `def FIRST(` to the first column-0 line after `def LAST(` — the
-    comments-log code as one contiguous span — with the 1-based line number it starts on."""
-    start = KERNEL.index("\ndef %s(" % FIRST) + 1
-    last = KERNEL.index("\ndef %s(" % LAST) + 1
-    m = re.compile(r"^\S", re.M).search(KERNEL, KERNEL.index("\n", last) + 1)
-    end = m.start() if m else len(KERNEL)
-    return KERNEL[start:end], KERNEL[:start].count("\n") + 1, start, end
-
-
-def _func(region, name):
-    """One function's source out of the region: its def line to the next top-level line."""
-    start = region.index("\ndef %s(" % name) + 1
-    m = re.compile(r"^\S", re.M).search(region, region.index("\n", start) + 1)
-    return region[start:m.start() if m else len(region)]
-
-
-class CommentsLogVocabulary(unittest.TestCase):
-    """The kernel's comments-log code uses none of the words CONTEXT.md avoids for the comments log."""
-
+class TheFileCommentsSectionSpeaksTheEntrysWords(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.avoid = _avoid_words(_read("CONTEXT.md"), "Comments log")
-        cls.region, cls.first_line, cls.start, cls.end = _region()
+        with open(KERNEL, encoding="utf-8") as f:
+            text = f.read()
+        start = text.index(SECTION_START)
+        end = text.index(SECTION_END, start)
+        cls.section = text[start:end]
+        cls.blocks = _blocks(cls.section)
 
-    def test_context_md_lists_the_word_under_avoid_for_the_comments_log(self):
-        # The premise, checked against its source: if CONTEXT.md drops "ledger" from the avoid list
-        # the scan below is no longer the glossary's rule, and this says so before that one passes vacuously.
-        self.assertIn("ledger", self.avoid)
+    def test_the_only_thread_is_the_cli_flag(self):
+        # the send builder's docstring, the send op, the message's command lines, the header, every helper:
+        # `--thread <id>` may appear (the format's flag); "thread" as the noun for a file comment may not
+        for name, text in self.blocks.items():
+            if name in PYTHON_THREAD:
+                continue
+            self.assertEqual(_hits(BARE_THREAD, text), [],
+                             "%s: a file comment is a file comment, never a thread (CONTEXT.md, File comment); "
+                             "a comment thread is a forked side session" % name)
+        self.assertIn("--thread <id>", self.blocks["_file_comments_message"], "the flag itself stays")
 
-    def test_region_holds_every_comments_log_function(self):
-        # The scan is a contiguous span; every def the comments-log code consists of must lie inside it,
-        # so a function moved past _file_comments_after fails here instead of escaping the scan.
-        outside = [m.group(1) for m in COMMENTS_LOG_DEFS.finditer(KERNEL)
-                   if not (self.start <= m.start() < self.end)]
-        self.assertEqual(outside, [], "comments-log functions outside the scanned region %s..%s; widen FIRST/LAST"
-                         % (FIRST, LAST))
-        for name in ("_save_trace_body", "_save_trace", "_file_comments_call", "_file_comments_message",
-                     "_file_comments_after"):
-            self.assertIn("\ndef %s(" % name, self.region)
+    def test_the_python_thread_allowlist_names_functions_that_exist_and_use_the_word(self):
+        # so the allowlist cannot go stale (a renamed function would otherwise leave a name that excludes
+        # nothing) and cannot grow past need (an entry that never says "thread" is a hole, not an exemption)
+        for name in PYTHON_THREAD:
+            self.assertIn(name, self.blocks, name)
+            self.assertTrue(_hits(BARE_THREAD, self.blocks[name]), "%s no longer says thread: drop it from the list" % name)
+        self.assertIn("threading.Thread(", self.blocks["_file_comments_reply"])
 
-    def test_comments_log_code_uses_no_avoided_word(self):
-        # Single-word entries only: a phrase like "log alone" names a usage, not a token, and the
-        # region says "the comments log" where it means the log (CONTEXT.md's own spelling).
-        words = [w for w in self.avoid if " " not in w]
-        self.assertTrue(words)
-        hits = []
-        for i, line in enumerate(self.region.split("\n")):
-            for word in words:
-                if re.search(r"(?i)\b%s\b" % re.escape(word), line):
-                    hits.append("kernel/kernel.py:%d says %r (CONTEXT.md, Comments log, Avoid): %s"
-                                % (self.first_line + i, word, line.strip()))
-        self.assertEqual(hits, [])
+    def test_no_other_avoid_word_of_the_entry(self):
+        # the format's "suggestion" for a change and "annotation" for a comment: the webview guard's pair
+        self.assertEqual(_hits(OTHER_AVOID, self.section), [])
 
-    def test_save_path_calls_the_lists_decisions(self):
-        # The plan's word, positively: the trace and the after-hook describe the save's `rejected` as
-        # decisions, and the local that counts them is spelled the same way.
-        for name in ("_save_trace", "_file_comments_call", "_file_comments_after"):
-            self.assertRegex(_func(self.region, name), r"\bdecisions\b", name)
-        after = _func(self.region, "_file_comments_after")
-        self.assertIn('decisions = args.get("rejected")', after)
-        self.assertIn("len(decisions) if isinstance(decisions, list) else 0", after)
+    def test_the_section_uses_the_entrys_terms(self):
+        # positive side, as the webview guard checks the guide's phrases: CONTEXT.md's own nouns are the ones in use
+        for phrase in ("comments log", "direct edit", "Send to session"):
+            self.assertIn(phrase, self.section, phrase)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,39 @@
+name: Ledger
+
+# Render the upstream ledger (upstream/*.md) into this run's job summary on
+# every push to main, so the latest Ledger run on the Actions tab shows main's
+# table: open entries first, closed ones collapsed. Nothing is committed or
+# pushed and the job needs no write permission. The rendering lives outside
+# the tree ON PURPOSE: a committed table would make every status edit a
+# conflict with every other ledger change, which is the cost the per-file
+# ledger exists to remove (2026-09-06).
+#
+# `check` runs first so a broken entry fails this job loudly; the same rules
+# gate CI through tests/test_upstream_ledger.py.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ledger-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Render the upstream ledger
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the entries
+        run: python3 scripts/upstream-ledger.py check
+      - name: Render into the job summary
+        run: |
+          python3 scripts/upstream-ledger.py render \
+            --link-base "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_SHA/" \
+            >> "$GITHUB_STEP_SUMMARY"

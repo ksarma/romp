@@ -8,7 +8,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { liveNow, paintAge, refreshAges, stampAge, type AgeEl } from "./feed-age";
+import { liveNow, liveRefresher, paintAge, refreshAges, stampAge, type AgeEl } from "./feed-age";
 import { ageRgb } from "./age-color";
 
 const FEED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
@@ -38,7 +38,7 @@ test("a quiet board's ages advance: every stamped element repaints from the live
   assert.equal(treeMeta.style.color, tint(240));
   // an hour passes with no payload: the 15 s tick's pass, from the live clock
   const n = refreshAges([cardTime, groupTime, treeMeta, modalAge], T + 3600, rel, tint);
-  assert.equal(n, 4, "every stamped element is repainted — group cards and the modal included");
+  assert.equal(n, 4, "every stamped element is repainted — group cards and the modal included (every label changed)");
   assert.equal(cardTime.textContent, "1h ago"); assert.equal(groupTime.textContent, "1h ago");
   assert.equal(treeMeta.textContent, "(1h ago)"); assert.equal(modalAge.textContent, "1h ago");
   assert.equal(treeMeta.style.color, tint(3840)); assert.notEqual(treeMeta.style.color, tint(240), "the tint aged");
@@ -80,8 +80,67 @@ test("an unstamped element is left alone", () => {
   assert.equal(refreshAges([plain, junk], 5, rel, tint), 0);
 });
 
-test("feed.ts reads the clock only through nowSec(), stamps every age-bearing element, and the tick repaints them all", () => {
-  assert.match(FEED, /import \{ liveNow, refreshAges, stampAge \} from "\.\/feed-age";/);
+test("a second pass at the same `now` writes NOTHING, and a pass across a minute boundary writes exactly the labels that crossed it", () => {
+  // Blink treats an identical textContent write as a real Text-node replacement once the document has created
+  // a MutationObserver (gear.js does at boot), so the compare is what keeps a quiet 15 s pass off the layout.
+  const T = 1_000_000;
+  const writes = (init: number) => {
+    let n = 0;
+    const e = { _text: "" as string | null, style: { color: "" }, dataset: {} as AgeEl["dataset"],
+      get textContent() { return this._text; }, set textContent(v: string | null) { this._text = v; n++; } };
+    stampAge(e, T - init, "plain", true, T, rel, tint);
+    return { e, count: () => n };
+  };
+  const a = writes(100), b = writes(150), c = writes(4 * 60);   // "2m ago", "3m ago" (rounded), "4m ago"
+  const c0 = a.count() + b.count() + c.count();
+  assert.equal(c0, 3, "the stamp paints once each");
+  assert.equal(refreshAges([a.e, b.e, c.e], T, rel, tint), 0, "same now: nothing rewritten");
+  assert.equal(a.count() + b.count() + c.count(), c0, "…and no textContent setter ran");
+  assert.equal(a.e.style.color, tint(100));
+  // 20 s later: a (120 s → "2m ago") and c (260 s → "4m ago") read the same; b (170 s) rounds to "3m ago" still — but
+  // every tinted colour moves on the log ramp, so the tinted labels rewrite their colour, not their text
+  const nText = { a: a.count(), b: b.count(), c: c.count() };
+  refreshAges([a.e, b.e, c.e], T + 20, rel, tint);
+  assert.deepEqual({ a: a.count(), b: b.count(), c: c.count() }, nText, "no text changed: no textContent write");
+  // untinted stamps (card time stamps) have only their text: a pass that moves no label writes nothing at all
+  let wrote = 0;
+  const plain = { _text: "" as string | null, style: { color: "" }, dataset: {} as AgeEl["dataset"],
+    get textContent() { return this._text; }, set textContent(v: string | null) { this._text = v; wrote++; } };
+  stampAge(plain, T - 100, "plain", false, T, rel, tint);          // "2m ago"
+  assert.equal(refreshAges([plain], T + 20, rel, tint), 0);          // 120 s: still "2m ago"
+  assert.equal(refreshAges([plain], T + 40, rel, tint), 0);          // 140 s: "2m ago"
+  assert.equal(refreshAges([plain], T + 50, rel, tint), 1, "150 s rounds to 3m: the one label that crossed is rewritten");
+  assert.equal(plain.textContent, "3m ago");
+  assert.equal(wrote, 2, "one write at the stamp, one at the crossing");
+});
+
+test("a running DURATION is a stamp too (fmt 'dur'): workingFor's minutes-then-hours vocabulary, moving with the clock", () => {
+  const T = 1_000_000;
+  const d = mk();
+  stampAge(d, T - 42 * 60, "dur", false, T, rel, tint);
+  assert.equal(d.textContent, "42m", "the awaiting box's / narration's duration, bare — the caller places the separator");
+  refreshAges([d], T + 18 * 60, rel, tint);
+  assert.equal(d.textContent, "1h 0m", "past sixty minutes it splits out the hours, as workingFor always did");
+  assert.equal(refreshAges([d], T + 18 * 60 + 30, rel, tint), 0, "within the same minute nothing is written");
+  assert.equal(d.style.color, "", "untinted");
+});
+
+test("liveRefresher: a hidden pane skips the pass and catches up exactly once when shown; an ordinary resize runs nothing", () => {
+  let hidden = false, passes = 0;
+  const live = liveRefresher({ hidden: () => hidden, pass: () => { passes++; } });
+  live.tick(); assert.equal(passes, 1, "visible: the tick runs the pass");
+  live.catchUp(); assert.equal(passes, 1, "nothing owed: a resize or visibility flip runs nothing");
+  hidden = true;
+  live.tick(); live.tick(); assert.equal(passes, 1, "hidden: two ticks, no pass");
+  live.catchUp(); assert.equal(passes, 1, "still hidden: the catch-up waits");
+  hidden = false;
+  live.catchUp(); assert.equal(passes, 2, "shown: ONE catch-up pass for the two skipped ticks");
+  live.catchUp(); assert.equal(passes, 2, "…and only one");
+  live.tick(); assert.equal(passes, 3, "the cadence resumes");
+});
+
+test("feed.ts reads the clock only through nowSec(), stamps every age-bearing element, and the live pass repaints them all", () => {
+  assert.match(FEED, /import \{ liveNow, liveRefresher, refreshAges, stampAge \} from "\.\/feed-age";/);
   assert.match(FEED, /function nowSec\(\): number \{ return liveNow\(hostNow, hostNowAt, Date\.now\(\)\); \}/);
   assert.match(FEED, /if \(typeof m\.now === "number"\) \{\n\s*hostNow = m\.now;\n\s*hostNowAt = typeof m\.nowAt === "number" \? m\.nowAt : Date\.now\(\);/,
     "the payload's clock is recorded with when THAT FRAME ARRIVED (federation's `nowAt`) — never with when this handler ran");
@@ -101,13 +160,24 @@ test("feed.ts reads the clock only through nowSec(), stamps every age-bearing el
   assert.match(FEED, /gist\.textContent = \(opened \? "▾ " : "▸ "\) \+ logPhrase\(last\) \+ " · ";\n/);
   assert.match(FEED, /stampAge\(gistAge, logRowT\(last\), "plain", false, nowSec\(\), relAge, ageTint\);/);
   assert.doesNotMatch(FEED, /logPhrase\(last\) \+ " · " \+ relAge\(/, "the gist's age is no longer built into a text the tick cannot reach");
-  // the wash is recomputed from the live clock at render…
-  assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - it\.t\);/);
-  assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - g\.t\);/);
-  // …and the 15 s tick re-applies it to ask AND group cards, then repaints every stamped age
-  const tick = FEED.slice(FEED.indexOf("setInterval(() => {\n  const now = nowSec();"), FEED.indexOf("}, 15000);"));
-  assert.ok(tick.length > 0, "the tick reads the live clock");
-  assert.match(tick, /for \(const card of askEls\.values\(\)\) \{\s*\n\s*const it = \(card as any\)\._it as AskItem \| undefined;\s*\n\s*if \(it\) card\.style\.background = cardTint\(now - it\.t\);/);
-  assert.match(tick, /for \(const card of groupEls\.values\(\)\) \{\s*\n\s*const g = \(card as any\)\._g as AskGroup \| undefined;\s*\n\s*if \(g\) card\.style\.background = cardTint\(now - g\.t\);/);
-  assert.match(tick, /refreshAges\(document\.querySelectorAll<HTMLElement>\("\[data-age-t\]"\), now, relAge, ageTint\);/);
+  // the running DURATIONS (2026-09-06): the awaiting box, the Awaiting-task pill, the waiting-on chip, the
+  // working narration and the per-paragraph ages are stamped too — the per-card update gate repaints a card
+  // only when its inputs change, so a duration baked into a caption would freeze on a card never re-sent
+  assert.match(FEED, /function durSpan\(since: number\): HTMLElement \{\n\s*const d = el\("span", "fask-dur"\);\n\s*stampAge\(d, since, "dur", false, nowSec\(\), relAge, ageTint\);/);
+  assert.doesNotMatch(FEED, /, Date\.now\(\) \/ 1000\)/, "no elapsed label reads the browser clock any more (the clock anchors themselves still do, feed-age.ts liveNow)");
+  assert.match(FEED, /if \(bp!\[i\]\.since\) stampAge\(age, bp!\[i\]\.since, "plain", false, nowS, relAge, ageTint\);/);
+  // the wash is recomputed from the live clock at render, through the one compare-then-write tint helper…
+  assert.match(FEED, /function applyTint\(card: HTMLElement, ageSecs: number\): void \{\n\s*const s = cardTint\(ageSecs\);\n\s*if \(\(card as any\)\._tint === s\) return;/);
+  assert.match(FEED, /applyTint\(card, nowSec\(\) - it\.t\);/);
+  assert.match(FEED, /applyTint\(card, nowSec\(\) - g\.t\);/);
+  // …and the 15 s live pass re-applies it to ask AND group cards, then repaints every stamped age, writing
+  // only what changed, through the shared visibility gate
+  const pass = FEED.slice(FEED.indexOf("function livePass(): void {"), FEED.indexOf("const paneHidden = () =>"));
+  assert.ok(pass.length > 0, "the live pass exists");
+  assert.match(pass, /const now = nowSec\(\);/);
+  assert.match(pass, /for \(const card of askEls\.values\(\)\) \{\s*\n\s*const it = \(card as any\)\._it as AskItem \| undefined;\s*\n\s*if \(!it\) continue;\s*\n\s*applyTint\(card, now - it\.t\);/);
+  assert.match(pass, /for \(const card of groupEls\.values\(\)\) \{\s*\n\s*const g = \(card as any\)\._g as AskGroup \| undefined;\s*\n\s*if \(g\) applyTint\(card, now - g\.t\);/);
+  assert.match(pass, /refreshAges\(document\.querySelectorAll<HTMLElement>\("\[data-age-t\]"\), now, relAge, ageTint\);/);
+  assert.match(FEED, /const paneHidden = \(\) => document\.hidden \|\| window\.innerWidth === 0 \|\| window\.innerHeight === 0;\n/);
+  assert.match(FEED, /const live = liveRefresher\(\{ hidden: paneHidden, pass: livePass \}\);\nsetInterval\(live\.tick, 15000\);\ndocument\.addEventListener\("visibilitychange", live\.catchUp\);\nwindow\.addEventListener\("resize", live\.catchUp\);/);
 });

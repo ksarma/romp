@@ -14,7 +14,8 @@ conftest gives pytest, but neither covers `cd tests && python -m unittest test_x
 script run, so the per-module preamble is the primary defence and this test is the ratchet.
 
 The rule this file enforces, per tests/test_*.py module: if the module loads romp code (any
-SourceFileLoader call, or an import of the kernel/postal/cli packages), then BEFORE the first
+load_source call, or an import of the kernel/postal/cli packages; SourceFileLoader still counts as a
+load, and a second test below refuses it outright), then BEFORE the first
 such load, at module top level, it must (a) assign os.environ["XDG_STATE_HOME"] (or
 ["ROMP_STATE_DIR"]) and (b) handle ROMP_STATE_DIR (assign it, or pop it — a live kernel exports
 it to its sessions, and it outranks the XDG floor). The canonical preamble:
@@ -25,7 +26,7 @@ it to its sessions, and it outranks the XDG floor). The canonical preamble:
     os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 
 Static AST scan, ordered by line number; every in-process load call counts as state-touching —
-SourceFileLoader and the importlib idioms (spec_from_file_location/exec_module/import_module/
+load_source (tests/romp_load.py), SourceFileLoader and the importlib idioms (spec_from_file_location/exec_module/import_module/
 __import__) alike, since most bin/* files are or transitively load a STATE-resolving module, and
 the few that aren't pay two harmless lines rather than this test resolving targets. Out of scope by design: a subprocess
 spawned with a hand-built env= dict that carries the real HOME — env construction is dynamic and
@@ -48,10 +49,10 @@ PREAMBLE = (
 )
 
 ROOT_PACKAGES = {"kernel", "postal", "cli"}
-# Every in-process load form counts, not just the repo's usual SourceFileLoader: the
+# Every in-process load form counts, not just the repo's usual load_source: the
 # spec_from_file_location + exec_module idiom (tests/test_colormap.py) aimed at a STATE-resolving
 # bin file would recreate the corruption with the ratchet silent otherwise.
-LOAD_CALLS = {"SourceFileLoader", "spec_from_file_location", "exec_module", "import_module",
+LOAD_CALLS = {"load_source", "SourceFileLoader", "spec_from_file_location", "exec_module", "import_module",
               "__import__"}
 
 
@@ -123,8 +124,29 @@ class StateIsolationOrder(unittest.TestCase):
             "These modules load romp code before making the state root hermetic — under a bare\n"
             "unittest or script run they operate on the REAL ~/.local/state/romp (which is how\n"
             "tests/test_kernel.py overwrote the real remotes.json on 2026-08-12). Put this at\n"
-            "module top level, above the first SourceFileLoader line:\n\n%s\n\n%s"
+            "module top level, above the first load_source line:\n\n%s\n\n%s"
             % (PREAMBLE, "\n".join(bad)))
+
+    def test_no_test_module_uses_the_removed_loader(self):
+        """Every test module loads by load_source (tests/romp_load.py): SourceFileLoader.load_module() is
+        removed in Python 3.15 and warns before that. tools/loadsource-sweep.py converts a module
+        mechanically, so a file written in the old idiom (a branch from before the sweep) fails here
+        with the command to run rather than surviving as a warning."""
+        stale = []
+        for fn in sorted(os.listdir(HERE)):
+            if not fn.endswith(".py") or fn in ("romp_load.py", "conftest.py", "__init__.py", "credential_patterns.py"):
+                continue
+            tree = ast.parse(open(os.path.join(HERE, fn)).read(), filename=fn)
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.ImportFrom) and node.module == "importlib.machinery"
+                        and any(a.name == "SourceFileLoader" for a in node.names)):
+                    stale.append("%s:%d imports SourceFileLoader" % (fn, node.lineno))
+                elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "load_module"):
+                    stale.append("%s:%d calls load_module()" % (fn, node.lineno))
+        self.assertFalse(stale,
+            "These modules still use SourceFileLoader.load_module(), removed in Python 3.15. Run\n"
+            "tools/loadsource-sweep.py and commit the result:\n%s" % "\n".join(stale))
 
     def test_the_suite_wide_floors_stay_in_place(self):
         # The suspenders: conftest.py (pytest) and __init__.py (unittest package runs) each set the
@@ -136,6 +158,11 @@ class StateIsolationOrder(unittest.TestCase):
                           "%s must keep the temp XDG_STATE_HOME floor" % fn)
             self.assertIn('os.environ.pop("ROMP_STATE_DIR", None)', src,
                           "%s must keep dropping an inherited ROMP_STATE_DIR override" % fn)
+            # ...and the dead-port floors: a shell of a romp session inherits the live manager's and
+            # kernel's ports, and a test that reads one dials the running deployment (2026-09-06)
+            for var in ("ROMP_MANAGER_PORT", "ROMP_KERNEL_PORT", "ROMP_SERVE_PORT"):
+                self.assertIn('os.environ["%s"] = "1"' % var, src,
+                              "%s must keep poisoning %s to a dead port" % (fn, var))
 
 
 if __name__ == "__main__":

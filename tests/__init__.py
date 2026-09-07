@@ -7,20 +7,28 @@ script run — the per-module preambles do, and tests/test_state_isolation_order
 import atexit
 import os
 import shutil
+import sys
 import tempfile
 
-# Temp-directory hygiene (2026-09-06): the suite used to leak every directory it made. This floor and
-# conftest.py's each minted a state root per process and never removed it (nine per `pytest -n 8`
-# run), and about three hundred test modules call tempfile.mkdtemp with no cleanup of their own. On a
-# machine where many sessions run the suite all day that left about 1.4 million directories under
-# /tmp, enough that listing /tmp took minutes and tens of gigabytes of memory, and the out-of-memory
-# kills that followed took a live kernel down. The fix is at the source: every tempfile.mkdtemp call
-# made in this process is recorded, and everything recorded is removed at interpreter exit (and, under
-# pytest, at session end; see conftest.py). Only directories this process created, and only under the
-# system temp directory, are ever removed. tempfile.TemporaryDirectory goes through the same mkdtemp
-# and cleans itself first, so the exit sweep finds nothing of it. This package imports before
-# conftest.py (pytest imports `tests.conftest` through the package), so conftest's own root is
-# recorded too.
+# Temp-directory hygiene, the in-process half (2026-09-06): the suite used to leak every directory it
+# made. This floor and conftest.py's each minted a state root per process and never removed it (nine
+# per `pytest -n 8` run), and about three hundred test modules call tempfile.mkdtemp with no cleanup
+# of their own. On a machine where many sessions run the suite all day that left about 1.4 million
+# directories under /tmp, enough that listing /tmp took minutes and tens of gigabytes of memory, and
+# the out-of-memory kills that followed took a live kernel down. The fix is at the source: every
+# tempfile.mkdtemp call made in THIS process is recorded, and everything recorded is removed at
+# interpreter exit (and, under pytest, at session end; see conftest.py). Only directories this
+# process created, and only under the process temp dir, are ever removed: tempfile.gettempdir(),
+# which is the system temp dir under a unittest run and conftest's private per-run root under
+# pytest. tempfile.TemporaryDirectory goes through the same mkdtemp and cleans itself first, so the
+# exit sweep finds nothing of it.
+# What this hook cannot see is the other half, conftest.py's: directories made by CHILD processes
+# (kernels, git, a shell's `mktemp -d`), files from mkstemp, and os.mkdir paths under the temp dir.
+# Under pytest those land in conftest's root because TMPDIR points there, and the root is removed
+# whole at run end; the two directories this process mints BEFORE that redirect (this package's
+# state dir below, and the root itself, both recorded here but outside the redirected gettempdir()
+# and so skipped by this sweep) are conftest's to remove. No such cover exists under a bare
+# unittest run, where the per-module cleanups (addCleanup, tearDownClass) are what there is.
 _MADE_DIRS = []
 _REAL_MKDTEMP = tempfile.mkdtemp
 
@@ -53,4 +61,28 @@ def remove_made_dirs():
 atexit.register(remove_made_dirs)
 
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")
+# Recorded by the hook above, which removes it at exit under a unittest run. Under pytest it is
+# minted BEFORE conftest.py redirects the temp root (the package imports first), so it sits beside
+# the root in the system temp dir, outside the hook's redirected scope; conftest reads STATE_DIR
+# and removes it with the root when the run ends. Nothing runs after an os._exit (pytest-timeout's
+# thread method ends a hung run that way), so a hung run leaves this dir beside the root.
+STATE_DIR = os.environ["XDG_STATE_HOME"]
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+
+# No test may reach a REAL manager control port or the REAL kernel (the twin of conftest.py's port
+# floors, 2026-09-06): a shell of a romp session inherits ROMP_MANAGER_PORT, ROMP_KERNEL_PORT and
+# ROMP_SERVE_PORT from the live deployment, and a test kernel that dials "the manager" through the
+# inherited value restarts the actual one, while postal_service.py's KERNEL_BASE and kernel.py's
+# PORT resolve the kernel port at import time. POISONED to a dead port, never popped: an absent
+# variable maps to the default, which is the live port, so only a dead value is safe for every
+# consumer. Tests that need a kernel start their own on an ephemeral port and pass it explicitly.
+os.environ["ROMP_MANAGER_PORT"] = "1"
+os.environ["ROMP_KERNEL_PORT"] = "1"
+os.environ["ROMP_SERVE_PORT"] = "1"
+
+# `from romp_load import load_source` in every test module (tests/romp_load.py): under pytest and
+# `python -m unittest tests.test_x` the test modules are imported as members of this package, so the
+# bare name resolves only because it is registered here; a direct script run finds the file on
+# sys.path itself. One module object either way.
+from . import romp_load as _romp_load  # noqa: E402
+sys.modules.setdefault("romp_load", _romp_load)

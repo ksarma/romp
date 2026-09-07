@@ -32,7 +32,7 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(KERNEL.includes('out["spendSeries"] = ss'));
   // the bars payload attaches the KEYED split only — a login turn's computed cost there would be
   // dollars nobody is billed — and only when key turns actually exist (the user 2026-08-08)
-  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False):"));
+  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False, now=None):"));
   assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True)"));
   assert.match(KERNEL, /if any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\):/);
   // no fragment of the key rides ANY payload (the user 2026-08-08, evening): the tail plumbing is
@@ -42,8 +42,11 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(!KERNEL.includes("authTail"), "no key material in the status payload either");
   // rolling day/week read the HOUR buckets (192h = 8 days fits both); month-to-date reads the day
   // ledger. fiveHour/sevenDay stay emitted ONE release for version skew (the user 2026-08-13).
-  assert.match(KERNEL, /"day": _rolling\(24\), "week": _rolling\(7 \* 24\)/);
-  assert.match(KERNEL, /"fiveHour": _rolling\(5\), "sevenDay": _rolling\(7 \* 24\)/);
+  // …the seven-day walk runs once and first (its keys are every other window's), `sevenDay` and `week`
+  // are the same sum in two dicts, so a budget set on one stays off the other (round 6, 2026-09-06)
+  assert.match(KERNEL, /seven_days = _rolling\(7 \* 24\)/);
+  assert.match(KERNEL, /"fiveHour": _rolling\(5\), "sevenDay": seven_days,/);
+  assert.match(KERNEL, /"day": _rolling\(24\), "week": dict\(seven_days\)/);
   assert.ok(KERNEL.includes("k.startswith(month)"));
   // the accumulator: cumulative-per-process DELTAS, and each bucket splits out the key's own turns
   assert.ok(BACKEND.includes("delta = total - self._last_cost_total if total >= self._last_cost_total else total"));
@@ -218,13 +221,87 @@ test("every tip string carries data — the narration is gone and stays gone", (
 
 // The two cost surfaces are measured differently, and only one of them sees fast mode (the user
 // 2026-08-08). The rail passes the CLI's own per-turn total_cost_usd through, premium included; the
-// gear's cost view prices session tokens from a per-model table that fast mode is invisible to, because
-// it changes no model id. That gap is a footnote in the view and a comment at the table — pinned here so
-// neither can quietly vanish while the gap is still real.
-test("the cost view says its session dollars are an estimate that fast mode exceeds", () => {
+// gear's cost view priced session tokens from a per-model table that fast mode is invisible to, because
+// it changes no model id. Since 2026-09-05 the view shows the rail's ledger figure — the CLI's own
+// cost — and since 2026-09-06 at the rail's own bucket edges, with every other figure cut at the same
+// start, the keyed split where a key runs beside a login, and a labelled token-price estimate added for
+// any part of the period the ledger predates; the estimate stands alone only where the ledger has
+// nothing. The wordings are pinned here so none can quietly vanish while the gap is still real.
+test("the cost view shows the CLI's own cost, adds a labelled estimate for the time before the ledger, and calls its estimate an estimate elsewhere", () => {
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.match(GEAR, /var led = \(sess\.ledger && typeof sess\.ledger\.usd === 'number'\) \? sess\.ledger : null;/);
+  assert.match(GEAR, /var before = \(led && typeof led\.estBefore === 'number'\) \? led\.estBefore : 0;/, "the estimate for the part of the period the ledger predates");
+  assert.match(GEAR, /var sessCost = led \? led\.usd \+ before : est;/, "the ledger's figure plus that estimate; the estimate alone as the fallback");
+  assert.match(GEAR, /session \$ is the CLI\\'s own per-turn cost/);
+  assert.match(GEAR, /plus a token-price estimate for the time before ' \+ ledFrom \+ ' \(/, "a young ledger says where it begins and what was estimated");
+  assert.match(GEAR, /recording began partway through that ' \+ \(dayB \? 'day' : 'hour'\) \+ ', so turns earlier in it are in neither figure/,
+    "…and that its first bucket is partial: the turns before recording began are in neither figure (2026-09-06)");
+  assert.match(GEAR, /key-billed turns only, login turns left out/, "the keyed split names what it excludes (the rail's rule)");
+  assert.match(GEAR, /raState\.periodLabel \+ ' · from ' \+ fromTxt/, "the footnote names the period's real start");
+  assert.ok(!/led\.since\b/.test(GEAR), "no raw hour key reaches the modal: an hour edge renders as a time in the user's clock, a day edge as the kernel's date");
+  // day edges come as the kernel's own DATE strings and render from them; hour edges stay instants
+  assert.match(GEAR, /var fromTxt = dayB \? raDate\(d\.fromDate\) : \(\(typeof d\.from === 'number'\) \? raWhen\(d\.from\) : ''\);/);
+  assert.match(GEAR, /var ledFrom = led \? \(dayB \? raDate\(led\.sinceDate\) : \(\(typeof led\.sinceT === 'number'\) \? raWhen\(led\.sinceT\) : ''\)\) : '';/);
+  assert.match(KERNEL, /resp\["fromDate"\] = _keys\[-1\]/, "the kernel names the period's first local date for day buckets");
+  assert.match(KERNEL, /out\["sinceDate"\] = oldest/, "…and a young day ledger's first date");
   assert.match(GEAR, /session \$ estimated from token prices; fast mode draws more than shown/);
-  assert.match(GEAR, /raCost\(\) \? ' · session \$ estimated/, "shown only on the cost metric, not tokens");
+  assert.match(GEAR, /raCost\(\) \? \(led \?/, "shown only on the cost metric, not tokens");
+  // the kernel serves the ledger beside the estimate at the rail's bucket edges, every figure cut at one start
+  assert.match(KERNEL, /def _analytics_edges\(now, window\):/);
+  assert.match(KERNEL, /def _spend_ledger_window\(now, window, keyed_only=False\):/);
+  assert.match(KERNEL, /if _auth_key_present\(\) and _claude_account\(\):\n\s+ksp = _spend_windows\(keyed_only=True, now=now\)\n\s+keyed = any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\)/,
+    "the rail's mixed-host arm decides the split, under the rail's own guard: the key has recorded turns");
+  assert.match(KERNEL, /led\["estBefore"\] = round\(before, 6\)/);
+  assert.match(KERNEL, /s\["ledger"\] = led/);
+  assert.match(KERNEL, /"from": t0, "buckets": kind/);
+  // …and the estimate itself dedupes split responses and reads subagent transcripts, nested ones too (2026-09-06)
+  assert.match(KERNEL, /def _subagent_transcripts\(path\):/);
+  assert.match(KERNEL, /for root, dirs, files in os\.walk\(d\):/, "Workflow agents nest under subagents/workflows/");
+  assert.match(KERNEL, /j = by_id\.get\(mid\)/, "one row per message.id");
+  assert.match(KERNEL, /"claude-fable-5-1":\s+\{"in": 10e-6, "out": 50e-6, "cache_w": 12\.5e-6, "cache_r": 0\.25e-6\}/);
+});
+
+// BEHAVIORAL: the two edge formatters run for real under three process zones. A day bucket is a kernel-local
+// DATE, so its edge must print as that date in every browser; an hour bucket's edge is an instant, so each
+// browser prints it in its own clock. Node applies a runtime TZ change to Date formatting (checked on v22).
+test("a day edge renders as the kernel's own date in every browser zone; an hour edge as an instant in the browser's clock", () => {
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  const start = GEAR.indexOf("  function raWhen(epoch)"), end = GEAR.indexOf("  function raSegments()");
+  assert.ok(start > 0 && end > start, "raWhen and raDate sit together ahead of raSegments");
+  const fns = new Function(GEAR.slice(start, end) + "\nreturn { raWhen: raWhen, raDate: raDate };")() as
+    { raWhen: (epoch: number) => string; raDate: (iso: string) => string };
+  const fmt = (t: Date) => t.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const saved = process.env.TZ;
+  try {
+    process.env.TZ = "America/Los_Angeles";   // a browser west of a UTC kernel
+    assert.equal(fns.raDate("2026-09-05"), "Sep 5", "the kernel's date, as the kernel named it");
+    assert.equal(fmt(new Date(Date.UTC(2026, 8, 5))), "Sep 4", "…where the kernel's midnight epoch prints the day before (the bug the string avoids)");
+    const west = fns.raWhen(Date.UTC(2020, 0, 15, 12) / 1000);
+    process.env.TZ = "Asia/Tokyo";            // and one east of it
+    assert.equal(fns.raDate("2026-09-05"), "Sep 5");
+    const east = fns.raWhen(Date.UTC(2020, 0, 15, 12) / 1000);
+    assert.ok(west.startsWith("Jan 15, ") && east.startsWith("Jan 15, "), "an hour edge not on today carries its date: " + west + " / " + east);
+    assert.notEqual(west, east, "the same instant, each browser's own clock");
+    assert.equal(fns.raDate(""), "", "no date (an older kernel's payload) prints nothing; the footnote then reads 'last 30d'");
+    assert.equal(fns.raDate("2026-09-05T13"), "", "an hour key is not a date");
+  } finally {
+    if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+  }
+});
+
+// Day buckets from before the per-turn delta fix (2026-08-07..09) hold inflated figures — each result
+// re-added the whole session so far. They stay in the ledger as recorded (never rewritten), and every
+// window that folds one says so: the kernel flags the window at read time, the hover names it on the
+// row, and the analytics footnote carries the same words when its ledger figure includes such a day.
+test("windows that fold a pre-fix day say so, on the rail's hover and in the analytics footnote", () => {
+  assert.match(KERNEL, /SPEND_PRE_FIX_DATE = "2026-08-10"/);
+  assert.match(KERNEL, /def _spend_pre_fix\(key\):/);
+  assert.match(KERNEL, /if _spend_pre_fix\(k\):\s+out\["preFix"\] = True/, "flagged at read time, in both the windows and the ledger sum");
+  assert.match(KERNEL, /if\(seg\.preFix\)row\.preFix=true;/, "spendDet carries the flag per window");
+  assert.match(KERNEL, /if\(v\.preFix\)t\.preFix=true;/, "any host's pre-fix day marks the summed row");
+  assert.match(KERNEL, /if\(v\.preFix\)lab\+=' \\u00b7 includes days recorded before the per-turn fix';/);
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.match(GEAR, /led\.preFix \? '; includes days recorded before the per-turn fix' : ''/);
 });
 
 test("the price table records the fast-mode gap for whoever maintains it", () => {

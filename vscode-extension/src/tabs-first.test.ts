@@ -10,8 +10,8 @@ import * as path from "node:path";
 const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "render.ts"), "utf8");
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
-test("a tabMeta map holds the kernel's name+color per tab", () => {
-  assert.match(RENDER, /const tabMeta = new Map<string, \{ name: string; color: Color \| null \}>\(\);/);
+test("a tabMeta map holds the kernel's name+color per tab (and its emoji since 2026-09-06)", () => {
+  assert.match(RENDER, /const tabMeta = new Map<string, \{ name: string; color: Color \| null; emoji\?: string \}>\(\);/);
 });
 
 test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs don't linger)", () => {
@@ -19,7 +19,8 @@ test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs
   assert.match(RENDER, /function applyTabOrder\(o: any, tabs\?: any, report\?: OrderReport\)/);
   assert.match(RENDER, /if \(Array\.isArray\(tabs\)\) \{\s*tabMeta\.clear\(\);/);
   // the frame's provenance rides along since T233 (captureViews still runs FIRST)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/);
+  // (the kernel's own name, selfHost, is adopted first — pr-links.test.ts pins that line)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/);
 });
 
 test("renderTabs renders the union of arrived sessions and tabMeta, placeholders for the rest", () => {

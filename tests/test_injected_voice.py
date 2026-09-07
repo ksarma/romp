@@ -33,7 +33,7 @@ import os
 import re
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -42,11 +42,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-km = SourceFileLoader("romp_kernel_voice", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_voice", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -326,6 +326,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # voice like the edit trace, for one change and for several
             "reject trace": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
             "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
+            # the count-less form: the host wrote the file and died before saying which ids landed
+            "reject trace (count unknown)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", None),
             # the save trace (plans/file-review.md, Slice 5; the review round, 2026-09-06): the editor's
             # Save wrote the file AND its decisions rejected some of the session's tracked changes, so the
             # session hears the direct edit and the count in one body — told as the edit trace alone it
@@ -378,6 +380,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                  {"id": "1781100000001-0", "desc": 'on your change "40%" to "35%"',
                   "body": "Keep the measured number."}],
                 4, 1, True, True),
+            # …and the DECISIONS-ONLY shape (Slice 2): a send carrying an Accept or Reject and no
+            # comments wears its own prose (the file, the decisions line, that nothing needs a reply,
+            # the same closing ask). A distinct body with its own words, so it is rendered here too —
+            # a hand-copied noun list elsewhere would drift from ROMP_WORDS (the review, 2026-09-06)
+            "file comments message (decisions only)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", [], 3, 1, True, True),
             # Slice 3: a region of a standalone image — fractions of its natural size, two decimals —
             # beside a whole-file comment; the image bullet, since the file is not text
             "file comments message (image, region)": km._file_comments_message(
@@ -476,6 +484,20 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                          "(%r: %s). The desc reaches the session verbatim — write it as the "
                                          "person would name the spot." % (fname, fn, lit, base, n, word, why))
 
+    def test_the_index_renders_both_shapes_of_the_file_comments_message(self):
+        # the send message has TWO shapes with different prose (kernel _file_comments_message): the
+        # comments shape and the decisions-only shape a send with no comments wears. The index must
+        # render both, or one is scanned only by a copied noun list that ROMP_WORDS cannot update —
+        # the gap the 2026-09-06 review found. Pinned on the shapes' own tell-tales, not their names.
+        bodies = self._bodies()
+        decisions = [n for n, b in bodies.items() if "No comments this time" in b]
+        comments = [n for n, b in bodies.items() if "\nComment " in b and "To respond:" in b]
+        self.assertTrue(decisions, "the decisions-only send is rendered and scanned")
+        self.assertTrue(comments, "the comments send is rendered and scanned")
+        for name in decisions:
+            self.assertNotIn("Comment ", bodies[name], "%r is the decisions-only shape: no comment list" % name)
+            self.assertIn("I accepted", bodies[name], "%r carries the decision it exists to report" % name)
+
     def test_the_command_allowance_is_the_span_not_the_word(self):
         # the T212 allowance must never become a whitelist: bare "romp" in prose, or any other
         # romp command, still speaks romp at the session and still fails the scan
@@ -489,8 +511,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # it, the line must speak plainly — no markers (it joins an EXISTING message and would
         # re-author it), no romp nouns, one line
         import os as _os
-        from importlib.machinery import SourceFileLoader as _L
-        sb = _L("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
         line = sb.RENAME_NUDGE % "tests"
         self.assertTrue(line.startswith("[romp] "), "the sanctioned mechanics prefix")
         self.assertNotIn("\n", line, "one line")
@@ -507,8 +528,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # from the session, never that they died: under the per-session scopes a task's shell can
         # outlive the CLI, so the ask is to check whether each still runs before relaunching it.
         import os as _os
-        from importlib.machinery import SourceFileLoader as _L
-        sb = _L("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
         for tasks in ([{"desc": "watching the CI run"}],
                       [{"desc": "watching the CI run"}, {"desc": "tailing the deploy log"}, {}]):
             text = sb.task_death_notice(tasks)
@@ -571,7 +591,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                 "it — add a row to _bodies() (and, if it is an FYI, to the four-verdicts "
                                 "exemption list) so the index-wide checks reach it" % name)
         traces = {n: b for n, b in self._bodies().items() if n.split(" (")[0].endswith(" trace")}
-        self.assertEqual(sorted(traces), ["edit trace", "reject trace", "reject trace (one change)",
+        self.assertEqual(sorted(traces), ["edit trace", "reject trace", "reject trace (count unknown)", "reject trace (one change)",
                                           "save trace", "save trace (one change)"])
         for name, body in traces.items():
             with self.subTest(message=name):
@@ -602,9 +622,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                 "debt reminder (question)", "debt reminder (handoff)",
                                 "debt reminder (several)", "comment thread opener", "user-todo answer",
                                 "user-todo context block", "edit trace", "reject trace",
-                                "reject trace (one change)", "save trace", "save trace (one change)",
-                                "comment-thread merge",
-                                "compaction suggestion")):
+                                "reject trace (one change)", "reject trace (count unknown)",
+                                "save trace", "save trace (one change)",
+                                "comment-thread merge", "compaction suggestion")):
                                 # ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()
@@ -740,7 +760,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
     with the product's name on it; these two must not teach the model a tracking system.)"""
 
     def test_the_descriptions_carry_no_romp_vocabulary(self):
-        pm = SourceFileLoader("romp_postal_voice", os.path.join(BIN, "romp-postal-service")).load_module()
+        pm = load_source("romp_postal_voice", os.path.join(BIN, "romp-postal-service"))
         tools = {t["name"]: t for t in pm.MCP_TOOLS}
         for name in ("add_user_todo", "withdraw_user_todo"):
             self.assertIn(name, tools, "the tool exists to be scanned")
@@ -759,13 +779,12 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         # identity refusal is out of scope on purpose: it is every postal tool's answer, and
         # the bus names romp deliberately (visible tooling); identity is stubbed so no branch
         # here can reach it.
-        pm = SourceFileLoader("romp_postal_voice_results",
-                              os.path.join(BIN, "romp-postal-service")).load_module()
-        saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        pm = load_source("romp_postal_voice_results",
+                              os.path.join(BIN, "romp-postal-service"))
+        saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         canned = {}
         pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
-        pm.my_name = lambda: "api"
-        pm.my_id = lambda: SID
+        pm._self_identity = lambda: (SID, "api")     # the one resolver every tool call reads (2026-09-06)
         pm._heartbeat = lambda *a, **k: None
         # the per-install switch (2026-09-03) is OFF by default: turn it on for the live branches,
         # then off again for the two refusals a still-connected session hears
@@ -788,7 +807,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
         finally:
-            pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = saved
+            pm._kernel_post, pm._self_identity, pm._heartbeat = saved
             pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])

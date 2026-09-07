@@ -20,7 +20,7 @@ import threading
 import types
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -31,7 +31,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_newdir", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_newdir", os.path.join(BIN, "romp-kernel"))
 
 
 class _Dirs(unittest.TestCase):
@@ -384,7 +384,7 @@ class CreateSessionTags(_Wire):
     def test_the_op_and_the_docs_say_how_the_live_name_case_differs_from_post_new(self):
         # the two doors disagree on a running name ON PURPOSE — /new's `tags` is always an explicit
         # --in (re-asserted like model/effort); the picker's is a prefill (warned, not applied). The
-        # op's comment and the UPSTREAM.md row both state the difference, not a match.
+        # op's comment and the ledger entry both state the difference, not a match.
         src = inspect.getsource(km.Handler._dispatch_ws)
         op = src[src.index('msg.get("type") == "createSession"'):src.index('msg.get("type") == "cancelCreate"')]
         live_arm = op[op.index("elif nm in live:"):op.index("elif _thread_name_refusal(nm, _thread_names())")]
@@ -392,7 +392,7 @@ class CreateSessionTags(_Wire):
         self.assertIn("existing:true arm differs on purpose", live_arm)
         self.assertNotIn("the same contract as", op)
         root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-        up = open(os.path.join(root, "UPSTREAM.md")).read()
+        up = open(os.path.join(root, "upstream", "2026-09-04-tab-groups-on-tags.md")).read()
         self.assertIn("a name that already runs: `/new` re-asserts an explicit `--in`, the picker's op warns instead", up)
         guide = open(os.path.join(root, "docs", "guide.md")).read()
         self.assertIn("from\nthe picker, a name that already runs is focused and the Tags row is not applied", guide)
@@ -491,22 +491,30 @@ class NativeDialogWire(_Wire):
                 self.assertIn(said, r["text"])
 
     def test_a_kernel_that_can_show_one_says_nothing_and_opens_it(self):
+        # The dialog runs off the message loop, and that thread reads `_pick_file`/`_pick_folder` when
+        # it CALLS them — so the wait for each pick has to happen inside the patch, on an event the pick
+        # itself sets. The earlier proof joined every daemon this test had started, after the `with`
+        # block: under free threading (CI's 3.14t cell) the main thread lifted the patch before the
+        # dialog thread ran, the thread called the real, headless picker (None at once), the join
+        # returned promptly, and the test saw one pick instead of two. The census itself did not miss
+        # the thread (`enumerate()` covers `_limbo` too); the lifted patch was the defect.
         opened = []
-        before = set(threading.enumerate())            # join only the threads THIS test starts (T230b):
-        #                                                joining every daemon in the process made this
-        #                                                test's runtime scale with the suite's leaked
-        #                                                threads (~122 s measured, 2 s per leak)
+        ran = {"file": threading.Event(), "folder": threading.Event()}
+
+        def _picked(kind):
+            opened.append(kind)
+            ran[kind].set()
+            return ""                                     # "cancelled": nothing to reply with
         with mock.patch.object(km, "_native_dialogs", lambda: True), \
-             mock.patch.object(km, "_pick_folder", lambda: opened.append("folder") or ""), \
-             mock.patch.object(km, "_pick_file", lambda: opened.append("file") or ""):
-            for msg in ({"type": "browseDir"}, {"type": "pickFile"}):
+             mock.patch.object(km, "_pick_folder", lambda: _picked("folder")), \
+             mock.patch.object(km, "_pick_file", lambda: _picked("file")):
+            for msg, kind in (({"type": "browseDir"}, "folder"), ({"type": "pickFile"}, "file")):
                 self.sent.clear()
                 self.send(msg)
                 self.assertEqual([m for m in self.sent if m.get("type") == "warn"], [],
                                  "an available dialog must not be talked about, only shown")
-        for t in threading.enumerate():                      # the dialog runs off the message loop
-            if t not in before and t is not threading.current_thread() and t.daemon:
-                t.join(timeout=2)
+                self.assertTrue(ran[kind].wait(timeout=10),
+                                "the %s dialog thread never ran the pick" % kind)
         self.assertEqual(sorted(opened), ["file", "folder"])
 
     def test_the_gear_learns_the_same_thing_from_its_own_route(self):

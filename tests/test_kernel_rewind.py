@@ -13,7 +13,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -24,7 +24,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_rw", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_rw", os.path.join(BIN, "romp-kernel"))
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
 # tests/test_kernel_limit_queue.py) is a SEPARATE axis from the compaction/busy gates this module
@@ -534,7 +534,8 @@ class TwoPhaseRewindTiming(unittest.TestCase):
         # tab-hover recents derived from it) read jd.load_goals raw and kept showing the doomed
         # asks for the whole armed window — unbounded on a bare delete
         src = inspect.getsource(km.build_session)
-        self.assertIn("gstore = _apply_rewind_hold(sid, jd.load_goals(sid))", src)
+        self.assertIn("gstore = _apply_rewind_hold(sid, jd.load_goals_shared(sid))", src,
+                      "the ledger tree reads the hold-filtered view of the shared read-only store")
 
     def test_the_boot_pass_resolves_a_hold_the_transcript_moved_past_out_of_band(self):
         # bare rollback armed, kernel dies, the user continues the session CLI-natively: the OLD

@@ -2,7 +2,7 @@
 // Slice 5; the review of 2026-09-06). `accepted` and `rejected` are the decisions taken in the editor,
 // each {id, oldText, newText}, and doSave writes them into the comments log as its accept and reject
 // entries. CONTEXT.md lists "ledger" under _Avoid_ for the comments log, and the kernel and the editor
-// chunk were renamed to `decisions` for that reason (tests/test_kernel_file_comments_vocabulary.py,
+// chunk were renamed to `decisions` for that reason (tests/test_kernel_comments_log_vocabulary.py,
 // ui/webview/editor-chunk-decisions.test.ts) — but this script, the one process that writes those
 // decisions into the log, kept calling them a ledger in doSave's prose, so a reader met "the ledger"
 // and "the log" side by side for one set of decisions, told apart only by the word the glossary bans

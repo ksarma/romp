@@ -282,12 +282,16 @@ const SID = "11111111-2222-3333-4444-555555555555";
 const ROOT = "/repo/notes-api";
 const REPORT = ROOT + "/docs/report.md";
 const APP = ROOT + "/src/app.py";
-const DOC = "# Report\n\n## Findings\nThe api session cut p95 latency by 40%.\n\nWe recommend shipping the cache in v1.2.\n";
+// the file as the viewer shows it, with the session's substitution (p95 -> p99) already in it: a change's marks are
+// painted only where its new text sits at its offsets (the painters verify the batch against the view's text), so the
+// hunk fixture below indexes this string
+const DOC = "# Report\n\n## Findings\nThe api session cut p99 latency by 40%.\n\nWe recommend shipping the cache in v1.2.\n";
+const SUB_AT = DOC.indexOf("p99");
 const PY = "def main():\n    return 0\n";
 const MT = "1757145600000000001";
 const NS = (n: number) => "17571456000000000" + String(n).padStart(2, "0");   // a later mtime, in the fixture's own clock
 const T0 = 1757145600000;
-const hunk = (id: string): Hunk => ({ id, author: "api", ts: T0, kind: "sub", curFrom: 28, curTo: 31, baseFrom: 28, baseTo: 31, oldText: "p95", newText: "p99", anchor: null });
+const hunk = (id: string): Hunk => ({ id, author: "api", ts: T0, kind: "sub", curFrom: SUB_AT, curTo: SUB_AT + 3, baseFrom: SUB_AT, baseTo: SUB_AT + 3, oldText: "p95", newText: "p99", anchor: null });
 const recordOf = (h: Hunk) => ({ id: h.id, author: "api", authorId: SID, ts: T0, kind: h.kind, from: h.curFrom, newText: h.newText, oldText: h.oldText });
 const record = (id: string) => recordOf(hunk(id));
 // the session removed " now" after "shipping": a deletion is a point in the current text, so the card offers Reveal in the read view
