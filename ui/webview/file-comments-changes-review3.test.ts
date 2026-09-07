@@ -573,6 +573,8 @@ test("a Space on a confirm checkbox rebuilds the confirm and the rebuilt box tak
   act(a3, "fcsend")!.click();
   flipHoldsFocus(a3, "todo");
   // the mend at source: the checkbox's identity for focusKey and findControl
-  assert.match(SRC, /: a\.dataset\.opt \? \{ act: "opt", key: a\.dataset\.opt \} : null;/, "focusKey: a confirm checkbox, by its option");
-  assert.match(SRC, /if \(k\.act === "opt"\) return this\.root\.querySelector\('\[data-opt="' \+ k\.key \+ '"\]'\) as HTMLElement \| null;/, "findControl re-finds it");
+  assert.match(SRC, /: a\.dataset\.opt \? \{ act: "opt", key: a\.dataset\.opt, id: a\.dataset\.opt === "todopick" \? \(a as HTMLInputElement\)\.value : undefined \} : null;/,
+    "focusKey: a confirm checkbox, by its option (a radio of the todo group by its option and value too — the todo-file follow-on)");
+  assert.match(SRC, /if \(k\.act === "opt"\) \{\n\s*const all = Array\.from\(this\.root\.querySelectorAll\('\[data-opt="' \+ k\.key \+ '"\]'\)\) as HTMLElement\[\];\n\s*return \(k\.id === undefined \? all\[0\] : all\.find\(\(n\) => \(n as HTMLInputElement\)\.value === k\.id\)\) \|\| null;/,
+    "findControl re-finds it");
 });

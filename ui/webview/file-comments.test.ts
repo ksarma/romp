@@ -690,8 +690,11 @@ test("both ops carry sid and a client-minted reqId; replies match by reqId; a wa
   assert.match(SRC, /this\.ctx\.post\(\{ \.\.\.msg, type: "fileCommentsSend", reqId \}\);/);
   assert.match(SRC, /sid: this\.ctx\.sid, path: this\.ctx\.path, tracked, comments: parts\.comments,\n\s*accepted: counts\.accepted, rejected: counts\.rejected, watermark: parts\.watermark,/,
     "the counts are sendCounts' — the log's unsent decisions plus the pending changes the confirm's checkbox accepts (Slice 2)");
-  assert.match(SRC, /if \(answerTodo\) msg\.todoId = this\.ctx\.todoId;/);
-  assert.match(SRC, /const answerTodo = !!this\.ctx\.todoId && this\.sendOpts\.todo && !this\.todoAnswered;/, "one send answers the todo; later sends carry none");
+  // the todo a send answers is the confirm's choice (the todo-file follow-on, 2026-09-07: the one the file was opened from,
+  // or one the status lists as naming this file; file-comments-todo-choices.test.ts drives the checkbox and the radio group)
+  assert.match(SRC, /const todoId = this\.chosenTodoId\(s\);/);
+  assert.match(SRC, /if \(todoId\) msg\.todoId = todoId;/);
+  assert.match(SRC, /if \(cands\.length === 1\) return this\.sendOpts\.todo \? cands\[0\]\.id : null;/, "one candidate: the checkbox decides; a send that stamped it leaves it out of later candidates (answeredTodos)");
   for (const t of ["fileCommentsResult", "fileCommentsFailed", "fileCommentsSent", "fileCommentsSendFailed"]) assert.ok(SRC.includes('m.type === "' + t + '"'), t);
   assert.match(SRC, /const p = this\.pending\.get\(Number\(m\.reqId\)\);\n\s*if \(!p\) return;/);
   assert.match(SRC, /else if \(m\.type === "warn"\) live\.failAll\(/, "a federation warn during an outstanding request is its failure");
@@ -713,7 +716,8 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.match(SRC, /const stale = !!this\.statusRefusal;\n\s*b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid \|\| stale;/,
     "Send stands down while a status refusal stands: the unsent list was derived from a disk the kernel can no longer read");
   assert.match(send, /if \(!s \|\| this\.statusRefusal \|\| this\.sending \|\| !this\.ctx\.sid\) return;/, "and doSend refuses the same way, a click never sends over a stale status");
-  assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
+  assert.match(SRC, /this\.todoOpts\(opts, s\);/, "the answer-a-todo control: the checkbox, or the radio group when several todos name the file (the todo-file follow-on)");
+  assert.match(SRC, /"answer " \+ TODO_OPENED_FROM/, "the generic wording stands for the opened-from todo the status does not list (decision 36)");
   assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/, "all three checked by default (decision 8; the third is Slice 2's accept-pending box)");
   assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: counts\.accepted, rejected: counts\.rejected, tracked, media \}\)\)\);/,
