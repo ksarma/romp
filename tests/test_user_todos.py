@@ -447,6 +447,125 @@ class Routes(_StoreSandbox):
         self.assertEqual(len(self.pushed_soon), 2, "each route wakes the pusher instead")
 
 
+# A PRIVATE synthetic sid for the account tests below (the goal-store fixture rule, generalized:
+# rows minted under the shared placeholder can be reached by another module's fixtures).
+WSID = "7a7a7a7a-1111-4222-8333-944444444444"
+WSID2 = "7b7b7b7b-1111-4222-8333-944444444444"
+
+
+class WithdrawAccount(_StoreSandbox):
+    """POST /usertodo/withdraw ACCOUNTS for what it found (2026-09-07): `ok` keeps its meaning
+    (this call stamped the row), and `state` / `at` / `owner` say which kind of nothing-to-do an
+    ok:false was, so the postal tool can tell the agent "the person already answered it" apart from
+    "not your id". Two sessions had read the one-size ok:false as a failure. The route describes
+    the asker's own rows only: another session's id is `unknown`, never described."""
+
+    def setUp(self):
+        super().setUp()
+        self._push = (km._push_all, km._push_soon)
+        self.pushed_soon = []
+        km._push_all = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("synchronous _push_all on a postal-called route"))
+        km._push_soon = lambda: self.pushed_soon.append(True)
+
+    def tearDown(self):
+        km._push_all, km._push_soon = self._push
+        super().tearDown()
+
+    def _post(self, path, body):
+        code, out = _serve_post(path, body, {"X-Romp-Token": km.TOKEN})
+        self.assertEqual(code, 200)
+        return json.loads(out.decode() or "{}")
+
+    def _file(self, text="Need the auth-scheme decision", sid=WSID):
+        tid = self._post("/usertodo", {"id": sid, "text": text})["todoId"]
+        self.pushed_soon.clear()                     # the register's own wake; the counts below are the withdraw's
+        return tid
+
+    def _withdraw(self, tid, sid=WSID):
+        return self._post("/usertodo/withdraw", {"id": sid, "todoId": tid})
+
+    def test_a_fresh_withdraw_is_ok_and_accounts_the_stamp_it_made(self):
+        tid = self._file()
+        out = self._withdraw(tid)
+        row = km._user_todos()[WSID][0]
+        self.assertEqual(row["resolved"]["kind"], "withdrawn")
+        self.assertEqual(out, {"ok": True, "state": "withdrawn", "at": row["resolved"]["t"], "owner": True})
+        self.assertIsInstance(out["at"], int)
+        self.assertEqual(len(self.pushed_soon), 1, "the row leaves the split card")
+
+    def test_a_row_the_person_answered_is_accounted_answered_and_left_alone(self):
+        tid = self._file()
+        self.assertTrue(km._resolve_user_todo(WSID, tid, "answered", reply="OAuth."))
+        stamp = km._user_todos()[WSID][0]["resolved"]
+        out = self._withdraw(tid)
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["at"], out["owner"]), ("answered", stamp["t"], True))
+        self.assertTrue(out.get("error"), "the old contract's error text still rides along")
+        self.assertEqual(km._user_todos()[WSID][0]["resolved"], stamp, "a withdraw never overwrites a stamp")
+        self.assertEqual(self.pushed_soon, [], "nothing changed, nothing to push")
+
+    def test_a_row_the_person_dismissed_is_accounted_dismissed(self):
+        tid = self._file()
+        self.assertTrue(km._resolve_user_todo(WSID, tid, "dismissed"))
+        stamp = km._user_todos()[WSID][0]["resolved"]
+        out = self._withdraw(tid)
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["at"], out["owner"]), ("dismissed", stamp["t"], True))
+
+    def test_a_second_withdraw_accounts_the_first_ones_stamp(self):
+        tid = self._file()
+        first = self._withdraw(tid)
+        again = self._withdraw(tid)
+        self.assertFalse(again["ok"])
+        self.assertEqual((again["state"], again["at"], again["owner"]), ("withdrawn", first["at"], True))
+        self.assertEqual(len(self.pushed_soon), 1, "only the stamping call woke the pusher")
+
+    def test_an_unknown_id_is_unknown_and_not_owned(self):
+        out = self._withdraw("ut-deadbeef")
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["at"], out["owner"]), ("unknown", None, False))
+        self.assertTrue(out.get("error"))
+
+    def test_another_sessions_id_is_unknown_to_the_asker_and_stays_open(self):
+        tid = self._file(sid=WSID2)
+        out = self._withdraw(tid, sid=WSID)
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["owner"]), ("unknown", False), "never described, never stamped")
+        self.assertNotIn("resolved", km._user_todos()[WSID2][0], "the other session's ask still stands")
+        self.assertEqual(self.pushed_soon, [])
+
+    def test_the_lookup_and_the_stamp_share_one_critical_section(self):
+        # a racing answer must not land between "found open" and the stamp: the stamp is made
+        # while the account's look-up still holds the store lock (re-entrant, so the nested
+        # _resolve_user_todo takes it again instead of deadlocking)
+        held = []
+        real = km._resolve_user_todo
+        km._resolve_user_todo = lambda *a, **k: (held.append(km._user_todos_lock._is_owned()) or real(*a, **k))
+        try:
+            tid = self._file()
+            self.assertTrue(self._withdraw(tid)["ok"])
+        finally:
+            km._resolve_user_todo = real
+        self.assertEqual(held, [True], "the stamp ran inside the look-up's lock")
+
+    def test_the_remote_forward_passes_the_account_through(self):
+        saved = (km._host_for_sid, km._remote_forward)
+        km._host_for_sid = lambda sid: {"host": "TESTHOST", "local_port": 1, "token": "t"}
+        try:
+            km._remote_forward = lambda r, path, body: {"ok": False, "state": "answered", "at": 1781200000,
+                                                          "owner": True}
+            out = self._withdraw("ut-9f2c1a34")
+            self.assertEqual(out, {"ok": False, "state": "answered", "at": 1781200000, "owner": True})
+            # a remote kernel that predates the account answers ok alone: nothing is invented
+            km._remote_forward = lambda r, path, body: {"ok": False}
+            self.assertEqual(self._withdraw("ut-9f2c1a34"), {"ok": False})
+            km._remote_forward = lambda r, path, body: None          # a dead tunnel: as before
+            self.assertEqual(self._withdraw("ut-9f2c1a34"), {"ok": False})
+        finally:
+            km._host_for_sid, km._remote_forward = saved
+
+
 class ContextBlock(_StoreSandbox):
     """SLICE 3 (memory across context loss, plans/user-todos.md): _user_todo_context_block renders
     a session's OPEN todos as the agent's OWN outstanding notes to the person it works for — the

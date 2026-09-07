@@ -5504,6 +5504,40 @@ def _resolve_user_todo(sid, tid, kind, reply=None):
     return True
 
 
+def _withdraw_user_todo(sid, tid):
+    """The agent's own clearing event, with an honest ACCOUNT of what it found (the withdraw
+    contract, plans/user-todos.md; the user 2026-09-07, after two sessions read a plain "already
+    answered" as a failure and folded it into an error path). Returns the route's answer body:
+    `ok` is True iff THIS call stamped the row; `state` is the row's state as the store now holds
+    it: withdrawn (this call's stamp, or an earlier one), answered, dismissed, or unknown (no such
+    id among this session's rows; an id that belongs to another session is reported as unknown
+    too, never described: the route accounts for the asker's own rows only); `at` is the epoch of
+    the stamp that closed the row, None when it is open or unknown; `owner` says whether the id is
+    among the asking session's rows. One critical section: the look-up and the stamp hold the
+    store lock together (re-entrant, so _resolve_user_todo nests), or a racing answer could land
+    between "found open" and the stamp and the account would describe a row that no longer
+    exists in that state."""
+    sid = str(sid)
+
+    def _row():
+        return next((t for t in _user_todos().get(sid) or []
+                     if isinstance(t, dict) and t.get("id") == tid), None)
+
+    with _user_todos_lock:
+        hit = _row()
+        if hit is None:
+            return {"ok": False, "state": "unknown", "at": None, "owner": False}
+        ok = False
+        if not hit.get("resolved"):
+            ok = _resolve_user_todo(sid, tid, "withdrawn")
+            hit = _row() or hit                          # re-read: the stamp's own time is on the row now
+        res = hit.get("resolved") if isinstance(hit.get("resolved"), dict) else {}
+        state = str(res.get("kind") or "") or ("withdrawn" if ok else "open")
+        at = res.get("t")
+        return {"ok": bool(ok), "state": state, "at": int(at) if isinstance(at, (int, float)) else None,
+                "owner": True}
+
+
 def _reopen_user_todo(sid, tid):
     """Lift an 'answered' stamp — the ONE un-stamp, and only when the answer's own DELIVERY came
     undone: the recall of its send (the queued bubble's ✕ before the message ever reached the
@@ -44073,6 +44107,11 @@ class Handler(BaseHTTPRequestHandler):
                 # The agent takes back its own todo, by id — the ONE agent-side clearing event. An
                 # unknown or already-cleared id answers ok:false and the tool surface says so LOUDLY:
                 # a silent success would teach agents their withdrawals worked when nothing changed.
+                # The answer also carries the ACCOUNT (_withdraw_user_todo, 2026-09-07): `state`
+                # (withdrawn | answered | dismissed | unknown), `at` (epoch of the closing stamp, or
+                # null) and `owner` (is the id among the asker's rows), so the tool can say WHICH
+                # kind of nothing-to-do this was: a row the person already answered or dismissed is
+                # the need met, not the agent's error. `ok` keeps its meaning (this call stamped it).
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -44087,16 +44126,24 @@ class Handler(BaseHTTPRequestHandler):
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     res = _remote_forward(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
-                    return self._send(200, json.dumps({"ok": bool(res and res.get("ok"))}), "application/json")
-                if not _resolve_user_todo(sid, tid, "withdrawn"):
-                    return self._send(200, json.dumps({"ok": False,
-                                                       "error": "no open todo with that id"}), "application/json")
+                    out = {"ok": bool(res and res.get("ok"))}
+                    if isinstance(res, dict):
+                        # the remote's account rides through when it gives one; a remote kernel that
+                        # predates it answers ok alone, and the tool words that the old way
+                        for k in ("state", "at", "owner"):
+                            if k in res:
+                                out[k] = res[k]
+                    return self._send(200, json.dumps(out), "application/json")
+                acct = _withdraw_user_todo(sid, tid)
+                if not acct["ok"]:
+                    return self._send(200, json.dumps(dict(acct, error="no open todo with that id")),
+                                      "application/json")
                 _push_soon()                                        # ack-fast: the row leaves the split card
                 #                                                     on the pusher's woken cycle, and the
                 #                                                     postal caller's 2s POST never waits
                 #                                                     behind a synchronous build of every
                 #                                                     session's payload
-                return self._send(200, json.dumps({"ok": True}), "application/json")
+                return self._send(200, json.dumps(acct), "application/json")
             if u.path == "/usertodo/context":
                 # The re-surfacing read (plans/user-todos.md slice 3): the SessionStart hook
                 # (hooks/romp-usertodo-context.sh) fetches the session's open todos as a rendered
