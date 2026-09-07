@@ -11,6 +11,36 @@
     sudo apt install python3 nodejs npm    # Ubuntu / Debian
     ```
 
+### Which Python runs the kernel
+
+`romp-serve` chooses the interpreter each time it starts the kernel: `ROMP_PYTHON`
+if set, otherwise the newest of `python3.14` through `python3.10` on `PATH` or in
+`~/.local/bin`, otherwise `python3` (`pick_python` in `bin/romp-serve`;
+`bin/romp-sdk-setup` applies the same rule, so the SDK venv is built with the
+interpreter the kernel runs). `install.sh` only checks that a `python3` exists.
+
+The kernel also runs on free-threaded CPython 3.14t, the build with the GIL off.
+The test suite passes there, CI runs it, and the kernel's shared caches are
+written for threads that run at the same time (`tests/test_free_threaded_caches.py`
+holds the cases). The kernel's builders, judge tiers and request handlers are
+threads, so on that build they run in parallel. Nothing selects the free-threaded
+build on its own. Name it: for a foreground `romp`, export
+`ROMP_PYTHON=/path/to/python3.14t` in the shell; for the login service, put that
+line in `~/.config/romp/service.env`, which the manager reads when it starts. The
+SDK backend's venv must be built with the same interpreter (`romp-sdk-setup`
+reads `ROMP_PYTHON` too). Web Push works on that build: `cryptography`, its soft
+dependency, ships free-threaded wheels, and CI installs it on the 3.14t cell.
+
+Installing another interpreter can move the kernel onto it. `uv python install
+<version>` puts a `python3.X` shim in `~/.local/bin`, which `pick_python`
+searches, so at its next restart the kernel runs the newest version it finds
+while the SDK venv stays built for the old one, and every SDK session then fails
+at import. Install extra interpreters with `uv python install --no-bin <version>`
+and reach them through `uv python find <version>` or a venv, never as a bare
+`python3.X` on `PATH`. The kernel and its SDK venv must share one interpreter, so
+a move to 3.14t goes in this order: set `ROMP_PYTHON`, rebuild the SDK venv on it
+with `bin/romp-sdk-setup`, run the test suite there, then restart.
+
 ## Install
 
 ```bash

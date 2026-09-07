@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 import pytest
@@ -38,7 +38,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # runs conftest's floor (a bare script run would otherwise write REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-km = SourceFileLoader("romp_kernel_filecomments_e2e", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_filecomments_e2e", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-555555555555"

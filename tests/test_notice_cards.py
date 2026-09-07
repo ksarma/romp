@@ -9,7 +9,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
@@ -17,10 +17,10 @@ BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-em = SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
-km = SourceFileLoader("romp_kernel_notice", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_notice", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 NOW = 1781100000
@@ -34,7 +34,7 @@ class MarkersCarryRompSystem(unittest.TestCase):
     a card per retry would be noise), so it deliberately does NOT carry the marker."""
 
     def test_boot_resume_carries_the_marker(self):
-        sdk = SourceFileLoader("romp_sdk_backend_nc", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        sdk = load_source("romp_sdk_backend_nc", os.path.join(BIN, "romp_sdk_backend.py"))
         self.assertIn("romp-system", sdk.BOOT_RESUME_NUDGE, "the restart/resume notice is a romp SYSTEM notice")
         self.assertIn("romp-injected", sdk.BOOT_RESUME_NUDGE, "still romp-injected → author 'romp'")
         with open(os.path.join(BIN, "romp-kernel")) as f:
