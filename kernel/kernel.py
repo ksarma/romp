@@ -36865,7 +36865,8 @@ def _setting_kept_value(name):
 # frame and the gear's STALE_LABELS already share, so /version's settingsGt speaks the same one.
 _GT_STORES = ("auto-nudge", "compact-suggest", "file-editing", "update-mode", "thinking-summaries",
               "judge-model", "index-model", "judge-effort", "index-effort",
-              "distill-model", "distill-effort", "comment-model", "comment-effort", "comment-fast")
+              "distill-model", "distill-effort", "comment-model", "comment-effort", "comment-fast",
+              "user-todos")   # the fork's per-install switch (_set_user_todos), gt-gated like the rest
 
 
 def _setting_stored_gt(name):
@@ -36882,6 +36883,15 @@ def _setting_stored_gt(name):
         try:
             d = json.loads((jd.STATE / (THINKING_SUMMARIES_FILE if name == "thinking-summaries"
                                         else "file-editing.json")).read_text())
+            return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
+        except Exception:
+            return 0
+    if name == "user-todos":
+        # the fork's switch file ({"enabled", "gt"}, _set_user_todos): without this arm the store fell to
+        # the sidecar below, which the switch never writes, so /version taught a dashboard 0 and its
+        # first toggle after another device's stood down as stale (fold follow-up, 2026-09-07)
+        try:
+            d = json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text())
             return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
         except Exception:
             return 0

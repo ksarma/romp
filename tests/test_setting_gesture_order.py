@@ -719,7 +719,7 @@ class VersionReportsEveryStoredStamp(_Base):
     def test_a_fresh_install_reports_every_store_at_zero(self):
         gts = km._version_info()["settingsGt"]
         self.assertEqual(set(gts), set(km._GT_STORES), "one key per gt-gated store, no more, no less")
-        self.assertEqual(len(km._GT_STORES), 14, "five toggles/modes + nine judge-tier stores")
+        self.assertEqual(len(km._GT_STORES), 15, "five toggles/modes + nine judge-tier stores + the fork's user-todos switch")
         self.assertEqual(set(gts.values()), {0}, "nothing applied yet reads 0 — nothing to outrank")
         self.assertEqual(json.loads(json.dumps(gts)), gts, "plain JSON — ints, no paths, nothing to redact")
 
@@ -731,10 +731,11 @@ class VersionReportsEveryStoredStamp(_Base):
         self.assertEqual(km._set_update_mode("auto", gt=T_NEW + 7), T_NEW + 7)
         self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW + 8), T_NEW + 8)
         self.assertEqual(km._set_comment_fast("on", gt=T_NEW + 9), T_NEW + 9)
+        self.assertEqual(km._set_user_todos(True, gt=T_NEW + 10), T_NEW + 10)
         gts = km._version_info()["settingsGt"]
         want = {"judge-model": T_NEW, "auto-nudge": T_OLD, "compact-suggest": T_NEW + 5,
                 "file-editing": T_NEW + 6, "update-mode": T_NEW + 7, "thinking-summaries": T_NEW + 8,
-                "comment-fast": T_NEW + 9}
+                "comment-fast": T_NEW + 9, "user-todos": T_NEW + 10}
         for store, gt in want.items():
             self.assertEqual(gts[store], gt, store)
         for store in set(km._GT_STORES) - set(want):
@@ -759,21 +760,36 @@ class VersionReportsEveryStoredStamp(_Base):
                  {"type": "setIndexModel", "model": "fable"}, {"type": "setJudgeEffort", "effort": "high"},
                  {"type": "setIndexEffort", "effort": "high"}, {"type": "setDistillModel", "model": "haiku"},
                  {"type": "setDistillEffort", "effort": "high"}, {"type": "setCommentModel", "model": "haiku"},
-                 {"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentFast", "fast": "on"}]
+                 {"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentFast", "fast": "on"},
+                 {"type": "setUserTodos", "enabled": True}]
         older = [{"type": "setAutoNudge", "enabled": True}, {"type": "setCompactSuggest", "enabled": False},
                  {"type": "setFileEditing", "enabled": False}, {"type": "setUpdateMode", "mode": "off"},
                  {"type": "setThinkingSummaries", "enabled": False}, {"type": "setJudgeModel", "model": "opus"},
                  {"type": "setIndexModel", "model": "opus"}, {"type": "setJudgeEffort", "effort": "low"},
                  {"type": "setIndexEffort", "effort": "low"}, {"type": "setDistillModel", "model": "triage"},
                  {"type": "setDistillEffort", "effort": "low"}, {"type": "setCommentModel", "model": "session"},
-                 {"type": "setCommentEffort", "effort": "session"}, {"type": "setCommentFast", "fast": "session"}]
+                 {"type": "setCommentEffort", "effort": "session"}, {"type": "setCommentFast", "fast": "session"},
+                 {"type": "setUserTodos", "enabled": False}]
         with contextlib.redirect_stderr(io.StringIO()):
             for n, o in zip(newer, older):
                 km.Handler._dispatch_ws(types.SimpleNamespace(), dict(n, gt=T_NEW), client)
                 km.Handler._dispatch_ws(types.SimpleNamespace(), dict(o, gt=T_OLD), client)
         named = {m["setting"] for m in sent if m.get("type") == "settingStale"}
         self.assertEqual(named, set(km._version_info()["settingsGt"]), "frames and the report share one vocabulary")
-        self.assertEqual(len(named), 14)
+        self.assertEqual(len(named), 15)
+
+    def test_the_forks_user_todos_switch_is_taught_like_every_other_store(self):
+        # the fork's per-install switch is gt-gated (_set_user_todos) and the gear stamps it, so a dashboard
+        # that never learned its stamp from /version had its first toggle stood down after a device with a
+        # fast clock toggled it, the one store outside the mechanism (fold follow-up, 2026-09-07)
+        self.assertIn("user-todos", km._GT_STORES)
+        self.assertEqual(km._version_info()["settingsGt"]["user-todos"], 0, "never set: nothing to outrank")
+        self.assertEqual(km._set_user_todos(True, gt=T_NEW), T_NEW)
+        self.assertEqual(km._version_info()["settingsGt"]["user-todos"], T_NEW, "the switch file's own stamp")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(km._set_user_todos(False, gt=T_OLD), "an older gesture stands down, as for every store")
+        self.assertEqual(km._set_user_todos(False, gt=T_NEW + 1), T_NEW + 1, "a gesture stamped above the taught value applies")
+        self.assertEqual(km._version_info()["settingsGt"]["user-todos"], T_NEW + 1)
 
 
 class ASkewedClockCannotLockTheStore(_Base):
