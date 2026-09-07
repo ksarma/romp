@@ -6427,8 +6427,42 @@ def _user_todo_fp(sid):
     return ("on:" if _user_todos_on() else "off:") + json.dumps(rows, sort_keys=True)
 
 
+# THE FLOOR'S ARM RECORD (2026-09-07): str(sid) -> (frozenset of the open todo ids the floor armed
+# on, the settled turn's end it armed at). _user_todo_idle writes it at the settle and reads it on
+# every later build, so a turn the HUMAN did not open — peer mail, a romp reminder, a harness
+# notification, a monitor wake — holds the floor instead of dipping the card to Working and back
+# (the flap the cards-move-on-new-information rule forbids; before this record the stand-down was
+# author-agnostic, _session_working's open-turn bit). In-memory like _NOTIFY_UT_FIRED: a restart
+# re-derives from the next settle. Every read-modify-write holds the lock — build_feed is the
+# only writer today, but the pusher's build and a route's build can overlap.
+_UT_FLOOR_ARM = {}
+_UT_FLOOR_ARM_LOCK = threading.Lock()
+
+
+def _ut_floor_disarm(sid):
+    """Spend the floor's arm record for one session — the stand-down events call this: the human
+    acting (a turn they open, a message they queue, an interrupt), the open set changing (an
+    answer, a dismiss, a withdraw, a new ask), a peer owing the session a reply."""
+    with _UT_FLOOR_ARM_LOCK:
+        _UT_FLOOR_ARM.pop(str(sid), None)
+
+
+def _turn_opener(turn):
+    """(author, t) of the atom that OPENED a turn — the trigger atom, else the first atom, the
+    same resolution _last_plain_user_turn_t and _turn_romp_injected make. author is the event
+    model's own field: 'human', 'romp', 'sdk', 'system', 'teammate', or a peer's postal dict.
+    (None, 0) for a turn with no atoms."""
+    atoms = turn.get("atoms") or []
+    trig = turn.get("trigger") or {}
+    tuid = trig.get("uuid") if isinstance(trig, dict) else trig
+    a = next((x for x in atoms if x.get("uuid") == tuid), None) or (atoms[0] if atoms else None)
+    if not a:
+        return None, 0
+    return a.get("author"), (a.get("t") or turn.get("t") or 0)
+
+
 def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
-                    tm=None, path=_PATH_UNRESOLVED):
+                    tm=None, path=_PATH_UNRESOLVED, open_ids=None):
     """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
     has SETTLED idle with nothing else in motion — the exact idle the auto-nudge tick requires —
     so its open user todos ARE its frontier and the focus card may floor to needs-input. Read-side
@@ -6454,6 +6488,24 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
       no time window); a progressing record from BEFORE the turn end is a stale lost-write and
       must not wedge the floor off (the nudge learned the same lesson).
 
+    THE ARM RECORD — the stand-down is AUTHOR-AWARE (2026-09-07). who_working is author-agnostic
+    (_session_working reads ended / idle-tail / suspend only), so keying the stand-down on it
+    alone flapped the card Blocked → Working → Blocked on every turn the user did NOT start: a
+    peer's mail, a romp reminder, a harness notification, a monitor wake — same todo set, no user
+    action, the exact flap the no-flap guard exists to prevent, one layer up. So the settle that
+    arms the floor is RECORDED (_UT_FLOOR_ARM: the open todo ids + the settled turn's end), and on
+    a later build the record holds the floor through an open turn or a mid-turn lull while
+    nothing that is news has happened. What spends it, each a real event: the HUMAN opening a turn
+    (a plain prompt via _last_plain_user_turn_t, or the open turn's own opener — a typed card
+    reply carries the goal marker that the plain read skips), a user interrupt, queued intent
+    (the user's answer parked or queued for the session), the open set changing (an answer, a
+    dismiss, a withdraw, a new ask — build_feed also disarms when the set empties), and a peer
+    owing the session a reply. Both stamps compared are TRANSCRIPT times (the opener's t against
+    the settled turn's end), never a wall-clock read. The live stories that outrank this one
+    (awaiting, an API error, a live prompt, compaction) still read not-idle for their duration
+    but leave the record alone: none of them is the user acting, and the floor returns with the
+    record at the next settle without a fresh push (_NOTIFY_UT_FIRED dedups on the set).
+
     ps None / no turns reads UNKNOWN, never idle — the cache-warm idiom: the floor snaps in after
     _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache. The
     interrupt read is this gate's own: build_feed's badge asks the same predicate a few lines
@@ -6462,25 +6514,54 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
     `tm` / `path`: the caller's liveness row and transcript path for _compacting_now's gate (the
     same hoist _session_rows makes): build_feed holds both, and without them the gate resolves
     the path through _path_of's 48h search — nothing for a live session idle longer than that,
-    so its cached parse would go unread there."""
-    if ps is None or who_working or sess_awaiting_why or aerr or peer_wait:
+    so its cached parse would go unread there. `open_ids`: the open todo ids the caller already
+    holds (build_feed's _ut_open); read from the store when not passed."""
+    key = str(sid)
+    if ps is None:
+        return False                                 # unknown, never idle — and the record is not touched
+    with _UT_FLOOR_ARM_LOCK:
+        rec = _UT_FLOOR_ARM.get(key)
+    if rec is None and (who_working or sess_awaiting_why or aerr or peer_wait):
+        return False                                 # nothing armed: the frontier is not empty, read as before
+    if peer_wait:
+        _ut_floor_disarm(key)                        # the idle is the peer's to explain: spent
         return False
     if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid, tm=tm, path=path):
         return False
-    if _pending_ops.get(str(sid)) or _backend_queued(sid) or _backend_rewind_pending(sid):
+    if _pending_ops.get(key) or _backend_queued(sid) or _backend_rewind_pending(sid):
+        _ut_floor_disarm(key)                        # a message is on its way in: the user acted
         return False
     turns = ps.get("turns") or []
     if not turns:
         return False
     try:
         if _interrupt_suppresses_nudge(turns, sid):
+            _ut_floor_disarm(key)                    # the user stopped the agent: their move
             return False
     except Exception:
         return False                                 # an unreadable gate reads unknown, never idle
+    if open_ids is None:
+        open_ids = (t["id"] for t in _open_user_todos(key))
+    open_ids = frozenset(open_ids)
     lt = turns[-1]
+    if rec is not None:
+        author, opened_t = _turn_opener(lt)
+        if (rec[0] != open_ids                                       # the set changed: news
+                or _last_plain_user_turn_t(turns) > rec[1]           # the human spoke since the arm
+                or (author == "human" and opened_t > rec[1])):       # …or opened the turn now running
+            _ut_floor_disarm(key)
+            rec = None
+    if sess_awaiting_why or aerr:
+        return False                                 # a live story outranks; the record stands for the settle
+    if who_working:
+        return rec is not None                       # an open turn: held by the record, or not idle
+    lt_end = lt.get("end", lt.get("t", 0))
     ls_val, ls_t = _last_state(sid)
-    if ls_val in _PROGRESSING_STATES and ls_t >= lt.get("end", lt.get("t", 0)):
-        return False
+    if ls_val in _PROGRESSING_STATES and ls_t >= lt_end:
+        return rec is not None                       # a lull never ARMS; a standing record holds through it
+    if rec is None:
+        with _UT_FLOOR_ARM_LOCK:
+            _UT_FLOOR_ARM[key] = (open_ids, lt_end)  # the settle: arm on this set, at this turn's end
     return True
 
 
@@ -36925,14 +37006,21 @@ def build_feed(now, tmux=None):
         # THE IDLE-ESCALATION FLOOR (the spec's one earned card move): when the session has settled
         # idle with open todos and nothing else dispatched, the todo IS its frontier — the focus card
         # floors to needs-input, perm_top's own family. A READ-SIDE floor, never a judge verdict (the
-        # ADR bars the diary), so it re-derives away the build after an answer/withdraw/dismiss or a
-        # new turn opening. THE EVENTS BEHIND THE MOVE: it arms at the SETTLE (the parsed turn's end
-        # with the state log's post-turn record not progressing — _user_todo_idle's no-flap guard,
-        # so a mid-turn lull never moves the card) and stands down on the next turn opening, on a
-        # message queued for the session, on a peer owing it a reply, and on the todo's own
-        # resolution — each a real event, none a clock. _user_todo_idle carries the guard and the
-        # peer-wait stand-down (wmap's edge: a live peer owing this session a reply explains the
-        # idle — 2026-08-22). CONSTRAINT — the peer-wait edge is LOCAL-HOST scope (2026-08-22,
+        # ADR bars the diary), so it re-derives away the build after an answer/withdraw/dismiss or
+        # the user's next turn. THE EVENTS BEHIND THE MOVE: it arms at the SETTLE (the parsed turn's
+        # end with the state log's post-turn record not progressing — _user_todo_idle's no-flap
+        # guard, so a mid-turn lull never moves the card) and stands down when the HUMAN acts — a
+        # turn they open (plain or a card reply), a message they queue for the session, an
+        # interrupt — on a peer owing the session a reply, and on the todo's own resolution (the
+        # open set changing; an emptied set disarms right here) — each a real event, none a clock.
+        # A turn anyone ELSE opens holds it (2026-09-07): peer mail, a romp reminder, a harness
+        # notification, a monitor wake. _user_todo_idle's per-sid ARM RECORD (_UT_FLOOR_ARM: the
+        # open set + the settle it armed at) carries the floor across such turns; before it the
+        # stand-down keyed on who_working alone, an author-agnostic bit, and the card dipped
+        # Blocked → Working → Blocked on every turn the user did not start. _user_todo_idle carries
+        # the guard, the record and the peer-wait stand-down (wmap's edge: a live peer owing this
+        # session a reply explains the idle — 2026-08-22). CONSTRAINT — the peer-wait edge is
+        # LOCAL-HOST scope (2026-08-22,
         # documented not fixed): _wait_for_graph keeps an edge only to peers in THIS kernel's alive
         # set, so an unanswered ask to a FEDERATED peer makes no edge and the floor still fires over
         # an idle that remote peer explains. The waitingOn chip and the nudge tick's skip share the
@@ -36942,9 +37030,12 @@ def build_feed(now, tmux=None):
         # Yields to every LIVE interrupt (api / perm / judge-auth): one interrupt at a time, the
         # present event first.
         todo_top = None
+        if not _ut_open:
+            _ut_floor_disarm(fsid)                   # nothing open (answered / withdrawn / ended): the record is spent
         _todo_idle = bool(_ut_open) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why,
                                                         perm_state, aerr, wmap.get(fsid),
-                                                        tm=tm, path=s["path"])
+                                                        tm=tm, path=s["path"],
+                                                        open_ids=[t["id"] for t in _ut_open])
         if _todo_idle and api_top is None and perm_top is None and jauth_top is None:
             f = store.get("lastNode")
             while f and nodes.get(f, {}).get("parentId") is not None:
@@ -45564,12 +45655,14 @@ def _notify_prev_forget_gone(owned):
                      % (len(gone), "" if len(gone) == 1 else "s", len(sids), "" if len(sids) == 1 else "s"))
     return len(gone)
 # The todo-floor's PUSH latch (plans/user-todos.md, escalation; 2026-08-22): sid -> the frozenset of
-# open todo ids the floored card last PUSHED for. The floor stands down for every turn the session
-# takes and re-arms at the settle — the designed card move — but the column diff above read each
-# re-entry as news: an OS push per exchange and per monitor wake-cycle for the SAME deferred todo.
-# So the push is deduplicated here, event-keyed on the FLOORED TODO SET: it fires on first arm or
-# when a todo id joins the set (a new ask is news); an identical set re-entering is not. This latch
-# survives the card's Working dips, which is exactly what the per-build prev map cannot do. A
+# open todo ids the floored card last PUSHED for. The floor stands down when the HUMAN acts on the
+# session — a turn they open, a message they queue — and re-arms at the next settle if the todo
+# still stands (since 2026-09-07 a turn a peer, romp or the harness opens holds the floor instead:
+# _user_todo_idle's arm record); a designed card move, but the column diff above read each
+# re-entry as news: an OS push per exchange for the SAME deferred todo. So the push is
+# deduplicated here, event-keyed on the FLOORED TODO SET: it fires on first arm or when a todo id
+# joins the set (a new ask is news); an identical set re-entering is not. This latch survives the
+# card's Working dips, which is exactly what the per-build prev map cannot do. A
 # kernel restart re-baselines both together — and the baseline SEEDS this one from the
 # already-floored cards (2026-08-22): the floored world IS the already-notified state, so an
 # in-memory reset must not turn the first post-restart dip+re-entry into a spurious re-push of a

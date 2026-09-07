@@ -107,6 +107,7 @@ class _StoreSandbox(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._UT_FLOOR_ARM.clear()                     # the floor's per-sid arm record is process state
         km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03);
         #                                              these suites pin the ON behavior — the OFF side
         #                                              lives in test_user_todos_switch.py
@@ -116,6 +117,7 @@ class _StoreSandbox(unittest.TestCase):
         self.td.cleanup()
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._UT_FLOOR_ARM.clear()
 
 
 class StoreRoundTrip(_StoreSandbox):
@@ -2931,9 +2933,12 @@ class EscalationFloorPredicate(_StoreSandbox):
 
     def test_a_settled_idle_session_arms_the_floor(self):
         self.assertTrue(self._idle())
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID), (frozenset(), NOW - 30),
+                         "the arm record: the open set (none minted here) and the settle's turn end")
 
     def test_an_open_turn_never_arms_it(self):
         self.assertFalse(self._idle(who_working=True))
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
 
     def test_dispatched_background_work_never_arms_it(self):
         self.assertFalse(self._idle(awaiting="waiting on 2 agents"))
@@ -3039,9 +3044,28 @@ class EscalationFloorPredicate(_StoreSandbox):
         self.assertEqual(seen, [(row, "/nonexistent/web.jsonl")])
 
     def test_the_deciding_events_re_derive_it_cleanly(self):
-        # escalate at the settle; stand down the build after a new turn opens — each a real event
-        self.assertTrue(self._idle())
-        self.assertFalse(self._idle(who_working=True), "a new turn opening stands the floor down")
+        # escalate at the settle; stand down when the HUMAN opens a turn — each a real event. A
+        # turn anyone else opens (peer mail, a romp reminder, a harness notification) holds the
+        # arm record: that turn is not the user acting, and the card dipping for it was the flap
+        # (2026-09-07). The opener is the trigger atom's author, the event model's own field.
+        def opened_by(author):
+            settled = dict(self.PS["turns"][0])
+            atom = {"uuid": "u2", "type": "user", "author": author, "t": NOW - 10,
+                    "message": {"role": "user", "content": "a word from someone"}}
+            return {"turns": [settled, {"id": "t2", "t": NOW - 10, "trigger": {"uuid": "u2"},
+                                        "atoms": [atom]}]}
+        peer = {"peer": SID2, "mid": "m-11111111", "kind": "coordinate"}
+        self.assertFalse(self._idle(who_working=True), "nothing armed: an open turn is not idle")
+        self.assertTrue(self._idle(), "the settle arms the record")
+        self.assertTrue(self._idle(ps=opened_by(peer), who_working=True),
+                        "a peer-opened turn holds the floor — the set is unchanged and the user did nothing")
+        self.assertTrue(self._idle(ps=opened_by("romp"), who_working=True))
+        self.assertTrue(self._idle(ps=opened_by("system"), who_working=True))
+        self.assertFalse(self._idle(ps=opened_by("human"), who_working=True),
+                         "the human opening a turn stands the floor down")
+        self.assertFalse(self._idle(ps=opened_by(peer), who_working=True),
+                         "…and spends the record: the next peer turn finds nothing to hold")
+        self.assertTrue(self._idle(), "the next settle re-arms it")
 
 
 class EscalationFloorWiring(_StoreSandbox):
@@ -3122,6 +3146,225 @@ class EscalationFloorWiring(_StoreSandbox):
         # read-side only: build_feed never writes the goal store or the diary for this move
         src = inspect.getsource(km.build_feed)
         self.assertNotIn("save_goals", src)
+
+
+class EscalationFloorLive(_StoreSandbox):
+    """The floor driven through the REAL build_feed with the REAL arming predicate. The source
+    pins above and the predicate's own unit tests left the wiring unpinned: a dead or mis-ordered
+    predicate call in build_feed (ps replaced by None, who_working / perm_state transposed,
+    who_working hardcoded False) passed the whole suite. Here the predicate reads real session
+    inputs — the parsed turns, the states log under STATE, the store — and the column is the
+    assertion.
+
+    Also the AUTHOR-AWARE stand-down (2026-09-07). The floor used to stand down on ANY open turn,
+    so a turn the user did not start — peer mail, a romp reminder, a harness notification, a
+    monitor wake — flapped the card Blocked → Working → Blocked with the todo set unchanged and
+    no user action. _user_todo_idle now keeps a per-sid ARM RECORD (the open set + the settle it
+    armed at) and holds the floor through such turns; it stands down on the events that are
+    news: the human opening a turn (plain or a card reply), a message queued for the session, a
+    user interrupt, the open set changing, a peer owing the session a reply. SYNTHETIC data only
+    (the notes-api demo world)."""
+
+    def setUp(self):
+        super().setUp()
+        km._parse_cache.clear()
+        self.turns = []
+        self.store = {"nodes": {"g1": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                      "status": {"g1": "working"}, "lastNode": "g1", "placements": {}}
+        self.wmap = {}
+        sessions = [{"sid": SID, "name": "web", "path": "/nonexistent/%s.jsonl" % SID,
+                     "anchor": 0, "mtime": 0}]
+        patches = [
+            mock.patch.object(jd, "_auth_down_map", lambda: {}),
+            mock.patch.object(km, "_alive_sessions", lambda now, tmux: list(sessions)),
+            mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
+            mock.patch.object(km, "_parse_cached", lambda path: {"turns": list(self.turns)}),
+            mock.patch.object(km, "_merge_live_atoms", lambda ps, sid: ps),
+            mock.patch.object(km, "_feed_goals", lambda sid: dict(self.store)),
+            mock.patch.object(km, "_wait_for_graph", lambda now, sids: dict(self.wmap)),
+            mock.patch.object(km, "_tmux_sessions", lambda: {}),   # the compacting gate's fallback row read
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+
+    # ── the fixture's vocabulary: turns by OPENER, states rows, the focus card ──
+
+    @staticmethod
+    def _turn(tid, t, author, ended=True, text="wire the login routes"):
+        """One parsed turn whose trigger atom carries `author` — 'human', 'romp', 'system', or a
+        peer's postal author dict, the event model's own shapes. Ended turns end 30 s after they
+        open; an open one has no end and no idle tail, exactly what _session_working reads as
+        an open turn."""
+        atom = {"uuid": tid + "-u", "type": "user", "author": author, "t": t,
+                "message": {"role": "user", "content": text}}
+        turn = {"id": tid, "t": t, "trigger": {"uuid": tid + "-u"}, "atoms": [atom]}
+        if ended:
+            turn["end"] = t + 30
+            turn["ended"] = True
+        return turn
+
+    PEER = {"peer": SID2, "mid": "m-11111111", "kind": "coordinate"}
+
+    def _states(self, *rows):
+        d = jd.STATE / "states"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (SID + ".jsonl")).write_text("".join(json.dumps({"t": t, "state": v}) + "\n"
+                                                  for v, t in rows))
+
+    def _settled(self):
+        """The arming shape: one human turn ended at NOW-30 and the Stop hook's 'waiting' row
+        after it — the session has settled idle on its one open todo."""
+        self.turns = [self._turn("t1", NOW - 60, "human")]
+        self._states(("working", NOW - 55), ("waiting", NOW - 25))
+
+    def _g1(self, feed):
+        return next(a for a in feed["asks"] if a["itemId"] == "g1")
+
+    def _column(self):
+        return self._g1(km.build_feed(NOW, {}))["column"]
+
+    # ── the real predicate through the real build (DEFECT: source pins only) ──
+
+    def test_a_settled_idle_session_floors_the_focus_card(self):
+        self._settled()
+        feed = km.build_feed(NOW, {})
+        g1 = self._g1(feed)
+        self.assertEqual(g1["column"], "needs_input")
+        self.assertEqual(g1["blocked"]["state"], "userTodos")
+        self.assertEqual(g1["blocked"]["count"], 1)
+        self.assertNotIn("usertodo:" + SID, [a["itemId"] for a in feed["asks"]],
+                         "the focus card carries the story — no goal-less placeholder beside it")
+        self.assertEqual(feed["userTodos"], {SID: 1})
+
+    def test_an_open_turn_with_no_record_keeps_the_card_working(self):
+        # the human's own turn is running: nothing has settled, nothing is armed
+        self.turns = [self._turn("t1", NOW - 60, "human", ended=False)]
+        self._states(("working", NOW - 55))
+        g1 = self._g1(km.build_feed(NOW, {}))
+        self.assertEqual(g1["column"], "working")
+        self.assertIsNone(g1.get("blocked"))
+
+    def test_a_progressing_state_after_the_turn_end_is_a_lull_not_a_stop(self):
+        # the no-flap guard through the real build: the parse says the turn ended, the states log
+        # says a newer turn is progressing — the floor must not arm on the lull
+        self.turns = [self._turn("t1", NOW - 60, "human")]
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 20))
+        self.assertEqual(self._column(), "working")
+
+    def test_a_withdraw_stands_the_floor_down(self):
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.assertIn(SID, km._UT_FLOOR_ARM, "armed at the settle")
+        km._withdraw_user_todo(SID, self.tid)
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(self._g1(feed)["column"], "working")
+        self.assertEqual(feed["userTodos"], {})
+        self.assertNotIn(SID, km._UT_FLOOR_ARM, "the todo's own resolution spends the record")
+
+    # ── the author-aware stand-down (2026-09-07) ──
+
+    def test_a_turn_the_human_did_not_open_holds_the_floor(self):
+        # THE REPRO: settle → Blocked; a peer's message opens a turn with the todo set unchanged
+        # and no user action → the card read Working, then Blocked again at the next settle. The
+        # user's eye followed a move that carried no news. Now the floor holds through the turn.
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 10, self.PEER, ended=False))
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        g1 = self._g1(km.build_feed(NOW, {}))
+        self.assertEqual(g1["column"], "needs_input", "a peer-opened turn is not the user acting")
+        self.assertEqual(g1["blocked"]["state"], "userTodos")
+        # …through the mid-turn lull the event model reads between that turn's atoms…
+        self.turns[-1] = self._turn("t2", NOW - 10, self.PEER)
+        self.assertEqual(self._column(), "needs_input", "a lull inside the held turn is not news either")
+        # …and through the harness's and romp's own openers, the same way
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10),
+                     ("waiting", NOW - 8))
+        self.assertEqual(self._column(), "needs_input", "the peer turn settled: still Blocked, no move")
+        self.turns.append(self._turn("t3", NOW - 6, "romp", ended=False))
+        self.assertEqual(self._column(), "needs_input", "a romp reminder holds it")
+        self.turns[-1] = self._turn("t3", NOW - 6, "romp")
+        self.turns.append(self._turn("t4", NOW - 3, "system", ended=False))
+        self.assertEqual(self._column(), "needs_input", "a harness notification holds it")
+
+    def test_a_turn_the_human_opened_stands_it_down(self):
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 10, "human", ended=False))
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "working", "the user spoke to the session: their move")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM, "spent, not suppressed")
+        # the exchange settles with the todo still open → the floor re-arms at THAT settle
+        self.turns[-1] = self._turn("t2", NOW - 10, "human")
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10),
+                     ("waiting", NOW + 21))
+        self.assertEqual(self._column(), "needs_input")
+
+    def test_a_card_reply_is_the_human_acting_too(self):
+        # a typed card reply carries the goal marker, so _last_plain_user_turn_t skips it — the
+        # OPENER check must still read it as the human's own turn
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 10, "human", ended=False,
+                                     text="the cookie, for now <!-- romp-goal-id: g1 -->"))
+        self.assertEqual(self._column(), "working")
+
+    def test_a_human_turn_in_the_history_spends_the_record_under_a_later_peer_turn(self):
+        # both landed between two builds: the human's exchange (ended) and then a peer's open turn.
+        # The open turn's opener is not the human, but the human DID act since the arm.
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 20, "human"))
+        self.turns.append(self._turn("t3", NOW - 5, self.PEER, ended=False))
+        self.assertEqual(self._column(), "working")
+
+    def test_queued_intent_spends_the_record(self):
+        # the user answered while the peer turn ran: the answer is parked → the user acted. The
+        # record is SPENT, not merely suppressed — the parked op draining does not bring the floor
+        # back while the turn is still open; the next settle re-derives it.
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 10, self.PEER, ended=False))
+        with mock.patch.dict(km._pending_ops, {SID: [("send", "the cookie", None)]}, clear=True):
+            self.assertEqual(self._column(), "working")
+        with mock.patch.dict(km._pending_ops, {}, clear=True):
+            self.assertEqual(self._column(), "working", "spent: the drain alone does not re-floor")
+            self.turns[-1] = self._turn("t2", NOW - 10, self.PEER)
+            self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10),
+                         ("waiting", NOW + 21))
+            self.assertEqual(self._column(), "needs_input", "…the settle does")
+
+    def test_a_set_change_under_a_peer_turn_stands_it_down(self):
+        # the agent registered a second need mid-turn: the set changed, which IS news — the card
+        # comes back at the settle wearing the new count (and the push latch fires for the new id)
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 10, self.PEER, ended=False))
+        km._add_user_todo(SID, "Need the staging port")
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(self._g1(feed)["column"], "working")
+        self.assertEqual(feed["userTodos"], {SID: 2}, "the marker's data still rides")
+        self.turns[-1] = self._turn("t2", NOW - 10, self.PEER)
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10),
+                     ("waiting", NOW + 21))
+        g1 = self._g1(km.build_feed(NOW, {}))
+        self.assertEqual((g1["column"], g1["blocked"]["count"]), ("needs_input", 2))
+
+    def test_a_peer_wait_spends_the_record(self):
+        # the session asked a live peer a question: its idle is the peer's to explain, and the
+        # floor stands down for good until the next settle — the edge lifting alone does not
+        # re-floor a turn still open
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.wmap = {SID: {"peerSid": SID2, "name": "api", "color": None, "inCycle": False,
+                           "since": NOW - 5, "kind": "question"}}
+        self.assertEqual(self._column(), "working")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+        self.wmap = {}
+        self.turns.append(self._turn("t2", NOW - 3, self.PEER, ended=False))
+        self.assertEqual(self._column(), "working", "no record to hold: the reply's turn is a plain turn")
 
 
 class PeerWaitScopeIsLocalOnly(_StoreSandbox):
@@ -3351,9 +3594,11 @@ class OneInterruptStory(_StoreSandbox):
 
 
 class FloorNotificationDedup(_StoreSandbox):
-    """2026-08-22: the floor stands down for every turn the session takes and re-arms at the
-    settle — the DESIGNED card move — but _feed_notifications read each re-entry as news, an OS
-    push per exchange and per monitor wake-cycle for the SAME deferred todo. The interrupt is
+    """2026-08-22: the floor stands down when the human acts on the session (a turn they open, a
+    message they queue) and re-arms at the settle if the todo still stands — the DESIGNED card
+    move (since 2026-09-07 a turn a peer, romp or the harness opens holds the floor instead:
+    _user_todo_idle's arm record, EscalationFloorLive) — but _feed_notifications read each
+    re-entry as news, an OS push per exchange for the SAME deferred todo. The interrupt is
     deduplicated at the notification layer, event-keyed on the FLOORED TODO SET: it fires on
     first arm or when a todo id joins the set; an identical set re-entering is not news. The
     latch is _NOTIFY_PREV's own in-memory idiom, kept beside it, so it survives the card's
