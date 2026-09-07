@@ -22501,13 +22501,36 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _fsid = os.path.basename(sess["path"]).rsplit(".", 1)[0] if sess.get("path") else ""
     fold = _fold_tasks(session)                       # the transcript's own task record — feeds the store
     todo = _read_task_store(_fsid, fold)              # content join for team-named interactive stores
+    # USER TODOS (plans/user-todos.md): the needs this session registered with the person it works
+    # for, sharing the checklist's transcript-bottom card — two sections, each auto-hiding when
+    # empty, so today's behavior is unchanged when no todos exist. The rows ride ON the event (not
+    # only the top-level `userTodos` field in the return below) on purpose: the chat wire's steady
+    # state is chatTail deltas, which re-send changed EVENTS only — a top-level field that changed
+    # with no event change would never reach a caught-up client. An ENDED session hides its todos
+    # from every surface — hidden, not cleared: they return with a revive (a dead session's asks
+    # should neither keep asking for a reply nor be silently lost). ENDED is corroborated per
+    # backend (_user_todo_session_ended): the SDK registry's alive:false, or a reg-less tmux sid's
+    # durable death record — the registry alone is {} for tmux, so a dead tmux session's todos
+    # would keep a live Reply that fires answers into a nonexistent pane. A dormant session
+    # (alive:true, no thread) still shows them: it is addressable, and answering auto-revives it.
+    # Checked only when open todos exist (the common case skips it). A card with no open todo
+    # carries no `userTodos` key at all, so the pre-existing event serializes byte-for-byte as before.
+    _user_todos_open = _open_user_todos(sid)
+    if _user_todos_open and _user_todo_session_ended(sid):
+        _user_todos_open = []
+    _todo_ev = None
     if todo is None:                                  # authoritative store unreadable — never silently fold
         if fold and any(t["status"] not in ("completed", "cancelled") for t in fold):
-            events.append({"kind": "todo", "tasks": [],
-                           "error": "Can't read Claude's task store (~/.claude/tasks) for this session, "
-                                    "so the to-do list can't be shown accurately."})
+            _todo_ev = {"kind": "todo", "tasks": [],
+                        "error": "Can't read Claude's task store (~/.claude/tasks) for this session, "
+                                 "so the to-do list can't be shown accurately."}
     elif any(t["status"] not in ("completed", "cancelled") for t in todo):
-        events.append({"kind": "todo", "tasks": todo})
+        _todo_ev = {"kind": "todo", "tasks": todo}
+    if _user_todos_open:
+        _todo_ev = _todo_ev or {"kind": "todo", "tasks": []}
+        _todo_ev["userTodos"] = _user_todos_open
+    if _todo_ev:
+        events.append(_todo_ev)
     # The queued indicator (computed above, before the live merge) appends LAST — at the bottom by the
     # composer, like the old TS kernel — so it's visible instead of vanishing (the user 2026-06-15;
     # pane-scrape dropped a 2nd queued message → both vanished, 2026-06-16). The matching input echo (if any)
@@ -23045,6 +23068,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             "hideFromFeed": _session_flag(sid, "hideFromFeed"),
             "postalServiceOff": _session_flag(sid, "postalServiceOff") or _session_flag(sid, "postalOff"),
             "notify": _notify_session_effective(sid),   # session-level bell, EFFECTIVE (override, else the master default): OS notification when its work blocks on you / completes (the user 2026-07-28)
+            # open user todos (plans/user-todos.md): the client merge seam (upsert prev-fallback) —
+            # the split card renders from the todo EVENT above (the chatTail wire re-sends events
+            # only), and a later slice's tab glyph derives from this field. Fixed store values only:
+            # like firstSeen below, this rides the dedup-compared payload — NEVER a per-build value.
+            "userTodos": _user_todos_open,
             # NEVER `now`. This rides the chat payload, and _send_client dedups by comparing the
             # SERIALIZED payload against what that client last received — so a firstSeen that ticked
             # with the wall clock made every build differ, defeated the dedup entirely, and re-sent the
@@ -28198,6 +28226,12 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
             and pc[0] == (evs[pc[1]].get("uuid") if pc[1] < total else None)):
         tail = {"type": "chatTail", "id": sid, "from": change_from,
                 "events": evs[change_from:], "total": total, "status": m.get("status")}
+        # the top-level userTodos seam (plans/user-todos.md) rides EVERY delta, like status: the
+        # chat's steady state is chatTail frames, and a caught-up client that only ever merged full
+        # session frames kept a stale field. Riding unconditionally is dedup-safe — store values
+        # only, byte-stable when unchanged — where a changed-only attach would need per-client prev
+        # tracking to save a few bytes of small rows.
+        tail["userTodos"] = m.get("userTodos") or []
         if led_changed:                               # the TOC only changed on a judge pass → usually omitted
             tail["ledger"] = m.get("ledger")
         _send_client(c, ("chat", sid), tail)

@@ -17,6 +17,11 @@ Covered here, kernel-side:
   harness (the auth-hardening idiom: ask the real dispatcher, don't pin source positions), and
   the ack-fast contract: the reply never waits behind a synchronous every-session build;
 - the per-sid chat-build-sig fold (a todo write busts the owning session's cache only);
+- build_session's `userTodos` field + the split-card `todo` event that carries the rows (the
+  chatTail wire re-sends changed EVENTS only, so the rows must ride the event), clock-invariant
+  per the serialized-payload dedup rule, hidden for an ended session, and the pre-existing
+  card's shape kept byte-for-byte when no todo is open — and _send_chat's chatTail frame
+  carrying the field on every delta (BuildSessionSeam);
 - resolved rows are size-capped per sid while open rows never are (ResolvedRowsAreBounded);
 - the authority tier as a grep-provable pin: judge.py never names the store or its helpers
   (NoJudgeWritesTheStore).
@@ -602,6 +607,229 @@ class ResolvedRowsAreBounded(_StoreSandbox):
         self.assertEqual(len(km._user_todos()[SID]), K,
                          "the per-sid fold hashes at most K resolved rows, forever")
         self.assertTrue(km._user_todo_fp(SID))
+
+
+class BuildSessionSeam(unittest.TestCase):
+    """The chat payload: the top-level `userTodos` field (the upsert merge seam) AND the split-card
+    `todo` event that carries the same rows — the chatTail wire re-sends changed EVENTS only, so a
+    row change must be an event change or a caught-up client never hears of it. Fixture mirrors
+    the build_session suites' discover setup (names + transcript in the munged dir)."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        cdir = td / "launchdir"
+        cdir.mkdir()
+        proj = td / "projects"
+        pdir = proj / jd.re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(cdir)))
+        pdir.mkdir(parents=True)
+        self.tpath = pdir / (SID + ".jsonl")
+        names = td / "names"
+        names.mkdir()
+        (names / SID).write_text("web\t%s\t#abcdef\n" % str(cdir))
+        self.saved = (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
+                      km._read_task_store, km._fold_tasks, km._tmux_sessions, km._GLOBAL_CLAUDE_MD)
+        jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE = names, proj, td / "goals", td
+        km.NAMES = names
+        km._GLOBAL_CLAUDE_MD = td / "no-global.md"           # keep a real ~/.claude/CLAUDE.md out of the fixture
+        km._read_task_store = lambda fsid, fold=None: []
+        km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
+                                           "context": None, "compactPct": None, "color": None}}
+        jd.GOALDIR.mkdir(parents=True)
+        km._parse_cache.clear()
+        km._user_todos_cache.clear()
+        rows = [
+            {"type": "user", "uuid": "u1", "timestamp": "2026-06-01T00:00:00Z",
+             "sessionId": SID, "message": {"role": "user", "content": "wire the login routes"}},
+            {"type": "assistant", "uuid": "a1", "parentUuid": "u1", "timestamp": "2026-06-01T00:00:05Z",
+             "sessionId": SID,
+             "message": {"role": "assistant", "stop_reason": "end_turn",
+                         "content": [{"type": "text", "text": "starting on the open routes"}]}},
+        ]
+        self.tpath.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    def tearDown(self):
+        (jd.NAMES, jd.PROJECTS, jd.GOALDIR, jd.STATE, km.NAMES,
+         km._read_task_store, km._fold_tasks, km._tmux_sessions, km._GLOBAL_CLAUDE_MD) = self.saved
+        km._parse_cache.clear()
+        km._user_todos_cache.clear()
+        self.td.cleanup()
+
+    def _todo_events(self, payload):
+        return [e for e in payload["events"] if e.get("kind") == "todo"]
+
+    def test_no_todos_and_no_tasks_mean_no_event_and_an_empty_field(self):
+        payload = km.build_session(SID, NOW)
+        self.assertEqual(payload["userTodos"], [])
+        self.assertEqual(self._todo_events(payload), [])
+
+    def test_open_todos_ride_both_the_field_and_the_event(self):
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login", "OAuth vs cookie")
+        payload = km.build_session(SID, NOW)
+        self.assertEqual([t["id"] for t in payload["userTodos"]], [tid])
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1, "one split card, by the composer")
+        self.assertEqual(evs[0]["tasks"], [])
+        self.assertEqual(evs[0]["userTodos"], payload["userTodos"],
+                         "the event carries the rows — the chatTail delta re-sends events only")
+        self.assertIs(payload["events"][-1], evs[0], "appended last: the card sits by the composer")
+
+    def test_agent_tasks_and_user_todos_share_one_card(self):
+        km._read_task_store = lambda fsid, fold=None: [
+            {"id": "1", "subject": "Build the fixtures", "activeForm": None, "status": "pending"}]
+        km._add_user_todo(SID, "Need a test credential for the api session")
+        payload = km.build_session(SID, NOW)
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(len(evs[0]["tasks"]), 1)
+        self.assertEqual(len(evs[0]["userTodos"]), 1)
+
+    def test_a_card_without_user_todos_keeps_its_pre_existing_shape(self):
+        # the everyday card (agent tasks, no open todos) serializes exactly as before this seam
+        # existed: no `userTodos` key at all — an empty list would be a new byte in every payload
+        km._read_task_store = lambda fsid, fold=None: [
+            {"id": "1", "subject": "Build the fixtures", "activeForm": None, "status": "pending"}]
+        payload = km.build_session(SID, NOW)
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(set(evs[0]), {"kind", "tasks"})
+
+    def test_an_unreadable_task_store_still_carries_the_rows(self):
+        # FAIL LOUDLY on the task store, but the waiting-on-you rows come from a DIFFERENT store:
+        # the error card carries them too, so an unreadable ~/.claude/tasks never hides an ask
+        km._read_task_store = lambda fsid, fold=None: None
+        km._fold_tasks = lambda session: [{"id": "1", "subject": "Build the fixtures",
+                                           "activeForm": None, "status": "pending"}]
+        km._add_user_todo(SID, "Need the staging port")
+        payload = km.build_session(SID, NOW)
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1)
+        self.assertTrue(evs[0]["error"])
+        self.assertEqual(evs[0]["tasks"], [])
+        self.assertEqual(len(evs[0]["userTodos"]), 1)
+        # …and the error card WITHOUT open todos keeps its pre-existing shape
+        km._user_todos_cache.clear()
+        (jd.STATE / "user-todos.json").write_text("{}")
+        evs = self._todo_events(km.build_session(SID, NOW))
+        self.assertEqual(set(evs[0]), {"kind", "tasks", "error"})
+
+    def test_resolved_todos_ship_nowhere(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        km._resolve_user_todo(SID, tid, "dismissed")
+        payload = km.build_session(SID, NOW)
+        self.assertEqual(payload["userTodos"], [])
+        self.assertEqual(self._todo_events(payload), [])
+
+    def test_the_field_is_clock_invariant(self):
+        # _send_client dedups by the serialized payload (the firstSeen lesson): the field must
+        # serialize identically across builds when nothing changed
+        km._add_user_todo(SID, "Need the auth-scheme decision")
+        a = km.build_session(SID, NOW)
+        b = km.build_session(SID, NOW + 600)
+        self.assertEqual(json.dumps(a["userTodos"]), json.dumps(b["userTodos"]))
+
+    def test_an_ended_session_hides_its_todos_without_clearing_them(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision")
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps({"alive": False}))
+        payload = km.build_session(SID, NOW)
+        self.assertEqual(payload["userTodos"], [], "ended (registry alive:false) → hidden everywhere")
+        self.assertEqual(self._todo_events(payload), [])
+        self.assertEqual(len(km._open_user_todos(SID)), 1, "hidden, not cleared — revive returns them")
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps({"alive": True}))
+        self.assertEqual(len(km.build_session(SID, NOW)["userTodos"]), 1,
+                         "a dormant session (alive:true, no thread) still shows its todos")
+
+    def test_a_dead_tmux_session_hides_its_todos_too(self):
+        # _thread_reg is {} for tmux, so the registry gate alone left a dead tmux session's todos
+        # rendered with a live Reply — the gate must also read the durable death record
+        # (STATE/gone, corroborated at write time), never a raw listing miss
+        km._add_user_todo(SID, "Need the auth-scheme decision")
+        (jd.STATE / "gone").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "gone" / (SID + ".json")).write_text(json.dumps({"t": NOW - 50, "by": "gone"}))
+        km._parse_cache.clear()
+        payload = km.build_session(SID, NOW)
+        self.assertEqual(payload["userTodos"], [], "dead tmux session → hidden everywhere")
+        self.assertEqual(self._todo_events(payload), [])
+        self.assertEqual(len(km._open_user_todos(SID)), 1, "hidden, not cleared")
+        # a REVIVAL supersedes the marker (newer states evidence) without deleting it
+        (jd.STATE / "states").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "states" / (SID + ".jsonl")).write_text(
+            json.dumps({"t": NOW - 10, "state": "idle"}) + "\n")
+        km._parse_cache.clear()
+        self.assertEqual(len(km.build_session(SID, NOW)["userTodos"]), 1,
+                         "revived → the todos return with the session")
+
+    def test_a_muted_session_still_ships_its_todos_to_the_tab(self):
+        # THE DESIGNED ASYMMETRY (review call, 2026-08-22): hideFromFeed quiets the feed and every
+        # aggregate built from it, because mute means "stop interrupting me about this session".
+        # The CHAT payload still carries the open todos: the session's own tab remains truthful
+        # about what it holds.
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        (jd.STATE / "session-flags.json").write_text(json.dumps({SID: {"hideFromFeed": True}}))
+        km._flags_cache.clear()
+        payload = km.build_session(SID, NOW)
+        self.assertTrue(payload["hideFromFeed"])
+        self.assertEqual(len(payload["userTodos"]), 1, "muted ≠ hidden on the session's own tab")
+        self.assertEqual(len(self._todo_events(payload)), 1, "the split card renders too")
+
+    def test_a_row_carries_detail_iff_the_ask_has_one(self):
+        # The row's "more behind this" hint (render.ts renderTodo) keys on the PRESENCE of `detail`
+        # on the payload row — that presence is the has-detail flag (no separate boolean: the row
+        # already carries the text, and a second field could drift from it). So it must track the
+        # store exactly: present, with the text, when the ask carries a non-blank detail; ABSENT
+        # (not empty, not null) for a bare one-line ask — and a blank or whitespace-only detail
+        # written straight into the store is no detail either, so the seam (_open_user_todos), not
+        # just the register route, is what drops it.
+        (jd.STATE / "user-todos.json").write_text(json.dumps({SID: [
+            {"id": "ut-aaaaaaaa", "text": "Need the auth-scheme decision to wire login",
+             "createdT": NOW - 40, "detail": "OAuth vs cookie — either unblocks login"},
+            {"id": "ut-bbbbbbbb", "text": "Need a test credential for the api session", "createdT": NOW - 30},
+            {"id": "ut-cccccccc", "text": "Need your pick of the two route layouts",
+             "createdT": NOW - 20, "detail": "  \n\t "},
+            {"id": "ut-dddddddd", "text": "Need the staging port", "createdT": NOW - 10, "detail": ""}]}))
+        km._user_todos_cache.clear()
+        payload = km.build_session(SID, NOW)
+        rows = {t["id"]: t for t in payload["userTodos"]}
+        self.assertEqual(set(rows), {"ut-aaaaaaaa", "ut-bbbbbbbb", "ut-cccccccc", "ut-dddddddd"})
+        self.assertEqual(rows["ut-aaaaaaaa"]["detail"], "OAuth vs cookie — either unblocks login")
+        self.assertNotIn("detail", rows["ut-bbbbbbbb"], "a bare ask ships no detail key at all")
+        self.assertNotIn("detail", rows["ut-cccccccc"], "whitespace-only detail is no detail")
+        self.assertNotIn("detail", rows["ut-dddddddd"], "an empty detail is no detail")
+        ev_rows = {t["id"]: t for t in self._todo_events(payload)[0]["userTodos"]}
+        self.assertEqual({k: ("detail" in v) for k, v in ev_rows.items()},
+                         {k: ("detail" in v) for k, v in rows.items()},
+                         "the split-card event rows carry the same has-detail truth as the field")
+
+    def test_the_chat_tail_delta_carries_the_user_todos_field(self):
+        # the chat wire's steady state is chatTail deltas: a caught-up client that only merged
+        # full session frames kept a stale top-level field (the tab glyph's read, a later slice)
+        rows = [{"id": "ut-aaaaaaaa", "text": "Need the auth-scheme decision", "createdT": NOW}]
+        evs = [{"uuid": "u1", "kind": "user", "text": "wire the login routes"},
+               {"uuid": "a1", "kind": "todo", "tasks": [], "userTodos": rows}]
+        m = {"type": "session", "id": SID, "events": evs, "status": {"state": "idle"},
+             "userTodos": rows}
+        got = []
+        c = {"send": lambda s: got.append(json.loads(s)), "sent": {},
+             "echat": {SID: ("u1", 0)}}                # caught up from event 0 → the delta path
+        km._send_chat(c, m, None, 1, False)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["type"], "chatTail", "the caught-up client got the delta")
+        self.assertEqual(got[0]["userTodos"], rows,
+                         "the field rides the delta — byte-stable store values, dedup-safe")
+
+    def test_the_chat_tail_delta_of_a_todo_less_session_carries_an_empty_field(self):
+        # riding EVERY delta (like status) is what keeps the field honest after the last todo
+        # clears: a changed-only attach would need per-client prev tracking to send the []
+        m = {"type": "session", "id": SID, "userTodos": [],
+             "events": [{"uuid": "u1", "kind": "user", "text": "wire the login routes"},
+                        {"uuid": "a1", "kind": "assistant", "text": "starting"}],
+             "status": {"state": "idle"}}
+        got = []
+        c = {"send": lambda s: got.append(json.loads(s)), "sent": {}, "echat": {SID: ("u1", 0)}}
+        km._send_chat(c, m, None, 1, False)
+        self.assertEqual(got[0]["type"], "chatTail")
+        self.assertEqual(got[0]["userTodos"], [])
 
 
 class NoJudgeWritesTheStore(unittest.TestCase):
