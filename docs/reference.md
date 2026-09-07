@@ -1962,7 +1962,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,
   so they can add up to more than `push`.
-- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
+- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`; `feed` also carries
+  `dirty`, the rebuilds a kernel-side mutation forced past the view signature (a card reply, a
+  clear, a follow-up: the mutation is invisible to the signature and must not wait out the
+  rebuild interval).
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
@@ -2096,6 +2099,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
   `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
   an absent file's entry.
+  `feed_segs` is the feed build's per-session memo of the values that are pure
+  functions of a session's parse and goal store (the seam maps, the tree shape
+  and each top goal's flattened tree), keyed on the parse object, the served
+  store's identity, the names registry, the working bit and the session row's
+  name and colour: `hit` and `miss` (sessions served from the memo against
+  recomputed and stored), `bypass_live` (a build whose parse was a live-merge
+  copy: computed for that build only), `bypass_degraded` (a walk that swallowed
+  an exception: computed, never stored), `bypass_unkeyed` (a store whose
+  identity does not stand for its content: a rewind hold, a failed gesture
+  replay, the shared cache switched off, no store file), `bypass_unscoped` (a
+  build outside a pusher cycle: read but never filled), `evict` (entries dropped
+  for sessions that left the alive set), and the gauge `entries`.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

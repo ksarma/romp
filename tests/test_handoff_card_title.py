@@ -145,7 +145,7 @@ class BuildFeedWiring(_Base):
         self.assertIn('**({"handoffTo": handoff_to} if handoff_to else {})', src)
 
     def test_nested_tree_rows_keep_their_raw_text(self):
-        src = getsource(km.build_feed)
+        src = getsource(km._feed_segs_build)          # flatten lives in the feed's per-session memo builder (2026-09-07)
         self.assertIn('"kind": "handoff" if _ho_sid else "ask", "text": nd["text"]', src,
                       "flatten's rows are untouched — nested handoff rows render as before")
 

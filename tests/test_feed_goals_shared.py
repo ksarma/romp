@@ -382,13 +382,14 @@ class LandingGate(_World):
     def test_the_feed_read_path_never_writes_into_the_store_it_reads(self):
         # the source pin: no assignment into `store`, `nodes[...]` or `status[...]`, no mutating method on
         # them, no rollup_status or record_verdict (both write) in the functions that hold a served store
-        for fn in (km.build_feed, km._apply_rewind_hold):
+        for fn in (km.build_feed, km._feed_segs_build, km._apply_rewind_hold):
             src = inspect.getsource(fn)
             self.assertIsNone(re.search(r"\b(store|nodes|status)\[[^\]]+\]\s*=[^=]", src), fn.__name__)
             self.assertIsNone(re.search(r"\bdel\s+(store|nodes|status)\[", src), fn.__name__)
             self.assertIsNone(re.search(r"\b(store|nodes|status)\.(setdefault|update|pop|popitem|clear)\(", src), fn.__name__)
             self.assertNotIn("record_verdict(", src, fn.__name__)
         self.assertNotIn("rollup_status(", inspect.getsource(km.build_feed))
+        self.assertNotIn("rollup_status(", inspect.getsource(km._feed_segs_build))
         # _apply_rewind_hold re-rolls the columns on a throwaway deep copy, never on the store it was handed
         hold_src = inspect.getsource(km._apply_rewind_hold)
         self.assertIn("jd.rollup_status(tmp, session_closed=False)", hold_src)

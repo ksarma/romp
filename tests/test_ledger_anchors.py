@@ -117,7 +117,8 @@ class SharedHelperAntiDrift(unittest.TestCase):
             self.assertIsNotNone(m, "found %s" % fn)
             return m.group(0)
         self.assertIn("_node_anchor_uuids(", body("build_session"), "the ledger resolves anchors via the helper")
-        self.assertIn("_node_anchor_uuids(", body("build_feed"), "the feed resolves anchors via the helper")
+        # the feed's flatten lives in _feed_segs_build since 2026-09-07 (build_feed's per-session memo)
+        self.assertIn("_node_anchor_uuids(", body("_feed_segs_build"), "the feed resolves anchors via the helper")
 
 
 class GlowByIdRouting(unittest.TestCase):
@@ -242,7 +243,8 @@ class SegJump(unittest.TestCase):
     def test_the_deep_link_maps_use_the_landable_anchor(self):
         # both zone maps (ledger seg_work + feed seg_uuid) resolve through _seg_jump, not bare `r or w`
         import inspect
-        src = inspect.getsource(km.build_session) + inspect.getsource(km.build_feed)
+        src = (inspect.getsource(km.build_session) + inspect.getsource(km.build_feed)
+               + inspect.getsource(km._feed_segs_build))   # the feed's seam walk (2026-09-07)
         self.assertEqual(src.count('_seg_jump(seg["atoms"])'), 2)
         self.assertNotIn("= r or w", src)
 

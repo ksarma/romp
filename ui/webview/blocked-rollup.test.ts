@@ -23,7 +23,8 @@ test("kernel flatten rolls a blocked descendant up to every non-done ancestor an
   // rolled-up ancestors are distinguishable from the actual ask
   assert.match(KERNEL, /"qderived": st == "question" and not nd\.get\("blocked"\),/);
   // the anchor keys on the node's NEWEST trail segment — where it stands, not where born (2026-07-20)
-  assert.match(KERNEL, /_node_anchor_uuids\(nd, seg_trig, seg_uuid\)/);
+  // (the feed's flatten lives in _feed_segs_build since 2026-09-07 and records what the resolve read and wrote)
+  assert.match(KERNEL, /_node_anchor_uuids\(nd, seg_trig, seg_uuid, deps, writes\)/);
 });
 
 test("the card checklist ⏸ tooltip points down the tree on a rolled-up ancestor", () => {

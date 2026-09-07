@@ -2977,7 +2977,9 @@ class OneInterruptStory(_StoreSandbox):
             mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
             mock.patch.object(km, "_parse_cached", lambda path: {"turns": list(turns)}),
             mock.patch.object(km, "_merge_live_atoms", lambda ps, sid: ps),
-            mock.patch.object(km, "_feed_goals", lambda sid: dict(store)),
+            # build_feed reads the store with its identity key (_feed_goals_view, 2026-09-07); a synthetic
+            # store has no identity guarantee, so it rides a sentinel key (the memo bypasses it)
+            mock.patch.object(km, "_feed_goals_view", lambda sid: (dict(store), object())),
             # the predicate is pinned separately (EscalationFloorPredicate); force-arm it here
             # so these shapes exercise the GUARDS, not the arming gates — arity-proof on purpose
             mock.patch.object(km, "_user_todo_idle", lambda *a, **k: True),

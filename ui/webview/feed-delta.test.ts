@@ -112,7 +112,11 @@ test("the kernel announces the delta capability on every feed-consumer page's so
 
 test("the recency tint is computed client-side from `t` on a live clock; deltas never carry trgb, full frames still do for older bundles", () => {
   assert.equal(/\.trgb\b|trgb[?]?:/.test(FEED), false, "no reader or type of a per-card colour remains — present or absent on the wire, it is ignored");
-  assert.ok(KERNEL.includes('"trgb": list(cm.age_rgb('), "full frames keep the tint: an older bundle destructures it unguarded");
+  // full frames keep the tint (an older bundle destructures it unguarded), stamped at serialization since
+  // 2026-09-07 (the kernel's _feed_body through _tinted_asks); no builder computes it into a card any more
+  assert.ok(KERNEL.includes("def _stamp_trgb(card, now, cmap):"), "one stamper for every whole frame");
+  assert.ok(KERNEL.includes('body["asks"] = _tinted_asks(feed)'), "_feed_body stamps the cards it serializes");
+  assert.equal(KERNEL.includes('"trgb": list(cm.age_rgb('), false, "no card builder computes the tint");
   assert.match(KERNEL, /def _strip_trgb\(card\):/);
   assert.match(KERNEL, /cards = \{a\["itemId"\]: json\.dumps\(_strip_trgb\(a\), default=dflt\)/, "deltas are built from tint-less cards");
   assert.match(KERNEL, /dflt = _wire_default_in\("_feed_parts"\)/, "…encoded through the wire default that counts a non-JSON value and names its type once, not a bare str");

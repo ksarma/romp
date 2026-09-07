@@ -4892,10 +4892,13 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(comp[0]["tree"][0]["status"], "done")
         self.assertTrue(any(a["column"] == "needs_input" for a in d["asks"]), "the blocked goal is a BLOCKED card")
         # card tint is the recency colormap (age → hawaii ramp), not a flat session color. It rides FULL
-        # frames only (an older bundle destructures it); the delta path and the dedup signature strip it,
-        # because a colour that ticks with the clock is not a change (tests/test_feed_delta.py).
-        self.assertEqual(comp[0]["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
-        self.assertNotEqual(comp[0]["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
+        # frames only (an older bundle destructures it), stamped at serialization since 2026-09-07 (_feed_body);
+        # the built card carries none, and the delta path never does, because a colour that ticks with the
+        # clock is not a change (tests/test_feed_delta.py).
+        self.assertNotIn("trgb", comp[0])
+        wire = next(a for a in json.loads(km._feed_body(d))["asks"] if a["itemId"] == comp[0]["itemId"])
+        self.assertEqual(wire["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
+        self.assertNotEqual(wire["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
 
     def test_cards_for_segments_resolves_segment_to_owning_top_card(self):
         # reverse-hover: a hovered timeline bar's segment id → the TOP goal card that owns it (inverse
