@@ -37486,7 +37486,11 @@ def _api_health_frame(now, tmux):
             if not e or e.get("tooLong") or e.get("modelLimit") or e.get("authErr") or e.get("refusal"):
                 continue                               # nothing latched, or an on-you failure (the session's own)
             status = e.get("status")
-            row = {"kind": "blocked", "cls": _apih_class(status, e.get("category"), None),
+            # The word follows the LIVE state (review round 1, 2026-09-07): a turn open on the retry prompt
+            # (romp's own, or a human's) with no api_retry frame yet, or a tmux session's whole internal retry,
+            # reads 'retrying', not 'stopped'. The latch only keeps the row counted; since stays the record's time.
+            kind = "retrying" if tm.get("state") == "working" else "blocked"
+            row = {"kind": kind, "cls": _apih_class(status, e.get("category"), None),
                    "since": int(e.get("t") or 0)}
         row.update({"sid": sid, "name": s.get("name") or sid[:8], "color": _name_color(sid),
                     "status": _apih_status(status), "suppressed": _session_retry_suppressed(sid)})

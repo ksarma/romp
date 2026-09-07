@@ -212,6 +212,20 @@ class States(_Fixture):
         r = self.frame()["sessions"][0]
         self.assertEqual((r["name"], r["color"]), ("web", {"bg": "#3366cc", "fg": "#ffffff"}))
 
+    def test_a_latched_row_reads_retrying_while_its_session_is_working(self):
+        # The retry prompt (romp's own, or a human's) was accepted and the turn is open, no api_retry frame yet;
+        # for a tmux session that is the whole internal retry. The word follows the live state; the latch only
+        # keeps the row counted, and its since stays the record's time (review round 1, 2026-09-07).
+        self.add(0, state="working", err={"status": 529, "category": "overloaded"})
+        f = self.frame()
+        r = f["sessions"][0]
+        self.assertEqual((r["kind"], r["cls"], r["status"], r["since"]), ("retrying", "529", 529, T_REC))
+        self.assertEqual((f["waiting"], f["retrying"], f["blocked"], f["text"]), (1, 1, 0, "overloaded %s 1 waiting" % MDOT))
+        self.add(1, state="idle", err={"status": 529, "category": "overloaded"})
+        f = self.frame()
+        self.assertEqual([x["kind"] for x in f["sessions"]], ["retrying", "blocked"])
+        self.assertEqual((f["waiting"], f["retrying"], f["blocked"]), (2, 1, 1))
+
     def test_a_string_status_on_the_wire_is_read_as_a_number(self):
         self.add(0, retry={"status": "529"})
         f = self.frame()
