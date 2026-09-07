@@ -1849,9 +1849,10 @@ class CourierGate(_Gate):
             self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid], "a completed tracker is never linked")
         self.assertIsNotNone(self._stamp("courier", SID2), "the sender, with nothing pending, stamped")
         snd = jd.load_goals(SID2)                                        # the user reopens the tracker
-        snd["nodes"][tid]["nodeComplete"] = False
-        snd["status"][tid] = "working"
+        self.assertTrue(jd.record_verdict(snd, snd["nodes"][tid], "user", "reopen", NOW + 1, why="reopened by the user"))
+        jd.rollup_status(snd, False)
         jd.save_goals(SID2, snd)
+        self.assertFalse(jd.load_goals(SID2)["nodes"][tid].get("nodeComplete"), "premise: the tracker is open again")
         seen.clear()
         self._reset()
         self._pass(tiers=("courier",))
@@ -1862,8 +1863,9 @@ class CourierGate(_Gate):
         seen.clear()
         self._reset()
         self._pass(tiers=("courier",))
-        self.assertEqual(sorted(seen), sorted([SID, SID2]), "both stores moved: one more scan each")
-        self.assertEqual(self._ran(), (2, 0, 2, 0), "the link is in the store: the repair stops before the lookup")
+        self.assertEqual(seen, [SID], "the link's save moved the recipient's store: one more scan (the sender's "
+                                      "reopen save preceded the linking pass, so its scan there already stamped it)")
+        self.assertEqual(self._ran(), (1, 1, 1, 0), "the link is in the store: the repair stops before the lookup")
         seen.clear()
         self._reset()
         self._pass(tiers=("courier",))
