@@ -36762,8 +36762,9 @@ def _waiting_page():
 # (so a host:sid op routes to the owning kernel through the fake acquireVsCodeApi), then ui/webview/files.ts,
 # and a seat in the conserve-memory viewer list (or an open Files pane alone reads as a closed dashboard). The
 # shell's viewFile relay brings the pane forward and forwards a chat file-link click into it when fileLinkPane
-# is "pane" (render.ts openPath). Browser shell only for now: the VS Code extension's panel mirror is a
-# separate change (UPSTREAM.md).
+# is "pane" (render.ts openPath); its browseFiles relay does the same for a folder click (render.ts openBrowse,
+# 2026-09-06), so the file BROWSER opens as a column too. Browser shell only for now: the VS Code extension's
+# panel mirror is a separate change (UPSTREAM.md).
 def _files_page():
     try:
         files_css = (UI / "webview" / "files-pane.css").read_text()
@@ -37635,9 +37636,25 @@ _LANDING_SETTINGS_JS = """
 if(m.romp==='settings')document.body.classList.toggle('settings-open',!!m.on);
 // the /chat iframe's new-session picker asks the shell to lift it full-window (see body.picker-open CSS)
 if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
-// "Browse files" from any pane surfaces the FILE BROWSER in the FEED pane, which is a different
-// document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
-// and remember to put it back, so the browser never costs the user their layout. (File VIEWS
+// A browse ask from the chat ({romp:'browseFiles',path,sid,pane,identity}: the folder at the bottom of the
+// transcript, the System-context Directory row, a tab menu's Browse files, a viewer's directory link; render.ts
+// openBrowse) names its TARGET in m.pane, decided at the click by the file-link ladder (ui/webview/file-route.ts
+// browseRoute). 'pane' is the FILES pane (the user 2026-09-06: the folder's listing belongs in the Files pane
+// while that pane is open or the File-links setting names it, never over the transcript): bring the pane
+// forward, the folder click being the one gesture that moves it, and forward the ask with the session's
+// identity, which files.ts caches for the viewer's chip (the pane has no session list of its own). The pane
+// STAYS up, so none of the feed route's was-off / browseClosed restore below applies to this branch; the
+// pane's own close edge (filesViewerClosed) puts a phone back on the tab the click came from, exactly as the
+// viewFile pane branch does.
+if(m.romp==='browseFiles'&&m.pane==='pane'){var fb=document.getElementById('f-files');
+  try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
+  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curb=document.body.getAttribute('data-tab')||'chat';
+    if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
+  try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
+// 'feed', the default while the Files pane is closed (and an ask naming no pane at all), surfaces the FILE
+// BROWSER in the FEED pane, which is a different document — so the shell relays it. If the feed pane is
+// toggled off we turn it on for the duration and remember to put it back, so the browser never costs the
+// user their layout. (File VIEWS
 // default to needing none of this since 2026-08-15 — the viewer is a modal over whatever document
 // clicked — but the cards-pane preference below opts a chat click back into the same juggling.)
 // THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its
@@ -37651,7 +37668,7 @@ if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
 // land before this arm sits on the committed flag (which transfers); one still in flight arrives to
 // a cleared pend and arms nothing — that open costs a pane left forward, arm-on-ack's one named
 // price, never a surprise hide.
-if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
+else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(window.__rompFeedWasOffView){window.__rompFeedWasOff=true;window.__rompFeedWasOffView=false;}
   window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
@@ -38697,9 +38714,9 @@ _LANDING_COLLAPSE_JS = """
   // re-applies re-send an unchanged set (redundant, harmless) — again on each iframe's own load, so a pane
   // that boots or reloads after the shell still hears the current set (the focus ring's "wire now + on every
   // (re)load", _LANDING_FOCUS_JS), and from _LANDING_MOBILE_JS on a tab switch or a layout flip (what is on
-  // screen changed with no toggle). The chat routes a file-link click by it (render.ts fileLinkRoute, the
-  // user 2026-09-04: an OPEN Files pane takes the click whatever the fileLinkPane setting says — the pane
-  // being open IS the intent).
+  // screen changed with no toggle). The chat routes a file-link click by it (ui/webview/file-route.ts
+  // fileLinkRoute, the user 2026-09-04: an OPEN Files pane takes the click whatever the fileLinkPane setting
+  // says — the pane being open IS the intent), and a folder click the same way (browseRoute, 2026-09-06).
   var KEYS=__PANE_KEYS__;
   // on[k] is "this pane is on screen", not the po flag: in the mobile layout (one tab at a time, the po-*
   // classes ignored — _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session

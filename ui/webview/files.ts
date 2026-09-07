@@ -18,11 +18,17 @@
 //   • the relay is taken WHOLE (initFileView's onRelay): the default relay branch is the FEED's contract
 //     (viaRelay + the viewFileOpened ack, which arm the shell's pane restore), and the Files pane owes
 //     the shell no restore — it stays up; that is the point of it.
-// Close returns to the empty state, never to a hidden pane: closeFileView only removes the viewer's
-// element, and the placeholder repaints on that removal (a body childList observer — the event itself,
-// no polling), which also covers the browser's "‹ Files" back path and the conflict Reload's replace.
+//   • the shell's browseFiles relay ({romp:"browseFiles", path, sid, identity}: a folder clicked in the chat
+//     while this pane is on screen or the File-links setting names it, render.ts openBrowse; the user
+//     2026-09-06) opens the file BROWSER here, the listing as its own column. The identity it carries is
+//     cached the same way, so a file picked from the listing names its session in the chip. The browser
+//     owes the shell no browseClosed either (initFileBrowse's shellRestore false): the pane stays up, and
+//     that message is the FEED's restore.
+// Close returns to the empty state, never to a hidden pane: closeFileView and closeFileBrowse only remove
+// their element, and the placeholder repaints when neither is up (a body childList observer — the event
+// itself, no polling), which also covers the browser's "‹ Files" back path and the conflict Reload's replace.
 import { initFileView, openFileView, setFileViewIdentity, hostStub, type FileViewIdentity } from "./file-view";
-import { initFileBrowse } from "./file-browse";
+import { initFileBrowse, openFileBrowse } from "./file-browse";
 import { delegate } from "./actions";
 import { applyTheme } from "./theme";
 import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
@@ -37,6 +43,11 @@ const identities = new Map<string, FileViewIdentity>();
 let recent: RecentFile[] = parseRecent(readStore());
 
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+// The pane is SHOWING something while the viewer or the browser is up: both are body children by id (the
+// viewer's modal wrap, the browser's fixed box), both come and go by element, so presence is the state.
+function surfaceUp(): boolean {
+  return !!(document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse"));
+}
 function readStore(): string | null { try { return localStorage.getItem(RECENT_KEY); } catch { return null; } }
 function writeStore(): void { try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch { /* storage may be denied */ } }
 
@@ -59,7 +70,7 @@ function openHere(path: string, sid: string | null, identity: FileViewIdentity |
 function paint(): void {
   const empty = document.getElementById("files-empty");
   if (!empty) return;
-  const open = !!document.getElementById("romp-fileview");
+  const open = surfaceUp();
   empty.hidden = open;
   if (open) return;
   const title = el("div", "fs-title"); title.textContent = "No file open";
@@ -104,7 +115,15 @@ setFileViewIdentity((id) => identities.get(id) ?? hostStub(id));
 initFileView((m) => vscodeApi?.postMessage(m), (m) => {
   openHere(m.path, typeof m.sid === "string" ? m.sid : null, asIdentity(m.identity), typeof m.todoId === "string" ? m.todoId : null);
 });
-initFileBrowse((m) => vscodeApi?.postMessage(m));
+initFileBrowse((m) => vscodeApi?.postMessage(m), {
+  shellRestore: false,   // the pane stays up; browseClosed is the FEED's restore (see the header)
+  onRelay: (m) => {
+    const sid = typeof m.sid === "string" ? m.sid : null;
+    const id = asIdentity(m.identity);
+    if (sid && id) identities.set(sid, id);   // so a file picked from the listing names its session
+    openFileBrowse(m.path || ".", sid);
+  },
+});
 
 // re-open rows: delegated on the stable #files-empty (actions.ts), so a repaint mid-click still lands
 (() => {
@@ -114,16 +133,18 @@ initFileBrowse((m) => vscodeApi?.postMessage(m));
     open: (x) => { const r = recent[Number(x.dataset.i)]; if (r) openHere(r.path, r.sid, r.identity); },
   });
 })();
-// the viewer's element coming and going IS the open/close event: one observer on the body covers every
-// path (the relay, a recent row, the browser's rows and its "‹ Files" back, ✕, Escape, the Reload replace).
-// The CLOSE edge is also told to the shell ({romp:"filesViewerClosed"}): on a phone the relay switched tabs
-// to show this pane, and the shell puts the person back on the tab the click came from (a no-op on desktop,
-// where the column simply shows its recent list again). Edge, not every mutation: the Reload replace and an
-// open-over-open remove and re-add within one batch, so the viewer is still up when the observer runs.
-let viewerUp = !!document.getElementById("romp-fileview");
+// the viewer's or the browser's element coming and going IS the open/close event: one observer on the body
+// covers every path (the relays, a recent row, the browser's rows and its "‹ Files" back, ✕, Escape, the
+// Reload replace). The CLOSE edge, nothing left up, is also told to the shell ({romp:"filesViewerClosed"}): on
+// a phone the relay switched tabs to show this pane, and the shell puts the person back on the tab the click
+// came from (a no-op on desktop, where the column simply shows its recent list again). Edge, not every
+// mutation: the Reload replace and an open-over-open remove and re-add within one batch, so the viewer is
+// still up when the observer runs; and a viewer closing back onto the listing beneath it ("‹ Files") is no
+// edge either, since the browser is still up.
+let viewerUp = surfaceUp();
 function onBodyChange(): void {
   paint();
-  const up = !!document.getElementById("romp-fileview");
+  const up = surfaceUp();
   if (viewerUp && !up && window.parent !== window) window.parent.postMessage({ romp: "filesViewerClosed" }, "*");
   viewerUp = up;
 }

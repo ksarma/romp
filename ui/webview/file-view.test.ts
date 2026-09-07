@@ -12,6 +12,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileLinkRoute } from "./file-route";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = web("file-view.ts");
@@ -42,11 +43,7 @@ test("openPath routes by HOST: the in-pane viewer modal on the web, the editor i
 // user: the pane being open IS the intent; a click that opened as a modal over the chat while the
 // pane sat empty was the bug) — the setting decides only where a link goes while the pane is closed.
 test("fileLinkRoute: an open Files pane takes the click; otherwise the preference relays only when framed", () => {
-  const fileLinkRoute = (pane: unknown, framed: boolean, filesOpen: boolean): "feed" | "pane" | "here" => {
-    if (!framed) return "here";
-    if (filesOpen) return "pane";
-    return pane === "feed" || pane === "pane" ? pane : "here";
-  };
+  // the shipped function itself (file-route.ts since 2026-09-06, when the folder click joined the ladder), not a replica
   // the Files pane is OPEN: every setting value routes there (the 2026-09-04 rule)
   for (const setting of ["chat", "feed", "pane", undefined, "purple"]) {
     assert.equal(fileLinkRoute(setting, true, true), "pane", `Files pane open & framed, setting=${String(setting)} → the Files pane, whatever the setting`);
@@ -63,8 +60,9 @@ test("fileLinkRoute: an open Files pane takes the click; otherwise the preferenc
       assert.equal(fileLinkRoute(setting, false, open), "here", `standalone /chat, setting=${String(setting)}, filesOpen=${open} → open in place`);
     }
   }
-  // replica ↔ source: the pure function's exact body, so the executed table above is the shipped logic
-  assert.match(RENDER, /function fileLinkRoute\(pane: unknown, framed: boolean, filesOpen: boolean\): "feed" \| "pane" \| "here" \{\n\s*if \(!framed\) return "here";\n\s*if \(filesOpen\) return "pane";\n\s*return pane === "feed" \|\| pane === "pane" \? pane : "here";\n\}/);
+  // the chat imports the shipped function; no local copy that could drift from the table above
+  assert.match(RENDER, /import \{ fileLinkRoute, browseRoute, type BrowseRoute \} from "\.\/file-route";/);
+  assert.doesNotMatch(RENDER, /function fileLinkRoute\(/, "one definition, in file-route.ts");
   // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit, and posts up,
   // the message naming its target pane and carrying the session's identity for the Files pane's chip
   assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);\n\s*if \(route !== "here"\) \{/);
@@ -79,7 +77,8 @@ test("the chat caches the shell's pane set from its romp:panes broadcast, and op
   assert.match(RENDER, /let panesOn: Record<string, boolean> = \{\};/);
   assert.match(RENDER, /if \(m\.romp === "panes"\) \{\n\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*const on: Record<string, boolean> = \{\};\n\s*for \(const k of Object\.keys\(m\.on\)\) on\[k\] = m\.on\[k\] === true;\n\s*panesOn = on;\n\s*\}\n\s*return;\n\s*\}/);
   assert.match(RENDER, /fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\)/);
-  assert.equal((RENDER.match(/panesOn\.files/g) || []).length, 1, "one reader: openPath's route decision");
+  assert.equal((RENDER.match(/panesOn\.files/g) || []).length, 2,
+    "two readers: openPath's route decision, and browseRouteNow for a folder click (2026-09-06)");
   // executed: the listener's fold, as the source spells it — strict booleans in, unknown keys dropped on the next set
   const fold = (on: Record<string, unknown>): Record<string, boolean> => {
     const out: Record<string, boolean> = {};

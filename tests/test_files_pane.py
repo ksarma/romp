@@ -252,5 +252,85 @@ class Relay(unittest.TestCase):
         self.assertIn("fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*')", js)
 
 
+
+class BrowseRelay(unittest.TestCase):
+    """The shell's browseFiles relay gains the same `pane` branch (2026-09-06): the folder at the bottom of the
+    chat, the System-context Directory row and a tab menu's Browse files post {romp:'browseFiles', pane, ...}
+    with the file-link ladder's verdict (ui/webview/file-route.ts browseRoute), and 'pane' brings the Files pane
+    forward and forwards the ask, identity included, into #f-files, where files.ts opens the file BROWSER as a
+    column. None of the feed route's was-off / browseClosed machinery applies: the pane stays up. The feed route
+    is the else branch and unchanged; an ask naming 'feed' or no pane at all still lands there. The executed
+    checks live in ui/webview/browse-route.test.ts (the shell arms run against a shimmed window, and the pane
+    under the real shell script in a browser); these pin the kernel-side shape."""
+
+    HEAD = "if(m.romp==='browseFiles'&&m.pane==='pane'){var fb=document.getElementById('f-files');"
+    FEED = "else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');"
+
+    @staticmethod
+    def _code(js):
+        return "\n".join(l for l in js.splitlines() if not l.lstrip().startswith("//"))
+
+    def test_the_pane_branch_precedes_the_feed_else_branch(self):
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn(self.HEAD, js)
+        self.assertIn(self.FEED, js)
+        self.assertLess(js.index(self.HEAD), js.index(self.FEED))
+        # the viewFile pair keeps its own order and anchors (the playwright harnesses slice on them)
+        self.assertLess(js.index("if(m.romp==='viewFile'&&m.pane==='pane')"), js.index("else if(m.romp==='viewFile'){var vf="))
+
+    def test_the_pane_branch_brings_the_files_pane_forward_and_forwards_the_identity(self):
+        js = km._LANDING_SETTINGS_JS
+        branch = self._code(js.split(self.HEAD)[1].split(self.FEED)[0])
+        self.assertIn("window.__rompPaneToggle&&window.__rompPaneToggle('files',true)", branch)
+        # phone: the Files tab comes forward only in the mobile layout, and the tab the click came from is
+        # remembered for filesViewerClosed (the viewFile pane branch's exact idiom)
+        self.assertIn("try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curb=document.body.getAttribute('data-tab')||'chat';\n"
+                      "    if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}", branch)
+        self.assertIn("postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*')", branch)
+        self.assertEqual(branch.count("postMessage("), 1, "one forward, carrying the whole ask")
+        for tok in ("__rompFeedWasOff", "browseClosed", "'f-feed'", "__rompMobileTab('feed')"):
+            self.assertNotIn(tok, branch, tok + " belongs to the feed route")
+
+    def test_the_feed_route_is_the_else_branch_and_unchanged(self):
+        js = km._LANDING_SETTINGS_JS
+        feed = js.split(self.FEED)[1].split("if(m.romp==='browseClosed'")[0]
+        self.assertIn("window.__rompFeedWasOff=true;", feed)
+        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", feed)
+        self.assertIn("postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*')", feed)
+        self.assertNotIn("identity", feed, "the feed resolves its own identity")
+        # the restore still consumes either feed flag, and only those
+        self.assertIn("if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){", js)
+
+    def test_the_comment_above_the_pane_branch_names_the_ladder_and_the_gesture(self):
+        js = km._LANDING_SETTINGS_JS
+        lines = js.split(self.HEAD)[0].rstrip("\n").split("\n")
+        start = len(lines)
+        while start > 0 and lines[start - 1].lstrip().startswith("//"):
+            start -= 1
+        comment = "\n".join(lines[start:])
+        self.assertIn("file-route.ts", comment, "the route is decided at the click, by the ladder the chat imports")
+        self.assertIn("gesture", comment, "a pane moves on a user gesture only; the comment names it")
+        self.assertIn("filesViewerClosed", comment, "the phone's way back is the pane's own close edge")
+
+    def test_the_two_ends_agree_on_the_message(self):
+        # the sender names its target and carries the identity (render.ts openBrowse); the pane caches the
+        # identity, opens the browser, and owes the shell no browseClosed (files.ts; file-browse.ts gates it)
+        render = (UI / "render.ts").read_text()
+        self.assertIn('window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: route,', render)
+        files = (UI / "files.ts").read_text()
+        self.assertIn("shellRestore: false,", files)
+        self.assertIn("if (sid && id) identities.set(sid, id);", files)
+        self.assertIn('openFileBrowse(m.path || ".", sid);', files)
+        browse = (UI / "file-browse.ts").read_text()
+        self.assertIn("if (!shellRestore) return;", browse)
+        route = (UI / "file-route.ts").read_text()
+        self.assertIn("export function browseRoute(web: boolean, pane: unknown, framed: boolean, filesOpen: boolean): BrowseRoute {", route)
+
+    def test_the_guide_names_the_folder_link_and_where_its_listing_opens(self):
+        guide = (Path(BIN).parent / "docs" / "guide.md").read_text()
+        self.assertIn("The folder under the chat (the session's working directory) opens a\nlisting of that folder by the same rule", guide)
+        self.assertIn("otherwise over the feed. Pick a file in the listing and\nit opens where the listing is.", guide)
+
+
 if __name__ == "__main__":
     unittest.main()

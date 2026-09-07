@@ -1,6 +1,8 @@
-// The file BROWSER in the FEED pane (plans/file-browser.md, the user 2026-08-14): breadcrumb over one
-// directory's entries, riding the listDir WS op with the dirComplete staleness protocol, opening files
-// through the existing viewer. Source pins (no jsdom for these modules), the repo convention.
+// The file BROWSER (plans/file-browser.md, the user 2026-08-14): breadcrumb over one directory's entries,
+// riding the listDir WS op with the dirComplete staleness protocol, opening files through the existing
+// viewer. Hosted by the FEED pane (the shell's relay target), the FILES pane (files.ts) and, unframed only,
+// the chat; where a chat click lands is the ladder in file-route.ts (browse-route.test.ts holds its table).
+// Source pins (no jsdom for these modules), the repo convention.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -53,9 +55,11 @@ test("the close contract is ownership-aware: each restore fires exactly once, fo
   assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&\(window\.__rompFeedWasOff\|\|window\.__rompFeedWasOffView\)\)\{/);
 });
 
-test("the shell relays browseFiles: pane forward, remembered, phone tab", () => {
-  assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
-  const relay = KERNEL.split("if(m.romp==='browseFiles')")[1].split("if(m.romp==='browseClosed'")[0];
+test("the shell relays browseFiles to the feed: pane forward, remembered, phone tab", () => {
+  // the feed route is the ELSE branch since 2026-09-06: a browse naming pane:'pane' takes the Files-pane
+  // branch before it (browse-route.test.ts executes both); a browse naming 'feed' or nothing lands here
+  assert.match(KERNEL, /else if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
+  const relay = KERNEL.split("else if(m.romp==='browseFiles')")[1].split("if(m.romp==='browseClosed'")[0];
   assert.ok(relay.includes("window.__rompFeedWasOff=true;"), "a pane turned on for the browser is remembered");
   assert.ok(relay.includes("window.__rompMobileTab&&window.__rompMobileTab('feed')"), "phone: one pane at a time");
   assert.ok(relay.includes("postMessage({romp:'browseFiles',path:m.path,sid:m.sid}"), "forwarded into the feed iframe");
@@ -110,11 +114,16 @@ test("Escape closes the TOPMOST surface only, and Backspace walks up", () => {
 });
 
 test("every entry point is gated to where the click can land, and posts the one shell message", () => {
-  // chat: openBrowse is PANE-LOCAL (2026-08-24 — it used to relay to the shell and open over the
-  // FEED, the wrong pane): the browser opens over the chat that launched it, web-only, framed or not
-  assert.match(RENDER, /openFileBrowse\(path \|\| "\.", sid \|\| activeId \|\| null\);/);
-  assert.match(RENDER, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/, "the chat hosts its own browser instance");
-  assert.doesNotMatch(RENDER, /window\.parent\.postMessage\(\{ romp: "browseFiles"/, "no shell relay from the chat anymore");
+  // chat: openBrowse walks the file-link ladder (file-route.ts browseRoute; the user 2026-09-06): the Files
+  // pane or the feed pane through the shell's browseFiles relay, naming its target, and in place ONLY
+  // unframed (standalone /chat), the one host where neither surface exists. This replaces the 2026-08-24
+  // pane-local cut, which opened over the chat everywhere (itself the answer to a listing over the FEED
+  // CARDS while the person read the chat; the Files pane is the surface that complaint wanted)
+  assert.match(RENDER, /const route = browseRouteNow\(\);\n\s*if \(route === "editor"\) return;/);
+  assert.match(RENDER, /if \(route === "here"\) \{ openFileBrowse\(path \|\| "\.", to\); return; \}/);
+  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "browseFiles", path: path \|\| "\.", sid: to, pane: route,/);
+  assert.match(RENDER, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{\n\s*shellRestore: false,/,
+    "the chat hosts its own browser instance for the unframed route, owing the shell no restore");
   // tab right-click menu row: bottom of the menu, behind a divider, icon + sub-description
   assert.match(RENDER, /l\.textContent = "Browse files"; bodyEl\.appendChild\(l\);/);
   // feed card menu row rides canPreview (web only — the VS Code webview can't reach the kernel
@@ -124,7 +133,7 @@ test("every entry point is gated to where the click can land, and posts the one 
 });
 
 test("the statusline folder link BROWSES on the web; OS-open lives on its right-click (the user 2026-08-14)", () => {
-  assert.match(RENDER, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);   // pane-local browse needs no shell (2026-08-24)
+  assert.match(RENDER, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);   // the act names the intent; openBrowse routes it at the click
   assert.match(RENDER, /click to browse this folder/);
   // the demoted OS-open: one document-level contextmenu on folder links, posting the old openFolder
   assert.match(RENDER, /item\.textContent = "Open folder window";/);
@@ -218,8 +227,8 @@ test("Browse files sits at the BOTTOM of the tab menu, behind a divider, wearing
             && menuBody.slice(0, browseAt).trimEnd().includes('menu.appendChild(el("div", "ctx-sep"));'),
     "a divider immediately precedes it — a different kind of thing");
   assert.match(menuBody.slice(browseAt - 400, browseAt), /ctxIcon\("folder", false\)/, "the folder icon");
-  assert.match(menuBody, /sb\.textContent = "the session's working tree, in a viewer over this chat";/,
-    "the standard sub-description line");
+  assert.match(menuBody, /sb\.textContent = "the session's working tree, " \+ \(where === "pane" \? "in the Files pane" : where === "feed" \? "in the feed pane" : "in a viewer over this chat"\);/,
+    "the standard sub-description line, naming where the listing will open (browseRouteNow, 2026-09-06)");
   // …and the Billing submenu (the previous last item) now sits ABOVE it
   assert.ok(menuBody.indexOf('l.textContent = "Billing"') < browseAt, "Browse is last");
 });
