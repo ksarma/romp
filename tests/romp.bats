@@ -559,9 +559,11 @@ _stale_server_globals() {
     # `romp new` lacks when the reference was swapped into service.env after the manager started.
     _stale_server_globals
     unset ROMP_API_KEY_REF
-    mkdir -p "$HOME/.config/romp"
+    # Name the file explicitly: CI runners export XDG_CONFIG_HOME, so "$HOME/.config" is not where the
+    # launcher would look (the keyswap tests pin the path the same way).
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
     printf '%s\n' "# the service env" "ROMP_PERF=1" "  ROMP_API_KEY_REF=op://test-vault/test-item/credential" \
-        > "$HOME/.config/romp/service.env"
+        > "$ROMP_SERVICE_ENV_FILE"
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
     grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
@@ -571,8 +573,8 @@ _stale_server_globals() {
 @test "new -t: no reference anywhere leaves the tmux server's environment alone (static-key and helper boxes)" {
     _stale_server_globals
     unset ROMP_API_KEY_REF
-    mkdir -p "$HOME/.config/romp"
-    printf '%s\n' "ANTHROPIC_API_KEY=synthetic-static-key" > "$HOME/.config/romp/service.env"
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "ANTHROPIC_API_KEY=synthetic-static-key" > "$ROMP_SERVICE_ENV_FILE"
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
     ! grep -q 'set-environment -gu' "$MOCK_LOG"
