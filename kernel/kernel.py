@@ -37388,15 +37388,15 @@ def _badge_push(n):
 
 
 # ── The bottom bar's API health cell (the user 2026-09-07): one glance answers 'is the API serving my
-# sessions', beside the spend cell. Built from what the kernel already owns — the merged live map's
+# sessions', beside the spend cell. Built from what the kernel already owns: the merged live map's
 # retrying state (the SDK api_retry storm), each alive transcript's LATCHED newest API error
-# (_api_last_failed) and the global retry-pause file — never from the /api-health ratio machine
+# (_api_last_failed) and the global retry-pause file, never from the /api-health ratio machine
 # (threshold-and-hold transitions evaluated at read time) and never from a clock: every field moves on
 # one named event (a retry frame, an isApiErrorMessage record, fresh assistant output, a pause set or
 # lifted, a session leaving the roster), so an unchanged world serializes identically and sends nothing.
 #
-# States: ok; degraded, with a class word by plurality over the affected sessions — 429 rate limited /
-# 529 overloaded / offline (this machine cannot reach the API) / errors — and the count waiting
+# States: ok; degraded, with a class word by plurality over the affected sessions, 429 rate limited /
+# 529 overloaded / offline (this machine cannot reach the API) / errors, and the count waiting
 # (retrying + stopped on an error record); paused, red, with the pause's latched reason (limit / spend /
 # manual), outranking every degraded reading since nothing retries and the judges are gated too.
 # On-you failures (tooLong / modelLimit / authErr / refusal) do NOT count: they already wear red on that
@@ -37432,7 +37432,7 @@ def _apih_class(status, category="", network_down=None):
     """One affected session's class for the rail: "429" | "529" | "offline" | "errors". A kernel-local
     twin of sdk_backend.api_health_status_class collapsed to the four rail words (tests pin agreement on the
     shared statuses): its 5xx / other / none all read "errors" here, except a no-status attempt the CLI
-    flagged is_network_down, which is this box's connectivity, not the API — "offline". Only a retrying row
+    flagged is_network_down, which is this box's connectivity, not the API: "offline". Only a retrying row
     can say offline: a transcript error record carries no network flag."""
     st = _apih_status(status)
     if st is not None:
@@ -37453,8 +37453,8 @@ def _apih_class(status, category="", network_down=None):
 
 def _api_health_frame(now, tmux):
     """The apiHealth shell frame for this cycle (the block comment above says what it reads). `tmux` is
-    the cycle's merged live map (Sessions.live()). Every timestamp is an event stamp — a record's time, the
-    storm turn's start (SdkSession.since moves once per fresh turn, not per attempt), the pause's t — never
+    the cycle's merged live map (Sessions.live()). Every timestamp is an event stamp, a record's time, the
+    storm turn's start (SdkSession.since moves once per fresh turn, not per attempt) or the pause's t, never
     the clock, so two cycles over the same world return equal dicts and _api_health_push sends nothing.
     Rows sort by (since, sid) so the roster's mtime order cannot reshuffle an unchanged world into a send.
     Nothing from retryInfo but status and networkDown: attempt / retryAt tick per attempt."""
@@ -37536,7 +37536,7 @@ def _api_health_push(frame):
 
 
 def _apih_resend(client):
-    """A shell that just sent `ready` paints its API cell from the last frame — verbatim, so an identical
+    """A shell that just sent `ready` paints its API cell from the last frame, verbatim, so an identical
     frame cannot pulse the cell (the client diffs state and text before touching the DOM). Chat and pane
     clients get nothing: only the shell owns the rail."""
     if client.get("app") == "shell" and _APIH_LAST[0] is not None:
@@ -41951,7 +41951,7 @@ def _landing():
             # the Claude /usage rate-limit bars (Pro/Max): three compact vertical bar-pairs (used % colored +
             # elapsed % slate), %-label, full detail on hover — side-by-side in the bottom bar.
             "<div id=rail-usage data-keycmd=usage.open></div>"
-            # the API health cell (the user 2026-09-07): its own label, a 7px dot, one word — painted by
+            # the API health cell (the user 2026-09-07): its own label, a 7px dot, one word, painted by
             # _LANDING_APIH_JS from the kernel's apiHealth push. Ships HIDDEN: it shows on its first frame,
             # so an older kernel that never sends one shows nothing rather than a false ok. Its own element,
             # not a child of #rail-usage (renderRows empties that one when there are no bars and no spend).

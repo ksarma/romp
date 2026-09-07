@@ -353,6 +353,21 @@ class Wiring(unittest.TestCase):
     def test_auto_pause_on_limit_latches_reason_limit(self):
         self.assertIn('_set_retry_paused(True, reason="limit")', inspect.getsource(km._auto_pause_on_limit))
 
+    def test_the_cell_s_kernel_prose_carries_no_em_dashes(self):
+        # the style rule for new prose covers the comments this feature added (review round 1, 2026-09-07)
+        for fn in (km._api_error_pass, km._api_error_scan, km._api_error_read, km._api_error, km._api_last_failed,
+                   km._api_last_output_t, km._bills_login, km._apih_status, km._apih_class, km._api_health_frame,
+                   km._api_health_push, km._apih_resend):
+            self.assertNotIn("\u2014", inspect.getsource(fn), fn.__name__)
+        src = Path(BIN, "romp-kernel").read_text()
+        block = src[src.index("The bottom bar's API health cell (the user 2026-09-07): one glance"):src.index("_APIH_TEXT = {")]
+        self.assertNotIn("\u2014", block, "the block comment above the text table")
+        block = src[src.index("# The bottom bar's API health cell (the user 2026-09-07): one dot and one word"):src.index('_LANDING_APIH_JS = """')]
+        self.assertNotIn("\u2014", block, "the comment above the shell JS")
+        i = src.index("# the API health cell (the user 2026-09-07): its own label")
+        self.assertNotIn("\u2014", src[i:src.index("<div id=rail-api", i)], "the markup's comment")
+        self.assertNotIn("\u2014", src[src.index("_api_last_failed_cache = {}"):src.index("\n", src.index("_api_last_failed_cache = {}"))])
+
 
 class Detail(unittest.TestCase):
     """The click detail's content, pinned at source (no jsdom for the shell page)."""
