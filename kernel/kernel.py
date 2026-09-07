@@ -16409,10 +16409,16 @@ class TmuxBackend(sb.SessionBackend):
                     continue
                 if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
                     d.pop(k, None)
+                    _tmux_echo_bump(str(sid))
                     if not d:
                         _tmux_echo.pop(str(sid), None)
                     return a.get("_echo_text")
             return None
+
+    def live_rev(self, sid):
+        """The sid's echo-store revision (_tmux_echo_rev): the tmux half of Sessions.live_rev."""
+        with _tmux_echo_lock:
+            return _tmux_echo_rev.get(str(sid), 0)
 
     # ask picker — translate a webview action into pane keystrokes (AskDriver); current_ask SCRAPES the pane
     # (the SDK answers its own callback / reads its stored ask instead).
@@ -16740,6 +16746,22 @@ class Sessions:
     # coordination — the working-note ("what I'm working on" ownership claim list_agents shows) lives in ONE
     # backend-agnostic kernel store (working/<sid> files), so both backends publish it and the postal bus
     # reads/writes it through the kernel, never tmux. (the user 2026-06-26.)
+    @staticmethod
+    def live_rev(sid):
+        """The revision of the sid's live tail — the atoms live_atoms merges ahead of the transcript —
+        as a value that changes on every change to the tail (an add, a prune, a settle mark, a
+        dismiss, a flag write) and only then, so the chat-build signature can key a background tab
+        on its tail without hashing the atoms per cycle (round-4 plan P4, 2026-09-07). The SDK and tmux
+        backends count (SdkBackend.live_rev via _touch_live; _tmux_echo_rev via _tmux_echo_bump). A
+        backend with no counter (the Codex backend, whose live_atoms builds fresh dicts from a short
+        per-session list; a test fake) answers with the tail's serialized value instead: exact, and
+        small for the list-shaped tails those keep."""
+        be = Sessions.backend_for(sid)
+        fn = getattr(be, "live_rev", None)
+        if fn is not None:
+            return fn(str(sid))
+        return json.dumps(be.live_atoms(str(sid)), sort_keys=True, default=str)
+
     @staticmethod
     def working_note(sid):
         p = _working_note_path(sid)
@@ -28972,6 +28994,11 @@ def _atom_user_texts(a):
 # turn lands. A SUCCESSFUL send's echo prunes when the turn writes; a DROPPED send's echo PERSISTS, so the
 # lost message stays visible (no response) instead of vanishing silently.
 _tmux_echo = {}                                       # sid -> {key -> synthetic user atom}
+_tmux_echo_rev = {}                                   # sid -> the store's revision, advanced by _tmux_echo_bump at
+#                                                       every change to the sid's echoes (an add, a prune, a settle
+#                                                       mark, a dismiss): the chat-build signature's live-tail
+#                                                       component for tmux sids (Sessions.live_rev), the twin of
+#                                                       SdkBackend._touch_live
 _tmux_echo_lock = threading.Lock()                    # every compound step on the store runs under it: senders
 #                                                       (WS/HTTP handler threads) add while builders (the pusher,
 #                                                       connect pushes) prune and settle, and "snapshot the keys,
@@ -28990,6 +29017,15 @@ def _tmux_echo_add(sid, text, author="human"):
         "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
     with _tmux_echo_lock:
         _tmux_echo.setdefault(sid, {})[key] = atom
+        _tmux_echo_bump(sid)
+
+
+def _tmux_echo_bump(sid):
+    """Advance the sid's echo-store revision (_tmux_echo_rev), after the write it records. The CALLER
+    holds _tmux_echo_lock — it is not re-entrant, so this takes nothing. Only a change calls it (an
+    add, a pop, a `dropped` mark); a prune or settle that touched nothing leaves the revision alone."""
+    _tmux_echo_rev[sid] = _tmux_echo_rev.get(sid, 0) + 1
+
 
 def _tmux_echo_atoms(sid):
     with _tmux_echo_lock:
@@ -29009,8 +29045,11 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
         d = _tmux_echo.get(sid)
         if not d:
             return
-        for k in [k for k, a in d.items() if _landed(a)]:
+        gone = [k for k, a in d.items() if _landed(a)]
+        for k in gone:
             d.pop(k, None)
+        if gone:
+            _tmux_echo_bump(sid)
         if not d:
             _tmux_echo.pop(sid, None)
 
@@ -29071,6 +29110,7 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
         d = _tmux_echo.get(sid)
         if not d:
             return
+        changed = False
         for k, a in list(d.items()):
             if not _echo_overtaken(a, human_floor):
                 continue
@@ -29078,8 +29118,12 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
                 continue                                 # still owed by the queue ledger → waiting, not lost
             if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
                 d.pop(k, None)
-            else:
+                changed = True
+            elif not a.get("dropped"):
                 a["dropped"] = True
+                changed = True
+        if changed:
+            _tmux_echo_bump(sid)
         if not d:
             _tmux_echo.pop(sid, None)
 
