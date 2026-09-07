@@ -120,6 +120,21 @@ test("a dismissed or expired toast never absorbs a later frame: liveness is the 
   assert.deepEqual(g.texts(), ["Triage model: not applied on web. A later pick (fable) is already in place."]);
 });
 
+test("a toast already fading does not absorb a later refusal of the same gesture: it gets its own toast", () => {
+  // the 11 s fade precedes the 12 s removal; with liveness read as parentNode alone, a refusal arriving
+  // in that second was written into a toast at opacity 0 and never seen (the #945 review). Event-keyed
+  // still: the fade class is read at the frame, no cleanup rides the timers.
+  const g = lift();
+  g.frame({ ...REFUSED, host: "web" });
+  g.timers.filter((t) => t.ms === 11000).forEach((t) => t.fn());   // the fade arms; the node is still on screen
+  g.frame({ ...REFUSED, host: "api" });
+  assert.equal(g.box().children.length, 2, "a fresh toast, not a write into the fading one");
+  assert.ok(g.box().children[0].classList.contains("fade"));
+  assert.ok(!g.box().children[1].classList.contains("fade"));
+  assert.deepEqual(g.texts(), ["Triage model: not applied on web. A later pick (fable) is already in place.",
+                               "Triage model: not applied on api. A later pick (fable) is already in place."]);
+});
+
 test("the folded toast keeps its Apply anyway: one click re-issues the echo with a fresh stamp", () => {
   const g = lift();
   g.frame({ ...REFUSED, host: "web" });

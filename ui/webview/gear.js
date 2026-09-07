@@ -842,12 +842,15 @@ function initGear(post) {
   // linked kernel, so one stale flush used to draw N identical toasts naming no host. The fold key
   // is the gesture's identity — setting + its own gt, which the frame carries — an event key, never
   // a time window: N kernels refusing one flush share it, two different gestures never do. A frame
-  // without gt (an older kernel) keeps one toast per frame. Liveness is the node's parentNode at
-  // lookup, so a dismissed or expired toast never absorbs a later frame and no cleanup rides the
-  // timers. A remote kernel's frame arrives host-stamped (federation.ts prefixInbound); the local
-  // kernel's has no host and reads as this machine, the name the gear already uses for it.
+  // without gt (an older kernel) keeps one toast per frame. Liveness is read at lookup — the node's
+  // parentNode, and not yet fading: a toast in its fade→remove second sits at opacity 0, so a frame
+  // written into it would never be seen (#945 review) — so a dismissed, expired or fading toast never
+  // absorbs a later frame, and still no cleanup rides the timers. A remote kernel's frame arrives
+  // host-stamped (federation.ts prefixInbound); the local kernel's has no host and reads as this
+  // machine, the name the gear already uses for it.
   var staleOpen = {};   // 'setting:gt' → { t: the toast node, hosts: [...] } while the toast is up
   function staleHost(m) { return (typeof m.host === 'string' && m.host) ? m.host : 'this machine'; }
+  function staleLive(t) { return !!t.parentNode && !(t.classList && t.classList.contains('fade')); }
   // Apply anyway re-issues the frame's echoed gesture as a NEW one, stamped above everything this
   // page has seen (the frame's storedGt included, learned just before): a fresh click is legitimate
   // new information, the event the ordering rule wants — never a clock heuristic. Offered only when
@@ -865,7 +868,7 @@ function initGear(post) {
     var kept = m.kept === true ? 'on' : m.kept === false ? 'off'
       : (typeof m.kept === 'string' && m.kept ? m.kept : '');
     var key = typeof m.gt === 'number' ? m.setting + ':' + m.gt : '';
-    var live = key && staleOpen[key] && staleOpen[key].t.parentNode ? staleOpen[key] : null;
+    var live = key && staleOpen[key] && staleLive(staleOpen[key].t) ? staleOpen[key] : null;
     var where = staleHost(m);
     if (live) {   // the same gesture, refused by one more kernel: add the host to the toast on screen
       if (live.hosts.indexOf(where) < 0) live.hosts.push(where);

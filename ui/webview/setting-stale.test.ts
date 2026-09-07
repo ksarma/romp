@@ -70,7 +70,7 @@ test("the toast's copy names the setting and the kept value and never claims ano
   assert.match(GEAR, /return label \+ ': not applied on ' \+ hosts\.join\(', '\) \+ '\. A later pick'\s*\n\s*\+ \(kept \? ' \(' \+ kept \+ '\)' : ''\) \+ ' is already in place\.';/,
     "the copy: what was not applied, on which kernels, and what is in force");
   const copy = GEAR.slice(GEAR.indexOf("function staleText("), GEAR.indexOf("if (!p.hidden) fill();"));
-  assert.ok(copy.length > 0 && copy.length < 3000, "the copy helper and the listener located");
+  assert.ok(copy.length > 0 && copy.length < 6000, "the copy helper and the listener located (a sanity bound on the slice)");
   for (const claim of ["somewhere else", "another device", "elsewhere", "changed more recently"])
     assert.ok(!copy.includes(claim), `the toast no longer says "${claim}"`);
   assert.ok(!GEAR.includes("changed more recently"), "the old copy is gone from the file");
@@ -144,7 +144,11 @@ test("one toast per refused gesture, naming the refusing hosts: the fold key is 
   const FED = read("ui", "webview", "federation.ts");
   assert.ok(FED.includes('if (out.type === "settingStale") out.host = host;'), "a remote kernel's frame is host-stamped on the way in");
   assert.match(GEAR, /var key = typeof m\.gt === 'number' \? m\.setting \+ ':' \+ m\.gt : '';/, "the fold key; no gt (an older kernel) → no fold");
-  assert.match(GEAR, /staleOpen\[key\]\.t\.parentNode \? staleOpen\[key\] : null/, "liveness is the node's parentNode at lookup — no cleanup on the timers");
+  assert.match(GEAR, /staleLive\(staleOpen\[key\]\.t\) \? staleOpen\[key\] : null/, "liveness is read at lookup — no cleanup on the timers");
+  // live = on screen AND not yet fading: a toast in its fade→remove second sits at opacity 0, so a frame
+  // written into it would never be seen (the #945 review) — it gets a fresh toast instead
+  assert.match(GEAR, /function staleLive\(t\) \{ return !!t\.parentNode && !\(t\.classList && t\.classList\.contains\('fade'\)\); \}/,
+    "a fading toast is not live");
   assert.match(GEAR, /return \(typeof m\.host === 'string' && m\.host\) \? m\.host : 'this machine';/, "the local kernel's frame reads as this machine");
   assert.doesNotMatch(GEAR.slice(GEAR.indexOf("var staleOpen"), GEAR.indexOf("if (!p.hidden) fill();")), /Date\.now\(|setTimeout|setInterval/,
     "the fold keys on the gesture, never on a clock or a window");
