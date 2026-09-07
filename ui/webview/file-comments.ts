@@ -31,14 +31,18 @@
 //     page has scrolled away shows it too; a page with no bitmap and nothing kept (pageUndrawn: the chunk draws pages as
 //     they near the reader, and nothing here can ask for one) has, in the crop's place, a line that says so and scrolls
 //     the page in, which draws it and brings the crop.
+//     A figure in rendered markdown is wrapped by its overlay only while the panel is open or the figure has a
+//     rectangle to show (paintRegions): closed, with nothing to show, the author's own layout of the page stands.
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
 //     the kernel that owns the disk with no new relay code.
 //   • Change awareness by POLLING (2.5 s while the panel is open and the tab visible): HEAD /file on
 //     the file, the sidecar the kernel named, and the project's config.json, comparing X-Romp-Mtime-Ns
-//     as STRINGS. The Files pane has no filesystem watcher; the poll stands in for that event, and the
-//     person's own writes never fire it because every verb reply re-baselines it. Replies land in the
+//     as STRINGS — and on every figure a text file's region comments name, against the poll's own last
+//     reading (a regenerated figure moves none of the three; tick). The Files pane has no filesystem
+//     watcher; the poll stands in for that event, and the person's own writes never fire it because every
+//     verb reply re-baselines it. Replies land in the
 //     order their asks were issued (applyStatus): the kernel runs each ask concurrently and answers when
 //     it finishes, and a status that read the disk before a write — asked before it, or asked while it was
 //     in flight — must not put the panel back a step once the write's reply is showing.
@@ -62,13 +66,13 @@ import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paint
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
-  type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, actionLabel, cardModel, changeCards, changeGroups,
+  type Status, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
   foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, sendParts, sendCounts, buildSendMessage, unsentCount,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
-  regionTarget, regionState, type PollBaseline,
+  regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
-import { regionDesc, type Region } from "./region-geometry";
+import { regionDesc, isRegion, type Region } from "./region-geometry";
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
@@ -77,6 +81,10 @@ const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
 // it, and the poll will never notice, since every reply re-baselines it (the plan's own rule).
 const FILE_VERBS = new Set(["reject", "reject-all"]);
+/** The verbs that write ABOUT a figure — a region's comment, a re-place — and so carry `fence.figureHash` when the status
+ *  holds a hash for it (figureFenceHash); the host answers `figure-changed` when the bytes are no longer those. */
+const FIGURE_VERBS = new Set(["comment", "retarget"]);
+const FIGURE_CHANGED = "figure-changed";
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -99,8 +107,9 @@ const answeredTodos = new Set<string>();
 // A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
 // Rendered view a click on the picture offers Comment, and the anchor is the embed's source text. The
 // mapping walk records no positions for an image (it renders no text), so the embed is found here from
-// the picture's own `src`: every embed form the source can hold, in order, fenced code skipped, matched
-// against the attribute marked emitted (which percent-encodes the destination).
+// the picture's own destination (pictureDest: the authored spelling the viewer kept beside a src it
+// rewrote through /file, else `src` itself): every embed form the source can hold, in order, fenced code
+// skipped, matched against the attribute marked emitted (which percent-encodes the destination).
 export type ImageEmbed = { start: number; end: number; dest: string };
 const LABEL = "(?:\\\\.|[^\\[\\]\\\\])*";
 const IMG_INLINE = new RegExp("!\\[(" + LABEL + ")\\]\\([ \\t]*(?:<([^<>\\n]*)>|([^\\s()]*(?:\\([^\\s()]*\\)[^\\s()]*)*))(?:[ \\t]+(?:\"[^\"]*\"|'[^']*'|\\([^()]*\\)))?[ \\t]*\\)", "g");
@@ -164,9 +173,17 @@ export function normPath(p: string): string {
   return (abs ? "/" : "") + out.join("/");
 }
 const decoded = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
+// An embed's dest is decoded with decodeURI, as the viewer decodes it before it loads the picture (file-view.ts
+// rewriteFigureSrcs), the poll before it HEADs the figure (file-comments-model.ts figurePath) and the host before it
+// hashes it: the three readers of a destination must name one file. decodeURIComponent, which stood here first, also
+// decodes the escapes of RESERVED characters, so `a%26b.png` became `a&b.png` on this side and stayed `a%26b.png` on
+// the viewer's — and a figure written with such an escape never matched its embed once rewritten through /file (the
+// drag refused, the embed-line frame unpainted, the picture click's offer a whole-file comment). fileUrlPath keeps
+// decodeURIComponent: fileUrl built its `path` with encodeURIComponent, and that is the exact inverse there.
+const decodedDest = (s: string): string => { try { return decodeURI(s); } catch { return s; } };
 /** Where an embed's `dest`, as written, points relative to the markdown file at `filePath` (absolute dest: itself). */
 export function embedPath(filePath: string, dest: string): string {
-  const d = decoded(dest);
+  const d = decodedDest(dest);
   if (d.startsWith("/")) return normPath(d);
   return normPath(filePath.slice(0, filePath.lastIndexOf("/") + 1) + d);
 }
@@ -186,25 +203,51 @@ export function srcIsEmbed(src: string, dest: string, filePath: string | null | 
   return p !== null && typeof filePath === "string" && normPath(p) === embedPath(filePath, dest);
 }
 const imgsIn = (root: Element): HTMLElement[] => Array.from(root.querySelectorAll("img")) as HTMLElement[];
-/** The embed a rendered picture came from: by destination, and among twins by order. Null when the source holds none.
- *  `filePath` lets a src the viewer rewrote through /file match its embed (srcIsEmbed). */
-export function embedFor(img: Element, root: Element, src: string, filePath?: string | null): ImageEmbed | null {
-  const want = img.getAttribute("src");
-  if (want === null) return null;
-  const hits = imageEmbeds(src).filter((e) => srcIsEmbed(want, e.dest, filePath));
+/** The destination a rendered picture was written with: the authored attribute the viewer keeps as `data-fv-src` when it
+ *  rewrites `src` through /file (file-view.ts rewriteFigureSrcs), else `src` itself — a picture the viewer left as written.
+ *  Null for a picture with neither. */
+export function pictureDest(img: Element): string | null {
+  const kept = img.getAttribute("data-fv-src");
+  return kept !== null ? kept : img.getAttribute("src");
+}
+/** Whether a rendered picture came from an embed written as `dest`: srcIsEmbed over the picture's own spelling. With the
+ *  authored spelling in hand this is sameDest, so `./fig.png` and `fig.png` — two embeds of ONE file — stay two
+ *  destinations, each with its own picture; the /file-path comparison serves only a rewritten picture that carries no
+ *  authored spelling. The ONE test every reader of the picture↔embed pairing uses (embedFor, imgForRange, the region
+ *  painter's fallbacks), so they cannot disagree about which picture an embed made. */
+export function pictureIsEmbed(img: Element, dest: string, filePath?: string | null): boolean {
+  const s = pictureDest(img);
+  return s !== null && srcIsEmbed(s, dest, filePath);
+}
+/** The embed the picture at `img` came from, given every embed and every picture: the embeds written as the picture's
+ *  destination, and among them, by order — the k-th picture of that destination is its k-th embed. */
+function embedOf(img: HTMLElement, imgs: HTMLElement[], all: ImageEmbed[], filePath?: string | null): ImageEmbed | null {
+  if (pictureDest(img) === null) return null;
+  const hits = all.filter((e) => pictureIsEmbed(img, e.dest, filePath));
   if (hits.length === 1) return hits[0];
   if (!hits.length) return null;
-  const k = imgsIn(root).filter((i) => i.getAttribute("src") === want).indexOf(img as HTMLElement);
+  const k = imgs.filter((i) => pictureIsEmbed(i, hits[0].dest, filePath)).indexOf(img);
   return k >= 0 && k < hits.length ? hits[k] : null;
 }
-/** The rendered picture for an embed's exact source range — the inverse, for painting. */
+/** The embed a rendered picture came from: by destination, and among twins by order. Null when the source holds none.
+ *  `filePath` lets a src the viewer rewrote through /file match its embed (srcIsEmbed) when the picture carries no
+ *  authored spelling (pictureDest). Before the rewrite, the hits were found by path (two spellings of one file matched
+ *  either picture) while the twins were counted by the rewritten `src` (which the two spellings made different): a
+ *  region drawn on the second figure was anchored to the first's embed line, and imgForRange, counting the other way
+ *  round, painted the second embed's rectangle on the first figure (the 2026-09-06 review). Both now pair through
+ *  embedOf, and imgForRange is embedFor's inverse by construction. */
+export function embedFor(img: Element, root: Element, src: string, filePath?: string | null): ImageEmbed | null {
+  return embedOf(img as HTMLElement, imgsIn(root), imageEmbeds(src), filePath);
+}
+/** The rendered picture for an embed's exact source range — the inverse, for painting: the picture whose embedFor is
+ *  that embed. Null when no picture came from it (the range is not an embed's, or the source holds more embeds of the
+ *  destination than the view holds pictures). */
 export function imgForRange(root: Element, src: string, range: SourceRange, filePath?: string | null): HTMLElement | null {
   const all = imageEmbeds(src);
   const e = all.find((x) => x.start === range.start && x.end === range.end);
   if (!e) return null;
-  const k = all.filter((x) => x.dest === e.dest).indexOf(e);
-  const twins = imgsIn(root).filter((i) => { const s = i.getAttribute("src"); return s !== null && srcIsEmbed(s, e.dest, filePath); });
-  return twins[k] || null;
+  const imgs = imgsIn(root);
+  return imgs.find((i) => embedOf(i, imgs, all, filePath) === e) || null;
 }
 // A framed picture wears the mark classes itself — an <img> has no text to wrap — plus an inline outline,
 // because the sheets' ring is an inset shadow the picture covers. `fc-img` tells unpaint to strip, not unwrap.
@@ -313,6 +356,9 @@ type Composer =
   | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
 /** Why a region on a figure cannot be saved: the anchor is the embed line, and the source holds none for this picture. */
 const EMBED_NOT_FOUND = "the line that embeds this image was not found in the source, so a region on it cannot be saved";
+/** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
+ *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
+const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
  *  sanitizer keeps a rendered figure's data-* attributes (owns() relies on that for data-act), so a raw
@@ -342,6 +388,72 @@ function scrollerOf(el: Element | null): Element | null {
   return null;
 }
 type Err = { text: string; reload: boolean; warn?: boolean };
+
+// ── why a region's staleness is unknown ─────────────────────────────────────────────────────────────
+// The host puts a reason beside every hash it could not take (fileHashFor / embeddedHashesFor in the host script:
+// `fileHashReason` for a media file, `embeddedHashReasons[src]` for a figure a text file's comments name), because the
+// kernel keeps the host's stderr only when a call fails — the reason reaches the panel in the reply or not at all. The
+// Status type (file-comments-model.ts) names the hashes; the reasons are read off the same reply here, where the card
+// is the one thing that shows them: the tag's title collapsed, a sentence in the open card (a title never reaches touch,
+// the caption idiom of renderSend). Unknown also has causes the host cannot explain, each named in its own words: a
+// comment saved without a hash, a host from before region comments (no hash field at all). Never a bare "unknown": a
+// deleted figure, one moved outside the project and one past the hash cap are three different things for the person to
+// do (CLAUDE.md: surface the error, never degrade silently).
+// A text file's reply carries a third kind of reason, per COMMENT rather than per src (`derivedSrcReasons`, the host's
+// derivedSrcsFor): the contract's own shape for an embedded figure is the embed line's anchor plus `{kind, region, hash}`
+// with no `src` (the plan's contract; another writer can leave it), and the host reads such a comment by its passage —
+// one that embeds exactly one figure gives the reply's copy of the comment that src, so the panel never sees the gap;
+// one that cannot tell (two figures on it, none, the passage gone) is left src-less and the cause filed under the
+// comment's id. That cause is the answer for such a comment, and a text-file reply never carries `fileHash` — so before
+// it was read here, the card blamed a kernel that had answered correctly (the "may predate region comments" sentence
+// below, meant for a reply with no hash field at all) and sent the person to restart it (the 2026-09-06 review).
+type HashReasons = {
+  fileHashReason?: string | null; embeddedHashReasons?: Record<string, string | null> | null;
+  /** a text file: per comment id, why a src-less region's passage could not tell which figure it is on */
+  derivedSrcReasons?: Record<string, string | null> | null;
+};
+const unknownGeneric = (noun: string): string => "Whether the " + noun + " changed since this region was drawn could not be checked.";
+/** The host's reason as the card shows it: capitalized, ending in a period (the host writes lowercase fragments). */
+const asSentence = (s: string): string => { const t = s.trim(); return t.charAt(0).toUpperCase() + t.slice(1) + (/[.!?]$/.test(t) ? "" : "."); };
+/** Whether a reply is a TEXT file's: the host puts `embeddedHashes` (an object, empty or not) on every text-file reply and
+ *  `fileHash` on every media reply; a kernel from before region comments sends neither. */
+const textFileReply = (r: Status & HashReasons): boolean => r.fileHash === undefined && !!r.embeddedHashes && typeof r.embeddedHashes === "object";
+/** Why a region comment's staleness cannot be told (regionState "unknown"): the host's own reason when it sent one —
+ *  for this comment (derivedSrcReasons), else for its figure or file (embeddedHashReasons / fileHashReason) — else the
+ *  panel-side cause it can see, else the generic sentence. `commentId` keys the per-comment reason; without it only the
+ *  per-src and per-file reasons are read. */
+export function unknownReason(target: Target, s: Status | null, commentId?: string): string {
+  const noun = target.kind === "pdf" ? "PDF" : "image";   // the file the region is on: the image, or the PDF whose page it is on
+  if (typeof target.hash !== "string" || !target.hash) return "This region was saved without the " + noun + "'s hash, so a later change to the " + noun + " cannot be detected.";
+  if (!s) return unknownGeneric(noun);
+  const r = s as Status & HashReasons;
+  const src = typeof target.src === "string" && target.src ? target.src : null;
+  const derived = commentId !== undefined && r.derivedSrcReasons && typeof r.derivedSrcReasons === "object" ? r.derivedSrcReasons[commentId] : undefined;
+  if (typeof derived === "string" && derived.trim()) return asSentence(derived);
+  const reason = src ? (r.embeddedHashReasons && typeof r.embeddedHashReasons === "object" ? r.embeddedHashReasons[src] : undefined) : r.fileHashReason;
+  if (typeof reason === "string" && reason.trim()) return asSentence(reason);
+  const current = src ? (r.embeddedHashes && typeof r.embeddedHashes === "object" ? r.embeddedHashes[src] : undefined) : r.fileHash;
+  if (current === undefined) {
+    // a src-less region on a TEXT file with no reason filed for it: the comment names no figure (no src, and no passage
+    // the host could read one from — a region left with no embed line, or a host that does not read passages). The
+    // kernel answered; the "predate" sentence would send the person to restart a kernel that is current.
+    if (!src && textFileReply(r)) return "This region does not name the figure it is on, so there is no figure to check for changes since the region was drawn.";
+    return "The file's machine sent no hash for this " + noun + ", so whether it changed since this region was drawn could not be checked. Its kernel may predate region comments: update and restart it.";
+  }
+  return unknownGeneric(noun);
+}
+/** A region the sidecar holds MALFORMED (isRegion fails: a coordinate missing, a string, a null — a hand edit, or a foreign
+ *  writer of the romp-only `target`): the card says so in words. It paints no rectangle and crops no thumbnail — a missing
+ *  `h` placed a rectangle with `height: NaN%` (a declaration the browser drops: a bar with the author's chip, as if it were
+ *  the region) and appended a 0×0 canvas (the 2026-09-06 review) — so the mark on the picture and the card's reference
+ *  ("the region at 0.10, 0.20, 0.30, ?") never disagree. The recourse follows (regionRecourse). */
+const UNREADABLE_REGION = "The region's coordinates could not be read from the comments file, so it is not drawn on the picture.";
+/** The stale card's own words: the tag's title collapsed, a sentence on the open card. `noun`: the image, or the PDF
+ *  (mediaNoun), whose pages the regions are on. */
+const staleRegion = (noun: string): string => "The " + noun + " changed after this region was drawn, so it may no longer mark the right place.";
+/** A PDF region whose page the document shown no longer has (pageGone, Slice 4): stale whatever the hashes say, and the
+ *  card says which page went. */
+const pageGoneRegion = (page: number | undefined): string => "The PDF changed after this region was drawn and no longer has page " + page + ".";
 
 // ── the wire: ONE window listener for the module, dispatching to the live panel by reqId ───────────
 // A reply is matched by reqId only — a REMOTE kernel's reply comes back with its sid host-prefixed
@@ -398,6 +510,24 @@ export function rawTarget(src: string, r: MapRefusal & { selText: string }): Sou
 
 let reqSeq = 0;
 
+// ── the panel's marks, for listeners that never see a panel ─────────────────────────────────────────
+// Every element a panel paints into the file's body — a highlight, a change mark, a picture frame, a rectangle, and
+// the overlay the rectangles sit on — is registered here beside the panel's own `marks` (owns), so a document-level
+// listener that knows nothing of panels can tell a panel's activation from the file's markup. The chat pane's link
+// handler (render.ts) is that listener: it opens every absolute `a[href]` in a new tab at the CAPTURE phase, before the
+// delegate root and before the overlay swallows the click after a press it handed on, so a rectangle on a LINKED figure
+// (`[![alt](fig.png)](url)`, which mdBlock renders as <a><img></a>) opened the tab there instead of its card — twice with
+// the panel open, once for the click the layer handed on and once for the browser's own — while the feed and Files
+// panes, which have no such handler, opened the card (the 2026-09-06 review). A registry, not a class name: the
+// sanitizer keeps `class` and `data-*` on the file's own markup, so neither proves the panel made an element (owns).
+const PANEL_MARKS = new WeakSet<Element>();
+/** Whether `t`, or an element above it, is a mark some panel painted: a rectangle's chip counts through its rectangle,
+ *  a press on the overlay through the overlay. False for the file's own markup, whatever it wears. */
+export function panelMark(t: Element | null): boolean {
+  for (let x: Element | null = t; x; x = x.parentElement) if (PANEL_MARKS.has(x)) return true;
+  return false;
+}
+
 class Panel {
   status: Status | null = null;
   statusRefusal: { code: string; error: string } | null = null;   // why there is no status, when the kernel refused one
@@ -418,6 +548,10 @@ class Panel {
   regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
   pageWatch: IntersectionObserver | null = null;              // the panel's watch on PDF page shells with no overlay yet (watchPages → onPageNear)
   pageWatched = new Map<HTMLElement, HTMLCanvasElement>();    // the shells it watches, and their canvases
+  // what each overlay last painted (its marks, the pending region, the re-place cue), so a pass that brings it nothing
+  // new leaves its rectangles standing — the layer updates them in place (RegionLayer.paint), and this spares the pass
+  // itself: openPanel's own paint, a status that moved nothing (CLAUDE.md: a move on no new information)
+  paintedKey = new WeakMap<RegionLayer, string>();
   cropWait = new WeakSet<HTMLImageElement>();                 // pictures whose load will re-render the cards for their thumbnails
   // a PDF region's crop, kept from the last time its page was drawn (cutCrop: on every draw's repaint for every region on
   // the page, the card open or not, and on an open card's render): the chunk keeps only the bitmaps near the reader (a far
@@ -425,6 +559,7 @@ class Panel {
   // was closed while the page was on screen. Keyed by what the crop was cut from, so a re-place or a regenerated file
   // drops it (cropKey)
   crops = new Map<string, { key: string; crop: HTMLCanvasElement }>();
+  figureBase: FigureBaseline = {};                            // the poll's last reading of each figure a region comment names (tick)
   resolvedOpen = false;
   trackChoice = false;                      // the on-toggle's scope row (file / folder) is showing
   trackStop = false;                        // the folder-off confirm is showing
@@ -457,6 +592,16 @@ class Panel {
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
   catchUp = () => { if (this.tickSkipped) void this.tick(); };
   hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) { this.float.hidden = true; this.imageTarget = null; } };
+  // Esc cancels a Re-place. Every other composer kind focuses the input, whose own keydown catches Esc; a re-place hides
+  // the input (it takes a drag, not words), so nothing in the box holds focus and the key fell through to the viewer's
+  // document-level Escape, which closed the WHOLE viewer — the panel, the open card and the pending re-place with it, when
+  // the person meant only to think again. Caught at the document in the capture phase, ahead of the viewer's handler,
+  // wherever the focus sits (the re-rendered Re-place button, or the body); only while a re-place is pending.
+  escapeReplace = (ev: KeyboardEvent) => {
+    if (ev.key !== "Escape" || !this.composer || this.composer.kind !== "replace") return;
+    ev.preventDefault(); ev.stopPropagation();
+    this.closeComposer();
+  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
@@ -490,6 +635,7 @@ class Panel {
     this.float.addEventListener("touchend", (e) => { e.preventDefault(); act(); });
     document.body.appendChild(this.float);
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
+    document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
     ctx.onSelection((sel) => this.onSelection(sel));
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
@@ -541,7 +687,12 @@ class Panel {
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
-        fcopen: (x) => { this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
+        // a mark in the file's own markup — a rectangle on a figure, a framed picture — is the panel's control, and its
+        // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
+        // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
+        // handed-on press on a rectangle inside it, since the overlay and its rectangles stand inside the <a>
+        // (the 2026-09-06 review). Cancelling the click ends the anchor's activation; the card opens as before.
+        fcopen: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard(this.cardKey(x.dataset.id!)); },
         fcreplace: (x, ev) => { ev.stopPropagation(); this.startReplace(x.dataset.id!); },   // a region comment's Re-place (Slice 3)
       }),
     });
@@ -580,6 +731,8 @@ class Panel {
   owns(x: Element): boolean {
     return (this.root !== null && this.root.contains(x)) || this.marks.has(x);
   }
+  /** Remember an element this panel painted into the body — for owns, and for the document's listeners (panelMark). */
+  private mark(x: Element): void { this.marks.add(x); PANEL_MARKS.add(x); }
   /** The handlers, each routed only for an element the panel owns. The delegate helper has already flashed
    *  the element by then (a cosmetic pulse); nothing else happens for the file's markup. */
   private own(acts: Record<string, ActionHandler>): Record<string, ActionHandler> {
@@ -678,6 +831,7 @@ class Panel {
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
+    this.figureBase = figureBaseline(s, this.ctx.path, this.figureBase);   // the figures' baseline from the same reply (Slice 3)
     this.unit.hidden = false;
     this.button.textContent = actionLabel(s);
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
@@ -744,6 +898,13 @@ class Panel {
     this.ctx.aside(null);
     this.button.classList.remove("on"); this.button.setAttribute("aria-pressed", "false");
     this.float.hidden = true;
+    // A pending Re-place is a gesture of the OPEN panel: its instruction and Cancel are the composer box, and the drag it
+    // waits for is disarmed with the panel. Left pending, the closed panel's picture kept the cue (the dashed accent
+    // outline inviting a drag) over an overlay that took none, with nothing on screen saying why, and escapeReplace kept
+    // swallowing the document's Escape — the viewer's own close — for a re-place nothing showed (the 2026-09-06 review).
+    // Closing ends it, as Esc does: the comment keeps its place. A region composer holding a typed note stays: the words
+    // are the person's, and its pending rectangle is a mark like any other.
+    if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
     this.stopPoll();
   }
@@ -755,6 +916,7 @@ class Panel {
     this.crops.clear();
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
+    document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
     if (live === this) live = null;
   }
@@ -775,8 +937,10 @@ class Panel {
         }
       }
     } catch { /* the chips fall back to their labels */ }
-    // the change marks carry the author's colour too (paintChanges): repaint when any are up, else just the chips
-    if (this.status && (this.status.hunks || []).length) this.paintAll(); else this.render();
+    // the change marks and the region rectangles carry the author's colour too (paintChanges, paintRegions): repaint
+    // when any are up — a rectangle painted before this answer wears the sheet's fallback until then — else just the chips
+    const s = this.status;
+    if (s && ((s.hunks || []).length || this.cards().some((c) => c.target))) this.paintAll(); else this.render();
   }
   sessionName(): string {
     const id = this.ctx.identity();
@@ -808,30 +972,53 @@ class Panel {
       const checks: Array<[keyof PollBaseline, string]> = [["file", t.file]];
       if (t.store) checks.push(["store", t.store]);
       if (t.config) checks.push(["config", t.config]);
+      // `fileMoved`: the bytes the VIEW shows moved — the file's own, or (below) an embedded figure's, drawn in it
       let fileMoved = false, moved = false;
       for (const [key, target] of checks) {
-        if (this.stopped.has(target)) continue;
-        let r: Response;
-        try { r = await fetch(fileUrl(target, this.ctx.sid), { method: "HEAD", cache: "no-store" }); }
-        catch { continue; }                          // a network blip: the next tick tries again
-        const v = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
-        if (v.kind === "stop") {
-          this.stopped.add(target);
-          // "checking … for changes", the guide's own words for this loop — never "watching": the row sits under
-          // the Track changes toggle, and a tracked file whose refresh stopped is still tracked
-          this.errors.set("poll", { text: "Stopped checking " + target + " for changes: the kernel answered " + v.status
-            + (v.status === 413 ? " (too large to serve)" : " (not a type it serves)") + ". Reload to try again.", reload: true });
-          this.render();
-          continue;
-        }
-        if (v.kind !== "value") continue;
+        const v = await this.head(target);
+        if (!v) continue;
         if (mtimeMoved(base[key], v.value)) { moved = true; if (key === "file") fileMoved = true; }
       }
+      // the figures (Slice 3): a region comment on a figure embedded in a text file goes stale when the FIGURE's bytes
+      // change, and a session that regenerates one touches none of the three targets above — so they are HEADed too.
+      // Each is compared with its baseline (figuresMoved): the mtime the status reply read beside the figure's hash
+      // (embeddedMtimes, seeded in applyStatus through figureBaseline), else the poll's own last reading of it — a first
+      // reading with neither is an observation, never a move. A move re-asks status, whose embeddedHashes flip the
+      // comment to stale by hash, and reloads the view so the new picture shows: the kernel serves /file with
+      // Cache-Control: no-cache, so the re-rendered <img> revalidates instead of reusing the old bytes.
+      const figs = figureTargets(this.status, this.ctx.path);
+      const seen: FigureBaseline = {};
+      for (const target of figs) {
+        const v = await this.head(target);
+        if (v) seen[target] = v.value;
+      }
+      const fm = figuresMoved(this.figureBase, figs, seen);
+      this.figureBase = fm.next;
+      if (fm.moved.length) { moved = true; fileMoved = true; }
       if (moved) {
         if (fileMoved) this.ctx.reload();            // the bytes changed under the view — repaint them
         await this.refresh();                        // fresh sidecar, log, and a new baseline
       }
     } finally { this.polling = false; }
+  }
+  /** One HEAD of the poll: the target's mtime verdict, or null when it says nothing this tick — a network blip (the next
+   *  tick tries again), an unknown answer, or a 413/415, which retires the target (`stopped`) under the poll's row. */
+  private async head(target: string): Promise<{ kind: "value"; value: string } | null> {
+    if (this.stopped.has(target)) return null;
+    let r: Response;
+    try { r = await fetch(fileUrl(target, this.ctx.sid), { method: "HEAD", cache: "no-store" }); }
+    catch { return null; }                           // a network blip: the next tick tries again
+    const v: HeadVerdict = headVerdict(r.status, r.headers.get("X-Romp-Mtime-Ns"));
+    if (v.kind === "stop") {
+      this.stopped.add(target);
+      // "checking … for changes", the guide's own words for this loop — never "watching": the row sits under
+      // the Track changes toggle, and a tracked file whose refresh stopped is still tracked
+      this.errors.set("poll", { text: "Stopped checking " + target + " for changes: the kernel answered " + v.status
+        + (v.status === 413 ? " (too large to serve)" : " (not a type it serves)") + ". Reload to try again.", reload: true });
+      this.render();
+      return null;
+    }
+    return v.kind === "value" ? v : null;
   }
 
   // ── verbs ──────────────────────────────────────────────────────────────────────────────────────
@@ -855,6 +1042,13 @@ class Panel {
     const s = this.status;
     const fence: Record<string, string> = { storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "" };
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
+    // a write ABOUT a figure — `comment` with a target, `retarget` — is fenced on the figure's bytes too: the hash the
+    // status holds for it (figureFenceHash), which the host compares with the bytes it stamps and refuses `figure-changed`
+    // when they differ. Without it a figure regenerated between the drag and Enter was stamped with the NEW bytes' hash,
+    // which every reply then equalled, so a rectangle drawn on the old picture read as current on the new one — the one
+    // write the hash exists to catch (the Slice 3 review, 2026-09-06; the host's fence stood unarmed until the panel sent this)
+    const fh = FIGURE_VERBS.has(verb) && args.target ? figureFenceHash(s, args.target as Target) : null;
+    if (fh) fence.figureHash = fh;
     try {
       const r = await this.request(verb, args, fence);
       this.markOverlapped();                           // the status asks still out may have read the disk before this write
@@ -871,8 +1065,17 @@ class Panel {
         await this.refresh();
         if (e.code === "file-moved") this.ctx.reload();   // the file itself moved under the view: repaint its bytes (the poll's own moved branch)
         return this.mutateOnce(verb, args, slot, true);
+      } else if (e.code === FIGURE_CHANGED) {
+        // the figure's bytes changed under the drawing: the one refusal the hash fence exists for, and never retried — a
+        // retry would stamp the new bytes with a rectangle drawn on the old ones. It is the event the poll acts on when it
+        // sees a figure move, arrived through the refusal instead (and for a figure only resolved comments name, the poll
+        // is not watching), so the panel does what the poll does: re-read the comments (the hashes flip the cards stale)
+        // and the view (the new picture shows; first, as the poll does — the re-read waits on the kernel, the view need not).
+        // The refusal then shows under the control with Reload, the note kept.
+        this.ctx.reload();
+        await this.refresh();
       }
-      this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) });
+      this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) || e.code === FIGURE_CHANGED });
       return null;
     }
   }
@@ -938,8 +1141,7 @@ class Panel {
     this.openPanel();
     this.composer = range
       ? { kind: "comment", range, quote: src.slice(range.start, range.end), text: src, refusal: null }
-      : { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "",
-          reason: "The line that embeds this image was not found in the source; select it in the Raw view." } };
+      : { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "", reason: EMBED_NOT_FOUND_SELECT } };
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderComposer();
@@ -1004,7 +1206,16 @@ class Panel {
    *  (rawTarget) — so the presel mark shows it; otherwise scroll to the block's first line and leave the
    *  note waiting for a Raw selection. */
   switchToRaw(): void {
-    const c = this.composer;
+    let c = this.composer;
+    if (c && c.kind === "region" && c.refusal) {
+      // a region on a figure the source holds no embed for: nothing to anchor a region to, but a passage on the embed's
+      // line can still carry the note. The composer becomes the one the picture click's offer builds for the same
+      // figure (startImageComment), awaiting a Raw selection; the typed note stays in the input, the pending rectangle
+      // leaves the overlay. The refusal's own sentence used to send the person to Cancel — the one exit that drops the note.
+      c = this.composer = { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "", reason: EMBED_NOT_FOUND_SELECT } };
+      this.errors.delete("composer");
+      this.repaintPresel();
+    }
     if (!c || c.kind !== "comment" || !c.refusal) return;
     this.ctx.setMode("raw");
     const src = this.ctx.text();
@@ -1098,12 +1309,13 @@ class Panel {
    *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
    *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
   paintAll(): void {
+    const keep = this.bodyFocusKey();                  // a highlight or rectangle holding the keyboard: re-found after the pass
     this.located = new Map();
     this.paintedChanges = new Set();
     unpaintChanges(this.ctx.body());                   // before each repaint (D5): the marks are unwrapped, never stacked
     this.unpaint(".fc-hl, .fc-presel");                // a status refresh repaints the SAME body: never wrap twice
     const src = this.ctx.text(); const root = this.contentRoot();
-    if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint
+    if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
     for (const card of this.cards()) {
       if (card.resolved || !card.anchor) continue;
@@ -1116,18 +1328,35 @@ class Panel {
         painted = !!out && out.length > 0;
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup
-        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.marks.add(m); }
+        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
-          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.marks.add(img); painted = true; }
+          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
         }
       }
       this.located.set(card.id, { ...loc, painted });
     }
     this.paintChanges(root, src, rendered);
+    this.refocusBody(keep);                            // the highlights and change marks are rebuilt; the rectangles keep their own (paintRegions)
     this.paintPresel(root, src, rendered);
     this.paintRegions();
     this.render();
+  }
+  // The marks in the BODY are controls too (KEY_ACTS: a highlight, a change mark, a rectangle), and every paint pass
+  // rebuilds them — so a status landing while the keyboard was on one left it on the body, the way Enter on a card's
+  // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS,
+  // the action plus the id of its subject, never by its node; the first match, since a highlight may span several.
+  private bodyFocusKey(): { act: string; id: string } | null {
+    const a = document.activeElement as HTMLElement | null;
+    if (!a || !this.marks.has(a) || !a.dataset || !a.dataset.act || !a.dataset.id) return null;
+    return { act: a.dataset.act, id: a.dataset.id };
+  }
+  private refocusBody(k: { act: string; id: string } | null): void {
+    if (!k) return;
+    const a = document.activeElement;
+    if (a && this.ctx.body().contains(a)) return;     // the mark survived the pass (paintedKey), or the focus moved on its own
+    const n = this.ctx.body().querySelector('[data-act="' + k.act + '"][data-id="' + k.id + '"]') as HTMLElement | null;
+    if (n && this.owns(n)) n.focus({ preventScroll: true });
   }
   /** The change marks, after the comment highlights (D5): stylesFor hands each mark the author's session colour
    *  from the Slice 1 colour map as `--fc-author` (nothing when unknown: the sheet's neutral). Every painted
@@ -1151,7 +1380,7 @@ class Panel {
       marks = paintChangesRaw(root, src, changes, stylesFor);
       for (const m of marks) { const id = (m as HTMLElement).dataset.id; if (id) this.paintedChanges.add(id); }
     }
-    for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.marks.add(m); }
+    for (const m of marks) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open this change"; this.mark(m); }
   }
   private paintPresel(root: Element, src: string, rendered: boolean): void {
     const c = this.composer;
@@ -1223,7 +1452,7 @@ class Panel {
     }
     const dest = c.target.src;
     if (dest) {
-      const hit = imgs.find((i) => { const s = i.getAttribute("src"); return s !== null && srcIsEmbed(s, dest, this.ctx.path); });
+      const hit = imgs.find((i) => pictureIsEmbed(i, dest, this.ctx.path));
       if (hit) return hit;
     }
     return null;
@@ -1285,12 +1514,13 @@ class Panel {
    *  rectangles show whenever the highlights do. A painted rectangle is the comment's mark (located, painted): the
    *  card's reference links to it and offers no Reveal. A pending region whose picture was repainted is re-found
    *  (the media body's one picture; a PDF page by its number, since a reload hands back new canvases; a figure by its
-   *  embed's src). A rectangle holding keyboard focus is refocused once the layers have rebuilt it: every pass removes
-   *  and recreates the rectangles, a removed element loses its focus to the body, and with a PDF this pass runs on
-   *  every page draw, redraw and width change (the chunk's onPage) — without the mend, scrolling page 2 into view
-   *  dropped the keyboard off a rectangle on page 1, and Enter then did nothing. */
+   *  embed's src). A layer is repainted only when what it would show changed (paintedKey), and its rectangles are
+   *  updated in place (RegionLayer.paint): opening the panel, a status that moved nothing, a presel repaint elsewhere
+   *  and — with a PDF, where this pass runs on every page draw, redraw and width change (the chunk's onPage) — a page
+   *  drawing in leave every rectangle standing, with the click pulse and keyboard focus on one. A rectangle that did
+   *  go (its layer dropped, its mark moved to another picture) is re-found for the keyboard by what it is (refocusBody). */
   private paintRegions(): void {
-    const keep = this.focusedRegion();                 // before any layer is dropped or repainted: the focused node is about to go
+    const keep = this.bodyFocusKey();                  // a rectangle holding the keyboard: re-found after the pass (refocusBody)
     const imgs = this.regionImages();
     const cur = new Set<Pictured>(imgs);                  // a set: the pass runs per page draw, over thousands of pages
     for (const [img, layer] of this.regionLayers) if (!cur.has(img)) { layer.dispose(); this.regionLayers.delete(img); }
@@ -1298,13 +1528,13 @@ class Panel {
     const s = this.status;
     const c = this.composer;
     if (c && c.kind === "region" && !imgs.includes(c.img)) {
-      const again = this.ctx.mode() === "media" ? (c.page ? imgs.find((i) => pageOf(i) === c.page) : imgs[0])
-        : c.src ? imgs.find((i) => { const x = i.getAttribute("src"); return x !== null && srcIsEmbed(x, c.src!, this.ctx.path); }) : undefined;
+      const again = this.ctx.mode() === "media" ? (c.page ? imgs.find((i) => pageOf(i) === c.page) : imgs[0]) : this.composerImage(c, imgs);
       if (again) c.img = again;
     }
     const per = new Map<Pictured, RegionMark[]>();
     for (const card of this.cards()) {
-      if (!card.target || (card.target.kind !== "image" && card.target.kind !== "pdf")) continue;
+      // a malformed region (isRegion) paints nothing: the card says so (UNREADABLE_REGION), and Re-place redraws it
+      if (!card.target || (card.target.kind !== "image" && card.target.kind !== "pdf") || !isRegion(card.target.region)) continue;
       const img = this.regionImageFor(card);
       if (!img) continue;
       // a drawn page: the crop of every region on it is cut and kept NOW (cutCrop), the card open or closed, resolved or
@@ -1321,7 +1551,7 @@ class Panel {
     }
     this.regionMarks = per;
     const active = this.open && !isCoarsePointer();
-    const replacing = c && c.kind === "replace" ? this.replaceTarget(c.commentId) : null;   // once: the lookup walks the pictures, and so does this loop
+    const target = c && c.kind === "replace" ? this.replaceTarget(c.commentId) : null;   // the picture a re-place must be drawn on — once: the lookup walks the pictures, and so does this loop
     // A PDF's pages: a layer is made NOW for a page with a bitmap (near the reader: the chunk draws only the pages within a
     // scroller height of it), for a page with a rectangle to place (a region comment, the composer's pending region, the
     // re-place cue), and for every page when nothing can say which pages are near (no IntersectionObserver: the chunk
@@ -1332,36 +1562,60 @@ class Panel {
     // document (the review, 2026-09-06). The chunk's page cap bounds its own shells, not the panel's layers.
     const lazy = typeof IntersectionObserver !== "undefined";
     const later: HTMLCanvasElement[] = [];
+    const rendered = this.ctx.mode() === "rendered";
     for (const img of imgs) {
+      const marks = per.get(img) || [];
+      const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
+      const replacing = target === img;
+      // A figure in rendered markdown takes a layer only while the panel is open, or when there is something to put on it —
+      // its rectangles, the pending region, the re-place cue. The wrapper is a layout of its own (the sheet's inline-block
+      // around a block picture) standing in the AUTHOR's flow: wrapped on every paint, a right-floated README logo stopped
+      // floating and a width="100%" plot shrank to its natural width, with the panel closed and no comment anywhere near
+      // them (the 2026-09-06 review). Closed, a figure with nothing to show stays as the browser laid it out, and a layer
+      // with nothing left to show comes down (closePanel's pass puts the picture back). The media body's one picture keeps
+      // its layer as before: it is the file, in a box built for it, and its rectangles show whenever a text file's
+      // highlights would (the probe's status paints both).
+      const wanted = !rendered || this.open || marks.length > 0 || pending !== null || replacing;
       let layer = this.regionLayers.get(img);
+      if (!wanted) { if (layer) { layer.dispose(); this.regionLayers.delete(img); } continue; }
       if (!layer) {
-        if (lazy && isCanvas(img) && !(img.width > 0 && img.height > 0) && !per.has(img) && !(c && c.kind === "region" && c.img === img) && replacing !== img) { later.push(img); continue; }
+        if (lazy && isCanvas(img) && !(img.width > 0 && img.height > 0) && !per.has(img) && !(c && c.kind === "region" && c.img === img) && target !== img) { later.push(img); continue; }
         layer = this.layerFor(img);
       }
-      this.paintLayer(img, layer, active, replacing);
+      this.paintLayer(img, layer, active, target);
     }
     this.watchPages(later, cur);
-    if (keep) this.refocusRegion(keep);
+    this.refocusBody(keep);
   }
   /** The overlay for a picture, made once and kept (regionLayers): a page's canvas already sits in the chunk's positioned
-   *  wrapper (div.fileview-pdf-page), so the layer anchors there; an <img> is wrapped in a span of the layer's own. */
+   *  wrapper (div.fileview-pdf-page), so the layer anchors there; an <img> is wrapped in a span of the layer's own. The
+   *  overlay is the panel's own mark too (panelMark): the browser's own click after a press the layer handed on lands there. */
   private layerFor(img: Pictured): RegionLayer {
+    // onClick is a PLAIN picture's click; a framed picture's (an embed-line comment's highlight, data-act="fcopen")
+    // the layer hands to the picture itself (handOn), so the delegate's fcopen and the row's IMG listener hear it as
+    // they did before the overlay stood over it
     const layer = new RegionLayer(img, {
       onDraw: (i, r) => this.onRegionDrawn(i, r), onClick: (i) => this.onImageClick(i),
       onPress: () => { this.float.hidden = true; this.imageTarget = null; },   // what hideFloatOnDown does for a mousedown the overlay cancels
     }, isCanvas(img) ? img.parentElement : null);
     this.regionLayers.set(img, layer);
+    this.mark(layer.overlay);                          // the browser's own click after a handed-on press lands here (panelMark)
     return layer;
   }
   /** Arm one layer as the pass arms them all, and paint it: the rectangles the last pass filed for its picture
    *  (regionMarks), the composer's pending region when it was drawn there, and the re-place cue when the picture is the
-   *  comment's own (`replacing`). The rectangles are the panel's own controls (owns). */
+   *  comment's own (`target`). A layer is repainted only when what it would show changed (paintedKey): opening the
+   *  panel, a status that moved nothing, a presel repaint elsewhere leave its rectangles standing. The rectangles are
+   *  the panel's own controls (owns, and the registry the document's listeners read: mark). */
   private paintLayer(img: Pictured, layer: RegionLayer, active: boolean, target: Pictured | null): void {
     layer.setActive(active);
     const c = this.composer; const per = this.regionMarks;
     const pending = c && c.kind === "region" && c.img === img && !c.refusal ? c.region : null;
     const replacing = target === img;
-    for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.marks.add(r);
+    const key = JSON.stringify([per.get(img) || [], pending, replacing]);
+    if (this.paintedKey.get(layer) === key) return;    // nothing new for this picture: its rectangles stand (paintedKey)
+    this.paintedKey.set(layer, key);
+    for (const r of layer.paint(per.get(img) || [], pending, replacing)) this.mark(r);
   }
   /** Watch the shells of the pages that took no overlay this pass (pageWatch), so each takes one as it nears the reader
    *  (onPageNear) — one scroller height ahead, the chunk's own margin for the draws, so the overlay is under a page before
@@ -1383,6 +1637,21 @@ class Panel {
       this.pageWatch.observe(shell);
     }
   }
+  /** The picture a region composer's figure is now, after a repaint of rendered markdown: the one its embed line renders
+   *  — the range retargetComposer has re-found in the current text, through imgForRange, the way a saved region's picture
+   *  is found (regionImageFor) — else the first picture of its src (the passage not re-found: the "passage changed" state,
+   *  where Save hands the drag-time anchor to the host). By src alone, two embeds of ONE destination — a figure shown
+   *  twice — put the pending rectangle and the composer's thumbnail on the FIRST twin while `range` still named the second
+   *  and Save anchored the region there: the preview stood on one picture and the saved rectangle landed on another (the
+   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. */
+  private composerImage(c: Extract<Composer, { kind: "region" }>, imgs: Pictured[]): Pictured | undefined {
+    const root = this.contentRoot(); const src = this.ctx.text();
+    if (root && src !== null && c.range && c.text === src) {
+      const img = imgForRange(root, src, c.range, this.ctx.path) as Pictured | null;
+      if (img && imgs.includes(img)) return img;
+    }
+    return c.src ? imgs.find((i) => pictureIsEmbed(i, c.src!, this.ctx.path)) : undefined;
+  }
   /** A watched shell neared the reader: its page's overlay is made and painted now, armed as the others are, and the
    *  shell leaves the watch. A shell whose canvas is no longer in the viewer's body (the pages went while the entry was in
    *  flight) makes none. The first overlay in view re-renders the aside: the empty state names the drag and the cards
@@ -1402,22 +1671,6 @@ class Panel {
     }
     if (none && this.regionLayers.size) this.render();
   }
-  /** The region rectangle holding keyboard focus, by the comment it opens — a mark of the panel's own (owns) that sits
-   *  among the file's pictures, outside the aside, so render()'s focusKey never sees it. Null for anything else. */
-  private focusedRegion(): string | null {
-    const a = document.activeElement as HTMLElement | null;
-    if (!a || !a.dataset || a.dataset.act !== "fcopen" || !a.dataset.id || !this.marks.has(a)) return null;
-    return a.classList && typeof a.classList.contains === "function" && a.classList.contains("fc-region") ? a.dataset.id : null;
-  }
-  /** Put the keyboard back on the comment's rebuilt rectangle, re-found by what it is (the way refocus re-finds the
-   *  aside's controls), unless something else holds focus by now. No scroll: a page drawing in as it scrolls near must
-   *  not yank the view back to the rectangle. */
-  private refocusRegion(id: string): void {
-    const a = document.activeElement;
-    if (a && a !== document.body) return;              // the focus did not fall to the body: nothing to mend
-    const r = this.ctx.body().querySelector('.fc-region[data-id="' + id + '"]') as HTMLElement | null;
-    if (r) r.focus({ preventScroll: true });
-  }
   /** Whether any overlay in view takes a drag (the panel open, a fine pointer): the empty state names the gesture
    *  and the cards offer Re-place only then. */
   private drawsRegions(): boolean {
@@ -1433,17 +1686,26 @@ class Panel {
     const c = this.composer;
     const page = pageOf(img);                          // a PDF page's canvas names its page; an <img> has none, whatever its markup carries
     if (c && c.kind === "replace") {
+      // the drag's answer — the loader for the retarget's round trip, a refusal — is the card's own slot (card:<id>), which
+      // renderCard builds only in the OPEN card. startReplace opens it, but nothing kept it so: collapsed since (a click
+      // on its head while scrolling the panel), the drag gave no acknowledgement and a refusal showed nowhere while the
+      // composer still asked for the drag (the 2026-09-06 review; ui/CLAUDE.md: always acknowledge). The drag is a gesture
+      // about this comment, so its card opens for the answer, and is scrolled to.
+      const key = this.cardKey(c.commentId);
+      this.openCards.add(key);
       const own = this.replaceTarget(c.commentId);
       // a PDF region may be re-placed on any page (the page rides in the new target); a figure's must stay on its own picture
       if (page === null && own !== img) {
         this.errors.set("card:" + c.commentId, { text: own ? "Draw the new place on the figure this comment is on, not on another one." : "The figure this comment is on is not shown here.", reload: false });
         this.render();
+        this.scrollCard(key);
         return;
       }
       this.composer = null;
       void this.mutate("retarget", { commentId: c.commentId, target: regionTarget(region, c.src, page) }, "card:" + c.commentId);
       this.repaintPresel();
       this.renderComposer();
+      this.scrollCard(key);
       return;
     }
     this.openPanel();
@@ -1503,7 +1765,7 @@ class Panel {
    *  then says the page is not drawn and reaches it (pageUndrawn, cropWaitNote); the scroll draws the page, and the crop
    *  comes with that draw's repaint. A picture still loading re-renders the cards once, on its load. */
   private cropFor(img: Pictured | null, c: Card): HTMLCanvasElement | null {
-    if (!c.target) return null;
+    if (!c.target || !isRegion(c.target.region)) return null;   // a malformed region crops nothing (UNREADABLE_REGION): its NaN made a 0×0 canvas
     const fresh = img ? this.cutCrop(img, c) : null;
     if (fresh) return fresh;
     const kept = this.crops.get(c.id); const key = this.cropKey(c);
@@ -1759,8 +2021,14 @@ class Panel {
       ref.appendChild(el("span", "fc-note", "Drag the comment's new place on " + (c.page ? "a page" : "the image") + " (now " + c.ref + (gone ? ", a page the PDF no longer has" : "") + "). Cancel keeps it where it is."));
     }
     else if (c.kind === "region") {
-      if (c.refusal) ref.appendChild(el("span", "fc-note fc-refused", c.refusal[0].toUpperCase() + c.refusal.slice(1) + ". Cancel, and comment on its passage from the Raw view."));
-      else {
+      if (c.refusal) {
+        // no embed line, so no region — but a passage on that line can carry the note, and the switch keeps it (switchToRaw)
+        // where Cancel drops it (closeComposer clears the input): the sentence points at the switch, never at Cancel
+        ref.appendChild(el("span", "fc-note fc-refused", c.refusal[0].toUpperCase() + c.refusal.slice(1) + ". Select its line in the Raw view instead; the note stays."));
+        const sw = btn("Switch to Raw", "fcraw");
+        sw.title = "Raw view; select the line that embeds this image there";
+        ref.appendChild(sw);
+      } else {
         ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region, c.page)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
@@ -1814,8 +2082,13 @@ class Panel {
       return list;
     }
     if (!cards.length && !view.cards.length) {
+      // the gesture is named wherever an overlay in view takes it (drawsRegions): the media body's picture, or a figure in
+      // rendered markdown — the panel's guidance is the one place the drag is discoverable from; the overlay's own label
+      // reaches assistive tech alone, and the crosshair names nothing
+      const draws = this.drawsRegions();
       list.appendChild(el("div", "fc-empty", this.ctx.mode() === "media"
-        ? (this.drawsRegions() ? "No comments yet. Drag a rectangle on " + (this.ctx.media() === "pdf" ? "a page" : "the image") + ", or comment on this file." : "No comments yet. Comment on this file to leave one.")
+        ? (draws ? "No comments yet. Drag a rectangle on " + (this.ctx.media() === "pdf" ? "a page" : "the image") + ", or comment on this file." : "No comments yet. Comment on this file to leave one.")
+        : draws ? "No comments yet. Select a passage and press Comment, drag a rectangle on a figure, or comment on this file."
         : "No comments yet. Select a passage and press Comment, or comment on this file."));
       return list;
     }
@@ -1846,9 +2119,21 @@ class Panel {
     }
     return list;
   }
+  /** What the person can do about a region the card reports on (stale, unreadable), in the card's own words: Re-place
+   *  when THIS card offers it; otherwise resolve, and where Re-place is — the tag's title used to say "Re-place it" to a
+   *  phone that never gets the button (a coarse pointer draws nothing) and to a view that shows no picture (Raw, an SVG's
+   *  Source), so the line names the way there instead of a control that is not on the card. A PDF region with no picture
+   *  is on a page the viewer has not drawn — pdf.js could not (pageUnrendered), or the PDF shows as the browser's frame —
+   *  and no other view draws it, so the line names the page rather than a view. */
+  private regionRecourse(picture: Pictured | null, offered: boolean): string {
+    if (offered) return "Re-place it where it belongs now, or resolve it.";
+    if (!picture) return this.ctx.media() === "pdf" ? "Resolve it; re-placing it needs its page drawn in the viewer." : "Resolve it, or re-place it from the view that shows the image.";
+    return "Resolve it, or re-place it from a computer: drawing a region needs a mouse.";
+  }
   private renderCard(c: Card): HTMLElement {
     const isOpen = this.openCards.has(c.id);
     const loc = this.located.get(c.id);
+    const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
     card.dataset.id = c.id;
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
@@ -1878,15 +2163,41 @@ class Panel {
     // there): the hashes alone say whether the file changed, and a tag of its own says the page did not render
     const gone = this.pageGone(c);
     const regionSt = c.target ? regionState(c.target, this.status) : "current";
-    if (gone || regionSt === "stale") {
-      const t = el("span", "fc-tag fc-tag-stale", "stale");
-      t.title = gone ? "The PDF changed after this region was drawn and no longer has page " + c.target!.page + "; Re-place it on a page it has, or resolve it"
-        : "The " + this.mediaNoun() + " changed after this region was drawn; Re-place it, or resolve it";
-      head.appendChild(t);
-    } else if (regionSt === "unknown") { const t = el("span", "fc-tag", "unknown"); t.title = "Whether the " + this.mediaNoun() + " changed since this region was drawn could not be checked"; head.appendChild(t); }
+    // A RESOLVED region has no staleness left to report: the plan and the guide end "stale" at resolve or re-place, the
+    // picture paints no rectangle for it (paintRegions), and the card offers no Re-place — so the stale tag, whose title
+    // names that button, and the unknown tag and note would point at nothing; a page the PDF lost is no different. Its
+    // card wears "resolved" alone (the 2026-09-06 review, which found a resolved region wearing both).
+    const shownSt = c.resolved ? "current" : regionSt;
+    const shownGone = gone && !c.resolved;
+    // Re-place is the way out of a stale or unreadable region, and the card offers it only with a pointer that can draw
+    // and a picture in view (below) — the comment's own, or for a PDF region whose page the document no longer has
+    // (pageGone) ANY page: a PDF re-place may land on another page (onRegionDrawn), and the stale tag names Re-place as
+    // the remedy, so the card must offer it there too rather than leave Resolve as the only way out. The words about
+    // either state name what THIS card offers (regionRecourse), so a phone is never told to press a button it does not have
+    const replaceOffered = (!!picture || gone) && !c.resolved && this.drawsRegions();
+    const recourse = this.regionRecourse(picture, replaceOffered);
+    // the stale words, the tag's title and the open card's note alike: which page the PDF lost, when that is what makes
+    // the region stale (the page is not there to be current on, whatever the hashes say); else the file's own change
+    const staleWords = shownGone
+      ? pageGoneRegion(c.target!.page) + " " + (replaceOffered ? "Re-place it on a page it has, or resolve it." : "Resolve it, or re-place it on a page it has from a computer: drawing a region needs a mouse.")
+      : staleRegion(this.mediaNoun()) + " " + recourse;
+    if (shownGone || shownSt === "stale") { const t = el("span", "fc-tag fc-tag-stale", "stale"); t.title = staleWords; head.appendChild(t); }
+    else if (shownSt === "unknown" && c.target) { const t = el("span", "fc-tag", "unknown"); t.title = unknownReason(c.target, this.status, c.id); head.appendChild(t); }
     if (unrendered) {
       const t = el("span", "fc-tag", "not rendered");
       t.title = "Page " + c.target!.page + " did not render, so this region is not shown; the PDF still has that page, and its notice says why";
+      head.appendChild(t);
+    }
+    // a region the sidecar holds malformed (isRegion): no rectangle, no crop, and the card says so — the reference already
+    // prints "?" in each slot it cannot read (regionDesc), and this names why the picture shows nothing for it
+    const unreadable = !!c.target && !c.resolved && !isRegion(c.target.region);
+    if (unreadable) { const t = el("span", "fc-tag", "unreadable"); t.title = UNREADABLE_REGION + " " + recourse; head.appendChild(t); }
+    // a region whose picture this view does not show, with no passage to reveal in its place: a standalone image's region
+    // seen in the SVG Source view (the XML). No seam call returns to the picture from here (setMode is the markdown
+    // pair only), so the tag names the way back rather than leaving the card a dead end (ui/CLAUDE.md)
+    if (c.target && !c.anchor && !picture && this.ctx.mode() !== "media") {
+      const t = el("span", "fc-tag", "not shown");
+      t.title = this.ctx.media() === "svg" ? "The Source view shows the XML, not the image; press Source again to see the region on it" : "This view does not show the image the region is on";
       head.appendChild(t);
     }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
@@ -1897,22 +2208,25 @@ class Panel {
     head.appendChild(el("span", "fc-time", clock(c.ts)));
     card.appendChild(head);
     if (!isOpen) { card.appendChild(el("div", "fc-preview", c.body.replace(/\s+/g, " ").trim())); return card; }
-    const picture = c.target ? this.regionImageFor(c) : null;
     const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
     if (crop) card.appendChild(crop);
     else if (c.target && this.pageUndrawn(c)) card.appendChild(this.cropWaitNote(c));   // no bitmap to cut: the slot says so and reaches the page
     card.appendChild(el("div", "fc-body", c.body));
+    // the open card says in words what the region tags say — why the staleness is unknown (unknownReason), that the image
+    // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
+    // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
+    // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
+    if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
+    else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
+    if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));
     if (c.replies.length) card.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");
     const reply = btn("Reply", "fcreply"); reply.dataset.id = c.id; acts.appendChild(reply);
     const res = btn(c.resolved ? "Reopen" : "Resolve", "fcresolve"); res.dataset.id = c.id; res.dataset.on = c.resolved ? "0" : "1"; acts.appendChild(res);
-    // Re-place needs a pointer that can draw and a picture in view — the comment's own, or for a PDF region whose page
-    // the document no longer has (pageGone) ANY page: a PDF re-place may land on another page, and the stale tag names
-    // Re-place as the remedy, so the card must offer it there too rather than leave Resolve as the only way out
-    if ((picture || gone) && !c.resolved && this.drawsRegions()) {
+    if (replaceOffered) {                              // Re-place: a pointer that can draw, and the picture in view — or any page, for a PDF region whose page went (replaceOffered)
       const rp = btn("Re-place", "fcreplace"); rp.dataset.id = c.id;
       rp.title = gone ? "The PDF no longer has this page: draw the region again on a page it has"
-        : regionSt === "stale" ? "The " + this.mediaNoun() + " changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words";
+        : regionSt === "stale" ? "The " + this.mediaNoun() + " changed: draw the region again where it belongs now" : "Draw the region again; the comment keeps its words and its replies";
       acts.appendChild(rp);
     }
     const src = this.ctx.text();

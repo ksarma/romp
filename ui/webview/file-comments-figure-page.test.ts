@@ -419,7 +419,7 @@ test("a rendered figure carrying data-page: the composer names no page, and Ente
   const rect = overlay.querySelector('.fc-region[data-id="' + T0 + '-0"]')!;
   assert.ok(rect, "the rectangle on the figure");
   assert.equal(rect.classList.contains("fc-stale"), false);
-  assert.equal(h.q('.fc-card[data-id="' + T0 + '-0"] .fc-ref')!.textContent, "the region at 0.17, 0.20, 0.33, 0.30", "the card names no page either");
+  assert.equal(h.q('.fc-card[data-id="' + T0 + '-0"] .fc-ref')!.textContent, "the region at 0.17, 0.20, 0.33, 0.30 of figure.png", "the card names no page either — the figure, as every figure region's card does");
   await h.restatus({ ...withStore([rawEmbedded()], "docs/report.md"), embeddedHashes: { "figure.png": H2 } });
   assert.equal(overlay.querySelector('.fc-region[data-id="' + T0 + '-0"]')!.classList.contains("fc-stale"), true, "staleness reads embeddedHashes by src");
   h.dispose();

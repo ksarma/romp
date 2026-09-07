@@ -221,7 +221,7 @@ test("the contrast the stand-in models: a rectangle removed and remade under the
   h.teardown();
 });
 
-test("several passes, the marks unchanged: the same nodes every time, one per comment, in the marks' order", async () => {
+test("several passes, the marks unchanged: the same nodes every time, one per comment, in the stacking order", async () => {
   const h = await layerOver("pdf", [MARK, { id: ID2, region: REGION2, label: "web", state: "current" }]);
   const before = h.rects();
   assert.equal(before.length, 2);
@@ -229,7 +229,7 @@ test("several passes, the marks unchanged: the same nodes every time, one per co
   for (let i = 0; i < 3; i++) h.paint();
   sameNodes(h.rects(), before, "the same two nodes, in the same order");
   assert.equal(doc.removals.size, 0, "nothing was removed or moved");
-  assert.deepEqual(h.rects().map((r) => r.dataset.id), [ID, ID2]);
+  assert.deepEqual(h.rects().map((r) => r.dataset.id), [ID2, ID], "largest first (stackOrder): the table's rectangle stands under the header's, which is the smaller");
   h.teardown();
 });
 
@@ -262,25 +262,28 @@ test("a mark that changed is updated on its node: place, staleness (class and ti
   h.teardown();
 });
 
-test("marks that come and go: a new mark's rectangle goes in after the previous mark's without moving the ones up; a gone mark's rectangle leaves", async () => {
+test("marks that come and go: a new mark's rectangle goes in at its place in the stacking order without moving the ones up; a gone mark's rectangle leaves", async () => {
+  // by area the footer (REGION3) is the largest, the table (REGION2) next, the header (REGION) the smallest: the stacking
+  // order (stackOrder, largest first) puts them footer, table, header — whatever order the marks arrive in
   const h = await layerOver("pdf", [MARK, { id: ID3, region: REGION3, label: "you", state: "current" }]);
-  const [r1, r3] = h.rects();
+  const r1 = h.rectFor(ID)!, r3 = h.rectFor(ID3)!;
+  sameNodes(h.rects(), [r3, r1], "largest first");
   doc.removals.clear();
   // a comment arrives between the two
   h.paint([MARK, { id: ID2, region: REGION2, label: "web", state: "current" }, { id: ID3, region: REGION3, label: "you", state: "current" }]);
   const r2 = h.rectFor(ID2)!;
-  sameNodes(h.rects(), [r1, r2, r3], "in the marks' order, the two that were up untouched");
+  sameNodes(h.rects(), [r3, r2, r1], "in the stacking order, the two that were up untouched");
   assert.equal(doc.removals.size, 0);
-  // the first is resolved
+  // the smallest is resolved
   h.paint([{ id: ID2, region: REGION2, label: "web", state: "current" }, { id: ID3, region: REGION3, label: "you", state: "current" }]);
-  sameNodes(h.rects(), [r2, r3], "the two that remain");
+  sameNodes(h.rects(), [r3, r2], "the two that remain");
   assert.equal(r1.parentNode, null, "its rectangle left");
   sameNodes([...doc.removals], [r1], "and nothing else moved");
-  // a comment arrives at the front
+  // the comment comes back
   h.paint([MARK, { id: ID2, region: REGION2, label: "web", state: "current" }, { id: ID3, region: REGION3, label: "you", state: "current" }]);
   const r1b = h.rectFor(ID)!;
   assert.notEqual(r1b, r1, "a fresh node for the comment that came back");
-  sameNodes(h.rects(), [r1b, r2, r3], "at the front, the others where they were");
+  sameNodes(h.rects(), [r3, r2, r1b], "at its place, the others where they were");
   // all gone
   h.paint([]);
   assert.equal(h.rects().length, 0);

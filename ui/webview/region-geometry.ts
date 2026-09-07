@@ -3,9 +3,10 @@
 // A region is a rectangle stored in FRACTIONS of the image's natural size (`target.region`, x y w h in
 // 0..1, four decimals stored, two shown), so it re-paints correctly at any viewer width by construction:
 // the overlay places each rectangle by CSS percentages, and nothing here depends on pixels once the
-// fractions exist. This module turns the browser's measurements (an element's client rect, the image's
-// natural size, two pointer points) into those fractions and back, computes the crop the card's
-// thumbnail draws, words the region for the composer and the sent message, and rules on staleness.
+// fractions exist. This module turns the browser's measurements (an element's client rect, its computed
+// `object-fit`, the image's natural size, two pointer points) into those fractions and back, computes the
+// crop the card's thumbnail draws, words the region for the composer and the sent message, and rules on
+// staleness.
 // No DOM: every function is a transform over plain numbers, so region-geometry.test.ts runs it under
 // node with no stand-in, and file-comments-regions.ts (the overlay) holds only the wiring.
 
@@ -15,6 +16,20 @@ export type Box = { left: number; top: number; width: number; height: number };
 export type Point = { x: number; y: number };
 /** The stored shape: fractions of the image's natural size. */
 export type Region = { x: number; y: number; w: number; h: number };
+const REGION_KEYS = ["x", "y", "w", "h"] as const;
+const isFraction = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** Whether a stored value IS a region as the host writes one (validateTarget): an object whose x, y, w and h
+ *  are all finite numbers. A sidecar reaches the panel as it is on disk — store-io hands the comments through
+ *  and the host validates only what it writes — so a hand edit, or a foreign writer of the romp-only `target`
+ *  field, can leave a string, a null or a missing coordinate under `target.region`; a numeric string is not a
+ *  region either, the host refuses one. Gate on this before placing or cropping; the wording below never
+ *  throws on a value that fails it. */
+export function isRegion(v: unknown): v is Region {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const r = v as Record<string, unknown>;
+  return REGION_KEYS.every((k) => isFraction(r[k]));
+}
 export type Staleness = "current" | "stale" | "unknown";
 
 /** The smallest region in either dimension: a drag thinner than 1% of the image is widened to it, so a
@@ -28,15 +43,42 @@ export const CLICK_THRESHOLD_PX = 4;
 const round4 = (v: number): number => Math.round(v * 10 ** FRACTION_DECIMALS) / 10 ** FRACTION_DECIMALS;
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
 
-/** The box the image's pixels are DRAWN in, inside the element's client rect: `object-fit: contain`
- *  letterboxes an image whose aspect differs from the element's, and a fraction of the natural size is a
- *  fraction of this box, not of the element. Equal to `rect` when the natural size is unknown (an SVG
- *  with no intrinsic size, a picture still loading) or either box is empty. */
-export function drawnBox(rect: Box, natural: Size | null | undefined): Box {
+/** The box the image's pixels are DRAWN in, relative to the element's client rect: a fraction of the
+ *  natural size is a fraction of THIS box, not of the element, and the two differ whenever the element's
+ *  aspect is not the picture's. Which box depends on the element's `object-fit`, so `fit` is its COMPUTED
+ *  value (`getComputedStyle(img).objectFit`), and it is REQUIRED: the caller measures, it never assumes a
+ *  stylesheet's rule. The two rules romp's sheets give a picture differ, and an assumed one placed the
+ *  overlay wrong: the media body's `.fileview-img` has `object-fit: contain`, while `.fileview-md img` sets
+ *  none, so a figure in rendered markdown with `width` and `height` that disagree with its aspect (raw HTML
+ *  the sanitizer keeps, or a correct pair squeezed by `max-width: 100%` in a narrow column) is drawn under
+ *  the initial `fill`, stretched over the whole element — and a letterbox computed for it put the overlay
+ *  over pixels that hold no picture. Per keyword: `contain` letterboxes the picture inside the element;
+ *  `fill` stretches it over the whole element, so the box IS the rect; `cover` and `none` can overflow the
+ *  element (the element clips what falls outside); `scale-down` is `none` for a picture that fits and
+ *  `contain` otherwise. A word that is none of the five (a stand-in with no computed style, or a value a
+ *  JavaScript caller left out) is `fill`, the CSS initial value. Centered placement (`object-position`'s
+ *  initial `50% 50%`) is assumed: no romp stylesheet moves it. Equal to `rect` when the natural size is
+ *  unknown (an SVG with no intrinsic size, a picture still loading) or either box is empty. */
+export function drawnBox(rect: Box, natural: Size | null | undefined, fit: string): Box {
   if (!natural || !(natural.width > 0) || !(natural.height > 0) || !(rect.width > 0) || !(rect.height > 0)) return { ...rect };
-  const scale = Math.min(rect.width / natural.width, rect.height / natural.height);
+  const scale = drawnScale(rect, natural, fit);
+  if (scale === null) return { ...rect };
   const width = natural.width * scale, height = natural.height * scale;
   return { left: rect.left + (rect.width - width) / 2, top: rect.top + (rect.height - height) / 2, width, height };
+}
+
+/** The factor the natural size is drawn at under `fit`; null when the picture is stretched to the element
+ *  (`fill`, or a word that is not an object-fit keyword — `undefined` included), where no single factor
+ *  applies. */
+function drawnScale(rect: Box, natural: Size, fit: string): number | null {
+  const contain = Math.min(rect.width / natural.width, rect.height / natural.height);
+  switch (fit) {
+    case "contain": return contain;
+    case "cover": return Math.max(rect.width / natural.width, rect.height / natural.height);
+    case "none": return 1;
+    case "scale-down": return Math.min(1, contain);
+    default: return null;
+  }
 }
 
 /** Where the overlay sits inside its wrapper, in pixels, when the drawn image does not fill the wrapper —
@@ -111,13 +153,23 @@ export function cropSize(crop: { sw: number; sh: number }, max: Size): Size {
   return { width: Math.max(1, Math.round(crop.sw * scale)), height: Math.max(1, Math.round(crop.sh * scale)) };
 }
 
-/** Two decimals, always ("0.40", "1.00"): the form the composer shows and the sent message carries (E7). */
-export const fmt2 = (v: number): string => v.toFixed(2);
+/** What a coordinate that is not a finite number prints as, in its own slot: "the region at 0.10, ?, 0.30,
+ *  0.40" says which value is unreadable, so a malformed sidecar shows on ITS card and nowhere else. */
+export const UNREADABLE = "?";
+
+/** Two decimals, always ("0.40", "1.00"): the form the composer shows and the sent message carries (E7). Anything
+ *  that is not a finite number prints as UNREADABLE — shown, never thrown. This used to be a bare `toFixed`, and
+ *  one string coordinate in a sidecar (a hand edit; a foreign writer of the `target` field) threw out of it for
+ *  every render of that file's panel: cardModel words every comment, so nothing rendered and nothing said why. */
+export const fmt2 = (v: unknown): string => (isFraction(v) ? v.toFixed(2) : UNREADABLE);
 
 /** "the region at 0.12, 0.40, 0.35, 0.20", and for a PDF page "… of page 2" — the phrase after "on" in the
- *  message's parenthetical (contract C2/E7) and the card's reference. */
-export function regionDesc(r: Region, page?: number | null): string {
-  const at = "the region at " + [r.x, r.y, r.w, r.h].map(fmt2).join(", ");
+ *  message's parenthetical (contract C2/E7) and the card's reference. Total over whatever the sidecar holds
+ *  (see fmt2): a coordinate that is not a finite number, or a value that is not an object at all, reads as
+ *  UNREADABLE in each slot it fails, and the phrase still composes with the " of page N" / " of <src>" tails. */
+export function regionDesc(r: unknown, page?: number | null): string {
+  const o = r && typeof r === "object" ? (r as Record<string, unknown>) : {};
+  const at = "the region at " + REGION_KEYS.map((k) => fmt2(o[k])).join(", ");
   return page ? at + " of page " + page : at;
 }
 

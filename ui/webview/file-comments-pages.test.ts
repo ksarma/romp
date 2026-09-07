@@ -390,7 +390,7 @@ test("a region on page 3 of a PDF regenerated with two pages: stale (whatever th
   assert.equal(ref.getAttribute("data-act"), null, "nothing in view to scroll to");
   const tag = () => h.head().querySelector(".fc-tag")!;
   assert.equal(tag().textContent, "stale");
-  assert.equal(tag().title, "The PDF changed after this region was drawn and no longer has page 3; Re-place it on a page it has, or resolve it");
+  assert.equal(tag().title, "The PDF changed after this region was drawn and no longer has page 3. Re-place it on a page it has, or resolve it.");
   await h.restatus({ ...withStore([c3]), fileHash: null });
   assert.equal(tag().textContent, "stale", "a host with no hash cannot make a vanished page unknown: the page is not there to be current on");
   await h.restatus({ ...withStore([c3]), fileHash: H2 });
@@ -436,7 +436,7 @@ test("controls: a vanished page's card offers no Re-place where nothing could ta
   assert.equal(h.overlays().length, 0, "no pages: no overlays");
   h.click('.fc-card[data-id="' + ID + '"] .fc-card-head');
   assert.equal(h.q('.fc-card.open [data-act="fcreplace"]'), null);
-  assert.equal(h.q(".fc-card.open .fc-tag")!.title, "The PDF changed after this region was drawn; Re-place it, or resolve it", "nothing is known about the pages: the plain stale tag");
+  assert.equal(h.q(".fc-card.open .fc-tag")!.title, "The PDF changed after this region was drawn, so it may no longer mark the right place. Resolve it; re-placing it needs its page drawn in the viewer.", "nothing is known about the pages: the plain stale tag, and no Re-place to name");
   h.dispose();
 });
 
@@ -529,10 +529,11 @@ test("keyboard focus on a rectangle survives a page draw: the rectangle is the s
 
 test("source pins: the keep runs before any layer is dropped, the refocus scrolls nothing, and Re-place is gated on the picture OR the vanished page", () => {
   const SRC = web("file-comments.ts");
-  assert.match(SRC, /private paintRegions\(\): void \{\n\s*const keep = this\.focusedRegion\(\);/, "the focused rectangle is read before a layer is dropped or a pass removes a rectangle (a comment moved to another page)");
-  assert.match(SRC, /if \(keep\) this\.refocusRegion\(keep\);\n\s*\}/, "…and refocused after every layer has painted, when the keyboard fell to the body");
-  assert.match(SRC, /if \(r\) r\.focus\(\{ preventScroll: true \}\);/, "a page drawing in as it scrolls near must not yank the view back");
-  assert.match(SRC, /if \(\(picture \|\| gone\) && !c\.resolved && this\.drawsRegions\(\)\) \{/);
-  assert.match(SRC, /const gone = this\.pageGone\(c\);\n\s*const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";\n\s*if \(gone \|\| regionSt === "stale"\) \{/, "a vanished page reads stale whatever the hashes say");
+  assert.match(SRC, /private paintRegions\(\): void \{\n\s*const keep = this\.bodyFocusKey\(\);/, "the focused mark is read before a layer is dropped or a pass removes a rectangle (a comment moved to another page)");
+  assert.match(SRC, /this\.refocusBody\(keep\);\n\s*\}\n\s*\/\*\* The overlay for a picture/, "…and refocused after every layer has painted, when the keyboard fell to the body");
+  assert.match(SRC, /if \(n && this\.owns\(n\)\) n\.focus\(\{ preventScroll: true \}\);/, "a page drawing in as it scrolls near must not yank the view back");
+  assert.match(SRC, /const replaceOffered = \(!!picture \|\| gone\) && !c\.resolved && this\.drawsRegions\(\);/, "Re-place is gated on the picture OR the vanished page");
+  assert.match(SRC, /const gone = this\.pageGone\(c\);\n\s*const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";/);
+  assert.match(SRC, /const shownGone = gone && !c\.resolved;\n[\s\S]*?if \(shownGone \|\| shownSt === "stale"\) \{/, "a vanished page reads stale whatever the hashes say — unless resolved, when nothing is left to report");
   assert.match(SRC, /\(c\.page \? imgs\.find\(\(i\) => pageOf\(i\) === c\.page\) : imgs\[0\]\)/, "a pending PDF region is re-found by its page number");
 });

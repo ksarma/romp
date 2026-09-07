@@ -115,6 +115,8 @@ test('under the default cap, a media file of exactly the kernel\'s cap hashes an
   sparse(png, FILE_HASH_CAP + 1);
   assert.equal(status(w, png).fileHash, null);
   // The same boundary at the function the verb calls, with the cap passed as the verb passes it.
-  assert.deepEqual(hashRegular(png, FILE_HASH_CAP), { hash: null, size: FILE_HASH_CAP + 1 });
+  const over = hashRegular(png, FILE_HASH_CAP);
+  assert.equal(over.hash, null); assert.equal(over.size, FILE_HASH_CAP + 1);
+  assert.match(String(over.mtimeNs), /^\d+$/, 'and the mtime beside it, which the poll\'s figure baseline reads (Slice 3)');
   assert.equal(hashRegular(png, null).hash, sha256Zeros(FILE_HASH_CAP + 1), 'a comment stamps the full hash uncapped');
 });

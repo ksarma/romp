@@ -3553,6 +3553,12 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg); }
 .fileview-md img { max-width: 100%; }
+/* A figure's region layer (the file-comments block below wraps every <img>) wears the PAGE's size and face, not the
+   heading's or the prose's. The author chip is 0.72em of its layer, and a layer inside an h1 (1.3em) put the chip at
+   0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or in the aside (the README
+   banner pattern, <h1><img></h1>; ui/CLAUDE.md, font sizes: nested em compounds). --fs is the body's own size, so the
+   chip lands where the aside's does; --sans is the body's face, where the prose face is mono in the light theme. */
+.fileview-md .fc-overlay { font-size: var(--fs); font-family: var(--sans); }
 
 /* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts) ── the viewer's ASIDE: the body row
    holds the body and the panel side by side, and folds the panel below the body when the column is narrower
@@ -3662,12 +3668,17 @@ body.filebrowse-open { overflow: hidden; }
    chip is generated from data-label: no text node goes under the picture, or the rendered-markdown mapper would misalign
    the paragraph holding the figure. A stale region (the image's bytes changed under it) is dashed, an unknown one dotted;
    the author's session colour rides --fc-author as on the change marks, the comment ring's warn colour when no session
-   matches. A coarse pointer gets no drawing: the overlay takes no events there; the rectangles still open their cards. */
+   matches. A coarse pointer gets no drawing: the overlay takes no events there; the rectangles still open their cards, and
+   the viewer still pans under a finger: `touch-action: none` is for the ARMED layer, where a drag draws — a disarmed
+   layer gives it back. Touch-action composes by INTERSECTION from the touched element up to the scroll container, so a
+   rectangle (pointer-events: auto) could not opt back in on its own: with `none` left on the layer, a swipe that started
+   on a rectangle covering most of a picture left the phone's viewer unscrolled. */
 .fc-imgwrap { position: relative; display: inline-block; max-width: 100%; }
 .fc-imgwrap > img { display: block; }
 .fc-overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
 .fc-overlay-off { pointer-events: none; cursor: default; }
 .fc-overlay-off .fc-region { pointer-events: auto; }
+.fc-overlay-off { touch-action: auto; }
 .fc-overlay.fc-replacing { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .fc-region { position: absolute; box-sizing: border-box; border: 2px solid var(--fc-author, var(--warn)); border-radius: 4px;
   background: color-mix(in srgb, var(--fc-author, var(--warn)) 12%, transparent); cursor: pointer; }

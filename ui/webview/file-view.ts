@@ -225,8 +225,8 @@ export interface FileViewActionCtx {
    *  one region overlay in each (Slice 4) */
   pdfPages(): HTMLElement[];
   /** the figures inside a Rendered markdown body, in document order, as of the latest onRendered; [] in every other
-   *  view. A relative figure's `src` is the kernel's /file URL by then and its authored value rides in `data-fv-src`
-   *  (rewriteFigureSrcs); the figures' own load events are the caller's to await */
+   *  view. A path figure's `src` (relative or absolute) is the kernel's /file URL by then and its authored value rides
+   *  in `data-fv-src` (rewriteFigureSrcs); the figures' own load events are the caller's to await */
   renderedImages(): HTMLImageElement[];
   /** the session the file was opened from, as the hosting document resolves it (the title-bar chip's source) */
   identity(): FileViewIdentity | null;
@@ -769,6 +769,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     offer.addEventListener("click", () => startDownload(dlUrl, offer));
     why.appendChild(offer);
     body.replaceChildren(why);
+    // The pane is a paint of the body like any other, so the seam's hooks hear it: whenShown fires only for a
+    // picture that decoded, and until this line the panel kept the layer it had built over the PREVIOUS picture
+    // when a reload's bytes failed to decode — the overlay stood, armed, over a body with no picture, and the
+    // empty state still named the drag — until some later paint happened to run (the 2026-09-06 review; the
+    // panel's hook disposes a layer whose picture left: mediaElement() is null now).
+    fireRendered();
   };
 
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
@@ -1418,31 +1424,38 @@ function mdBlock(text: string, path: string, sid: string | null | undefined): HT
   return box;
 }
 
-/** A markdown file's relative figures — `![](plot.png)`, `<img src="figs/a.png">` — name files beside the FILE, and a
- *  browser resolving them against the page URL (/files, /chat, /feed) 404'd every one; only http(s), data: and other
- *  absolute URLs ever rendered (plans/file-review.md, Images and PDFs; Slice 3). So each relative `src` in the
- *  sanitized rendered DOM is re-pointed at the kernel's /file route for `<dir of the open file>/<src>` — fileUrl:
- *  same-origin, cookie-authed, and a remote session's figure relays through /remote/<host>/file exactly as the file
- *  itself did. Untouched: a src with a scheme (http:, https:, data:, blob:, …), an absolute path (`/…`, so protocol-
- *  relative `//…` too), and an empty one. `..` segments and `./` pass through as written: the kernel resolves the path
- *  and gates it, and a client-side normalization would be a second, weaker opinion on what it serves. marked
- *  percent-encodes destinations (`six seven.png` renders as `six%20seven.png`), so the attribute is decoded back to a
- *  path first (decodeURI; a malformed escape is taken as written). The authored attribute value survives as
- *  `data-fv-src` on every rewritten figure: the panel's embed matching (embedFor / imgForRange in file-comments.ts)
- *  and a region comment's `src` need the source's own spelling, not a URL. An untouched figure's `src` IS that value,
- *  and an authored `data-fv-src` on one is dropped so the attribute means one thing: this viewer rewrote this src.
- *  Runs on the DOM after DOMPurify, never on marked's HTML string — a string rewrite would re-parse attribute syntax
- *  the sanitizer already settled, and a src the sanitizer removed must stay removed. `dir` carries its trailing
- *  slash ("" for a bare relative file name, which then resolves against the session's cwd like the file did). */
+/** A markdown file's path figures — `![](plot.png)`, `<img src="figs/a.png">`, `![](/srv/notes-api/figs/a.png)` — name
+ *  files on the kernel's disk, and a browser resolving them against the page URL (/files, /chat, /feed) 404'd every
+ *  one: a relative src against the page's directory, an absolute path against the dashboard ORIGIN, where no route
+ *  serves it; only http(s), data: and other URLs ever rendered (plans/file-review.md, Images and PDFs; Slice 3). So
+ *  each path `src` in the sanitized rendered DOM is re-pointed at the kernel's /file route — fileUrl: same-origin,
+ *  cookie-authed, and a remote session's figure relays through /remote/<host>/file exactly as the file itself did.
+ *  A relative src names `<dir of the open file>/<src>`; an absolute one (`/…`) names that path itself, which is how
+ *  every other reader of an embed's destination already takes it — the panel's embed matching (embedPath, in
+ *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
+ *  — so the picture shown is the file the poll watches and the host hashes (review round 2: the viewer alone left
+ *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw).
+ *  Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL (`//host/…`, which the
+ *  browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
+ *  as written: the kernel resolves the path and gates it, and a client-side normalization would be a second, weaker
+ *  opinion on what it serves. marked percent-encodes destinations (`six seven.png` renders as `six%20seven.png`), so
+ *  the attribute is decoded back to a path first (decodeURI; a malformed escape is taken as written). The authored
+ *  attribute value survives as `data-fv-src` on every rewritten figure: the panel's embed matching (embedFor /
+ *  imgForRange in file-comments.ts) and a region comment's `src` need the source's own spelling, not a URL. An
+ *  untouched figure's `src` IS that value, and an authored `data-fv-src` on one is dropped so the attribute means one
+ *  thing: this viewer rewrote this src. Runs on the DOM after DOMPurify, never on marked's HTML string — a string
+ *  rewrite would re-parse attribute syntax the sanitizer already settled, and a src the sanitizer removed must stay
+ *  removed. `dir` carries its trailing slash ("" for a bare relative file name, which then resolves against the
+ *  session's cwd like the file did). */
 export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | null | undefined): void {
   root.querySelectorAll("img[src]").forEach((node) => {
     const img = node as HTMLElement;
     const src = img.getAttribute("src") || "";
-    if (!src || src.startsWith("/") || /^[a-z][a-z0-9+.-]*:/i.test(src)) { img.removeAttribute("data-fv-src"); return; }
+    if (!src || src.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(src)) { img.removeAttribute("data-fv-src"); return; }
     let rel = src;
     try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written */ }
     img.setAttribute("data-fv-src", src);
-    img.setAttribute("src", fileUrl(dir + rel, sid));
+    img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
   });
 }
 
@@ -1451,8 +1464,9 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
 // browser's viewer owns everything inside it and gives no signal to wait for (the same reason pdfBlock arms no
 // error listener). An <img> counts once it has decoded: at once when it already had (`complete` — a blob the
 // browser still holds), else on its load event. A load that lands after the img left the document fires nothing:
-// a reload replaced it, the decode failed and imgFailed's pane took the body, or the viewer closed — what shows
-// then is something else, and an overlay sized against the old picture would frame nothing anyone sees.
+// a reload replaced it, the decode failed and imgFailed's pane took the body (a paint of its own, which fires the
+// hooks itself), or the viewer closed — what shows then is something else, and an overlay sized against the old
+// picture would frame nothing anyone sees.
 function whenShown(shown: HTMLElement, cb: () => void): void {
   const img = shown.querySelector("img.fileview-img") as HTMLImageElement | null;
   if (!img || img.complete) { cb(); return; }

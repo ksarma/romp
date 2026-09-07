@@ -416,7 +416,7 @@ test("a page pdf.js could not draw reads 'not rendered', not as a page the PDF n
   // the file DID change under it: stale from the hashes, in the PDF's words (not "no longer has page 2"), and not rendered besides
   await h.restatus({ ...withStore([c2]), fileHash: H2 });
   assert.deepEqual(h.tags().map((t) => t.textContent), ["stale", "not rendered"]);
-  assert.equal(h.tags()[0].title, "The PDF changed after this region was drawn; Re-place it, or resolve it");
+  assert.equal(h.tags()[0].title, "The PDF changed after this region was drawn, so it may no longer mark the right place. Resolve it; re-placing it needs its page drawn in the viewer.", "the PDF's words; no Re-place, so the recourse says what stands in its way");
   h.dispose();
 });
 
@@ -426,7 +426,7 @@ test("the page set is the shells, not the canvases: beside a failed page 2, a co
   await h.ok(withStore([c3, c4]));
   await h.open(withStore([c3, c4]));
   assert.deepEqual(h.tags(ID4).map((t) => t.textContent), ["stale"]);
-  assert.equal(h.tags(ID4)[0].title, "The PDF changed after this region was drawn and no longer has page 4; Re-place it on a page it has, or resolve it");
+  assert.equal(h.tags(ID4)[0].title, "The PDF changed after this region was drawn and no longer has page 4. Re-place it on a page it has, or resolve it.");
   h.click('.fc-card[data-id="' + ID4 + '"] .fc-card-head');
   const rp = h.q('.fc-card.open[data-id="' + ID4 + '"] [data-act="fcreplace"]')!;
   assert.ok(rp, "Re-place is the remedy the tag names");
@@ -506,7 +506,7 @@ test("the unknown state names the PDF: a status with no file hash tags the card 
   await h.ok({ ...withStore([c1]), fileHash: null });
   await h.open({ ...withStore([c1]), fileHash: null });
   assert.deepEqual(h.tags().map((t) => t.textContent), ["unknown"]);
-  assert.equal(h.tags()[0].title, "Whether the PDF changed since this region was drawn could not be checked");
+  assert.equal(h.tags()[0].title, "Whether the PDF changed since this region was drawn could not be checked.");
   const rect = h.pages[0].querySelector('.fc-region[data-id="' + ID + '"]')!;
   assert.ok(rect.classList.contains("fc-unknown"));
   assert.equal(rect.title, "Open the comment on this region (whether the PDF changed could not be checked)");

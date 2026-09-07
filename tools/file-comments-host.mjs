@@ -6,7 +6,8 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "fileHash" | "embeddedHashes", "baseline"?, "logged"?, "accepted"?, "rejected"?}
+//            "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons" + "derivedSrcs" +
+//            "derivedSrcReasons", "baseline"?, "logged"?, "accepted"?, "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
@@ -32,13 +33,42 @@
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
 //     different change under the same name; and accept never drops a comment bound to the change
 //     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable;
-//   * a region comment's `target.hash` is this script's sha256 of the figure's BYTES (Slice 3), never
-//     the client's value and never a hash of the lossy text: for a standalone image or PDF the file's
-//     own, for a figure embedded in a markdown file the bytes of the `src` the embed names, resolved
-//     against the file's directory and refused unless it is a regular file inside the project root.
-//     Every reply carries the current hash to compare against — `fileHash` on a media file,
-//     `embeddedHashes` per src on a text file — with null for "unknown" (unreadable, or past the
-//     size cap), which is never the same as stale.
+//   * a region comment's stored target is `{kind, region, page?, hash, src?}` (validateTarget, then
+//     stampTarget, in that key order): `page` on a PDF only, and `src` only on a figure embedded in a
+//     markdown file — the embed's destination as written, which keys the reply's `embeddedHashes`
+//     and which the anchor quote does not always carry (a reference-style embed's destination sits
+//     in a `[ref]: dest` definition elsewhere in the file); a target with no anchor has none. The
+//     `hash` is this script's sha256 of the figure's BYTES (Slice 3), never the client's value and
+//     never a hash of the lossy text: for a standalone image or PDF the file's own, for a figure
+//     embedded in a markdown file the bytes of the `src` the embed names, resolved
+//     against the file's directory and refused unless it is a regular file inside the project root,
+//     one the anchored passage embeds (`figure-mismatch`), of the kind the target claims, and no
+//     larger than the viewer shows (`too-large`); the region lies inside the unit square. And when
+//     the request says which bytes the person saw (`fence.figureHash`: the hash the last reply
+//     carried for that figure — `fileHash` on a media file, `embeddedHashes[src]` on a text file),
+//     the bytes hashed must be those, else `figure-changed` (figureFence, stampTarget): a figure
+//     regenerated between the drag and Enter would otherwise be stamped with a hash the person never
+//     saw, which the panel reads as current — the one write the hash exists to catch, missed at the
+//     moment it is made. That fence says what the caller saw and is checked when it says anything;
+//     a request without one is taken as before, since a caller has no hash for a figure no reply
+//     has hashed yet (a text file's replies hash the figures its region comments already name), and
+//     `retarget` is held to the same rule. Every reply carries the current hash to compare against
+//     — `fileHash` on a media file, `embeddedHashes` per src on a text file — with null for
+//     "unknown" (unreadable, or past the size cap), which is never the same as stale, and beside
+//     every null the reason (`fileHashReason`, `embeddedHashReasons`), so the panel can say what
+//     could not be checked;
+//   * the contract's own shape — the embed line's anchor plus `{kind, region, hash}` with no `src`,
+//     which the plan describes and another writer can leave — is read, never left "unknown": every
+//     reply names the figure such a comment is on from its anchored passage, located now, when that
+//     passage embeds exactly one figure (passageFigure), carries that src in the store it answers
+//     (`derivedSrcs`, per comment id: a read never rewrites the sidecar, and the reply says where
+//     its store differs from the disk) and hashes it under `embeddedHashes`, so the panel's stale
+//     check and its re-place key on it; when the passage cannot tell (gone, ambiguous, embedding no
+//     figure or several) the reason stands per comment id in `derivedSrcReasons`. A `retarget` on
+//     such a comment whose request names no `src` takes the passage's figure and writes the target
+//     with its src; a passage that cannot tell refuses (`no-figure`, or the anchor's own code),
+//     since that is the disk's state and not a caller bug. A stored src must still be named by the
+//     request, as before: the panel holds it, and a re-place keeps the figure.
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
@@ -96,7 +126,10 @@ const CONFIG_VERSION = 2;
 // The verbs through Slice 3 (retarget is Slice 3's re-place gesture); Slice 5 adds save. The verbs
 // that write the FILE (not only the sidecar) — reject, reject-all, and later save — also fence on
 // fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large) before any
-// write; no other verb does.
+// write; no other verb does. The verbs that stamp a figure's hash (comment with a target, retarget)
+// fence on the figure's BYTES instead, through fence.figureHash when the request carries it
+// (figureFence, then stampTarget with 'figure-changed'): a markdown file's mtime cannot fence a
+// figure embedded in it, and a hash is checked against the very bytes stamped.
 const VERBS = new Set([
   'status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send',
   'accept', 'accept-all', 'reject', 'reject-all', 'retarget',
@@ -468,9 +501,30 @@ function envCap(name, dflt) {
 export function fileHashCap() { return envCap('FILE_COMMENTS_HASH_CAP', FILE_HASH_CAP); }
 export function embeddedHashCap() { return envCap('FILE_COMMENTS_EMBEDDED_HASH_CAP', EMBEDDED_HASH_CAP); }
 
-export function isMediaPath(p) {
+// What the viewer shows a path as, by its extension (the kernel's _PREVIEW_MIME, keyed the same
+// way): 'pdf', 'image', or null for a file it renders as text or refuses. A region can be drawn
+// only on the first two, and a target's `kind` must be the one the file it is about has.
+export function mediaKind(p) {
   const ext = path.extname(String(p == null ? '' : p)).slice(1).toLowerCase();
-  return ext !== '' && MEDIA_EXTENSIONS.has(ext);
+  if (ext === 'pdf') return 'pdf';
+  return ext !== '' && MEDIA_EXTENSIONS.has(ext) ? 'image' : null;
+}
+export function isMediaPath(p) { return mediaKind(p) !== null; }
+
+// A byte count as the kernel's _human_bytes prints it (the 413's own phrasing), so a size this
+// script names beside a cap reads the same as the viewer's refusal for the same file.
+export function humanBytes(n) {
+  for (const [unit, step] of [['GB', 1 << 30], ['MB', 1 << 20], ['KB', 1 << 10]]) {
+    if (n >= step) return `${(n / step).toFixed(1)} ${unit}`;
+  }
+  return `${n} bytes`;
+}
+
+// An embedded figure's `src` as the viewer decodes it before loading the figure (decodeURI, so
+// `p95%20latency.png` is the file with the space; a malformed escape is read as written —
+// file-view.ts, rewriteFigureSrcs): the spelling every path check and the kind check use.
+function decodeSrc(src) {
+  try { return decodeURI(src); } catch { return src; }
 }
 
 // The sha256 hex of a regular file's BYTES, streamed through the hash in chunks and never decoded:
@@ -480,14 +534,20 @@ export function isMediaPath(p) {
 // a directory named as a figure fails at once instead of hanging. `cap` (bytes, or null for none)
 // is checked against the size before any byte is read: over it the hash is null, "unknown", which
 // the panel shows as such and never as stale. Throws on anything unreadable; the caller decides
-// between a refusal (comment, retarget) and null (the hashes a reply carries).
+// between a refusal (comment, retarget) and null (the hashes a reply carries). `mtimeNs` is the
+// file's mtime from the same fstat, in nanoseconds as a string (statNs's form, the kernel's
+// X-Romp-Mtime-Ns): what a reply hands the panel's poll as the baseline its HEADs of the figure
+// are compared with, so the reading the hash was taken at and the reading the poll starts from
+// are one and the same.
 export function hashRegular(abs, cap) {
   let fd;
   try {
     fd = fs.openSync(abs, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
-    const st = fs.fstatSync(fd);
+    const st = fs.fstatSync(fd, { bigint: true });
     if (!st.isFile()) throw new Error(`${abs} is not a regular file`);
-    if (cap != null && st.size > cap) return { hash: null, size: st.size };
+    const size = Number(st.size);
+    const mtimeNs = st.mtimeNs.toString();
+    if (cap != null && size > cap) return { hash: null, size, mtimeNs };
     const h = createHash('sha256');
     const buf = Buffer.allocUnsafe(64 * 1024);
     for (;;) {
@@ -495,7 +555,7 @@ export function hashRegular(abs, cap) {
       if (n === 0) break;
       h.update(buf.subarray(0, n));
     }
-    return { hash: h.digest('hex'), size: st.size };
+    return { hash: h.digest('hex'), size, mtimeNs };
   } finally {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
   }
@@ -503,12 +563,14 @@ export function hashRegular(abs, cap) {
 
 // The region a comment names, checked the way every other argument is (a bad shape is a caller
 // bug, so BadRequest) and rebuilt from its known fields: `kind`, `region` (fractions of the image's
-// natural size, kept to four decimals — the client sends four, and this makes sure), `page` (PDFs
-// only, 1-based), and `src`. The hash is not the client's to send; stampTarget computes it.
-// `embedded` says whether the comment carries an anchor: a figure in a markdown file names its
-// `src` (the embed's destination as written) and a standalone image or PDF has none, and the two
-// cannot mix — a src with no embed line to stand on, or an embed line with no figure to hash,
-// would hash the wrong file.
+// natural size, kept to four decimals — the client sends four, and this makes sure — and lying
+// inside the image: x + w and y + h at most 1, so what the sidecar holds is always a region OF the
+// picture, never a rectangle that overflows it or misses it), `page` (PDFs only, 1-based), and
+// `src`. The hash is not the client's to send; stampTarget computes it, and checks `kind` against
+// the file it hashes. `embedded` says whether the comment carries an anchor: a figure in a
+// markdown file names its `src` (the embed's destination as written) and a standalone image or
+// PDF has none, and the two cannot mix — a src with no embed line to stand on, or an embed line
+// with no figure to hash, would hash the wrong file.
 export function validateTarget(raw, embedded) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequest('target must be an object {kind, region, page?, src?}');
   if (raw.kind !== 'image' && raw.kind !== 'pdf') throw new BadRequest('target.kind must be "image" or "pdf"');
@@ -521,6 +583,11 @@ export function validateTarget(raw, embedded) {
     region[k] = Math.round(v * 1e4) / 1e4;
   }
   if (!(region.w > 0) || !(region.h > 0)) throw new BadRequest('target.region.w and .h must be greater than 0 at four decimals');
+  // Each value is a multiple of 1e-4 up to float noise, so rounding the sum's ten-thousandths reads
+  // it exactly: 0.9999 + 0.0001 is inside, 1 + 0.0001 is not.
+  if (Math.round((region.x + region.w) * 1e4) > 1e4 || Math.round((region.y + region.h) * 1e4) > 1e4) {
+    throw new BadRequest('target.region must lie inside the image: x + w and y + h must not exceed 1 at four decimals');
+  }
   const out = { kind: raw.kind, region };
   if (raw.kind === 'pdf') {
     if (!Number.isInteger(raw.page) || raw.page < 1) throw new BadRequest('target.page must be a positive integer for a pdf');
@@ -539,20 +606,19 @@ export function validateTarget(raw, embedded) {
 }
 
 // Where an embedded figure's `src` points: the destination as the embed writes it, decoded the way
-// the viewer decodes it before loading the figure (decodeURI, so `p95%20latency.png` is the file
-// with the space; a malformed escape is read as written — file-view.ts, rewriteFigureSrcs), so the
-// host hashes the file the person saw; resolved against the commented file's directory as a path,
-// then confirmed by realpath to be INSIDE the project root:
-// never above it, and not through a symlink that leaves it. `rootDir` is the root the file has, or
-// for a loose file the one its first comment is about to create, its own directory (decision 37).
-// Returns the resolved path or throws with the reason; the caller makes that a refusal (comment,
-// retarget) or a null hash (the hashes a reply carries). Whether it is a regular file is
-// hashRegular's check, on the same descriptor it reads.
+// the viewer decodes it (decodeSrc), so the host hashes the file the person saw; resolved against
+// the commented file's directory as a path — an absolute src (`![x](/srv/figs/a.png)`, which the
+// viewer also reads as a filesystem path) names that path itself, path.resolve dropping the
+// directory — then confirmed by realpath to be INSIDE the project root: never above it, not through
+// a symlink that leaves it, and an absolute src is held to the same check, which is the only thing
+// keeping it in (the targets test sends one in each direction). `rootDir` is the root the file has,
+// or for a loose file the one its first comment is about to create, its own directory (decision
+// 37). Returns the resolved path or throws with the reason; the caller makes that a refusal
+// (comment, retarget) or a null hash with the reason beside it (the hashes a reply carries).
+// Whether it is a regular file is hashRegular's check, on the same descriptor it reads.
 export function resolveSrc(ctx, rootDir, src) {
   if (/^[a-z][a-z0-9+.-]*:/i.test(src)) throw new Error(`${src} is a URL, not a file in the project`);
-  let rel = src;
-  try { rel = decodeURI(src); } catch { /* a malformed escape: the spelling as written, as the viewer reads it */ }
-  const abs = path.resolve(path.dirname(ctx.abs), rel);
+  const abs = path.resolve(path.dirname(ctx.abs), decodeSrc(src));
   let real;
   try {
     real = fs.realpathSync(abs);
@@ -566,68 +632,354 @@ export function resolveSrc(ctx, rootDir, src) {
   return real;
 }
 
+const errText = (e) => tildeText(e && e.message ? e.message : String(e));
+
+// The figure's fence: `fence.figureHash`, the sha256 the caller last saw for the figure the region is
+// on — the reply's `fileHash` on a media file, `embeddedHashes[src]` on a text file — or null when
+// the request names none. Read before any disk read, like every fence key (a bad shape is a caller
+// bug): a hash this script never emitted (not 64 lowercase hex digits) could only ever refuse, so it
+// is refused as the bug it is rather than reported as a changed figure; and it fences a region, so a
+// `comment` carrying it with no target is a caller bug too (the caller checks that). Absent is
+// allowed, unlike the mtime fences: a caller has no hash for a figure no reply has hashed yet (a
+// text file's replies hash only the figures its region comments already name), so the fence says
+// what the caller saw, and is checked, in stampTarget, when it says anything.
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+function figureFence(ctx) {
+  const v = ctx.fence.figureHash;
+  if (v == null) return null;
+  if (typeof v !== 'string' || !SHA256_HEX.test(v)) {
+    throw new BadRequest(`fence.figureHash must be the sha256 hex a reply carried for the figure (fileHash, or embeddedHashes[src]), not ${JSON.stringify(v)}`);
+  }
+  return v;
+}
+
 // The target `comment` and `retarget` write: the validated shape plus the hash of the bytes it
 // is about — the figure `src` names, or the commented file itself for a standalone image or PDF.
-// No size cap here: this is the one moment the bytes are known to be the ones the person drew on,
-// and the viewer showed them, so they are within the kernel's cap already. Key order is the
-// contract's: kind, region, page (pdf), hash, src (embedded).
-function stampTarget(ctx, rootDir, target) {
+// Three checks stand between the shape and the hash, in this order. A region with no anchor is on
+// the commented file itself, so that file must be an image or a PDF (a region on a markdown file
+// with no embed line to stand on would hash the markdown's bytes and be a rectangle on nothing).
+// The src resolves inside the root (resolveSrc: not a URL, not above the root, not out through a
+// symlink). Then `kind` must be what the named file's extension says it is, the way the viewer
+// decides what to render — a `pdf` target on a png, or a figure whose extension the viewer never
+// shows as media, is a caller bug, not a stored shape. Then the bytes are hashed under
+// FILE_HASH_CAP, the most the viewer shows of any one file (the kernel's _MEDIA_MAX_BYTES): a
+// figure past it was never on the person's screen, so a request naming one refuses `too-large`
+// instead of hashing it — before this cap a multi-GB src named by a client pinned the host for as
+// long as the kernel's deadline allowed and then failed as a timeout. The constant, not the
+// environment override: the override belongs to the reply-side hashes alone (their tests cap a
+// tiny fixture; a write verb's cap is pinned with a sparse file). Key order is the contract's:
+// kind, region, page (pdf), hash, src (embedded). Then, when the request said which bytes the person
+// saw (`figureHash`, from figureFence), the hash taken must equal it — else the figure was
+// regenerated between the picture the person drew on and this write, and the target refuses
+// `figure-changed` rather than record a hash the person never saw as the one they did: every reply
+// would then equal it, and the panel would read a rectangle drawn on the old picture as current on
+// the new one, the very case the hash exists to mark stale. Deliberately NOT one of the `-moved`
+// codes: the panel re-issues status and retries those once, and a retry here would stamp the new
+// bytes — the person has to look at the picture as it is now and draw the region again, so this one
+// is shown to them.
+function stampTarget(ctx, rootDir, target, figureHash) {
+  const what = target.src != null ? `the figure ${tilde(target.src)} in ${ctx.shown}` : ctx.shown;
+  if (target.src == null && mediaKind(ctx.abs) == null) {
+    throw new BadRequest(`a region with no anchor is on the file itself, and ${ctx.shown} is not an image or a PDF; a figure embedded in it takes the anchor of its embed line and target.src`);
+  }
   let abs = ctx.abs;
   if (target.src != null) {
     try {
       abs = resolveSrc(ctx, rootDir, target.src);
     } catch (e) {
-      throw new Refusal('unreadable', `the figure ${target.src} in ${ctx.shown} cannot be read: ${tildeText(e && e.message ? e.message : String(e))}; nothing was changed`);
+      throw new Refusal('unreadable', `${what} cannot be read: ${errText(e)}; nothing was changed`);
     }
   }
-  let hash;
+  const kind = mediaKind(target.src != null ? decodeSrc(target.src) : ctx.abs);
+  if (kind == null) throw new BadRequest(`${what} is not an image or a PDF by its extension, so the viewer never showed it as one and no region can be drawn on it`);
+  if (kind !== target.kind) throw new BadRequest(`target.kind is "${target.kind}" but ${what} is ${kind === 'pdf' ? 'a PDF' : 'an image'}`);
+  let hashed;
   try {
-    hash = hashRegular(abs, null).hash;
+    hashed = hashRegular(abs, FILE_HASH_CAP);
   } catch (e) {
-    const what = target.src != null ? `the figure ${target.src} in ${ctx.shown}` : ctx.shown;
-    throw new Refusal('unreadable', `${what} cannot be read: ${tildeText(e && e.message ? e.message : String(e))}; nothing was changed`);
+    throw new Refusal('unreadable', `${what} cannot be read: ${errText(e)}; nothing was changed`);
+  }
+  if (hashed.hash == null) {
+    throw new Refusal('too-large', `${what} is ${humanBytes(hashed.size)}, more than the ${humanBytes(FILE_HASH_CAP)} the viewer shows, so no region can be placed on it; nothing was changed`);
+  }
+  if (figureHash != null && hashed.hash !== figureHash) {
+    throw new Refusal('figure-changed', `${what} changed on disk since it was shown — reload to see it as it is now, then draw the region again; nothing was changed`);
   }
   const out = { kind: target.kind, region: target.region };
   if (target.page != null) out.page = target.page;
-  out.hash = hash;
+  out.hash = hashed.hash;
   if (target.src != null) out.src = target.src;
   return out;
 }
 
 // The hash a reply carries for a media file: its bytes as they are now, for the panel to compare
-// with each region comment's target.hash. Null past the cap, and null (with a note on stderr) when
-// the file cannot be read at this moment — the verb already read or stat'ed it, so that is a race
-// with a writer, and "unknown" is the honest answer where a refusal would deny a write that landed.
+// with each region comment's target.hash — {hash} when it could be taken, else {hash: null, reason}.
+// Null past the cap, and null when the file cannot be read at this moment — the verb already read
+// or stat'ed it, so that is a race with a writer, and "unknown" is the honest answer where a
+// refusal would deny a write that landed. The reason travels IN the reply (fileHashReason): the
+// kernel keeps this script's stderr only when the call fails, so a reason written there alone
+// left the panel with a bare "unknown" that named neither the file nor what stopped the check.
 function fileHashFor(ctx) {
   try {
-    return hashRegular(ctx.abs, fileHashCap()).hash;
+    const r = hashRegular(ctx.abs, fileHashCap());
+    if (r.hash != null) return { hash: r.hash };
+    return { hash: null, reason: `${ctx.shown} is ${humanBytes(r.size)}, past the ${humanBytes(fileHashCap())} checked on each open, so whether it changed since its regions were drawn could not be checked` };
   } catch (e) {
-    process.stderr.write(`file-comments-host: ${ctx.shown} could not be hashed: ${tildeText(e && e.message ? e.message : String(e))}\n`);
-    return null;
+    return { hash: null, reason: `${ctx.shown} could not be read to check it: ${errText(e)}` };
   }
 }
 
 // The hashes a reply carries for a text file: one per distinct `src` its region comments name, in
 // order of first appearance, each the figure's bytes as they are now — or null when the src does
 // not resolve to a regular file inside the root, or when hashing it would take the call past the
-// shared budget. An empty object when the file has no sidecar or no region comments.
+// shared budget, with the reason under the same src in `reasons` (the reply's embeddedHashReasons:
+// a figure that is gone, one that moved outside the root, and one past the budget are three
+// different situations for the person, and a null alone showed all three as one "unknown").
+// Empty objects when the file has no sidecar or no region comments. `store` is the one the reply
+// carries (derivedSrcsFor): a comment in the contract's src-less shape is hashed under the src its
+// passage told, and skipped when it could not — its reason is in derivedSrcReasons. `mtimes` (the
+// reply's embeddedMtimes) is each figure's mtime as read here, by the same src, for every figure
+// that could be stat'ed — past the cap too, since the poll compares mtimes whatever the hash — and
+// absent where it could not: the panel's poll HEADs these figures and compares against this reading,
+// so a figure regenerated between this read and the poll's first HEAD of it is a move it re-asks
+// status for, not a first observation it takes as the baseline (the review consolidation, 2026-09-06).
 function embeddedHashesFor(ctx, rootDir, store) {
-  if (!store || !rootDir) return {};
-  const out = new Map();
-  let budget = embeddedHashCap();
+  const hashes = new Map();
+  const reasons = {};
+  const mtimes = {};
+  if (!store || !rootDir) return { hashes: {}, reasons, mtimes };
+  const cap = embeddedHashCap();
+  let budget = cap;
   for (const c of store.comments || []) {
     const src = c && c.target && c.target.src;
-    if (typeof src !== 'string' || !src || out.has(src)) continue;
+    if (typeof src !== 'string' || !src || hashes.has(src)) continue;
     let hash = null;
     try {
       const r = hashRegular(resolveSrc(ctx, rootDir, src), budget);
+      mtimes[src] = r.mtimeNs;
       if (r.hash != null) { hash = r.hash; budget -= r.size; }
+      else reasons[src] = `the figure ${tilde(src)} (${humanBytes(r.size)}) was not checked: the figures ${ctx.shown}'s comments name are checked up to ${humanBytes(cap)} together, and this one would pass it`;
     } catch (e) {
-      process.stderr.write(`file-comments-host: the figure ${src} in ${ctx.shown} was not hashed: ${tildeText(e && e.message ? e.message : String(e))}\n`);
+      reasons[src] = `the figure ${tilde(src)} in ${ctx.shown} was not hashed: ${errText(e)}`;
     }
-    out.set(src, hash);
+    hashes.set(src, hash);
   }
-  return Object.fromEntries(out);
+  return { hashes: Object.fromEntries(hashes), reasons, mtimes };
+}
+
+// ── regions: the embeds a passage holds ─────────────────────────────
+
+// The image embeds in a markdown text, read as the panel reads them (ui/webview/file-comments.ts,
+// imageEmbeds — the same forms, the same destinations): `![alt](dest "title")` with dest bare or
+// in <>, `![alt][ref]` and `![ref]` through `[ref]: dest` definitions, and a raw `<img src>` tag;
+// an embed inside fenced code renders as text and is skipped. Each is {start, end, dest} over the
+// text's offsets, dest exactly as written, which is what a region comment's `src` is. The targets
+// test runs the panel's fixture forms through this so the two readers stay in step.
+//
+// Linear in the text, on purpose: `comment` and `retarget` run this over the WHOLE file (a
+// reference-style embed's destination sits in a definition anywhere in it) under the kernel's 10 s
+// deadline, and the viewer shows texts up to 2 MB. Before the Slice 3 review two parts of the
+// reading were quadratic — fence membership scanned per embed (#fences × #embeds), and the
+// one-regex `<img>` form rescanning from every `<img` to the next `>` — so a 2 MB file of repeated
+// fences and embeds, or of `<img ` with no `>`, took the host past the deadline on every attempt,
+// and no region could be placed on any figure in it (measured). The embeds test pins the cost and
+// the agreement with the one-regex reading.
+const LABEL = '(?:\\\\.|[^\\[\\]\\\\])*';
+const IMG_INLINE = new RegExp('!\\[(' + LABEL + ')\\]\\([ \\t]*(?:<([^<>\\n]*)>|([^\\s()]*(?:\\([^\\s()]*\\)[^\\s()]*)*))(?:[ \\t]+(?:"[^"]*"|\'[^\']*\'|\\([^()]*\\)))?[ \\t]*\\)', 'g');
+const IMG_FULL_REF = new RegExp('!\\[(' + LABEL + ')\\]\\[(' + LABEL + ')\\]', 'g');
+const IMG_SHORT_REF = new RegExp('!\\[(' + LABEL + ')\\](?![\\[(])', 'g');
+const IMG_OPEN = /<img\b/gi;
+const SRC_ATTR = /\bsrc[ \t]*=[ \t]*/gi;
+const NOT_BARE = /[\s"'>]/;
+const REF_DEF = /^ {0,3}\[((?:\\.|[^\[\]\\])+)\]:[ \t]*<?([^\s>]+)>?/gm;
+const normLabel = (s) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+
+// Offsets of the text's fenced code blocks, [start, end).
+function fencedRanges(text) {
+  const out = [];
+  let open = null;
+  let at = 0;
+  for (const line of text.split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (m) {
+      if (!open) open = { ch: m[1][0], n: m[1].length, at };
+      else if (m[1][0] === open.ch && m[1].length >= open.n && /^\s*$/.test(line.slice(m[0].length))) { out.push([open.at, at + line.length]); open = null; }
+    }
+    at += line.length + 1;
+  }
+  if (open) out.push([open.at, text.length]);
+  return out;
+}
+
+// Whether offset i lies in one of the fenced ranges: a binary search, since fencedRanges walks the
+// lines once and so yields them sorted and disjoint.
+function inFencedRange(fences, i) {
+  let lo = 0;
+  let hi = fences.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (fences[mid][1] <= i) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < fences.length && fences[lo][0] <= i;
+}
+
+// The raw `<img …>` tags of a text, each {start, end, dest}, in order: exactly the matches of
+//   /<img\b[^>]*?\bsrc[ \t]*=[ \t]*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi
+// (the panel's regex), without its cost. That regex rescans from every `<img` to the next `>`, so a
+// text of repeated `<img ` with no `>` costs #tags × distance. Read as the regex reads: from each
+// `<img\b`, its window runs to the first `>` after it; the tag's src is the first `src=` in the
+// window whose value can be read — a quoted value runs to its closing quote, even across `>` and
+// newlines, a bare one to the next whitespace, quote or `>` — and is followed by a `>` somewhere
+// later; the match runs through the value to the next `>`. Linear because every position asked of
+// the cursors below is asked in increasing order, a tag's window is scanned for `src=` at most once
+// (when a tag has no usable src, no `<img` between it and its `>` has one either — their windows
+// are the tail of its own — so the walk resumes past that `>`), and a value's chars are inside the
+// match they complete.
+function htmlImgTags(text) {
+  const out = [];
+  const lastGt = text.lastIndexOf('>');
+  if (lastGt < 0) return out;
+  // Monotone cursors: the first '>' / '"' / "'" at or after the position last asked, or -1.
+  let gt = -1;
+  const nextGt = (i) => { if (gt < i) gt = text.indexOf('>', i); return gt; };
+  const quote = { '"': -1, "'": -1 };
+  const nextQuote = (ch, i) => { if (quote[ch] < i) quote[ch] = text.indexOf(ch, i); return quote[ch]; };
+  let srcAt = -1;   // the `src=` last found: its offset, and the offset past its `=` and spaces
+  let srcEnd = -1;
+  const nextSrc = (i) => {
+    if (srcAt >= i) return srcAt;
+    SRC_ATTR.lastIndex = i;
+    const m = SRC_ATTR.exec(text);
+    if (m) { srcAt = m.index; srcEnd = SRC_ATTR.lastIndex; } else { srcAt = Infinity; srcEnd = Infinity; }
+    return srcAt;
+  };
+  let pos = 0;
+  let m;
+  while (pos <= lastGt) {
+    IMG_OPEN.lastIndex = pos;
+    m = IMG_OPEN.exec(text);
+    if (!m) break;
+    const start = m.index;
+    const winEnd = nextGt(start + 4);
+    if (winEnd < 0) break;
+    let dest;
+    let valueEnd = -1;
+    for (let from = start + 4; nextSrc(from) < winEnd; from = srcAt + 1) {
+      const v = srcEnd;
+      const ch = text[v];
+      if (ch === '"' || ch === "'") {
+        const close = nextQuote(ch, v + 1);
+        if (close >= 0 && close < lastGt) { dest = text.slice(v + 1, close); valueEnd = close + 1; break; }
+      } else if (v < lastGt && !NOT_BARE.test(ch)) {
+        let e = v + 1;
+        while (e < text.length && !NOT_BARE.test(text[e])) e++;
+        dest = text.slice(v, e); valueEnd = e; break;
+      }
+    }
+    if (valueEnd < 0) { pos = winEnd + 1; continue; }
+    const end = nextGt(valueEnd) + 1;
+    out.push({ start, end, dest });
+    pos = end;
+  }
+  return out;
+}
+
+export function imageEmbeds(text) {
+  const fences = fencedRanges(text);
+  const inFence = (i) => inFencedRange(fences, i);
+  const defs = new Map();
+  let m;
+  REF_DEF.lastIndex = 0;
+  while ((m = REF_DEF.exec(text))) if (!inFence(m.index)) defs.set(normLabel(m[1]), m[2]);
+  const out = [];
+  const push = (start, len, dest) => {
+    if (dest !== undefined && !inFence(start)) out.push({ start, end: start + len, dest });
+  };
+  for (const re of [IMG_INLINE, IMG_FULL_REF, IMG_SHORT_REF]) re.lastIndex = 0;
+  while ((m = IMG_INLINE.exec(text))) push(m.index, m[0].length, m[2] ?? m[3] ?? '');
+  while ((m = IMG_FULL_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[2] || m[1])));
+  while ((m = IMG_SHORT_REF.exec(text))) push(m.index, m[0].length, defs.get(normLabel(m[1])));
+  for (const t of htmlImgTags(text)) push(t.start, t.end - t.start, t.dest);
+  out.sort((a, b) => a.start - b.start);
+  return out.filter((e, i) => !i || e.start >= out[i - 1].end);   // a shortcut form inside a longer one: the longer wins
+}
+
+// An anchored region's `src` must be a figure the anchored passage embeds: the panel finds the
+// picture to paint on by the anchor and judges staleness by the src, so a src the passage does not
+// name splits the two — the rectangle on one figure, the stale check on another — and hands any
+// client a hash of whatever in-root file it cares to name. The dests are read from the whole text
+// (a reference-style embed's destination sits in a definition elsewhere in the file) and the
+// passage's embeds are the ones overlapping the located range; the embed's exact range, which the
+// panel sends, and a whole line around it both qualify. A refusal, not a caller bug: a reference
+// definition can change on disk between the drag and Enter.
+function checkEmbedNamesSrc(ctx, text, from, to, src) {
+  const dests = imageEmbeds(text).filter((e) => e.start < to && e.end > from).map((e) => e.dest);
+  if (dests.includes(src)) return;
+  const named = dests.length ? `embeds ${dests.map((d) => tilde(d)).join(', ')}, not ${tilde(src)}` : `embeds no figure, so nothing there is ${tilde(src)}`;
+  throw new Refusal('figure-mismatch', `the passage this comment is anchored to in ${ctx.shown} ${named}; a region on that figure cannot stand on this passage; nothing was changed`);
+}
+
+// The figure an anchored region comment is on when its stored target names no src: the contract's
+// own shape (plans/file-review.md, "The contract": the embed line's anchor plus {kind, region,
+// hash}), which the panel never writes but another writer following the plan can leave. The
+// anchored passage, located now, decides — the reading checkEmbedNamesSrc makes of a src the caller
+// names, with no src to compare: {src} when the passage embeds exactly one distinct destination (a
+// reference-style embed's through its definition, the case the anchor's quote alone cannot answer);
+// else {src: null, code, reason} — the passage gone or ambiguous (locateExact's codes, the anchor
+// unreadable counted with them) or embedding no figure or several (`no-figure`). The reason is a
+// fragment for the person, as the hash reasons are. `embeds` is imageEmbeds(text), read once per
+// reply by the caller.
+function passageFigure(ctx, text, c, embeds) {
+  const id = String(c.id);
+  let anchor;
+  try {
+    anchor = validateAnchor(c.anchor);
+  } catch (e) {
+    return { src: null, code: 'anchor-not-found', reason: `the anchor of comment ${id} in ${ctx.shown} cannot be read (${e.message}), so which figure it is on cannot be told` };
+  }
+  const loc = locateExact(text, anchor, undefined);
+  if (loc.error) return { src: null, code: loc.error, reason: `the passage of comment ${id} could not be placed in ${ctx.shown} (${loc.error}), so which figure it is on cannot be told` };
+  const dests = [...new Set(embeds.filter((e) => e.start < loc.to && e.end > loc.from).map((e) => e.dest))];
+  if (dests.length === 1) return { src: dests[0] };
+  const named = dests.length ? `embeds ${dests.map((d) => tilde(d)).join(', ')}` : 'embeds no figure';
+  return { src: null, code: 'no-figure', reason: `the passage of comment ${id} in ${ctx.shown} ${named}, so which figure it is on cannot be told` };
+}
+
+// Whether a comment's stored target is the contract's src-less shape on an anchored passage: a
+// target object naming no usable src, under an anchor. A standalone image's target (no anchor) and
+// a region another writer left on a text file with no embed line are not — nothing there names a
+// figure by its passage.
+function namesFigureByPassage(c) {
+  return !!(c && c.anchor != null && c.target && typeof c.target === 'object' && !Array.isArray(c.target)
+    && (typeof c.target.src !== 'string' || !c.target.src));
+}
+
+// The store as a reply carries it: every comment in the contract's src-less shape with the src its
+// passage tells (passageFigure), the stored target's keys kept and `src` after them, so the panel
+// keys the stale check and the re-place on it; a comment whose passage cannot tell is left as it
+// is. Which srcs were told this way, and why the rest could not be, go beside the store in the
+// reply (`derivedSrcs`, `derivedSrcReasons`, per comment id): a read never rewrites the sidecar,
+// and the reply says where its store differs from the disk. `text` is the file as the load read
+// it; a store with such a comment and no text is a program error (every verb that loads a sidecar
+// reads the text to rebase it), never a silent "unknown".
+function derivedSrcsFor(ctx, store, text) {
+  const srcs = {};
+  const reasons = {};
+  if (!store || !(store.comments || []).some(namesFigureByPassage)) return { store, srcs, reasons };
+  if (typeof text !== 'string') throw new Error(`a comment on ${ctx.shown} names its figure by its passage, and the file's text was not read`);
+  const embeds = imageEmbeds(text);
+  const comments = store.comments.map((c) => {
+    if (!namesFigureByPassage(c)) return c;
+    const f = passageFigure(ctx, text, c, embeds);
+    if (f.src == null) {
+      reasons[String(c.id)] = f.reason;
+      return c;
+    }
+    srcs[String(c.id)] = f.src;
+    return { ...c, target: { ...c.target, src: f.src } };
+  });
+  return { store: { ...store, comments }, srcs, reasons };
 }
 
 // `too-large`: only verbs that write the file check it, before any write (the kernel's cap).
@@ -843,6 +1195,8 @@ export function buildComment(text, args, now, suggestions) {
       replies: [],
       resolved: false,
     };
+    // Where the anchor landed, for the checks a region comment makes on the passage (doComment).
+    return { comment: c, range: { from: loc.from, to: loc.to } };
   }
   return { comment: c };
 }
@@ -850,7 +1204,7 @@ export function buildComment(text, args, now, suggestions) {
 // ── the reply ───────────────────────────────────────────────────────
 
 function reply(ctx, state, extra) {
-  const { root, paths, store, text, fileMtimeNs } = state;
+  const { root, paths, store: loaded, text, fileMtimeNs } = state;
   let log = [];
   let logTruncated = false;
   let entries = [];
@@ -861,6 +1215,12 @@ function reply(ctx, state, extra) {
     logTruncated = entries.length > LOG_TAIL;
     log = logTruncated ? entries.slice(entries.length - LOG_TAIL) : entries;
   }
+  // The store the reply carries: on a text file, with the src every comment in the contract's
+  // src-less shape names by its passage (derivedSrcsFor); a media file's comments have no anchor,
+  // so its store goes as loaded.
+  const media = isMediaPath(ctx.abs);
+  const derived = media ? null : derivedSrcsFor(ctx, loaded, text);
+  const store = derived ? derived.store : loaded;
   const out = {
     ok: true,
     verb: ctx.verb,
@@ -878,9 +1238,26 @@ function reply(ctx, state, extra) {
     logTruncated,
   };
   // What a region comment's target.hash is compared with, on every reply (each one is the status
-  // the panel holds next): a media file's own bytes, or the figures a text file's comments name.
-  if (isMediaPath(ctx.abs)) out.fileHash = fileHashFor(ctx);
-  else out.embeddedHashes = embeddedHashesFor(ctx, root, store);
+  // the panel holds next): a media file's own bytes, or the figures a text file's comments name —
+  // and beside every null, why (fileHashReason: a string or null; embeddedHashReasons: one entry per
+  // null src), so the panel can say which figure could not be checked and what stopped it. On a
+  // text file, beside them, which comments name their figure by their passage (derivedSrcs) and
+  // why the rest of that shape could not (derivedSrcReasons), per comment id. The same reasons go
+  // to stderr, which the kernel keeps when a call fails.
+  if (media) {
+    const fh = fileHashFor(ctx);
+    out.fileHash = fh.hash;
+    out.fileHashReason = fh.reason || null;
+    if (fh.reason) process.stderr.write(`file-comments-host: ${fh.reason}\n`);
+  } else {
+    const eh = embeddedHashesFor(ctx, root, store);
+    out.embeddedHashes = eh.hashes;
+    out.embeddedHashReasons = eh.reasons;
+    out.embeddedMtimes = eh.mtimes;                 // the poll's baseline for each figure, from the read the hash came from
+    out.derivedSrcs = derived.srcs;
+    out.derivedSrcReasons = derived.reasons;
+    for (const reason of [...Object.values(eh.reasons), ...Object.values(derived.reasons)]) process.stderr.write(`file-comments-host: ${reason}\n`);
+  }
   if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
   return Object.assign(out, extra || {});
 }
@@ -943,10 +1320,15 @@ function noChange(ctx, ids) {
 
 // comment {note}, {anchor, note}, {suggestionId, note}, {target, note}, {anchor, target, note}: the
 // target's shape is checked first (a caller bug, before any disk read the anchor needs), the
-// anchor is placed, and only then is the figure hashed — the region's own refusals (`unreadable`
-// for a src outside the root or unreadable) come after the passage's, and all of them before the
-// landmark and the write.
+// anchor is placed, the anchored passage is checked to embed the figure the target names
+// (`figure-mismatch`), and only then is the figure hashed — the region's own refusals
+// (`unreadable` for a src outside the root or unreadable, `too-large` past the viewer's cap, and
+// `figure-changed` when the bytes are not the ones the request's fence.figureHash says were shown)
+// come after the passage's, and all of them before the landmark and the write. The fence's shape is
+// read first of all, before any disk read, as every fence key is.
 function doComment(ctx) {
+  const figureHash = figureFence(ctx);
+  if (figureHash != null && ctx.args.target == null) throw new BadRequest('fence.figureHash fences the figure a region is on, and this comment has no target');
   return withSidecar(ctx, true, (store, text, root) => {
     const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
     const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
@@ -957,7 +1339,10 @@ function doComment(ctx) {
       throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
     }
     if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
-    if (target) built.comment.target = stampTarget(ctx, root || path.dirname(ctx.abs), target);
+    if (target) {
+      if (target.src != null) checkEmbedNamesSrc(ctx, text, built.range.from, built.range.to, target.src);
+      built.comment.target = stampTarget(ctx, root || path.dirname(ctx.abs), target, figureHash);
+    }
     return (s) => { s.comments.push(built.comment); };
   });
 }
@@ -966,18 +1351,51 @@ function doComment(ctx) {
 // for a PDF a page) over the same figure, the hash recomputed from the bytes as they are now, so a
 // comment the figure's regeneration made stale is current again. The comment must exist (else
 // `no-comment`) and be a region comment (a target on a comment that has none is a caller bug); an
-// embedded figure's new target names its src as the old one did and a standalone one's has none —
-// the anchor decides, as it does for comment. Fenced on the sidecar like every sidecar write; the
-// anchor, id, body and replies stay as they were; nothing is appended to the comments log, since a
-// re-placed rectangle is not a decision.
+// embedded figure's new target names its src as the old one did — the SAME src, checked: a
+// re-place moves the rectangle, never the figure, and a src that differed would leave the anchor
+// (and so the painted rectangle) on one figure while the stale check followed another. A stored
+// target with an anchor but no src (the contract's own shape, which another writer can leave) is
+// re-placed either way: a request naming a src takes it only when the anchored passage, located
+// now, embeds it; a request naming none — the panel's, when no reply could tell the figure, or a
+// caller following the plan — takes the figure that passage embeds (passageFigure), and a passage
+// that cannot tell refuses with its reason rather than crashing as a caller bug. Either way the
+// target written carries its src. A stored src must be named by the request, as ever: the panel's
+// store view carries it (stored, or told by the passage on a reply), so a request without one is a
+// caller bug. A standalone one's target has none — the anchor decides, as it does for comment.
+// Fenced on the sidecar like every sidecar write, and on the figure's bytes when the request says
+// which it saw (fence.figureHash, checked in stampTarget: a figure regenerated again between the
+// status that showed it stale and this re-place refuses `figure-changed`, and is never stamped with
+// bytes the person has not seen); the anchor, id, body and replies stay as they were; nothing is
+// appended to the comments log, since a re-placed rectangle is not a decision.
 function doRetarget(ctx) {
   const id = requireCommentId(ctx.args);
+  const figureHash = figureFence(ctx);
   if (ctx.args.target == null) throw new BadRequest('retarget needs target: {kind, region, page?, src?}');
   return withSidecar(ctx, false, (store, text, root) => {
     const c = findComment(store, id);
     if (!c) throw new Refusal('no-comment', `comment ${String(id)} is not among the comments for ${ctx.shown} — reload and retry`);
     if (!c.target || typeof c.target !== 'object') throw new BadRequest(`comment ${String(id)} has no region to re-place`);
-    const target = stampTarget(ctx, root || path.dirname(ctx.abs), validateTarget(ctx.args.target, c.anchor != null));
+    const embedded = c.anchor != null;
+    const stored = typeof c.target.src === 'string' && c.target.src ? c.target.src : null;
+    let asked = ctx.args.target;
+    let told = false;   // the src is the passage's own, located and checked in the telling
+    if (embedded && stored == null && asked && typeof asked === 'object' && !Array.isArray(asked) && asked.src == null) {
+      const f = passageFigure(ctx, text, c, imageEmbeds(text));
+      if (f.src == null) throw new Refusal(f.code, `${f.reason}; a re-place needs the figure named in the comment's target (src); nothing was changed`);
+      asked = { ...asked, src: f.src };
+      told = true;
+    }
+    const validated = validateTarget(asked, embedded);
+    if (validated.src != null && !told) {
+      if (stored != null) {
+        if (validated.src !== stored) throw new BadRequest(`retarget keeps the figure: comment ${String(id)} is on ${tilde(stored)}, and target.src names ${tilde(validated.src)}`);
+      } else {
+        const loc = locateExact(text, validateAnchor(c.anchor), undefined);
+        if (loc.error) throw new Refusal(loc.error, `the passage of comment ${String(id)} could not be placed in ${ctx.shown} (${loc.error}), so which figure it embeds cannot be told — reload and retry`);
+        checkEmbedNamesSrc(ctx, text, loc.from, loc.to, validated.src);
+      }
+    }
+    const target = stampTarget(ctx, root || path.dirname(ctx.abs), validated, figureHash);
     return (s) => { findComment(s, id).target = target; };
   });
 }

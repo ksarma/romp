@@ -202,10 +202,12 @@ test('a region comment on a standalone image stores the sha256 of its bytes in t
 
 test('the region is kept to four decimals, a pdf target carries its page, and an SVG is hashed as bytes like any image', () => {
   const w = world();
+  // Rounded to four decimals and still inside the unit square (x + w = 0.1236, y + h = 1); a region
+  // that rounds to one lying past the image is refused (the targets test).
   let r = comment(w, w.chart, status(w, w.chart), {
-    note: 'Rounded.', target: { kind: 'image', region: { x: 0.123456, y: 0.99996, w: 0.00005, h: 1 } },
+    note: 'Rounded.', target: { kind: 'image', region: { x: 0.123456, y: 0.49996, w: 0.00005, h: 0.5 } },
   });
-  assert.deepEqual(readSidecar(r.storePath).comments[0].target.region, { x: 0.1235, y: 1, w: 0.0001, h: 1 });
+  assert.deepEqual(readSidecar(r.storePath).comments[0].target.region, { x: 0.1235, y: 0.5, w: 0.0001, h: 0.5 });
 
   r = comment(w, w.pdf, status(w, w.pdf), { note: 'Page two, the table.', target: { kind: 'pdf', page: 2, region: REGION } });
   const c = readSidecar(r.storePath).comments[0];
@@ -281,37 +283,44 @@ test('a region on an embedded figure carries the embed line\'s anchor, src as wr
 
 test('an embedded figure\'s src must resolve to a regular file inside the project root; anything else refuses unreadable and writes nothing', () => {
   const w = world();
-  const st = status(w, w.figures);
   const escape = path.join(w.docs, 'figs', 'escape.png');
   fs.symlinkSync(w.banner, escape);
   const fifo = path.join(w.docs, 'figs', 'pipe.png');
   const mkfifo = spawnSync('mkfifo', [fifo]);
+  fs.mkdirSync(path.join(w.docs, 'figs', 'dir.png'));
   const cases = [
     ['../../shared/banner.png', /outside the project root/],       // exists, above the root
     ['../../../nowhere/banner.png', /cannot be resolved/],          // above the root and absent
     ['figs/missing.png', /cannot be resolved/],
-    ['figs', /is not a regular file/],                              // a directory
+    ['figs/dir.png', /is not a regular file/],                      // a directory (with a media extension: a src without one is a caller bug, the targets test)
     ['figs/escape.png', /outside the project root/],                // a symlink that leaves the root
     ['https://example.com/notes-api/logo.png', /is a URL, not a file in the project/],
     ['data:image/png;base64,iVBORw0KGgo=', /is a URL/],
   ];
   if (mkfifo.status === 0) cases.push(['figs/pipe.png', /is not a regular file/]);
+  // Each src under test is embedded on a line of its own, so the anchor names the src it is sent with
+  // (a src the anchored passage does not embed is its own refusal, figure-mismatch — the targets test)
+  // and what is exercised here is the resolution alone.
+  const probe = path.join(w.docs, 'probe.md');
+  const text = '# Probe\n\n' + [...cases.map(([src]) => src), 'figs/alias.png'].map((src) => `![probe](${src})`).join('\n\n') + '\n';
+  fs.writeFileSync(probe, text);
+  const st = status(w, probe);
   for (const [src, re] of cases) {
-    const { anchor, hintOffset } = anchorAt(w.figText, LATENCY_EMBED, 0);
+    const { anchor, hintOffset } = anchorAt(text, `![probe](${src})`, 0);
     const r = refused(w, {
-      verb: 'comment', path: w.figures, fence: fenceFor(st),
+      verb: 'comment', path: probe, fence: fenceFor(st),
       args: { anchor, hintOffset, note: 'On the figure.', target: { kind: 'image', region: REGION, src } },
     }, 'unreadable');
     assert.match(r.error, re, src);
-    assert.ok(r.error.includes(src) && r.error.includes('~/notes-api/docs/figures.md'), r.error);
+    assert.ok(r.error.includes(src) && r.error.includes('~/notes-api/docs/probe.md'), r.error);
     assert.ok(r.error.endsWith('nothing was changed'), r.error);
   }
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
   // A symlink that stays inside the root is fine: the hash is of the file it names.
   const inside = path.join(w.docs, 'figs', 'alias.png');
   fs.symlinkSync(w.errors, inside);
-  const { anchor, hintOffset } = anchorAt(w.figText, ERRORS_EMBED, 0);
-  const r = comment(w, w.figures, st, { anchor, hintOffset, note: 'Via the alias.', target: { kind: 'image', region: REGION, src: 'figs/alias.png' } });
+  const { anchor, hintOffset } = anchorAt(text, '![probe](figs/alias.png)', 0);
+  const r = comment(w, probe, st, { anchor, hintOffset, note: 'Via the alias.', target: { kind: 'image', region: REGION, src: 'figs/alias.png' } });
   assert.equal(readSidecar(r.storePath).comments[0].target.hash, sha256(ERRORS));
   assert.equal(readSidecar(r.storePath).comments[0].target.src, 'figs/alias.png');
 });
@@ -353,6 +362,14 @@ test('a text file\'s replies carry embeddedHashes: one per distinct src its regi
   assert.deepEqual(Object.keys(r.embeddedHashes), ['figs/latency.png', 'figs/errors.png']);
   assert.equal(r.store.comments.length, 3);
   assert.equal('fileHash' in r, false);
+  // Beside the hashes, each figure's mtime from the same read (embeddedMtimes, by src, in statNs's nanosecond string
+  // form — the kernel's X-Romp-Mtime-Ns): the baseline the panel's poll compares its HEADs of the figure with, so a
+  // figure regenerated between this read and the poll's first HEAD is a move, not a first observation.
+  const mtimeNs = (p) => fs.statSync(p, { bigint: true }).mtimeNs.toString();
+  assert.deepEqual(r.embeddedMtimes, { 'figs/latency.png': mtimeNs(w.latency), 'figs/errors.png': mtimeNs(w.errors) });
+  assert.match(r.embeddedMtimes['figs/latency.png'], /^\d{16,}$/, 'nanoseconds, as a string');
+  assert.deepEqual(status(w, w.figures, { FILE_COMMENTS_EMBEDDED_HASH_CAP: '1' }).embeddedMtimes, r.embeddedMtimes,
+    'past the cap the hash is null but the mtime is still read: the poll compares mtimes whatever the hash');
 
   // The figure is regenerated: its hash flips while every comment keeps the hash it was drawn on
   // (the panel's stale verdict is that comparison). A deleted figure is null — unknown, not stale.
@@ -360,6 +377,7 @@ test('a text file\'s replies carry embeddedHashes: one per distinct src its regi
   fs.unlinkSync(w.errors);
   st = status(w, w.figures);
   assert.deepEqual(st.embeddedHashes, { 'figs/latency.png': sha256(REGENERATED), 'figs/errors.png': null });
+  assert.deepEqual(Object.keys(st.embeddedMtimes), ['figs/latency.png'], 'a figure that could not be read has no mtime either: the poll keeps its own reading for it');
   for (const c of st.store.comments.slice(0, 2)) assert.equal(c.target.hash, sha256(LATENCY));
   assert.equal(st.store.comments[2].target.hash, sha256(ERRORS));
   // A src that now points outside the root is null too, with a note on stderr, never a refusal.
@@ -373,7 +391,9 @@ test('a text file\'s replies carry embeddedHashes: one per distinct src its regi
   // A text file whose comments name no figure, and one with no sidecar, answer {}.
   r = comment(w, w.report, status(w, w.report), { note: 'Whole file.' });
   assert.deepEqual(r.embeddedHashes, {});
+  assert.deepEqual(r.embeddedMtimes, {});
   assert.deepEqual(status(w, w.report).embeddedHashes, {});
+  assert.deepEqual(status(w, w.report).embeddedMtimes, {});
 });
 
 test('the embedded budget: figures are hashed until the call would pass the cap, then null; the caps are the kernel\'s numbers', () => {
@@ -410,10 +430,13 @@ test('a media file\'s replies carry fileHash — the sha256 of its bytes, null a
   assert.equal(status(w, w.chart, { FILE_COMMENTS_HASH_CAP: String(size) }).fileHash, sha256(CHART));
   assert.equal(status(w, w.chart, { FILE_COMMENTS_HASH_CAP: String(size - 1) }).fileHash, null);
   assert.equal(status(w, w.chart, { FILE_COMMENTS_HASH_CAP: '0' }).fileHash, null);
-  // The cap is status's alone: a comment on the same file still stamps the full hash.
+  // The environment override is the reply's alone: a comment on the same file still stamps the full
+  // hash (the write verbs' cap is the viewer's constant, pinned in the targets test), and the reply
+  // says why its own hash is null.
   const r = ok(w, { verb: 'comment', path: w.chart, args: { note: 'Over the cap.', target: { kind: 'image', region: REGION } }, fence: { storeMtimeNs: '' } },
     { FILE_COMMENTS_HASH_CAP: '0' });
   assert.equal(r.fileHash, null);
+  assert.match(r.fileHashReason, /~\/notes-api\/docs\/chart\.png is \d+ bytes, past the 0 bytes/);
   assert.equal(r.store.comments[0].target.hash, sha256(CHART));
   // A text file: the other key, never fileHash.
   const st = status(w, w.report);
@@ -500,9 +523,17 @@ test('retarget on an embedded figure keeps needing src and hashes the figure as 
   assert.deepEqual(st.embeddedHashes, { 'figs/latency.png': sha256(REGENERATED) });
   crashed(w, { verb: 'retarget', path: w.figures, args: { commentId: c.id, target: { kind: 'image', region: REGION2 } }, fence: fenceFor(st) },
     /needs target\.src/);
-  const bad = refused(w, { verb: 'retarget', path: w.figures, args: { commentId: c.id, target: { kind: 'image', region: REGION2, src: '../../shared/banner.png' } }, fence: fenceFor(st) },
+  // A re-place keeps the figure: a src other than the stored one is a caller bug, whatever it names.
+  crashed(w, { verb: 'retarget', path: w.figures, args: { commentId: c.id, target: { kind: 'image', region: REGION2, src: '../../shared/banner.png' } }, fence: fenceFor(st) },
+    /retarget keeps the figure: comment \S+ is on figs\/latency\.png, and target\.src names \.\.\/\.\.\/shared\/banner\.png/);
+  // The stored src is resolved again as it is NOW: a figure that has become a symlink out of the root refuses.
+  fs.unlinkSync(w.latency);
+  fs.symlinkSync(w.banner, w.latency);
+  const bad = refused(w, { verb: 'retarget', path: w.figures, args: { commentId: c.id, target: { kind: 'image', region: REGION2, src: 'figs/latency.png' } }, fence: fenceFor(st) },
     'unreadable');
   assert.match(bad.error, /outside the project root/);
+  fs.unlinkSync(w.latency);
+  fs.writeFileSync(w.latency, REGENERATED);
   assert.deepEqual(readSidecar(sp).comments[0], c, 'unchanged after the refusals');
   r = retarget(w, w.figures, st, { commentId: c.id, target: { kind: 'image', region: REGION2, src: 'figs/latency.png' } });
   const after = readSidecar(sp).comments[0];
