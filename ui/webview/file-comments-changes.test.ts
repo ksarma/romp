@@ -532,7 +532,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };
   w.ctx = {
     path: ABS, sid: SID, todoId: over.todoId ?? null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },

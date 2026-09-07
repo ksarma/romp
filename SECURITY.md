@@ -70,6 +70,18 @@ UID can read.
 - **Output sanitization:** model output and message content rendered in the
   dashboard/webview pass through DOMPurify; the VS Code webview runs under a
   strict nonce CSP with `localResourceRoots` limited to the extension's assets.
+  While the **Comments** panel is open, pdf.js parses a PDF in a Worker on the
+  dashboard's origin and paints each page onto a canvas, with pixels as its
+  only sink: no text layer, annotation layer, form field, link, or script from
+  the file reaches the DOM. That puts a PDF beside the untrusted files the
+  viewer already renders on this origin (markdown through marked and
+  DOMPurify, source through highlight.js); with the panel closed a PDF opens
+  in the browser's own viewer, as before. The properties that limit this
+  (pdf.js is handed bytes, never a URL, so it fetches nothing; the installed
+  build has no eval path; only its core is bundled; a size cap and a page cap;
+  the browser's viewer as the fallback) are stated under "Security posture" in
+  `plans/file-review.md` and checked against the code by
+  `ui/webview/file-review-posture.test.ts`.
 - **No unsafe deserialization:** no `pickle`, `eval`, `exec`, or non-safe YAML on
   untrusted data.
 

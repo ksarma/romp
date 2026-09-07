@@ -412,7 +412,10 @@ test('the embedded budget: figures are hashed until the call would pass the cap,
   r = status(w, w.figures, { FILE_COMMENTS_EMBEDDED_HASH_CAP: String(2 * size) });
   assert.deepEqual(r.embeddedHashes, { 'figs/latency.png': sha256(LATENCY), 'figs/errors.png': sha256(ERRORS) });
   assert.equal(EMBEDDED_HASH_CAP, 200_000_000);
-  assert.equal(FILE_HASH_CAP, 50_000_000);
+  // The kernel's _MEDIA_MAX_BYTES is a power-of-two 50 MiB (so its 413 reads "50.0 MB"), not the
+  // 50,000,000 the host carried through Slice 3; file-comments-host-caps.test.mjs reads the constant
+  // out of kernel.py and pins the two equal byte for byte, so this literal must agree with both.
+  assert.equal(FILE_HASH_CAP, 50 * 1024 * 1024);
 });
 
 test('a media file\'s replies carry fileHash — the sha256 of its bytes, null above the cap — and no embeddedHashes', () => {

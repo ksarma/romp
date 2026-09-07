@@ -302,7 +302,7 @@ function world(over: WorldOpts = {}): World {
   const land = () => { w.landReload = null; w.viewMtime = w.diskMtime; setText(w.disk); };
   w.ctx = {
     path: ABS, sid: SID, todoId: null,
-    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [],
+    body: () => body as unknown as HTMLElement, mode: () => "raw", text: () => text, mtimeNs: () => w.viewMtime, media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },

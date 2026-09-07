@@ -383,8 +383,10 @@ export function buildSendMessage(o: MessageOpts): string {
 
 // ── region comments (Slice 3) ──────────────────────────────────────────────────────────────────────
 /** The `target` a `comment` or `retarget` sends: the kind, the fractions, and for an embedded figure the embed's
- *  `src` as written. Never a hash — the host stamps that from the bytes it reads (E1). */
-export function regionTarget(region: Region, src: string | null): Target {
+ *  `src` as written; with a `page` (1-based) the region is on a PDF page (F4) — kind "pdf", the page, never a src
+ *  (a PDF is always a file of its own). Never a hash — the host stamps that from the bytes it reads (E1). */
+export function regionTarget(region: Region, src: string | null, page: number | null = null): Target {
+  if (page) return { kind: "pdf", region, page };
   const t: Target = { kind: "image", region };
   if (src) t.src = src;
   return t;

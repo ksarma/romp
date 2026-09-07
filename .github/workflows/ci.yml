@@ -248,6 +248,13 @@ jobs:
         # repo root, not the job's vscode-extension working directory.
         working-directory: ${{ github.workspace }}
         run: node --test tests/manager-*.test.js
+      - name: PDF renderer dependency smoke test (node --test)
+        # tools/pdf-smoke.test.mjs opens a synthetic PDF with the pdfjs-dist this job's npm ci installed
+        # (plans/file-review.md, Slice 4). The shell job's tools/*.test.mjs step picks the file up too, but
+        # that job installs nothing, so the test SKIPS there by design and asserts here. Repo root: the
+        # test locates node_modules relative to itself.
+        working-directory: ${{ github.workspace }}
+        run: node --test tools/pdf-smoke.test.mjs
       - name: Build
         run: npm run build
       - name: Dashboard pane bench (node --test)

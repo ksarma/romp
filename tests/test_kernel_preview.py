@@ -165,13 +165,13 @@ class FilePreviewEndpoint(unittest.TestCase):
         self.assertEqual(code, 404)
 
     def test_oversize_413s_rather_than_truncating(self):
-        old = km._PREVIEW_MAX_BYTES
-        km._PREVIEW_MAX_BYTES = len(PNG) - 1
+        old = km._MEDIA_MAX_BYTES
+        km._MEDIA_MAX_BYTES = len(PNG) - 1
         try:
             code, _, _ = self._req("/file?path=" + urllib.parse.quote(self.png))
             self.assertEqual(code, 413)
         finally:
-            km._PREVIEW_MAX_BYTES = old
+            km._MEDIA_MAX_BYTES = old
 
     def test_head_probe_reports_existence_without_the_bytes(self):
         # the client's PDF-chip probe: headers only (real Content-Length), no body download

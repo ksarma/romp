@@ -188,7 +188,10 @@ and the feed, so an open file covers neither. While the pane is open, a file
 link clicked in the chat opens here. When it is closed, the gear's **File
 links open in** setting decides where a link opens; set it to **The Files
 pane** and the pane comes forward on its own and stays up until you close the
-file. Selecting
+file. The folder under the chat (the session's working directory) opens a
+listing of that folder by the same rule: in this pane while it is open or when
+the setting names it, otherwise over the feed. Pick a file in the listing and
+it opens where the listing is. Selecting
 a passage in it puts the quote in the chat's composer, as it does from the
 viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again. The pane is off by default;
@@ -198,7 +201,7 @@ the bottom bar turns it on.
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
 and press Enter. **Comment on this file** leaves a comment on the file as a whole, which
-every file takes; for a PDF it is the only kind for now. When a passage cannot be mapped from the
+every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
@@ -221,6 +224,20 @@ from the file's own folder, so a relative path shows in the Rendered view; a web
 with the rectangle: the session's tools and the other editors place it on that line, and this
 viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
 on a phone, comment on the file as a whole instead.
+
+**PDFs.** A PDF opens in the browser's own PDF viewer. While **Comments** is open, the viewer
+draws the pages itself instead, one below the other, so a rectangle can be dragged on a page
+the same way as on an image; the comment names its page, and its card shows that part of the
+page once the page has been drawn. Pages are drawn as you scroll near them, so until then the
+card shows a line naming the page, and clicking it scrolls the page in. A rectangle drawn on
+one page can be placed again on another. Pages are drawn only up to 25 MB of PDF; above that,
+or when the page renderer cannot be loaded or the file cannot be opened, the browser's viewer
+stays with a line above it saying why, and a comment on the whole file still works. The
+renderer ships without pdf.js's standard fonts and CMaps, and without its JPEG 2000, JBIG2, and
+fax (CCITT) image decoders, so a PDF that does not embed its fonts may show some text in a
+system font, and an image in one of those encodings is left blank, with a line at the top of
+the page saying how many; the rest of the page still draws, and the browser's own viewer shows
+the whole page.
 
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,
@@ -351,7 +368,9 @@ agent works in the new folder and reads its `CLAUDE.md`.
 
 A session's tab can carry one emoji before its name, so you can tell the
 sessions apart at a glance by role or state: a moon on the one left running
-overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**, or run
+overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**
+to open a picker: search by name or keyword, reuse one from the **Recent** row,
+browse the categories, or type or paste one the list does not have. Or run
 `romp emoji <session> <emoji>` (`romp emoji <session> --clear` removes it; with
 no emoji argument it prints the current one). A session can also set or change
 its own, with the `set_emoji` tool it gets alongside its mail tools, so you can

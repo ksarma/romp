@@ -230,10 +230,21 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers),
+                                   judge.py's thread pools; the split rides as cpu_ms_workers; the
+                                   producer thread's own per-pass work, the episode tick, the goals
+                                   snapshot and the compaction, is not in it and lands under "other"),
+                                   wakes (every _producer_wake.set() call: the backends' pokes, POST
+                                   /tick, the two kernel-internal sites; one SDK turn fires several,
+                                   so wakes/s is an upper bound on the poke-episode rate, not the
+                                   rate itself) with wakes_event / wakes_backstop (how the loop's
+                                   3 s wait ended; wakes - wakes_event is the sets a pass absorbed),
                                    chain_memo {hit, miss, populate, bypass}: the write-moment chain
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
-                                   read from the live kernel rather than assumed
+                                   read from the live kernel rather than assumed; tiers: the
+                                   evidence gate's per-tier counters (judge.tier_stats: ran,
+                                   skipped, stamped, bypassed, incomplete, due_clock per gated tier,
+                                   plus stamps held), from which skipped / (ran + skipped) is the
+                                   share of per-session runs the gate declined
       memos                        one entry per memo the kernel keeps, each a flat dict of counters:
                                    goals_snap (the judge pass's stat-keyed goal-store snapshot, see
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs
@@ -289,7 +300,8 @@ class _PerfStats:
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
             self.sends = {k: {} for k in self.SEND_KINDS}
-            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0}
+            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
+                          "wakes": 0, "wakes_event": 0, "wakes_backstop": 0}
             self.http = {}
 
     # ── writers (hot paths) ──
@@ -354,6 +366,16 @@ class _PerfStats:
         with self.lock:
             self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
 
+    def judge_wake(self):
+        """One _producer_wake.set() call (the producer's _CountedEvent)."""
+        with self.lock:
+            self.judge["wakes"] += 1
+
+    def judge_wake_kind(self, by_event):
+        """How the producer's wait ended: the flag was set, or the 3 s backstop timed out."""
+        with self.lock:
+            self.judge["wakes_event" if by_event else "wakes_backstop"] += 1
+
     def http_request(self, path, dt):
         """dt None: count the request, add no time (the WebSocket upgrade case)."""
         with self.lock:
@@ -401,6 +423,10 @@ class _PerfStats:
         except Exception:
             judge["chain_memo"] = {}
         try:
+            judge["tiers"] = jd.tier_stats()               # the evidence gate's per-tier counters
+        except Exception:
+            judge["tiers"] = {}
+        try:
             goals = jd.goal_io_stats()
         except Exception:
             goals = {}
@@ -423,14 +449,24 @@ _PERF_STATS = _PerfStats()
 
 
 class _CountedEvent(threading.Event):
-    """A threading.Event whose set() also counts in _PERF_STATS: the pusher's wake. Counting at the
-    event keeps every existing call site as it is, including the bound-method callbacks
-    (`push=_pusher_wake.set`) the backends hold and the tests that pin `_pusher_wake.set()` in the
-    source."""
+    """A threading.Event whose set() also counts in _PERF_STATS: the pusher's wake (the default
+    counter) and the producer's (`on_set`, a zero-argument callable). Counting at the event keeps every
+    existing call site as it is, including the bound-method callbacks (`push=_pusher_wake.set`) the
+    backends hold and the tests that pin `_pusher_wake.set()` in the source. The counter runs AFTER the
+    real set, so no wake ever depends on a dict increment succeeding, and `on_set` is a callable that
+    looks _PERF_STATS up at call time rather than a bound method captured at import, so a rebound
+    collector (a test's instance patch) still sees every set."""
+
+    def __init__(self, on_set=None):
+        super().__init__()
+        self._on_set = on_set
 
     def set(self):
-        _PERF_STATS.wake()
         super().set()
+        if self._on_set is None:
+            _PERF_STATS.wake()
+        else:
+            self._on_set()
 
 
 def _perf_http_key(method, path):
@@ -34531,7 +34567,9 @@ _img_cache = {}                                  # "path:mtime:size" → dataURL
 #      served as an image (an <img> never runs its scripts); the files are the user's own, written by
 #      their own agents, on their own machine.
 _PREVIEW_MIME = dict(_IMG_MIME, **{".pdf": "application/pdf"})
-_PREVIEW_MAX_BYTES = 50_000_000                  # a plot/report, not a dataset — bigger 413s (fail loudly)
+_MEDIA_MAX_BYTES = 50 * 1024 * 1024              # a plot/report, not a dataset — bigger 413s (fail loudly). A power
+#   of two so the 413 says "50.0 MB" (50_000_000 read as "47.7 MB", a cap that sounds miscopied — _TEXT_MAX_BYTES's
+#   reason); the cap of GET /file on every non-text file, the relay's backstop, and the mention pin's floor
 
 # ---- …and the SOURCE/TEXT half of the same route (the user 2026-08-08). Clicking a file link used to
 #      post openFile, which runs an opener on the KERNEL's machine — useless when you are reading the
@@ -36130,7 +36168,7 @@ def _pin_mention(fp):
     if ext not in _IMG_MIME:
         return None
     try:
-        if os.path.getsize(fp) > _PREVIEW_MAX_BYTES:   # /file would 413 it anyway — nothing to pin
+        if os.path.getsize(fp) > _MEDIA_MAX_BYTES:   # /file would 413 it anyway — nothing to pin
             return None
         with open(fp, "rb") as f:
             raw = f.read()
@@ -36901,7 +36939,9 @@ def _push_session_now(sid):
 _last_producer_sig = [None]
 # Event-driven wake: POST /tick (poked by the Stop / UserPromptSubmit hooks the instant a turn ends or a
 # prompt lands) sets this so the producer runs a judge pass NOW instead of waiting out the 20s backstop.
-_producer_wake = threading.Event()
+# Counted for /perf (judge.wakes; the wait's outcome rides judge_wake_kind in the loop): the one cadence
+# number the counters could not derive, the sets a pass absorbs, so the pass rate can be read against it.
+_producer_wake = _CountedEvent(lambda: _PERF_STATS.judge_wake())
 # Same idea for the CHAT PUSHER: the SDK live-tail (and any caller) sets this to push the chat NOW
 # instead of waiting out the 4s poll — the SDK stream leads the transcript on disk, so an immediate push
 # of the in-memory live atoms makes messages appear instantly. 4s stays as the backstop.
@@ -37988,7 +38028,8 @@ def _producer():
         # timeline/feed snappy. (the user 2026-06-19: 20s → 3s.)
         # Parked-op delivery is NOT here (2026-09-03): it rides the pusher cycle, woken by the settle itself,
         # so a long pass — a judge stage stuck on one session — can never hold a user's queued input.
-        _producer_wake.wait(3)
+        _woke = _producer_wake.wait(3)    # True: the flag was set (an event); False: the backstop timed out
+        _PERF_STATS.judge_wake_kind(_woke)
 
 
 def _pusher_cycle():
@@ -38846,8 +38887,9 @@ def _waiting_page():
 # (so a host:sid op routes to the owning kernel through the fake acquireVsCodeApi), then ui/webview/files.ts,
 # and a seat in the conserve-memory viewer list (or an open Files pane alone reads as a closed dashboard). The
 # shell's viewFile relay brings the pane forward and forwards a chat file-link click into it when fileLinkPane
-# is "pane" (render.ts openPath). Browser shell only for now: the VS Code extension's panel mirror is a
-# separate change (upstream/2026-09-03-files-pane.md).
+# is "pane" (render.ts openPath); its browseFiles relay does the same for a folder click (render.ts openBrowse,
+# 2026-09-06), so the file BROWSER opens as a column too. Browser shell only for now: the VS Code extension's
+# panel mirror is a separate change (upstream/2026-09-03-files-pane.md).
 def _files_page():
     try:
         files_css = (UI / "webview" / "files-pane.css").read_text()
@@ -39843,9 +39885,25 @@ _LANDING_SETTINGS_JS = """
 if(m.romp==='settings')document.body.classList.toggle('settings-open',!!m.on);
 // the /chat iframe's new-session picker asks the shell to lift it full-window (see body.picker-open CSS)
 if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
-// "Browse files" from any pane surfaces the FILE BROWSER in the FEED pane, which is a different
-// document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
-// and remember to put it back, so the browser never costs the user their layout. (File VIEWS
+// A browse ask from the chat ({romp:'browseFiles',path,sid,pane,identity}: the folder at the bottom of the
+// transcript, the System-context Directory row, a tab menu's Browse files, a viewer's directory link; render.ts
+// openBrowse) names its TARGET in m.pane, decided at the click by the file-link ladder (ui/webview/file-route.ts
+// browseRoute). 'pane' is the FILES pane (the user 2026-09-06: the folder's listing belongs in the Files pane
+// while that pane is open or the File-links setting names it, never over the transcript): bring the pane
+// forward, the folder click being the one gesture that moves it, and forward the ask with the session's
+// identity, which files.ts caches for the viewer's chip (the pane has no session list of its own). The pane
+// STAYS up, so none of the feed route's was-off / browseClosed restore below applies to this branch; the
+// pane's own close edge (filesViewerClosed) puts a phone back on the tab the click came from, exactly as the
+// viewFile pane branch does.
+if(m.romp==='browseFiles'&&m.pane==='pane'){var fb=document.getElementById('f-files');
+  try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
+  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curb=document.body.getAttribute('data-tab')||'chat';
+    if(curb!=='files'){window.__rompFilesTabFrom=curb;window.__rompMobileTab&&window.__rompMobileTab('files');}}}catch(e){}
+  try{fb&&fb.contentWindow&&fb.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
+// 'feed', the default while the Files pane is closed (and an ask naming no pane at all), surfaces the FILE
+// BROWSER in the FEED pane, which is a different document — so the shell relays it. If the feed pane is
+// toggled off we turn it on for the duration and remember to put it back, so the browser never costs the
+// user their layout. (File VIEWS
 // default to needing none of this since 2026-08-15 — the viewer is a modal over whatever document
 // clicked — but the cards-pane preference below opts a chat click back into the same juggling.)
 // THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its
@@ -39859,14 +39917,34 @@ if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
 // land before this arm sits on the committed flag (which transfers); one still in flight arrives to
 // a cleared pend and arms nothing — that open costs a pane left forward, arm-on-ack's one named
 // price, never a surprise hide.
-if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
+else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(window.__rompFeedWasOffView){window.__rompFeedWasOff=true;window.__rompFeedWasOffView=false;}
   window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  // a phone's tab switch and its way back wait for the feed's browseOpened ack (the arm below), not this relay
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
-// the browser's close ends the overlay chain: browseClosed puts a brought-forward feed back the way
+// The feed's ack: its browser is up and the listing asked for (file-browse.ts openFileBrowse posts browseOpened
+// after its listDir, the viewFileOpened idiom). ARM ON ACK, and only here: on a phone (one pane at a time) the
+// Feed tab comes forward ONLY in the mobile layout (on desktop the column is already visible and show() would
+// only persist a stale romp-mobile-tab for a later narrow layout, the viewFile pane branch's gate, 2026-09-07),
+// and the tab showing at the ack, the one the click came from, is remembered so the listing's close puts the
+// person back (the browseClosed arm below). Armed at the relay, the memory outlived a relay the feed stood down
+// (its openFileBrowse keeps a viewer with unsaved edits when the person says so: nothing opens, no browseClosed
+// ever consumes it), and a listing the feed later opened for itself replayed the stale tab at its close (review
+// round 2, 2026-09-07). A vetoed relay sends no ack, so nothing arms; a listing the feed opens for itself (a
+// viewer's directory link) acks with the Feed tab already showing, so nothing arms either.
+if(m.romp==='browseOpened'){
+  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';
+    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}}
+// the browser's close ends the overlay chain, and the feed's browser tells the shell on every close path
+// (file-browse.ts tellShellClosed). First the phone's way back: where the browseOpened arm above switched
+// tabs to show the listing, return to the tab the click came from (the filesViewerClosed idiom below); a
+// browse the feed opened for itself remembered nothing and moves nothing. The memory is dropped either way,
+// so a rotation to desktop in between makes the return a no-op, never a stale switch later.
+if(m.romp==='browseClosed'){var backf=window.__rompFeedTabFrom;window.__rompFeedTabFrom=null;
+  if(backf&&window.__rompMobileOn&&window.__rompMobileOn()){try{window.__rompMobileTab&&window.__rompMobileTab(backf);}catch(e){}}}
+// Then the pane: browseClosed puts a brought-forward feed back the way
 // it was, consuming the VIEWER's flag too — the feed-document handoff (the viewer's own dir-link →
 // initFileBrowse) opens the browser without any browseFiles reaching this shell, so the transfer
 // above never ran and the handed-off obligation still sits on the viewer flag. Either way: one
@@ -40910,9 +40988,9 @@ _LANDING_COLLAPSE_JS = """
   // re-applies re-send an unchanged set (redundant, harmless) — again on each iframe's own load, so a pane
   // that boots or reloads after the shell still hears the current set (the focus ring's "wire now + on every
   // (re)load", _LANDING_FOCUS_JS), and from _LANDING_MOBILE_JS on a tab switch or a layout flip (what is on
-  // screen changed with no toggle). The chat routes a file-link click by it (render.ts fileLinkRoute, the
-  // user 2026-09-04: an OPEN Files pane takes the click whatever the fileLinkPane setting says — the pane
-  // being open IS the intent).
+  // screen changed with no toggle). The chat routes a file-link click by it (ui/webview/file-route.ts
+  // fileLinkRoute, the user 2026-09-04: an OPEN Files pane takes the click whatever the fileLinkPane setting
+  // says — the pane being open IS the intent), and a folder click the same way (browseRoute, 2026-09-06).
   var KEYS=__PANE_KEYS__;
   // on[k] is "this pane is on screen", not the po flag: in the mobile layout (one tab at a time, the po-*
   // classes ignored — _LANDING_MOBILE_JS) it is the current tab, so a po.files left true by a desktop session
@@ -42320,7 +42398,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(415, b"" if head else
                               "not viewable in the browser: %s" % _tilde(fp), "text/plain")
         size = os.path.getsize(fp)
-        cap = _TEXT_MAX_BYTES if text else _PREVIEW_MAX_BYTES
+        cap = _TEXT_MAX_BYTES if text else _MEDIA_MAX_BYTES
         if size > cap:
             return self._send(413, b"" if head else
                               "too large to show: %s (%s, limit %s)"
@@ -45677,7 +45755,7 @@ class Handler(BaseHTTPRequestHandler):
                 hdrs["Range"] = _rng
             conn.request("HEAD" if head else "GET", "/file?" + urlencode(q, doseq=True), headers=hdrs)
             resp = conn.getresponse()
-            body = b"" if head else resp.read(_PREVIEW_MAX_BYTES + 1)
+            body = b"" if head else resp.read(_MEDIA_MAX_BYTES + 1)
             status, ctype = resp.status, mime          # OUR mime, never resp.getheader("Content-Type")
             clen = resp.getheader("Content-Length")
             # These three are MIRRORED, unlike Content-Type: they are data about the remote's file
@@ -45697,7 +45775,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             except OSError:
                 pass
-        if len(body) > _PREVIEW_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
+        if len(body) > _MEDIA_MAX_BYTES:       # backstop only — the remote's own cap 413s long before this
             return self._send(413, b"" if head else "too large to preview", "text/plain")
         if head:
             # mirror _file_preview's HEAD: the remote's verdict + real length, no body

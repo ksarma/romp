@@ -187,8 +187,19 @@ class SharedStoreCache(unittest.TestCase):
         self.assertIs(jd.load_goals_shared(SID), b, "the new bytes are memoized")
 
     def test_eight_concurrent_loaders_receive_one_object(self):
-        # A smoke test over real threads: whichever of them fills, every reader ends with one object. The
-        # scheduler decides whether a fill loses the race; the dup path itself is forced in the test below.
+        """A smoke test over real threads: eight loaders of one unchanged store all receive the one published
+        object, and the cache holds one entry. The scheduler decides how many of the eight fill; the dup path
+        itself, with its exact counts, is forced in test_a_fill_that_loses_the_race_returns_the_published_object.
+
+        The counts asserted here hold for every interleaving, from load_goals_shared's fill path. A call on an
+        unchanged file counts exactly one of hit (an entry with its keys and bytes) or miss (no entry yet); a
+        compare_miss needs other bytes and a refuse a moved archive, so neither occurs. Every miss reaches the
+        publish step under the lock: the first publishes, and each later one finds that entry and counts a dup,
+        so there is one publish and dup == miss - 1. A thread that reads the map after the publish hits while
+        another is still mid-fill, so any split of hit and miss with miss >= 1 is legal. (The sum miss + hit +
+        dup this test once asserted read 9 for eight loads whenever two fills overlapped: the 2026-09-07 CI
+        failure, on a branch that predated the dup-aware arithmetic.) The counters are process-global; the
+        loader is pointed at this test's private state root, where the only store is the one seeded here."""
         self._seed()
         n = 8
         bar = threading.Barrier(n)
@@ -196,25 +207,27 @@ class SharedStoreCache(unittest.TestCase):
 
         def go():
             try:
-                bar.wait(5)
-                out.append(jd.load_goals_shared(SID))
+                bar.wait(30)                             # bounds on a hang, not a schedule: a loaded box can
+                out.append(jd.load_goals_shared(SID))    # take seconds to start eight threads
             except Exception as e:                       # pragma: no cover — a failure here is the finding
                 errs.append(e)
         ts = [threading.Thread(target=go) for _ in range(n)]
         for t in ts:
             t.start()
         for t in ts:
-            t.join(10)
+            t.join(60)
         self.assertEqual(errs, [])
         self.assertEqual(len(out), n)
-        self.assertEqual(len({id(o) for o in out}), 1, "one object for every reader")
-        # Every load is a hit or a miss on an unchanged file; a miss that also lost the publish race counts a
-        # dup besides (the forced case below: two misses, one dup), so dup is bounded by the misses after the
-        # first, not added to them. Under the GIL the eight fills rarely overlap (one miss, seven hits); on the
-        # free-threaded build several do, and the old sum miss + hit + dup read 10 for eight loads.
-        self.assertEqual(self._delta("hit") + self._delta("miss"), n)
-        self.assertGreaterEqual(self._delta("miss"), 1)
-        self.assertLessEqual(self._delta("dup"), self._delta("miss") - 1, "only a fill that found an earlier publish is a dup")
+        self.assertIsInstance(out[0], jd.FrozenStore)
+        for o in out[1:]:
+            self.assertIs(o, out[0], "one object for every reader")
+        self.assertEqual(jd.shared_store_stats()["entries"], 1, "one publish; a fill that lost the race published nothing")
+        hit, miss, dup = self._delta("hit"), self._delta("miss"), self._delta("dup")
+        self.assertGreaterEqual(miss, 1, "the first call found no entry")
+        self.assertEqual(hit + miss, n, "each call counted once, as a hit or as a miss")
+        self.assertEqual(dup, miss - 1, "one miss published; every other miss found its entry")
+        self.assertEqual((self._delta("compare_miss"), self._delta("refuse")), (0, 0),
+                         "neither is reachable on an unchanged file with an unmoved archive")
 
     def test_a_fill_that_loses_the_race_returns_the_published_object(self):
         # The dup path, forced: inside the first fill's freeze a second loader runs the whole fill and

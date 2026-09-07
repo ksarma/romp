@@ -22,6 +22,9 @@ import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, a
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
+import { EMOJI_RECENT_KEY, gridSections, moveInGrid, parseRecentEmoji, rememberEmoji, sameEmoji } from "./emoji-picker";
+import type { GridPos } from "./emoji-picker";
+import { EMOJI_CATEGORIES } from "./emoji-data";
 import { markerLabel, dayContext } from "./time-marker";
 import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind } from "./sender-identity";
@@ -53,7 +56,8 @@ import { openPathLink, linkifyPathTokens } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
-import { initFileBrowse, openFileBrowse } from "./file-browse";   // the browser is pane-local here now (the user 2026-08-24)
+import { initFileBrowse, openFileBrowse } from "./file-browse";   // the chat's own browser instance, for standalone /chat (openBrowse)
+import { fileLinkRoute, browseRoute, type BrowseRoute } from "./file-route";   // where a file or folder click opens: one ladder, pure
 import { pastedFilePath } from "./paste-path";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
@@ -1290,12 +1294,12 @@ document.addEventListener("click", (e) => {
 //     pane sat there empty was the bug. The setting decides only where a link goes while the pane is
 //     CLOSED.
 //
-// The route decision is fileLinkRoute, pure so the branch is testable: it names the TARGET — "feed",
-// "pane", or "here" (the in-document modal) — and a preference relays ONLY when a shell exists to
-// relay to (framed — openBrowse's exact gate). Standalone /chat has no shell and no other pane, so
-// either preference quietly means "here". The gate lives at THIS end deliberately: the shell forwards
-// whatever arrives (browseFiles' contract), so a message never sent is a click that opens in place —
-// no setting check shell-side can swallow a click.
+// The route decision is fileLinkRoute (file-route.ts: pure, so the table runs for real in tests). It names
+// the TARGET, "feed", "pane", or "here" (the in-document modal), and a preference relays ONLY when a shell
+// exists to relay to (framed). Standalone /chat has no shell and no other pane, so either preference quietly
+// means "here". The gate lives at THIS end deliberately: the shell forwards whatever arrives (browseFiles'
+// contract), so a message never sent is a click that opens in place; no setting check shell-side can
+// swallow a click. A FOLDER click walks the same ladder through browseRoute (openBrowse below).
 //
 // panesOn is the shell's pane set as the shell last told it — {romp:"panes", on:{chat,feed,files,…}},
 // where on means ON SCREEN: a desktop column toggled on, or on a phone the one tab showing (a po flag
@@ -1307,11 +1311,6 @@ document.addEventListener("click", (e) => {
 // per-click guess (no reading the parent's DOM, no polling). Standalone /chat never hears one and reads
 // as all-off, which the framed gate makes moot anyway.
 let panesOn: Record<string, boolean> = {};
-function fileLinkRoute(pane: unknown, framed: boolean, filesOpen: boolean): "feed" | "pane" | "here" {
-  if (!framed) return "here";
-  if (filesOpen) return "pane";
-  return pane === "feed" || pane === "pane" ? pane : "here";
-}
 function openPath(path: string, sid?: string | null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
@@ -1339,24 +1338,55 @@ function openPath(path: string, sid?: string | null): void {
   vscodeApi.postMessage(sid ? { type: "openFile", path, id: sid } : { type: "openFile", path });
 }
 
-// Surface the FILE BROWSER at `path` for the session: the shell brings the feed pane forward and the
-// browser overlay opens there (unlike openPath's in-pane viewer modal, the browser overlay lives in
-// the feed document). Web-only, and only when a shell exists to relay to; VS Code's affordances are
-// gated off at their call sites (the editor has its own explorer, and the webview can't reach the
-// kernel origin anyway).
-function openBrowse(path: string, sid?: string | null): void {
-  // PANE-LOCAL since 2026-08-24 (the user: it opened over the FEED cards — the wrong pane): the
-  // browser is a modal over the chat that launched it, the same document the viewer already uses —
-  // no shell lift, no pane juggling (the shell's browseClosed restore is a no-op here: it only
-  // fires when the shell itself lifted the feed). Web-only stands — the VS Code webview cannot
-  // reach the kernel origin, and the editor has its own explorer.
+// Where a FOLDER click opens right now: the file-link ladder's verdict for a browse (file-route.ts
+// browseRoute), read live at the click, in one place so its two readers (openBrowse and the tab menu's
+// sub-line, which tells the person where Browse files will land) cannot disagree.
+function browseRouteNow(): BrowseRoute {
   const web = location.protocol === "http:" || location.protocol === "https:";
-  if (!web) return;
-  openFileBrowse(path || ".", sid || activeId || null);
+  return browseRoute(web, settings.fileLinkPane, window.parent !== window, panesOn.files === true);
 }
-// (The old forwarder that relayed the viewer's directory-half {romp:'browseFiles'} ask to the shell
-// is gone with the move: initFileBrowse's own listener answers it in THIS document now.)
-initFileBrowse((m) => vscodeApi?.postMessage(m));
+// Surface the FILE BROWSER at `path` for the session: the statusline's folder, the System-context Directory
+// row, a tab menu's Browse files, a chat-hosted viewer's directory link. The SAME ladder as a file link,
+// with one difference: a framed chat never browses in place (the user 2026-09-06: the folder at the bottom
+// of the chat opened its listing over the transcript; it belongs in the Files pane, or over the feed). The
+// 2026-08-24 pane-local move answered a listing that opened over the FEED CARDS while the user read the
+// chat; the Files pane (2026-09-03) is the surface that complaint was asking for, and the feed route is
+// what the shell already does for a browse. The route names the target; the shell does the pane work at
+// the other end, on this click and nothing else (the folder click is the one gesture that moves a pane):
+//   "pane"   the Files pane is on screen, or the gear's File-links setting names it: the listing opens IN
+//            that pane (files.ts hosts the same browser); a closed pane comes forward and stays. A file
+//            picked from the listing opens there, pane-resident, with the viewer's back button to the listing.
+//   "feed"   the default while the pane is closed: the feed pane's browser, brought forward for the
+//            duration and put back on browseClosed (the shell's feed-lift machinery, unchanged).
+//   "here"   only UNFRAMED (standalone /chat), where neither surface exists: the browser as a modal over
+//            this document, the one place the chat's own overlay (and its CSS mirror in styles.css) shows.
+// Web-only: in VS Code the folder link keeps openFolder (asFolderLink) and the menu row is not built; the
+// webview cannot reach the kernel origin, and the editor has its own explorer.
+// A viewer up over this chat stays where it is when the listing opens in another pane: closing it bought
+// nothing there and, with unsaved edits in the viewer, cost a discard prompt for a click that never needed
+// the edits gone (review 2026-09-07). Only the in-place route closes it first ("browse" means the person
+// wants the listing now, the browser's own rule, in openFileBrowse), and a dirty-edit veto there stands the
+// click down whole. The message carries the session's identity (name + color, nameOf's ladder) for the
+// Files pane, which has no session list to name a picked file's session by (openPath's viewFile does the
+// same); the feed resolves its own and ignores it.
+function openBrowse(path: string, sid?: string | null): void {
+  const route = browseRouteNow();
+  if (route === "editor") return;
+  const to = sid || activeId || null;
+  if (route === "here") { openFileBrowse(path || ".", to); return; }
+  const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
+  window.parent.postMessage({ romp: "browseFiles", path: path || ".", sid: to, pane: route,
+    identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
+}
+// The chat hosts its own browser instance for the unframed route. A chat-hosted viewer's directory link posts
+// browseFiles to THIS window (file-view.ts); onRelay hands that ask to openBrowse, so it walks the same ladder
+// as the folder link instead of opening in place. The chat never asks the shell to lift a pane for its own
+// browser, so its close owes the shell no restore (shellRestore false: a browseClosed from here would consume
+// a flag the FEED's relay armed and hide the feed under its own browser).
+initFileBrowse((m) => vscodeApi?.postMessage(m), {
+  shellRestore: false,
+  onRelay: (m) => openBrowse(m.path, typeof m.sid === "string" ? m.sid : null),
+});
 
 // A clickable file name that opens the real file — in the editor (VS Code) or the in-pane viewer
 // modal (web). Shared open/navigate surface; see extension.ts's openFile handler and file-view.ts.
@@ -3029,11 +3059,13 @@ function asFolderLink(elem: HTMLElement, cwd: string, sid?: string): void {
   if (!cwd) return;
   // On the web a click BROWSES the folder in the dashboard (the user 2026-08-14) — the affordance
   // that works from every device, where OS-open acted on the KERNEL's machine (the wrong-machine
-  // class the 📎 picker and file links were cured of). OS-open survives on
-  // the row's right-click menu for the genuinely-local case (the contextmenu delegate below). In
-  // VS Code the browser overlay doesn't exist, so the click keeps opening the folder host-side.
+  // class the 📎 picker and file links were cured of). WHERE the listing opens is decided at the
+  // click, not here (openBrowse: the Files pane, the feed pane, or in place only when unframed; the
+  // user 2026-09-06). OS-open survives on the row's right-click menu for the genuinely-local case
+  // (the contextmenu delegate below). In VS Code the browser overlay doesn't exist, so the click
+  // keeps opening the folder host-side.
   const web = location.protocol === "http:" || location.protocol === "https:";
-  elem.dataset.act = web ? "browseFiles" : "openFolder";   // pane-local browse needs no shell (2026-08-24)
+  elem.dataset.act = web ? "browseFiles" : "openFolder";   // the act names the intent; openBrowse routes it
   elem.dataset.cwd = cwd;
   if (sid) elem.dataset.id = sid;
   elem.classList.add("folder-link");
@@ -5661,6 +5693,7 @@ function stripAftermath(visibleIds: readonly string[], ids: readonly string[]): 
 // so this is a small themed floating menu; one open at a time, dismissed by any
 // outside click, Escape, scroll, or losing window focus.
 let ctxMenuEl: HTMLElement | null = null;
+let ctxMenuAt: { x: number; y: number } | null = null;   // the tab menu's last (clamped) corner: where its emoji picker opens
 function dismissTabMenu() {
   ctxMenuEl?.remove();
   ctxMenuEl = null;
@@ -5774,6 +5807,7 @@ function ctxIcon(kind: "feed" | "mail" | "bell" | "bill" | "folder" | "tag" | "p
 
 function showTabMenu(e: MouseEvent, id: string) {
   dismissTabMenu();
+  closeEmojiPrompt();   // a menu opening closes the emoji picker the last one spawned (the swatches' dismissal rule)
   const menu = el("div", "ctx-menu");
   // Rename leads ONE top section with the session controls (the user 2026-08-24: it sat alone and
   // bare above its own divider) — the standard dress like its siblings: icon + the sub-line, which
@@ -6215,16 +6249,20 @@ function showTabMenu(e: MouseEvent, id: string) {
     menu.appendChild(tagsItem);
   }
   // BROWSE FILES — at the BOTTOM behind its own divider (the user 2026-08-24: it is a different
-  // kind of thing from the toggles above), wearing the standard icon + sub-description dress, and
-  // opening PANE-LOCAL over this chat (openBrowse). Web-only: the VS Code webview cannot reach the
-  // kernel origin, and the editor has its own explorer.
+  // kind of thing from the toggles above), wearing the standard icon + sub-description dress. It
+  // opens where the folder link opens (openBrowse's ladder: the Files pane, the feed pane, or over
+  // this chat only when unframed), and the sub-line names that place, read when the menu builds.
+  // Web-only: the VS Code webview cannot reach the kernel origin, and the editor has its own explorer.
   if (location.protocol === "http:" || location.protocol === "https:") {
     menu.appendChild(el("div", "ctx-sep"));
     const browse = el("div", "ctx-item ctx-item-toggle");
     browse.appendChild(ctxIcon("folder", false));
     const bodyEl = el("span", "ctx-item-body");
     const l = el("span", "ctx-item-label"); l.textContent = "Browse files"; bodyEl.appendChild(l);
-    const sb = el("span", "ctx-item-sub"); sb.textContent = "the session's working tree, in a viewer over this chat"; bodyEl.appendChild(sb);
+    const where = browseRouteNow();
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = "the session's working tree, " + (where === "pane" ? "in the Files pane" : where === "feed" ? "in the feed pane" : "in a viewer over this chat");
+    bodyEl.appendChild(sb);
     browse.appendChild(bodyEl);
     browse.addEventListener("click", (ev) => {
       ev.stopPropagation(); dismissTabMenu();
@@ -6236,8 +6274,11 @@ function showTabMenu(e: MouseEvent, id: string) {
   ctxMenuEl = menu;
   // at the cursor, clamped so it never overflows the pane
   const r = menu.getBoundingClientRect();
-  menu.style.left = Math.max(0, Math.min(e.clientX, window.innerWidth - r.width - 4)) + "px";
-  menu.style.top = Math.max(0, Math.min(e.clientY, window.innerHeight - r.height - 4)) + "px";
+  const mx = Math.max(0, Math.min(e.clientX, window.innerWidth - r.width - 4));
+  const my = Math.max(0, Math.min(e.clientY, window.innerHeight - r.height - 4));
+  menu.style.left = mx + "px";
+  menu.style.top = my + "px";
+  ctxMenuAt = { x: mx, y: my };   // Emoji… opens its picker here, where this menu stood
 }
 // A remote host coming or going flips the disconnected marks on its tabs. The federation manager fires
 // this only when the reachable set actually CHANGES (its own /tunnels poll is the event), so this is a
@@ -6247,6 +6288,12 @@ window.addEventListener("mousedown", (e) => { if (ctxMenuEl && !ctxMenuEl.contai
 // …and says so on the event (preventDefault) when it did close a menu: the snapshot's Escape (leaveSnapshot),
 // a later capture listener on this window, yields to a consumed Escape instead of also leaving the view
 window.addEventListener("keydown", (e) => { if (e.key === "Escape" && ctxMenuEl) { dismissTabMenu(); e.preventDefault(); } }, true);
+// The emoji picker (showEmojiPrompt) dismisses the way the menu it came from does: a mousedown outside it,
+// Escape, and the tab menu opening again (showTabMenu). Not on scroll, which the menu also takes: the
+// picker's own grid scrolls, and a window-level capture sees that. Not on blur either: its footer field
+// invites a paste, and a paste begins with a trip to another window.
+window.addEventListener("mousedown", (e) => { if (emojiPrompt && !emojiPrompt.card.contains(e.target as Node)) closeEmojiPrompt(); }, true);
+window.addEventListener("keydown", (e) => { if (e.key === "Escape" && emojiPrompt) { e.stopPropagation(); e.preventDefault(); closeEmojiPrompt(); } }, true);
 window.addEventListener("scroll", dismissTabMenu, true);
 window.addEventListener("blur", () => dismissTabMenu());
 
@@ -7605,22 +7652,46 @@ function onMoveDirCompletions(m: any): void {
   movePrompt.input.classList.toggle("bad", said.cls === "bad");
 }
 
-// Emoji… (tab context menu): one input for one emoji, prefilled with the current one. Set posts it, Clear
-// posts "", and the pressed button acknowledges at once — it reads "Setting…" / "Clearing…" and the input
-// locks (the repo's button rule) — while the dialog STAYS OPEN for the kernel's verdict, the move dialog's
-// shape (review, 2026-09-06; it shipped closing on the click, so a refusal arrived as a toast after the
-// input was gone and retrying meant reopening and finding the value again). The kernel's {emojiSet} for
-// this session closes it; a refusal (letters, two emoji, a bare text symbol) paints the kernel's one-line
-// reason under the input with the typed value still there to fix. The kernel's refusal is a bare warn
-// with no id (the rename precedent), so while a Set is pending the warn router hands warns to THIS dialog
-// first (emojiRefusedLocal), ahead of the create-failure branch that used to claim every warn during a
-// provisional create and so struck the opening tab for a refused emoji; what remains ambiguous — a
-// create's own failure landing in the moment between a Set and its answer — is bounded by that window.
-// Pane-local like the move dialog. The backstop covers a kernel that never answers (the loading rule: a
-// wait never traps); Cancel and Escape work throughout.
-let emojiPrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
-                   go: HTMLButtonElement; clear: HTMLButtonElement; pending: boolean; close: () => void;
-                   backstop?: number; asked?: string } | null = null;   // asked: the value the last Set/Clear posted
+// Emoji… (tab context menu): a picker (2026-09-07), in place of the one-field dialog of 2026-09-06. Top to
+// bottom: a search box (word prefixes over the names and keywords of the curated list in emoji-data.ts, no
+// network), a Recent row (the last sixteen picks, per browser, in localStorage), the grid by category with a
+// strip of category icons that jumps to each, and a footer for what the list does not carry: a small "or
+// type or paste one" field (a skin-toned or brand-new emoji), Set, and Clear. It floats where the tab menu
+// stood, in the menu vocabulary, and dismisses on a mousedown outside it, Escape, or the tab menu opening
+// again (the menu's own closers, minus scroll and blur: see the window listeners by dismissTabMenu). What
+// a pick does is unchanged from the field: the value is posted
+// with setSessionEmoji and the dialog STAYS OPEN for the kernel's verdict, acknowledging at once (Set reads
+// "Setting…" or Clear "Clearing…", the picked cell dims, the cells, the search box and the field lock). The
+// kernel is the validator
+// (exactly one emoji, nothing textual) and this dialog never pre-judges a value: a cell and a typed value go
+// through the same door, and the kernel's one-line reason lands in the same hint line above the field with
+// the typed value still there to fix. The kernel's {emojiSet} for this session closes it and files the emoji
+// as a recent. The refusal is a bare warn with no id (the rename precedent), so while a Set is pending the
+// warn router hands warns to THIS dialog first (emojiRefusedLocal), ahead of the create-failure branch that
+// used to strike the opening tab. The backstop covers a kernel that never answers (the loading rule: a wait
+// never traps).
+// Click safety: the cells are rebuilt on every keystroke in the search box, so their action is DELEGATED
+// to the card (actions.ts delegate, data-act="pick" and "cat"), never hung on a cell; a rebuild between
+// mousedown and mouseup still lands the click on the card. Set and Clear are built once per open and never
+// rebuilt, so their own listeners are safe (the move dialog's arrangement).
+// Keyboard: Tab runs search, the Recent row, the grid, the field, Clear, Set (one roving stop each for the
+// row and the grid: tabIndex 0 on the focused cell, -1 on the rest); arrows move through the cells and
+// across section boundaries (moveInGrid, emoji-picker.ts, tested there); Enter or Space on a cell picks it
+// (the button's own activation); Down from the search box goes to the next Tab stop (the Recent row when
+// there is one, else the grid) and Enter in the search box picks the first result; Enter in the field sets
+// the typed value; Escape closes throughout. The category strip is mouse-only (tabIndex -1): the arrows
+// already walk every category, and a Tab stop between the search box and the grid cost more than it gave.
+// Focus never falls to <body>: a submit parks it on the card (tabIndex -1) before disabling the control
+// that held it, and a close hands it back when the card held it, by focusActiveTab's ladder: the session's
+// tab, else its section head when a push folded it away meanwhile, else the active tab when a push closed
+// the session (the way the tab bar refocuses after a rebuild); the hint line is a live region (role=status),
+// so a refusal or the backstop is announced wherever focus sits. The scroll box is a listbox of groups (one
+// per section) whose options are the cells; its two Tab stops (the Recent row, the categories) are a
+// deliberate departure from the one-stop listbox, kept because the row is the row people reach for.
+let emojiPrompt: { sid: string; card: HTMLElement; search: HTMLInputElement; scroll: HTMLElement;
+                   input: HTMLInputElement; hint: HTMLElement; go: HTMLButtonElement; clear: HTMLButtonElement;
+                   pending: boolean; typed: boolean; close: () => void;
+                   backstop?: number; asked?: string } | null = null;   // asked: the value the last pick/Set/Clear posted; typed: the field held it
 function closeEmojiPrompt(): void {
   if (!emojiPrompt) return;
   if (emojiPrompt.backstop !== undefined) clearTimeout(emojiPrompt.backstop);
@@ -7628,75 +7699,256 @@ function closeEmojiPrompt(): void {
   p.close();
 }
 
+// the Recent row's store: the shape and the cap live in emoji-picker.ts (tested there); this is the
+// localStorage seam, tolerant of a blocked or full store
+function readRecentEmoji(): string[] {
+  try { return parseRecentEmoji(localStorage.getItem(EMOJI_RECENT_KEY)); } catch { return []; }
+}
+function rememberRecentEmoji(emoji: string): void {
+  try { localStorage.setItem(EMOJI_RECENT_KEY, JSON.stringify(rememberEmoji(readRecentEmoji(), emoji))); } catch { /* storage blocked */ }
+}
+
+// the hint for Set with an empty field: a local refusal, in the kernel's slot
+const EMPTY_SET = "Pick an emoji, or type or paste one.";
+
+// The category strip's current mark, from the scroll box's geometry (pure, so tab-emoji-picker.test.ts runs
+// it): the last section whose top has reached the top of the box. Two corrections to that rule, both from
+// review round 1: the Recent row has no strip button, so it counts as the first category; and the box clamps
+// at its end, where the last section may never reach the top, so at the end the last section is the one.
+// `ids` and `tops` are the sections in order (data-sec, offsetTop within the box); null marks nothing.
+function stripMarkAt(ids: readonly string[], tops: readonly number[], scrollTop: number, clientHeight: number,
+                     scrollHeight: number): string | null {
+  let at = -1;
+  tops.forEach((t, i) => { if (t <= scrollTop + 1) at = i; });
+  if (scrollHeight > clientHeight && scrollTop + clientHeight >= scrollHeight - 1) at = ids.length - 1;
+  if (at >= 0 && ids[at] === "recent") at = Math.min(at + 1, ids.length - 1);
+  return at >= 0 ? ids[at] || null : null;
+}
+
 function showEmojiPrompt(sid: string): void {
   closeEmojiPrompt();
   const sess = sessions.get(sid);
   const cur = sess?.emoji || tabMeta.get(sid)?.emoji || "";
-  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "emoji-prompt";
-  const box = el("div", "picker-box confirm-box");
-  const h = el("div", "confirm-title"); h.textContent = `Emoji for “${sess?.name || tabMeta.get(sid)?.name || "session"}”`;
-  const d = el("div", "confirm-detail");
-  d.textContent = "One emoji, shown before the name on the tab. The session can change it too.";
+  const who = sess?.name || tabMeta.get(sid)?.name || "session";
+  const card = el("div", "ctx-menu emoji-picker"); card.id = "emoji-picker";
+  card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Emoji for " + who);
+  card.tabIndex = -1;   // holds focus while a submit disables the control that had it; never a Tab stop
+  const title = el("div", "emoji-title"); title.textContent = `Emoji for “${who}”`;
+  const search = document.createElement("input");
+  search.type = "text"; search.className = "ctx-tag-input emoji-search"; search.placeholder = "Search";
+  search.setAttribute("aria-label", "Search emoji");
+  search.setAttribute("autocapitalize", "off"); search.setAttribute("autocomplete", "off");
+  search.setAttribute("autocorrect", "off"); search.setAttribute("spellcheck", "false");
+  const cats = el("div", "emoji-cats");
+  for (const c of EMOJI_CATEGORIES) {
+    const b = el("button", "emoji-cat") as HTMLButtonElement;
+    b.type = "button"; b.tabIndex = -1; b.dataset.act = "cat"; b.dataset.cat = c.id;
+    b.title = c.label; b.setAttribute("aria-label", c.label); b.textContent = c.icon;
+    cats.appendChild(b);
+  }
+  const scroll = el("div", "emoji-scroll");
+  scroll.setAttribute("role", "listbox"); scroll.setAttribute("aria-label", "Emoji");
+  const hint = el("div", "emoji-hint");   // the kernel's one-line reason for a refused value; empty until then
+  hint.setAttribute("role", "status"); hint.setAttribute("aria-live", "polite");   // announced, wherever focus sits
+  const foot = el("div", "emoji-foot");
   const input = document.createElement("input");
-  input.type = "text"; input.className = "fork-name emoji-pick"; input.value = cur;
-  input.placeholder = "one emoji";
+  input.type = "text"; input.className = "ctx-tag-input emoji-pick"; input.value = cur;
+  input.placeholder = "or type or paste one"; input.setAttribute("aria-label", "Type or paste an emoji");
   input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
   input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
-  const hint = el("div", "emoji-hint");   // the kernel's one-line reason for a refused value; empty until then
-  const actions = el("div", "confirm-actions");
-  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
-  const clear = el("button", "picker-action confirm-btn") as HTMLButtonElement; clear.textContent = "Clear";
+  const clear = el("button", "picker-action") as HTMLButtonElement; clear.type = "button"; clear.textContent = "Clear";
   // nothing to clear → disabled, and DRESSED as disabled (.picker-action:disabled): with the live button's
   // pointer cursor and hover wash it read as one whose click did nothing (review, 2026-09-06)
   clear.disabled = !cur;
   if (!cur) clear.title = "nothing to clear — this session has no emoji";
-  const go = el("button", "picker-action confirm-btn") as HTMLButtonElement; go.textContent = "Set";
-  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeEmojiPrompt(); } };
-  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
-  emojiPrompt = { sid, overlay, input, hint, go, clear, pending: false, close };
-  const submit = (value: string, btn: HTMLButtonElement, busy: string) => {
+  const go = el("button", "picker-action") as HTMLButtonElement; go.type = "button"; go.textContent = "Set";
+  const close = () => {
+    // focus goes back to this session's tab when the card held it (Escape, the kernel's confirm, an outside
+    // mousedown: the click's own focus move follows this one); when it did not (the tab menu reopening on
+    // a right-click that has already focused ITS tab), nothing here moves it. The tab was on screen when
+    // the menu opened on it, not necessarily now: the card lives on document.body and outlives every strip
+    // rebuild, and a push meanwhile can close the session from another client or re-home it into a folded
+    // section, whose members render as the section head alone; focusing the missing tab left focus on
+    // <body> (review round 2). So focusActiveTab's ladder, for THIS sid: the tab, else its section head
+    // (homeSectionOf on the rendered plan), else the active tab (renderTabs's own rule when a focused
+    // header is gone).
+    const held = card.contains(document.activeElement);
+    card.remove();
+    if (!held) return;
+    const bar = document.getElementById("tabs");
+    const tab = bar?.querySelector(`.tab[data-id="${sid}"]`) as HTMLElement | null;
+    if (tab) { tab.focus(); return; }
+    const home = homeSectionOf(lastStripItems, sid);
+    const head = home && home.name !== null && bar
+      ? Array.from(bar.querySelectorAll<HTMLElement>(".tab-group-head")).find((h) => h.dataset.group === home.name) : undefined;
+    if (head) head.focus(); else focusActiveTab();
+  };
+  emojiPrompt = { sid, card, search, scroll, input, hint, go, clear, pending: false, typed: false, close };
+
+  // the grid: sections from emoji-picker.ts; one roving focus for the Recent row, one for the rest
+  let recents = readRecentEmoji();
+  let sections = gridSections("", recents);
+  let gridFocus: GridPos = { section: 0, index: 0 };   // the grid's Tab stop (the categories, or Results)
+  let recentFocus = 0;                                  // the Recent row's Tab stop
+  const isRecent = (s: number) => sections[s]?.id === "recent";
+  const cellAt = (pos: GridPos) =>
+    scroll.querySelector(`.emoji-cell[data-s="${pos.section}"][data-i="${pos.index}"]`) as HTMLButtonElement | null;
+  const focusedIn = (s: number): number => isRecent(s) ? recentFocus : (gridFocus.section === s ? gridFocus.index : -1);
+  // the strip marks the category the scroll box shows (keyed on the scroll event; the math is stripMarkAt)
+  const markCat = () => {
+    const secs = Array.from(scroll.querySelectorAll<HTMLElement>(".emoji-sec"));
+    const at = stripMarkAt(secs.map((x) => x.dataset.sec || ""), secs.map((x) => x.offsetTop),
+                           scroll.scrollTop, scroll.clientHeight, scroll.scrollHeight);
+    cats.querySelectorAll<HTMLElement>(".emoji-cat").forEach((b) => b.classList.toggle("cur", b.dataset.cat === at));
+  };
+  const paint = () => {
+    sections = gridSections(search.value, recents);
+    const searching = !!search.value.trim();
+    cats.classList.toggle("off", searching);   // nothing to jump to while a search shows one Results section
+    // the grid's stop starts on the tab's current emoji when the list has it, else on the first cell
+    let first = sections.findIndex((s) => s.id !== "recent" && s.cells.length > 0);
+    if (first < 0) first = 0;
+    gridFocus = { section: first, index: 0 };
+    recentFocus = 0;
+    if (cur) {
+      for (let s = 0; s < sections.length; s++) {
+        if (isRecent(s)) continue;
+        const k = sections[s].cells.findIndex((c) => sameEmoji(c[0], cur));
+        if (k >= 0) { gridFocus = { section: s, index: k }; break; }
+      }
+    }
+    const frag = document.createDocumentFragment();
+    sections.forEach((sec, s) => {
+      const box = el("div", "emoji-sec"); box.dataset.sec = sec.id;
+      const h = el("div", "emoji-sec-h"); h.textContent = sec.label; h.id = "emoji-sec-" + sec.id; box.appendChild(h);
+      box.setAttribute("role", "group"); box.setAttribute("aria-labelledby", h.id);
+      if (!sec.cells.length) {
+        const none = el("div", "emoji-none"); none.textContent = "No match. Type or paste one below."; box.appendChild(none);
+      } else {
+        const grid = el("div", "emoji-grid");
+        const f = focusedIn(s);
+        sec.cells.forEach(([emoji, nm], i) => {
+          const isCur = sameEmoji(emoji, cur);   // U+FE0F-insensitive: the kernel stores either form unchanged
+          const b = el("button", "emoji-cell" + (isCur ? " cur" : "")) as HTMLButtonElement;
+          b.type = "button"; b.dataset.act = "pick"; b.dataset.emoji = emoji; b.dataset.s = String(s); b.dataset.i = String(i);
+          b.title = nm; b.setAttribute("aria-label", nm); b.textContent = emoji; b.tabIndex = i === f ? 0 : -1;
+          b.setAttribute("role", "option"); b.setAttribute("aria-selected", isCur ? "true" : "false");
+          grid.appendChild(b);
+        });
+        box.appendChild(grid);
+      }
+      frag.appendChild(box);
+    });
+    scroll.replaceChildren(frag);
+    scroll.scrollTop = 0;
+    markCat();
+  };
+  // move the roving focus: the old stop's cell leaves the Tab order, the new one joins it and takes focus,
+  // scrolled into view under the sticky section header
+  const focusCell = (pos: GridPos) => {
+    const was = cellAt(isRecent(pos.section) ? { section: pos.section, index: recentFocus } : gridFocus);
+    if (was) was.tabIndex = -1;
+    if (isRecent(pos.section)) recentFocus = pos.index; else gridFocus = pos;
+    const b = cellAt(pos);
+    if (!b) return;
+    b.tabIndex = 0; b.focus({ preventScroll: true });
+    const top = b.offsetTop, bottom = top + b.offsetHeight, head = 24;
+    if (top - head < scroll.scrollTop) scroll.scrollTop = Math.max(0, top - head);
+    else if (bottom > scroll.scrollTop + scroll.clientHeight) scroll.scrollTop = bottom - scroll.clientHeight;
+  };
+  const jumpTo = (id: string) => {
+    const sec = scroll.querySelector(`.emoji-sec[data-sec="${id}"]`) as HTMLElement | null;
+    if (sec) scroll.scrollTop = sec.offsetTop;
+  };
+  // `fromField`: the field holds what is being sent (its Enter, the Set button), so a refusal marks and
+  // refocuses it; a cell pick and Clear say no, and a refusal hands focus back to the pressed control. The
+  // CALLER says which, never a comparison of the value with the field: the field is prefilled with the tab's
+  // emoji, so a pick of that emoji's cell compared equal, and so did Clear once the field was emptied, and
+  // the refusal (or the 30 s backstop) then reddened and focused a field holding nothing wrong (review round 2).
+  const submit = (value: string, btn: HTMLButtonElement, busy: string, fromField: boolean) => {
     const p = emojiPrompt;
     if (!p || p.pending) return;   // one answer per press
-    // acknowledge the click before the round trip (the repo's button rule); the kernel's answer — its
-    // emojiSet for this session, or a warn with the reason — is what changes this dialog next
+    // acknowledge the click before the round trip (the repo's button rule); the kernel's answer, its
+    // emojiSet for this session or a warn with the reason, is what changes this dialog next
     p.pending = true; p.asked = value;
-    btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;
-    hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint";
+    p.typed = fromField;
+    // a disabled control drops its focus to <body>, where the next Tab leaves the dialog: park it on the card
+    // first (a cell keeps its own focus; the cells lock by pointer-events, not disabled)
+    const a = document.activeElement;
+    if (a === search || a === input || a === go || a === clear) card.focus({ preventScroll: true });
+    btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true; search.disabled = true;
+    card.classList.add("waiting");   // the cells and the strip lock (styles.css .emoji-picker.waiting)
+    scroll.querySelectorAll<HTMLElement>(".emoji-cell").forEach((c) => c.classList.toggle("busy", c.dataset.emoji === value));
+    hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint"; input.classList.remove("bad");
     setSessionEmoji(sid, value);
     p.backstop = window.setTimeout(
       () => emojiRefusedLocal("still waiting — the kernel has not answered; check the kernel log"), 30000);
   };
+  const pick = (emoji: string) => { if (emoji) submit(emoji, go, "Setting…", false); };
   const start = () => {
     const v = input.value.trim();
-    if (!v) { input.classList.add("bad"); input.focus(); return; }   // an empty Set is not a clear — that is the Clear button
-    submit(v, go, "Setting…");
+    if (!v) {   // an empty Set is not a clear: that is the Clear button; the field is marked and the hint says so
+      input.classList.add("bad"); input.focus();
+      hint.textContent = EMPTY_SET; hint.title = EMPTY_SET; hint.className = "emoji-hint bad";
+      return;
+    }
+    submit(v, go, "Setting…", true);
   };
-  cancel.addEventListener("click", closeEmojiPrompt);
-  clear.addEventListener("click", () => submit("", clear, "Clearing…"));
+  delegate(card, { pick: (b) => pick(b.dataset.emoji || ""), cat: (b) => jumpTo(b.dataset.cat || "") });
+  clear.addEventListener("click", () => submit("", clear, "Clearing…", false));
   go.addEventListener("click", start);
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeEmojiPrompt(); });
-  actions.appendChild(cancel); actions.appendChild(clear); actions.appendChild(go);
-  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(hint); box.appendChild(actions);
-  overlay.appendChild(box);
-  document.body.appendChild(overlay);
-  document.addEventListener("keydown", onKey, true);
-  input.focus(); input.select();
+  search.addEventListener("input", paint);
+  search.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); focusCell(isRecent(0) ? { section: 0, index: recentFocus } : gridFocus); }   // the next Tab stop: the Recent row when there is one
+    else if (e.key === "Enter" && search.value.trim()) {
+      e.preventDefault();
+      const top = sections[0]?.cells[0];   // the first result, the way a search box picks its top hit
+      if (top) pick(top[0]);
+    }
+  });
+  scroll.addEventListener("keydown", (e) => {
+    const b = (e.target as HTMLElement | null)?.closest?.(".emoji-cell") as HTMLElement | null;
+    if (!b) return;
+    const next = moveInGrid(sections.map((s) => s.cells.length),
+                            { section: +(b.dataset.s || 0), index: +(b.dataset.i || 0) }, e.key);
+    if (!next) return;   // Enter and Space are the button's own activation; Tab leaves the grid
+    e.preventDefault(); focusCell(next);
+  });
+  scroll.addEventListener("scroll", markCat);
+  foot.appendChild(input); foot.appendChild(clear); foot.appendChild(go);
+  card.appendChild(title); card.appendChild(search); card.appendChild(cats); card.appendChild(scroll);
+  card.appendChild(hint); card.appendChild(foot);
+  document.body.appendChild(card);
+  paint();
+  // where the tab menu stood (its clamped corner), clamped again for this card's own size, like the menu
+  // at the cursor; centered if no menu placed it
+  const r = card.getBoundingClientRect();
+  const at = ctxMenuAt || { x: (window.innerWidth - r.width) / 2, y: (window.innerHeight - r.height) / 3 };
+  card.style.left = Math.max(0, Math.min(at.x, window.innerWidth - r.width - 4)) + "px";
+  card.style.top = Math.max(0, Math.min(at.y, window.innerHeight - r.height - 4)) + "px";
+  search.focus();
 }
 
-// the kernel's answer to the dialog's Set/Clear. `emojiLanded`: its {emojiSet} for this session — the
-// handler has already put it on the strip — closes the dialog, while it is pending OR when the value is
+// the kernel's answer to the dialog's pick, Set or Clear. `emojiLanded`: its {emojiSet} for this session
+// (the handler has already put it on the strip) closes the dialog while it is pending OR when the value is
 // the one this dialog asked for: the kernel answers only the client that asked, so a confirm for that sid
 // after the 30 s backstop (or an unrelated warn) has already un-pended the dialog is this dialog's own
 // answer arriving late, and leaving it open put a red "still waiting" under a value the tab already wore
 // (review round 3, 2026-09-06). The decision is emojiConfirmClosesDialog (tab-meta.ts, tested there): a
-// confirm for another session, or one landing on a dialog that has asked nothing yet, leaves it alone.
-// `emojiRefusedLocal`: a warn while a Set is pending is the refusal — the reason goes under the input, the
-// buttons come back, the typed value stays to fix. A warn while NOT pending is not this dialog's business
-// (it returns before touching anything; the router sends it on to the create branch or a toast).
+// confirm for another session, or one landing on a dialog that has asked nothing yet, leaves it alone. A
+// landed emoji (not a clear) is filed as a recent on the way out: the Recent row holds what the kernel
+// ACCEPTED, so a refused typed value never reaches it.
+// `emojiRefusedLocal`: a warn while a Set is pending is the refusal. The reason goes in the hint line, the
+// buttons and cells come back, and when the field holds the refused value (noted at submit time as `typed`,
+// since the field is locked in between) it is marked and focused with the value in place to fix; a refused
+// cell, which the curated list should never produce, leaves the field alone. A warn while NOT pending is not this dialog's business (it returns before touching
+// anything; the router sends it on to the create branch or a toast).
 function emojiLanded(sid: string, emoji: string): void {
-  if (emojiConfirmClosesDialog(emojiPrompt, sid, emoji)) closeEmojiPrompt();
+  if (!emojiConfirmClosesDialog(emojiPrompt, sid, emoji)) return;
+  if (emoji) rememberRecentEmoji(emoji);
+  closeEmojiPrompt();
 }
 
 function emojiRefusedLocal(text: string): void {
@@ -7704,11 +7956,14 @@ function emojiRefusedLocal(text: string): void {
   if (!p || !p.pending) return;
   if (p.backstop !== undefined) { clearTimeout(p.backstop); p.backstop = undefined; }
   p.pending = false;
+  p.card.classList.remove("waiting");
+  p.scroll.querySelectorAll(".emoji-cell.busy").forEach((c) => c.classList.remove("busy"));
   p.go.disabled = false; p.go.textContent = "Set";
   p.clear.disabled = !(sessions.get(p.sid)?.emoji || tabMeta.get(p.sid)?.emoji); p.clear.textContent = "Clear";
-  p.input.disabled = false;
+  p.input.disabled = false; p.search.disabled = false;
   p.hint.textContent = text; p.hint.title = text; p.hint.className = "emoji-hint bad";
-  p.input.classList.add("bad"); p.input.focus();
+  if (p.typed) { p.input.classList.add("bad"); p.input.focus(); }
+  else if (document.activeElement === p.card) (p.asked === "" ? p.clear : p.go).focus();   // parked at submit: back to the pressed button
 }
 
 // the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a

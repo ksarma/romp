@@ -164,13 +164,21 @@ A session's tab can carry one emoji before its name, so you can tell the
 sessions apart at a glance by role or state. It can be set from three places,
 which share one validator and one store:
 
-- **The tab.** Right-click it and choose **Emoji…**. The dialog's **Set** sends
-  the `setSessionEmoji` WebSocket op (`{type: "setSessionEmoji", id, emoji}`;
-  `emoji: ""` clears, and **Clear** sends exactly that). The kernel answers with
-  `{type: "emojiSet", id, emoji}` when the store has it, and the strip changes
-  on that confirm, the way a rename changes on `renamed`; a refusal comes back
-  as a `warn` with the reason, which the dialog shows in place, under the input,
-  with the typed value still there to fix.
+- **The tab.** Right-click it and choose **Emoji…** for the picker: a search
+  box over a curated list (name and keyword prefixes, no network), a **Recent**
+  row (the last 16 picks, kept per browser), a grid by category with a strip
+  that jumps to each, and a footer with a field for an emoji the list does not
+  have, **Set**, and **Clear**. Clicking a cell, Enter in the search box (the
+  first result) and **Set** with a typed value all send the same
+  `setSessionEmoji` WebSocket op (`{type: "setSessionEmoji", id, emoji}`;
+  `emoji: ""` clears, and **Clear** sends exactly that); only the kernel
+  judges the value. The picker stays open for the answer. The kernel answers
+  with `{type: "emojiSet", id, emoji}` when the store has it: the tab strip
+  changes on that confirm, the way a rename changes on `renamed`, the picker
+  closes, and the emoji joins the Recent row. A refusal comes back as a `warn`
+  with the reason, which the picker shows in its hint line above the field,
+  with a typed value left in the field to fix. **Set** with the field empty is
+  refused in place, without a round trip: to clear, use **Clear**.
 - **The session itself.** The `set_emoji(emoji)` tool, beside `set_working`, so
   a session can mark what it is doing (a moon while it runs unattended).
 - **The shell.** `romp emoji <session> <emoji>`, `romp emoji <session> --clear`,
@@ -1609,7 +1617,9 @@ share of cycle time in each stage, CPU split between the pusher thread, the
 judge threads and the rest of the process, builds served from cache against
 rebuilds, bytes sent per slot as full frames, deltas and deduplicated frames,
 goal-store loads and writes per second, judge passes and their durations
-with the chain memo's hits and misses, memory and thread count. `romp perf --json` prints one raw snapshot. If the
+with the CPU each pass cost, the producer's wakes against the waits they
+ended, the chain memo's hits and misses, the evidence gate's runs against
+skips per judge tier, memory and thread count. `romp perf --json` prints one raw snapshot. If the
 kernel restarted between the two snapshots the counters have started over, so
 the command says so and exits non-zero instead of printing negative rates; a
 refused token is reported as such, not as a dead kernel.
@@ -1647,16 +1657,36 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the publish's own write. `absent_hits` and `absent_misses` count the memo
   behind the two triage sweeps over stores no discovered session owns:
   answered from the memo, or loaded and evaluated because the store, its
-  override journal or its archive changed or was new.
+  override journal or its archive changed or was new. `noop_hash_ms` is the
+  time `save_goals` spent serializing a held store for its no-op check (the
+  cost a conditional tail save would remove); `romp perf` prints it as a rate
+  on the `goals` line so that item can be judged from a measurement.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
-  per-session worker they run; the workers' share is `cpu_ms_workers`), and
-  `chain_memo` with `hit`, `miss`, `populate`, `bypass`: the memo behind the
-  write-moment chain check, which asks before every planner mint whether the
-  prompt sits on a rewound-away branch. A hit served a memoized check, a miss
-  built one, a populate stored one (a build that failed is a miss with no
-  populate), and a bypass built without memoizing because an input file could
-  not be stat'd.
+  per-session worker they run; the workers' share is `cpu_ms_workers`; the
+  producer thread's own per-pass work is not included and shows under the
+  process line's "other"), `wakes` (every wake of the producer: the backends'
+  pokes, `POST /tick`, and two kernel-internal sites; one SDK turn fires
+  several, so this is an upper bound on the poke rate), `wakes_event` and
+  `wakes_backstop` (how the producer's 3 s wait ended; `wakes - wakes_event`
+  is the number of wakes a pass absorbed), `chain_memo` with `hit`, `miss`,
+  `populate`, `bypass`: the memo behind the write-moment chain check, which
+  asks before every planner mint whether the prompt sits on a rewound-away
+  branch. A hit served a memoized check, a miss built one, a populate stored
+  one (a build that failed is a miss with no populate), and a bypass built
+  without memoizing because an input file could not be stat'd. `tiers` holds
+  the evidence gate's counters per gated tier (`plan`, `close`, and the four
+  store-only tiers once they are gated): `ran` (per-session stage runs),
+  `skipped` (runs the gate declined because nothing the tier reads had
+  changed), `stamped` (runs that ended complete and recorded what they
+  judged), `bypassed` (runs with no signature to record, or whose parse ran
+  under a cut that moved after the gate looked), `incomplete` (runs a
+  deferral or a failed call left unfinished), `due_clock` (runs a background
+  task's deadline made due), plus `stamps`, the number of per-session records
+  held. `skipped / (ran + skipped)` is the share of per-session runs the gate
+  saved; `romp perf` prints it per tier on the `tiers` line and adds
+  `cpu/pass` to the `judge` line, since the judge's CPU share alone cannot
+  tell a cheaper pass from a faster cadence.
 - `memos`: one block per memo the kernel keeps, each a flat map of counters.
   `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
   only when its file changed: `hit` and `miss` (stores served from memory

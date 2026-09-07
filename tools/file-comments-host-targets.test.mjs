@@ -312,9 +312,9 @@ test('comment and retarget hash under the viewer\'s cap: a figure past FILE_HASH
   fs.writeFileSync(md, text);
   let st = status(w, md);
   let r = refused(w, anchored(w, md, text, '![big](figs/big.png)', 0, st, { kind: 'image', region: REGION, src: 'figs/big.png' }), 'too-large');
-  assert.match(r.error, /the figure figs\/big\.png in ~\/notes-api\/docs\/big\.md is 47\.7 MB, more than the 47\.7 MB the viewer shows/);
+  assert.match(r.error, /the figure figs\/big\.png in ~\/notes-api\/docs\/big\.md is 50\.0 MB, more than the 50\.0 MB the viewer shows/);
   assert.ok(r.error.endsWith('nothing was changed'), r.error);
-  assert.equal(humanBytes(FILE_HASH_CAP + 1), '47.7 MB');
+  assert.equal(humanBytes(FILE_HASH_CAP + 1), '50.0 MB', 'the kernel\'s 50 MiB cap (file-comments-host-caps.test.mjs), as its own 413 prints it');
   noSidecar(w);
   // A standalone image past the cap: the same refusal, and status on it answers null with the reason.
   const bigImg = path.join(w.docs, 'huge.png');
@@ -322,9 +322,9 @@ test('comment and retarget hash under the viewer\'s cap: a figure past FILE_HASH
   fs.truncateSync(bigImg, FILE_HASH_CAP + 1);
   st = status(w, bigImg);
   assert.equal(st.fileHash, null);
-  assert.match(st.fileHashReason, /huge\.png is 47\.7 MB, past the 47\.7 MB checked on each open/);
+  assert.match(st.fileHashReason, /huge\.png is 50\.0 MB, past the 50\.0 MB checked on each open/);
   r = refused(w, { verb: 'comment', path: bigImg, fence: fenceFor(st), args: { note: 'x', target: { kind: 'image', region: REGION } } }, 'too-large');
-  assert.match(r.error, /~\/notes-api\/docs\/huge\.png is 47\.7 MB, more than the 47\.7 MB the viewer shows/);
+  assert.match(r.error, /~\/notes-api\/docs\/huge\.png is 50\.0 MB, more than the 50\.0 MB the viewer shows/);
   noSidecar(w);
   // At the cap exactly: hashed (the viewer shows a file of exactly its cap), on comment and on retarget.
   fs.truncateSync(bigImg, FILE_HASH_CAP);

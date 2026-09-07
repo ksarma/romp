@@ -116,3 +116,9 @@ open Romp from the sidebar.
 ### Start a session
 
 <video src="../assets/guide/first-session.mp4" controls loop muted playsinline preload="none" data-romp-autoplay width="100%"></video>
+
+## License
+
+Romp is [Apache-2.0](https://github.com/romp-on/romp/blob/main/LICENSE); the file viewer draws PDF
+pages with [pdf.js](https://mozilla.github.io/pdf.js/), bundled with the interface under the same
+Apache-2.0 license.
