@@ -12067,7 +12067,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
     # romp's own injections are not the user's words: anything wearing the `<!-- romp-` marker
     # (nudges, notices) plus the boot reconcile's continuation text (marker-less by design) must
     # not render as a 'you' bubble in the popover
-    boot_nudge = getattr(sys.modules.get("romp_sdk_backend"), "BOOT_RESUME_NUDGE", None)
+    is_nudge = getattr(sys.modules.get("romp_sdk_backend"), "is_resume_nudge", None) or (lambda t: False)
     while u is not None and hops < 500000:
         if u == cut_uuid:
             break                                   # copied history starts here — the parent's, not the thread's
@@ -12084,7 +12084,7 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
                                                     # with one — the event model's own anchored test; prose that merely
                                                     # quotes a tag is the user's message): the CLI's bookkeeping, not
                                                     # something the user SAID — it must not owe a reply (T237 review)
-            if txt and txt != boot_nudge and not (r.get("type") == "user" and "<!-- romp-" in txt):
+            if txt and not is_nudge(txt) and not (r.get("type") == "user" and "<!-- romp-" in txt):
                 rows.append({"who": "you" if r.get("type") == "user" else "agent",
                              "text": txt[:4000],
                              "t": int(em.parse_z(r.get("timestamp")) or 0)})
@@ -16538,7 +16538,10 @@ def _start_remote_kernel(host):
     ssh shell often lacks the user's PATH additions), then conventional clone locations. romp-serve
     itself picks the right python (its pick_python) and self-builds stale UI bundles, so a plain
     clone is enough. Returns (started, detail) — detail names everything the probe tried when romp
-    isn't installed there. KEEP the source order IN SYNC with _discover_remote_clone."""
+    isn't installed there. A host stopped by `romp down` (its down-by-romp marker in the state root) is
+    NOT booted: a bare kernel there would serve under a marker that says down and no manager would own
+    it (review find, 2026-09-06); (False, why) names `romp up` on that host as the way to start it.
+    KEEP the source order IN SYNC with _discover_remote_clone."""
     cmd = ('S=""; SR="${ROMP_REPO_ROOT:-$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/repo-root" 2>/dev/null)}"; '
            'if [ -n "$SR" ] && [ -x "$SR/bin/romp-serve" ]; then S="$SR/bin/romp-serve"; fi; '
            'if [ -z "$S" ]; then S="$(command -v romp-serve || bash -lc "command -v romp-serve" 2>/dev/null || true)"; fi; '
@@ -16546,12 +16549,16 @@ def _start_remote_kernel(host):
            'if [ -x "$d/bin/romp-serve" ]; then S="$d/bin/romp-serve"; break; fi; done; fi; '
            'if [ -z "$S" ]; then echo NOROMP; exit 0; fi; '
            'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; '
+           'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
            'nohup "$S" >>"$LOGDIR/kernel.log" 2>&1 </dev/null & echo "STARTED:$S"')
     try:
         r = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, cmd], capture_output=True, text=True, timeout=25)
         out = (r.stdout or "").strip()
         if "STARTED" in out:
             return True, out.partition(":")[2]
+        if out == "DOWN":
+            return False, ("romp is stopped on %s by romp down; not starting it (romp up there starts it)"
+                           % host)
         if "NOROMP" in out:
             return False, ("romp not installed on %s — no repo-root state file (a kernel that has "
                            "run there writes one; ROMP_REPO_ROOT on that machine also works), no "
@@ -17017,8 +17024,14 @@ def attach_remote(host, kernel_port=None):
                 time.sleep(1.0)
             if not token:
                 token = _fetch_remote_token(host)  # the fresh kernel wrote its serve-token on startup
-        elif not token:
-            boot_detail = detail                   # applied below, AFTER _spawn_tunnel resets detail
+        else:
+            # the refusal rides the row whether or not a token came back: a host attached before
+            # `romp down` stopped it still has its serve-token file, and keeping the reason only on
+            # the no-token path left the popover with the generic no-kernel hint instead of the stop
+            # and the way out (review find, round 2, 2026-09-06). Applied below, AFTER _spawn_tunnel
+            # resets detail; the supervisor keeps a specific parked detail over its generic hint
+            # and clears it once the kernel answers.
+            boot_detail = detail
     with _remotes_lock:
         r = _remotes.get(host)
         if r is None:                              # detached mid-fetch
@@ -17041,8 +17054,8 @@ def attach_remote(host, kernel_port=None):
             except Exception:
                 pass
             _spawn_tunnel(r)
-        if boot_detail and not token:
-            r["detail"] = boot_detail              # the popover's next step (e.g. "run bin/romp-host-setup")
+        if boot_detail:
+            r["detail"] = boot_detail              # the popover's next step ("run bin/romp-host-setup", the romp down refusal)
         pub = _remote_public(r)
     _remotes_save()
     _tunnel_wake.set()
@@ -18342,12 +18355,19 @@ def _update_remote(host):
         'NEW="$(git -C "$R" rev-parse --short HEAD)"; '
         # RESTART the kernel THROUGH THE MANAGER (the user 2026-07-04: the manager is romp's durable supervisor —
         # "there is never an invisible orphan" — so a restart should keep/leave the remote MANAGER-owned, not
-        # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the SAME idempotent auto-start
-        # the SessionStart hook uses): if a manager already supervises this host it respawns the kernel on the new
-        # code; if this host was only ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager,
-        # which spawns a SUPERVISED kernel — UPGRADING the orphan to properly managed. ensure needs node; if it
-        # can't run (or the port never returns) we relaunch romp-serve bare as a last resort so the host isn't
-        # left dead. The port poll confirms whichever path brought it back.
+        # launch a bare romp-serve). Kill the kernel, then `romp-manager ensure` (the idempotent supervised
+        # start; this apply and _restart_remote_kernel's are its only callers, no hook runs it): if a manager
+        # already supervises this host it respawns the kernel on the new code; if this host was only
+        # ATTACH-bootstrapped (bare kernel, no manager) ensure STARTS the manager, which spawns a SUPERVISED
+        # kernel — UPGRADING the orphan to properly managed. ensure needs node; if it can't run (or the port
+        # never returns) we relaunch romp-serve bare as a last resort so the host isn't left dead. The port
+        # poll confirms whichever path brought it back.
+        # A host stopped by `romp down` (its down-by-romp marker in the state root, and no manager owning
+        # the kernel) is left stopped: ensure refuses on the marker, so the immediate path below would boot
+        # the bare fallback while `romp status` there still said down (review find, 2026-09-06). The code
+        # is synced and nothing is killed or started; SYNCED:<sha>:DOWN says so, and `romp up` there boots
+        # the new code. The OWNED check comes first: a manager running beside a marker was started some
+        # way that did not clear it, and its kernel gets the normal quiet restart.
         'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW"; exit 0; fi; '
         # NEVER AN ANONYMOUS SIGTERM (T238, the T121 rule): a restart-audit row lands BEFORE whichever
         # restart happens, so the far kernel's cut row carries WHO and WHY (the p2p update, from this
@@ -18368,6 +18388,8 @@ def _update_remote(host):
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
         '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
         'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
+        # stopped on purpose (see above): synced, nothing restarted
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi; '
         # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
         # kill, then `ensure` upgrades the host to a supervised kernel.
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
@@ -18436,6 +18458,10 @@ def _update_remote(host):
         if mode == "FALLBACK":
             return True, ("synced to %s + restarting now (no manager owns that kernel there — an "
                           "immediate restart)" % short)
+        if mode == "DOWN":
+            _unexpect()                           # nothing restarts: the host stays stopped on purpose
+            return True, ("synced to %s; %s is stopped by romp down, so nothing was restarted there "
+                          "(romp up on it starts the new code)" % (short, host))
         return True, "synced to %s + restarting" % short
     _unexpect()                                   # nothing restarted: DIVERGED / RESETFAIL / NOLAUNCH / error
     if tag == "DIVERGED":
@@ -18655,7 +18681,10 @@ def _restart_remote_kernel(host):
     to push but the process still has to come back on the new build of ITS own code. Same shape as
     _update_remote's step 3 (manager `ensure` so the restart stays supervised, the `romp-kern[e]l`
     self-match guard so pkill can't kill the apply shell, setsid so an ssh drop can't leave the host with
-    no kernel at all), minus every git step. Returns (ok, detail)."""
+    no kernel at all), minus every git step. A host stopped by `romp down` (its marker present) is not
+    restarted: ensure would refuse and the bare fallback would boot an unsupervised kernel under a
+    marker that says down (review find, 2026-09-06); the detail says so and names `romp up` there.
+    Returns (ok, detail); a `romp down` host is (False, why), since the restart asked for did not run."""
     with _remotes_lock:
         r = dict(_remotes.get(host) or {})
     if r.get("checkin_peer"):
@@ -18667,6 +18696,7 @@ def _restart_remote_kernel(host):
     apply_cmd = (
         'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; R=%s; '
         'if [ ! -x "$R/bin/romp-serve" ]; then echo NOLAUNCH; exit 0; fi; '
+        'if [ -f "$LOGDIR/down-by-romp" ]; then echo DOWN; exit 0; fi; '
         # never an anonymous SIGTERM (T238): the far kernel's cut row names this explicit restart
         'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
         '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
@@ -18700,6 +18730,8 @@ def _restart_remote_kernel(host):
             rr.pop("restartExpected", None)
     if out == "NOLAUNCH":
         return False, "found no romp/romp-serve launcher to restart the kernel"
+    if out == "DOWN":
+        return False, "%s is stopped by romp down; not restarting it (romp up there starts it)" % host
     return False, (_ssh_err(a.stderr) or out or "remote restart failed").strip()[:180]
 
 
@@ -18880,6 +18912,35 @@ def _mark_boot(kind):
             _append_boot_settled(_BOOT_MARKS["firstServe"], _BOOT_MARKS["reconcileDone"])
     except Exception:
         pass
+
+
+# ── going down (`romp down`, 2026-09-06) ─────────────────────────────────────────
+# `romp down` stops this kernel through its supervisor (the login service, or the manager's /stop
+# when nothing supervises it), and asks the kernel to QUIESCE first via POST /down: hold new turn
+# starts, refuse new session creates, and wait a bounded time for the turns in flight to reach a
+# turn boundary — so the SIGTERM that follows cuts as little as possible. The kernel never exits
+# from that route: under the manager a kernel exit is a crash to respawn, so the stop has to come
+# top-down through the supervisor, and the route only makes the moment quiet. What the stop then
+# cuts resumes at the next start exactly as after `romp refresh` (the boot reconcile reads the
+# 'working' state tail, never anything written here).
+DOWN_WAIT_DEFAULT_S = 5.0     # the CLI's default `--wait`; a turn boundary in the next few seconds is caught
+DOWN_WAIT_MAX_S = 600.0       # a cap on the request, so a typo cannot hold a handler thread for an hour
+DOWN_HOLD_GRACE_S = 30.0      # the hold outlives the wait by this much: the supervisor stop lands on a
+#                               still-quiet kernel, and if no stop comes the lease lapses on its own
+# The refusal both create doors give. Its reader can be an AGENT (`romp new` inside a session prints
+# a 4xx body's error verbatim), and an agent told to run `romp up` would do so and undo a stop the
+# user made on purpose (review find, 2026-09-06). So it states the fact and hands over no command:
+# the person who stopped the kernel knows how to start it.
+GOING_DOWN_REFUSAL = "the kernel is being stopped on purpose; a new session cannot start right now"
+
+
+def _going_down():
+    """True while POST /down's quiesce is in force. Reads the backend GLOBAL, never _sdk(): the
+    route must not construct a backend just to ask whether one is quiescing (the SIGTERM path's
+    rule). Both session-create doors (POST /new, the WS createSession op) refuse on this — a session
+    born now would die with the kernel seconds later, with the create read as a success."""
+    be = _sdk_backend
+    return bool(be) and hasattr(be, "quiescing") and be.quiescing()
 
 
 def _recent_restart_reason(window=90, now=None):
@@ -42231,6 +42292,54 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, FLEET_REPORT.read_text(), "application/json")
                 except OSError:
                     return self._send(200, json.dumps({"rows": []}), "application/json")
+            if u.path == "/down":
+                # `romp down`'s quiesce (see _going_down): body {"wait": seconds} holds new turn starts
+                # + creates and blocks until the in-flight count reaches 0 or `wait` runs out, then
+                # answers {quiet, busy, inflight[names], waited} so the CLI can say what the stop is
+                # about to cut. {"cancel": true} releases the hold (the stop did not happen). A WRITE
+                # that holds every session's turn starts, so it needs the EXPLICIT serve token
+                # (_write_token_ok) on top of the preamble's _authorize — the /busy?drain=1 rule.
+                # No SDK backend ever built → nothing to hold or wait for: quiet at once.
+                # Every 200 names this process's pid: `romp down` ends by SIGTERMing a kernel nothing
+                # above it stopped, and the pid it signals must come from a route the serve token
+                # gates. GET /version's pid is auth-exempt and vouches for nothing: a CLI aimed at
+                # the wrong port (an empty ROMP_KERNEL_PORT falls to the default) took another
+                # romp's kernel pid from it and stopped every session there (2026-09-06). A pid
+                # given here was given under the caller's token, to a kernel the caller manages.
+                if not self._write_token_ok(q):
+                    return self._send(403, json.dumps({"ok": False, "error":
+                        "forbidden: /down needs the serve token (X-Romp-Token or ?token=)"}), "application/json")
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                if not isinstance(b, dict):
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        'body must be {"wait": seconds} or {"cancel": true}'}), "application/json")
+                be = _sdk_backend or None
+                if b.get("cancel") is True:
+                    if be is not None and hasattr(be, "cancel_quiesce"):
+                        be.cancel_quiesce()
+                    return self._send(200, json.dumps({"ok": True, "canceled": True, "pid": os.getpid()}),
+                                      "application/json")
+                wait = b.get("wait", DOWN_WAIT_DEFAULT_S)
+                if isinstance(wait, bool) or not isinstance(wait, (int, float)) or wait < 0 or wait > DOWN_WAIT_MAX_S:
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        "wait must be a number of seconds in [0, %d]" % int(DOWN_WAIT_MAX_S)}), "application/json")
+                if be is None or not hasattr(be, "quiesce"):
+                    return self._send(200, json.dumps({"ok": True, "quiet": True, "busy": 0,
+                                                       "inflight": [], "waited": 0, "pid": os.getpid()}),
+                                      "application/json")
+                be.quiesce(float(wait) + DOWN_HOLD_GRACE_S)
+                t0 = time.monotonic()
+                busy = be.busy_count()
+                while busy and time.monotonic() - t0 < wait:
+                    time.sleep(min(0.25, max(0.01, wait - (time.monotonic() - t0))))
+                    busy = be.busy_count()
+                return self._send(200, json.dumps({
+                    "ok": True, "quiet": busy == 0, "busy": busy,
+                    "inflight": be.inflight_names() if busy else [],
+                    "waited": round(time.monotonic() - t0, 1), "pid": os.getpid()}), "application/json")
             if u.path == "/update-dismiss":
                 # the banner's Not-now, PERSISTED (the user 2026-08-31): the dismissal outlives the
                 # page and the kernel — event-keyed, a NEW sha/tag offers again. Body: {"tag": id}.
@@ -42620,6 +42729,9 @@ class Handler(BaseHTTPRequestHandler):
                     b = json.loads(raw_body or b"{}")
                 except Exception:
                     b = {}
+                if _going_down():             # `romp down` in progress: a session born now dies with the kernel
+                    return self._send(503, json.dumps({"ok": False, "error": GOING_DOWN_REFUSAL}),
+                                      "application/json")
                 nm = str((b or {}).get("name") or "").strip()
                 if not nm or not NAME_RE.match(nm):
                     return self._send(400, json.dumps({"ok": False, "error":
@@ -44128,6 +44240,8 @@ class Handler(BaseHTTPRequestHandler):
                         # AFTER the focus so the client sees the running session first.
                         client["send"](json.dumps({"type": "warn", "text":
                             '"%s" is already running; its tags were not changed — use the tab\'s Tags menu' % nm}))
+                elif _going_down():              # `romp down` in progress: the same refusal POST /new gives
+                    client["send"](json.dumps({"type": "warn", "text": GOING_DOWN_REFUSAL}))
                 elif _thread_name_refusal(nm, _thread_names()):   # a thread's name (or unverifiable): never mint a namesake tab (T223)
                     client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(nm, _thread_names())}))
                 elif msg.get("backend") == "sdk":   # non-tmux: drive via the Agent SDK

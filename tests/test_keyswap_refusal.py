@@ -528,7 +528,8 @@ class NamedSwapRefused(_Env):
         # (daemon-reload, enable --now)
         self.assertIn("On Linux the install rewrites the unit and reloads systemd but restarts no running\n"
                       "            manager, so restart after it.", out)
-        self.assertIn("systemctl --user daemon-reload\n            systemctl --user enable --now romp-manager.service", svc)
+        # (the systemctl binary is a seam, ROMP_SYSTEMCTL, so tests and `romp down` mocks can stand in for it)
+        self.assertIn('"$SYSTEMCTL" --user daemon-reload\n            "$SYSTEMCTL" --user enable --now romp-manager.service', svc)
         self.assertNotIn("systemctl --user restart", install, "install restarts no running manager on Linux")
         # and for what it costs on BOTH platforms: the rewrite drops a line added to the unit or the plist by
         # hand, so a Linux operator in command mode through a hand-added unit line who follows the install hint
