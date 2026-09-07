@@ -2,7 +2,7 @@
 // after walking the loop the user found the one-line box too small. Every composer the panel offers — a passage, the
 // whole file, a region, a reply on a card, a comment bound to a change — is one textarea: three rows to start, grown
 // to its content up to twelve rows (then it scrolls), draggable taller. Enter, plain or with Shift, adds a line (the
-// textarea's own newline; never a save, whatever a chat tool taught the person's hands); Cmd+Enter or Ctrl+Enter, or
+// textarea's own newline; never a save, whatever habit a chat composer built); Cmd+Enter or Ctrl+Enter, or
 // the Save button, saves; Escape cancels as before. The draft (text, caret, chosen height) survives the poll's
 // re-render and a refusal, saving trims the blank ends and keeps the breaks inside, a blank comment saves nothing, and
 // a card renders a multi-line body with its breaks. Driven through the same DOM stand-in the panel tests use (there is
@@ -326,7 +326,7 @@ test("composerKeyAction: Enter, plain or with Shift, is the browser's newline; E
   assert.equal(composerKeyAction({ key: "Enter" }), null, "a plain Enter is not ours: the textarea inserts the newline");
   // The browser's KeyboardEvent carries shiftKey; the function's parameter type names only the modifiers it reads, so
   // the key arrives as the event would (a typed value, not a literal) — and the point is that shiftKey is NOT read: the
-  // chat composer sends on Enter and breaks a line on Shift+Enter, and a hand trained there must not save a half-written
+  // chat composer sends on Enter and breaks a line on Shift+Enter, and a habit formed there must not save a half-written
   // comment here (the docstring's "a plain or Shift+Enter is the browser's own newline").
   const shiftEnter: Pick<KeyboardEvent, "key" | "shiftKey"> = { key: "Enter", shiftKey: true };
   assert.equal(composerKeyAction(shiftEnter), null, "Shift+Enter is the textarea's newline too, never a save");

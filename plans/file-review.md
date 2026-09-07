@@ -952,8 +952,18 @@ region, a reply on a card, a comment bound to a change) is now one textarea: thr
 grown to its content up to twelve rows and scrolling past that, draggable taller or shorter
 (`resize: vertical`; a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter
 on macOS or Ctrl+Enter elsewhere (either modifier works on every platform, the chat composer's rule)
-or the Save button saves; Escape cancels as before, the re-place Escape included; a hint under the
-box names the platform's chord, detected once by the editor's modifier rule. The draft (text, caret,
+or the Save button saves; Escape cancels as before, the re-place Escape included. A hint under the
+box says what saves, and its wording follows the device. With a keyboard it names the platform's
+chord: "Cmd+Enter saves; Enter adds a line" on macOS, Ctrl+Enter elsewhere, the modifier detected
+once by the editor's modifier rule. On a device whose primary pointer is coarse (a phone; a tablet
+with no trackpad) it names the button instead: "Enter adds a line; tap Save when done". A soft
+keyboard has no modifier to hold, so a chord would name a key the device lacks, and a person who
+pressed Return to save in the old one-line box got a newline with no explanation of what saves now
+(the composer review, 2026-09-07). The chord still saves from any hardware keyboard, whatever the
+hint says: a tablet with a keyboard and no trackpad shows the button hint and accepts the chord.
+Whether the pointer is coarse is read at each render, as the editor's decide words read it, because
+the primary pointer changes when a tablet docks to a trackpad; the chat composer's placeholder, which
+drops its key chart on a coarse pointer, follows the same rule. The draft (text, caret,
 chosen height) survives the poll's re-render and a refusal, since the box is one persistent node and
 the typed comment is never discarded; saving trims the blank ends and keeps the line breaks inside; a
 blank comment saves nothing. A card renders a multi-line body with its breaks (`white-space:

@@ -1,21 +1,16 @@
-// Card keyboard nav yields to a text field (review 2026-09-07). The shell's paneFocus (Alt+Arrow) arms the card
-// cursor, and nothing but Escape or a window blur disarms it — not a click, not the file viewer opening over the
-// board (file-view.ts mounts it in the feed document). So a key typed into the comment box under the viewer
-// reaches feed.ts's window keydown handler with the cursor armed, and before the guard this pins, a plain Enter
-// there — the newline, since the box is multi-line — was cancelled (no line added) and descended into the first
-// card; the next Enter clicked that card's title behind the viewer. RUN, not pinned at the source: the real
-// feed.ts boots under the DOM stand-in feed-render-incremental.test.ts introduced (copied here, with a :not()
-// clause so kbCardEls' selector matches and a click() so an activation counts), three synthetic cards render,
-// the cursor is armed the way the shell arms it, and the keys are pressed with focus in a textarea under
-// #romp-fileview, then in the session search box with the board uncovered, then with focus back on the page.
-// The uncovered case is the one that observes the text-field yield on its own (review round 3): since round 2
-// added the boardCovered() yield (feed-keynav-covered.test.ts), a key pressed with the viewer up is nobody's
-// before the focused element is read, so the comment-box case passes with or without the text-field yield.
-// The session search box (#feed-search-input, mounted in #feed-foot by the render) covers no card, and its own
-// onkeydown takes only Escape, so an arrow or Enter typed there reaches the cursor's handler uncancelled —
-// without the yield, the cursor cancels the arrow (the caret stays put) and moves the card cursor instead, and
-// Enter descends into the first card. Synthetic only: the notes-api demo world, placeholder sids, hostname
-// TESTHOST.
+// The card keyboard scope yields while the board is covered (review 2026-09-07, round 3). Round 2 made the card
+// cursor's handler stand down while the file viewer or the file browser is up (boardCovered), but its sibling — the
+// Tab scope's window CAPTURE handler, which cycles a card's controls on Tab and falls back to the cursor's card
+// (kbCardEl) — did not, and the cursor stays armed through the click that opens the viewer. So with the viewer up:
+// a Tab from the composer's Save button (the box's own Tab lands there, and a button passes the scope's typing
+// yield) was cancelled and focused a control of a card behind the viewer, with the accent ring on it; the next Enter
+// clicked that control (the card's title: its timeline journey; one Tab on, its Clear button); and a scope armed
+// before the viewer opened swallowed the Escape meant to close it — the handler runs ahead of the viewer's own
+// Escape on `document`, so a cancel there never reached it. The same hole with #romp-filebrowse up. RUN, not pinned
+// at the source: the real feed.ts boots under the DOM stand-in feed-keynav-covered.test.ts uses (copied here, with
+// focus modelled and the window delivering a keydown capture-first, as a browser does), three synthetic cards
+// render, the cursor is armed the way the shell arms it, and Tab, Shift+Tab, Enter and Escape are pressed with the
+// viewer or the browser up. Synthetic only: the notes-api demo world, placeholder sids, hostname TESTHOST.
 import { test, mock, after } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -24,6 +19,12 @@ import * as path from "node:path";
 const FEED_SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "feed.ts"), "utf8");
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
+// feed-keynav-covered.test.ts's stand-in, with two things a browser does that these tests read: focus() and blur()
+// move document.activeElement (the earlier copies leave them no-ops), and the window delivers a keydown the way a
+// browser does — its CAPTURE listeners first, then, unless one of them stopped propagation, its bubble listeners
+// (Node's EventTarget runs listeners in registration order, which puts the card cursor's bubble handler AHEAD of the
+// Tab scope's capture handler and lets both act on one Escape; a browser runs the scope first and the cursor never
+// sees a key the scope stopped).
 class Style {
   [key: string]: any;
   private props = new Map<string, string>();
@@ -134,8 +135,8 @@ class El extends EventTarget {
     return { left, top, right: left + 300, bottom: top + 90, width: 300, height: 90 };
   }
   scrollIntoView(): void {}
-  focus(): void {}
-  blur(): void {}
+  focus(): void { doc.activeElement = this; }                                   // what a browser does: focus moves here
+  blur(): void { if (doc.activeElement === this) doc.activeElement = body; }   // …and falls to the body on blur
   click(): void { this.clicks++; this.onclick?.(clickEv); this.dispatchEvent(new MouseEvent("click")); }   // HTMLElement.click(): the handler runs
   matchesCompound(c: Compound): boolean {
     if (c.pseudo) return false;
@@ -165,6 +166,25 @@ class El extends EventTarget {
   *walk(): Generator<El> { for (const c of this.childNodes) if (c instanceof El) { yield c; yield* c.walk(); } }
   byId(id: string): El | null { for (const e of this.walk()) if (e.id === id) return e; return null; }
 }
+/** The window, delivering a keydown in a browser's order: capture listeners, then bubble listeners unless propagation
+ *  was stopped in between (the same-target rule lets every capture listener run even after one stops it). */
+class Win extends EventTarget {
+  private keyL: { fn: (e: Event) => void; cap: boolean }[] = [];
+  addEventListener(type: string, fn: any, opts?: any): void {
+    if (type === "keydown") { this.keyL.push({ fn, cap: opts === true || !!(opts && opts.capture) }); return; }
+    super.addEventListener(type, fn, opts);
+  }
+  removeEventListener(type: string, fn: any, opts?: any): void {
+    if (type === "keydown") { const cap = opts === true || !!(opts && opts.capture); this.keyL = this.keyL.filter((l) => !(l.fn === fn && l.cap === cap)); return; }
+    super.removeEventListener(type, fn, opts);
+  }
+  dispatchEvent(e: Event): boolean {
+    if (e.type !== "keydown") return super.dispatchEvent(e);
+    for (const l of this.keyL) if (l.cap) l.fn(e);
+    if (!e.cancelBubble) for (const l of this.keyL) if (!l.cap) l.fn(e);   // cancelBubble: the stop-propagation flag
+    return !e.defaultPrevented;
+  }
+}
 const posted: any[] = [];
 const body = new El("body");
 const head = new El("div"); head.id = "feed-head";
@@ -178,7 +198,7 @@ const storage = (m: Map<string, string>) => ({
   setItem: (k: string, v: string) => { m.set(k, String(v)); },
   removeItem: (k: string) => { m.delete(k); },
 });
-const win: any = new EventTarget();
+const win: any = new Win();
 win.parent = win; win.top = win;
 win.location = { hash: "", search: "", protocol: "http:" };
 win.innerWidth = 1200; win.innerHeight = 800;
@@ -235,8 +255,8 @@ const settle = async () => {
 };
 const dispatch = async (f: any) => { win.dispatchEvent(new MessageEvent("message", { data: f })); await settle(); };
 /** One key at the window, the way a browser delivers a keydown that bubbled up from the focused element. */
-const press = async (key: string): Promise<Event> => {
-  const e = Object.assign(new Event("keydown", { cancelable: true }), { key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false });
+const press = async (key: string, shift = false): Promise<Event> => {
+  const e = Object.assign(new Event("keydown", { cancelable: true }), { key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: shift });
   win.dispatchEvent(e);
   await settle();
   return e;
@@ -245,7 +265,26 @@ after(() => { assert.deepEqual(listenerErrors.map((e) => e.stack || e.message), 
 const card = (id: string): El => { const c = body.querySelector(`[data-key="a:${id}"]`); assert.ok(c, "card " + id); return c!; };
 const title = (id: string): El => { const t = card(id).querySelector(".fcard-title.nav"); assert.ok(t, "title of " + id); return t!; };
 const rings = () => body.querySelectorAll(".kbd-focus").length;
-const askPaths = () => posted.filter((m) => m.type === "showAskPath").length;   // kbSelectCard lights a journey per move
+const ringed = (): El | null => body.querySelector(".kbd-focus");
+const onTimeline = () => posted.filter((m) => m.type === "showOnTimeline").length;
+const active = (): El => doc.activeElement as El;
+/** A short name for an element in a failure message — never the element itself: the runner inspects a failed equal's
+ *  operands, and a stand-in node reaches the whole document through parentNode, so an El-to-El equal that failed read
+ *  as a hang (minutes of serialisation) instead of a red test. Identity is asserted as a boolean, the names carry
+ *  the detail. */
+const desc = (el: El | null): string => el
+  ? (el.closest("[data-key]")?.dataset.key ?? "-") + "/" + el.tagName + (el.className ? "." + el.className.split(" ").join(".") : "") + (el.id ? "#" + el.id : "") + (el.dataset.act ? "[" + el.dataset.act + "]" : "")
+  : "null";
+const same = (got: El | null, want: El | null, msg: string): void => { assert.ok(got === want, msg + " (got " + desc(got) + ", want " + desc(want) + ")"); };
+/** The viewer's composer row, the way file-comments.ts builds it: a real <button> per action under #romp-fileview. */
+function mountViewer(): { view: El; box: El; save: El; cancel: El } {
+  const view = new El("div"); view.id = "romp-fileview";
+  const box = new El("textarea"); box.className = "fc-input";
+  const save = new El("button"); save.className = "fileview-btn"; save.setAttribute("data-act", "fcsave");
+  const cancel = new El("button"); cancel.className = "fileview-btn"; cancel.setAttribute("data-act", "fccancel");
+  view.append(box, save, cancel); body.appendChild(view);
+  return { view, box, save, cancel };
+}
 
 test("boot: three cards render, and the shell's paneFocus arms the card cursor on the first", async () => {
   mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: T0 * 1000 });
@@ -255,78 +294,97 @@ test("boot: three cards render, and the shell's paneFocus arms the card cursor o
   await dispatch({ romp: "paneFocus" });                          // what the shell posts on Alt+Arrow into the feed
   assert.ok(card("g1").classList.contains("focused"), "the cursor's ring is on the first card");
   assert.equal(rings(), 0, "…and no element inside it is ringed yet");
+  same(active(), body, "nothing is focused: the cursor's ring is not focus");
 });
 
-test("with focus in the comment box under the viewer, Enter is left to the box, the cursor does not descend, and nothing behind the viewer is clicked", async () => {
-  // The scenario the round-1 fix answered. Two yields now stand between these keys and the cursor — the text
-  // field, and (since round 2) the covered board — so this case holds whichever of the two fires first; the
-  // next case is the one where the text-field yield stands alone.
-  const view = new El("div"); view.id = "romp-fileview";           // the viewer, mounted in the feed document (file-view.ts)
-  const box = new El("textarea"); box.className = "fc-input";
-  view.appendChild(box); body.appendChild(view);
-  doc.activeElement = box;
-  const enter = await press("Enter");
-  assert.equal(enter.defaultPrevented, false, "not cancelled: the browser adds the line");
-  assert.equal(rings(), 0, "the cursor did not descend into the card");
-  assert.ok(card("g1").classList.contains("focused"), "the card cursor stays where it was, still armed");
-  const again = await press("Enter");
-  assert.equal(again.defaultPrevented, false);
-  assert.equal(title("g1").clicks, 0, "no control behind the viewer was clicked");
-  assert.equal(posted.filter((m) => m.type === "showOnTimeline").length, 0, "…so nothing was posted for it either");
-  // arrows typed in the box move the caret, not the card cursor
-  const down = await press("ArrowDown");
-  assert.equal(down.defaultPrevented, false);
-  assert.ok(card("g1").classList.contains("focused") && !card("g2").classList.contains("focused"), "the card cursor did not move");
+test("board uncovered: Tab is the scope's — it rings and focuses the cursor's card's first control, and Escape releases it with the cursor still armed", async () => {
+  const tab = await press("Tab");
+  assert.equal(tab.defaultPrevented, true, "the scope took the key");
+  same(ringed(), title("g1"), "the first control of the cursor's card is ringed");
+  same(active(), title("g1"), "…and focused");
+  const esc = await press("Escape");
+  assert.equal(esc.defaultPrevented, true, "the scope's release");
+  assert.equal(rings(), 0);
+  same(active(), body, "the release blurred the control");
+  assert.ok(card("g1").classList.contains("focused"), "the scope's Escape is not the cursor's: it stays armed (capture-first, the scope stopped the key)");
+});
+
+test("viewer up, focus on the composer's Save button: Tab and Shift+Tab are the page's own — not cancelled, focus untouched, no ring in a card — and Enter is the button's native click", async () => {
+  const { view, save, cancel } = mountViewer();
+  for (const b of [save, cancel]) {
+    doc.activeElement = b;                                          // the box's own Tab landed here
+    for (const shift of [false, true]) {
+      const tab = await press("Tab", shift);
+      assert.equal(tab.defaultPrevented, false, (shift ? "Shift+Tab" : "Tab") + " from " + b.dataset.act + " is not the scope's");
+      assert.equal(rings(), 0, "no control behind the viewer was ringed");
+      same(active(), b, "focus stays where the browser has it: the page's own order moves it, not the scope");
+    }
+    const enter = await press("Enter");
+    assert.equal(enter.defaultPrevented, false, "Enter is " + b.dataset.act + "'s native click");
+    assert.equal(title("g1").clicks, 0, "nothing behind the viewer was clicked");
+  }
+  assert.equal(onTimeline(), 0, "…and nothing was posted for a card the person cannot see");
+  doc.activeElement = body;
   view.remove();
 });
 
-test("board uncovered, focus in the session search box: the arrows move the caret and Enter is the box's — nothing cancelled, the card cursor neither moves nor descends", async () => {
-  // The one case where the text-field yield alone stands between the key and the cursor: no viewer, no browser,
-  // and the real box the render mounts in #feed-foot (ensureSessionBox), focused the way the Sessions button's
-  // click leaves it. Its own onkeydown takes only Escape, so an arrow or Enter here reaches the window handler
-  // uncancelled — and an INPUT is not in activatesOnEnter's set, so no other yield speaks for it.
-  assert.equal(body.byId("romp-fileview"), null, "no viewer up");
-  assert.equal(body.byId("romp-filebrowse"), null, "no browser up");
-  const inp = body.byId("feed-search-input");
-  assert.ok(inp && inp.tagName === "INPUT" && foot.contains(inp), "the render mounted the real session search box in the foot");
-  doc.activeElement = inp;
-  const paths = askPaths();
-  const left = await press("ArrowLeft");
-  assert.equal(left.defaultPrevented, false, "not cancelled: the caret moves");
-  const down = await press("ArrowDown");
-  assert.equal(down.defaultPrevented, false, "not cancelled: the caret moves");
-  assert.ok(card("g1").classList.contains("focused") && !card("g2").classList.contains("focused"), "the card cursor did not move");
-  assert.equal(askPaths(), paths, "…and lit no journey");
-  const enter = await press("Enter");
-  assert.equal(enter.defaultPrevented, false, "not cancelled: the box keeps its Enter");
-  assert.equal(rings(), 0, "the cursor did not descend into the card");
-  assert.ok(card("g1").classList.contains("focused"), "…and stays armed where it was");
-  assert.equal(title("g1").clicks, 0, "no card control was clicked");
+test("viewer up, focus on the body (what Save leaves): Tab is not the scope's, and Enter clicks nothing behind the viewer", async () => {
+  const { view } = mountViewer();
   doc.activeElement = body;
+  const tab = await press("Tab");
+  assert.equal(tab.defaultPrevented, false);
+  assert.equal(rings(), 0, "no card control was ringed");
+  same(active(), body, "…or focused");
+  const enter = await press("Enter");
+  assert.equal(enter.defaultPrevented, false);
+  assert.equal(title("g1").clicks, 0);
+  assert.equal(card("g1").querySelector(".fdismiss")!.clicks, 0, "the card's Clear was not reached either");
+  assert.equal(onTimeline(), 0);
+  view.remove();
 });
 
-test("with focus back on the page, the same keys drive the cursor as before: Enter descends and rings the title, Enter again clicks it, Escape steps out", async () => {
-  doc.activeElement = body;
+test("a scope armed before the viewer opened: Enter and Escape are not its while the viewer is up (Escape reaches the viewer's own handler), and the next Escape once the viewer is gone releases it", async () => {
+  const tab = await press("Tab");                                   // uncovered: the scope arms on the cursor's card
+  assert.equal(tab.defaultPrevented, true);
+  same(active(), title("g1"), "focus");
+  const { view } = mountViewer();                                   // the card menu's Browse files → a file, with the scope's control still focused
   const enter = await press("Enter");
-  assert.equal(enter.defaultPrevented, true, "the cursor took the key");
-  assert.ok(title("g1").classList.contains("kbd-focus"), "the first control is ringed");
-  const again = await press("Enter");
-  assert.equal(again.defaultPrevented, true);
-  assert.equal(title("g1").clicks, 1, "Enter on the ringed control is exactly one click on it");
-  await press("Escape");                                            // card → cards
+  assert.equal(enter.defaultPrevented, false, "the scope did not click its control behind the viewer");
+  assert.equal(title("g1").clicks, 0);
+  const esc = await press("Escape");
+  assert.equal(esc.defaultPrevented, false, "not the scope's release: the viewer's Escape handler on `document` gets the key");
+  same(ringed(), title("g1"), "the scope is still armed, untouched");
+  view.remove();                                                    // file-view.ts's onKey closed the viewer on that Escape
+  const esc2 = await press("Escape");
+  assert.equal(esc2.defaultPrevented, true, "with the board back, Escape is the scope's release");
   assert.equal(rings(), 0);
-  assert.ok(card("g1").classList.contains("focused"));
-  await press("Escape");                                            // cards → off
-  assert.ok(!card("g1").classList.contains("focused"), "the cursor is gone");
-  const off = await press("Enter");
-  assert.equal(off.defaultPrevented, false, "with the cursor off, Enter is nobody's");
+  same(active(), body, "focus");
+  assert.ok(card("g1").classList.contains("focused"), "the cursor is still armed on the board");
+});
+
+test("the file browser up (the sibling overlay): the same yield", async () => {
+  const fb = new El("div"); fb.id = "romp-filebrowse"; body.appendChild(fb);
+  doc.activeElement = body;
+  const tab = await press("Tab");
+  assert.equal(tab.defaultPrevented, false, "Tab is not the scope's under the browser");
+  assert.equal(rings(), 0);
+  same(active(), body, "focus");
+  fb.remove();
+  const again = await press("Tab");
+  assert.equal(again.defaultPrevented, true, "…and is again once the browser is gone");
+  same(ringed(), title("g1"), "ring");
+  await press("Escape");
+  assert.equal(rings(), 0);
   mock.timers.reset();
 });
 
-test("source: the yield reads the focused element through the one text-field test the focus policy uses", () => {
-  assert.match(FEED_SRC, /function typingIn\(t: EventTarget \| null\): boolean \{\n\s*const el = t as HTMLElement \| null;\n\s*return !!el && \(\/\^\(INPUT\|TEXTAREA\|SELECT\)\$\/\.test\(el\.tagName\) \|\| el\.isContentEditable\);\n\}/);
-  assert.match(FEED_SRC, /return typingIn\(t\);\n\}/, "feedWantsKeys reads it");
-  const kb = FEED_SRC.slice(FEED_SRC.indexOf("function kbExit(): void"), FEED_SRC.indexOf('window.addEventListener("blur", () => { if (kbMode) kbExit(); });'));
-  assert.match(kb, /if \(document\.getElementById\("feed-modal"\)\) return;[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*if \(typingIn\(document\.activeElement\)\) return;/,
-    "the card cursor's handler yields right after the modal check, before any key is read");
+test("source: the scope's handler yields on the same boardCovered() the cursor's does, ahead of its Escape, Tab and Enter branches", () => {
+  const kd = FEED_SRC.slice(FEED_SRC.indexOf("// ── CARD KEYBOARD SCOPE"), FEED_SRC.indexOf("// The feed payload's full application"));
+  const modal = kd.indexOf('if (document.getElementById("feed-modal")) return;');
+  const covered = kd.indexOf("if (boardCovered()) return;");
+  const esc = kd.indexOf('if (e.key === "Escape" && tabScopeKey) {');
+  const tab = kd.indexOf('if (e.key === "Tab") {');
+  assert.ok(modal >= 0 && covered > modal && esc > covered && tab > esc, "modal yield, then the covered yield, then the key branches");
+  assert.equal((kd.match(/if \(boardCovered\(\)\) return;/g) || []).length, 1, "one yield covers every branch");
+  assert.match(FEED_SRC, /function boardCovered\(\): boolean \{\n\s*return !!\(document\.getElementById\("romp-fileview"\) \|\| document\.getElementById\("romp-filebrowse"\)\);\n\}/, "the two full-pane ids the cursor's yield reads");
 });

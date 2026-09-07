@@ -681,6 +681,35 @@ function ensureListener(): void {
   });
   window.addEventListener("romp:wsdown", () => { if (live) live.failAll("the connection dropped; try again once it returns"); });
 }
+/** The save chord, claimed at the WINDOW in the capture phase while the live panel's box is the key's target: the first
+ *  listener a keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts
+ *  runs every bound chord from a capture listener on this pane's document, wired when the pane loaded (so ahead of
+ *  anything the panel hangs on the document), and a chord with a real modifier dispatches while typing (keybindings.ts
+ *  dispatchable). Ctrl+Enter and Cmd+Enter are bindable there and conflict with no shell command, so a shell command the
+ *  person bound to one stopped the event before boxKey and ran instead: nothing saved, the hint under the box false. The
+ *  chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind that): the claim stops the event
+ *  short of every other listener and hands it to boxKey, which saves. Nothing else is claimed: an Escape, a plain Enter,
+ *  a composing IME's Enter and a key anywhere but the box pass untouched.
+ *
+ *  ONE listener for the module, added when it loads and keyed on `live` — not one per panel, added when the panel is
+ *  built (the 2026-09-07 review). The chat pane runs its history keys, chat.navBack and chat.navForward, from a
+ *  window-capture listener of its own (render.ts, added when that module loads, reading the same overrides store as the
+ *  shell's dispatcher), and a rebind of either to Ctrl+Enter or Meta+Enter reached it: listeners on one target in one
+ *  phase run in the order they were added, and stopPropagation stops none of them, so a claim added when the panel was
+ *  built ran after the chat's listener had navigated — the comment saved and the session switched under the viewer.
+ *  Only an earlier listener can stop a same-target one, and only with stopImmediatePropagation. This module is a static
+ *  dependency of render.ts (file-view.ts imports fileCommentsAction from here; render.ts imports panelMark), so its body
+ *  runs before render.ts's and this listener is added before the chat's; the feed's window listeners leave every Ctrl and
+ *  Meta chord alone, and the shell's dispatcher sits on the document, behind the window in the capture phase whatever the
+ *  order. A panel adds and removes nothing: dispose clears `live`, and a chord in what was its box passes on as before.
+ *  The guard is for an import with no window at all (a node test of the pure helpers), where there is no keyboard. */
+function claimSaveChord(ev: KeyboardEvent): void {
+  const p = live;
+  if (!p || ev.target !== p.input || composerKeyAction(ev) !== "save") return;
+  ev.stopImmediatePropagation();
+  p.boxKey(ev);
+}
+if (typeof window !== "undefined") window.addEventListener("keydown", claimSaveChord, true);
 
 // The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
 // and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
@@ -855,20 +884,6 @@ class Panel {
     if (act === "save") { e.preventDefault(); void this.saveComposer(); }
     else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
   };
-  /** The save chord, claimed at the WINDOW in the capture phase while the box is the key's target: the first listener a
-   *  keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts runs
-   *  every bound chord from a capture listener on this pane's document, wired when the pane loaded (so ahead of anything
-   *  the panel hangs on the document), and a chord with a real modifier dispatches while typing (keybindings.ts
-   *  dispatchable). Ctrl+Enter and Cmd+Enter are bindable there and conflict with no shell command, so a shell command the
-   *  person bound to one stopped the event before boxKey and ran instead: nothing saved, the hint under the box false.
-   *  The chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind that): the claim stops the
-   *  event short of the shell's listener and hands it to boxKey, which saves. Nothing else is claimed: an Escape, a plain
-   *  Enter, a composing IME's Enter and a key anywhere but the box pass untouched. */
-  claimSaveChord = (ev: KeyboardEvent) => {
-    if (ev.target !== this.input || composerKeyAction(ev) !== "save") return;
-    ev.stopPropagation();
-    this.boxKey(ev);
-  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
@@ -877,7 +892,7 @@ class Panel {
     this.input.rows = NOTE_ROWS;
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
-    this.input.addEventListener("keydown", this.boxKey);   // Escape and the save chord; a plain Enter is left to the textarea
+    this.input.addEventListener("keydown", this.boxKey);   // Escape here; the save chord arrives through the window's claim (claimSaveChord); a plain Enter is left to the textarea
     this.input.addEventListener("input", () => this.autosize());
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
@@ -901,7 +916,6 @@ class Panel {
     document.body.appendChild(this.float);
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
     document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
-    window.addEventListener("keydown", this.claimSaveChord, true);    // the save chord, ahead of the shell's dispatcher: see claimSaveChord
     ctx.onSelection((sel) => this.onSelection(sel));
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
@@ -1224,9 +1238,8 @@ class Panel {
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     document.removeEventListener("keydown", this.escapeReplace, true);
-    window.removeEventListener("keydown", this.claimSaveChord, true);
     this.failAll("the file viewer closed");
-    if (live === this) live = null;
+    if (live === this) live = null;   // …and the window's save-chord claim (claimSaveChord reads `live`) is no longer this box's
   }
 
   // ── the session color map: one GET /sessions per panel open, authorId → name + colour ──────────

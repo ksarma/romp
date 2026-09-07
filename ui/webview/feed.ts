@@ -5023,6 +5023,24 @@ function kbEnterCard(): void {
   kbMode = "card"; kbSelectEl(0);
 }
 function kbExitCard(): void { kbClearEl(); kbEls = []; kbElIdx = -1; kbMode = "cards"; }   // back to the card cursor
+// Focus a mouse click left on a button or link is not the keyboard's. A click focuses the clicked control and the
+// focus policy keeps focus in the feed while the cursor is armed; the Tab scope takes every Tab while it is armed, so
+// the one keyboard path to a focused control is that scope (tabScopeFocus), and any other focused button or link is a
+// click's leftover — with no ring to show it (.fask-secbtn has no focus rule; a browser rings keyboard focus only).
+// The cursor handler's Enter yield reads the focus, and a leftover would take the key as the browser's re-click:
+// Summary clicked on card A, an arrow to card B, Enter — A's Summary toggled off and the cursor descended nowhere
+// (review 2026-09-07, round 3). So the leftover gives its focus up first, and Enter is the cursor's. Two callers:
+// Enter drops a leftover INSIDE a card (a header button keeps its native Enter — the round-2 call); an arrow that
+// moves the cursor drops one anywhere, since from the move on the keyboard is driving the cursor. The scope's own
+// control keeps its focus either way: that scope is a keyboard state with its own release (Escape, the pointer
+// leaving the card).
+function kbDropClickFocus(inCardOnly: boolean): void {
+  const ae = document.activeElement as HTMLElement | null;
+  if (!ae || !activatesOnEnter(ae)) return;
+  if (tabScopeKey && cardElByKey(tabScopeKey)?.contains(ae)) return;
+  if (inCardOnly && !ae.closest(".fitem")) return;
+  ae.blur();
+}
 function kbExit(): void { kbClearEl(); kbEls = []; kbElIdx = -1; kbMode = ""; kbCardEl = null; hoverAskId = null; applyFocus(); }
 
 window.addEventListener("keydown", (e) => {
@@ -5047,9 +5065,12 @@ window.addEventListener("keydown", (e) => {
   if (boardCovered()) return;
   // - focus on a button or link: Enter is its native click, and cancelling the keydown here suppressed it — a Tab
   //   from the comment box to Save and Enter saved nothing and descended instead. The arrows stay the cursor's: a
-  //   button has no arrow behaviour of its own.
+  //   button has no arrow behaviour of its own. The focus this reads is the KEYBOARD's: a click's leftover inside a
+  //   card is dropped first (kbDropClickFocus), so a pill the mouse pressed never takes the cursor's Enter.
+  if (e.key === "Enter") kbDropClickFocus(true);
   if (e.key === "Enter" && activatesOnEnter(document.activeElement)) return;
   const k = e.key, fwd = (k === "ArrowDown" || k === "ArrowRight"), back = (k === "ArrowUp" || k === "ArrowLeft");
+  if (fwd || back) kbDropClickFocus(false);           // the move says the keyboard drives the cursor: the next Enter is its
   if (kbMode === "cards") {
     if (fwd || back) {
       const cards = kbCardEls();
@@ -5305,6 +5326,16 @@ function releaseTabScope(): void {
 }
 window.addEventListener("keydown", (e) => {
   if (document.getElementById("feed-modal")) return;   // the modal owns keys while it is open
+  // The file viewer or the file browser is up: the cards are behind it, and no key is theirs — the yield the card
+  // cursor's handler makes (boardCovered). The scope's fallback card is the cursor's (kbCardEl), which stays armed
+  // through the click that opens the viewer, and the cards keep a non-null offsetParent under a fixed overlay — so
+  // before this, a Tab from the composer's Save button (the box's own Tab lands there; a button passes the typing
+  // yield below) was cancelled here and focused a control of a card the person could not see, and the next Enter
+  // clicked it; and a scope armed before the viewer opened swallowed the Escape meant to close it. This handler runs
+  // at the window's capture, ahead of the surfaces' own handlers on `document`, so nothing nearer can preempt it: it
+  // stands down itself. Tab is then the page's own order over the surface's controls, Escape the surface's
+  // (file-view.ts, file-browse.ts), Enter the focused button's native click (review 2026-09-07, round 3).
+  if (boardCovered()) return;
   if (e.key === "Escape" && tabScopeKey) {
     e.preventDefault(); e.stopPropagation();
     releaseTabScope();
