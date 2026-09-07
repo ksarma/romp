@@ -111,9 +111,12 @@ def _sdk_python():
 def _user_api_key_helper(config_dir=None):
     """The `apiKeyHelper` command from the user's own Claude Code settings ("" when there is none): the
     hermetic config dir borrows the COMMAND, so the child authenticates exactly the way the user's real
-    sessions do. Never a key: this test writes none to disk. `config_dir` defaults to
-    $CLAUDE_CONFIG_DIR, else ~/.claude."""
-    d = config_dir or os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    sessions do. Never a key: this test writes none to disk. `config_dir` defaults to the user's real
+    config dir: under pytest the suite's conftest floors $CLAUDE_CONFIG_DIR to an empty dir (no backend
+    construction may read the real settings) and keeps the pre-floor location in
+    $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR, so that is read first; else $CLAUDE_CONFIG_DIR, else ~/.claude."""
+    d = (config_dir or os.environ.get("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR") or os.environ.get("CLAUDE_CONFIG_DIR")
+         or os.path.expanduser("~/.claude"))
     try:
         with open(os.path.join(d, "settings.json")) as f:
             v = json.load(f).get("apiKeyHelper")
@@ -174,13 +177,20 @@ class UserApiKeyHelper(unittest.TestCase):
 
 class ApiKeyHelperPrecedence(unittest.TestCase):
     """The helper the hermetic settings get (always-run; the live class stays opt-in): the explicit
-    $ROMP_MOVE_LIVE_API_KEY_HELPER wins; else the command borrowed from $CLAUDE_CONFIG_DIR/settings.json;
-    else from ~/.claude/settings.json; "" when none names one. HOME and CLAUDE_CONFIG_DIR point at temp
-    dirs throughout, so nothing here reads the operator's own settings."""
+    $ROMP_MOVE_LIVE_API_KEY_HELPER wins; else the command borrowed from the pre-floor
+    $ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR/settings.json (conftest sets it when it floors CLAUDE_CONFIG_DIR);
+    else from $CLAUDE_CONFIG_DIR/settings.json; else from ~/.claude/settings.json; "" when none names one.
+    HOME and the two config-dir variables point at temp dirs or are absent throughout, so nothing here reads
+    the operator's own settings."""
 
     def setUp(self):
         self.td = tempfile.mkdtemp(prefix="romp-move-live-prec-")
         self.addCleanup(shutil.rmtree, self.td, ignore_errors=True)
+        # the suite's floor keeps the real location in this variable; each test below sets or clears it
+        # inside its own patch, so the operator's settings are never the fallback read
+        self._real = mock.patch.dict(os.environ, {"ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": os.path.join(self.td, "absent-real")})
+        self._real.start()
+        self.addCleanup(self._real.stop)
 
     def _settings(self, sub, helper):
         d = os.path.join(self.td, sub)
@@ -199,8 +209,22 @@ class ApiKeyHelperPrecedence(unittest.TestCase):
         cfg = self._settings("cfg", "/opt/example/borrowed --print")
         with mock.patch.dict(os.environ, {"HOME": os.path.join(self.td, "home"), "CLAUDE_CONFIG_DIR": cfg}):
             os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            os.environ.pop("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", None)
             self.assertEqual(_api_key_helper(), "/opt/example/borrowed --print")
             self.assertEqual(_user_api_key_helper(), "/opt/example/borrowed --print", "no argument: $CLAUDE_CONFIG_DIR")
+
+    def test_the_pre_floor_location_outranks_the_floored_config_dir(self):
+        # under pytest CLAUDE_CONFIG_DIR is conftest's empty floor; the user's real settings are where
+        # ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR points, and that is what the live test borrows from
+        real = self._settings("real", "/opt/example/real-helper")
+        floor = os.path.join(self.td, "floor")
+        os.makedirs(floor)
+        with mock.patch.dict(os.environ, {"HOME": os.path.join(self.td, "home"), "CLAUDE_CONFIG_DIR": floor,
+                                          "ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR": real}):
+            os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            self.assertEqual(_user_api_key_helper(), "/opt/example/real-helper")
+            self.assertEqual(_api_key_helper(), "/opt/example/real-helper")
+            self.assertEqual(_user_api_key_helper(floor), "", "an explicit directory is read as given")
 
     def test_the_default_dir_is_dot_claude_under_home(self):
         home = os.path.join(self.td, "home")
@@ -208,6 +232,7 @@ class ApiKeyHelperPrecedence(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOME": home}):
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
             os.environ.pop("ROMP_MOVE_LIVE_API_KEY_HELPER", None)
+            os.environ.pop("ROMP_TESTS_REAL_CLAUDE_CONFIG_DIR", None)
             self.assertEqual(_user_api_key_helper(), "/opt/example/home-helper")
             self.assertEqual(_api_key_helper(), "/opt/example/home-helper")
 

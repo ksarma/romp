@@ -3484,6 +3484,297 @@ def _declared_auth(state_dir) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# The key-source verdict: one pure check at backend construction (the cli_scope_supported pattern).
+# ---------------------------------------------------------------------------
+
+_SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "fish")
+LAUNCHD_LABEL = "com.romp.manager"          # bin/romp-service's LABEL
+_VERDICT_KINDS = ("file", "op", "command", "error")   # the mode words the verdict returns
+
+
+def _is_credential_name(name: str) -> bool:
+    """The credential-shaped variable names every scan here looks for: ANTHROPIC_API_KEY, any *_API_KEY,
+    any *_TOKEN."""
+    return name == "ANTHROPIC_API_KEY" or name.endswith("_API_KEY") or name.endswith("_TOKEN")
+
+
+def _credential_names_in_env_text(body: str) -> list:
+    """The credential-shaped NAMES assigned a non-empty value in an env file's text, as the launchers and
+    keysource read the file: blank and `#` lines skipped, `NAME=value`, a leading `export` ignored, one
+    layer of matching quotes counting as part of an empty value. Names only, in file order, once each: no
+    value is ever returned, so nothing built from this can print one. Pure on the text it is handed, so the
+    verdict stays pure."""
+    names: list = []
+    for raw in str(body or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export ") or line.startswith("export\t"):
+            line = line[7:].strip()
+        name, sep, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        if not sep or not value:
+            continue
+        if _is_credential_name(name) and name not in names:
+            names.append(name)
+    return names
+
+
+def _last_run_of(snap) -> dict:
+    """The command source's last run as the verdict and /api-health report it: ok, at, reason, exitCode,
+    durationS, stale (a failed run standing on the previous set), failures (consecutive), lastOkAt.
+    Value-free by construction (the record is)."""
+    snap = snap or {}
+    return {"ok": snap.get("ok"), "at": int(snap["at"]) if snap.get("at") else None,
+            "reason": snap.get("reason") or "", "exitCode": snap.get("exitCode"),
+            "durationS": snap.get("durationS"), "stale": bool(snap.get("stale")),
+            "failures": int(snap.get("failures") or 0),
+            "lastOkAt": int(snap["lastOkAt"]) if snap.get("lastOkAt") else None}
+
+
+def _expected_auth_of(env) -> str:
+    """_expected_auth's rule over a given environ (the verdict takes its inputs, never the process)."""
+    v = (env.get("ROMP_EXPECTED_AUTH") or "").strip().lower()
+    return v if v in ("key", "login") else ""
+
+
+def _unit_credential_names(text: str) -> list:
+    """Credential-shaped NAMES a service definition sets: a systemd unit's or drop-in's `Environment=` lines
+    (whitespace-separated NAME=value tokens, optionally quoted) and a launchd plist's EnvironmentVariables
+    pairs (`<key>NAME</key><string>value</string>`). Names with a non-empty value only; never a value."""
+    import shlex
+    names: list = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("Environment="):
+            continue
+        body = line[len("Environment="):]
+        try:
+            toks = shlex.split(body)
+        except ValueError:
+            toks = body.split()
+        for tok in toks:
+            name, sep, value = tok.partition("=")
+            name = name.strip().strip("\"'")      # the plain-split fallback leaves an unbalanced quote on
+            if sep and value and _is_credential_name(name) and name not in names:
+                names.append(name)
+    for m in re.finditer(r"<key>([A-Za-z_][A-Za-z0-9_]*)</key>\s*<string>([^<]*)</string>", str(text or "")):
+        if m.group(2).strip() and _is_credential_name(m.group(1)) and m.group(1) not in names:
+            names.append(m.group(1))
+    return names
+
+
+def _exec_start_shell(texts) -> bool | None:
+    """Whether the service starts the manager THROUGH A SHELL: `ExecStart=/bin/zsh -lc '...'`, or a plist
+    whose ProgramArguments begin with one. The LAST ExecStart across the texts in order wins (a drop-in
+    overrides the unit; an empty `ExecStart=` resets). None when no ExecStart or program is found at all (no
+    unit installed, or an unparseable one)."""
+    last = None
+    for text in texts or ():
+        for raw in str(text or "").splitlines():
+            line = raw.strip()
+            if line.startswith("ExecStart="):
+                last = line[len("ExecStart="):].strip()
+        m = re.search(r"<key>ProgramArguments</key>\s*<array>\s*<string>([^<]*)</string>", str(text or ""))
+        if m:
+            last = m.group(1).strip()
+    if not last:
+        return None
+    toks = last.lstrip("-@:+!").split()
+    if not toks:
+        return None
+    argv0 = os.path.basename(toks[0].strip("\"'"))
+    if argv0 == "env" and len(toks) > 1:       # `/usr/bin/env bash -lc ...`
+        rest = [t for t in toks[1:] if "=" not in t]
+        argv0 = os.path.basename(rest[0].strip("\"'")) if rest else ""
+    return argv0 in _SHELLS
+
+
+def _unit_texts(environ=None) -> list:
+    """(label, text) for every service definition the box may carry, by the same paths and variables
+    bin/romp-service uses: the systemd user unit, its drop-ins (sorted, so the later one overrides), and
+    the launchd plist. Missing files are simply absent; never raises."""
+    env = os.environ if environ is None else environ
+    home = os.path.expanduser("~")
+    cfg = (env.get("XDG_CONFIG_HOME") or "").strip() or os.path.join(home, ".config")
+    sysd = (env.get("ROMP_SYSTEMD_DIR") or "").strip() or os.path.join(cfg, "systemd", "user")
+    lagents = (env.get("ROMP_LAUNCHD_DIR") or "").strip() or os.path.join(home, "Library", "LaunchAgents")
+    paths = [os.path.join(sysd, "romp-manager.service")]
+    dropins = os.path.join(sysd, "romp-manager.service.d")
+    try:
+        paths += [os.path.join(dropins, n) for n in sorted(os.listdir(dropins)) if n.endswith(".conf")]
+    except OSError:
+        pass
+    paths.append(os.path.join(lagents, LAUNCHD_LABEL + ".plist"))
+    out: list = []
+    for path in paths:
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                out.append((path, fh.read()))
+        except OSError:
+            continue
+    return out
+
+
+def _verdict_kind(source_kind, env, service_env_text: str) -> str:
+    """The mode word the verdict speaks about. The backend hands in keysource's live selection (`source_kind`,
+    any KeySource.kind: the startup key and an empty selection are the file mode's). Without one, a pure
+    call derives it from the inputs alone, by keysource's own precedence: the env file's TEXT first
+    (parse_source: command > op > file, a file's line outranking the environment, as select_source has it),
+    then the environ's ROMP_CREDENTIAL_COMMAND, then its ROMP_API_KEY_REF, selected by presence as at the
+    environment door. Never the env file this process is configured from."""
+    if source_kind:
+        return source_kind if source_kind in _VERDICT_KINDS else "file"
+    parsed = _keysrc.parse_source(service_env_text)
+    if parsed.kind in _keysrc.RUNTIME_KINDS:
+        return parsed.kind
+    if parsed.kind == "file" and parsed.value:
+        return "file"
+    for kind, var in (("command", _keysrc.CMD_VAR), ("op", _keysrc.REF_VAR)):
+        if var in env:
+            return kind
+    return "file"
+
+
+def key_source_verdict(environ=None, *, source_kind=None, service_env_text: str = "", unit_texts=(),
+                       helper_command: str = "", snapshot=None, work_key_present: bool = False,
+                       startup_key_present: bool = False) -> dict:
+    """What the box's key source is and whether its configuration is consistent, decided ONCE per backend,
+    at construction, from inputs the caller hands in: the kind keysource selected, the process environment,
+    the env file's text, the unit/drop-in/plist texts, the apiKeyHelper command from settings.json, the
+    command source's value-free first-run record and two booleans. Pure on those inputs, so the truth table
+    is testable on any OS without a unit, a command or a key, and a hypothetical call never reads the env
+    file this process is configured from (_verdict_kind).
+
+    Returns {"mode": "file"|"op"|"command"|"error", "selector", "sessionKeyPath": "injected"|"helper"|"login",
+    "expectedAuth", "helperConfigured", "execStartShell", "credentialNamesFound": {"serviceEnv", "unit",
+    "environment"}, "lastRun" (the command kind: _last_run_of; else None), "lines": [{"text", "problem"}]},
+    the lines the caller logs. Every line carries NAMES and fingerprints only; no value, no stderr text.
+
+    The command kind says: the first run (succeeded, informational; failed, a problem with its consequence:
+    the previous set stands, or nothing is injected until a run succeeds); ROMP_* and CLI-auth names it
+    printed (dropped); a timeout out of range; an ANTHROPIC_API_KEY copy in the env file, the unit, a drop-in
+    or the plist (ignored while the command governs; remove and rotate); ANTHROPIC_API_KEY in the manager's
+    own environment (ignored by the launch, but the tmux server and its panes inherit it: only the reference
+    scrubs them); ExecStart through a shell (its variables freeze until a manager restart); =login declared
+    while the command prints a key; =key declared with nothing to inject and no apiKeyHelper. Under the
+    command kind nothing is claimed or scrubbed, so every other credential-shaped name in the env file, the
+    service definition or the kernel's environment reaches every session's CLI and tool shells while the set
+    never does: one informational line per place, names only.
+
+    The op kind (the reference, #962's own mechanism) exempts op's names everywhere (claimed for the op read,
+    never a session's), rings on a leftover ANTHROPIC_API_KEY line the reference outranks, and reports other
+    credential-shaped names by place as information; the startup key is the selection's own stderr line and
+    is not repeated. The file kind says nothing the base's checks (_check_key_file_agrees,
+    _check_env_file_vs_declaration) do not already say, except a unit credential under a declared auth, so
+    its boot log stays byte for byte the base's. An error kind (no source can be selected) has no lines here;
+    the backend says the selection's own error."""
+    env = os.environ if environ is None else environ
+    kind = _verdict_kind(source_kind, env, service_env_text)
+    exp = _expected_auth_of(env)
+    snap = dict(snapshot or {})
+    lines: list = []
+
+    def say(text, problem=True):
+        lines.append({"text": text, "problem": bool(problem)})
+
+    exempt = _keysrc.is_op_env_name if kind == "op" else (lambda _n: False)
+    file_names = [n for n in _credential_names_in_env_text(service_env_text) if not exempt(n)]
+    unit_names: list = []
+    unit_found: list = []                      # (label, [names]) per definition that carries any
+    for label, text in unit_texts or ():
+        found = [n for n in _unit_credential_names(text) if not exempt(n)]
+        if found:
+            unit_found.append((label, found))
+            unit_names += [n for n in found if n not in unit_names]
+    exec_shell = _exec_start_shell([t for _l, t in (unit_texts or ())])
+    env_names = sorted(n for n in env if _is_credential_name(n) and (env.get(n) or "").strip()
+                       and n != "ROMP_SERVE_TOKEN" and not exempt(n))
+    if startup_key_present and _keysrc.KEY_VAR not in env_names:
+        env_names.insert(0, _keysrc.KEY_VAR)
+    found = {"serviceEnv": file_names, "unit": unit_names, "environment": env_names}
+    env_file = _keysrc.service_env_path()
+    sel, last_run = "", None
+    if kind == "command":
+        sel = _envsrc.selector_label(snap)
+        if snap.get("ok") is False:
+            say("key source: the credential command failed: %s. %s" % (
+                snap.get("reason") or "no reason recorded",
+                "Sessions launch on the set from its last successful run (sha256:%s) until a run succeeds."
+                % (snap.get("setFp") or "") if snap.get("stale") else
+                "Sessions launch with nothing injected (the apiKeyHelper or the login bills) until a run "
+                "succeeds; the next launch or judge call re-runs it."))
+        elif snap.get("ok"):
+            names = snap.get("names") or []
+            say("key source: command%s; the set is sha256:%s (%d name%s: %s); %s" % (
+                (" (selector %s)" % sel.strip("()")) if sel else "", snap.get("setFp") or "", len(names),
+                "" if len(names) == 1 else "s", ", ".join(names),
+                ("the sessions' key is sha256:%s" % snap.get("keyFp")) if snap.get("hasKey") else
+                "no ANTHROPIC_API_KEY in it, so the apiKeyHelper or the login bills the sessions"), problem=False)
+        if snap.get("dropped"):
+            d = list(snap.get("dropped") or [])
+            say("key source: the credential command printed %d ROMP_* variable%s (%s); romp owns those names, "
+                "so %s dropped from the set" % (len(d), "" if len(d) == 1 else "s", ", ".join(d),
+                                                 "it was" if len(d) == 1 else "they were"))
+        if snap.get("droppedAuth"):
+            d = list(snap.get("droppedAuth") or [])
+            say("key source: the credential command printed %s, %s the CLI reads as its own authentication or "
+                "endpoint, which would re-route or re-bill every session; dropped from the set (the key rides "
+                "ANTHROPIC_API_KEY alone)" % (", ".join(d), "a name" if len(d) == 1 else "names"))
+        if snap.get("timeoutProblem"):
+            say("key source: %s" % snap["timeoutProblem"])
+        last_run = _last_run_of(snap)
+    if kind in _keysrc.RUNTIME_KINDS:
+        command = kind == "command"
+        governs = ("%s governs the key" % _keysrc.CMD_VAR) if command else ("%s selects the 1Password reference" % _keysrc.REF_VAR)
+        places = ([env_file] if _keysrc.KEY_VAR in file_names else []) + [label for label, ns in unit_found if _keysrc.KEY_VAR in ns]
+        if places:
+            say("key source: ANTHROPIC_API_KEY is set in %s while %s. The line is ignored (%s); remove it and rotate "
+                "the value, since it reached a file." % ("; ".join(places), governs,
+                                                          "the command's set decides the key" if command else
+                                                          "the reference outranks it"))
+        if command and _keysrc.KEY_VAR in env_names:
+            say("key source: ANTHROPIC_API_KEY in the manager's own environment is ignored by the launch (the credential "
+                "command decides the key), but the tmux server and its panes inherit it. Remove it from the unit or "
+                "the service environment and rotate it.")
+        reach = "They reach every session's CLI and tool shells%s." % ("; the command's set does not" if command else "")
+        others = [n for n in file_names if n != _keysrc.KEY_VAR]
+        if others:
+            say("key source: credential-shaped names in %s: %s. %s" % (env_file, ", ".join(others), reach), problem=False)
+        others_unit = [(label, [n for n in ns if n != _keysrc.KEY_VAR]) for label, ns in unit_found]
+        others_unit = [(label, ns) for label, ns in others_unit if ns]
+        if others_unit:
+            say("key source: credential-shaped names in the service definition: %s. %s"
+                % ("; ".join("%s (%s)" % (label, ", ".join(ns)) for label, ns in others_unit), reach), problem=False)
+        others = [n for n in env_names if n != _keysrc.KEY_VAR]
+        if others:
+            say("key source: credential-shaped names in the kernel's own environment: %s. %s" % (", ".join(others), reach),
+                problem=False)
+    if kind == "command":
+        if exec_shell:
+            say("key source: ExecStart runs the manager through a shell; the variables that shell loads freeze until "
+                "a manager restart. The command source needs none of them: the generated unit runs the manager "
+                "directly (`romp-service install` rewrites it).")
+        if exp == "login" and snap.get("hasKey"):
+            say("key source: ROMP_EXPECTED_AUTH=login while the credential command prints ANTHROPIC_API_KEY "
+                "(sha256:%s); every session without an explicit Billing pick will bill the key." % (snap.get("keyFp") or ""))
+        if exp == "key" and not work_key_present and not helper_command:
+            say("auth: ROMP_EXPECTED_AUTH=key, but there is no key to inject (the credential command prints no "
+                "ANTHROPIC_API_KEY) and settings.json names no apiKeyHelper; sessions will land on the login, and "
+                "every init will say so.")
+    elif kind == "file" and exp and unit_found:
+        say("auth: the service definition carries credential-shaped lines (%s) while ROMP_EXPECTED_AUTH=%s. A "
+            "credential in a unit contradicts the declared auth model; remove the lines and rotate the values."
+            % ("; ".join("%s (%s)" % (label, ", ".join(ns)) for label, ns in unit_found), exp))
+    path = "injected" if work_key_present else ("helper" if helper_command else "login")
+    return {"mode": kind, "selector": sel, "sessionKeyPath": path, "expectedAuth": exp,
+            "helperConfigured": bool(helper_command), "execStartShell": exec_shell,
+            "credentialNamesFound": found, "lastRun": last_run, "lines": lines}
+
+
+# ---------------------------------------------------------------------------
 # Fast-mode permission for key-billed sessions — ask the account that PAYS.
 # ---------------------------------------------------------------------------
 
@@ -6536,6 +6827,8 @@ class SdkBackend:
         #                                           logs the condition once per episode, not per call
         self._fork_children_memo = None           # (sdk/ dir mtime_ns, {parent sid: [child lineage]}) — fork_children()
         self._work_key_pin: str | None = None     # a test's explicit `be.work_key = …` (see the property)
+        self._startup_key_present = bool(startup_api_key())   # whether the manager's environment carried a key at
+        #   startup: a bool for the boot verdict, taken before the selection below retires the key (never the value)
         work_api_key_source()                     # claim ambient auth; inspect config without resolving op
         startup_auth_env()
         #   the transport merges options.env over this process's env, so an ambient key would bill
@@ -6562,6 +6855,11 @@ class SdkBackend:
         self._cred_timeout_said = None            # the ROMP_CREDENTIAL_TIMEOUT_S problem last said (change-only)
         self._cred_noted_attempt = -1             # the `attempt` of the record last noted: an older record is ignored
         self._cred_note_lock = threading.Lock()
+        # The key-source verdict (key_source_verdict), once, here: the source in force and whether the box's
+        # configuration is consistent with it, from the process environment, the env file, the unit and its
+        # drop-ins, the plist, the apiKeyHelper setting and the command's first run. Kept for /api-health.
+        # Before the noter is registered, so a reader that coalesced with the verdict's run says nothing twice.
+        self.key_source = self._boot_key_source_verdict()
         # The module-level readers (work_api_key for a judge's key-billed call, credential_set for the
         # judges' environment and the catalog fetch) say a failed run through THIS backend's noter: one
         # episode guard for every path that can run the command (_noted_take). The kernel constructs one
@@ -6692,11 +6990,82 @@ class SdkBackend:
             return key, ("command" if key else "")
         return source.resolve(), ("startup" if source.kind == "environment" else source.kind)
 
+    @staticmethod
+    def _key_source_word(source) -> str:
+        """The kind word the verdict, the status report and /api-health carry for a selection: `command`,
+        `op`, `file` (a key line, the startup key, or nothing selected) or `error` (no source can be
+        selected: a removed runtime source, an unreadable or garbled file)."""
+        return source.kind if source.kind in ("command", "op", "error") else "file"
+
+    def credential_fingerprint(self, snap=None, values=None, source=None) -> tuple:
+        """(fingerprint, kind) of the credential a session launched NOW would bill, by the selected kind:
+        under the command kind the set's ANTHROPIC_API_KEY ("key"), else the configured apiKeyHelper's output
+        ("helper"; run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
+        helper is configured at all (the machine login bills, and there is nothing to fingerprint) or ("", "")
+        when a configured helper could not be fingerprinted; under the reference ("", ""), since a status read
+        never runs op (the reference is resolved at launch, per operation); under the file kind the file's or
+        the startup key ("key"). The value the kernel's /keycycle answer carries as keyFp and keyKind. `snap`
+        is a record the caller already took and `values` the set beside it (_cred_take's pair), so one
+        operation reads the set once and the helper runs in that set's environment rather than reading it
+        again, which on a failing command is another run; with no record the read happens here, noted.
+        `source` is the selection the caller already read; None reads it here."""
+        if source is None:
+            source = self._work_key_source()
+        if source.kind == "command":
+            if snap is None:
+                snap, values = self._cred_take(source)
+            if snap.get("hasKey"):
+                return snap.get("keyFp") or "", "key"
+            if not _envsrc.helper_command():
+                return "", "login"                # no key in the set, no helper: the machine login bills
+            fp, _reason = self._helper_fingerprint(snap, values, source)
+            return fp, ("helper" if fp else "")
+        if source.kind in ("file", "environment"):
+            fp = _keysrc.fingerprint(source.value)
+            return fp, ("key" if fp else "")
+        return "", ""
+
+    def _cred_take(self, source=None) -> tuple:
+        """(record, values) from ONE read of the command source, the record said through THIS backend's noter:
+        the instance half of _noted_take, for the readers that hold a backend (the status report, the
+        api-health snapshot, the key cycle, the fingerprints). Every path that can run the command reads
+        through one of the two, so a failed run is one problem line per episode wherever it is first seen. On
+        the backend itself, not the registered noter: with two backends in one process (tests) the registered
+        one is the last constructed, and this backend's own report belongs in its own ring."""
+        if source is None:
+            source = self._work_key_source()
+        snap, vals = _envsrc.take(source)
+        self._note_credential_set(snap)
+        return snap, vals
+
+    @staticmethod
+    def _helper_fingerprint(snap, values, source=None) -> tuple:
+        """envsource.helper_fingerprint on the set a caller already took (its values, generation and set
+        identity), so the helper runs in that set's environment and no second read of the command source
+        happens; with no values in hand, the module reads `source`'s current set itself."""
+        if values is None:
+            return _envsrc.helper_fingerprint(source=source)
+        return _envsrc.helper_fingerprint(values=values, generation=(snap or {}).get("generation"),
+                                          set_seq=(snap or {}).get("setSeq"), source=source)
+
+    def role_fingerprint(self, values=None, source=None) -> str:
+        """The fingerprint of the ROLE VARIABLES a launch would inject now: the command source's set minus
+        ANTHROPIC_API_KEY; "" under any other kind or for an empty set. `values` is a set the caller already
+        took (_cred_take's values half); None reads it here, noted."""
+        if source is None:
+            source = self._work_key_source()
+        if source.kind != "command":
+            return ""
+        vals = dict(values) if values is not None else self._cred_take(source)[1]
+        vals.pop(_envsrc.KEY_VAR, None)
+        return _envsrc.set_fingerprint(vals)
+
     def work_key_fp(self) -> str:
-        """The renderable form of the key sessions launch on: the sha256 head, "" for none. The
-        kernel's /keycycle answer carries this so an operator can confirm the kernel re-read the
-        file they just wrote — the value itself never leaves this process."""
-        return _keysrc.fingerprint(self.work_key)
+        """The renderable form of the credential sessions launch on: the sha256 head, "" for none
+        (credential_fingerprint's first half). The kernel's /keycycle answer carries this so an operator can
+        confirm the kernel reads what their shell reads; the value itself never leaves this process, and a
+        status read under the reference retrieves nothing."""
+        return self.credential_fingerprint()[0]
 
     def _note_work_key(self, key: str, source: str = "file") -> None:
         """Log WHICH key a launch is billing, as a fingerprint, and only when it changes. That makes
@@ -6791,6 +7160,119 @@ class SdkBackend:
         if tmo and tmo != self._cred_timeout_said:
             self._cred_timeout_said = tmo
             say("credential command: " + tmo, problem=True)
+
+    def _boot_key_source_verdict(self) -> dict:
+        """key_source_verdict on the real inputs, its lines logged. Never raises: a verdict that cannot be
+        taken is a logged problem, and the backend still constructs. The kind is keysource's live selection
+        (_work_key_source: the file's line, the environment door, the marker), and the verdict's inputs are
+        read as the launch reads them: the env file's text, the unit, its drop-ins and the plist by
+        bin/romp-service's paths (_unit_texts), the apiKeyHelper from settings.json. Under the command kind
+        the record it describes is the command's FIRST run, and its lines are the boot's ONE report of that
+        record: the noter takes the record as `reported` (guards set, nothing said) once the lines are
+        logged, so the next path that meets the same facts is silent, and a verdict that could not be taken
+        leaves the record unsaid for the next path to say. This runs BEFORE the constructor registers the
+        noter for the module-level readers: a reader whose run coalesced with this one (the catalog's boot
+        fetch) then reads plain, or meets guards already primed. Whether a key is injected is the record's
+        own `hasKey`, so the boot describes one record from one read; under the reference it is the
+        configured reference (resolved at launch, never here); under the file kind the file's or the
+        startup key. A selection that is itself an error (a removed runtime source, an unreadable file) is
+        said here, once, in the problem ring: every launch would otherwise fail with nothing at boot to find
+        it by."""
+        snap = None
+        try:
+            source = self._work_key_source()
+            kind = self._key_source_word(source)
+            env_text = ""
+            try:
+                with open(_keysrc.service_env_path(), "r", encoding="utf-8", errors="replace") as fh:
+                    env_text = fh.read()
+            except OSError:
+                pass
+            if source.kind == "command":
+                snap = _envsrc.status(source)
+            if self._work_key_pin is not None:
+                work_key_present = bool(self._work_key_pin)
+            elif source.kind == "command":
+                work_key_present = bool(snap.get("hasKey"))
+            elif source.kind == "op":
+                work_key_present = True
+            else:
+                work_key_present = source.kind in ("file", "environment") and bool(source.value)
+            v = key_source_verdict(source_kind=kind, service_env_text=env_text, unit_texts=_unit_texts(),
+                                   helper_command=_envsrc.helper_command(), snapshot=snap,
+                                   work_key_present=work_key_present,
+                                   startup_key_present=self._startup_key_present)
+        except Exception as e:
+            self._log("key source: the boot verdict failed (%s)" % e, problem=True)
+            return {"mode": self._key_source_mode(), "lines": []}
+        if source.kind == "error":
+            self._log("key source: %s" % (source.error or "the API key source cannot be read"), problem=True)
+        for ln in v.get("lines") or []:
+            self._log(ln["text"], problem=ln["problem"])
+        if snap is not None:
+            self._note_credential_set(snap, reported=True)
+        return v
+
+    def _key_source_mode(self) -> str:
+        """The live selection's kind word, "file" when even the selection cannot be read."""
+        try:
+            return self._key_source_word(self._work_key_source())
+        except Exception:
+            return "file"
+
+    def _launched_histogram(self) -> dict:
+        """{credential fingerprint: live session count}: what each running CLI launched on, for the /keycycle
+        answer and api-health ("" counts the sessions launched with no credential the kernel fingerprinted:
+        the login)."""
+        with self._lock:
+            sess = list(self.sessions.values())
+        out: dict = {}
+        for s in sess:
+            if getattr(s, "ended", False):
+                continue
+            fp = getattr(s, "_launched_key_fp", None) or ""
+            out[fp] = out.get(fp, 0) + 1
+        return out
+
+    def key_source_status(self) -> dict:
+        """The value-free key-source facts the /keycycle route reports beside its rows: source
+        ("file"|"op"|"command"|"error"), fp (the current credential fingerprint, keyFp on the wire), fpKind
+        ("key"|"helper"|"login"|""; keyKind on the wire: "login" is a set with no key and no helper
+        configured, the machine login bills, nothing to fingerprint, no error), err (why there is no
+        fingerprint, the last run failed, or the selection itself is an error; "" when fine), setFp and
+        selector (the command kind), launched (the histogram). A status read runs no provider: under the
+        reference fp is "" by design."""
+        source = self._work_key_source()
+        snap, vals = self._cred_take(source) if source.kind == "command" else (None, None)
+        fp, kind = self.credential_fingerprint(snap, vals, source)
+        out = {"source": self._key_source_word(source), "fp": fp, "fpKind": kind, "err": "", "setFp": "",
+               "selector": "", "launched": self._launched_histogram()}
+        if source.kind == "error":
+            out["err"] = source.error or "the API key source cannot be read"
+        if snap is not None:
+            out["setFp"] = snap.get("setFp") or ""
+            out["selector"] = _envsrc.selector_label(snap)
+            if snap.get("ok") is False:
+                out["err"] = snap.get("reason") or "the credential command failed"
+            elif not snap.get("hasKey") and not fp and kind != "login":
+                out["err"] = self._helper_fingerprint(snap, vals, source)[1]   # a configured helper that gave no fingerprint
+        return out
+
+    def refresh_key_source(self) -> dict:
+        """Re-run the command NOW rather than at the next launch, and say what moved: {"from": fp, "to": fp,
+        "err": reason}. Under the command kind the cached set is invalidated and the next read (the status
+        report below) runs the command; under the reference and the file kind the selection is already read
+        live (the file's own stat identity), so this is a plain re-read that retrieves nothing."""
+        source = self._work_key_source()
+        before, _k = self.credential_fingerprint(source=source)
+        if source.kind == "command":
+            _envsrc.invalidate("refresh")
+        st = self.key_source_status()
+        after = st.get("fp", "")
+        if before != after:
+            self._log("key source: refreshed; the credential fingerprint moved sha256:%s -> sha256:%s"
+                      % (before or "(none)", after or "(none)"))
+        return {"from": before, "to": after, "err": st.get("err", "")}
 
     def _credential_auth_failed(self, sess, what: str) -> None:
         """A credential the command source supplied (or the helper it fingerprints) was refused on `sess`:
@@ -7971,6 +8453,41 @@ class SdkBackend:
         for _var, key, _ok, _rule, typ in CLI_SCOPE_LIMITS:
             v = self.cli_scope_limits.get(key) if self.cli_scope else None
             out["cliScope"][key] = typ(v) if v is not None else None
+        # The key source (key_source_verdict at boot, plus what is live now): mode, selector, the path a
+        # session's key takes, the declaration, whether a helper is configured, the ExecStart shape,
+        # credential-shaped names found (names only), the command's last run, the current credential
+        # fingerprint and which live sessions launched on which. The mode is the LIVE selection's (a keyswap
+        # to another kind moves it; a removed source reads `error`), the rest of the boot's facts stand.
+        # The documented shape holds whatever the boot verdict managed. Never a value.
+        ksrc = {k: v for k, v in (getattr(self, "key_source", None) or {}).items() if k != "lines"}
+        for k, dflt in (("mode", "file"), ("selector", ""), ("sessionKeyPath", "login"), ("expectedAuth", ""),
+                        ("helperConfigured", False), ("execStartShell", None),
+                        ("credentialNamesFound", {"serviceEnv": [], "unit": [], "environment": []}), ("lastRun", None)):
+            ksrc.setdefault(k, dflt)
+        snap = None
+        try:
+            source = self._work_key_source()
+            snap, vals = self._cred_take(source) if source.kind == "command" else (None, None)
+            fp, kind = self.credential_fingerprint(snap, vals, source)
+            ksrc["mode"] = self._key_source_word(source)
+            ksrc["helperConfigured"] = bool(_envsrc.helper_command())     # settings.json as of now, not the boot
+            if source.kind == "op":
+                ksrc["sessionKeyPath"] = "injected"
+            elif source.kind in ("file", "environment", "none"):
+                ksrc["sessionKeyPath"] = "injected" if source.value else ("helper" if ksrc["helperConfigured"] else "login")
+        except Exception:
+            snap, fp, kind = None, "", ""
+        ksrc["fingerprint"], ksrc["fingerprintKind"] = fp, kind
+        ksrc["setFingerprint"], ksrc["names"] = "", []
+        if snap is not None:
+            ksrc["selector"] = _envsrc.selector_label(snap)
+            ksrc["setFingerprint"] = snap.get("setFp") or ""
+            ksrc["names"] = list(snap.get("names") or [])
+            ksrc["lastRun"] = _last_run_of(snap)
+            ksrc["sessionKeyPath"] = "injected" if snap.get("hasKey") else (
+                "helper" if ksrc.get("helperConfigured") else "login")
+        ksrc["sessionsByFingerprint"] = self._launched_histogram()
+        out["keySource"] = ksrc
         return out
 
     def _poke(self):

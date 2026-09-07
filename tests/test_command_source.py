@@ -321,22 +321,27 @@ class CommandSourceLaunch(_Lab):
         self.assertEqual(len([t for t in self.problems() if "authentication or endpoint" in t]), 1, "said once per distinct list")
 
     def test_the_set_line_is_change_only(self):
+        # the boot verdict is the report of the first set (one "key source: command" line: the set's fingerprint
+        # and names); the noter's own line is for a CHANGE, and the first connect on the same set says nothing
+        boot = [m for m in self.logged if m.startswith("key source: command")]
+        self.assertEqual(len(boot), 1, self.logged)
+        self.assertIn("sha256:" + es.set_fingerprint(self.values), boot[0])
+        self.assertIn("2 names: ANTHROPIC_LP_API_KEY, A_TOKEN", boot[0])
+        self.assertIn("no ANTHROPIC_API_KEY in it", boot[0])
         self._env_for(1, "login")
-        said = [m for m in self.logged if m.startswith("credential command: sessions now launch with the set")]
-        self.assertEqual(len(said), 1, self.logged)
-        self.assertIn("sha256:" + es.set_fingerprint(self.values), said[0])
-        self.assertIn("2 names: ANTHROPIC_LP_API_KEY, A_TOKEN", said[0])
-        self.assertIn("no ANTHROPIC_API_KEY in it", said[0])
         for _ in range(3):
             self._env_for(2, "login")
         self.rerun()
         self._env_for(3, "login")
-        self.assertEqual(len([m for m in self.logged if "sessions now launch with the set" in m]), 1, "the same set again is not said")
+        self.assertEqual([m for m in self.logged if "sessions now launch with the set" in m], [],
+                         "the same set again is not said")
         self.values["A_TOKEN"] = fixture_value("rotated")
         self.print_set(self.values)
         self.rerun()
         self._env_for(4, "login")
-        self.assertEqual(len([m for m in self.logged if "sessions now launch with the set" in m]), 2, "a changed set is")
+        said = [m for m in self.logged if "sessions now launch with the set" in m]
+        self.assertEqual(len(said), 1, "a changed set is")
+        self.assertIn("sha256:" + es.set_fingerprint(self.values), said[0])
         for v in self.values.values():
             self.assertFalse(any(v in m for m in self.logged), "a value in a log line")
 
@@ -482,8 +487,10 @@ class CommandSourceFailure(_Lab):
             self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present (%s)" % auth)
             self.assertFalse("A_TOKEN" in env, "A_TOKEN present (%s)" % auth)
             self.assertEqual(env["ROMP_SID"], "11111111-2222-3333-4444-%012d" % n)
-        failed = [t for t in self.problems() if t.startswith("credential command: failed")]
+        failed = [t for t in self.problems() if "credential command" in t and "failed" in t]
         self.assertEqual(len(failed), 1, self.problems())
+        self.assertTrue(failed[0].startswith("key source: the credential command failed"),
+                        "the boot verdict is the one report of the first run; the connects add no second line")
         self.assertIn("exited 7", failed[0])
         self.assertIn("nothing injected", failed[0])
         self.assertTrue(any("printed no ANTHROPIC_API_KEY" in t for t in self.problems()),
