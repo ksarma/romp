@@ -1332,5 +1332,93 @@ class RaisingRegistryTransactions(unittest.TestCase):
             self.assertEqual(len(be._sessions), 0)
 
 
+class EnsureCodexSdk(unittest.TestCase):
+    """ensure_codex_sdk adds the codexvenv's site-packages only when they were built for the interpreter
+    this process runs (the twin of the SDK venv's rule, tests/test_sdk_venv_abi.py). Every
+    codexvenv/lib/python3.* used to join sys.path[0] whatever the interpreter, so a codexvenv built with a
+    newer python failed deep inside the import under the kernel's python and shadowed shared
+    dependencies for every later import (review round 2). find_spec is stubbed so the outcome does not
+    depend on whether this machine has openai_codex installed."""
+
+    def setUp(self):
+        import io
+        import tempfile
+        self.state = tempfile.mkdtemp()
+        self.venv = Path(self.state) / "codexvenv"
+        self.path_before = list(sys.path)
+        self.err = io.StringIO()
+        cb._CODEX_VENV_BUILT_FOR = []
+
+    def tearDown(self):
+        import shutil
+        sys.path[:] = self.path_before
+        shutil.rmtree(self.state, ignore_errors=True)
+
+    def _site(self, pyname):
+        sp = self.venv / "lib" / pyname / "site-packages"
+        sp.mkdir(parents=True)
+        return str(sp)
+
+    def _run(self, importable_from=None):
+        import importlib.util
+
+        def fake_find_spec(name, *a, **k):
+            if name != "openai_codex":
+                return fake_find_spec.__wrapped__(name, *a, **k)
+            if importable_from and any(p.startswith(importable_from) for p in sys.path):
+                return SimpleNamespace(name=name)
+            return None
+        fake_find_spec.__wrapped__ = importlib.util.find_spec
+        with mock.patch.object(importlib.util, "find_spec", fake_find_spec), \
+             mock.patch.object(sys, "stderr", self.err):
+            return cb.ensure_codex_sdk(self.state)
+
+    def test_a_venv_for_another_python_is_not_added_and_is_named(self):
+        sp = self._site("python3.99")
+        self.assertFalse(self._run(importable_from=sp))
+        self.assertNotIn(sp, sys.path, "a 3.99 venv must never join a %s process" % cb._running_python_tag())
+        line = self.err.getvalue()
+        self.assertIn("built for python 3.99", line)
+        self.assertIn("runs " + cb._running_python_tag(), line)
+        self.assertIn("romp-codex-setup", line, "the remedy, named")
+        self.assertEqual(cb._CODEX_VENV_BUILT_FOR, ["3.99"])
+        self.assertFalse(self._run(importable_from=sp))
+        self.assertEqual(self.err.getvalue(), line, "one line per verdict, not one per launch")
+
+    def test_a_matching_venv_is_added_and_the_sdk_imports(self):
+        sp = self._site("python" + cb._running_python_tag())
+        self.assertTrue(self._run(importable_from=sp))
+        self.assertIn(sp, sys.path)
+        self.assertEqual(self.err.getvalue(), "", "nothing to say when the venv matches")
+
+    def test_only_the_matching_directory_joins_when_both_exist(self):
+        old = self._site("python3.99")
+        new = self._site("python" + cb._running_python_tag())
+        self.assertTrue(self._run(importable_from=new))
+        self.assertIn(new, sys.path)
+        self.assertNotIn(old, sys.path)
+
+    def test_a_free_threaded_build_is_its_own_tag(self):
+        # venv names a 3.99t build's lib directory python3.99t: that venv is the 3.99t process's own, and a
+        # python3.99 venv in a 3.99t process is a mismatch, whatever the shared minor says
+        own = self._site("python3.99t")
+        with mock.patch.multiple(sys, abiflags="t", version_info=(3, 99, 0, "final", 0), create=True):
+            self.assertEqual(cb._running_python_tag(), "3.99t")
+            self.assertTrue(self._run(importable_from=own))
+            self.assertIn(own, sys.path)
+            sys.path[:] = self.path_before
+            import shutil
+            shutil.rmtree(self.venv)
+            other = self._site("python3.99")
+            self.assertFalse(self._run(importable_from=other))
+            self.assertNotIn(other, sys.path)
+        self.assertIn("built for python 3.99 but the kernel runs 3.99t", self.err.getvalue())
+
+    def test_no_venv_is_the_plain_not_importable_path(self):
+        self.assertFalse(self._run())
+        self.assertEqual(self.err.getvalue(), "", "no venv: nothing about versions to say")
+        self.assertEqual(sys.path, self.path_before)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
