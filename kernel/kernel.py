@@ -31761,15 +31761,25 @@ class _FeedSegs:
         self.degraded = degraded
 
     def anchors_hold(self):
-        """True while every remembered anchor a cold row of this entry read still reads the same."""
-        return all(_node_anchor_last.get(nid) == held for nid, held in self.anchor_deps.items())
+        """True while every remembered anchor a cold row of this entry read still reads the same. The
+        dependency map is read as a snapshot taken under the memo lock: a concurrent build (a gesture
+        build on a handler thread beside the pusher's) may be filling another top's tree into it, and
+        iterating the live dict raised on the size change (review 2026-09-07)."""
+        with _FEED_SEGS_LOCK:
+            deps = list(self.anchor_deps.items())
+        return all(_node_anchor_last.get(nid) == held for nid, held in deps)
 
     def tree(self, nid):
         e = self.trees.get(nid)
         if e is None:
-            rows, writes = [], {}
-            self.flatten(nid, rows, self.anchor_deps, writes, boundary=jd.review_boundary(self.nodes[nid]))
-            e = self.trees[nid] = (rows, writes)
+            rows, deps, writes = [], {}, {}
+            self.flatten(nid, rows, deps, writes, boundary=jd.review_boundary(self.nodes[nid]))
+            with _FEED_SEGS_LOCK:                    # the flatten ran on locals; publish them in one step
+                self.anchor_deps.update(deps)
+                e = self.trees.get(nid)
+                if e is None:                        # a concurrent fill of the same top published first:
+                    e = self.trees[nid] = (rows, writes)   # one object for every reader of it
+                rows, writes = e
         else:
             rows, writes = e
             if writes:

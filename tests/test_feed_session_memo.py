@@ -524,6 +524,77 @@ class SharedRows(_World):
         self.assertLessEqual(len(km._feed_segs_memo), len(self.sessions) or 1)
 
 
+class ConcurrentDeps(unittest.TestCase):
+    """_FeedSegs.anchors_hold() on one thread while tree() fills a cold top on another (a gesture build
+    on a handler thread beside the pusher's): the dependency map is read as a snapshot and filled in one
+    step under the memo lock, so the iteration never sees the dict change size. Staged with hooks (the
+    filler records its first cold read only once the reader is inside its loop, and the reader resumes
+    only once that read is recorded), not a sleep race."""
+
+    def setUp(self):
+        self.saved_last = km._node_anchor_last
+        self.addCleanup(setattr, km, "_node_anchor_last", self.saved_last)
+
+    def _entry(self):
+        nodes = {}
+        for top in ("g1", "g2"):
+            tid = "%s:%s" % (SID, top)
+            nodes[tid] = {"id": tid, "text": "top " + top, "parentId": None, "t": T0, "mt": T0, "trail": [], "log": []}
+            for i in range(40):
+                cid = "%s:%s-c%d" % (SID, top, i)                       # a cold sub: its trail resolves in no parse
+                nodes[cid] = {"id": cid, "text": "cold %d" % i, "parentId": tid, "t": T0 + i, "mt": T0 + i,
+                              "trail": ["%s:999:nonexistent%d" % (SID, i)], "log": []}
+        store = {"rompUuid": SID, "nodes": nodes, "status": {}, "placements": {}}
+        return km._feed_segs_build(SID, "web", None, None, store, False)
+
+    def test_anchors_hold_reads_a_snapshot_while_another_thread_fills_the_deps(self):
+        e = self._entry()
+        e.tree(SID + ":g1")                                            # 41 cold reads recorded: the top (an empty
+        self.assertEqual(len(e.anchor_deps), 41)                       # trail resolves to no segment) and its 40 subs
+        iterating, inserted = threading.Event(), threading.Event()
+        reader_ident = [None]                                          # the hook stages the READER's reads only: the
+        #                                                                writer's own cold reads go through get() too
+
+        class Hooked(dict):
+            def get(self_, k, d=None):
+                if threading.get_ident() == reader_ident[0] and not iterating.is_set():
+                    iterating.set()                                    # the reader is inside its loop
+                    inserted.wait(10)                                  # …and holds until the filler recorded a read
+                return dict.get(self_, k, d)
+        km._node_anchor_last = Hooked(self.saved_last)
+        real = km._node_anchor_uuids
+
+        def filler(nd, seg_trig, seg_work, deps=None, writes=None):
+            first = deps is not None and not inserted.is_set()
+            if first:
+                iterating.wait(10)                                     # record nothing until the reader is mid-loop
+            out = real(nd, seg_trig, seg_work, deps, writes)
+            if first:
+                inserted.set()
+            return out
+        errors, results = [], []
+
+        def reader():
+            reader_ident[0] = threading.get_ident()
+            try:
+                results.append(e.anchors_hold())
+            except Exception as ex:                                    # noqa: BLE001 — the test collects the failure
+                errors.append(repr(ex))
+
+        def writer():
+            try:
+                with mock.patch.object(km, "_node_anchor_uuids", filler):
+                    e.tree(SID + ":g2")
+            except Exception as ex:                                    # noqa: BLE001
+                errors.append(repr(ex))
+        tr, tw = threading.Thread(target=reader), threading.Thread(target=writer)
+        tr.start(); tw.start(); tw.join(20); tr.join(20)
+        self.assertTrue(iterating.is_set() and inserted.is_set(), "the staging ran")
+        self.assertEqual(errors, [], "no dict-changed-size raise out of either thread")
+        self.assertEqual(results, [True])
+        self.assertEqual(len(e.anchor_deps), 82, "the second top's cold reads were merged after its flatten")
+
+
 class Differential(_World):
     def test_random_perturbations_memoized_equals_fresh(self):
         rng = random.Random(20260907)
