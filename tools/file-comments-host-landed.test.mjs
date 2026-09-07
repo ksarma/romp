@@ -32,7 +32,7 @@ import { createRequire } from 'node:module';
 
 import { storePathFor, writeTrackedPaths } from '../vendor/track-changents/store-io.mjs';
 import {
-  handle, statNs, logPathFor, isTextPath, underTrackchanges, human,
+  handle, statNs, logPathFor, isTextPath, underTrackchanges, humanBytes,
   TEXT_MAX_BYTES, REPLY_MAX_BYTES, TEXT_EXT, TEXT_NAMES, TRACKCHANGES_DIR,
 } from './file-comments-host.mjs';
 
@@ -366,10 +366,16 @@ test('REPLY_MAX_BYTES is the kernel\'s _FILE_COMMENTS_REPLY_MAX, and the text an
   assert.equal(TEXT_MAX_BYTES, 2 * 1024 * 1024);
   assert.match(src, /^_TRACKCHANGES_DIR = "\.trackchanges"/m);
   assert.equal(TRACKCHANGES_DIR, '.trackchanges');
-  assert.equal(human(2 * MB + 1), '2.0 MB');
-  assert.equal(human(9 * MB), '9.0 MB');
-  assert.equal(human(512), '512 bytes');
-  assert.equal(human(1536), '1.5 KB');
+  assert.equal(humanBytes(2 * MB + 1), '2.0 MB');
+  assert.equal(humanBytes(9 * MB), '9.0 MB');
+  assert.equal(humanBytes(512), '512 bytes');
+  assert.equal(humanBytes(1536), '1.5 KB');
+  // one size formatter, and a header that names every figure field a text file's reply carries
+  const host = fs.readFileSync(HOST, 'utf8');
+  assert.equal((host.match(/^export function humanBytes\(/mg) || []).length, 1);
+  assert.doesNotMatch(host, /^(?:export )?function human\(/m, 'humanBytes is the one formatter; `human` was its byte-identical twin');
+  assert.match(host, /"embeddedHashes" \+ "embeddedHashReasons" \+\n\/\/\s+"embeddedMtimes" \+ "derivedSrcs" \+ "derivedSrcReasons"/, 'the stdout line names the per-src mtimes beside the hashes and reasons');
+  assert.match(host, /"decided", "fileHash" \+ "fileHashReason"/, '…and the decisions the log remembers');
 });
 
 test('save refuses too-large before any write when a record\'s oldText or author would take the reply past the kernel\'s cap; a record under it saves', () => {
@@ -488,7 +494,7 @@ test('save and reject refuse too-large on a file past the text cap on disk, the 
   assert.deepEqual(s0.trackedBy, { kind: 'file', entry: 'docs/big.md' });
   const before = snapshot(w, big);
   const r = refused(w, saveReq(big, s0, 'tiny\n', []), 'too-large');
-  assert.equal(r.error, `cannot save ~/notes-api/docs/big.md: the file on disk is ${human(TEXT_MAX_BYTES + 1)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+  assert.equal(r.error, `cannot save ~/notes-api/docs/big.md: the file on disk is ${humanBytes(TEXT_MAX_BYTES + 1)}, past the ${humanBytes(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
   untouched(w, big, before);
   // A pending change on it: reject would write a file under the cap, and still refuses — the text
   // it would write is derived from a file the person never saw.

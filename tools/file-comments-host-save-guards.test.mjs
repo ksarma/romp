@@ -29,7 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
 import { storePathFor, saveStore, writeTrackedPaths } from '../vendor/track-changents/store-io.mjs';
-import { statNs, logPathFor, applyEdits, human, TEXT_MAX_BYTES } from './file-comments-host.mjs';
+import { statNs, logPathFor, applyEdits, humanBytes, TEXT_MAX_BYTES } from './file-comments-host.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -333,7 +333,7 @@ test('save and reject refuse too-large on the stat, before the file is read: a f
   const s0 = status(w, huge);                                   // status stats (no sidecar): the same door, no read
   assert.deepEqual(s0.trackedBy, { kind: 'folder', entry: 'docs/' });
   const r = refused(w, saveReq(huge, s0, 'tiny\n', []), 'too-large');
-  assert.equal(r.error, `cannot save ~/notes-api/docs/huge.md: the file on disk is ${human(HUGE)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+  assert.equal(r.error, `cannot save ~/notes-api/docs/huge.md: the file on disk is ${humanBytes(HUGE)}, past the ${humanBytes(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
   assert.equal(r.error.includes('GiB'), false, 'not Node\'s read-limit text');
   assert.equal(fs.statSync(huge).size, HUGE, 'the file is untouched');
   assert.equal(fs.existsSync(logPathFor(storePathFor(w.root, huge))), false);
@@ -344,7 +344,7 @@ test('save and reject refuse too-large on the stat, before the file is read: a f
   sparse(big, BIG);
   const s1 = status(w, big);
   const r1 = refused(w, saveReq(big, s1, 'tiny\n', []), 'too-large');
-  assert.equal(r1.error, `cannot save ~/notes-api/docs/big.md: the file on disk is ${human(BIG)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+  assert.equal(r1.error, `cannot save ~/notes-api/docs/big.md: the file on disk is ${humanBytes(BIG)}, past the ${humanBytes(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
   assert.equal(fs.statSync(big).size, BIG);
   // reject and reject-all take the same door. A sidecar exists here (the realistic case), but the
   // refusal comes before it is consulted: the fence values are whatever the disk says.
@@ -353,7 +353,7 @@ test('save and reject refuse too-large on the stat, before the file is read: a f
   const sidecar = fileBytes(sp);
   const fence = { storeMtimeNs: statNs(sp), fileMtimeNs: statNs(huge) };
   const r2 = refused(w, { verb: 'reject-all', path: huge, args: {}, fence }, 'too-large');
-  assert.equal(r2.error, `cannot write ~/notes-api/docs/huge.md: the file on disk is ${human(HUGE)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+  assert.equal(r2.error, `cannot write ~/notes-api/docs/huge.md: the file on disk is ${humanBytes(HUGE)}, past the ${humanBytes(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
   const r3 = refused(w, { verb: 'reject', path: huge, args: { ids: ['1700000000000-0'] }, fence }, 'too-large');
   assert.equal(r3.code, 'too-large');
   assert.deepEqual(fileBytes(sp), sidecar, 'the sidecar is untouched');

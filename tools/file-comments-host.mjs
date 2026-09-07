@@ -6,9 +6,9 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons" + "derivedSrcs" +
-//            "derivedSrcReasons", "baseline"?, "logged"?, "logWarning"?, "accepted"?,
-//            "rejected"?}
+//            "decided", "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons" +
+//            "embeddedMtimes" + "derivedSrcs" + "derivedSrcReasons", "baseline"?, "logged"?,
+//            "logWarning"?, "accepted"?, "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
@@ -189,8 +189,11 @@ export const TEXT_MAX_BYTES = 2 * 1024 * 1024;
 // The kernel's _FILE_COMMENTS_REPLY_MAX: the most stdout it holds for one reply before it kills this
 // process and discards what it read. checkReplyFits measures the reply a verb would send before a
 // write that carries a client's text into the sidecar or the log, with REPLY_SLACK left for the
-// stand-ins the estimate uses (the mtimes the write will set, the reloaded sidecar's normalization,
-// the tracking verdict and the hashes, each a few dozen bytes).
+// stand-ins the estimate uses: the mtimes the write will set, the reloaded sidecar's normalization,
+// the tracking verdict, and the figure fields it leaves empty — on a media file `fileHash` and
+// `fileHashReason`; on a text file `embeddedHashes`, `embeddedMtimes` and `embeddedHashReasons`,
+// one entry per src the comments name, a hash, an mtime string and a reason apiece — each a few
+// dozen bytes, and a file's comments name a handful of figures at most.
 export const REPLY_MAX_BYTES = 16 * 1024 * 1024;
 const REPLY_SLACK = 64 * 1024;
 // The kernel's _TEXT_EXT and _TEXT_NAMES (_is_text_path): the files GET /file serves as text and
@@ -755,7 +758,8 @@ export function mediaKind(p) {
 export function isMediaPath(p) { return mediaKind(p) !== null; }
 
 // A byte count as the kernel's _human_bytes prints it (the 413's own phrasing), so a size this
-// script names beside a cap reads the same as the viewer's refusal for the same file.
+// script names beside a cap — a figure's, a file's on disk, a reply's — reads the same as the
+// viewer's refusal for the same file. The one formatter in this script.
 export function humanBytes(n) {
   for (const [unit, step] of [['GB', 1 << 30], ['MB', 1 << 20], ['KB', 1 << 10]]) {
     if (n >= step) return `${(n / step).toFixed(1)} ${unit}`;
@@ -1230,14 +1234,6 @@ export function checkTooLarge(shown, text) {
   }
 }
 
-// The kernel's _human_bytes, for the refusals that name a size.
-export function human(n) {
-  for (const [unit, step] of [['GB', 1 << 30], ['MB', 1 << 20], ['KB', 1 << 10]]) {
-    if (n >= step) return `${(n / step).toFixed(1)} ${unit}`;
-  }
-  return `${n} bytes`;
-}
-
 // The kernel's _is_text_path: the extension allowlist plus the extensionless names that are text
 // by convention, on the basename lower-cased. The extension is Python's os.path.splitext's: the
 // text after the last dot, unless every character before that dot is a dot (`.gitignore` has
@@ -1274,7 +1270,7 @@ function checkTextPath(ctx, cannot) {
   }
 }
 function tooLargeOnDisk(ctx, bytes, cannot) {
-  return new Refusal('too-large', `${cannot} ${ctx.shown}: the file on disk is ${human(bytes)}, past the ${human(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+  return new Refusal('too-large', `${cannot} ${ctx.shown}: the file on disk is ${humanBytes(bytes)}, past the ${humanBytes(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
 }
 function checkDiskSize(ctx, file, cannot) {
   if (file.bytes > TEXT_MAX_BYTES) throw tooLargeOnDisk(ctx, file.bytes, cannot);
@@ -1713,7 +1709,7 @@ function checkReplyFits(ctx, state, extra, pending, what) {
   const est = reply(ctx, state, extra, { estimate: true, pending });
   const bytes = Buffer.byteLength(JSON.stringify(est), 'utf8') + 1;
   if (bytes > REPLY_MAX_BYTES - REPLY_SLACK) {
-    throw new Refusal('too-large', `cannot write the comments for ${ctx.shown}: with ${what} they come to ${human(bytes)} in one reply, past the ${human(REPLY_MAX_BYTES)} the dashboard can carry back; nothing was changed`);
+    throw new Refusal('too-large', `cannot write the comments for ${ctx.shown}: with ${what} they come to ${humanBytes(bytes)} in one reply, past the ${humanBytes(REPLY_MAX_BYTES)} the dashboard can carry back; nothing was changed`);
   }
 }
 
