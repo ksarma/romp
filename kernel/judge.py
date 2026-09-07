@@ -1097,6 +1097,21 @@ def _credential_error_note(exc):
     return str(exc) if isinstance(exc, _keysrc.KeySourceError) else "API credential source failed"
 
 
+_KEYLESS_COMMAND_LOGGED = {}   # set once a key-billed call has gone out un-injected under a keyless command
+                               # set: one stderr line per process, like the other once-lines here
+
+
+def _command_kind_selected():
+    """Whether the selected key source is the COMMAND kind (kernel/keysource.py select_source: the env
+    file's line, the environment door and the marker; a configuration read that runs nothing and
+    retrieves nothing). The startup key is left out of the question: it can only ever select the
+    `environment` kind, never a command. False on any failure, so the caller keeps the refusal."""
+    try:
+        return _keysrc.select_source().kind == "command"
+    except Exception:
+        return False
+
+
 def _judge_auth(fsid):
     """'key' or 'login' — which account THIS judge call bills: the judged session's own billing (the
     user 2026-08-12: a judge rides the account of the session it judges, never a third choice and
@@ -1346,7 +1361,13 @@ def _judge_env(tier, auth="login", model=None):
     reads the same set under the command kind). Its other names (a direct-call key, role variables)
     reach the child exactly as a session CLI's tool shells get them. Empty under every other kind. A
     Codex call merges nothing: another vendor's process has no use for the set, and the ANTHROPIC_
-    strip at the call keeps the rest of that namespace out."""
+    strip at the call keeps the rest of that namespace out.
+
+    A key-billed call with NO key to inject follows the kind: under the command kind (the set carries
+    no ANTHROPIC_API_KEY, an explicit key pick) the launch goes ahead un-injected with one problem line
+    (sdk_backend._options), so the call does the same, with the login tokens riding as on that launch,
+    and the child bills the apiKeyHelper or the login exactly as the session does; every other kind
+    raises, since a missing key there is a misconfiguration and never permission to bill the login."""
     env = dict(os.environ)
     for k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
         env.pop(k, None)                             # billing is an explicit choice per call
@@ -1380,9 +1401,23 @@ def _judge_env(tier, auth="login", model=None):
         env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key":
         wk = _resolve_work_key_gated()               # resolve only at the call boundary — once per pass on failure
-        if not wk:
+        if wk:
+            env["ANTHROPIC_API_KEY"] = wk
+        elif _command_kind_selected():
+            # The command kind with a set that carries no ANTHROPIC_API_KEY, under an explicit key pick: the
+            # launch (sdk_backend._options) goes ahead with nothing injected and one problem line, so the
+            # judge follows it rather than refusing (never an empty variable; the CLI reads one as
+            # key-mode-without-a-key). The startup login tokens ride as they do on that launch. A raise
+            # here made judge and launch disagree: the session ran while its judges latched auth-down and
+            # paused the pass (review find, 2026-09-07). Said once per process.
+            env.update(_login_auth_env())
+            if not _KEYLESS_COMMAND_LOGGED:
+                _KEYLESS_COMMAND_LOGGED["said"] = True
+                sys.stderr.write("romp-judge: the credential command's set carries no ANTHROPIC_API_KEY — "
+                                 "key-billed judge calls run without one (the apiKeyHelper or the login bills), "
+                                 "as the sessions do\n")
+        else:
             raise _keysrc.KeySourceError("No API key source is configured for this judge call")
-        env["ANTHROPIC_API_KEY"] = wk
     return env
 
 

@@ -96,8 +96,22 @@ def fixture_value(tag=""):
     return "romp-test-fixture-%s%s" % (tag + "-" if tag else "", uuid.uuid4().hex)
 
 
+# The developer's shell may carry a key, the CLI's login tokens and a session id (a suite run from inside
+# a romp session does): none may reach a helper run or an assertion message here, so each is popped per
+# test and restored after.
+_POPPED_VARS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ROMP_SID")
 _SAVED_VARS = es.CONFIG_VARS + ("CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME",
-                                "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV")
+                                "ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV") + _POPPED_VARS
+
+
+def _count(marker):
+    """How many times a fixture script appended a line to `marker`: a run count the module's own counter
+    cannot fake (0 for a file no run created)."""
+    try:
+        with open(marker) as fh:
+            return sum(1 for _ in fh)
+    except FileNotFoundError:
+        return 0
 
 
 class _Lab(unittest.TestCase):
@@ -107,7 +121,7 @@ class _Lab(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self._before = {v: os.environ.get(v) for v in _SAVED_VARS}
-        for v in es.CONFIG_VARS:
+        for v in es.CONFIG_VARS + _POPPED_VARS:
             os.environ.pop(v, None)
         os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.d, "claude-config")   # no settings.json: no helper
         os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = os.path.join(self.d, "selector")
@@ -226,7 +240,15 @@ class Config(_Lab):
         self.assertEqual(es.names(), ["hp"])
         self.assertEqual(set(es._file_config()), {"ROMP_CREDENTIAL_NAMES"})
         self.assertEqual(set(es._FILE_CFG[1]), {"ROMP_CREDENTIAL_NAMES"}, "the cached dict itself, not a view of it")
-        self.assertEqual(es.config_value("ANTHROPIC_API_KEY"), "", "not a tuning name: nothing is read for it")
+        # Not a tuning name: refused before the environment or the file is read (until 2026-09-07 the
+        # environment WAS read for any name asked, and this assertion, comparing against "", printed the
+        # developer's own ambient key on a failing run). The fixture key stands in for that ambient key,
+        # so the refusal is exercised whatever the shell running the suite carries.
+        os.environ["ANTHROPIC_API_KEY"] = fixture_value("ambient")       # restored by tearDown
+        for name in ("ANTHROPIC_API_KEY", "OP_SERVICE_ACCOUNT_TOKEN", "ROMP_PERF"):
+            with self.assertRaises(ValueError):
+                es.config_value(name)
+        self.assertEqual(es.config_value("ROMP_CREDENTIAL_NAMES"), "hp", "a tuning name still answers")
 
     def test_names_split_strip_and_dedupe(self):
         os.environ["ROMP_CREDENTIAL_NAMES"] = " hp ,lp,,hp, batch "
@@ -689,6 +711,47 @@ class CacheAndCoalescing(_Lab):
         es.current(self.src)
         self.assertEqual(es._runs, 3, "a caller arriving after the failed run completed runs again")
         self.assertEqual(es.injection(self.src), {"A_TOKEN": v}, "the previous set stands throughout")
+
+    def test_a_reader_that_declines_to_retry_takes_the_record_that_stands_with_no_run(self):
+        # retry_failed=False: the kernel's non-launch readers (the judges' overlay, the resolver behind
+        # work_api_key, the status reads, a cycle's rows) take the record that stands after a failed run,
+        # a failure on the last good set, and run nothing; a launch (the default) re-runs. With a hung
+        # store (a 15 s timeout) every one of those readers used to wait behind its own fresh run
+        # (review find, 2026-09-07). Runs are counted two ways: the module's counter and a marker line
+        # the fixture script appends per execution.
+        v = fixture_value()
+        marker = os.path.join(self.d, "ran")
+        self.configure(self.printing({"A_TOKEN": v}, extra="echo x >> '%s'" % marker))
+        self.assertEqual(es.injection(self.src), {"A_TOKEN": v})
+        self.script("echo x >> '%s'\nexit 2" % marker)
+        es.invalidate()
+        snap = es.current(self.src)                            # the invalidation's run: the failure
+        self.assertEqual((snap["ok"], snap["stale"]), (False, True))
+        runs, n = es._runs, _count(marker)
+        self.assertEqual(n, runs)
+        for _ in range(5):
+            snap2, vals = es.take(self.src, retry_failed=False)
+            self.assertEqual((snap2["ok"], snap2["attempt"], vals), (False, snap["attempt"], {"A_TOKEN": v}))
+            self.assertEqual(es.current(self.src, retry_failed=False)["attempt"], snap["attempt"])
+            self.assertEqual(es.injection(self.src, retry_failed=False), {"A_TOKEN": v})
+            self.assertEqual(es.resolve_key(self.src, retry_failed=False), "")
+            self.assertEqual(es.status(self.src, retry_failed=False)["ok"], False)
+        self.assertEqual((es._runs, _count(marker)), (runs, n), "a reader that declines to retry runs nothing")
+        snap3, _vals = es.take(self.src)
+        self.assertEqual((es._runs, _count(marker)), (runs + 1, n + 1), "the default re-runs")
+        self.assertEqual(snap3["attempt"], snap["attempt"] + 1)
+        # the events that re-run whatever the reader says: an invalidation (and, as elsewhere, a selector
+        # edit or another source), since those are new information, not a retry
+        es.invalidate()
+        self.assertEqual(es.current(self.src, retry_failed=False)["attempt"], snap3["attempt"] + 1)
+        self.assertEqual(es._runs, runs + 2)
+        # recovery is found by a caller that re-runs, and then served to every reader
+        self.printing({"A_TOKEN": v}, extra="echo x >> '%s'" % marker)
+        self.assertFalse(es.current(self.src, retry_failed=False)["ok"], "still the record that stands")
+        self.assertEqual(es._runs, runs + 2)
+        self.assertTrue(es.take(self.src)[0]["ok"])
+        self.assertTrue(es.current(self.src, retry_failed=False)["ok"])
+        self.assertEqual((es._runs, _count(marker)), (runs + 3, n + 3))
 
     def test_last_ok_at_survives_failures_and_moves_on_recovery(self):
         v = fixture_value()
@@ -1160,6 +1223,24 @@ class SourceIdentity(_Lab):
         self.assertEqual(es.injection(self.src), {"A_TOKEN": v}, "the command again: it runs again")
         self.assertEqual(es._runs, 2)
 
+    def test_a_reader_that_selected_another_kind_releases_the_set_without_a_run(self):
+        # the kernel's readers gate on the kind and never reach take() with a source of another kind, so
+        # after a swap from the command to the reference or a key line the last set stayed resident for
+        # the process's life (review find, 2026-09-07): release_for is their door, and it runs nothing
+        v = fixture_value()
+        self.configure(self.printing({"A_TOKEN": v}))
+        self.assertEqual(es.injection(self.src), {"A_TOKEN": v})
+        self.assertFalse(es.release_for(self.src), "the command itself: nothing to release")
+        self.assertEqual(es._values, {"A_TOKEN": v})
+        self.assertTrue(es.release_for(ks.KeySource("file", fixture_value("key"))))
+        self.assertEqual(es._values, {}, "no credential of a source no longer selected stays resident")
+        self.assertFalse(es._snap["configured"])
+        self.assertEqual(es._runs, 1, "no run")
+        self.assertFalse(es.release_for(ks.KeySource("op", "op://vault/item/field")), "already released")
+        self.assertFalse(es.release_for(None))
+        self.assertEqual(es.injection(self.src), {"A_TOKEN": v}, "the command again: it runs again")
+        self.assertEqual(es._runs, 2)
+
     def test_an_invalid_command_text_is_a_reason_and_nothing_runs(self):
         for bad in ("", "   ", "echo A=1\necho B=2", "echo A=1\r", "x" * (ks.CMD_MAX_BYTES + 1)):
             es._reset()
@@ -1495,15 +1576,44 @@ class HelperFingerprint(_Lab):
                          "the new set's own fingerprint")
         self.assertEqual(es.helper_fingerprint(source=self.src), (fp_lp, ""))
         self.assertEqual(es.helper_runs(), 2, "the current read is served the entry")
-        # an edit the command answers with the same set: the file rewritten with the same token
+        # an edit the command answers with the same set: the file rewritten with the same token. The
+        # selector's identity is part of the set's identity (a helper may read the selector file itself;
+        # the test below), so the identity moves ONCE for the edit, and the helper runs again, printing
+        # the same thing here.
         self.edit_selector("lp", bump_s=2)
         snap_same, vals_same = es.take(self.src)
         self.assertEqual(es._runs, 3, "the stat identity moved: a run")
-        self.assertEqual((snap_same["generation"], snap_same["setSeq"]), (snap_lp["generation"], snap_lp["setSeq"]),
-                         "the same set came back: its identity holds")
+        self.assertEqual((snap_same["generation"], snap_same["setSeq"]), (snap_lp["generation"], snap_lp["setSeq"] + 1),
+                         "the same set came back under an edited selector: the identity moved once, not twice")
         self.assertEqual(es.helper_fingerprint(values=vals_same, generation=snap_same["generation"],
                                                set_seq=snap_same["setSeq"]), (fp_lp, ""))
-        self.assertEqual(es.helper_runs(), 2, "an unchanged set keeps the entry")
+        self.assertEqual(es.helper_runs(), 3, "the helper ran again for the edited selector: the same fingerprint")
+
+    def test_a_selector_edit_the_command_ignores_still_re_fingerprints_a_helper_that_reads_the_file(self):
+        # the command does not read $1 (one set whatever the selector says) while the apiKeyHelper reads
+        # the selector file itself, the shape the selector exists for (one switch moves the injected key
+        # and the helper-billed sessions). The edit re-runs the command and the set is unchanged, so the
+        # helper's entry, keyed on (generation, setSeq), kept being served for the new selector and stamped
+        # on new connects until an invalidate() (review find, 2026-09-07). The selector's identity now
+        # moves setSeq too.
+        sel = os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"]
+        self.helper("cat '%s'" % sel)
+        self.configure(self.printing({"A_TOKEN": fixture_value()}), names="hp,lp")
+        self.select("hp")
+        snap_hp, vals_hp = es.take(self.src)
+        fp_hp = es.helper_fingerprint(values=vals_hp, generation=snap_hp["generation"], set_seq=snap_hp["setSeq"])[0]
+        self.assertEqual(fp_hp, es.fingerprint("hp"))
+        self.edit_selector("lp")
+        snap_lp, vals_lp = es.take(self.src)
+        self.assertEqual((snap_lp["selector"], vals_lp, es._runs), ("lp", vals_hp, 2),
+                         "the edit re-ran the command, which handed back the same set")
+        self.assertEqual(snap_lp["generation"], snap_hp["generation"], "with no invalidate()")
+        self.assertEqual(snap_lp["setSeq"], snap_hp["setSeq"] + 1, "the selector's identity moved the set's")
+        fp_lp, reason = es.helper_fingerprint(values=vals_lp, generation=snap_lp["generation"], set_seq=snap_lp["setSeq"])
+        self.assertEqual((fp_lp, reason), (es.fingerprint("lp"), ""), "the helper's fingerprint follows the edit")
+        self.assertEqual(es.helper_fingerprint(source=self.src), (fp_lp, ""), "the current read agrees")
+        self.assertEqual(es.helper_runs(), 2)
+        self.assertEqual(es.take(self.src)[0]["setSeq"], snap_lp["setSeq"], "an unchanged selector moves nothing")
 
     def test_a_late_connect_on_the_set_from_before_a_selector_edit_does_not_overwrite_the_entry_either(self):
         # the same ordering within one generation: X took the set before a hand edit, Y after; Y

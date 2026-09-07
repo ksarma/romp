@@ -531,6 +531,84 @@ class OpCredentialAndRetrievalGate(_JudgeAuthBase):
             jd._KEY_GATE.update(saved); jd._PASS_GEN[0] = saved_gen
 
 
+class KeylessCommandSetFollowsTheLaunch(_JudgeAuthBase):
+    """An explicit key pick beside a COMMAND source whose set carries no ANTHROPIC_API_KEY: the launch
+    (sdk_backend._options) goes ahead with nothing injected and one problem line, so the judge call
+    does the same, with the startup login tokens riding as they do on that launch. Before this _judge_env
+    raised for the same session, and _judge_run latched it auth-down and paused the pass while the
+    session ran (review find, 2026-09-07). The reference and the file kind keep the refusal: a missing
+    key there is a misconfiguration, never permission to bill the login. The kind is a configuration
+    read (keysource.select_source); nothing runs and nothing is retrieved to decide it."""
+
+    def _selected(self, line):
+        """The env file selecting the source `line` configures, for the duration of the with."""
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "service.env")
+        with open(path, "w") as fh:
+            fh.write(line + "\n")
+        jd._keysrc._CACHE = ((), "")
+        return patch.dict(os.environ, {"ROMP_SERVICE_ENV_FILE": path, "ROMP_SERVICE_ENV": path})
+
+    def setUp(self):
+        super().setUp()
+        self._said_before = dict(jd._KEYLESS_COMMAND_LOGGED)
+        jd._KEYLESS_COMMAND_LOGGED.clear()
+
+    def tearDown(self):
+        jd._KEYLESS_COMMAND_LOGGED.clear()
+        jd._KEYLESS_COMMAND_LOGGED.update(self._said_before)
+        super().tearDown()
+
+    def test_a_key_pick_on_a_keyless_set_runs_un_injected_and_latches_nothing(self):
+        import io
+        from contextlib import redirect_stderr
+        self._reg("key")
+        jd._WORK_KEY_FN = lambda: ""                           # the kernel's wire: the set carries no key
+        jd._ENV_SET_FN = lambda: {"A_TOKEN": "romp-test-fixture-role"}
+        jd._LOGIN_AUTH_ENV_FN = lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "synthetic-login-token"}
+        with self._selected("ROMP_CREDENTIAL_COMMAND=/bin/true"):
+            self.assertEqual(jd._judge_auth(SID), "key", "the pick keeps its billing intent")
+            err = io.StringIO()
+            with redirect_stderr(err):
+                env = jd._judge_env("triage", "key")
+                jd._judge_env("triage", "key")
+            self.assertNotIn("ANTHROPIC_API_KEY", env, "nothing injected, never an empty variable")
+            self.assertEqual(env["A_TOKEN"], "romp-test-fixture-role")
+            self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "synthetic-login-token",
+                             "the startup login tokens ride, as they do on the session's launch")
+            self.assertEqual(err.getvalue().count("no ANTHROPIC_API_KEY"), 1, "said once per process:\n" + err.getvalue())
+            self.assertIn("the apiKeyHelper or the login bills", err.getvalue())
+            jd._judge_ctx.fsid = SID
+            with patch.object(jd, "_judge_engine", return_value="claude"), \
+                    patch.object(jd.subprocess, "run", return_value=SimpleNamespace(
+                        returncode=0, stderr="", stdout=json.dumps({"result": "ok"}))) as run:
+                self.assertEqual(jd._judge_run("sonnet", "SYS", "input", judge="planner"), "ok")
+            run.assert_called_once()
+            self.assertNotIn("ANTHROPIC_API_KEY", run.call_args.kwargs["env"])
+            self.assertEqual(run.call_args.kwargs["env"].get("A_TOKEN"), "romp-test-fixture-role")
+        self.assertEqual(jd._auth_down_map(), {}, "nothing latched: the call ran, as the session does")
+        self.assertFalse(jd._judge_ctx.paused)
+
+    def test_a_set_that_carries_a_key_still_injects_it(self):
+        self._reg("key")
+        jd._WORK_KEY_FN = lambda: FAKE_KEY
+        jd._ENV_SET_FN = lambda: {"ANTHROPIC_API_KEY": FAKE_KEY, "A_TOKEN": "romp-test-fixture-role"}
+        with self._selected("ROMP_CREDENTIAL_COMMAND=/bin/true"):
+            env = jd._judge_env("triage", "key")
+        self.assertEqual(env.get("ANTHROPIC_API_KEY"), FAKE_KEY)
+        self.assertNotIn("CLAUDE_CODE_OAUTH_TOKEN", env, "a keyed call carries no competing login token")
+        self.assertEqual(jd._KEYLESS_COMMAND_LOGGED, {}, "nothing to say")
+
+    def test_the_reference_and_the_file_kind_still_raise_for_a_missing_key(self):
+        self._reg("key")
+        jd._WORK_KEY_FN = lambda: ""
+        for line in ("ROMP_API_KEY_REF=op://test-vault/test-item/credential", jd._keysrc.KEY_VAR + "="):   # an empty key line
+            with self._selected(line):
+                with self.assertRaises(jd._keysrc.KeySourceError, msg=line.partition("=")[0]):
+                    jd._judge_env("triage", "key")
+        self.assertEqual(jd._KEYLESS_COMMAND_LOGGED, {})
+
+
 class CommandSetInJudgeEnv(_JudgeAuthBase):
     """The command source's set in a judge call's environment: every name but the key rides the
     overlay; the key rides the billing decision (through _work_key), never the overlay; a Codex call

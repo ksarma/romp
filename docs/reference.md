@@ -625,11 +625,24 @@ an empty set). A judging pass of hundreds of key-billed calls is one run.
 A failed run keeps the previous set. It logs one problem line per distinct
 failure kind (an exit code, a timeout, a start error) with counts only, for
 example `exited 3 after 0.4s, stderr 87 bytes`, and it is not cached the way a
-success is: the next launch or call runs the command again, callers that
-overlap share one run, and a store that was briefly unreachable is back in use
-without an operator action. A launch is never refused for a failed run. A
-command that has never succeeded injects nothing, and the line says the
-`apiKeyHelper` or the login bills. An authentication failure invalidates the
+success is: the next launch runs the command again (so do `romp keyswap
+--refresh`, a `--cycle` and a `romp keyswap <name>` switch, which invalidate
+first), callers that overlap share one run, and a store that was briefly
+unreachable is back in use at the next launch without an operator action.
+Judge calls, the model catalog fetch, `GET /api-health`, a bare `romp keyswap`
+and the per-session rows of a cycle take the record that stands instead of
+running the command again, so a hanging command costs one timeout per launch,
+not one per read. A launch is never refused for a failed run. A command that
+has never succeeded injects nothing, and the line says the `apiKeyHelper` or
+the login bills. A configuration error is a different thing from a failed run:
+an empty or multi-line `ROMP_CREDENTIAL_COMMAND`, a selector file that cannot
+be read or does not hold one name, or a name outside `ROMP_CREDENTIAL_NAMES`
+is decided before the command runs and clears only when you fix it, so with no
+set from an earlier run to stand on, a launch that would bill the command's key
+(an API-key pick, or no pick) is refused with that reason (as a misconfigured
+reference refuses one), while an explicit **Login** pick launches without the
+set, as it never touches the key source; with an earlier set, that set stands,
+as after a store outage. An authentication failure invalidates the
 set once per credential: a second refusal of an unchanged set does not re-run
 the command, a served call or a completed turn on that credential re-arms it,
 and a refusal on a session still running on the credential from before a
@@ -906,9 +919,9 @@ variables the command printed and fingerprints the set as a whole.
 
 A cycle under a command stops before any reconnect when this shell's own run
 failed, when the kernel's latest run failed (it stands on the previous set, and
-the report says so), or when the two sides disagree. Each row costs the kernel
-one read of the cached set, which on a failing command is one run each, so a
-hanging command makes a large `--cycle-all` slow.
+the report says so), or when the two sides disagree. The kernel re-runs the
+command once for the request; each row then reads the record that stands, so
+a hanging command costs a `--cycle-all` one timeout, however many sessions.
 
 `MISMATCH` means the kernel and your shell disagree, and the line says on
 what:
@@ -985,9 +998,11 @@ answer carries fingerprints and reasons with counts, never a value:
   the command text.
 - `rows` of `{session, status, from}`, where `from` is the fingerprint the
   row's CLI launched on.
-- `keySource` (`file`, `op` or `command`), `keyKind` (`key`, `helper`, `login`,
-  or empty), `keyErr` (why there is no fingerprint, or the last run's
-  failure), `setFp`, `selector` (a declared name or `(undeclared, N chars)`),
+- `keySource` (`file`, `op`, `command`, or `error` when no source can be
+  selected: a removed runtime source, an unreadable file), `keyKind` (`key`,
+  `helper`, `login`, or empty), `keyErr` (why there is no fingerprint, the
+  last run's failure, or the selection's own error), `setFp`, `selector` (a
+  declared name or `(undeclared, N chars)`),
   `launched` (live sessions per launch fingerprint) and `refreshed`
   (`{from, to, err}` when asked, else `null`).
 

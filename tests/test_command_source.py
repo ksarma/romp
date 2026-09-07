@@ -98,6 +98,15 @@ SAVED_VARS = ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV", "ANTHROPIC_API_KEY", 
               "ROMP_CREDENTIAL_SELECTOR_FILE", "CLAUDE_CONFIG_DIR", "ROMP_EXPECTED_AUTH", "ROMP_SUPERVISED")
 
 
+def _count(marker):
+    """How many times a fixture script appended a line to `marker` (0 for a file no run created)."""
+    try:
+        with open(marker) as fh:
+            return sum(1 for _ in fh)
+    except FileNotFoundError:
+        return 0
+
+
 def _result(status):
     """A ResultMessage stand-in on the parent stream: an error carrying `status`, or a completed turn."""
     return SimpleNamespace(is_error=status is not None, api_error_status=status, parent_tool_use_id=None)
@@ -295,6 +304,30 @@ class CommandSourceLaunch(_Lab):
         # an unpicked session under a keyless set is not a key pick: launched, and nothing said
         self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(2, ""), "ANTHROPIC_API_KEY present")
         self.assertEqual(len([t for t in self.problems() if "printed no ANTHROPIC_API_KEY" in t]), 1)
+
+    def test_a_key_pick_with_no_key_in_the_set_still_gets_the_startup_login_tokens(self):
+        # the launch above bills the apiKeyHelper or the login. On a box whose login lives in the tokens
+        # the backend claimed at boot (CLAUDE_CODE_OAUTH_TOKEN, ANTHROPIC_AUTH_TOKEN) that CLI answered
+        # "Not logged in" while the log said the login bills, because only the login branch restored
+        # them (review find, 2026-09-07): every launch that injects no key restores them.
+        tok = fixture_value("oauth")
+        saved = sb._STARTUP_AUTH_ENV
+        sb._STARTUP_AUTH_ENV = {"CLAUDE_CODE_OAUTH_TOKEN": tok}
+        try:
+            env = self._env_for(1, "key")
+            self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present")
+            self.assertEqual(env.get("CLAUDE_CODE_OAUTH_TOKEN"), tok, "the startup login tokens ride a keyless key pick")
+            self.assertEqual(self._env_for(2, "login").get("CLAUDE_CODE_OAUTH_TOKEN"), tok, "as they ride a login pick")
+            self.assertEqual(self._env_for(3, "").get("CLAUDE_CODE_OAUTH_TOKEN"), tok, "and an unpicked session")
+            k = fixture_value("key")
+            self.values["ANTHROPIC_API_KEY"] = k
+            self.print_set(self.values)
+            self.rerun()
+            env = self._env_for(4, "key")
+            self.assertEqual(env.get("ANTHROPIC_API_KEY"), k)
+            self.assertFalse("CLAUDE_CODE_OAUTH_TOKEN" in env, "a keyed launch never carries a competing login token")
+        finally:
+            sb._STARTUP_AUTH_ENV = saved
 
     def test_one_run_serves_a_burst_of_connects(self):
         self._env_for(1, "login")
@@ -715,6 +748,118 @@ class CommandSourceFailure(_Lab):
         self.assertEqual(es.helper_runs(), hruns + 1, "the failing run kept the set: the helper's entry stands")
 
 
+class FailingCommandReaders(_Lab):
+    """After a failed run the launch re-runs the command (keep-last-good's recovery path) and the other
+    readers take the record that stands. Before this every reader re-ran: with a hung store (a 15 s
+    timeout per run) each judge call, status read and cycle row waited behind its own run (review find,
+    2026-09-07)."""
+
+    def test_the_judges_and_status_readers_take_the_record_that_stands_and_a_connect_re_runs(self):
+        s = self._live("", auth="login")
+        self.connect(s)
+        marker = os.path.join(self.lab, "ran")
+        self.fail_command("echo x >> '%s'\nexit 3" % marker)
+        self.rerun()
+        self.assertEqual(sb.credential_set(), self.values, "the invalidation's one run: a failure on the last good set")
+        runs, n = es._runs, _count(marker)
+        self.assertEqual(n, 1)
+        for _ in range(4):
+            self.assertEqual(sb.credential_set(), self.values, "the judges' overlay and the catalog")
+            self.assertEqual(sb.work_api_key(), "", "the resolver behind work_api_key: key-billed judge reads")
+            self.assertEqual(self.source().resolve(), "")
+            self.assertIn("exited 3", self.be.key_source_status()["err"])
+            self.assertEqual(self.be.api_health_snapshot()["keySource"]["lastRun"]["ok"], False)
+            self.assertEqual(self.be.cycle_key(s.sid), "current", "a cycle's row")
+            self.be.work_key_fp()
+        self.assertEqual((es._runs, _count(marker)), (runs, n), "no non-launch reader ran the command")
+        self.assertEqual(len([t for t in self.problems() if t.startswith("credential command: failed")]), 1)
+        self.connect(self._live("", auth="login", n=2))
+        self.assertEqual((es._runs, _count(marker)), (runs + 1, n + 1), "a connect re-runs")
+        self.be.refresh_key_source()
+        self.assertEqual((es._runs, _count(marker)), (runs + 2, n + 2), "a refresh re-runs")
+        self.print_set(self.values)
+        self.connect(self._live("", auth="login", n=3))
+        self.assertEqual(es._runs, runs + 3, "the connect after the store is back finds it")
+        self.assertEqual(self.be.key_source_status()["err"], "", "and every reader is served the recovery")
+        self.assertEqual(es._runs, runs + 3)
+
+
+class MisconfiguredSource(_Lab):
+    """A configuration error (an empty command line, a selector file that is not one name, a name outside
+    ROMP_CREDENTIAL_NAMES) is decided before the command runs, and nothing but an operator's edit clears
+    it. It is not a failed run: with no set from an earlier run a launch is refused with the reason (the
+    fail-loudly rule; a misconfigured reference refuses the same way), while an earlier set stands, as
+    after a store outage. Before this every launch on such an installation went ahead on the login after
+    one problem line (review find, 2026-09-07)."""
+
+    def _rebuild(self):
+        self.reset_sources()
+        self.logged.clear()
+        self.be = self.construct()
+
+    def test_an_empty_command_line_with_no_earlier_set_refuses_the_launches_that_would_bill_it(self):
+        self.write_command_env(command=False, lines=["ROMP_PERF=1", "%s=" % ks.CMD_VAR])
+        self._rebuild()
+        self.assertEqual(self.source().kind, "command")
+        for n, auth in ((1, "key"), (2, "")):
+            with self.assertRaises(ks.KeySourceError) as cm:
+                self._env_for(n, auth)
+            self.assertIn("must be one non-empty line", str(cm.exception), auth)
+        # an explicit login pick never touches the key source (the base's rule for a broken reference too):
+        # it launches, with nothing of the set (which holds nothing) and no key
+        env = self._env_for(3, "login")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("A_TOKEN", env)
+        self.assertEqual(es._runs, 0, "nothing ran: the reason was decided before the command")
+        snap = es.current(self.source())
+        self.assertEqual((snap["ok"], snap["configError"], snap["stale"]), (False, True, False))
+        self.assertTrue(any("credential command" in t and "must be one non-empty line" in t for t in self.problems()),
+                        self.problems())
+
+    def test_a_selector_problem_with_no_earlier_set_refuses_too_and_names_nothing(self):
+        os.environ["ROMP_CREDENTIAL_NAMES"] = "hp,lp"
+        sel = os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"]
+        with open(sel, "w") as fh:
+            fh.write("zz")
+        self._rebuild()
+        with self.assertRaises(ks.KeySourceError) as cm:
+            self._env_for(1, "")
+        self.assertIn("outside ROMP_CREDENTIAL_NAMES", str(cm.exception))
+        self.assertNotIn("zz", str(cm.exception), "the token is never part of the refusal")
+        secret = fixture_value("pasted")
+        with open(sel, "w") as fh:
+            fh.write(secret + " and more\n")                     # not a name: another size, another identity
+        with self.assertRaises(ks.KeySourceError) as cm:
+            self._env_for(2, "key")
+        self.assertIn("not a name", str(cm.exception))
+        self.assertNotIn(secret, str(cm.exception) + "\n".join(self.logged) + json.dumps(self.be.problems()))
+        self.assertEqual(es._runs, 0)
+
+    def test_a_failed_run_with_no_earlier_set_is_still_a_launch(self):
+        # unchanged: the store is down (the command exits 3), which clears on its own
+        self.fail_command("exit 3")
+        self._rebuild()
+        for n, auth in ((1, "key"), (2, ""), (3, "login")):
+            env = self._env_for(n, auth)
+            self.assertFalse("ANTHROPIC_API_KEY" in env, auth)
+        snap = es.current(self.source())
+        self.assertEqual((snap["ok"], snap["configError"]), (False, False))
+
+    def test_a_configuration_error_after_a_good_set_stands_on_it(self):
+        self.assertEqual(self._env_for(1, "login")["A_TOKEN"], self.values["A_TOKEN"])
+        os.environ["ROMP_CREDENTIAL_NAMES"] = "hp,lp"
+        with open(os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"], "w") as fh:
+            fh.write("zz")                                       # a hand edit: the selector's identity moved
+        env = self._env_for(2, "key")
+        self.assertEqual(env["A_TOKEN"], self.values["A_TOKEN"], "the last good set stands; no refusal")
+        self.assertFalse("ANTHROPIC_API_KEY" in env)
+        snap = es.current(self.source(), retry_failed=False)
+        self.assertEqual((snap["ok"], snap["stale"], snap["configError"]), (False, True, True))
+        lines = [t for t in self.problems() if t.startswith("credential command: failed")]
+        self.assertEqual(len(lines), 1, self.problems())
+        self.assertIn("outside ROMP_CREDENTIAL_NAMES", lines[0])
+
+
 class ModuleReaders(_Lab):
     def test_the_command_resolver_is_wired_at_import_and_never_raises_for_a_failed_run(self):
         self.assertIsNotNone(ks.COMMAND_RESOLVER)
@@ -738,6 +883,27 @@ class ModuleReaders(_Lab):
         self.print_set(self.values)
         self.rerun()
         self.assertEqual(sb.credential_set(), self.values, "the key is in it; the judge pops it itself")
+
+    def test_a_swap_to_another_kind_releases_the_resident_set(self):
+        # romp keyswap <profile> (or an edit of service.env) moves the selection from the command to a key
+        # line: every path here gates on the kind and never reached envsource with the new source, so the
+        # last set stayed resident in the kernel's memory for the process's life (review find, 2026-09-07).
+        # The launch and the module-level gate tell envsource (release_for), which drops it with no run.
+        self._env_for(1, "login")
+        self.assertEqual(es._values, self.values)
+        self.write_command_env(key=OLD_KEY, command=False)
+        self.assertEqual(self.source().kind, "file")
+        self.assertEqual(sb.credential_set(), {})
+        self.assertEqual(es._values, {}, "the module-level gate released the set")
+        self.assertFalse(es._snap["configured"])
+        self.write_command_env()
+        self.assertEqual(self._env_for(2, "login")["A_TOKEN"], self.values["A_TOKEN"], "the command again: it runs again")
+        self.assertEqual((es._runs, es._values), (2, self.values))
+        self.write_command_env(key=OLD_KEY, command=False)
+        self.assertEqual(self._env_for(3, "key")["ANTHROPIC_API_KEY"], OLD_KEY, "the file kind's launch is the base's")
+        self.assertEqual(es._values, {}, "the launch released the set")
+        self.assertEqual(es._runs, 2, "and ran nothing")
+        self.assertEqual([m for m in self.logged if m.startswith("credential command: failed")], [])
 
     def test_the_seams_are_no_ops_outside_the_command_kind(self):
         self.assertTrue(sb.credential_invalidate("judge call refused as unauthenticated (planner)"))
@@ -808,6 +974,21 @@ class JudgesDefaultBilling(_Lab):
         self.rerun()
         self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(2, ""), "the launch injects no key now")
         self.assertEqual(self.jd._judge_auth(""), "login")
+
+    def test_an_explicit_key_pick_on_a_keyless_set_follows_the_launch_instead_of_refusing(self):
+        # the launch (_options) goes ahead un-injected with one problem line for such a session; _judge_env
+        # raised "No API key source is configured for this judge call" for the same session, and _judge_run
+        # latched it auth-down and paused the pass (review find, 2026-09-07): judge and launch disagreed
+        self.assertFalse("ANTHROPIC_API_KEY" in self._env_for(1, "key"), "the launch injects nothing")
+        env = self.jd._judge_env("triage", "key")                          # no raise
+        self.assertFalse("ANTHROPIC_API_KEY" in env, "ANTHROPIC_API_KEY present: never an empty variable")
+        self.assertEqual(env.get("A_TOKEN"), self.values["A_TOKEN"], "the role variables ride the call")
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.rerun()
+        self.assertEqual(self.jd._judge_env("triage", "key").get("ANTHROPIC_API_KEY"), k, "a set with a key injects it")
+        self.assertFalse(any(k in m for m in self.logged), "no value reaches the log")
 
     def test_a_failed_run_answers_from_the_last_good_set(self):
         k = fixture_value("key")

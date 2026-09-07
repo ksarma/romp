@@ -960,21 +960,31 @@ class BootAndHealth(unittest.TestCase):
         self.assertEqual(len(lines), 1, be.problems())
         self.assertIn("exited 3", lines[0])
         self.assertIn("last successful run (sha256:%s)" % es.set_fingerprint(vals), lines[0])
-        # the same failure again, on every path that reads the set: no second line
+        # the same failure again, on every path that reads the set: no second line, and no second run either.
+        # The judges' wire, a judge's key read and the status reads take the record that stands (until
+        # 2026-09-07 each of them re-ran the command, so a hung store cost every judge call its timeout);
+        # the connect is the reader that re-runs.
         sb.credential_set()
         sb.credential_set()
-        self.assertEqual(es._runs, 4, "one run per caller after a failure, and one line for all of them")
+        self.assertEqual(es._runs, 2, "the judges' wire runs nothing after a failure: the record stands")
         self.assertEqual(sb.work_api_key(), "", "a judge's key read: the set carries no ANTHROPIC_API_KEY")
         st = be.key_source_status()
         self.assertIn("exited 3", st["err"])
         health = be.api_health_snapshot()["keySource"]["lastRun"]
         self.assertFalse(health["ok"])
         self.assertTrue(health["stale"])
-        self.assertGreaterEqual(es._runs, 7)
+        self.assertEqual(es._runs, 2, "nor do the status reads")
         self.assertEqual(len(self.failed_lines(be)), 1, "the episode is one line however many paths met it")
-        # the recovery ends the episode: an info line, not a problem
+        be._work_key_and_source()
+        self.assertEqual(es._runs, 3, "a connect re-runs")
+        self.assertEqual(len(self.failed_lines(be)), 1)
+        # the recovery ends the episode: an info line, not a problem. The connect finds the store back, and
+        # the judges' wire is served the recovered set from it
         self.command({"ANTHROPIC_LP_API_KEY": self.v})
+        be._work_key_and_source()
+        self.assertEqual(es._runs, 4)
         self.assertEqual(sb.credential_set(), {"ANTHROPIC_LP_API_KEY": self.v})
+        self.assertEqual(es._runs, 4, "served the recovery, no run of its own")
         self.assertEqual(len([m for m in self.logged if m.startswith("credential command: succeeded again")]), 1)
         self.assertEqual(len(self.failed_lines(be)), 1)
         # a later failure is a second episode: a second line. The served call re-arms the once-per-credential
@@ -1044,16 +1054,22 @@ class BootAndHealth(unittest.TestCase):
         self.assertEqual(self.failed_lines(be), [], "the noter's line is not a second entry")
         self.assertEqual(be.key_source["sessionKeyPath"], "login")
         self.assertEqual(be.key_source["lastRun"]["ok"], False)
-        # the same failure met next on the judges' wire, the status report and a connect: no more entries
+        # the same failure met next on the judges' wire, the status report and a connect: no more entries.
+        # The wire and the status report take the record that stands (no run; until 2026-09-07 every reader
+        # re-ran a failing command); the connect re-runs
         sb.credential_set()
         be.key_source_status()
+        self.assertEqual(es._runs, 1, "the judges' wire and the status report run nothing after a failure")
         be._work_key_and_source()
-        self.assertGreaterEqual(es._runs, 4, "each caller after a failed run re-runs")
+        self.assertEqual(es._runs, 2, "the connect re-runs")
         self.assertEqual(len(self.about_failure(be)), 1)
-        # the recovery ends the episode the boot opened
+        # the recovery ends the episode the boot opened: found by the connect, served to the judges' wire
         v = fixture_value()
         self.command({"A_TOKEN": v})
+        self.assertEqual(sb.credential_set(), {}, "no set from an earlier run stands, and the wire runs nothing")
+        be._work_key_and_source()
         self.assertEqual(sb.credential_set(), {"A_TOKEN": v})
+        self.assertEqual(es._runs, 3)
         self.assertEqual(len([m for m in self.logged if m.startswith("credential command: succeeded again")]), 1)
         # a failure of another kind after it is a new episode: the noter's one line
         es.invalidate("the store breaks again")

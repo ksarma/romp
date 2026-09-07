@@ -392,10 +392,17 @@ explicit decision adds back only for a key-billed call, read from the same set.
 A judge run on the Codex engine receives none of it. The set is cached in the
 kernel and kept on a failed run, so a key-billed call under a command rides the
 last good set rather than failing, and the kernel log says so once per failure
-kind. A credential-class refusal on a judge call marks the cached set stale, so
-the next call re-runs the command, once per credential; a served call re-arms
-that path. The model catalog fetch reads the set's `ANTHROPIC_LP_API_KEY` ahead
-of the work key.
+kind. A judge call itself never re-runs a failing command (a hanging store
+would otherwise cost every call its timeout); the next session launch does, and
+the recovered set reaches the judges from it. A credential-class refusal on a
+judge call marks the cached set stale, so the next call re-runs the command,
+once per credential; a served call re-arms that path. A key-billed call whose
+set carries no `ANTHROPIC_API_KEY` (an explicit key pick on an installation
+whose sessions bill an `apiKeyHelper` or the login) runs without one, as that
+session's own launch does, and the kernel's stderr says so once; under the
+reference or a key line the same call still fails with a credential error. The
+model catalog fetch reads the set's `ANTHROPIC_LP_API_KEY` ahead of the work
+key.
 
 Legacy `ANTHROPIC_API_KEY` and Claude login remain supported when no runtime
 provider is selected. See [Service environment and credentials](reference.md#service-environment-and-credentials)

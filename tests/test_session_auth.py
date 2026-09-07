@@ -404,6 +404,17 @@ class AuthErrorClass(unittest.TestCase):
                      "You've reached your Fable 5 limit", ""):
             self.assertFalse(km._is_auth_error(text), text)
 
+    def test_the_backends_launch_classifier_mirrors_the_kernels(self):
+        # sdk_backend.is_auth_failure_text (a CLI that refused to start for want of a credential: under the
+        # command kind the event the cached set goes stale on) is a copy of _is_auth_error, not an import
+        # (the backend loads standalone); the two must agree on the strings that matter and may only
+        # ever grow together. The backend's docstring names this pin.
+        for text in ("Not logged in · Please run /login", "API key is invalid", "invalid x-api-key",
+                     "Failed to authenticate", "OAuth token has expired", "oauth token revoked",
+                     'API Error: 401 {"type":"error","error":{"type":"authentication_error"}}',
+                     "500 server_error", "Request timed out", "prompt is too long", "overloaded", "", None):
+            self.assertEqual(sb.is_auth_failure_text(text), km._is_auth_error(text), repr(text))
+
     def test_it_is_an_on_you_class_end_to_end(self):
         import inspect
         # the classification lives in _api_error_scan since the tail-window split; _api_error is the

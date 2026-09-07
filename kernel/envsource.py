@@ -56,9 +56,18 @@ Three properties this module holds, the same three keysource.py holds:
   changes (a hand edit of a shared mode file is an event), or until the SOURCE changes (another
   command text, or a swap to the reference or a key: the cache identity is the generation, the
   source's fingerprint and the selector's stat identity, so a swap re-runs or empties by
-  construction). After a failed run the NEXT caller re-runs the command, one run per caller, so an
-  installation whose secret store was briefly unreachable recovers at the next launch or call
-  without an operator action; between runs the previous set stands and the record says ``stale``.
+  construction). After a failed run the next caller that asks to retry (``retry_failed``, the
+  default: a launch, and the refresh or cycle that invalidates first) re-runs the command, one run
+  per such caller, so an installation whose secret store was briefly unreachable recovers at the
+  next launch without an operator action. A caller that passes ``retry_failed=False`` (the kernel's
+  judge overlay, the resolver behind its work key, its status reads and a cycle's per-session rows)
+  takes the record that stands instead, so a hung store costs one timeout per launch and not one
+  per read. Between runs the previous set stands and the record says ``stale``. A reason decided
+  BEFORE the command runs (an invalid command text; a selector file that cannot be read or is not
+  one name; a name outside ``ROMP_CREDENTIAL_NAMES``) is a configuration error, marked
+  ``configError`` on the record: no retry clears it, only an operator's edit, and the kernel refuses
+  a launch that would bill the key on it when no earlier set stands in (an explicit login pick never
+  touches the source and launches without the set; a store outage never refuses any launch).
   The previous set is the SAME source's: a swap to another command starts from an empty set, so a
   new command's failed first run injects nothing rather than the other source's values. Concurrent
   callers coalesce on one lock (a boot that revives many sessions runs the command once, not once
@@ -73,8 +82,9 @@ value. To tell whether a running session is on the current credential, ``helper_
 the configured helper with the same runner, in the environment a session CLI gets (the set's role
 variables merged, ``ROMP_SID`` absent), and hashes its output inside this function; the bytes never
 leave it. The result is cached for the set it ran with, identified by the record's ``generation`` and
-``setSeq`` (the second moves when a run hands back a different set under one generation), and an
-entry is never written over a newer one.
+``setSeq`` (the second moves when a run hands back a different set under one generation, and when the
+selector file's identity changed, since a helper may read that file itself), and an entry is never
+written over a newer one.
 """
 from __future__ import annotations
 
@@ -205,6 +215,11 @@ def config_value(name: str, environ=None) -> str:
     """One configuration value: the environment's, else the env file's line, else "". An explicit
     `environ` replaces the process environment; the file is the process's either way (the module
     docstring). For the three tuning values only: the command line itself is keysource's to select."""
+    if name not in CONFIG_VARS:
+        # The environment is read for the tuning names and for nothing else: a caller naming anything
+        # else (a credential name, say) is a programming error, said here rather than answered with a
+        # value out of the process environment (review find, 2026-09-07).
+        raise ValueError("%s is not a credential-source tuning name" % name)
     env = os.environ if environ is None else environ
     v = (env.get(name) or "").strip()
     if v:
@@ -629,7 +644,7 @@ def _empty_snapshot(configured: bool, source_fp: str) -> dict:
             "reasonKey": "" if configured else "no %s" % COMMAND_VAR,
             "at": None, "exitCode": None, "durationS": None, "timedOut": False,
             "names": [], "dropped": [], "droppedAuth": [], "badLines": 0, "emptyValues": 0,
-            "setFp": "", "keyFp": "", "hasKey": False, "stale": False,
+            "setFp": "", "keyFp": "", "hasKey": False, "stale": False, "configError": False,
             "runs": _runs, "failures": _failures, "lastOkAt": _last_ok_at, "generation": _gen,
             "setSeq": _set_seq, "attempt": _attempts, "selector": "", "selectorNote": "", "timeoutProblem": ""}
 
@@ -640,7 +655,9 @@ def _set_values(new: dict) -> None:
     after a failed run, a selector-file edit), and either can hand back another set: a caller
     caching something per set (the helper's fingerprint) keys on (generation, setSeq), so a set
     that changed under one generation is not served the old set's entry, and one that did not
-    change keeps it. A comparison of values, inside the one function that holds them."""
+    change keeps it. A comparison of values, inside the one function that holds them. _run_locked
+    moves the identity once more on its own for a selector-file edit whose run handed back the SAME
+    set (the helper may read that file itself), at most one move per run between the two."""
     global _values, _set_seq
     if new != _values:
         _set_seq += 1
@@ -650,8 +667,11 @@ def _set_values(new: dict) -> None:
 def _run_locked(source, environ) -> None:
     """Under _lock: run the source's command once and record the outcome. A failure keeps `_values`
     when the source is the one the set came from; a source that differs from the record's (another
-    command, or no command) starts from an empty set, so nothing of another source's set stands in."""
-    global _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at
+    command, or no command) starts from an empty set, so nothing of another source's set stands in.
+    A reason decided before the command could run (the source's shape, the selector file) is a
+    configuration error and the record says so (`configError`): no retry clears it, only an
+    operator's edit, which the kernel's launch refuses on when no earlier set stands in."""
+    global _snap, _snap_selector_ident, _runs, _attempts, _failures, _last_ok_at, _set_seq
     gen = _gen
     configured = _is_command(source)
     source_fp = _source_fp(source)
@@ -666,7 +686,10 @@ def _run_locked(source, environ) -> None:
         snap["attempt"] = _attempts
         _snap = snap
         return
-    _snap_selector_ident = _selector_ident(environ)
+    ident = _selector_ident(environ)
+    selector_moved = bool(_snap_selector_ident) and ident != _snap_selector_ident
+    _snap_selector_ident = ident
+    seq0 = _set_seq
     sel, sel_err = read_selector(None, environ)
     declared = names(environ)
     if sel and sel in declared:
@@ -683,6 +706,7 @@ def _run_locked(source, environ) -> None:
     if not reason and sel and declared and sel not in declared:
         reason = "the selector file holds a name outside %s" % NAMES_VAR
     reason_key = reason                     # the selector and configuration reasons carry nothing per-run
+    snap["configError"] = bool(reason)      # decided before any run: a retry cannot clear it, an edit does
     if not reason:
         tmo, snap["timeoutProblem"] = _timeout_value(environ)
         r = run_command(source.value, sel, tmo)
@@ -719,6 +743,14 @@ def _run_locked(source, environ) -> None:
         _failures = 0
         _last_ok_at = snap["at"]
         snap["ok"] = True
+    if selector_moved and _set_seq == seq0:
+        # The selector's identity is part of the set's identity: an apiKeyHelper may read the selector
+        # file itself (the shape the file exists for: one switch moves the injected key and the
+        # helper-billed sessions), so an edit whose run handed back the SAME set from the command still
+        # changes what the helper prints. Keyed on (generation, setSeq) alone, the helper's old
+        # fingerprint kept being served and stamped on new connects until an invalidate() (review find,
+        # 2026-09-07). One move per run: a run whose set also changed moved it in _set_values already.
+        _set_seq += 1
     snap["failures"] = _failures
     snap["lastOkAt"] = _last_ok_at
     snap["names"] = sorted(_values)
@@ -737,8 +769,10 @@ def _ensure_locked(source, environ, retry_failed: bool = True) -> None:
     invalidate() moved the generation, when the source's fingerprint differs from the record's (another
     command text, a swap to or from the reference or a key: the identity keysource gives the source),
     when the selector file's stat identity changed, and, with `retry_failed`, when the last run
-    failed: a failure is not served like a good result, so the next caller runs again (one run per
-    caller; a caller that waited behind a run takes that run's result instead, see _fresh)."""
+    failed: a failure is not served like a good result, so the next caller that asks to retry runs
+    again (one run per such caller; a caller that waited behind a run takes that run's result instead,
+    see _fresh). Without `retry_failed` the failed record stands and is served as it is: the kernel's
+    non-launch readers pass False, so a hung store is waited out once per launch, not once per read."""
     if (_snap is None or _snap.get("generation") != _gen
             or _snap.get("configured") != _is_command(source) or _snap.get("sourceFp") != _source_fp(source)):
         _run_locked(source, environ)
@@ -756,17 +790,18 @@ class _fresh:
     """`with _fresh(source, environ):` : _lock held and the record current on entry. A caller that
     waited behind another caller's run (the attempt counter moved while it waited) takes that result
     even when it failed: concurrent callers coalesce on one run; only a caller arriving AFTER a failed
-    run completed triggers the next one."""
+    run completed, and asking to retry (`retry_failed`, the readers' argument), triggers the next one."""
 
-    def __init__(self, source, environ):
+    def __init__(self, source, environ, retry_failed: bool = True):
         self.source = source
         self.environ = environ
+        self.retry_failed = retry_failed
 
     def __enter__(self):
         attempts0 = _attempts
         _lock.acquire()
         try:
-            _ensure_locked(self.source, self.environ, retry_failed=(_attempts == attempts0))
+            _ensure_locked(self.source, self.environ, retry_failed=(self.retry_failed and _attempts == attempts0))
         except BaseException:
             _lock.release()
             raise
@@ -777,63 +812,89 @@ class _fresh:
         return False
 
 
-def current(source=None, environ=None) -> dict:
+def current(source=None, environ=None, retry_failed: bool = True) -> dict:
     """The value-free record of the current set for `source` (keysource's KeySource; None or a kind
     other than `command` is no command source), running the command if the cache is stale: configured
     (whether the source is a command), sourceFp (the source's fingerprint, keysource's rule, the only
     rendering of the command), ok (True/False; None when no command source), reason, reasonKey, at,
     exitCode, durationS, timedOut, names (the set's variable names), dropped (ROMP_* names refused),
     droppedAuth, badLines, emptyValues, setFp, keyFp (of the set's ANTHROPIC_API_KEY, "" when absent),
-    hasKey, stale (a failed run is standing on the previous set), runs, failures, lastOkAt,
-    generation, setSeq (the set's identity within the generation: it moves when a run hands back a
-    different set), attempt (the ordinal of the run or refusal that produced the record; callers that
+    hasKey, stale (a failed run is standing on the previous set), configError (the failure was decided
+    before the command could run: the source's shape or the selector file; an operator's edit clears
+    it, no retry does), runs, failures, lastOkAt, generation, setSeq (the set's identity within the
+    generation: it moves when a run hands back a different set, and when the selector file's identity
+    changed), attempt (the ordinal of the run or refusal that produced the record; callers that
     coalesced on one run share it; a reader holding two records orders them by it), selector (the
     token, when declared), selectorNote ("(undeclared, N chars)" otherwise), timeoutProblem. Never a
-    value."""
-    with _fresh(source, environ):
+    value. `retry_failed` False takes the record that stands after a failed run instead of running
+    again (every other event still runs: an invalidation, a selector edit, another source)."""
+    with _fresh(source, environ, retry_failed):
         return dict(_snap)
 
 
-def injection(source=None, environ=None) -> dict:
+def injection(source=None, environ=None, retry_failed: bool = True) -> dict:
     """THE value-bearing accessor: a copy of the current set for merging into a CHILD's environment
     (a session CLI's options.env, a judge call's env, the catalog fetch's header). Every other
     function in this module is value-free; nothing calling this may log, store or send what it
-    gets. {} when `source` is no command source or no run has succeeded yet."""
-    with _fresh(source, environ):
+    gets. {} when `source` is no command source or no run has succeeded yet. `retry_failed` as for
+    current()."""
+    with _fresh(source, environ, retry_failed):
         return dict(_values)
 
 
-def take(source=None, environ=None) -> tuple:
+def take(source=None, environ=None, retry_failed: bool = True) -> tuple:
     """(record, values) from ONE read under the lock: for a connect that needs both the value-free
     record (to log and stamp) and the set (to inject). Read separately, a run could land between
     the two and the key injected would not be the set the log names. The `values` half is
     injection()'s and under its rule. The record's `generation` and `setSeq` are the generation the
     values were served under and the set's identity within it (it moves when a run hands back a
-    different set): a caller handing the values to helper_fingerprint() hands both in beside them,
-    so the fingerprint is cached for exactly the set it was run with."""
-    with _fresh(source, environ):
+    different set, and on a selector-file edit): a caller handing the values to helper_fingerprint()
+    hands both in beside them, so the fingerprint is cached for exactly the set it was run with.
+    `retry_failed` as for current(): a connect keeps the default and re-runs a failed command; the
+    kernel's status readers and a cycle's rows pass False and take the record that stands."""
+    with _fresh(source, environ, retry_failed):
         return dict(_snap), dict(_values)
 
 
-def resolve_key(source, environ=None) -> str:
+def resolve_key(source, environ=None, retry_failed: bool = True) -> str:
     """KeySource.resolve for the command kind (keysource.COMMAND_RESOLVER, wired by the kernel at
     import): the set's ANTHROPIC_API_KEY, or "" when the set carries none (a helper- or login-billed
     installation), or "" for no command source. Never raises for a failed run: the last good set's
     key stands, and a command that never succeeded has nothing to hand over. The value goes to the
     one operation that asked (a launch, a key-billed judge call, the catalog fetch) and to nothing
-    else; every existing caller of resolve() keeps working unchanged."""
-    with _fresh(source, environ):
+    else; every existing caller of resolve() keeps working unchanged. `retry_failed` as for current()
+    (the kernel's resolver passes False: a judge's key-billed read never re-runs a failing command)."""
+    with _fresh(source, environ, retry_failed):
         return _values.get(KEY_VAR, "")
 
 
-def status(source=None, environ=None) -> dict:
+def status(source=None, environ=None, retry_failed: bool = True) -> dict:
     """`current()` plus the configuration, for reports: selectorFile, declaredNames, timeoutS,
-    timeoutProblem (also when no run happened). Value-free."""
-    out = current(source, environ)
+    timeoutProblem (also when no run happened). Value-free. `retry_failed` as for current()."""
+    out = current(source, environ, retry_failed)
     out["selectorFile"] = selector_path(environ)
     out["declaredNames"] = names(environ)
     out["timeoutS"], out["timeoutProblem"] = _timeout_value(environ)
     return out
+
+
+def release_for(source) -> bool:
+    """A reader that selected `source` and found it is NOT a command tells this module so: the resident
+    set is dropped and the record made unconfigured, with no run. take(source) does the same by
+    construction for a caller that passes the new source in; this is the door for the kernel's readers,
+    which gate on the kind first and never reach take() with another kind, so after a swap from the
+    command to the reference or a key line the last set stayed resident for the process's life (review
+    find, 2026-09-07). Returns whether anything was released; a no-op for a command source and for a
+    record already unconfigured."""
+    if _is_command(source):
+        return False
+    if not _values and not (_snap or {}).get("configured"):
+        return False                          # a look without the lock; the check repeats under it
+    with _lock:
+        if not _values and not (_snap or {}).get("configured"):
+            return False
+        _run_locked(source, None)
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -903,7 +964,9 @@ def helper_fingerprint(config_dir=None, environ=None, timeout=None, values=None,
     hand edit of the selector file re-runs the command with no invalidate(). Keyed on the generation
     alone, a connect on the new set was stamped with the OLD overlay's fingerprint, and cycle_key
     read it as current. An unchanged set keeps its entry (a failed run keeps the set, so it moves
-    nothing). As with `generation`, absent means the current one.
+    nothing), with one exception: a selector-file edit moves setSeq even when the command hands back
+    the same set, because the helper may read the selector file itself and print something else for
+    it (review find, 2026-09-07). As with `generation`, absent means the current one.
 
     The entry is written only when it is not OLDER than the one in the slot. A connect that took the
     set and then waited (its own connect work, the helper lock) can reach here after an invalidate()
