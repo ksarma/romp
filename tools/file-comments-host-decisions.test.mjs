@@ -282,6 +282,41 @@ test('a reject whose file rename fails after the append puts the sidecar back an
   assert.equal(s.unsent.rejected, 1);
 });
 
+test('a save whose file rename fails after the append puts the sidecar back and says the log already holds its entries', () => {
+  // The editor's Save keeps the decisions' order (doSave, after doReject): the file staged, the sidecar
+  // landed, the edit and reject entries appended, then the rename that lands the file — so a rename
+  // that fails leaves the record, and the refusal says so with `logged: true`, as reject's does.
+  const w = world();
+  const st = edit(w, OLD, NEW);
+  const [h] = st.hunks;
+  const sidecarBytes = bytes(w.storePath);
+  const fileText = fs.readFileSync(w.report, 'utf8');
+  const docsListing = listing(w.docs);
+  // the change rejected in the editor: its record dropped from the field, the old text back in the buffer
+  const content = fileText.replace(NEW, OLD);
+  assert.notEqual(content, fileText);
+  const req = { verb: 'save', path: w.report, fence: fileFenceFor(st),
+    args: { content, suggestions: [], accepted: [], rejected: [{ id: h.id, oldText: h.oldText, newText: h.newText }] } };
+  const r = refused(w, req, 'unreadable', { ROMP_FC_TEST_FAIL_RENAME_TO: w.real });
+  assert.match(r.error, /EPERM/);
+  assert.ok(r.error.includes('~/notes-api/docs/report.md'), r.error);
+  assert.equal(r.error.includes(w.home), false);
+  assert.match(r.error, /put back as it was, but the edit had already been recorded in the comments log/);
+  assert.equal(r.logged, true, 'the refusal says the entries are there');
+  assert.deepEqual(bytes(w.storePath), sidecarBytes, 'the prior sidecar bytes are back');
+  assert.equal(fs.readFileSync(w.report, 'utf8'), fileText, 'the file is untouched');
+  assert.deepEqual(listing(w.docs), docsListing, 'the staged file was discarded');
+  const lines = readLogLines(w.logPath);
+  assert.deepEqual(lines.map((e) => e.kind), ['edit', 'reject'], 'the edit entry, then the decision taken in the editor');
+  assert.equal(lines[0].mtimeBeforeNs, st.fileMtimeNs);
+  assert.match(lines[0].mtimeAfterNs, /^\d+$/, 'the staged file\'s mtime, which the rename would have kept');
+  decisionEntry(lines[1], 'reject', [h]);
+  // What the refusal warned of: the change is pending again, and the log counts a reject.
+  const s = status(w);
+  assert.deepEqual(s.hunks, st.hunks);
+  assert.equal(s.unsent.rejected, 1);
+});
+
 test('an accept whose sidecar rename fails after the append discards the stage and says the log already holds the decision', () => {
   const w = world();
   const st = edit(w, OLD, NEW);

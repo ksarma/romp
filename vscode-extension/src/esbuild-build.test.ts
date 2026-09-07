@@ -161,6 +161,6 @@ test("requiring esbuild.js runs no build: main() is gated on being the script", 
   // source so a refactor cannot quietly drop the gate.
   const src = fs.readFileSync(ESBUILD_JS, "utf8");
   assert.ok(src.includes("if (require.main === module) {"), "main() runs only under `node esbuild.js`");
-  assert.ok(src.includes("module.exports = { buildAll, failureSummary };"));
+  assert.ok(src.includes("module.exports = { buildAll, failureSummary, extension, webview, testBuild, oneCodeMirror };"));
   assert.ok(src.includes("await buildAll([extension, webview]);"), "the production path IS the atomic write");
 });

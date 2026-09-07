@@ -202,7 +202,13 @@ test("the Edit refusal (Slice 2 wording): one line naming the count, saying to a
   assert.equal(editBlockedReason([]), null);
   assert.doesNotMatch(editBlockedReason([h1])!, /\n/, "one line");
   assert.doesNotMatch(editBlockedReason([h1])!, /next update|next slice|card|board|goal|nudge/i);
-  assert.match(SRC, /this\.ctx\.setEditBlocked\(editBlockedReason\(s\.hunks \|\| \[\]\)\);/, "set from every status reply");
+  // Slice 5: no status reply blocks Edit; the wording is the refusal trackedEdit.begin() hands the viewer. The one call left
+  // is holdEdit's, for a decision this panel sent and not yet answered (file-comments-editing-races.test.ts drives it).
+  const apply = SRC.split("applyStatus(s: Reply): boolean {")[1].split("\n  }\n")[0];
+  assert.doesNotMatch(apply, /setEditBlocked/, "a status reply blocks nothing");
+  assert.equal((SRC.match(/this\.ctx\.setEditBlocked\(/g) || []).length, 1, "the panel's one call: holdEdit's");
+  assert.match(SRC, /private holdEdit\(delta: 1 \| -1\): void \{[^]*?this\.ctx\.setEditBlocked\(this\.decisionsOut \? DECISION_IN_FLIGHT : null\);/);
+  assert.match(SRC, /refusal: editBlockedReason\(hunks\) \|\| "",/);
 });
 
 test("a decided change is remembered from the log: describeComment and the card keep the change's texts after Accept dropped it from the sidecar", () => {
@@ -536,7 +542,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired

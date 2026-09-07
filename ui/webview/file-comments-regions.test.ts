@@ -323,7 +323,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     pdfPages: () => pages as unknown as HTMLElement[],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: noop, reload: noop,
     ...ctxOver,
@@ -941,7 +941,7 @@ test("the sheets: the region rules sit inside the mirrored file-comments block, 
     const block = css.slice(a, b);
     assert.match(block, /\n\.fc-imgwrap \{ position: relative; display: inline-block; max-width: 100%; \}\n\.fc-imgwrap > img \{ display: block; \}\n/, f + ": the wrapper hugs a block picture");
     assert.match(block, /\n\.fc-overlay \{ position: absolute; inset: 0; cursor: crosshair; touch-action: none; \}\n/, f);
-    assert.match(block, /\n\.fc-overlay-off \{ pointer-events: none; cursor: default; \}\n\.fc-overlay-off \.fc-region \{ pointer-events: auto; \}\n/, f + ": a coarse pointer reads through the overlay, the rectangles still click");
+    assert.match(block, /\n\.fc-overlay-off \{ pointer-events: none; cursor: default; touch-action: auto; \}\n\.fc-overlay-off \.fc-region \{ pointer-events: auto; \}\n/, f + ": a coarse pointer reads through the overlay and pans, the rectangles still click (one declaration)");
     assert.match(block, /\n\.fc-region \{ position: absolute; box-sizing: border-box; border: 2px solid var\(--fc-author, var\(--warn\)\);/, f + ": the author's colour, the ring's colour as the fallback");
     assert.match(block, /\n\.fc-region\.fc-stale \{ border-style: dashed; \}\n\.fc-region\.fc-unknown \{ border-style: dotted; \}\n/, f);
     assert.match(block, /\n\.fc-region-chip::after \{ content: attr\(data-label\); \}\n/, f + ": the chip's label is generated, never a text node");

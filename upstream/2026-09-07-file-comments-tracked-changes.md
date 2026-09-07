@@ -1,0 +1,11 @@
+---
+title: File comments and tracked changes in the file viewer: a Comments panel beside the viewer keeps a person's comments on a file and a session's tracked changes in the track-changents sidecar (`.trackchanges/`), hands everything unsent to the owning session as one message, accepts and rejects changes from cards (a reject rewrites the file and tells the session), draws region comments on figures and PDF pages, and lets the editor save over pending changes with the decisions taken in it
+status: candidate
+where: plans/file-review.md (Slices 0-5, Status: BUILT); fork PRs #239 (Slice 0, merged 2026-09-06), #250 (Slice 1), #252 (Slice 2), #274 (Slice 3), #282 (Slice 4, merged 2026-09-07), Slice 5 PR pending: `kernel/kernel.py` (the FILE COMMENTS section: the `fileComments` and `fileCommentsSend` ops, the edit, reject and save traces), `tools/file-comments-host.mjs`, `ui/webview/file-comments*.ts`, `ui/webview/file-view.ts`, `ui/webview/editor-chunk.ts` (the `track` option), `ui/webview/track-decorations.ts`, `vendor/track-changents/` (the vendored engine, store-io, CLIs, hooks, skill and `obsidian/src/track-cm.js`, pinned by `tools/vendor-drift.test.mjs` and `tools/vendor-patches.test.mjs`), `docs/guide.md`; tests under `tests/test_file_comments*.py`, `tests/test_kernel_file_comments_*.py`, `tools/file-comments-host*.test.mjs`, `ui/webview/file-comments*.test.ts`, `ui/webview/file-view-*.test.ts`
+added: 2026-09-07
+pr:
+tier: major-feature
+offered:
+closed:
+---
+Upstream's viewer reads a file and saves plain text; nothing there records a session's edits as changes a person can accept or reject from the dashboard, or carries comments on a file back to the session as one message (the plan's Summary). Offered as one, the way the plan's Upstream section intends: the vendored track-changents copy goes with it (vendoring the core and the agent-side tooling makes the loop self-contained, decisions 4 and 15), and three of the four patches to the vendored files were offered to that project's author separately (`vendor/track-changents/README.md`, the patch table; the fourth is romp-only). Not yet offered: the Slice 5 PR is pending on the fork, so no single PR number fits the `pr` field. Slice 0 is a candidate on its own (`user-todo-detail-opens-file`).

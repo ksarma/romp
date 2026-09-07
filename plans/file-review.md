@@ -1,11 +1,15 @@
 # Comments and tracked changes in the file viewer
 
-**Status: BUILDING** (approved by the user on 2026-09-06 after reviews on 2026-09-05 and 2026-09-06 and
-a structured design interview; every question ruled). A dedicated romp session is building all
-six slices in one push, one fork PR per slice with an adversarial review pass, in the order under
-Build slices; the ADR is accepted with Slice 1, and one user todo at the end asks for the
-end-to-end walk. File and line references describe this fork at its 2026-09-05 merge base and the
-track-changents repo as of the same day; as with every plans/ document, treat them as dated.
+**Status: BUILT — all six slices (2026-09-07), awaiting the user's end-to-end walk** (decision 29: done
+means the per-slice criteria pass and the user completes the motivating loop with no GitHub and no
+Obsidian). Approved by the user on 2026-09-06 after reviews on 2026-09-05 and 2026-09-06 and a structured
+design interview. Built by a dedicated romp session as six stacked fork PRs, each through an adversarial
+review (seven lenses, two refuters per finding with executed probes, three rounds, a consolidation pass,
+and a full test sweep); the "The Slice N build" notes in the sections below record where the code as
+built departs from this text and why. The ADR was accepted with Slice 1. Running `install.sh` on a
+machine links the vendored tooling and registers the guard; the walk needs that first. File and line
+references describe this fork at its 2026-09-05 merge base and the track-changents repo as of the same
+day; as with every plans/ document, treat them as dated.
 
 ## Summary
 
@@ -307,7 +311,11 @@ after a direct edit, see The comments log). Slice 2: `accept {ids}`, `reject {id
 `accept-all`, `reject-all`. Slice 3: `retarget {commentId, target}`, the re-place of a region
 comment (a new rectangle over the same figure, the hash recomputed from the bytes as they are
 now; not appended to the comments log, since a re-placed rectangle is not a decision). Slice 5:
-`save {content, ops}`. Every mutating verb (all but
+`save {content, suggestions, accepted, rejected}` (as built: the
+records as the editor's field holds them after the person's typing remapped them, which is what
+this plan called `ops`, and the decisions taken in the editor, each `{id, oldText, newText}`;
+the records are checked against `content` and refuse `desync` naming the first that does not
+fit). Every mutating verb (all but
 `status`) carries a fence: `storeMtimeNs` must equal the sidecar's current mtime, with `""`
 meaning the sidecar must not exist yet, so two browsers cannot both create it; `reject`,
 `reject-all`, and `save` also fence on `fileMtimeNs`; `set-tracked` fences on `configMtimeNs`
@@ -1037,23 +1045,46 @@ tinted and deletions struck inline; typing remaps the changes rather than desync
 accepts, modifier-click rejects; undo restores an accepted change; Save writes file and remapped
 sidecar together, and the Edit refusal disappears.
 
-Acceptance: the cases of track-changents' `obsidian/tests/track-cm.test.mjs` and
-`track-cm.undo.test.mjs`, copied into romp with their `createRequire` loads of
-`../src/track-cm.js`, `track-changents/engine`, `@codemirror/state`, and `@codemirror/commands`
-rewritten to romp's comments chunk and its CodeMirror (the tests use Node's own `require`, which
-a vitest alias cannot redirect), pass as the behavioral oracle; a save refuses when either mtime
-moved and keeps the buffer; `editor-lazy.test.ts` pins that the main bundles stay byte-stable.
+Acceptance (as built): the cases of track-changents' `obsidian/tests/track-cm.test.mjs` and
+`track-cm.undo.test.mjs`, ported case for case from vitest to `node:test` as
+`ui/webview/track-cm-oracle.test.ts` — their `createRequire` loads of `../src/track-cm.js`,
+`track-changents/engine`, `@codemirror/state` and `@codemirror/commands` are imports the test
+bundle resolves to the vendored field, the vendored engine and the one CodeMirror the editor
+chunk bundles — pass as the behavioral oracle; a save refuses when either mtime moved and keeps
+the buffer; `editor-lazy.test.ts` pins that the main bundles stay byte-stable.
 
-Files: `editor-chunk.ts` (a typed `track` mount option curated inside `extensionsFor`,
-`editor-chunk.ts:113-135`, consumed only by `file-view.ts`; the header doctrine comment names
-it), a new lazy comments chunk esbuild entry bundling, from the vendored copy, the engine, the
-78-line CodeMirror state field (`obsidian/src/track-cm.js`, unchanged), the decorations block
-(`obsidian/src/track-snapshot.js:433-839`) together with `obsidian/src/track-logic.js` (215
-lines of display-planning and click and layout helpers the block calls), with the one Obsidian
-read at `:595-596` replaced by a constant and the `mouseover` handler at `:774-781` fixed to take
-the editor view (survey A6), `file-view.ts` `doSave` sending the `save` verb instead of
-`saveFile` when the panel is open. Size: ~500 / ~60 / ~40. Lowest confidence of the six; it is
-the one slice that touches the editor chunk's contract.
+Files (as built): `editor-chunk.ts` carries the track field, the decorations and the click
+handling inside the editor chunk's own bundle, reached through the typed `track` mount option
+curated inside `extensionsFor` and consumed only by `file-view.ts` (decision 14; the header
+doctrine comment names it): the 78-line CodeMirror state field (`obsidian/src/track-cm.js`,
+bundled unchanged) and the engine from the vendored copy, and the decorations block adapted as
+`ui/webview/track-decorations.ts`, derived from the pristine vendored
+`obsidian/src/track-snapshot.js` (the inline-overlay block at the pinned commit, cited in its
+header) with the display-planning and click and layout helpers it calls, the one Obsidian read
+replaced by a constant and the `mouseover` handler taking the editor view (survey A6);
+`file-view.ts` `doSave` sends the `save` verb instead of `saveFile` when the panel routes the save
+(`setTrackedEdit`, below). The one slice that touches the editor chunk's contract.
+
+The Slice 5 build (2026-09-06): the track field, the marks and the click handling live inside
+the editor chunk's own bundle, reached through the typed `track` mount option (decision 14),
+because two bundles that each carry `@codemirror/state` cannot share a page; there is no
+separate comments chunk, and the oracle tests run under `node:test` as
+`ui/webview/track-cm-oracle.test.ts`. The viewer knows nothing of sidecars: the panel
+registers its half through one seam member (`setTrackedEdit`: what rides into the editor at
+Edit, whether Save goes through the host, and the save itself), and the viewer answers
+`text()` from the buffer and says `editing()` while the editor is up, so the panel's paint
+pass and the poll's file reload stand down. The save is fenced on the two things it writes: the
+sidecar the records came from (the status at Edit, not the poll's latest) and the file the
+editor loaded. It does not fence on `config.json`, which it only reads, as the disk stands at
+the save, to decide whether the edit is logged; a `configMtimeNs` a client sends is not read
+(`tools/file-comments-host-save-guards.test.mjs` pins this), and `set-tracked`, the verb that
+writes the config, is the one that fences on it, as the wire section says. A moved sidecar is
+retried once when the sidecar's records are still the ones the editor carries (a reply a session
+wrote mid-edit), a moved file never; there is no `config-moved` refusal for a save to retry. An
+older editor bundle that ignores the option is detected by the handle it returns, and Edit then
+refuses with the Slice 2 wording; a bundle that fails to load over pending changes refuses the
+same way rather than falling back to the plain editor. A CRLF file with pending changes refuses
+Edit: the editor normalizes line endings, which moves every offset the records hold.
 
 ### Optional: per-comment fork dispatch
 
