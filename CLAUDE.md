@@ -93,9 +93,21 @@ broad `git add` will sweep up your work). Conventions:
      `remote.pushDefault` already points there, so a bare `git push` does the same.
      Never push to `origin`: the server rejects it, and naming it in scripts bakes in
      a failure.
-  2. `gh pr create --repo romp-on/romp` (gh detects the fork head), then
-     `gh pr merge --auto --merge` — it lands itself when the six required Linux
-     checks pass. There is no way to move `main` except a green PR.
+  2. `gh pr create --repo romp-on/romp --label <tier>` (gh detects the fork head), then
+     `gh pr merge --auto --merge`: it lands itself when the required Linux checks
+     pass. There is no way to move `main` except a green PR.
+- **Every PR carries exactly one tier label** (maintainers' rule, 2026-09-06). A
+  required check holds a PR with no tier label, or two, red, so an unlabeled PR never
+  auto-merges. The author picks the tier at filing time:
+  - `tests-only` (tier 0): tests, docs, repo plumbing; no behavior change. Merges on green.
+  - `fix` (tier 1): a bug fix with a test that fails before it.
+  - `feature` (tier 2): a self-contained new capability inside romp's existing model;
+    put the design points in the body.
+  - `major-feature` (tier 3): new functionality that changes what romp does or its
+    contracts. Discussed first (an issue, or the PR as the RFC) and merged only on
+    agreement, so file it **without** `--auto` and leave the merge to the user.
+  The line that matters is 2 vs 3: adds a capability inside the existing model, `feature`;
+  changes what romp is, `major-feature`, talk first.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.
