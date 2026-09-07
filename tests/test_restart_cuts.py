@@ -623,7 +623,12 @@ class ParentGone(unittest.TestCase):
         for f in (self.AUDIT, km.RESTART_CUTS_FILE):
             if f.exists():
                 f.unlink()
+        # Both halves of the kernel's one-exit-path guard: the lock, and the flag whoever takes the lock
+        # sets (_TERMINATING, upstream's T240 stand-down, merged in the upstream fold). The handler tests
+        # above run _graceful_term in-process and leave the flag set (in the kernel the process exits
+        # right after), so without this reset _parent_watch stands down here and never reaches os._exit.
         km._EXIT_ONCE = threading.Lock()
+        km._TERMINATING[0] = False
 
     def tearDown(self):
         for f in (self.AUDIT, km.RESTART_CUTS_FILE):
