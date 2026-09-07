@@ -38,7 +38,21 @@ Covered here, kernel-side:
   boot pass re-offers marks a dead kernel left (TmuxPasteRefusalReopens, TmuxPendingPasteMarks,
   TmuxStampStandDown, SeamOrderPins, TmuxBatchDuplicateAnswers);
 - the authority tier as a grep-provable pin: judge.py never names the store or its helpers
-  (NoJudgeWritesTheStore).
+  (NoJudgeWritesTheStore);
+- ambient visibility: build_feed's sid-keyed open-count map behind the ended/muted gates and
+  the feed-cache sig watch (FeedSeamUserTodos); the tab glyph and feed marker pins live in the
+  node suites (tab-usertodo.test.ts, feed-user-todos.test.ts);
+- the endgame: the idle-escalation floor's arming predicate with the no-flap pin and the
+  peer-wait stand-down (EscalationFloorPredicate), its perm_top-family wiring and the goal-less
+  placeholder (EscalationFloorWiring), the peer-wait gate's local-host scope pinned as a
+  documented limitation shared with the waitingOn chip (PeerWaitScopeIsLocalOnly), one
+  interrupt story per session — the placeholder yields to any floored/blocked card, the floored
+  card suppresses the provisional Working placeholder, the focus walk falls back to a
+  still-working top and skips done-confirming ones (OneInterruptStory); the floored card's OS
+  push deduplicated on the floored todo SET with the boot baseline seeding the latch and a lost
+  answer's reopen un-latching its id (FloorNotificationDedup); the widened app badge and its
+  no-double-count rule (BadgeArithmetic); the auto-nudge stand-down scoped to the status-nudge
+  branch alone (NudgeStandsDownForOpenTodos).
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
@@ -2566,9 +2580,6 @@ class NoJudgeWritesTheStore(unittest.TestCase):
             self.assertNotIn(token, src)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 def _feed_env(test, sids):
     """Patch build_feed's session inputs to a synthetic alive set — the map seam needs no parse
@@ -2674,3 +2685,879 @@ class FeedSeamUserTodos(_StoreSandbox):
         km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         after = km._fleet_view_sig(NOW, {})
         self.assertNotEqual(before, after)
+
+
+class EscalationFloorPredicate(_StoreSandbox):
+    """The idle-escalation floor's ARMING read (_user_todo_idle): true only when the session has
+    SETTLED idle — no open turn, nothing dispatched, no queued intent, no live prompt — the exact
+    idle the auto-nudge tick requires. Event-keyed both ways, and NEVER armed by a transient
+    turn-boundary lull (the cards-move-on-new-information rule; jd.WHY_UNBLOCK_UNSETTLED is the
+    repo's own card-flap history)."""
+
+    PS = {"turns": [{"id": "t1", "t": NOW - 60, "end": NOW - 30, "atoms": []}]}
+
+    def _idle(self, sid=SID, ps=None, who_working=False, awaiting=None, perm_state=None, aerr=None,
+              last_state=("waiting", NOW - 20), queued=False, rewind=False, compacting=False,
+              interrupted=False, pending_ops=None, peer_wait=None):
+        patches = [
+            mock.patch.object(km, "_last_state", lambda s: last_state),
+            mock.patch.object(km, "_backend_queued", lambda s: queued),
+            mock.patch.object(km, "_backend_rewind_pending", lambda s: rewind),
+            mock.patch.object(km, "_compacting_now", lambda s, **k: compacting),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: interrupted),
+            mock.patch.dict(km._pending_ops, pending_ops or {}, clear=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return km._user_todo_idle(sid, self.PS if ps is None else ps, who_working, awaiting,
+                                  perm_state, aerr, peer_wait)
+
+    def test_a_settled_idle_session_arms_the_floor(self):
+        self.assertTrue(self._idle())
+
+    def test_an_open_turn_never_arms_it(self):
+        self.assertFalse(self._idle(who_working=True))
+
+    def test_dispatched_background_work_never_arms_it(self):
+        self.assertFalse(self._idle(awaiting="waiting on 2 agents"))
+
+    def test_a_live_prompt_or_compaction_never_arms_it(self):
+        self.assertFalse(self._idle(perm_state="permission"))
+        self.assertFalse(self._idle(perm_state="picker"))
+        self.assertFalse(self._idle(perm_state="compacting"))
+        self.assertFalse(self._idle(compacting=True))
+
+    def test_an_api_error_story_wins(self):
+        self.assertFalse(self._idle(aerr={"status": 529, "text": "overloaded"}))
+
+    def test_queued_intent_means_the_session_is_about_to_wake(self):
+        # a message arrived — the de-escalation event; the floor must not claim idle over it
+        self.assertFalse(self._idle(queued=True))
+        self.assertFalse(self._idle(pending_ops={SID: [("send", "hi")]}))
+        self.assertFalse(self._idle(rewind=True))
+
+    def test_a_user_interrupt_means_the_user_acted(self):
+        self.assertFalse(self._idle(interrupted=True))
+
+    def test_an_unreadable_interrupt_gate_reads_unknown_never_idle(self):
+        # the gate reads its own interrupt answer with the two-argument predicate; when that read
+        # raises, the floor has no evidence the user stepped away — unknown, never idle
+        seen = []
+
+        def boom(turns, sid=""):
+            seen.append((len(turns), sid))
+            raise RuntimeError("unreadable")
+        patches = [
+            mock.patch.object(km, "_last_state", lambda s: ("waiting", NOW - 20)),
+            mock.patch.object(km, "_backend_queued", lambda s: False),
+            mock.patch.object(km, "_backend_rewind_pending", lambda s: False),
+            mock.patch.object(km, "_compacting_now", lambda s, **k: False),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", boom),
+            mock.patch.dict(km._pending_ops, {}, clear=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.assertFalse(km._user_todo_idle(SID, self.PS, False, None, None, None))
+        self.assertEqual(seen, [(1, SID)], "the predicate was asked once, with the turns and the sid")
+
+    def test_waiting_on_a_live_peer_never_floors(self):
+        # the notes-api shape (2026-08-22): api sent web a question and web is alive — api's idle
+        # with an open todo is explained by the PEER it awaits (_wait_for_graph's edge, the same
+        # event the waitingOn chip and the nudge tick's skip read), and waiting on a peer is
+        # deliberately NOT needs-you (interrupt only when the human is the bottleneck). The floor
+        # must not fire while a live peer owes this session a reply.
+        edge = {"peerSid": SID2, "name": "web", "color": None, "inCycle": False,
+                "since": NOW - 900, "kind": "question"}
+        self.assertFalse(self._idle(peer_wait=edge))
+
+    def test_the_peer_wait_lifts_with_the_edge(self):
+        # the peer's reply (any message back) drops the edge — a real postal event, and the
+        # floor may then claim the idle it explains
+        self.assertTrue(self._idle(peer_wait=None))
+
+    def test_no_parse_or_no_turns_reads_unknown_never_idle(self):
+        self.assertFalse(self._idle(ps={}))
+        self.assertFalse(self._idle(ps={"turns": []}))
+        self.assertFalse(km._user_todo_idle(SID, None, False, None, None, None))
+
+    def test_no_flap_a_mid_turn_lull_never_arms_the_floor(self):
+        # THE PIN (the card-flap history): the event model reads "no open turn" during transient
+        # mid-turn lulls, so keying the floor on that alone would strobe the card at every turn
+        # boundary. The authoritative state log saying PROGRESSING at/after the parsed turn end
+        # means the stop is not real — the same genuine-stop discriminator the auto-nudge uses,
+        # two real-event timestamps, no time window.
+        self.assertFalse(self._idle(last_state=("working", NOW - 10)),
+                         "state log progressing AFTER the turn end → a lull, not a stop")
+        self.assertFalse(self._idle(last_state=("working", NOW - 30)),
+                         "progressing AT the turn end → still the open turn")
+
+    def test_a_stale_progressing_record_from_before_the_turn_end_does_not_wedge(self):
+        # the post-turn 'waiting' write can be LOST (kernel restart) — a progressing record OLDER
+        # than the turn end must not pin the floor off forever (the nudge's own lesson)
+        self.assertTrue(self._idle(last_state=("working", NOW - 40)))
+
+    def test_the_callers_row_and_path_reach_the_compacting_gate(self):
+        # build_feed holds the session's liveness row and transcript path; the gate hands both to
+        # _compacting_now so a long-idle live session's cached parse is read, not searched for
+        seen = []
+
+        def spy(sid, tm=None, path=km._PATH_UNRESOLVED):
+            seen.append((tm, path))
+            return False
+        patches = [
+            mock.patch.object(km, "_last_state", lambda s: ("waiting", NOW - 20)),
+            mock.patch.object(km, "_backend_queued", lambda s: False),
+            mock.patch.object(km, "_backend_rewind_pending", lambda s: False),
+            mock.patch.object(km, "_compacting_now", spy),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="": False),
+            mock.patch.dict(km._pending_ops, {}, clear=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        row = {"state": "", "since": NOW - 900}
+        self.assertTrue(km._user_todo_idle(SID, self.PS, False, None, None, None, None,
+                                           tm=row, path="/nonexistent/web.jsonl"))
+        self.assertEqual(seen, [(row, "/nonexistent/web.jsonl")])
+
+    def test_the_deciding_events_re_derive_it_cleanly(self):
+        # escalate at the settle; stand down the build after a new turn opens — each a real event
+        self.assertTrue(self._idle())
+        self.assertFalse(self._idle(who_working=True), "a new turn opening stands the floor down")
+
+
+class EscalationFloorWiring(_StoreSandbox):
+    """The floor lives in build_feed's perm_top family (source pins — the same convention as
+    test_kernel_distill_state: a full feed build's inputs are heavy). A verdict-shaped write is
+    exactly what the ADR forbids; the floor re-derives from the store read each build."""
+
+    def test_the_floor_yields_to_every_live_interrupt(self):
+        src = inspect.getsource(km.build_feed)
+        self.assertIn("_user_todo_idle(", src)
+        self.assertIn("if _todo_idle and api_top is None and perm_top is None and jauth_top is None:",
+                      src, "one interrupt at a time — the present event first")
+
+    def test_the_floor_files_the_focus_card_under_needs_input(self):
+        src = inspect.getsource(km.build_feed)
+        self.assertIn('_todo_block = bool(nid == todo_top and col == "working")', src,
+                      "floors a plain-working focus card only — never displaces awaiting/blocked/"
+                      "recheck moves, which are their own designed latches")
+        self.assertIn("or _todo_block", src.split("column = (")[1].split(")\n")[0],
+                      "the column expression carries the floor")
+
+    def test_the_escalated_card_carries_the_story(self):
+        src = inspect.getsource(km.build_feed)
+        self.assertIn('{"state": "userTodos"', src)
+        self.assertIn("if _todo_block", src)
+
+    def test_the_ended_gate_is_build_sessions_exact_gate(self):
+        src = inspect.getsource(km.build_feed)
+        self.assertIn("_user_todo_session_ended(fsid)", src)
+
+    def test_a_goal_less_session_gets_the_needs_input_placeholder(self):
+        src = inspect.getsource(km.build_feed)
+        self.assertIn("elif _todo_idle and _ut_open and todo_top is None and not had_needs_input:",
+                      src, "…and only when NOTHING else floored/blocked the session — one "
+                           "interrupt story at a time (2026-08-22; OneInterruptStory carries "
+                           "the behavioral repro)")
+        self.assertIn("_user_todo_placeholder(", src)
+
+    def test_the_floor_reads_the_peer_wait_edge(self):
+        # 2026-08-22: the predicate's peer-wait input comes from the SAME wait-for graph the
+        # nudge tick and the waitingOn chip consult — never a second derivation
+        src = inspect.getsource(km.build_feed)
+        self.assertIn("aerr, wmap.get(fsid),", src)
+
+    def test_the_provisional_chain_treats_a_floored_card_as_working(self):
+        # 2026-08-22: a todo-floored focus card reports needs_input, so without this the
+        # judge-latency window painted a provisional Working "Analyzing:" placeholder BESIDE the
+        # floored card — the exact duplicate the perm floor's guard already prevents; mirror it
+        src = inspect.getsource(km.build_feed)
+        self.assertIn("if not had_working and perm_top is None and todo_top is None and ps:", src)
+
+    def test_the_placeholder_is_a_presentation_not_a_countable_card(self):
+        # provisional, like the goal-less permission placeholder — the badge counts the TODOS
+        # (the map), never this presentation of them (the no-double-count rule)
+        ph = km._user_todo_placeholder(
+            {"sid": SID, "path": "/nonexistent"}, "web", None, SID, True, NOW,
+            [{"id": "ut-11111111", "text": "Need the auth-scheme decision", "createdT": NOW - 300},
+             {"id": "ut-22222222", "text": "Need a staging credential", "createdT": NOW - 100}])
+        self.assertTrue(ph["provisional"])
+        self.assertEqual(ph["column"], "needs_input")
+        self.assertEqual(ph["blocked"]["state"], "userTodos")
+        self.assertEqual(ph["blocked"]["count"], 2)
+        self.assertEqual(ph["blocked"]["what"], km._USER_TODO_BLOCK_WHAT)
+        self.assertEqual(ph["itemId"], "usertodo:" + SID)
+        self.assertIn("Need the auth-scheme decision", ph["text"], "the oldest open ask titles it")
+        self.assertIn("+1 more", ph["text"])
+        self.assertEqual(ph["t"], NOW - 100, "the newest ask is the card's current-state time")
+
+    def test_a_single_todo_placeholder_has_no_more_suffix(self):
+        ph = km._user_todo_placeholder(
+            {"sid": SID, "path": "/nonexistent"}, "web", None, SID, True, NOW,
+            [{"id": "ut-11111111", "text": "Need the auth-scheme decision", "createdT": NOW - 300}])
+        self.assertEqual(ph["text"], "Need the auth-scheme decision")
+        self.assertEqual(ph["blocked"]["count"], 1)
+        self.assertEqual(ph["t"], NOW - 300)
+
+    def test_the_floor_is_not_a_judge_verdict(self):
+        # read-side only: build_feed never writes the goal store or the diary for this move
+        src = inspect.getsource(km.build_feed)
+        self.assertNotIn("save_goals", src)
+
+
+class PeerWaitScopeIsLocalOnly(_StoreSandbox):
+    """The peer-wait stand-down is LOCAL-HOST only — a DOCUMENTED limitation, pinned
+    (2026-08-22): _wait_for_graph keeps an edge only when the awaited peer is in THIS kernel's
+    alive set, so an unanswered ask to a FEDERATED peer (a relay-addressed row) makes no edge
+    and the idle floor still fires needs-you over an idle a remote peer actually explains. The
+    scope is shared with the waitingOn chip and the nudge tick's skip — all three read the same
+    graph, deliberately: cross-host wait tracking belongs in _wait_for_graph, where widening it
+    lifts every surface at once; a floor-only special case would fork the wait derivation
+    (plans/user-todos.md, escalation). If these tests start failing because the graph learned
+    federated edges, flip the floor's expectation CONSCIOUSLY alongside the chip's."""
+
+    def setUp(self):
+        super().setUp()
+        self.mfile = Path(self.td.name) / "timeline" / "messages.jsonl"
+        self._saved_messages = jd.MESSAGES
+        jd.MESSAGES = self.mfile
+        self._saved_cache = list(km._POSTAL_WAIT_CACHE)
+        km._POSTAL_WAIT_CACHE[:] = [None, None]
+
+    def tearDown(self):
+        jd.MESSAGES = self._saved_messages
+        km._POSTAL_WAIT_CACHE[:] = self._saved_cache
+        super().tearDown()
+
+    def _write_rows(self, rows):
+        self.mfile.parent.mkdir(parents=True, exist_ok=True)
+        self.mfile.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        km._POSTAL_WAIT_CACHE[:] = [None, None]
+
+    def test_a_local_alive_peer_makes_the_edge(self):
+        # the control (keeps the negatives below non-vacuous): the same unanswered question to
+        # a LOCAL alive peer builds the edge the floor stands down on
+        self._write_rows([{"from_id": SID, "to_id": SID2, "t": NOW - 300,
+                           "kind": "question", "body": "Which port does staging use?"}])
+        wmap = km._wait_for_graph(NOW, {SID, SID2})
+        self.assertIn(SID, wmap)
+        self.assertEqual(wmap[SID]["peerSid"], SID2)
+
+    def test_a_relay_addressed_ask_makes_no_edge_so_the_floor_still_fires(self):
+        # the federated shape: the row is addressed to the relay and the remote never spoke, so
+        # the alias cannot resolve and the pair keys on the named recipient — never in the local
+        # alive set, so the graph drops the edge and the floor's peer_wait input (wmap.get(sid))
+        # is None: a session idle on a cross-host reply still floors as needs-you. KNOWN
+        # limitation, kept consciously — see the class docstring.
+        self._write_rows([{"from_id": SID, "to_id": "peer:TESTHOST", "toName": "TESTHOST:api",
+                           "t": NOW - 300, "kind": "question",
+                           "body": "Which port does staging use?"}])
+        wmap = km._wait_for_graph(NOW, {SID})
+        self.assertNotIn(SID, wmap, "no edge to a federated peer — wmap is local-host scope")
+
+    def test_even_a_resolved_remote_sid_makes_no_edge(self):
+        # the stronger claim: the alias CAN resolve the remote's real sid (it sent a row once),
+        # and the edge is still dropped — the gate is the local alive set, not addressability
+        self._write_rows([
+            {"from_id": SID2, "from": "api", "from_host": "TESTHOST", "to_id": SID,
+             "t": NOW - 900, "kind": "coordinate", "body": "Staging is rebuilt nightly."},
+            {"from_id": SID, "to_id": "peer:TESTHOST", "toName": "TESTHOST:api",
+             "t": NOW - 300, "kind": "question", "body": "Which port does staging use?"},
+        ])
+        wmap = km._wait_for_graph(NOW, {SID})
+        self.assertNotIn(SID, wmap, "a resolvable but non-local peer still makes no edge")
+
+
+class OneInterruptStory(_StoreSandbox):
+    """2026-08-22, the guard-conflict roots: a session shows ONE interrupt presentation at a
+    time. (a) The goal-less userTodos placeholder fired BESIDE a jauth-floored focus card
+    (todo_top None conflated 'no live goal' with 'yielded to jauth_top'); (b) the provisional
+    Working chain painted an 'Analyzing:' placeholder beside a todo-floored card during judge
+    latency; and the focus-chain miss: a completed lastNode top with another top still working
+    escalated NOTHING (the walk dead-ended, had_working suppressed the placeholder). Behavioral,
+    over a real build_feed with the repro's own harness — SYNTHETIC data only."""
+
+    TURNS = [{"id": "t1", "t": NOW - 60, "end": NOW - 30, "ended": True, "atoms": []}]
+
+    def _env(self, store, jauth=False, extra=None):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        sessions = [{"sid": SID, "name": "web", "path": "/nonexistent/%s.jsonl" % SID,
+                     "anchor": 0, "mtime": 0}]
+        turns = list(self.TURNS)
+        patches = [
+            mock.patch.object(jd, "_auth_down_map",
+                              lambda: ({SID: {"mode": "key", "since": NOW - 100}} if jauth else {})),
+            mock.patch.object(km, "_alive_sessions", lambda now, tmux: list(sessions)),
+            mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
+            mock.patch.object(km, "_parse_cached", lambda path: {"turns": list(turns)}),
+            mock.patch.object(km, "_merge_live_atoms", lambda ps, sid: ps),
+            mock.patch.object(km, "_feed_goals", lambda sid: dict(store)),
+            # the predicate is pinned separately (EscalationFloorPredicate); force-arm it here
+            # so these shapes exercise the GUARDS, not the arming gates — arity-proof on purpose
+            mock.patch.object(km, "_user_todo_idle", lambda *a, **k: True),
+        ] + (extra or [])
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _needs_input(self, feed):
+        return [a for a in feed["asks"]
+                if str(a.get("sid")) == SID and a.get("column") == "needs_input"]
+
+    def test_the_jauth_floor_stands_alone(self):
+        # the repro: jauth latched + open todos + a live goal → the jauth story is the one
+        # interrupt; the goal-less todo placeholder must not fire beside it
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working"}, "lastNode": "g1", "placements": {}}, jauth=True)
+        ni = self._needs_input(km.build_feed(NOW, {}))
+        self.assertEqual(len(ni), 1,
+                         "ONE needs-input presentation, got %d (%s)"
+                         % (len(ni), sorted(str((a.get("blocked") or {}).get("state")) for a in ni)))
+        self.assertNotIn("usertodo:" + SID, [a["itemId"] for a in ni],
+                         "the placeholder yielded — jauth won")
+
+    def test_a_todo_floored_card_gets_no_working_placeholder(self):
+        # (b): during judge latency _provisional_card can return a Working 'Analyzing:' card;
+        # a todo-floored focus card already tells the session's one story, so the provisional
+        # chain must treat it as had-working-equivalent (the perm floor's own handling)
+        dummy = {"itemId": "provisional:" + SID, "sid": SID, "name": "web", "color": None,
+                 "text": "Analyzing: wire the login flow", "t": NOW, "live": True,
+                 "trgb": [0, 0, 0], "turnId": None, "origin": None, "followupPending": None,
+                 "summary": None, "blockSummary": None, "background": None,
+                 "blocked": None, "column": "working", "provisional": True, "tree": []}
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working"}, "lastNode": "g1", "placements": {}},
+                  extra=[mock.patch.object(km, "_provisional_card", lambda *a, **k: dict(dummy))])
+        feed = km.build_feed(NOW, {})
+        ni = self._needs_input(feed)
+        self.assertEqual([str((a.get("blocked") or {}).get("state")) for a in ni], ["userTodos"],
+                         "the floored focus card carries the story")
+        self.assertNotIn("provisional:" + SID, [a["itemId"] for a in feed["asks"]],
+                         "no Working placeholder beside the floored card")
+
+    def test_the_floored_card_wears_the_count_and_the_story(self):
+        # the blocked badge the client renders: state, the open count (so the badge arithmetic
+        # can treat the card as a presentation of todos it already counted) and the one-line why
+        km._add_user_todo(SID, "Need a staging credential for the tests")   # two open before _env adds a third
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working"}, "lastNode": "g1", "placements": {}})
+        feed = km.build_feed(NOW, {})
+        ni = self._needs_input(feed)
+        self.assertEqual([a["itemId"] for a in ni], ["g1"])
+        self.assertEqual(ni[0]["blocked"],
+                         {"state": "userTodos", "count": 2, "what": km._USER_TODO_BLOCK_WHAT})
+        self.assertEqual(feed["userTodos"], {SID: 2}, "the map and the badge count agree")
+
+    def test_a_completed_focus_falls_back_to_the_working_top(self):
+        # the focus-chain miss: lastNode's top completed, another top still working → the todo
+        # IS the frontier of this IDLE session regardless of which top holds focus
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 900, "text": "ship the fixtures"},
+                             "g2": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "completed", "g2": "working"}, "lastNode": "g1",
+                   "placements": {}})
+        feed = km.build_feed(NOW, {})
+        ni = self._needs_input(feed)
+        self.assertEqual([a["itemId"] for a in ni], ["g2"],
+                         "the still-working top takes the floor when the focus walk dead-ends")
+        self.assertEqual((ni[0].get("blocked") or {}).get("state"), "userTodos")
+        self.assertNotIn("usertodo:" + SID, [a["itemId"] for a in feed["asks"]],
+                         "a floored card means no placeholder")
+
+    def test_the_fallback_still_yields_to_jauth(self):
+        # keep every yield rule: with the jauth floor latched on a live focus goal, the
+        # fallback never floors a second card for the same session
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 900, "text": "ship the fixtures"},
+                             "g2": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working", "g2": "working"}, "lastNode": "g1",
+                   "placements": {}}, jauth=True)
+        ni = self._needs_input(km.build_feed(NOW, {}))
+        self.assertEqual(len(ni), 1, "one interrupt story — jauth floors the focus, todos wait")
+        self.assertNotEqual((ni[0].get("blocked") or {}).get("state"), "userTodos")
+
+    def test_a_done_confirming_focus_is_never_floored(self):
+        # 2026-08-22: a top in the rollup's `confirming` export (done verdict filed, settle
+        # pending) still reads col 'working' — flooring it fights the settle gate and flaps
+        # working→needs-you→completed with no new information. The focus walk skips it; the
+        # fallback floors the genuinely working top instead.
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 900, "text": "ship the fixtures"},
+                             "g2": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working", "g2": "working"}, "lastNode": "g1",
+                   "confirming": ["g1"], "placements": {}})
+        feed = km.build_feed(NOW, {})
+        ni = self._needs_input(feed)
+        self.assertEqual([a["itemId"] for a in ni], ["g2"],
+                         "the confirming focus belongs to the settle gate, not the floor")
+        g1 = next(a for a in feed["asks"] if a["itemId"] == "g1")
+        self.assertTrue(g1.get("doneConfirming"), "the skipped focus keeps its steady cue")
+
+    def test_the_fallback_skips_a_confirming_top_too(self):
+        # …and the working-top fallback honors the same set: with the one candidate confirming,
+        # nothing floors this build — its completion is moments away (the settle), and a floor
+        # now would be un-floored by the very next verdict
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 900, "text": "ship the fixtures"},
+                             "g2": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "completed", "g2": "working"}, "lastNode": "g1",
+                   "confirming": ["g2"], "placements": {}})
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(self._needs_input(feed), [],
+                         "no floor while the only candidate is done-confirming")
+        g2 = next(a for a in feed["asks"] if a["itemId"] == "g2")
+        self.assertEqual(g2["column"], "working")
+        self.assertTrue(g2.get("doneConfirming"))
+
+    def test_a_goal_less_idle_session_gets_the_placeholder_once(self):
+        # no goal minted yet: the escalation's only home is the goal-less placeholder — exactly
+        # one, provisional, carrying the count; the map still counts the todo for the badge
+        self._env({"nodes": {}, "status": {}, "lastNode": None, "placements": {}})
+        feed = km.build_feed(NOW, {})
+        mine = [a for a in feed["asks"] if str(a.get("sid")) == SID]
+        self.assertEqual([a["itemId"] for a in mine], ["usertodo:" + SID])
+        self.assertTrue(mine[0]["provisional"])
+        self.assertEqual(mine[0]["blocked"]["state"], "userTodos")
+        self.assertEqual(feed["userTodos"], {SID: 1})
+
+    def test_a_working_session_floors_nothing(self):
+        # the arming read said no (an open turn, a peer wait, queued intent…): the card stays
+        # exactly where the judges left it and no placeholder appears — the floor is the
+        # predicate's move alone
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working"}, "lastNode": "g1", "placements": {}},
+                  extra=[mock.patch.object(km, "_user_todo_idle", lambda *a, **k: False)])
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(self._needs_input(feed), [])
+        g1 = next(a for a in feed["asks"] if a["itemId"] == "g1")
+        self.assertEqual(g1["column"], "working")
+        self.assertIsNone(g1.get("blocked"))
+        self.assertEqual(feed["userTodos"], {SID: 1}, "the marker's data still rides")
+
+
+class FloorNotificationDedup(_StoreSandbox):
+    """2026-08-22: the floor stands down for every turn the session takes and re-arms at the
+    settle — the DESIGNED card move — but _feed_notifications read each re-entry as news, an OS
+    push per exchange and per monitor wake-cycle for the SAME deferred todo. The interrupt is
+    deduplicated at the notification layer, event-keyed on the FLOORED TODO SET: it fires on
+    first arm or when a todo id joins the set; an identical set re-entering is not news. The
+    latch is _NOTIFY_PREV's own in-memory idiom, kept beside it, so it survives the card's
+    Working dips. The CARD move stays exactly as built — only the push is deduplicated."""
+
+    def setUp(self):
+        super().setUp()
+        km._NOTIFY_PREV[0] = None
+        getattr(km, "_NOTIFY_UT_FIRED", [{}])[0].clear()
+        patches = [
+            mock.patch.object(km, "_notify_card_effective", lambda cards, iid, sid: True),
+            mock.patch.object(km, "_prune_notify_cards", lambda live: None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        km._NOTIFY_PREV[0] = None
+        getattr(km, "_NOTIFY_UT_FIRED", [{}])[0].clear()
+        super().tearDown()
+
+    def _card(self, floored, state="userTodos"):
+        blocked = ({"state": state, "count": len(km._open_user_todos(SID)),
+                    "what": "waiting on you"} if floored else None)
+        return {"asks": [{"itemId": SID + ":g1", "sid": SID, "name": "web",
+                          "text": "wire the login flow",
+                          "column": "needs_input" if floored else "working",
+                          "blocked": blocked}]}
+
+    def test_a_dip_and_re_entry_with_the_same_todo_set_is_not_news(self):
+        # the monitor-cycle shape: settle→floor (push), check-in turn→working, settle→floor,
+        # …repeated. Exactly ONE notification for the one deferred todo.
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))          # baseline build
+        fired = len(km._feed_notifications(self._card(floored=True)))   # first arm → the one push
+        self.assertEqual(fired, 1)
+        for _cycle in range(3):                                    # three monitor wake-cycles
+            self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+            fired += len(km._feed_notifications(self._card(floored=True)))
+        self.assertEqual(fired, 1, "re-entry with an identical todo set is not news")
+
+    def test_a_new_todo_re_arms_the_push(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        km._feed_notifications(self._card(floored=False))          # the session took a turn
+        km._add_user_todo(SID, "Need a staging credential for the tests")
+        out = km._feed_notifications(self._card(floored=True))
+        self.assertEqual(len(out), 1, "a todo id joining the floored set IS news")
+
+    def test_the_dedup_is_scoped_to_the_floor(self):
+        # a permission stop that re-enters after an answer is a NEW block — unchanged contract
+        # (test_notify_bells.py::test_reblocking_after_an_answer_notifies_again is the master pin)
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 1)
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 1,
+                         "non-todo cards keep the column-diff contract exactly as before")
+
+    def test_a_restart_baseline_seeds_the_latch_from_the_floored_world(self):
+        # 2026-08-22: the latch is in-memory and the baseline build returned BEFORE seeding it,
+        # so the first dip+re-entry after every kernel restart re-pushed the SAME
+        # already-notified todo — one spurious interrupt per floored session per restart. The
+        # floored set IS the already-notified state (the card either fired before the restart
+        # or was status the baseline declined to push), so the baseline seeds the latch from
+        # exactly the cards already floored — event-derived, no persistence file.
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        # KERNEL RESTART: both in-memory latches re-baseline together
+        km._NOTIFY_PREV[0] = None
+        km._NOTIFY_UT_FIRED[0].clear()
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "the boot baseline stays silent — existing state is status, not news")
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "the routine dip+re-entry after a restart is NOT news — the baseline "
+                         "seeded the latch from the already-floored card")
+
+    def test_the_baseline_seed_suppresses_only_what_was_already_floored(self):
+        # the seed must not oversuppress: a todo the baseline never saw is still news
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "floored at boot — the baseline is silent and seeds the latch")
+        km._add_user_todo(SID, "Need a staging credential for the tests")
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "the id that joined AFTER the baseline is news")
+
+    def test_a_new_id_joining_while_floored_pushes_with_no_observed_dip(self):
+        # 2026-08-22: a second todo registers in a turn too quick for any build to observe the
+        # dip — the card is floored in BOTH adjacent builds, so hanging the latch off the column
+        # diff short-circuited it and the join never pushed. The todo-set diff is the news test,
+        # independent of the column transition.
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        km._add_user_todo(SID, "Need a staging credential for the tests")
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "a joining id is news even when no build observed a dip")
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "…and exactly once: the steadily floored card stays quiet after it")
+
+    def test_a_lost_answer_reopen_re_arms_the_push(self):
+        # 2026-08-22: the loss seam reopens the SAME id, so the set dedup ate the re-floor's
+        # push forever — but that push is the ONE signal telling the user their answer never
+        # arrived (the loss seam's never-quiet doctrine). The loss EVENT clears the id from the
+        # latch, so the next floor treats it as news.
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        # the user answers → stamp lands, the card unfloors
+        self.assertTrue(km._resolve_user_todo(SID, tid, "answered"))
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        # the answer's holder dies; the loss seam reopens the same id (no transcript → reopen)
+        with mock.patch.object(km, "_sessions",
+                               lambda now, window=None, forks=True: [{"sid": SID,
+                                                                      "path": "/dev/null"}]), \
+             mock.patch.object(km, "_parse", lambda path, sid, now: {"turns": []}), \
+             contextlib.redirect_stderr(io.StringIO()):
+            km._user_todo_answer_lost(SID, tid, "Re: Need the auth-scheme decision — cookie.",
+                                      wait=True)
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the loss reopened the ask")
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "the re-floor after a LOST answer pushes — never quiet")
+
+    def test_a_refused_paste_stand_down_re_arms_the_push(self):
+        # the tmux seam's other loss: the pane refused the paste before the stamp landed, so the
+        # stamp stands down and the ask never left the open rows — yet the user believes they
+        # answered. The stand-down is that loss event, so it un-latches the id the same way.
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        km._feed_notifications(self._card(floored=False))          # the answer's turn opened
+        km._tmux_paste_mark(SID, [(tid, body, "n-1")])
+        km._tmux_paste_flag_refused(SID, tid, "n-1")
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._stamp_user_todo_answered(SID, tid, body, nonce="n-1")
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the stamp stood down")
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "the re-floor after a refused paste pushes — the answer never arrived")
+
+    def test_the_users_own_recall_stays_silent(self):
+        # the ✕ recall (_cancel_backend_queued) reopens the same id too — but the user pulled
+        # the answer back THEMSELVES; an interrupt telling them what they just did is noise.
+        # The unlatch keys on the LOSS event alone, so the recall's re-floor stays deduplicated.
+        be = _FakeBackend()
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
+                                         "Go with the session cookie.")
+        self.assertTrue(km._backend_send(be, SID, body, user_todo=tid))
+        km._stamp_user_todo_answered(SID, tid, body)
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        self.assertIsNone(km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1]))
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the recall reopened the ask")
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "the user's own ✕ needs no interrupt saying what they just did")
+
+    def test_the_unlatch_touches_one_id_of_one_session(self):
+        # a loss in one session must not re-arm a peer's latch or the session's other ids
+        km._NOTIFY_UT_FIRED[0][SID] = frozenset({"ut-aaaaaaaa", "ut-bbbbbbbb"})
+        km._NOTIFY_UT_FIRED[0][SID2] = frozenset({"ut-cccccccc"})
+        km._notify_ut_unlatch(SID, "ut-aaaaaaaa")
+        self.assertEqual(km._NOTIFY_UT_FIRED[0][SID], frozenset({"ut-bbbbbbbb"}))
+        self.assertEqual(km._NOTIFY_UT_FIRED[0][SID2], frozenset({"ut-cccccccc"}))
+        km._notify_ut_unlatch(SID, "ut-not-there")                 # unknown id: a no-op, never a KeyError
+        km._notify_ut_unlatch("33333333-4444-5555-6666-777777777777", "ut-aaaaaaaa")
+        self.assertEqual(set(km._NOTIFY_UT_FIRED[0]), {SID, SID2}, "no entry minted for a stranger")
+
+    def test_the_latch_writers_share_one_lock(self):
+        # the loss seam's unlatch runs THREADED beside the build's read-modify-write; every
+        # writer holds _NOTIFY_UT_LOCK, or a stale fire could overwrite a concurrent unlatch
+        # (a lost update that re-arms or re-silences the wrong sid)
+        for fn in (km._feed_notifications, km._notify_ut_unlatch):
+            self.assertIn("with _NOTIFY_UT_LOCK", inspect.getsource(fn),
+                          "%s must hold the latch lock around its read-modify-write" % fn.__name__)
+
+
+class BadgeArithmetic(unittest.TestCase):
+    """_needs_you_count widens to 'things only the user can move' (plans/user-todos.md, (d)):
+    open user todos of non-ended sessions PLUS hard-stopped needs-input sessions — counted per
+    SESSION ('counts once as itself'), with the escalation floor adding nothing (a presentation
+    of todos the count already includes). Ended sessions are excluded upstream: the map is built
+    behind the ended gate (FeedSeamUserTodos)."""
+
+    def test_todos_plus_hard_stopped_sessions(self):
+        feed = {"asks": [{"itemId": "a", "sid": "S1", "column": "needs_input"}],
+                "userTodos": {"S2": 2}}
+        self.assertEqual(km._needs_you_count(feed), 3)
+
+    def test_the_escalation_floor_adds_nothing_extra(self):
+        # an idle session escalated BY its todos: the card is a presentation of the two todos
+        # already in the count — never a third thing
+        feed = {"asks": [{"itemId": "a", "sid": "S2", "column": "needs_input",
+                          "blocked": {"state": "userTodos", "count": 2}}],
+                "userTodos": {"S2": 2}}
+        self.assertEqual(km._needs_you_count(feed), 2)
+
+    def test_a_hard_stopped_session_with_todos_counts_once_as_itself(self):
+        # the spec's dedup rule: the permission stop is its own thing (1) beside the session's
+        # own todo (1) — the session's hard stop never counts twice
+        feed = {"asks": [{"itemId": "a", "sid": "S1", "column": "needs_input",
+                          "blocked": {"state": "permission", "what": "stopped"}}],
+                "userTodos": {"S1": 1}}
+        self.assertEqual(km._needs_you_count(feed), 2)
+
+    def test_hard_stops_count_per_session_not_per_card(self):
+        feed = {"asks": [{"itemId": "a", "sid": "S1", "column": "needs_input"},
+                         {"itemId": "b", "sid": "S1", "column": "needs_input"}]}
+        self.assertEqual(km._needs_you_count(feed), 1)
+
+    def test_provisional_and_non_blocked_cards_stay_out(self):
+        feed = {"asks": [
+            {"itemId": "a", "sid": "S1", "column": "needs_input", "provisional": True},
+            {"itemId": "b", "sid": "S2", "column": "working"},
+            {"itemId": "c", "sid": "S3", "column": "completed"},
+        ]}
+        self.assertEqual(km._needs_you_count(feed), 0)
+
+    def test_a_sid_less_card_still_counts(self):
+        # nothing to dedup it against — dropping it would hide a real needs-you
+        feed = {"asks": [{"itemId": "q1", "column": "needs_input"},
+                         {"itemId": "q2", "column": "needs_input"}]}
+        self.assertEqual(km._needs_you_count(feed), 2)
+
+    def test_held_mail_counts_per_message_beside_a_session_stop(self):
+        # 2026-08-22: quarantine cards are independent user DECISIONS (approve/deny/edit per
+        # message), not a state of their session — the per-session dedup absorbed them, so a
+        # permission stop + 2 held mails for the same session read badge 1. Three decisions = 3.
+        feed = {"asks": [
+            {"itemId": "S1:g1", "sid": "S1", "column": "needs_input",
+             "blocked": {"state": "permission", "what": "stopped"}},
+            {"itemId": "quarantine:m-01", "sid": "S1", "column": "needs_input",
+             "blocked": {"state": "quarantine", "mid": "m-01"}},
+            {"itemId": "quarantine:m-02", "sid": "S1", "column": "needs_input",
+             "blocked": {"state": "quarantine", "mid": "m-02"}},
+        ]}
+        self.assertEqual(km._needs_you_count(feed), 3)
+
+    def test_parked_handoffs_count_per_send(self):
+        # two handoffs parked for the same offline recipient are two deliver-or-dismiss calls
+        feed = {"asks": [
+            {"itemId": "parked:m-01", "sid": "S9", "column": "needs_input",
+             "blocked": {"state": "parkedHandoff", "toSid": "S9"}},
+            {"itemId": "parked:m-02", "sid": "S9", "column": "needs_input",
+             "blocked": {"state": "parkedHandoff", "toSid": "S9"}},
+        ]}
+        self.assertEqual(km._needs_you_count(feed), 2)
+
+    def test_the_per_item_classes_are_the_feeds_own(self):
+        # the class list is enumerated from build_feed's needs-input constructors — goal cards
+        # and the provisional placeholders are session-state; these two are the per-item ones.
+        # A constructor whose state leaves this list dedups by sid, so drift shows up here.
+        self.assertEqual(set(km._NEEDS_YOU_PER_ITEM), {"quarantine", "parkedHandoff"})
+        src = inspect.getsource(km.build_feed) + inspect.getsource(km._quarantine_cards)
+        for st in km._NEEDS_YOU_PER_ITEM:
+            self.assertIn('"state": "%s"' % st, src, "the class must name a real constructor")
+
+    def test_a_malformed_map_contributes_nothing(self):
+        # a stale or foreign frame may carry a non-numeric or non-dict map: never a crash, and
+        # the hard stops still count
+        feed = {"asks": [{"itemId": "a", "sid": "S1", "column": "needs_input"}],
+                "userTodos": {"S2": None, "S3": "2"}}
+        self.assertEqual(km._needs_you_count(feed), 3)
+        self.assertEqual(km._needs_you_count({"asks": [], "userTodos": None}), 0)
+        self.assertEqual(km._needs_you_count({"asks": [], "userTodos": ["S1"]}), 0)
+        self.assertEqual(km._needs_you_count({"asks": [], "userTodos": {"S1": "many"}}), 0)
+
+    def test_an_empty_feed_is_zero(self):
+        self.assertEqual(km._needs_you_count({"asks": []}), 0)
+        self.assertEqual(km._needs_you_count({}), 0)
+
+
+class NudgeStandsDownForOpenTodos(_StoreSandbox):
+    """The auto-nudge's open-todo gate is scoped to the STATUS NUDGE alone (plans/user-todos.md,
+    escalation; 2026-08-22): the todo says exactly what a status check would fish for, so none
+    fires while one stands — but two unrelated ladders share this walk and must flow past it.
+    The awaiting WAKE is the 6h LOST-WAKEUP backstop (suppressing it re-creates the 2026-08-11
+    wedge: dispatched background work whose completion wakeup died, asleep in Awaiting for
+    days), and the DEBT machinery is the ONE mechanism that unparks a PEER silently waiting on
+    this session's answer — a todo names what THIS session needs from the user and says nothing
+    about what a peer needs from it. The first cut returned at session level and silenced all
+    three. SYNTHETIC fixtures (the notes-api world)."""
+
+    S = {"sid": SID, "name": "web", "path": "/nonexistent/%s.jsonl" % SID, "anchor": 0, "mtime": 0}
+    TURNS = [{"id": "t1", "t": NOW - 600, "end": NOW - 500, "ended": True, "atoms": []}]
+
+    def setUp(self):
+        super().setUp()
+        self.saved_goaldir = jd.GOALDIR
+        jd.GOALDIR = jd.STATE / "goals"
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        km._autonudge_cache.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        km._flags_cache.clear()
+        self.sent = []
+        rec = self
+
+        class _Backend:
+            def send(self, sid, body):
+                rec.sent.append((sid, body))
+                return True
+
+        self.saved_backend = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: _Backend())
+        patches = [
+            mock.patch.object(km, "_api_error", lambda path: None),
+            mock.patch.object(jd, "parsed_session",
+                              lambda sid, paths, now: {"turns": list(self.TURNS)}),
+            mock.patch.object(km, "_session_working", lambda turns: False),
+            mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, s="", **k: False),
+            mock.patch.object(km, "_backend_queued", lambda s: False),
+            mock.patch.object(km, "_backend_rewind_pending", lambda s: False),
+            mock.patch.object(km, "_last_state", lambda s: ("waiting", 0)),
+            mock.patch.object(km, "_session_awaiting",
+                              lambda sid, path, idle, stamp=False: None),
+            mock.patch.object(km, "_closer_settled", lambda *a, **k: True),
+            mock.patch.object(jd, "plan_units", lambda ps, store: []),
+            mock.patch.object(km, "_revivers_pending", lambda *a, **k: ""),
+            mock.patch.object(km, "_peer_answered_at", lambda sid: 0),
+            mock.patch.object(km, "_log_nudge_event", lambda *a, **k: None),
+            mock.patch.dict(km._pending_ops, {}, clear=True),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def tearDown(self):
+        jd.GOALDIR = self.saved_goaldir
+        km.Sessions.backend_for = self.saved_backend
+        km._autonudge_cache.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        super().tearDown()
+
+    def _seed_goals(self, nodes, status=None):
+        (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
+            {"rompUuid": SID, "seq": 1, "placements": {}, "status": status or {},
+             "nodes": nodes}))
+
+    def _plain_top(self):
+        return {"g1": {"id": "g1", "text": "wire the login flow", "parentId": None,
+                       "t": NOW - 900, "mt": NOW - 900, "nodeComplete": False,
+                       "blocked": False, "cleared": False, "trail": []}}
+
+    def _stamped_top(self, at):
+        nd = {"id": "g1", "text": "run the fixture sweep", "parentId": None,
+              "t": NOW - 90000, "mt": NOW - 90000, "nodeComplete": False, "blocked": False,
+              "cleared": False, "trail": [],
+              "awaitingWhy": "the sweep it dispatched; reports when done", "awaitingAt": at,
+              "log": [{"ev_t": at, "src": "closer", "kind": "awaiting",
+                       "why": "the sweep it dispatched; reports when done", "at": at + 5}]}
+        return {"g1": nd}
+
+    def _run(self, alive_ids=None):
+        km._autonudge_cache.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        return km._auto_nudge_session(self.S, NOW, {SID: {"state": ""}}, {}, {},
+                                      alive_ids=alive_ids)
+
+    def test_the_status_nudge_stands_down_while_a_todo_is_open(self):
+        self._seed_goals(self._plain_top(), status={"g1": "working"})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        self.assertFalse(self._run())
+        self.assertEqual(self.sent, [], "the todo already names what a status check would ask")
+        self.assertEqual(km._auto_nudge_data().get("nudged", {}), {}, "no record armed either")
+
+    def test_the_gate_lifts_the_moment_the_last_todo_clears(self):
+        self._seed_goals(self._plain_top(), status={"g1": "working"})
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._resolve_user_todo(SID, tid, "dismissed")
+        self.assertTrue(self._run(), "with no open todos the status nudge proceeds as before")
+        self.assertEqual(len(self.sent), 1)
+
+    def test_the_awaiting_wake_flows_past_an_open_todo(self):
+        # the awaiting-wedge shape (2026-08-11): a stamped goal past the 6h backstop whose
+        # completion wakeup died. The wake is a lost-wakeup CHECK, not a status ask — an open
+        # todo must not put the session back to sleep for days.
+        self._seed_goals(self._stamped_top(at=NOW - 7 * 3600), status={"g1": "working"})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        self.assertTrue(self._run(), "the wake fired despite the open todo")
+        self.assertEqual(len(self.sent), 1)
+        self.assertTrue(km._auto_nudge_data()["nudged"]["g1"].get("wake"),
+                        "…and it is the WAKE's episode record, not a status nudge's")
+
+    def test_the_debt_machinery_flows_past_an_open_todo(self):
+        # the peer-parked-forever shape: this idle session owes a live peer a reply ("Awaiting
+        # us" on their card). The debt reminder is the one mechanism that unparks them; a todo
+        # about the USER must not silence it.
+        self._seed_goals({}, status={})
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        t_ask = NOW - 1800
+        maps = ({(SID2, SID): t_ask},
+                {(SID2, SID): (t_ask, "question", "Which port should the staging server use?")})
+        patches = [
+            mock.patch.object(km, "_postal_wait_maps", lambda: maps),
+            mock.patch.object(km, "_name_of", lambda sid: {SID2: "api", SID: "web"}.get(sid)),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.assertTrue(self._run(alive_ids={SID, SID2}), "the reminder fired despite the todo")
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("api asked you", self.sent[0][1])
+
+    def test_the_gate_sits_between_the_park_gate_and_the_last_resort_gate(self):
+        # placement pin: the stand-down is a per-goal `continue` on the status-nudge branch,
+        # BELOW the park gate (so a park lift during an open todo still logs its one re-armed
+        # row) and ABOVE the last-resort reviver gate and the fire itself
+        src = inspect.getsource(km._auto_nudge_session)
+        i_park = src.index("# PARK GATE")
+        i_gate = src.index("if _todo_standdown:")
+        i_last = src.index("# LAST-RESORT GATE")
+        self.assertLess(i_park, i_gate)
+        self.assertLess(i_gate, i_last)
+        self.assertEqual(src.count("if _todo_standdown:"), 1, "one gate, on the goal walk alone")
+
+
+if __name__ == "__main__":
+    unittest.main()
