@@ -8,9 +8,12 @@
 //   * nothing is written on a client's word that the kernel cannot carry back in one reply
 //     (REPLY_MAX_BYTES, the kernel's _FILE_COMMENTS_REPLY_MAX): an oversized record, decision or
 //     note refuses `too-large` before any write;
-//   * the verbs that write the file refuse what the kernel's saveFile refuses — a name outside the
-//     viewer's text scope (TEXT_EXT, TEXT_NAMES, mirrored from kernel.py) and a file past the 2 MB
-//     cap on disk;
+//   * `save` refuses what the kernel's saveFile refuses — a name outside the viewer's text scope
+//     (TEXT_EXT, TEXT_NAMES, mirrored from kernel.py) and a file past the 2 MB cap on disk. The
+//     NAME rule is save's alone: reject and reject-all write back only what the sidecar recorded, so
+//     they keep Slice 2's scope, every tracked UTF-8 file whatever its name (the review, round 3;
+//     the full contract is pinned in file-comments-host-scope.test.mjs). The SIZE cap is every
+//     file-writing verb's;
 //   * a path inside .trackchanges/ is never logged, and `save` logs only a file that already has a
 //     sidecar, a log, or a tracked flag.
 // Same hermetic harness as file-comments-host-save.test.mjs: the synthetic `notes-api` world under
@@ -432,7 +435,7 @@ test('comment and reply refuse too-large before any write when the note would ta
   assert.deepEqual(fileBytes(c.storePath), sidecar);
 });
 
-// ── the file-writing verbs keep saveFile's scope ────────────────────
+// ── save keeps saveFile's scope; the size cap is every file-writing verb's ──
 
 test('TEXT_EXT and TEXT_NAMES mirror the kernel\'s _TEXT_EXT and _TEXT_NAMES; isTextPath follows _is_text_path', () => {
   const src = fs.readFileSync(path.join(REPO, 'kernel', 'kernel.py'), 'utf8');
@@ -452,7 +455,7 @@ test('TEXT_EXT and TEXT_NAMES mirror the kernel\'s _TEXT_EXT and _TEXT_NAMES; is
   }
 });
 
-test('save and reject refuse not-text on a name outside the viewer\'s text scope, before any read or write', () => {
+test('save refuses not-text on a name outside the viewer\'s text scope, before any read or write; reject on such a name is not refused by name', () => {
   const w = world();
   // save: an extensionless file no allowlist names, with the fences a raw client could send.
   const keys = path.join(w.root, 'authorized_keys');
@@ -463,20 +466,27 @@ test('save and reject refuse not-text on a name outside the viewer\'s text scope
   assert.equal(r.error, 'cannot save ~/notes-api/authorized_keys: not a text file the viewer edits; nothing was changed');
   untouched(w, keys, before);
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
-  // reject: a tracked file the CLIs will edit under any name, which the viewer never shows.
+  // The same name rule on a tracked file the CLIs edit under any name, which the viewer serves
+  // download-only: save refuses it in saveFile's phrase, and nothing is read or written. reject and
+  // reject-all do NOT carry that rule (round 3: the text they write is the sidecar's own record, not
+  // the client's, so they keep Slice 2's scope) — the change is reverted and the decision logged.
+  // file-comments-host-scope.test.mjs pins the reject side in full; this is the boundary between
+  // the two verbs on one file.
   const tex = path.join(w.root, 'docs', 'notes.tex');
   fs.writeFileSync(tex, 'Hello world.\n');
   const st = edit(w, tex, 'world', 'there');
   assert.equal(st.hunks.length, 1);
+  assert.equal(fs.readFileSync(tex, 'utf8'), 'Hello there.\n');
   const before2 = snapshot(w, tex);
-  const r2 = refused(w, { verb: 'reject-all', path: tex, args: {}, fence: fileFenceFor(st) }, 'not-text');
-  assert.equal(r2.error, 'cannot write ~/notes-api/docs/notes.tex: not a text file the viewer edits; nothing was changed');
+  const r2 = refused(w, saveReq(tex, st, 'Hello there!\n', st.store.suggestions), 'not-text');
+  assert.equal(r2.error, 'cannot save ~/notes-api/docs/notes.tex: not a text file the viewer edits; nothing was changed');
   untouched(w, tex, before2);
-  refused(w, { verb: 'reject', path: tex, args: { ids: [st.hunks[0].id] }, fence: fileFenceFor(st) }, 'not-text');
-  untouched(w, tex, before2);
-  // accept writes no file, so the name is no concern of its own.
-  const a = ok(w, { verb: 'accept-all', path: tex, args: {}, fence: fenceFor(st) });
-  assert.deepEqual(a.accepted, [st.hunks[0].id]);
+  const rj = ok(w, { verb: 'reject', path: tex, args: { ids: [st.hunks[0].id] }, fence: fileFenceFor(st) });
+  assert.deepEqual(rj.rejected, [st.hunks[0].id]);
+  assert.deepEqual(rj.hunks, []);
+  assert.equal(fs.readFileSync(tex, 'utf8'), 'Hello world.\n', 'the old text is back');
+  assert.deepEqual(rj.log.map((e) => e.kind), ['reject']);
+  assert.equal(rj.logged, true);
 });
 
 test('save and reject refuse too-large on a file past the text cap on disk, the file the viewer never loaded, before any write', () => {

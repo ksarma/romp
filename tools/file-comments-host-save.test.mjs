@@ -442,11 +442,19 @@ test('desync refuses a record whose text no longer sits at its offset, one outsi
   assert.match(r.error, new RegExp(`overlaps change ${B.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   untouched(w, before);
   assert.deepEqual(Object.keys(r).sort(), ['code', 'error', 'ok']);
-  // A deletion point inside the change's span is not an overlap: it is written and reloads in place.
-  const point = { id: 'd1', author: 'web', ts: 1700000000000, kind: 'del', from: rec.from + 3, newText: '', oldText: 'gone', anchor: null };
+  // A deletion point inside the change's span is not an overlap. The point must be rooted, though:
+  // a save takes no record whose id is in neither the sidecar nor the comments log and is no
+  // fragment (`<id>~n`, the engine's split scheme) of one. Under a fresh id the same point refuses
+  // `desync` and writes nothing (file-comments-host-scope.test.mjs pins that rule in full); as a
+  // fragment of the change it is written and reloads in place.
+  const shape = { author: 'web', ts: 1700000000000, kind: 'del', from: rec.from + 3, newText: '', oldText: 'gone', anchor: null };
+  r = refused(w, saveReq(w.report, st, cur, [rec, { id: 'd1', ...shape }]), 'desync');
+  assert.match(r.error, /^change d1 was never pending in ~\/notes-api\/docs\/report\.md: /);
+  untouched(w, before);
+  const point = { id: `${rec.id}~1`, ...shape };
   const r2 = ok(w, saveReq(w.report, st, cur, [rec, point]));
-  assert.deepEqual(readSidecar(st.storePath).suggestions.map((s) => s.id), [rec.id, 'd1']);
-  assert.deepEqual(r2.hunks.map((h) => [h.id, h.kind]), [[rec.id, 'sub'], ['d1', 'del']]);
+  assert.deepEqual(readSidecar(st.storePath).suggestions.map((s) => s.id), [rec.id, point.id]);
+  assert.deepEqual(r2.hunks.map((h) => [h.id, h.kind]), [[rec.id, 'sub'], [point.id, 'del']]);
   assert.equal(r2.store.detached.length, 0);
 });
 

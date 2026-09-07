@@ -44,7 +44,20 @@
 //     made and never did — and the next save or the panel's Reject would then find it rooted, log a
 //     decision on it and count it to the session. A real editor never submits such an id: its field is
 //     seeded from the sidecar's records, the engine splits mint `<id>~n` (mapOpsThroughChange), and the
-//     chunk's re-mint keeps the parent (editor-chunk's freshIds);
+//     chunk's re-mint keeps the parent (editor-chunk's freshIds). And a record rooted in a change the
+//     sidecar holds must name that change's author and session id (recordsMisattributed), else
+//     `desync` by id and nothing written: the editor's remap copies both onto every fragment it splits
+//     off (mapOpsThroughChange) and keeps the earlier record's on a merge (coalesceOps), so a record
+//     that differs is not the editor's — written, it would put the session's change under another
+//     author and session id in the sidecar, the record every change card shows and every later verb
+//     reads as who changed what. The texts and `ts` stay the client's word: no equality against the
+//     sidecar holds for them (a split shortens newText, a merge concatenates the texts and takes the
+//     earlier ts), a record the log alone roots (the undo of a landed accept) has no author on record
+//     to compare, and the decisions' texts come from a remap this script never saw (requireDecisions
+//     checks the shape, decisionRoots the id). The sidecar is itself a file the viewer edits (the
+//     plan: a sidecar hand-edited in the viewer traces like any other file), so none of this closes a
+//     door that stands open beside it; it keeps the records this verb writes consistent with the
+//     changes they claim to be;
 //   * a region comment's `target.hash` is this script's sha256 of the figure's BYTES (Slice 3), never
 //     the client's value and never a hash of the lossy text: for a standalone image or PDF the file's
 //     own, for a figure embedded in a markdown file the bytes of the `src` the embed names, resolved
@@ -1407,7 +1420,7 @@ function checkContentText(shown, content) {
   }
 }
 
-// The editor's ledger of decisions, `[{id, oldText, newText}]`, in the shape the accept and reject
+// The decisions taken in the editor, `[{id, oldText, newText}]`, in the shape the accept and reject
 // log entries keep (changesOf). Malformed is a caller bug; so is an id decided twice, or decided
 // AND still among the records being saved (a decision drops its record from the editor's field,
 // and undo takes the decision back with it, so the two never name one id together). `taken`
@@ -1479,6 +1492,43 @@ function recordsNeverPending(ctx, ids) {
   return new Refusal('desync', `${what} never pending in ${ctx.shown}: neither the comments file holds ${them} nor the comments log remembers ${them}, so the records being saved are not that file's; nothing was changed — reload and retry`);
 }
 
+// A record's author and session id as the sidecar holds them (fitRecords's normalization: a missing
+// or empty author is 'unknown', a missing or empty authorId is none), so a submitted record and the
+// stored change it claims to be compare on the same terms.
+function authorOf(s) {
+  return {
+    author: typeof s.author === 'string' && s.author ? s.author : 'unknown',
+    authorId: typeof s.authorId === 'string' && s.authorId ? s.authorId : null,
+  };
+}
+
+// The sidecar's change a record descends from — the record's own id, else the nearest ancestor by
+// the split scheme (`<id>~n`, the rule rootedIn applies) — or null when the sidecar holds none: a
+// record the log alone roots, or a stranger recordsNeverPending refuses first.
+function sidecarRootOf(store, id) {
+  let best = null;
+  for (const s of (store && store.suggestions) || []) {
+    if (!s || s.id == null || s.id === '') continue;
+    const r = String(s.id);
+    if (id === r) return s;
+    if (id.startsWith(r + '~') && (!best || r.length > String(best.id).length)) best = s;
+  }
+  return best;
+}
+
+// A save's change record that names another author or session id than the sidecar's change it is
+// rooted in: not a record the editor derived from the seeded ones (the header's rule on records),
+// refused `desync` as a record that does not fit the text is, so the viewer shows the reason and
+// keeps the buffer, and a reload seeds the field from the sidecar again. Named as noChange names
+// ghosts.
+function recordsMisattributed(ctx, ids) {
+  const list = ids.map(String);
+  const one = list.length === 1;
+  const what = one ? `change ${list[0]} is not the change ${ctx.shown} holds under that id (its author or session differs)`
+    : `changes ${list.join(', ')} are not the changes ${ctx.shown} holds under those ids (their author or session differs)`;
+  return new Refusal('desync', `${what}, so the records being saved are not that file's; nothing was changed — reload and retry`);
+}
+
 // Every change record the editor holds, checked against `content` the way the engine's load checks
 // a sidecar's records against the file (rebaseSuggestions: the record's newText sits at its offset,
 // and two placed spans never overlap) — but refusing where the engine would detach or relocate: the
@@ -1513,8 +1563,9 @@ export function fitRecords(content, suggestions) {
     if (newText && content.slice(s.from, to) !== newText) {
       return { records: null, misfit: { id: key, why: `the text at ${s.from}..${to} is not the change's text` } };
     }
-    const rec = { id: s.id, author: typeof s.author === 'string' && s.author ? s.author : 'unknown' };
-    if (typeof s.authorId === 'string' && s.authorId) rec.authorId = s.authorId;
+    const who = authorOf(s);
+    const rec = { id: s.id, author: who.author };
+    if (who.authorId) rec.authorId = who.authorId;
     rec.ts = typeof s.ts === 'number' && Number.isFinite(s.ts) ? s.ts : 0;
     rec.kind = engine.kindOf(oldText, newText);
     rec.from = s.from;
@@ -1608,7 +1659,7 @@ export function editDiff(oldText, newText, name) {
 // save {content, suggestions, accepted, rejected}: the editor's Save over a file with pending
 // changes (Slice 5). `content` is the whole new text; `suggestions` the change records as the
 // editor's field holds them after the person's typing remapped them (the sidecar's v3 record
-// shape); `accepted` and `rejected` the ledger of what was decided in the editor, each
+// shape); `accepted` and `rejected` the decisions taken in the editor, each
 // `{id, oldText, newText}`, whose records the field has already dropped (and, for a reject, whose
 // old text the buffer already holds). Fenced on the sidecar AND the file: "" for storeMtimeNs means
 // no sidecar exists, so the editor had nothing to remap and nothing to decide (a non-empty list is
@@ -1618,8 +1669,9 @@ export function editDiff(oldText, newText, name) {
 // saveFile refuses, `not-text` and `too-large`), every decided id must be rooted in the sidecar or
 // the log (`no-change`), the file must be UTF-8 text on disk and `content` text the file can hold
 // (`not-text`), under the cap (`too-large`), every record must fit `content` (`desync`, naming the
-// first that does not) and be rooted the way a decision must (`desync` by id, recordsNeverPending:
-// a record the sidecar never held would be written into it as a change the session made), and the
+// first that does not), be rooted the way a decision must (`desync` by id, recordsNeverPending: a
+// record the sidecar never held would be written into it as a change the session made) and name the
+// author and session id of its root in the sidecar (`desync` by id, recordsMisattributed), and the
 // reply this save would send — the records as `store` and `hunks`, the log entries it appends —
 // must be one the kernel carries (`too-large`, checkReplyFits). Then the order track-edit and reject
 // use: the sidecar first (the records, every comment bound by `suggestionId` to a decided change
@@ -1668,7 +1720,7 @@ function doSave(ctx) {
     // happened), or a fragment of either (`<id>~n`, the engine's split scheme: the person typed inside
     // the change and decided one half). Anything else is a decision nobody took: logged, it would
     // stand in the append-only log as fact and be counted to the session (the kernel tells it how many
-    // changes the save rejected, from this ledger), so it refuses `no-change` by id, as accept and
+    // changes the save rejected, from these decisions), so it refuses `no-change` by id, as accept and
     // reject do (decidedChanges), and nothing is written.
     roots = decisionRoots(ctx, store, paths);
     if (!store && !roots.size) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
@@ -1689,7 +1741,7 @@ function doSave(ctx) {
     // pending again), or it is a fragment of either. fitRecords checked each against `content` only,
     // and rebuilds the record from the id, author, authorId, ts and oldText the client sent: a record
     // rooted nowhere would be written into the sidecar as a change by the session it names, with an
-    // old text the session never replaced — the state the ledger check above refuses to LOG, reached
+    // old text the session never replaced — the state the decisions check above refuses to LOG, reached
     // through the sidecar instead, since the next save or the panel's Reject would find it pending.
     // After fitRecords, so a malformed record is still the caller bug it crashes as and a misfit is
     // still named first; before the reply is measured and anything written. The sidecar's own ids
@@ -1703,6 +1755,25 @@ function doSave(ctx) {
       strangers = strangers.filter((id) => !rootedIn(roots, id));
       if (strangers.length) throw recordsNeverPending(ctx, strangers);
     }
+    // Every record the sidecar roots must name its root's author and session id: the editor's remap
+    // copies both onto each fragment it splits off (mapOpsThroughChange's `...s`) and keeps the earlier
+    // record's on a merge (coalesceOps), so the pair holds for every record a real editor derives from
+    // the seeded ones, and a record that differs is not the editor's — written, it would put the
+    // session's change under another author or session id in the sidecar, which the panel's change
+    // cards then show and every later verb reads as who changed what (the review, 2026-09-06).
+    // Compared against the loaded store, the one the editor was seeded from (fenced on storeMtimeNs
+    // and fileMtimeNs, so the load-time rebase produced the same records). A record the log alone
+    // roots has no author on record to compare, and the texts and ts are the client's (the header's
+    // rule on records). Named in the caller's order.
+    const misnamed = [];
+    for (const s of a.suggestions) {
+      const rootRec = sidecarRootOf(store, String(s.id));
+      if (!rootRec) continue;
+      const got = authorOf(s);
+      const want = authorOf(rootRec);
+      if (got.author !== want.author || got.authorId !== want.authorId) misnamed.push(String(s.id));
+    }
+    if (misnamed.length) throw recordsMisattributed(ctx, misnamed);
   }
   // Whether the log has business with this file, decided before the writes from the disk as it is:
   // a sidecar, a log, or the tracked flag (read from a config checkConfig passed in loadForDecision),

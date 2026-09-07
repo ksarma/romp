@@ -223,7 +223,11 @@ export interface FileViewActionCtx {
   /** runs after every paint of the body: a text body at once (open, view switch, reload), a media body once it shows —
    *  an image after its load event (at once when it was already complete), a PDF frame at once (whenShown), a PDF's
    *  pages once page 1 is drawn and then again after every page the chunk draws (so an overlay can attach to each). A
-   *  Rendered body's figures are in the DOM by then with their own loads still pending. The panel re-runs its paint pass */
+   *  Rendered body's figures are in the DOM by then with their own loads still pending. The panel re-runs its paint pass.
+   *  Also once at Edit, as the editor takes the body (Slice 5), with editing() true: the panel's paint pass stands down
+   *  then, and its cards, which read editing() at render time, take their edit-mode state from this render (the panel's
+   *  own begin() ran before the flip, so its render could not). No other paint while the editor holds the body; the exit's
+   *  repaint hands the read-mode state back */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -265,7 +269,10 @@ export interface TrackedEdit {
    *  holds them, the author → session colour map for the marks (null for a neutral mark), and the words Edit refuses
    *  with when the editor cannot carry them (the Slice 2 wording: an older editor bundle, or a bundle that failed to load).
    *  null when nothing is pending: the editor mounts as for any file. The panel fences the later save on the sidecar as
-   *  it stands at this call, since the records ride from it. */
+   *  it stands at this call, since the records ride from it. Asked twice per Edit, both times with editing() still false
+   *  (a refusal at either leaves the read view untouched): at the click, before the consent round-trip, and at the mount,
+   *  whose records the editor takes. A render the panel does here is therefore a read-mode one; its edit-mode render is
+   *  the onRendered the viewer fires once edit mode is entered (enterEdit). */
   begin(): { records: unknown[]; authorColor: (author: string) => string | null; refusal: string } | null;
   /** Whether Save goes through the comments host: the file is tracked or has a sidecar (a comment, a change). */
   routesSave(): boolean;
@@ -304,6 +311,10 @@ function runCloseHooks(): void {
 // whose branch is not on origin stays an anchor, dashed, with the note as its caption, since GitHub
 // 404s it until the push. One question per open, reqId-guarded. Exported for the DOM-shape test.
 const GH_REASONLESS = "this kernel predates link reasons; restart it after updating";
+/** The note bar's words when a save's late ack finds a new editor mounted over the pre-save file (doSave, the late-ack
+ *  branch): what happened, then what Save and Cancel do from here. The bar carries the Reload offer itself. */
+export const SAVE_LANDED_UNDER_NEW_EDITOR = "Your earlier save landed after you reopened the editor, so this editor shows the file as it was before that save. "
+  + "Save from it will refuse; Cancel shows the saved file.";
 let gitSeq = 0;
 let gitHooks: { reqId: number; apply: (url: string, reason: string) => void } | null = null;
 export const githubLinkAction: FileViewAction = {
@@ -1063,6 +1074,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     editing = true; dirty = false;
     eolCRLF = /\r\n/.test(text);
     renderBody();
+    // The panel's edit-mode render. Its cards read editing() at render time (the caption that says to decide in the
+    // editor, Accept and Reject dimmed with those words, no Reveal or link into a read view that is gone: setMode and
+    // scrollToOffset are no-ops now), and nothing above rendered them with the flag set: begin() ran before it, as it must
+    // (a refused begin() leaves the read view untouched), and renderBody paints nothing in edit mode. So the seam's
+    // onRendered fires here, once, as the editor takes the body: the panel's paint pass stands down on editing() and its
+    // cards take their edit-mode state. Without it a panel open at Edit kept its read-mode cards, live-looking controls
+    // that did nothing, until some status happened to land (the review's cards-keep-read-mode finding). The exit's
+    // repaint hands the read-mode state back.
+    fireRendered();
     // per the loading-state rule the chunk wait shows the romp loader, not a blank body
     const wait = el("div", "fileview-load");
     wait.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
@@ -1242,7 +1262,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
             // gone: the next open reads the disk.
             if (!wrap.isConnected) return;
             for (const cb of savedHooks) { try { cb({ mtimeNs: r.mtimeNs, logged: r.logged }); } catch { /* a hook must never cost the heal */ } }
-            if (editing) refetchAfterEdit = true; else fetchFile();
+            if (!editing) { fetchFile(); return; }
+            refetchAfterEdit = true;
+            // A NEW editor is up: Edit after the Cancel mounted it over the bytes and mtime from BEFORE this save, with the
+            // records of that time as its marks, and it holds whatever has been typed since. This ack is the one event that
+            // says the disk moved under it: the panel applied the reply as its status before resolving, so its poll's
+            // baseline is the saved file already and no later tick raises its moved-under-edit row, and keeping the buffer
+            // (above) is right but silent. Said here, above the editor, with the Reload offer the next Save's file-moved
+            // refusal would carry: that refusal is correct (mtimeNs is the file this editor loaded, so a Save from it refuses
+            // rather than overwrite the person's own landed save), but the person heard of the move only then, from words
+            // about a file some agent changed. The buffer stays; Cancel re-reads at the exit (refetchAfterEdit). Nothing is
+            // said when the ack's file is the one this editor loaded (the review's cancelled-save-ack finding).
+            if (r.mtimeNs && r.mtimeNs !== mtimeNs) showSaveError(SAVE_LANDED_UNDER_NEW_EDITOR, true);
             return;
           }
           editHooks = null;

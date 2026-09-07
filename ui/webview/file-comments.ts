@@ -483,7 +483,9 @@ class Panel {
   // the file's bytes moved under an edit (noteMovedUnderEdit) and the view has not re-read them yet: the first paint after
   // the edit ends re-reads (paintAll). A latch of its own, not the head row's presence: the row's ✕ dismisses the words,
   // and the re-read must still happen, or Cancel would leave the pre-rewrite bytes showing for good (the poll's baseline
-  // already moved on to the new mtime when the status landed, so no later tick would notice).
+  // already moved on to the new mtime when the status landed, so no later tick would notice). The same latch keeps the row
+  // to once per edit: every later status reads later than the editor's frozen mtime, and a dismissed row must not return
+  // with each of them (the shape the two latches below have)
   movedUnderEdit = false;
   // the sidecar's pending changes stopped being the editor's (noteChangesMovedUnderEdit): the row was set once for this
   // edit; a later status re-sets nothing, and the edit's end clears both (paintAll)
@@ -1058,8 +1060,14 @@ class Panel {
   /** The file's bytes moved under an edit (the poll saw it; a verb's reply read a later file): the viewer's reload() stands
    *  down in edit mode, so the head says so. Save will refuse on its file fence; the first paint after the edit ends
    *  re-reads the bytes (paintAll, on the movedUnderEdit latch — the row's ✕ removes the words, not the re-read). Keyed
-   *  on the clocks: the status read a later file than the one the editor loaded. */
+   *  on the clocks: the status read a later file than the one the editor loaded. Once per edit, as the sibling rows are
+   *  (noteChangesMovedUnderEdit, noteChangesUnreadUnderEdit): the editor's mtime is frozen while it is up, so every later
+   *  status keeps reading later than it — a comment's or a resolve's reply, a poll that saw only the sidecar move — and
+   *  each would otherwise re-raise the row the person dismissed with its ✕ on nothing new about the file. A second
+   *  rewrite changes none of the words either (Save refuses, Cancel shows the file as it is now), so the latch, not the
+   *  clock's value, decides; the edit's end resets it (paintAll). */
   private noteMovedUnderEdit(): void {
+    if (this.movedUnderEdit) return;                   // said once per edit: the row is up or was dismissed, and the re-read is owed either way
     const s = this.status;
     if (!this.ctx.editing() || !s || !laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return;
     this.movedUnderEdit = true;

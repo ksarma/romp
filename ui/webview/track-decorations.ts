@@ -50,7 +50,8 @@
 //     card's decision is refused in place, since it would move the sidecar the editor's records came from
 //     (file-comments.ts, DECIDE_IN_EDITOR). Verified in Chromium and Firefox with touch emulation: the pointerdown
 //     names the touch before the compatibility mousedown arrives in both (track-decorations.test.ts,
-//     track-decorations-firefox.test.ts).
+//     track-decorations-firefox.test.ts); the widget's own listener is driven under node, where CI has no browser,
+//     by track-decorations-guards.test.ts.
 //  7. A decision focuses the editor (romp's). Both mousedown paths preventDefault and stop CodeMirror's own
 //     handler — the one that would have focused — and a prevented mousedown moves no focus natively, so an
 //     editor that had lost focus to the toolbar or the panel stayed unfocused after an accept, and the undo the
@@ -63,6 +64,12 @@
 //     attributes (Tile.sync → setAttrs, on the first measure after a mount and on every redraw of the line), which
 //     drops the cue from the mark while the widget half, whose DOM is reused, keeps it; the tracker's
 //     docViewUpdate re-lights the cached change after each redraw.
+//  9. FIX: the hover cache short-circuits a crossing over plain text while nothing is cued. Upstream's early return
+//     needs `scope === lastHoverRoot`, but the root is reset to null together with the key, so the state the pointer
+//     spends most of its time in (no change under it, nothing lit) never matched, and every element boundary
+//     crossed over ordinary prose ran one document-wide class query — the cost the cache's own comment says it
+//     prevents, paid in the dashboard's document. Sound because only hoverPair and relightHover ever add the cue,
+//     and both leave the key set while anything is lit (track-decorations-hover-cost.test.ts counts the queries).
 // Omitted as dead code (upstream no longer emits them): DelWidget's 'above' mode, the inlineDelLayout
 // ViewPlugin, logic.layoutInlineRemovals, and the .tc-diff-del-inline vocabulary that only they used.
 import { StateField, type Extension, type EditorState } from "@codemirror/state";
@@ -248,7 +255,8 @@ class DelWidget extends WidgetType {
 
 // Box a change AND the removal it replaces together (they share data-hk-from). `root` is the editor's own
 // document. `lastHoverKey` short-circuits the common case: mouseover fires on every element boundary the pointer
-// crosses, so without it, dragging across ordinary prose ran two document-wide queries per crossing. The cache is
+// crosses, so without it, dragging across ordinary prose ran two document-wide queries per crossing; with nothing
+// cued the key alone decides (departure 9), since the root is null then and there is nothing to sweep. The cache is
 // module-level (one pointer, one cue) and remembers which editor holds the cue, so departure 8 can release it when
 // that editor is destroyed under the pointer and re-light it after that editor's redraws, and no other's.
 let lastHoverKey: string | null = null;
@@ -257,7 +265,7 @@ let lastHoverEditor: Element | null = null;                  // the .cm-editor h
 const halvesOf = (key: string) => `.${CLS.ins}[data-hk-from="${key}"], .${CLS.del}[data-hk-from="${key}"]`;
 function hoverPair(key: string | null, root: Document | null): void {
   const scope = root || document;
-  if (key === lastHoverKey && scope === lastHoverRoot) return;
+  if (key === lastHoverKey && (key == null || scope === lastHoverRoot)) return;   // departure 9: null → null is free
   const prev = lastHoverRoot || scope;                       // nothing cued before: only this document to sweep
   prev.querySelectorAll(`.${CLS.hover}`).forEach((e) => e.classList.remove(CLS.hover));
   if (scope !== prev) scope.querySelectorAll(`.${CLS.hover}`).forEach((e) => e.classList.remove(CLS.hover));
@@ -457,7 +465,7 @@ export function changeHandlers(host: TrackHost, mac: boolean): DOMEventHandlers<
       if (hit) {
         if (!pressDecides(view)) return false;
         const from = Number(hit.getAttribute("data-hk-from"));
-        if (!host.hasResolvableAt(view, from)) return false; // the same drift guard as mousedown
+        if (!host.hasResolvableAt(view, from)) return false; // the same drift guard as mousedown (track-decorations-guards.test.ts)
         event.preventDefault();
         event.stopPropagation();
         return true;

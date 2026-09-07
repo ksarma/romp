@@ -16,7 +16,7 @@ This file pins it. The avoid-words are read from CONTEXT.md's Comments log entry
 hard-coded, so a new avoid-word fails here too; the scan covers the kernel's whole comments-log
 region — the trace functions and every _file_comments_* function — and checks that region holds
 every such function, so a reordering widens the scan instead of silently shrinking it. The kernel's
-OTHER ledgers (the Fleet pane's per-session goal ledgers, the restart-cut ledger) are a different
+OTHER ledgers (the per-session goal ledgers, the restart-cut ledger) are a different
 thing and are outside the region on purpose. Synthetic: only the repo's own text.
 """
 import os
