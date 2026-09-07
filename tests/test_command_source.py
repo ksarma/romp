@@ -67,6 +67,13 @@ os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"],
 os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
 
 sb = SourceFileLoader("romp_sdk_backend_cmdsrc", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+# bin/romp-kernel at IMPORT, like every other kernel-loading test module. Its load re-executes judge.py into
+# the one romp_judge module object every module shares (SourceFileLoader.load_module), re-binding
+# romp_judge.STATE and GOALDIR. At collection that is harmless: the last loader wins before any test runs. A
+# run-time load from a setUpClass re-binds them mid-suite, and a later module's override journal then lands
+# under the state root another module minted its goals in (7 deterministic CI failures in the deferral sweep).
+# KeycycleRouteOnTheCommandKind takes this one.
+_KM_CMDSRC = SourceFileLoader("romp_kernel_cmdsrc", os.path.join(BIN, "romp-kernel")).load_module()
 ks = sb._keysrc
 # The command source module the backend holds; loaded here only while the backend does not hold one
 # (the red run), so the tests fail on behaviour rather than at collection.
@@ -1134,7 +1141,7 @@ class KeycycleRouteOnTheCommandKind(_Lab):
     def setUpClass(cls):
         import threading
         from http.server import ThreadingHTTPServer
-        cls.km = SourceFileLoader("romp_kernel_cmdsrc", os.path.join(BIN, "romp-kernel")).load_module()
+        cls.km = _KM_CMDSRC   # loaded at import (see the module header), never re-executed at run time
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.km.Handler)
         cls.port = cls.srv.server_address[1]
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
