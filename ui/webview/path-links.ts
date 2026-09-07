@@ -114,6 +114,17 @@ export function markPathLink(a: HTMLElement, open: string, relative = false, sid
   return a;
 }
 export function fileUriLink(uri: string): HTMLElement { return openPathLink(uri, fileUriToPath(uri)); }
+
+/** A selection left open inside `el` when a click arrives: the click ends a press-drag-release that selected text (a
+ *  press on text collapses the selection first, so a plain click never sees one), and the selection is what the person
+ *  gets, not the link under it. Every opener a link's click can reach reads this and yields: the viewer's body delegate
+ *  over its box, and the chat's document-level anchor opener over the anchor itself, which runs first, at the capture
+ *  phase, and opened the URL as well until it did (the 2026-09-07 review, round 3). The viewer's anchors are not
+ *  draggable, so a drag on one selects; the chat's own anchors are draggable and send no such click. */
+export function selectionOpenIn(el: Node): boolean {
+  const sel = window.getSelection();
+  return !!sel && !sel.isCollapsed && el.contains(sel.anchorNode);
+}
 // Is this bare token (trailing punctuation already stripped) a file path worth linkifying? Requires a slash
 // and EITHER an absolute/anchored start (/, ~/, ./, ../) OR a file extension on the final segment — so
 // "and/or", "TCP/IP", "24/7", "read/write" stay as prose. URL-ish tokens (a ':' or '//') are rejected;

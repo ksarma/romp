@@ -191,6 +191,14 @@ test("urlSegments: http and https URLs, trailing sentence punctuation left out, 
 });
 
 // ── the path gate and the resolution ─────────────────────────────────────────────────────────────
+test("urlRanges: the [start, end) of each URL urlSegments would wrap, trailing punctuation left out; none in text without a scheme", async () => {
+  const { urlRanges, urlSegments } = await import("./file-view-links");
+  const t = "see https://example.invalid/a, then (https://example.invalid/b) and https://";
+  assert.deepEqual(urlRanges(t), [[4, 29], [37, 62]]);
+  for (const [s, e] of urlRanges(t)) assert.ok(urlSegments(t).some((x) => x.href === t.slice(s, e)), t.slice(s, e));
+  assert.deepEqual(urlRanges("docs/a.md and x=/docs/b.md"), []);
+});
+
 test("viewerPathGate, the token alone: a slash and a letter-led extension on the last segment; anchored dotfiles; a hostname-shaped first segment and a `~user` home are refused", async () => {
   const { viewerPathGate } = await import("./file-view-links");
   for (const p of ["docs/a.md", "ui/webview/x.ts", "/tmp/TESTHOST/notes-api/a.py", "~/notes/plan.md", "./x.py", "../y.ts", "~/.zshrc", "./.env",
@@ -206,7 +214,7 @@ test("viewerPathGate, the token alone: a slash and a letter-led extension on the
   }
 });
 
-test("viewerPathGate, with the line: a token glued to what stands before it (a substitution, a scope, a drive, a host) is not one, and an unanchored token is not an import's specifier; an opener or the line's start admits it", async () => {
+test("viewerPathGate, with the line: a token glued to what stands before it (a substitution, a scope, a drive, a host) is not one, and an unanchored token is not the specifier of an import statement or a require call (the English from and export in prose name files); an opener (Markdown's * and _, every Unicode space and the zero-width space included) or the line's start admits it", async () => {
   const { viewerPathGate } = await import("./file-view-links");
   const at = (text: string, tok: string) => ({ text, at: text.indexOf(tok) });
   for (const [text, tok] of [
@@ -218,8 +226,15 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
     ['import "pkg/x.css";', "pkg/x.css"], ["const m = await import('pkg/m.mjs');", "pkg/m.mjs"],
     ['x = 1\nimport b from "lodash/fp.js";', "lodash/fp.js"], ['a\n  const m = require(  "pkg/m.js");', "pkg/m.js"], ['a\nexport * from\t"pkg/x.js";', "pkg/x.js"],
     ['$import("pkg/y.js")', "pkg/y.js"],   // a non-word character before the keyword is a word boundary, as \b had it
+    // the statement forms: a keyword starting its line, a `from` whose line began with import or export, the `}` line of a multi-line import
+    ['  import "pkg/x.css";', "pkg/x.css"], ['import type { X } from "pkg/t.js";', "pkg/t.js"], ['export { a as b } from "pkg/x.js";', "pkg/x.js"],
+    ['} from "pkg/x.js";', "pkg/x.js"], ['import {\n  a,\n} from "pkg/x.js";', "pkg/x.js"], ['x = 1\n  } from "pkg/x.js";', "pkg/x.js"], ['require "pkg/x.rb"', "pkg/x.rb"],
   ] as const) {
     assert.equal(viewerPathGate(tok, at(text, tok)), false, text);
+  }
+  // glue the openers do not admit: a closing paren, a colon, a hash (the shapes above: `$(ROOT)/src/x.c`, `git@host:user/repo.git`, `x#/docs/a.md`)
+  for (const [text, tok] of [[")docs/a.md", "docs/a.md"], ["x:docs/a.md", "docs/a.md"], ["#docs/a.md", "docs/a.md"], ["]docs/a.md", "docs/a.md"]] as const) {
+    assert.equal(viewerPathGate(tok, at(text, tok)), false, JSON.stringify(text));
   }
   for (const [text, tok] of [
     ['cp "docs/a.md" ./out/', "docs/a.md"], ["see docs/a.md here", "docs/a.md"], ["docs/a.md", "docs/a.md"], ["x=/docs/a.md", "/docs/a.md"],
@@ -230,8 +245,14 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
     ["See the plan in\ndocs/plan.md", "docs/plan.md"], ["x = 1\ndocs/a.md", "docs/a.md"], ["a\r\ndocs/a.md", "docs/a.md"], ["then\u00a0docs/a.md", "docs/a.md"],   // a line break or a no-break space before it is whitespace
     ['reimport("pkg/x.js")', "pkg/x.js"],                        // no word boundary before `import`: not the keyword
     ['import b from\n"lodash/fp.js";', "lodash/fp.js"],          // the quote starts a new line: the look-behind is the line's, and no formatter writes this
+    // the English words: a quote from a file, a stale export, a Ruby-less `require` mid-sentence, a `from` that starts a line with no import before it
+    ['a quote from "docs/from.md" says', "docs/from.md"], ['the export "out/data.json" is stale', "out/data.json"], ['they require "docs/a.md" to exist', "docs/a.md"],
+    ['from "pkg/sub.py" import x', "pkg/sub.py"], ['Copied the text\nfrom "docs/a.md" and kept it', "docs/a.md"], ['const x = 1; import y from "pkg/x.js"', "pkg/x.js"],
+    // Markdown emphasis in the Raw view, and the spaces \s names beyond the ASCII ones, plus the zero-width space
+    ["*docs/a.md*", "docs/a.md"], ["**docs/a.md**", "docs/a.md"], ["_docs/a.md_", "docs/a.md"],
+    ["\u200bdocs/a.md", "docs/a.md"], ["\fdocs/a.md", "docs/a.md"], ["\u2003docs/a.md", "docs/a.md"], ["\u2028docs/a.md", "docs/a.md"], ["\ufeffdocs/a.md", "docs/a.md"], ["\u3000docs/a.md", "docs/a.md"],
   ] as const) {
-    assert.equal(viewerPathGate(tok, at(text, tok)), true, text);
+    assert.equal(viewerPathGate(tok, at(text, tok)), true, JSON.stringify(text));
   }
 });
 
@@ -243,6 +264,7 @@ test("the gate's look-behind is the current line's and bounded by what stands ri
     ['import b from "lodash/fp.js";', "lodash/fp.js"], ['x = 1\nimport b from "lodash/fp.js";', "lodash/fp.js"], ['a\n  const m = require(  "pkg/m.js");', "pkg/m.js"],
     ['import b from\n"lodash/fp.js";', "lodash/fp.js"], ['reimport("pkg/x.js")', "pkg/x.js"], ["x = 1\n" + " ".repeat(500) + '"docs/a.md"', "docs/a.md"],
     ["docs/a.md", "docs/a.md"], ["\ndocs/a.md", "docs/a.md"], ['see "docs/a.md"', "docs/a.md"], ["x".repeat(3000) + '\n"docs/a.md"', "docs/a.md"],
+    ["x".repeat(3000) + '\na quote from "docs/a.md"', "docs/a.md"],   // a keyword: the line is read to its start (the head decides), and the line before it is not
   ] as const) {
     const at = text.lastIndexOf(tok);
     const start = lookBehindStart(text, at);
@@ -341,7 +363,7 @@ test("the pass, executed over codeBlock's rows: URLs in a comment become anchors
   assert.equal(textNodesOf(c.childNodes[4] as El).map((t) => t.data).pop(), ':12abc"');
 });
 
-test("the pass reads a line, not a node: a highlight's substitution span cannot turn a path's tail into an absolute link, a token the highlight cut through is left as it is, and so is a URL", async () => {
+test("the pass reads a line, not a node: a highlight's substitution span cannot turn a path's tail into an absolute link, a token the highlight cut through is left as it is, and so is a URL, whose path-shaped query value is the URL's and never a link", async () => {
   const { linkifyFileText } = await import("./file-view-links");
   // what hljs makes of `cp "$HOME/docs/a.md" ./out/` (bash), `${ROOT}/src/x.py`, `$(ROOT)/src/main.c` (makefile), a TS template
   // literal, a Python f-string and a YAML value: the substitution in a span of its own, the path's tail in the node after it
@@ -356,13 +378,17 @@ test("the pass reads a line, not a node: a highlight's substitution span cannot 
     row("see ", el("span", "hljs-string", '"docs/a.md"'), " and ", el("span", "hljs-comment", "# https://example.invalid/x")),
     row("u = ", el("span", "hljs-string", "`https://example.invalid/", el("span", "hljs-subst", "${host}"), "/x`")),
     row("q = ", el("span", "hljs-string", '"docs/b.md'), ":", el("span", "hljs-number", "12"), '"'),   // the line reference cut off the path: the path links, the line stays text
+    // a URL the substitution cuts, with an absolute path as a query value: bash's `$V` and a template's `${v}` in spans of their own
+    row("curl https://example.invalid/q?x=/docs/a.md/", el("span", "hljs-variable", "$V")),
+    row("const u = ", el("span", "hljs-string", "`https://example.invalid/q?x=/docs/a.md/", el("span", "hljs-subst", "${v}"), "`"), ";"),
+    row("ok https://example.invalid/w?x=/docs/a.md/ and docs/d.md"),                                   // the same URL whole: wrapped, and the path after it links
   );
   const before = c.childNodes.map((r) => r.textContent);
   linkifyFileText(c as unknown as HTMLElement, FILE);
   assert.deepEqual(c.childNodes.map((r) => r.textContent), before);
-  assert.deepEqual(links(c).map((x) => [x.textContent, x.dataset.path, x.dataset.line]), [["docs/a.md", DIR + "docs/a.md", undefined], ["docs/b.md", DIR + "docs/b.md", undefined]],
-    "the two real paths; no fabricated /docs/a.md, /src/x.py, /src/main.c, /out.json, /out.csv or /notes/a.md, and the cut docs/c.md stays text");
-  assert.deepEqual(urls(c).map((x) => x.href), ["https://example.invalid/x"], "a URL a substitution cuts through is not one");
+  assert.deepEqual(links(c).map((x) => [x.textContent, x.dataset.path, x.dataset.line]), [["docs/a.md", DIR + "docs/a.md", undefined], ["docs/b.md", DIR + "docs/b.md", undefined], ["docs/d.md", DIR + "docs/d.md", undefined]],
+    "the three real paths; no fabricated /docs/a.md, /src/x.py, /src/main.c, /out.json, /out.csv or /notes/a.md, the cut docs/c.md stays text, and the /docs/a.md inside the two cut URLs is the URL's");
+  assert.deepEqual(urls(c).map((x) => x.href), ["https://example.invalid/x", "https://example.invalid/w?x=/docs/a.md/"], "a URL a substitution cuts through is not one; a whole one is");
 });
 
 test("the pass links nothing in text that is not a URL or a file: identifiers, imports, fractions, routes, folders, sites", async () => {
@@ -404,12 +430,19 @@ test("viewerLinkTarget (marked's walkTokens, before the sanitizer): a same-direc
   assert.equal(viewerLinkTarget("notes.md:7"), "./notes.md:7");
   assert.equal(viewerLinkTarget("README.md:12:3"), "./README.md:12:3");
   assert.equal(viewerLinkTarget("app.py:7#x"), "./app.py:7#x");
+  assert.equal(viewerLinkTarget("app.test.ts:12"), "./app.test.ts:12", "three labels, the last a known extension: a file");
+  assert.equal(viewerLinkTarget("archive.tar.gz:3"), "./archive.tar.gz:3");
+  assert.equal(viewerLinkTarget("example.com:80"), "./example.com:80", "two labels: a file, whatever the second could be");
   assert.equal(viewerLinkTarget("file:///tmp/TESTHOST/a.md"), "/tmp/TESTHOST/a.md");
   assert.equal(viewerLinkTarget("file://localhost/tmp/TESTHOST/a.md"), "/tmp/TESTHOST/a.md");
   for (const h of ["docs/a.md:7", "./a.md:7", "../a.md:7", "a.md#L7", "https://example.invalid/x", "mailto:someone@example.invalid", "tel:12345",
-                   "javascript:alert(1)", "file://evil.invalid/x.md", "Makefile:12", "#section", "?x=1", "notes.md", ""]) {
+                   "javascript:alert(1)", "file://evil.invalid/x.md", "Makefile:12", "#section", "?x=1", "notes.md", "",
+                   "api.example.com:8443", "www.example.invalid:80", "sub.example.co.uk:443", "www.md:1"]) {   // a host with a port: left as written, so the sanitizer removes it and the anchor says why
     assert.equal(viewerLinkTarget(h), h, JSON.stringify(h));
   }
+  const { isHostName } = await import("./file-view-links");
+  for (const n of ["api.example.com", "www.example.invalid", "sub.example.co.uk", "www.x", "a.b.dev"]) assert.equal(isHostName(n), true, n);
+  for (const n of ["notes.md", "example.com", "app.test.ts", "archive.tar.gz", "jquery.min.js", "a_b.c.com", "x.y.py"]) assert.equal(isHostName(n), false, n);
   const tok = { type: "link", href: "notes.md:7" }; viewerWalkTokens(tok); assert.equal(tok.href, "./notes.md:7");
   const img = { type: "image", href: "notes.md:7" }; viewerWalkTokens(img); assert.equal(img.href, "notes.md:7", "a figure's src is rewriteFigureSrcs's business");
 });
@@ -423,8 +456,9 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   const lineHash = A("../src/app.py#L12", "l12"), lineColon = A("../src/app.py:7", "l7"), same = A("./notes.md:7", "same"), query = A("a.md?x=1#top", "q");
   const qOnly = A("?x=1", "qo"), frag = A("#section", "here"), fragHit = A("#top", "top"), dead = el("a", "", "dead"), named = el("a", "", "");
   named.setAttribute("name", "anchor");
+  const fragName = A("#anchor", "to the name");
   const target = el("h2", "", "Top"); target.setAttribute("id", "top");
-  const box = el("div", "fileview-md", target, el("p", "", web, mail, proto, rel, enc, abs, lineHash, lineColon, same, query, qOnly, frag, fragHit, dead, named));
+  const box = el("div", "fileview-md", target, el("p", "", web, mail, proto, rel, enc, abs, lineHash, lineColon, same, query, qOnly, frag, fragHit, dead, named, fragName));
   linkMarkdownAnchors(box as unknown as HTMLElement, md);
   for (const a of [web, mail, proto]) { assert.equal(a.getAttribute("target"), "_blank", a.href); assert.equal(a.getAttribute("rel"), "noopener"); assert.equal(a.dataset.act, undefined); }
   assert.equal(web.href, "https://example.invalid/x", "the href stays");
@@ -453,6 +487,14 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   assert.equal(frag.dataset.frag, undefined); assert.equal(frag.getAttribute("title"), noSectionTitle("section"));
   assert.ok(fragHit.classes.includes("fv-frag") && !fragHit.classes.includes("fv-dead"), fragHit.className);
   assert.equal(fragHit.dataset.frag, "top"); assert.equal(fragHit.getAttribute("title"), "Go to top");
+  // a GitHub-style `<a name>` is a target too (the README idiom above a heading): live, by name
+  assert.ok(fragName.classes.includes("fv-frag") && !fragName.classes.includes("fv-dead"), fragName.className);
+  assert.equal(fragName.dataset.frag, "anchor"); assert.equal(fragName.getAttribute("title"), "Go to anchor");
+  const { fragmentTarget } = await import("./file-view-links");
+  assert.equal(fragmentTarget(box as unknown as HTMLElement, "anchor"), named); assert.equal(fragmentTarget(box as unknown as HTMLElement, "top"), target);
+  const both = el("div", "", el("a", "", ""), el("h2", "", "x")); (both.childNodes[0] as El).setAttribute("name", "dup"); (both.childNodes[1] as El).setAttribute("id", "dup");
+  assert.equal(fragmentTarget(both as unknown as HTMLElement, "dup"), both.childNodes[1], "an id wins over a name, as the browser's fragment rule has it");
+  assert.equal(fragmentTarget(box as unknown as HTMLElement, "nowhere"), undefined);
   // an anchor the sanitizer stripped: dead, with the reason; a named target never was a link and is left alone
   assert.ok(dead.classes.includes("fv-dead")); assert.equal(dead.getAttribute("title"), DEAD_LINK_TITLE);
   assert.equal(named.getAttribute("class"), null); assert.equal(named.getAttribute("title"), null);
@@ -535,8 +577,8 @@ test("spanHolding over many spans finds the one holding a token (a binary search
   assert.equal(spanHolding(u, 1, 3), null, "across an edge"); assert.equal(spanHolding(u, 2, 4), null, "inside the link: dead"); assert.equal(spanHolding(u, 8, 9), null); assert.equal(spanHolding(u, -1, 1), null);
 });
 
-test("a Markdown link whose file target resolves to no path (`[up](../)` from a file named without a directory) is a dead link that says why, with no href to follow and no act to click", async () => {
-  const { linkMarkdownAnchors, EMPTY_TARGET_TITLE, DEAD_LINK_TITLE } = await import("./file-view-links");
+test("a Markdown link whose file target resolves to no path is a dead link that says why, with no href to follow and no act to click: `[up](../)` from `docs/plan.md` points above the file's folder, `[here](./)` from `README.md` names the folder the file is in", async () => {
+  const { linkMarkdownAnchors, EMPTY_TARGET_TITLE, SELF_TARGET_TITLE, DEAD_LINK_TITLE, emptyTargetTitle, resolveViewerPath } = await import("./file-view-links");
   const A = (href: string, ...kids: Array<El | string>) => { const a = el("a", "", ...kids); a.setAttribute("href", href); return a; };
   const up = A("../", "up"), dot = A("..", "dot"), root = A("/", "root"), here = A("./", "here"), sib = A("../x.md", "sib");
   const box = el("div", "fileview-md", el("p", "", up, dot, root, here, sib));
@@ -547,6 +589,23 @@ test("a Markdown link whose file target resolves to no path (`[up](../)` from a 
   }
   assert.notEqual(EMPTY_TARGET_TITLE, DEAD_LINK_TITLE, "its own reason");
   assert.equal(root.dataset.path, "/"); assert.equal(here.dataset.path, "docs/"); assert.equal(sib.dataset.path, "x.md", "a sibling folder's file above the shown one resolves fine");
+  // from a file named without a directory, `./`, `.` and `docs/../` name the folder the file is in: dead too, with that reason, not "above"
+  const selfHere = A("./", "here"), selfDot = A(".", "dot"), selfBack = A("docs/../", "back"), upRel = A("../", "up");
+  linkMarkdownAnchors(el("div", "fileview-md", el("p", "", selfHere, selfDot, selfBack, upRel)) as unknown as HTMLElement, "README.md");
+  for (const a of [selfHere, selfDot, selfBack]) {
+    assert.equal(a.getAttribute("href"), null); assert.equal(a.dataset.act, undefined); assert.equal(a.dataset.path, undefined);
+    assert.ok(a.classes.includes("fv-dead"), a.className); assert.equal(a.getAttribute("title"), SELF_TARGET_TITLE, a.textContent);
+  }
+  assert.notEqual(SELF_TARGET_TITLE, EMPTY_TARGET_TITLE); assert.match(SELF_TARGET_TITLE, /the folder this file is in/); assert.match(EMPTY_TARGET_TITLE, /above the folder/);
+  assert.equal(upRel.dataset.path, "../", "climbing out of a relative name keeps the `..`: a live link the kernel resolves");
+  // the rule behind the two titles: an empty resolution from a file with a directory can only have climbed above it; from one without, it is the folder itself
+  for (const [tok, file] of [["./", "README.md"], [".", "README.md"], ["docs/../", "README.md"], ["a/b/../../", "README.md"], ["../", "docs/plan.md"], ["..", "docs/plan.md"], ["./..", "docs/plan.md"], ["docs/../..", "docs/plan.md"]] as const) {
+    assert.equal(resolveViewerPath(tok, file), "", tok + " from " + file);
+  }
+  for (const [tok, file] of [["./", "docs/plan.md"], [".", "docs/plan.md"], ["docs/../", "docs/plan.md"], ["../", "README.md"], ["..", "README.md"]] as const) {
+    assert.notEqual(resolveViewerPath(tok, file), "", tok + " from " + file + " has a path");
+  }
+  assert.equal(emptyTargetTitle("README.md"), SELF_TARGET_TITLE); assert.equal(emptyTargetTitle("docs/plan.md"), EMPTY_TARGET_TITLE); assert.equal(emptyTargetTitle("/tmp/TESTHOST/a.md"), EMPTY_TARGET_TITLE);
   const upAbs = A("../", "upAbs");
   linkMarkdownAnchors(el("div", "fileview-md", el("p", "", upAbs)) as unknown as HTMLElement, "/tmp/TESTHOST/notes-api/docs/guide.md");
   assert.equal(upAbs.dataset.path, "/tmp/TESTHOST/notes-api/", "from an absolute file the folder above has a name");
@@ -626,7 +685,7 @@ test("wantsOwnTab reads a Cmd/Ctrl-click or the middle button; openFileTab opens
 
 // ── the viewer's wiring, at source ────────────────────────────────────────────────────────────────
 test("source: codeBlock and mdBlock run the one pass on the DOM they built; the markdown anchors are sorted before the fenced-block highlight and the text after it; marked's parse carries the link-target hook per call; the fallback is left bare", () => {
-  assert.match(VIEW, /import \{ linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, URL_LINK_CLASS, FRAG_LINK_CLASS \} from "\.\/file-view-links";/);
+  assert.match(VIEW, /import \{ linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS \} from "\.\/file-view-links";/);
   const codeFn = VIEW.split("function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement {")[1].split("\n}\n")[0];
   assert.match(codeFn, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);\n\s*linkifyFileText\(code, path\);/, "the wrap branch: after the rows are in the DOM");
   assert.match(codeFn, /if \(hl !== null\) code\.innerHTML = hl; else code\.textContent = text;\n\s*linkifyFileText\(code, path\);/, "the gutter branch too");
@@ -646,15 +705,24 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   const d = VIEW.split('body.addEventListener("click", (ev) => {')[1].split("\n  });\n")[0];
   assert.match(d, /const x = linkOf\(t\);\n\s*if \(!x\) return;/);
   assert.match(d, /if \(panelMark\(t\) && !wantsOwnTab\(ev\)\) \{[^\n]*\n\s*if \(x\.dataset\.act !== "openpath"\) ev\.preventDefault\(\);\n\s*return;/, "the card's click, and the anchor under the mark does not open too");
-  assert.match(d, /const sel = window\.getSelection\(\);\n\s*if \(sel && !sel\.isCollapsed && box\.contains\(sel\.anchorNode\)\) \{ ev\.preventDefault\(\); return; \}/, "a drag-select that ended on the link opens nothing");
-  assert.ok(d.indexOf("panelMark(t)") < d.indexOf("getSelection()") && d.indexOf("getSelection()") < d.indexOf("openLink(x, ev)"), "the mark first, then the selection, then the link");
+  assert.match(d, /if \(selectionOpenIn\(box\)\) \{ ev\.preventDefault\(\); return; \}/, "a drag-select that ended on the link opens nothing");
+  assert.ok(d.indexOf("panelMark(t)") < d.indexOf("selectionOpenIn(box)") && d.indexOf("selectionOpenIn(box)") < d.indexOf("openLink(x, ev)"), "the mark first, then the selection, then the link");
+  // the one selection test, in path-links.ts, read by the viewer's delegate and by the chat's capture-phase opener (which ran first and opened the URL a drag inside a non-draggable anchor had selected)
+  assert.match(LINKS, /export function selectionOpenIn\(el: Node\): boolean \{\n\s*const sel = window\.getSelection\(\);\n\s*return !!sel && !sel\.isCollapsed && el\.contains\(sel\.anchorNode\);\n\}/);
+  const opener = RENDER.slice(RENDER.indexOf('document.addEventListener("click", (e) => {\n  const a = (e.target as HTMLElement)?.closest?.("a[href]")'), RENDER.indexOf("}, true);", RENDER.indexOf('closest?.("a[href]")')));
+  assert.match(opener, /if \(panelMark\(e\.target as Element \| null\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(selectionOpenIn\(a\)\) \{ e\.preventDefault\(\); return; \}\n\s*const href = a\.getAttribute\("href"\) \|\| "";/,
+    "the chat's opener: the panel's mark first, then the selection open inside the anchor (the click that ends a drag-select: cancelled, never opened), then the href");
+  assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens, selectionOpenIn \} from "\.\/path-links";/);
+  assert.match(VIEW, /import \{ selectionOpenIn \} from "\.\/path-links";/);
+  assert.doesNotMatch(d, /getSelection|isCollapsed/, "no second spelling of the selection test in the delegate");
   assert.match(VIEW, /const linkOf = \(t: Element \| null\): HTMLElement \| null => \{\n\s*const x = t && typeof t\.closest === "function" \? t\.closest\('\[data-act="openpath"\], a\.' \+ URL_LINK_CLASS \+ ", a\." \+ FRAG_LINK_CLASS\) as HTMLElement \| null : null;\n\s*return x && body\.contains\(x\) \? x : null;/);
   const o = VIEW.split("const openLink = (x: HTMLElement, ev: MouseEvent) => {")[1].split("\n  };\n")[0];
   assert.match(o, /const own = wantsOwnTab\(ev\);/);
-  assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n\s*const id = x\.dataset\.frag;\n(?:\s*\/\/[^\n]*\n)*\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*const hit = id && md \? Array\.from\(md\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\) : undefined;\n\s*if \(hit\) hit\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/,
-    "a section link: the rendered document's own ids (the viewer's chrome has ids of its own), this document's scroll or nothing, never the page's location");
-  assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)/, "never the whole box: a colliding author id scrolled the notice bar");
-  assert.match(MOD, /const hit = id \? Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\) : undefined;/, "mark time reads the same root, the .fileview-md box");
+  assert.match(o, /if \(x\.classList\.contains\(FRAG_LINK_CLASS\)\) \{[^\n]*\n\s*ev\.preventDefault\(\);\n\s*const id = x\.dataset\.frag;\n(?:\s*\/\/[^\n]*\n)*\s*const md = body\.querySelector\("\.fileview-md"\);\n\s*const hit = id && md \? fragmentTarget\(md, id\) : undefined;\n\s*if \(hit\) hit\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/,
+    "a section link: the rendered document's own ids and named anchors (the viewer's chrome has ids of its own), this document's scroll or nothing, never the page's location");
+  assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)|querySelectorAll\("\[id\]"\)/, "never the whole box (a colliding author id scrolled the notice bar), and never a lookup of its own: the one in file-view-links.ts");
+  assert.match(MOD, /const hit = id \? fragmentTarget\(root, id\) : undefined;/, "mark time reads the same root, the .fileview-md box, through the one lookup");
+  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => e\.getAttribute\("name"\) === id\);/, "an id first, then a GitHub-style <a name>");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
   assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null\);/,
     "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");
@@ -662,7 +730,8 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.match(RENDER, /\n    openpath: \(elx\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx\); \},\n/, "the chat's body delegate serves the todo card and its Reply modal alone: a viewer link that reaches it opens nothing there (the double open after #346)");
   assert.match(VIEW, /const openUrlTab = \(href: string\) => \{\n\s*if \(!href\) return;\n\s*if \(canPreview\(\)\) window\.open\(href, "_blank", "noopener,noreferrer"\);[^\n]*\n\s*else post\(\{ type: "openLink", href \}\);/, "render.ts's two openers, by host");
   assert.match(VIEW, /body\.addEventListener\("mousedown", \(ev\) => \{\n\s*const x = ev\.button === 1 \? linkOf\(ev\.target as Element \| null\) : null;\n\s*if \(x && x\.dataset\.act === "openpath"\) ev\.preventDefault\(\);\n\s*\}\);/, "the middle press on a path link starts no autoscroll");
-  assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && x\.dataset\.act === "openpath"\) openLink\(x, ev\);\n\s*\}\);/, "the middle-click on a path link is its own tab; an anchor's is the browser's");
+  assert.match(VIEW, /body\.addEventListener\("auxclick", \(ev\) => \{\n\s*if \(ev\.button !== 1\) return;\n\s*const x = linkOf\(ev\.target as Element \| null\);\n\s*if \(x && \(x\.dataset\.act === "openpath" \|\| x\.classList\.contains\(FRAG_LINK_CLASS\)\)\) openLink\(x, ev\);\n\s*\}\);/,
+    "the middle-click on a path link is its own tab; on a section link it is this document's scroll (openLink's frag branch cancels the browser's tab at /files#id); a URL anchor's is the browser's");
   assert.match(VIEW, /import \{ fileUrl, wantsOwnTab, openFileTab, canPreview \} from "\.\/preview";/);
   assert.match(VIEW, /import \{ fileCommentsAction, panelMark \} from "\.\/file-comments";/);
   // the opener: the host's when registered (the Files pane), else the viewer in place
@@ -717,7 +786,14 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /const LINE_SUFFIX_AT_RE = new RegExp\(LINE_SUFFIX_RE\.source\.replace\(\/\^\\\^\/, ""\), "y"\);/, "cut from the one source");
   assert.doesNotMatch(MOD, /ctx\.text\.slice\(0, ctx\.at\)/, "the gate never reads the unit's whole text before the token (quadratic over a fence)");
   assert.match(MOD, /if \(!anchored && importLookBehind\(ctx\.text, ctx\.at\)\.isImport\) return false;/);
-  assert.match(MOD, /const OPENERS = " \\t\\n\\r\\u00a0\\"'`\(<\[\{=,;\|\\u201c\\u2018\\u00ab";/, "a line break and a no-break space are whitespace to the gate");
+  assert.match(MOD, /const OPENER_RE = \/\[\\s\\u200b"'`\(<\[\{=,;\|\*_\\u201c\\u2018\\u00ab\]\/u;/, "every space \\s names, the zero-width space, and Markdown's emphasis marks are openers to the gate");
+  assert.doesNotMatch(MOD, /OPENERS\.includes/, "the string list is gone: a regex reads the Unicode spaces");
+  // the import look-behind reads the line's head only after a keyword stands before the quote, so a quote with none costs the quote, the spaces and one word
+  const lb = MOD.split("function importLookBehind(text: string, at: number)")[1].split("\n}\n")[0];
+  assert.ok(lb.indexOf("return { start: s, isImport: false }") < lb.indexOf("lastIndexOf(\"\\n\", s - 1)"), "no keyword: return before the line is read back");
+  assert.ok(lb.indexOf("if (call) return") < lb.indexOf("lastIndexOf(\"\\n\", s - 1)"), "a call: return before the line is read back");
+  assert.match(lb, /const isImport = word === "from" \? STATEMENT_HEAD_RE\.test\(head\) \|\| CLOSING_HEAD_RE\.test\(head\) : \/\^\\s\*\$\/\.test\(head\);/);
+  assert.match(MOD, /const STATEMENT_HEAD_RE = \/\^\\s\*\(\?:import\|export\)\\b\/;/); assert.match(MOD, /const CLOSING_HEAD_RE = \/\^\\s\*\\\}\\s\*\$\/;/);
   assert.match(LINKS, /for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/, "no unit: every node its own unit, the chat's walk as it was");
   assert.match(LINKS, /const span = spanHolding\(u, start, start \+ tok\.length\);\n\s*if \(!span\) continue;/, "a token across a node's edge is left as it is");
   assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start \}\)\) continue;/);
@@ -725,7 +801,8 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /export const LINE_SUFFIX_RE = \/\^\(\?::\(\\d\+\)\(\?::\\d\+\)\?\|#L\(\\d\+\)\(\?:-L\?\\d\+\)\?\)\(\?!\[\\w\/\]\)\/;/);
   assert.match(LINKS, /export function markPathLink\(a: HTMLElement, open: string, relative = false, sid\?: string \| null\): HTMLElement \{\n\s*const cls = a\.getAttribute\("class"\) \|\| "";\n\s*if \(!\(" " \+ cls \+ " "\)\.includes\(" file-uri-link "\)\) a\.setAttribute\("class", \(cls \? cls \+ " " : ""\) \+ "file-uri-link"\);\n\s*a\.setAttribute\("title", "Open " \+ open\);/, "attributes, so an SVG <a> is marked too");
   assert.match(LINKS, /const a = el\("span", "file-uri-link"\);\n\s*a\.textContent = raw;[^\n]*\n\s*return markPathLink\(a, open, relative, sid\);/, "openPathLink mints and marks");
-  assert.match(MOD, /linkifyPathTokens\(root, null, undefined, \{\n\s*inPre: true,\n\s*accept: viewerPathGate,\n\s*resolve: \(tok\) => resolveViewerPath\(tok, filePath\),\n\s*lineSuffix: true,\n\s*unit: LINE_UNITS,\n\s*\}\);/, "the viewer runs the chat's walk under its own gate, a line at a time");
+  assert.match(MOD, /linkifyPathTokens\(root, null, undefined, \{\n\s*inPre: true,\n\s*accept: \(tok, ctx\) => !insideUrl\(ctx\) && viewerPathGate\(tok, ctx\),\n\s*resolve: \(tok\) => resolveViewerPath\(tok, filePath\),\n\s*lineSuffix: true,\n\s*unit: LINE_UNITS,\n\s*\}\);/, "the viewer runs the chat's walk under its own gate, a line at a time, and never inside a URL of the line");
+  assert.match(MOD, /if \(ctx\.text !== lineText\) \{ lineText = ctx\.text; lineUrls = \/https\?:\\\/\\\/\/i\.test\(ctx\.text\) \? urlRanges\(ctx\.text\) : \[\]; \}/, "the line's URLs are found once per line, not per token");
   assert.match(MOD, /for \(const u of textUnits\(root, LINE_UNITS, DEAD_TEXT\)\) \{/, "the URL pass reads the same lines and skips the same text");
   assert.match(MOD, /a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
   assert.doesNotMatch(MOD, /innerHTML|outerHTML|insertAdjacentHTML/, "the module builds elements; it never writes markup");

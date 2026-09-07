@@ -49,17 +49,21 @@ const GUIDE_TEXT = [
   "Bare ../src/app.py:3 links too, and https://example.invalid/prose is a URL.",
   "docs/first.md starts a soft-broken line of the same paragraph, and a hard break follows  ",   // two trailing spaces: marked's <br>
   "docs/second.md starts the line after the break.", "",
-  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err).", "",
+  "Also [same](notes.md:7), [uri](file:///tmp/TESTHOST/notes-api/README.md), [far](file://evil.invalid/x.md), [q](?foo=1), [here](#section), [go](#top), [past](../src/app.py:400), [collide](#fileview-save-err), [install](#install), [api](api.example.com:8443), [spec](app.test.ts:12).", "",
+  'Copied from "docs/from.md", and the export "out/data.json" is stale.', "",   // the English from and export: prose that names files (round 3)
+  "**docs/strong.md** and *docs/em.md*, then \u200bdocs/zwsp.md after a zero-width space.", "",   // Markdown emphasis and a zero-width space before a path: openers in the Raw view (round 3)
   '<svg width="200" height="30"><a href="https://example.invalid/s"><text y="11">svgweb</text></a><a href="x.md"><text x="60" y="11">svgfile</text></a><text y="26">label docs/label.md in the figure</text></svg>', "",   // a bare path only: marked autolinks a URL inside inline HTML itself
   "```bash", "curl https://example.invalid/dl -o data/x.json", "docs/fence2.md", "  ./docs/fence3.md", "```", "",
   ...Array.from({ length: 32 }, (_, i) => "line " + (i + 10) + "\n"),   // one paragraph each (a blank line between), so the rendered body scrolls
   '<h2 id="top">Top</h2>', "",
   '<h2 id="fileview-save-err">Collide</h2>', "",   // an author's id spelled like the viewer's own notice bar
+  '<a name="install"></a>', "", "## Install", "",   // the README idiom for a stable anchor: a named <a> above a heading, and the heading carries no id
 ].join("\n");
 const NOTES_TEXT = Array.from({ length: 12 }, (_, i) => "note " + (i + 1)).join("\n") + "\n";
 // what a highlighter cuts: bash puts `$HOME` and `${ROOT}` in spans of their own; typescript does the same to a template's `${x}`
-const RUN_TEXT = ["#!/bin/bash", 'cp "$HOME/docs/a.md" ./out/', "cat ${ROOT}/src/x.py", 'echo "see ./docs/b.md"', ""].join("\n");
-const XTS_TEXT = ['import b from "lodash/fp.js";', 'import c from "@scope/pkg/dist/index.js";', 'import d from "./util.ts";', "const s = `tmpl/${x}/file.ts`;", ""].join("\n");
+// …and a URL a substitution cuts, with an absolute path as a query value: the URL stays text, and the path inside it is the URL's (round 3)
+const RUN_TEXT = ["#!/bin/bash", 'cp "$HOME/docs/a.md" ./out/', "cat ${ROOT}/src/x.py", 'echo "see ./docs/b.md"', "curl https://example.invalid/q?x=/docs/a.md/$V", ""].join("\n");
+const XTS_TEXT = ['import b from "lodash/fp.js";', 'import c from "@scope/pkg/dist/index.js";', 'import d from "./util.ts";', "const s = `tmpl/${x}/file.ts`;", "const u = `https://example.invalid/q?x=/docs/a.md/${v}`;", ""].join("\n");
 const FILES: Record<string, string> = { [APP]: APP_TEXT, [GUIDE]: GUIDE_TEXT, [NOTES]: NOTES_TEXT, [README]: "# notes-api\n", [CONFIG]: '{"a": 1}\n', [RUN]: RUN_TEXT, [XTS]: XTS_TEXT };
 
 // ── the fake comments host: what the kernel answers a status ask with ─────────────────────────────
@@ -84,7 +88,7 @@ const MARKED: StatusLike = { ...emptyStatus(APP), storeMtimeNs: "2",
 function bundle(): string {
   const esbuild = requireCjs("esbuild");
   const r = esbuild.buildSync({
-    stdin: { contents: 'import "./files";\nimport { panelMark } from "./file-comments";\n(window as any).__rompProbe = { panelMark };\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" },
+    stdin: { contents: 'import "./files";\nimport { panelMark } from "./file-comments";\nimport { selectionOpenIn } from "./path-links";\n(window as any).__rompProbe = { panelMark, selectionOpenIn };\n', resolveDir: UI, loader: "ts", sourcefile: "files-probe.ts" },
     bundle: true, write: false, format: "iife", platform: "browser", target: "es2020",
     nodePaths: [path.join(EXT, "node_modules")], external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"], logLevel: "silent",
   });
@@ -102,7 +106,7 @@ function hostScript(kind: "chat" | "feed"): string {
     const start = RENDER.indexOf(head);
     const end = RENDER.indexOf("}, true);", start) + "}, true);".length;
     assert.ok(start > 0 && end > start, "render.ts's document-level anchor opener");
-    ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\n" + RENDER.slice(start, end);
+    ts = "const vscodeApi: { postMessage(m: unknown): void } | null = null;\nconst panelMark = (window as any).__rompProbe.panelMark as (t: Element | null) => boolean;\nconst selectionOpenIn = (window as any).__rompProbe.selectionOpenIn as (el: Node) => boolean;\n" + RENDER.slice(start, end);
     // …and the chat's BODY delegate (actions.ts delegate, the real one, on document.body as render.ts installs it) with
     // render.ts's own openpath handler, lifted from its source: it opens the todo card's and the Reply modal's path links
     // and, since the viewer's links carry the same data-act and the viewer lets a plain click go on to the document,
@@ -286,6 +290,12 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(raw.row30In, true, "line 30's row is in view"); assert.equal(raw.row1Out, true, "and the top of the file is scrolled away");
     assert.equal(raw.notice, false, "a line the file has: no notice");
     assert.ok(raw.pref === null || !/"raw"/.test(raw.pref), "the saved preference did not follow");
+    // the Raw view's rows: the English from and export before a quoted path are prose, Markdown's emphasis marks and a
+    // zero-width space are openers (the 2026-09-07 review, round 3), and the rows read as the file's lines
+    const rawLinks = (await linkInfo("#romp-fileview .file-uri-link")).map((l) => l.text);
+    for (const t of ["docs/from.md", "out/data.json", "docs/strong.md", "docs/em.md", "docs/zwsp.md"]) assert.ok(rawLinks.includes(t), "Raw links " + t + ": " + JSON.stringify(rawLinks));
+    assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-strong, #romp-fileview code.hljs .hljs-emphasis").length >= 2), "hljs marked the emphasis, so the ** and * stand in the row's text");
+    assert.deepEqual(await rowTexts(page), GUIDE_TEXT.split("\n").slice(0, -1), "every row reads as the file's line");
 
     // ── rendered markdown: a link to a file becomes a path link, a link to the web stays a tab, bare paths and fenced URLs link ─
     await open(GUIDE);
@@ -304,6 +314,10 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
     assert.equal(byText("docs/second.md").path, ROOT + "/docs/docs/second.md", "a path starting the line after a <br>");
     assert.equal(byText("docs/fence2.md").path, ROOT + "/docs/docs/fence2.md", "the fence's second line");
     assert.equal(byText("./docs/fence3.md").path, ROOT + "/docs/docs/fence3.md", "its third, indented");
+    // the rendered prose: a quoted path after the English from or export links (round 3), and so does one after a zero-width space, or inside emphasis
+    for (const [t, tail] of [["docs/from.md", "docs/from.md"], ["out/data.json", "out/data.json"], ["docs/strong.md", "docs/strong.md"], ["docs/em.md", "docs/em.md"], ["docs/zwsp.md", "docs/zwsp.md"]] as const) {
+      assert.equal(byText(t)?.path, ROOT + "/docs/" + tail, "rendered: " + t);
+    }
     assert.equal(await page.evaluate(() => document.querySelector("#romp-fileview .fileview-md p br") !== null), true, "marked made the hard break a <br>");
     // the SVG label: its path stays text (an element inserted into SVG text does not render), and the label reads whole
     assert.deepEqual(await page.evaluate(() => { const t = Array.from(document.querySelectorAll("#romp-fileview .fileview-md svg text")).pop()!; return { text: t.textContent, marks: t.querySelectorAll("a, span").length, nodes: t.childNodes.length }; }),
@@ -361,7 +375,7 @@ test("in a browser: a shown file's URLs and paths are links (a site, a far host 
   });
 });
 
-test("in a browser, through the real sanitizer: a same-directory `notes.md:7` and a `file:///` target open; a far host is a dead link that says why; a query alone opens a tab; a section link never moves the document (and scrolls to an anchor the document has); an inline SVG's anchors are marked; a line past the end says so", async (t) => {
+test("in a browser, through the real sanitizer: a same-directory `notes.md:7` and a `file:///` target open (a host with a port does not); a far host is a dead link that says why; a query alone opens a tab; a section link never moves the document (and scrolls to an id or a named anchor the document has, under a middle-click too); an inline SVG's anchors are marked; a line past the end says so", async (t) => {
   await inBrowser(t, "files", async (h) => {
     const { page, served, open, linkInfo, base } = h;
     await open(GUIDE);
@@ -375,6 +389,12 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     assert.deepEqual([byText("here").href, /fv-frag/.test(byText("here").cls), /fv-dead/.test(byText("here").cls), byText("here").title], ["#section", true, true, noSectionTitle("section")]);
     assert.deepEqual([byText("go").href, /fv-frag/.test(byText("go").cls), /fv-dead/.test(byText("go").cls), byText("go").title], ["#top", true, false, "Go to top"]);
     assert.deepEqual([byText("collide").href, /fv-frag/.test(byText("collide").cls), /fv-dead/.test(byText("collide").cls), byText("collide").title], ["#fileview-save-err", true, false, "Go to fileview-save-err"], "the author's heading carries that id");
+    // a GitHub-style <a name> is a target (the sanitizer kept it): live, by name (round 3)
+    assert.equal(await page.evaluate(() => document.querySelectorAll('#romp-fileview .fileview-md a[name="install"]').length), 1, "the named anchor survived the sanitizer");
+    assert.deepEqual([byText("install").href, /fv-frag/.test(byText("install").cls), /fv-dead/.test(byText("install").cls), byText("install").title], ["#install", true, false, "Go to install"]);
+    // a host with a port in the `name.ext:N` shape is left as written, so the sanitizer removes it and the anchor says why; a three-label file is a file (round 3)
+    assert.deepEqual([byText("api").href, byText("api").act, /fv-dead/.test(byText("api").cls), byText("api").title], [null, null, true, DEAD_LINK_TITLE], "api.example.com:8443 is not a same-directory file");
+    assert.deepEqual([byText("spec").href, byText("spec").path, byText("spec").line, byText("spec").act], [null, ROOT + "/docs/app.test.ts", "12", "openpath"], "app.test.ts:12 is");
     const svg = await linkInfo("#romp-fileview .fileview-md svg a");
     assert.deepEqual(svg.map((a) => [a.text, a.href, a.target, a.rel, /file-uri-link/.test(a.cls), a.act, a.path, a.title]), [
       ["svgweb", "https://example.invalid/s", "_blank", "noopener", false, null, null, null],
@@ -414,6 +434,25 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
     assert.equal(await inView(), true, "scrolled to the author's heading, not to the viewer's own element of that id");
     assert.equal(page.url(), url0);
     await page.evaluate(() => document.querySelector("#romp-fileview .fileview-body > #fileview-save-err")!.remove());
+    // the named anchor: a click scrolls to it (the heading under it comes into view), and the page's location stays
+    await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
+    const installIn = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = Array.from(document.querySelectorAll("#romp-fileview .fileview-md h2")).find((h) => h.textContent === "Install")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
+    assert.equal(await installIn(), false, "the Install heading is below the fold");
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "install" }).click();
+    await h.settle();
+    assert.equal(await installIn(), true, "scrolled to the named anchor above the heading"); assert.equal(page.url(), url0);
+    // a middle-click on a section link: this document's scroll, as a plain click, and NO tab (the browser's own opened a second
+    // copy of the hosting page at /files#top; the 2026-09-07 review, round 3); on a dead section link, nothing, and no tab either
+    await page.evaluate(() => { for (const e of [document.querySelector("#romp-fileview .fileview-body")!, document.querySelector("#romp-fileview .fileview-md")!]) e.scrollTop = 0; });
+    const topIn = () => page.evaluate(() => { const b = document.querySelector("#romp-fileview .fileview-body")!.getBoundingClientRect(); const r = document.getElementById("top")!.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom; });
+    assert.equal(await topIn(), false);
+    const tabsMid = h.newPages();
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "go" }).click({ button: "middle" });
+    await h.settle();
+    assert.equal(h.newPages(), tabsMid, "no tab for a middle-click on a section link"); assert.equal(await topIn(), true, "it scrolled, as a plain click does"); assert.equal(page.url(), url0);
+    await page.locator("#romp-fileview .fileview-md a", { hasText: "here" }).click({ button: "middle" });
+    await h.settle();
+    assert.equal(h.newPages(), tabsMid, "no tab for a middle-click on a dead section link"); assert.equal(page.url(), url0); assert.equal(await base(), "guide.md");
     // the same-directory :line target opens its file, in Raw, at the line
     const n = served.length;
     await page.locator("#romp-fileview .fileview-md a", { hasText: "same" }).click();
@@ -436,16 +475,19 @@ test("in a browser, through the real sanitizer: a same-directory `notes.md:7` an
   });
 });
 
-test("in a browser, over the real highlighter: a substitution span cannot turn a path's tail into a link, and an import's specifier stays text", async (t) => {
+test("in a browser, over the real highlighter: a substitution span cannot turn a path's tail into a link, nor a query value inside the URL it cut, and an import's specifier stays text", async (t) => {
   await inBrowser(t, "files", async (h) => {
     const { page, open, linkInfo } = h;
     await open(RUN);
-    assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-variable").length) >= 2, "bash's grammar put $HOME and ${ROOT} in spans of their own");
-    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./docs/b.md", ROOT + "/scripts/docs/b.md"]], "no /docs/a.md, no /src/x.py");
+    assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-variable").length) >= 3, "bash's grammar put $HOME, ${ROOT} and $V in spans of their own");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./docs/b.md", ROOT + "/scripts/docs/b.md"]], "no /docs/a.md (neither the one after $HOME nor the one inside the cut URL's query), no /src/x.py");
+    assert.deepEqual(await linkInfo("#romp-fileview a.fv-url"), [], "the URL $V cuts is left as text, not wrapped in part");
     assert.deepEqual(await rowTexts(page), RUN_TEXT.split("\n").slice(0, -1));
     await open(XTS);
-    assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-subst").length) >= 1, "typescript's grammar put ${x} in a span of its own");
-    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./util.ts", ROOT + "/ui/util.ts"]], "the relative import links; lodash/fp.js, @scope/pkg/dist/index.js and the template's /file.ts do not");
+    assert.ok(await page.evaluate(() => document.querySelectorAll("#romp-fileview code.hljs .hljs-subst").length) >= 2, "typescript's grammar put ${x} and ${v} in spans of their own");
+    assert.deepEqual((await linkInfo("#romp-fileview .file-uri-link")).map((l) => [l.text, l.path]), [["./util.ts", ROOT + "/ui/util.ts"]], "the relative import links; lodash/fp.js, @scope/pkg/dist/index.js, the template's /file.ts and the cut URL's /docs/a.md do not");
+    assert.deepEqual(await linkInfo("#romp-fileview a.fv-url"), [], "the template's URL ${v} cuts is left as text");
+    assert.deepEqual(await rowTexts(page), XTS_TEXT.split("\n").slice(0, -1));
   });
 });
 
@@ -549,13 +591,26 @@ test("in a browser, a comment typed and not yet saved survives a link click: the
   });
 });
 
-test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window", async (t) => {
+test("in a browser, under the chat's own document-level opener and its body delegate: a plain URL click is one tab, a drag inside the URL anchor selects and opens none, a plain click on a change mark inside the URL opens the card and no tab, a modified click on that mark is one tab and no card, and a path link (a span or a Markdown anchor) opens in place ONCE: the delegate's openpath, which serves the todo card alone, opens nothing for it, and a plain click still reaches the window", async (t) => {
   await inBrowser(t, "chat", async (h) => {
     const { page, served, open, status, settle, base, openCards } = h;
     await open(APP);
     const n0 = served.length;
     assert.equal(await nextTab(h, () => page.locator("#romp-fileview a.fv-url").click()), URL_SETUP, "the chat's capture-phase opener: one tab");
     assert.equal(await base(), "app.py"); assert.equal(served.length, n0);
+    // a press-drag-release inside the URL anchor: the text under it is selected and NO tab opens. The anchor is not draggable,
+    // so the click that ends the drag fires, and the chat's opener, running first at the capture phase, opened the URL as well
+    // until it read the selection open inside the anchor (the 2026-09-07 review, round 3). A plain click after it is one tab.
+    const ub = (await page.locator("#romp-fileview a.fv-url").boundingBox())!;
+    const tabsDrag = h.newPages();
+    await page.mouse.move(ub.x + 8, ub.y + ub.height / 2); await page.mouse.down();
+    await page.mouse.move(ub.x + ub.width - 8, ub.y + ub.height / 2, { steps: 10 }); await page.mouse.up();
+    await settle();
+    const dragSel = await page.evaluate(() => getSelection()!.toString());
+    assert.ok(dragSel.length > 5 && URL_SETUP.includes(dragSel), "the drag selected the URL's text: " + JSON.stringify(dragSel));
+    assert.equal(h.newPages(), tabsDrag, "and no tab opened for the click that ended it"); assert.equal(await base(), "app.py"); assert.equal(served.length, n0);
+    await page.evaluate(() => getSelection()!.removeAllRanges());
+    assert.equal(await nextTab(h, () => page.locator("#romp-fileview a.fv-url").click()), URL_SETUP, "a plain click after the drag: one tab again");
     await status("marked");
     await open(APP);
     await page.locator("#romp-fileview .fileview-fc:not([hidden]) button").click();

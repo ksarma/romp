@@ -12,8 +12,9 @@
 // the third alone read `/docs/a.md` as an absolute path that was never written (the 2026-09-07 review, the round's
 // one high finding). Over the line's joined text the token is `HOME/docs/a.md`, glued to the `$` before it, and the
 // gate below refuses a token glued to anything but an opener. A token the highlight cut through (its text in two
-// nodes) is left as it is, never re-read as its pieces. Text inside an inline SVG is read but never marked
-// (path-links.ts DEAD_TEXT): an HTML element inserted into SVG text does not render.
+// nodes) is left as it is, never re-read as its pieces, and so is a URL; a token inside a URL of its line is the
+// URL's, wrapped or not (a cut URL stays text, and its query can carry a path). Text inside an inline SVG is read
+// but never marked (path-links.ts DEAD_TEXT): an HTML element inserted into SVG text does not render.
 //
 // The path grammar is the chat's (path-links.ts: the one matcher, the one span, the one click act), run with the
 // walk's options for a surface that is code rather than prose, plus one gate of its own, viewerPathGate. The chat
@@ -22,11 +23,13 @@
 // same in the user's words): a token links when it has a slash and its last segment has a letter-led extension of
 // one to eight letters or digits (a dotfile only under an anchored start: `/`, `./`, `../`, `~/`); it is not glued
 // to the character before it (the line's start, whitespace or an opener must precede it: a quote, a bracket, `=`,
-// `,`, `;`, `|`), which is what cuts `$HOME/docs/a.md`, `${dir}/out.json`, `$(ROOT)/src/x.c`, `@scope/pkg/index.js`,
-// `C:/Users/x/file.txt` and `git@host:user/repo.git` down to prose; an unanchored token's first segment does not read
-// as a hostname (`www.` or dotted labels ending in two or more letters: `www.example.org/docs/index.html`,
-// `example.com/index.html`); an unanchored token is not the specifier of an import (`import x from "lodash/fp.js"`,
-// `require("pkg/sub.js")`); and a `~` start is `~/` (`~user/x.md` names a home the kernel does not expand). A local
+// `,`, `;`, `|`, Markdown's `*` or `_`), which is what cuts `$HOME/docs/a.md`, `${dir}/out.json`, `$(ROOT)/src/x.c`,
+// `@scope/pkg/index.js`, `C:/Users/x/file.txt` and `git@host:user/repo.git` down to prose; it is not inside a web
+// address on its line; an unanchored token's first segment does not read as a hostname (`www.` or dotted labels
+// ending in two or more letters: `www.example.org/docs/index.html`, `example.com/index.html`); an unanchored token is
+// not the specifier an import statement or a require call names (`import x from "lodash/fp.js"`,
+// `require("pkg/sub.js")`; the English `from` in `Copied from "docs/a.md"` names a file); and a `~` start is `~/`
+// (`~user/x.md` names a home the kernel does not expand). A local
 // file:// URI (an empty authority, or `localhost`) links as written. A relative token resolves against the shown
 // file's own directory (a file's mentions are written from where the file is), an absolute or `~/` one passes to the
 // kernel as written (it expands `~` and reads the file's session's machine), and the resolved path is normalized
@@ -36,7 +39,7 @@
 // What a click does is the viewer's (file-view.ts binds the body's delegate: the path act opens the file through
 // the host's opener, a URL anchor opens itself, a modified click opens either in a tab of its own). This module
 // marks; it binds no action.
-import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
+import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, BARE_FILE_EXTS, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
 export const URL_LINK_CLASS = "fv-url";
@@ -47,9 +50,14 @@ export const FRAG_LINK_CLASS = "fv-frag";
  *  have): dressed as a dead link, with its title saying why (fail loudly, never a silent dead end). */
 export const DEAD_LINK_CLASS = "fv-dead";
 export const DEAD_LINK_TITLE = "Not a link the viewer can follow: its target is neither a web address nor a file on the session's machine";
-/** A relative target that resolves to no path at all (`[up](../)` from a file named without a directory, `[x](..)`): a
- *  folder above the shown file's own place, which the viewer cannot name and so cannot open. */
+/** A relative target that resolves to no path at all. From a file named with a directory (`docs/plan.md`) that is `../` or
+ *  `..`: a folder above the file's own, which the viewer cannot name and so cannot open. From a file named without one
+ *  (`README.md`, as a chat-relayed relative path opens it) it is `./`, `.` or `docs/../`: the folder the file is in, which
+ *  the name does not carry. The title says which; one title claimed "above" for both (the 2026-09-07 review, round 3). A
+ *  target that climbs out of a relative name (`../` from `README.md`) keeps its `..` and is a live link the kernel resolves. */
 export const EMPTY_TARGET_TITLE = "Not a link the viewer can follow: the target points above the folder this file is named in, so there is no path to open";
+export const SELF_TARGET_TITLE = "Not a link the viewer can follow: the target is the folder this file is in, and the file's name carries no folder, so there is no path to open";
+export const emptyTargetTitle = (filePath: string): string => (filePath.includes("/") ? EMPTY_TARGET_TITLE : SELF_TARGET_TITLE);
 export const noSectionTitle = (id: string): string => "No anchor named \u201c" + id + "\u201d in this document (headings carry none here)";
 
 /** The elements whose text is one unit to the pass: a code view's row, a rendered block (a paragraph, a list item,
@@ -94,13 +102,23 @@ export function urlSegments(text: string): Array<{ text: string; href?: string }
   if (last < text.length) out.push({ text: text.slice(last) });
   return out;
 }
+/** The URLs in `text` as [start, end) ranges of it: exactly what urlSegments would wrap. */
+export function urlRanges(text: string): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  let at = 0;
+  for (const s of urlSegments(text)) { if (s.href) out.push([at, at + s.text.length]); at += s.text.length; }
+  return out;
+}
 
 // The gate's pieces (the grammar is written out in the header). What may stand right before a token: nothing (the
 // line's start), whitespace, or an opener; a token glued to anything else is the tail of something the matcher
-// cut through. A line break and a no-break space are whitespace here too: a rendered paragraph, list item or
-// fenced block is one unit of text with its line breaks inside it, and a path that starts a soft-broken line or
-// any line of a fence but the first was read as glued to the break before it (the 2026-09-07 review).
-const OPENERS = " \t\n\r\u00a0\"'`(<[{=,;|\u201c\u2018\u00ab";
+// cut through. Whitespace is every character \s names, a line break and a no-break space among them (a rendered
+// paragraph, list item or fenced block is one unit of text with its line breaks inside it, and a path that starts a
+// soft-broken line or any line of a fence but the first was read as glued to the break before it; the 2026-09-07
+// review), plus the zero-width space, which text pasted from a chat tool carries and \s leaves out. An asterisk or
+// an underscore is Markdown emphasis in the Raw view (`**docs/a.md**`), the view a `:line` link lands in (the
+// review's round 3). Not `)`, `]`, `:` or `#`: `$(ROOT)/src/x.c`, `git@host:user/repo.git` and `x#/docs/a.md` are glue.
+const OPENER_RE = /[\s\u200b"'`(<[{=,;|*_\u201c\u2018\u00ab]/u;
 const ANCHORED_RE = /^(?:~\/|\.{1,2}\/|\/)/;
 // a first segment that reads as a hostname
 const WWW_RE = /^www\./i;
@@ -111,9 +129,16 @@ const HOST_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
 // its length is bounded by what stands right before the token, never by the unit: a regex over the unit's text
 // before the token sliced the whole unit per token, quadratic over a fenced block, and 8000 lines cost most of a
 // second (the 2026-09-07 review). The one difference from that regex: `from` and its quote on different lines no
-// longer read as an import, which no formatter writes.
+// longer read as an import, which no formatter writes. The word alone is not the verdict: `from` and `export` are
+// English, and `Copied from "docs/a.md"` in a note names a file (the review's round 3). The word counts when the
+// statement around it is code: a call (`require("…")`, `import("…")`), a keyword that starts its line (`import
+// "pkg/x.css"`), or a `from` whose line began with `import` or `export` (`import x from "…"`, `export * from "…"`) or
+// holds nothing but the `}` that closes a multi-line import. Only then is the line read back to its start, so a
+// quote with no keyword before it still costs the quote, the spaces and one word.
 const IMPORT_WORDS = ["import", "export", "from", "require"];
 const KEYWORD_MAX = 7;                                   // `require`
+const STATEMENT_HEAD_RE = /^\s*(?:import|export)\b/;    // the line began an import or export statement
+const CLOSING_HEAD_RE = /^\s*\}\s*$/;                    // `} from "…"`: the last line of a multi-line import
 const isWordCh = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
 const isLineSpace = (c: string): boolean => c === " " || c === "\t";
 function importLookBehind(text: string, at: number): { start: number; isImport: boolean } {
@@ -121,12 +146,18 @@ function importLookBehind(text: string, at: number): { start: number; isImport: 
   if (i < 0 || !"\"'`".includes(text[i])) return { start: at, isImport: false };   // no quote before the token: nothing to read
   i--;
   while (i >= 0 && isLineSpace(text[i])) i--;
-  if (i >= 0 && text[i] === "(") { i--; while (i >= 0 && isLineSpace(text[i])) i--; }
+  let call = false;
+  if (i >= 0 && text[i] === "(") { call = true; i--; while (i >= 0 && isLineSpace(text[i])) i--; }
   const end = i + 1;
   let s = end;
   while (s > 0 && end - s < KEYWORD_MAX && isWordCh(text[s - 1])) s--;
-  const isImport = IMPORT_WORDS.includes(text.slice(s, end)) && (s === 0 || !isWordCh(text[s - 1]));   // a word boundary before it
-  return { start: s, isImport };
+  const word = text.slice(s, end);
+  if (!IMPORT_WORDS.includes(word) || (s > 0 && isWordCh(text[s - 1]))) return { start: s, isImport: false };   // no keyword, or the tail of a longer word
+  if (call) return { start: s, isImport: word === "require" || word === "import" };                          // a call: code wherever it stands
+  const lineStart = text.lastIndexOf("\n", s - 1) + 1;
+  const head = text.slice(lineStart, s);                 // what the line holds before the keyword: an import clause, or prose
+  const isImport = word === "from" ? STATEMENT_HEAD_RE.test(head) || CLOSING_HEAD_RE.test(head) : /^\s*$/.test(head);
+  return { start: lineStart, isImport };
 }
 /** Where the gate's look-behind for the token at `at` begins: the earliest index whose character it reads as text
  *  (one more before it is looked at only as the keyword's word boundary). Never before the line's start. */
@@ -149,7 +180,7 @@ export function viewerPathGate(tok: string, ctx?: { text: string; at: number }):
   }
   if (ctx) {
     const before = ctx.at > 0 ? ctx.text[ctx.at - 1] : "";
-    if (before && !OPENERS.includes(before)) return false;             // glued to a substitution, a scope, a drive, a host
+    if (before && !OPENER_RE.test(before)) return false;               // glued to a substitution, a scope, a drive, a host
     if (!anchored && importLookBehind(ctx.text, ctx.at).isImport) return false;   // a package specifier
   }
   return true;
@@ -186,8 +217,10 @@ export function resolveViewerPath(tok: string, filePath: string): string {
  *  URL as the title), a line at a time (LINE_UNITS). Text already inside a link, and a URL the highlight cut
  *  into two nodes, are left alone. The anchors are not draggable (draggable=false here, `-webkit-user-drag: none`
  *  and `user-select: text` in the sheets): a press-drag that starts on one selects the text under it, as it does on
- *  a path link, instead of starting the browser's link drag; the click that ends the drag is the one the viewer's
- *  delegate cancels for an open selection. Returns the anchors made. */
+ *  a path link, instead of starting the browser's link drag; the click that ends the drag finds a selection open
+ *  inside the anchor, and every opener it reaches yields to that (path-links.ts selectionOpenIn: the viewer's
+ *  delegate, and the chat's document-level opener, which runs first and opened the URL as well until it read the
+ *  selection too; the 2026-09-07 review, round 3). Returns the anchors made. */
 export function linkifyUrls(root: HTMLElement): HTMLAnchorElement[] {
   const made: HTMLAnchorElement[] = [];
   const doc = root.ownerDocument || document;
@@ -231,15 +264,23 @@ function textNodesOf(root: Node): Text[] {
 }
 
 /** The whole pass over a text body the viewer built (the code view's <code>, a rendered markdown box): URLs first,
- *  so the path walk never sees the path-shaped tail of a URL, then the shared path walk under the viewer's gate and
- *  resolution, both a line at a time. A body with no text (a stand-in that parses no HTML, an empty file) is left as
- *  it is. */
+ *  then the shared path walk under the viewer's gate and resolution, both a line at a time. A wrapped URL is dead text
+ *  to the walk; one the highlight cut across two nodes stays text, and the walk over the line then read a path-shaped
+ *  query value inside it as an absolute path (`https://x.y/q?x=/docs/a.md/$V`: hljs puts `$V` in a span of its own;
+ *  the 2026-09-07 review, round 3). So the gate also refuses a token inside any URL of its line, wrapped or not. The
+ *  line's URLs are found once per line, not per token: the walk asks about a line's tokens in a row. A body with no
+ *  text (a stand-in that parses no HTML, an empty file) is left as it is. */
 export function linkifyFileText(root: HTMLElement, filePath: string): void {
   if (!textNodesOf(root).length) return;
   linkifyUrls(root);
+  let lineText: string | null = null, lineUrls: Array<[number, number]> = [];
+  const insideUrl = (ctx: { text: string; at: number }): boolean => {
+    if (ctx.text !== lineText) { lineText = ctx.text; lineUrls = /https?:\/\//i.test(ctx.text) ? urlRanges(ctx.text) : []; }
+    return lineUrls.some(([s, e]) => ctx.at >= s && ctx.at < e);
+  };
   linkifyPathTokens(root, null, undefined, {
     inPre: true,
-    accept: viewerPathGate,
+    accept: (tok, ctx) => !insideUrl(ctx) && viewerPathGate(tok, ctx),
     resolve: (tok) => resolveViewerPath(tok, filePath),
     lineSuffix: true,
     unit: LINE_UNITS,
@@ -252,13 +293,34 @@ export function linkifyFileText(root: HTMLElement, filePath: string): void {
  *  module can no longer sort. So a same-directory `name.ext:12` becomes `./name.ext:12`, and a local file:// URI
  *  becomes its path. Anything else is left as written: a real scheme is the browser's, and a URI on another host
  *  is not a path (path-links.ts isFileUri); those the sanitizer still removes render as dead links that say why. */
+// `api.example.com:8443` has the `name.ext:N` shape and is a host with a port: `www.`, or three or more dotted labels
+// that read as a hostname (HOST_RE, the gate's own test) with a last label that is not a file extension the chat's
+// bare-name gate knows (`app.test.ts:12` and `archive.tar.gz:3` are files). A two-label name is a file (`notes.md`,
+// `x.py`): its second label is its extension, whatever else it could be. Left as written, the target is one the
+// sanitizer removes, and the anchor renders dead with the reason; rewritten, it was a link to a file that does not
+// exist (the 2026-09-07 review, round 3).
+const SAME_DIR_LINE_RE = /^([^/:?#]*\.[A-Za-z][A-Za-z0-9]{0,7}):\d+(?::\d+)?(?:[?#].*)?$/;
+export function isHostName(name: string): boolean {
+  if (WWW_RE.test(name)) return true;
+  return HOST_RE.test(name) && name.split(".").length > 2 && !BARE_FILE_EXTS.has(name.slice(name.lastIndexOf(".") + 1).toLowerCase());
+}
 export function viewerLinkTarget(href: string): string {
   if (isFileUri(href)) return fileUriToPath(href);
-  if (/^[^/:?#]*\.[A-Za-z][A-Za-z0-9]{0,7}:\d+(?::\d+)?(?:[?#].*)?$/.test(href)) return "./" + href;
+  const m = SAME_DIR_LINE_RE.exec(href);
+  if (m && !isHostName(m[1])) return "./" + href;
   return href;
 }
 export function viewerWalkTokens(token: { type: string; href?: string | null }): void {
   if (token.type === "link" && typeof token.href === "string") token.href = viewerLinkTarget(token.href);
+}
+
+/** The element a section link's `id` names in `root`: the first with that id, else the first `<a name>` of that name,
+ *  the README idiom for a stable anchor (`<a name="install"></a>` above a heading), which marked passes through and the
+ *  sanitizer keeps; a browser's own fragment rule reads both, and a lookup by id alone left such links dead (the
+ *  2026-09-07 review, round 3). Headings carry no ids here: marked gives none. Mark time and click time both ask here. */
+export function fragmentTarget(root: ParentNode, id: string): Element | undefined {
+  return Array.from(root.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id)
+    || Array.from(root.querySelectorAll("a[name]")).find((e) => e.getAttribute("name") === id);
 }
 
 const withClass = (a: Element, cls: string): void => {
@@ -269,8 +331,9 @@ const withClass = (a: Element, cls: string): void => {
 /** A rendered Markdown link's target, sorted the way the text is: a scheme (http:, https:, mailto:, …) or a
  *  protocol-relative `//host` opens a new tab, as the viewer always had it; a query alone (`?x=1`) is a web-style
  *  link to the page's own address and opens a new tab too (the viewer's document is never navigated); a fragment
- *  alone (`#section`) is the viewer's (FRAG_LINK_CLASS: the delegate scrolls to the element with that id when the
- *  document holds one, else the title says there is none, since marked gives headings no ids); anything else names
+ *  alone (`#section`) is the viewer's (FRAG_LINK_CLASS: the delegate scrolls to the element with that id, or the
+ *  `<a name>` of that name, when the document holds one, else the title says there is none, since marked gives
+ *  headings no ids); anything else names
  *  a file, relative to the shown one, and the anchor becomes a path link (the shared shape on its own <a>, so
  *  `[**bold** text](docs/x.md)` keeps its label). marked percent-encodes a destination (`my%20notes.md`), so it is
  *  decoded first; a `#L12` or `:12` on the target is the line; a `?query` or other fragment is dropped from the
@@ -292,7 +355,7 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
     if (href.startsWith("#")) {
       let id = href.slice(1);
       try { id = decodeURIComponent(id); } catch { /* a malformed escape: the spelling as written */ }
-      const hit = id ? Array.from(root.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id) : undefined;
+      const hit = id ? fragmentTarget(root, id) : undefined;
       withClass(a, FRAG_LINK_CLASS);
       if (hit) { a.dataset.frag = id; a.setAttribute("title", "Go to " + id); }
       else { withClass(a, DEAD_LINK_CLASS); a.setAttribute("title", noSectionTitle(id)); }
@@ -320,9 +383,9 @@ export function linkMarkdownAnchors(root: HTMLElement, filePath: string): void {
     }
     a.removeAttribute("href");                          // the browser must not follow it, whichever way it is dressed
     const open = resolveViewerPath(pathPart, filePath);
-    if (!open) {                                        // `[up](../)` from `docs/plan.md`: no path to open, said so, never a silent click
+    if (!open) {                                        // `[up](../)` from `docs/plan.md`, `[here](./)` from `README.md`: no path to open, said so, never a silent click
       withClass(a, DEAD_LINK_CLASS);
-      a.setAttribute("title", EMPTY_TARGET_TITLE);
+      a.setAttribute("title", emptyTargetTitle(filePath));
       return;
     }
     markPathLink(a, open, true);

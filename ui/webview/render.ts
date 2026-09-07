@@ -52,7 +52,7 @@ import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileView } from "./file-view";
-import { openPathLink, linkifyPathTokens } from "./path-links";
+import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
@@ -1266,6 +1266,11 @@ document.addEventListener("click", (e) => {
   // its delegate opens the card and cancels the anchor (fcopen). Running first, at the capture phase, this handler
   // opened the tab and let no card open (the 2026-09-06 review); the panel's registry, never the markup, says which.
   if (panelMark(e.target as Element | null)) return;
+  // The click that ends a press-drag-release inside an anchor that is not draggable (the viewer's URL anchors, which
+  // select like the text around them; file-view-links.ts): the drag selected text, and the selection is what the person
+  // gets, not the link. The viewer's delegate rules the same for its links; running first, this opener opened the tab as
+  // well (the 2026-09-07 review, round 3). The chat's own anchors are draggable and send no such click.
+  if (selectionOpenIn(a)) { e.preventDefault(); return; }
   const href = a.getAttribute("href") || "";
   if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // fragment/relative — leave alone
   e.preventDefault();

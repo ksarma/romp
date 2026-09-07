@@ -23,7 +23,8 @@ import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
+import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, fragmentTarget, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
+import { selectionOpenIn } from "./path-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -1047,7 +1048,8 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // unsaved comment, leaves the span in the document); that delegate now serves only the todo card and its Reply
   // modal, checked at the click, so a viewer link that reaches it opens nothing there (file-view-links-browser.test.ts,
   // the chat page). A click that ends a drag which selected text (the selection is still open at click time; a
-  // press on text collapses it first, so a plain click never sees one) selects and navigates nowhere. Enter on a
+  // press on text collapses it first, so a plain click never sees one) selects and navigates nowhere; the chat's
+  // capture-phase opener reads the same selection and yields too (path-links.ts selectionOpenIn). Enter on a
   // focused path link is its click (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
   const openUrlTab = (href: string) => {
     if (!href) return;
@@ -1063,10 +1065,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (x.classList.contains(FRAG_LINK_CLASS)) {                // a section of this document: this document's scroll, never the page's
       ev.preventDefault();
       const id = x.dataset.frag;
-      // the rendered document's own ids, as mark time read them (file-view-links.ts): the viewer's chrome carries ids
-      // of its own (the notice bar), and a lookup over the whole box scrolled to one of those on a colliding name
+      // the rendered document's own ids and named anchors, as mark time read them (file-view-links.ts fragmentTarget):
+      // the viewer's chrome carries ids of its own (the notice bar), and a lookup over the whole box scrolled to one of
+      // those on a colliding name
       const md = body.querySelector(".fileview-md");
-      const hit = id && md ? Array.from(md.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id) : undefined;
+      const hit = id && md ? fragmentTarget(md, id) : undefined;
       if (hit) hit.scrollIntoView({ block: "start" });
       return;
     }
@@ -1094,13 +1097,15 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       if (x.dataset.act !== "openpath") ev.preventDefault();
       return;
     }
-    const sel = window.getSelection();
-    if (sel && !sel.isCollapsed && box.contains(sel.anchorNode)) { ev.preventDefault(); return; }   // a drag-select ended on the link
+    if (selectionOpenIn(box)) { ev.preventDefault(); return; }   // a drag-select ended on the link
     openLink(x, ev);
   });
   // The middle button: its press would start the browser's autoscroll on a path link (a span, unlike an anchor)
   // and swallow the auxclick, so the press is cancelled there; the auxclick is the link's own tab. A URL anchor's
-  // middle-click is the browser's (it opens the href in a new tab itself), so neither listener touches one.
+  // middle-click is the browser's (it opens the href in a new tab itself), so neither listener touches one. A
+  // section link's middle-click is this document's scroll, as its plain click is: the browser's own opened a second
+  // copy of the hosting page at `/files#id`, and a section of the shown file has no tab of its own (the 2026-09-07
+  // review, round 3).
   body.addEventListener("mousedown", (ev) => {
     const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
     if (x && x.dataset.act === "openpath") ev.preventDefault();
@@ -1108,7 +1113,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   body.addEventListener("auxclick", (ev) => {
     if (ev.button !== 1) return;
     const x = linkOf(ev.target as Element | null);
-    if (x && x.dataset.act === "openpath") openLink(x, ev);
+    if (x && (x.dataset.act === "openpath" || x.classList.contains(FRAG_LINK_CLASS))) openLink(x, ev);
   });
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor

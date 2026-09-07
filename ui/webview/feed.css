@@ -1511,8 +1511,8 @@ a.fileview-gh-note { border-style: dashed; }
    link ink the other Markdown links wear. Neither is draggable (-webkit-user-drag: none, with draggable=false on the
    anchor) and both are selectable (user-select: text; Chromium starts no selection inside a link without it), so a
    press-drag that starts on a link selects the text under it, as on plain text, instead of starting the browser's link
-   drag; the click that ends such a drag is the one the viewer's delegate cancels. Mirrored in styles.css and feed.css
-   (fileview-parity.test.ts). */
+   drag; the click that ends such a drag finds the selection open, and the viewer's delegate and the chat's opener both
+   yield to it (path-links.ts selectionOpenIn). Mirrored in styles.css and feed.css (fileview-parity.test.ts). */
 .fileview-body .file-uri-link, .fileview-body .fv-url { color: inherit; cursor: pointer; text-decoration: underline dotted; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; -webkit-user-drag: none; user-select: text; }
 .fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover { text-decoration: underline; text-decoration-color: currentColor; }
 .fileview-md a.file-uri-link { color: var(--link); text-decoration: none; }

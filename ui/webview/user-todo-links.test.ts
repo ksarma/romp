@@ -142,7 +142,7 @@ test("the shape gates run for real: the exported matchers, not replicas", async 
 });
 
 test("render.ts imports the matcher and binds the click itself — the chat's routing is unchanged", () => {
-  assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens \} from "\.\/path-links";/);
+  assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens, selectionOpenIn \} from "\.\/path-links";/);   // selectionOpenIn: the anchor opener yields to a drag-select (file-view-links.test.ts pins the guard)
   for (const gone of ["const CLICKABLE_PATH_RE", "function looksLikeFilePath(", "function looksLikeBareFileName(", "function fileUriToPath(", "function openPathLink("]) {
     assert.ok(!RENDER.includes(gone), gone + " lives in path-links.ts now, once");
   }

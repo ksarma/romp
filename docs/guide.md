@@ -226,18 +226,21 @@ has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
 file lands on the last line, with a notice saying so. In a Markdown file, a
 `[link](target)` follows the same two rules: a web target opens a tab, a file
 target opens the file. A link to a section of the same document scrolls to it
-when the document has an anchor by that name, and otherwise says so when you
-hover it. One click does one thing: a plain click acts in the dashboard, and a
-Cmd-click (Ctrl on Windows and Linux) or a middle-click opens the link in a
-browser tab of its own. Where a comment highlight or a change mark covers a
+when the document has a heading or an anchor by that name (`<a name="install">`
+included), and otherwise says so when you hover it; it scrolls under every
+click, since a section of the shown file has no tab of its own. One click does
+one thing: a plain click acts in the dashboard, and a Cmd-click (Ctrl on Windows
+and Linux) or a middle-click opens the link in a browser tab of its own. Where a comment highlight or a change mark covers a
 link, a plain click opens the comment or the change and leaves the link alone.
 Inside a file the test for a path is stricter than the one a todo or a chat
 message gets: a path links only when it has a slash and a file extension, starts
-on its own, at the start of a line or after a space, a quote or a bracket (so
-`$HOME/docs/a.md`, `@scope/pkg/index.js` and `C:/Users/x.txt` stay text), does not start with a
-site name (`www.example.org/docs/index.html`), and is not the package an
-`import` or `require` names (a relative import such as `./app.css` still
-links). Web addresses and paths found in the text wear a dotted underline that
+on its own, at the start of a line or after a space, a quote, a bracket or
+Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and `C:/Users/x.txt` stay
+text), is not part of a web address, does not start with a site name
+(`www.example.org/docs/index.html`), and is not the package an `import`
+statement or a `require()` call names (a relative import such as `./app.css`
+still links, and so does a path after the English word "from" in a note). Web
+addresses and paths found in the text wear a dotted underline that
 turns solid under the pointer; a Markdown link that names a file keeps the
 ordinary link look. Selecting text across a link, and commenting on a line that
 holds one, work as before, and a drag that starts or ends on a link selects
