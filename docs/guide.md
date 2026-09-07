@@ -267,7 +267,7 @@ Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
 (`www.example.org/docs/index.html`), and is not the package an `import`
 statement or a `require()` call names, whether the statement fits one line or
 its `from` starts the next (a relative import such as `./app.css` still links,
-and so does a path after the English word "from" in a note, unless that line
+and so does a path after the English word "from" in prose, unless that line
 holds nothing but `from` and the quoted path). After a `*` the path must be
 the whole emphasised text, closed by a `*` of its own: `*docs/a.md*` and
 `**./scripts/setup.sh**` link; a glob's `**/docs/a.md`, an operand's

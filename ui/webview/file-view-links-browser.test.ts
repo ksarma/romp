@@ -142,7 +142,7 @@ function hostScript(kind: "chat" | "feed"): string {
       + "delegate(document.body, { openpath: (elx, ev) => { (window as any).__bodySeen.push(elx.dataset.path); openpath(elx, ev); } });\n";
   } else {
     const FEED = fs.readFileSync(path.join(UI, "feed.ts"), "utf8");
-    const start = FEED.indexOf("function feedWantsKeys(t: EventTarget | null): boolean {");
+    const start = FEED.indexOf("function typingIn(t: EventTarget | null): boolean {");   // the helpers feedWantsKeys reads, then the listener
     const at = FEED.indexOf('window.addEventListener("click", (e) => {', start);
     const end = FEED.indexOf("});", at) + 3;
     assert.ok(start > 0 && at > start && end > at, "feed.ts's window click listener");
