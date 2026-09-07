@@ -165,7 +165,8 @@ COLD_KERNEL_CACHES = ("_parse_cache", "_built_chat", "_prev_chat_events", "_prev
                       "_PATH_LINK_CACHE", "_states_notes_cache", "_state_ev_cache", "_bgtasks_cache", "_bgall_cache",
                       "_queued_parse_cache", "_wake_tail_cache", "_session_meta_cache", "_session_tok_cache",
                       "_machine_cut_cache",
-                      "_caps_memo", "_thread_reg_memo", "_states_overlay_cache")   # the per-lane reader memos (perf round 4, item C)
+                      "_caps_memo", "_thread_reg_memo", "_states_overlay_cache",   # the per-lane reader memos (perf round 4, item C)
+                      "_lanes_memo")                                                # the per-lane segment memo (item A)
 # (cache, its lock) in the event model: the parse layer under _parse. Missing names are skipped here too
 # (the trailing-record cache is newer than the assembly counters this tool requires); cold_caches in the
 # report says which of both lists were emptied, and the test pins that list at HEAD.

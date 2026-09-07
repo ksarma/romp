@@ -102,7 +102,7 @@ class SharedViewInBuilds(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved_state = jd.STATE
         jd._rebind_state(Path(self.td.name))         # clears the cache and lifts any earlier off switch
-        self.saved = {nm: getattr(km, nm) for nm in ("_timeline_sessions", "_derive_judging")}
+        self.saved = {nm: getattr(km, nm) for nm in ("_timeline_sessions", "_derive_judging_marks")}
         for i, sid in enumerate(SIDS):
             s = {"rompUuid": sid, "seq": 0, "placementsV": jd.PLACEMENTS_V, "nodes": {},
                  "placements": {}, "status": {}}
@@ -148,7 +148,7 @@ class SharedViewInBuilds(unittest.TestCase):
     def test_the_store_a_wired_site_works_on_is_the_frozen_shared_view(self):
         seen, raised = [], []
 
-        def spy(sid, caps, goals, t0, out, seg_ends=None):
+        def spy(sid, caps, goals, seg_ends=None):          # the per-lane marks derivation (the lane memo's miss path)
             seen.append(goals)
             for attempt in (lambda: goals["status"].__setitem__("x", "y"),
                             lambda: goals["nodes"][sid + ":g1"]["log"].append({"kind": "done"}),
@@ -157,8 +157,9 @@ class SharedViewInBuilds(unittest.TestCase):
                     attempt()
                 except jd.FrozenStoreError:
                     raised.append(1)
-            return self.saved["_derive_judging"](sid, caps, goals, t0, out, seg_ends)
-        km._derive_judging = spy
+            return self.saved["_derive_judging_marks"](sid, caps, goals, seg_ends)
+        km._derive_judging_marks = spy
+        km._lanes_memo.clear()                            # every lane derives (a held lane would not reach the spy)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             tl = km.build_timeline(NOW, {}, with_bars=True)
@@ -182,7 +183,7 @@ class SharedViewInBuilds(unittest.TestCase):
         self.assertEqual(jd.load_goals(SIDS[1])["nodes"][SIDS[1] + ":g1"]["text"], "Goal 1",
                          "a write on a fallback store reached no file")
         # the board keeps rendering: the next build's loads take load_goals (private, mutable) and succeed
-        km._derive_judging = self.saved["_derive_judging"]
+        km._derive_judging_marks = self.saved["_derive_judging_marks"]
         km.build_timeline(NOW, {}, with_bars=True)
         self.assertEqual(self._delta("fallback"), 2 * len(SIDS) - 1)
 

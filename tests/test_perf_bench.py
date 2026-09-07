@@ -58,7 +58,8 @@ EXPECTED_COLD_CACHES = {
     "kernel": {"_parse_cache", "_built_chat", "_prev_chat_events", "_prev_chat_ledger", "_arch_tops_cache",
                "_PATH_LINK_CACHE", "_states_notes_cache", "_state_ev_cache", "_bgtasks_cache", "_bgall_cache",
                "_queued_parse_cache", "_wake_tail_cache", "_session_meta_cache", "_session_tok_cache",
-               "_machine_cut_cache", "_chat_fold", "_caps_memo", "_thread_reg_memo", "_states_overlay_cache"},
+               "_machine_cut_cache", "_chat_fold", "_caps_memo", "_thread_reg_memo", "_states_overlay_cache",
+                "_lanes_memo"},
     "event_model": {"_JSONL_CACHE", "_ASM_CACHE", "_TRAILING_CACHE"}}
 # What the builders and the push write into the copy on a normal run: the import-time repo-root
 # marker, the tab-order audit and the session order the push maintains. A new write path in a
