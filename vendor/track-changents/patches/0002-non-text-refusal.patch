@@ -1,0 +1,202 @@
+# Patch 0002 — a tracked edit refuses a file that is not text; the guard lets such a file through
+# Offered back: yes
+# Files: store-io.mjs, cli/track-edit.mjs, hooks/track-guard.mjs, hooks/track-hooks.test.mjs
+#
+# Reason: every CLI reads a file as UTF-8 text, and track-edit writes the text back, so on an
+# image or a PDF it re-encoded a lossy decode over the original and destroyed the file; the
+# guard meanwhile denied the raw Write on a tracked image and pointed the agent at track-edit,
+# so a tracked folder holding figures could not be regenerated at all. The fix: store-io.mjs
+# gains NON_TEXT_EXTENSIONS, isNonTextPath(file) (names only, so the guard stays cheap) and
+# hasNulBytes(file) (a NUL in the first 8 KB of an existing file); track-edit refuses a
+# non-text name before reading a byte (creation included) and, after the read, any content
+# with a NUL byte or an invalid UTF-8 sequence (decodeTextOrNull, exported; a leading BOM is
+# kept, as the previous utf8 decode kept it), with a message that says nothing was written;
+# the guard returns null for a non-text name before any disk walk and, once a file is known
+# to be tracked, for NUL-bearing content. Tests: hooks/track-hooks.test.mjs (guard) and
+# tools/vendor-patches.test.mjs (P2 cases, in romp).
+diff --git a/cli/track-edit.mjs b/cli/track-edit.mjs
+index 6093121a..42b6da4b 100755
+--- a/cli/track-edit.mjs
++++ b/cli/track-edit.mjs
+@@ -21,6 +21,7 @@ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import {
+   findVaultRoot, recordAgentEdit, addThreadEditTurn, storePathFor, loadStore, saveStore, reviveThreadInto,
++  isNonTextPath,
+ } from '../store-io.mjs';
+ import { parseArgs } from './cli-args.mjs';
+ 
+@@ -40,6 +41,17 @@ export function applyTrackedEdit(text, oldStr, newStr) {
+   return { text: text.slice(0, idx) + newStr + text.slice(idx + oldStr.length), from: idx, to: idx + oldStr.length };
+ }
+ 
++// Decode a file's bytes as UTF-8 text, or return null when they are not text: a
++// NUL byte or an invalid sequence means a binary file, and applying old→new to a
++// lossy decode (what readFileSync(abs, 'utf8') returns, replacement characters
++// and all) and writing it back would destroy the file. A leading BOM is kept,
++// as readFileSync's decode kept it, so the written text equals the read text
++// outside the edited span.
++export function decodeTextOrNull(buf) {
++  if (buf.includes(0)) return null;
++  try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf); } catch { return null; }
++}
++
+ // ── CLI ─────────────────────────────────────────────────────────────
+ 
+ // Author identity comes from the environment: TRACKCHANGES_SESSION (set by
+@@ -62,6 +74,14 @@ function run(argv) {
+   const abs = path.resolve(args.file);
+   const vaultRoot = process.env.TRACKCHANGES_ROOT || findVaultRoot(abs);
+   if (!vaultRoot) fail(`Not inside an Obsidian vault: ${abs}`);
++  // A tracked edit is a text operation; on an image, a PDF or any other binary it
++  // would rewrite the file from a lossy decode. Refuse by name before reading a
++  // byte (this also covers creating one), and by content after the read below.
++  if (isNonTextPath(abs)) {
++    fail(`Refusing to edit ${abs}: ${path.extname(abs)} is not a text format, and track-edit `
++      + `rewrites a file from its UTF-8 text, which would destroy this one. Nothing was written. `
++      + `Regenerate the file with a normal write instead.`);
++  }
+   let text;
+   let res;
+   if (!fs.existsSync(abs)) {
+@@ -84,7 +104,14 @@ function run(argv) {
+     text = '';
+     res = { text: args.new, from: 0, to: 0 };
+   } else {
+-    try { text = fs.readFileSync(abs, 'utf8'); } catch { fail(`Could not read ${abs}`); }
++    let buf;
++    try { buf = fs.readFileSync(abs); } catch { fail(`Could not read ${abs}`); }
++    text = decodeTextOrNull(buf);
++    if (text == null) {
++      fail(`Refusing to edit ${abs}: its contents are not UTF-8 text (${buf.includes(0) ? 'it contains a NUL byte' : 'invalid UTF-8'}), `
++        + `so a tracked edit would rewrite it from a lossy decode and destroy it. Nothing was written. `
++        + `Regenerate the file with a normal write instead.`);
++    }
+     res = applyTrackedEdit(text, args.old, args.new);
+     if (res.error) fail(res.error);
+   }
+diff --git a/hooks/track-guard.mjs b/hooks/track-guard.mjs
+index e49de065..4f7a0820 100755
+--- a/hooks/track-guard.mjs
++++ b/hooks/track-guard.mjs
+@@ -15,7 +15,7 @@
+ 
+ import fs from 'node:fs';
+ import { fileURLToPath } from 'node:url';
+-import { findVaultRoot, isTrackedFile } from '../store-io.mjs';
++import { findVaultRoot, isTrackedFile, isNonTextPath, hasNulBytes } from '../store-io.mjs';
+ 
+ const TRACK_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
+ 
+@@ -26,12 +26,21 @@ export function evaluate(raw) {
+   if (!payload || !TRACK_TOOLS.has(payload.tool_name)) return null;
+   const file = payload.tool_input && payload.tool_input.file_path;
+   if (!file) return null;
++  // An image, a PDF or another binary cannot take a tracked edit (track-edit
++  // refuses it: a text rewrite would destroy the file), so steering the agent
++  // there would only strand it. Let the raw write through; the file is
++  // regenerated, not edited. Checked by name first, before any disk walk.
++  if (isNonTextPath(file)) return null;
+   let root;
+   try { root = process.env.TRACKCHANGES_ROOT || findVaultRoot(file); } catch { return null; }
+   if (!root) return null;
+   let tracked = false;
+   try { tracked = isTrackedFile(root, file); } catch { return null; }
+   if (!tracked) return null;
++  // Same for a binary under a text-looking name (an extensionless blob, a
++  // .dat): sniffed only now that the file is known to be tracked, so the
++  // common untracked case costs no read.
++  if (hasNulBytes(file)) return null;
+   return `Track-changes is ON for this file, so ${payload.tool_name} is blocked here `
+     + `(it would write the file silently). Make the change with track-edit so it lands as a `
+     + `reviewable tracked suggestion:\n`
+diff --git a/hooks/track-hooks.test.mjs b/hooks/track-hooks.test.mjs
+index 7a426544..c0187882 100644
+--- a/hooks/track-hooks.test.mjs
++++ b/hooks/track-hooks.test.mjs
+@@ -230,6 +230,28 @@ test('guard blocks a file tracked via a folder/ entry', () => {
+   assert.ok(guard(payload('Edit', sub)));
+ });
+ 
++test('guard lets a raw write through on a TRACKED file that is not text (image, PDF, NUL bytes)', () => {
++  // track-edit refuses such files (a text rewrite would destroy them), so the
++  // deny would strand the agent between two refusals; the raw write is the
++  // only way to regenerate a figure.
++  const png = path.join(vault, 'figure.png');
++  fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]));
++  const pdf = path.join(vault, 'report.pdf');
++  fs.writeFileSync(pdf, '%PDF-1.4\n');
++  const blob = path.join(vault, 'weights.dat');
++  fs.writeFileSync(blob, Buffer.from([0x01, 0x00, 0x02, 0x00]));
++  fs.writeFileSync(note, 'prose');
++  setTracked(vault, 'figure.png', true);
++  setTracked(vault, 'report.pdf', true);
++  setTracked(vault, 'weights.dat', true);
++  setTracked(vault, 'note.md', true);
++  assert.equal(guard(payload('Write', png)), null, 'a tracked image passes by name');
++  assert.equal(guard(payload('Edit', pdf)), null, 'a tracked PDF passes by name');
++  assert.equal(guard(payload('Write', path.join(vault, 'new-figure.PNG'))), null, 'a new image passes by name, case-insensitively');
++  assert.equal(guard(payload('Write', blob)), null, 'a tracked binary under a text-looking name passes by its NUL bytes');
++  assert.ok(guard(payload('Write', note)), 'a tracked text file is still denied');
++});
++
+ test('guard ignores a file outside any vault (no root, no config)', () => {
+   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-bare-'));
+   const f = path.join(outside, 'loose.md');
+diff --git a/store-io.mjs b/store-io.mjs
+index 3e991322..ff537d40 100644
+--- a/store-io.mjs
++++ b/store-io.mjs
+@@ -187,6 +187,52 @@ export function trackedClosure(vaultRoot) {
+   return out;
+ }
+ 
++// Files a TRACKED EDIT must never touch. track-edit reads a file as UTF-8 text and
++// writes the text back, which destroys any file that is not text (an image
++// decoded with replacement characters is re-encoded over the original). So
++// track-edit refuses these by name before reading a byte, and the guard hook
++// lets the raw tools through for them instead of steering the agent to
++// track-edit — a tracked image or PDF can only be regenerated, never edited as
++// text. The list is names only, because the guard runs on every Edit/Write in
++// every session and must stay cheap; hasNulBytes is the byte-level check for a
++// binary file under a text-looking name, used once a file is known to be tracked.
++export const NON_TEXT_EXTENSIONS = new Set((
++  // images
++  'png jpg jpeg gif webp bmp ico tif tiff heic heif avif psd'
++  // documents and books
++  + ' pdf doc docx xls xlsx ppt pptx odt ods odp odg epub pages numbers key'
++  // archives
++  + ' zip gz tgz bz2 tbz xz zst lz4 7z rar tar jar war ear'
++  // audio and video
++  + ' mp3 mp4 m4a m4v aac wav ogg oga ogv flac mov avi mkv webm wmv'
++  // fonts
++  + ' ttf otf woff woff2 eot'
++  // executables, objects, bundles
++  + ' exe dll so dylib o a bin class pyc pyo pyd wasm iso dmg'
++  // binary data and model files
++  + ' sqlite sqlite3 db parquet arrow feather npy npz pkl pickle h5 hdf5 pt pth onnx safetensors ckpt gguf'
++).split(' '));
++
++export function isNonTextPath(file) {
++  const ext = path.extname(String(file == null ? '' : file)).slice(1).toLowerCase();
++  return ext !== '' && NON_TEXT_EXTENSIONS.has(ext);
++}
++
++// True when the first 8 KB of an EXISTING file contain a NUL byte — text never
++// does, binaries almost always do. Absent or unreadable → false: the caller's
++// own read then decides.
++export function hasNulBytes(file) {
++  let fd;
++  try {
++    fd = fs.openSync(file, 'r');
++    const buf = Buffer.alloc(8192);
++    const n = fs.readSync(fd, buf, 0, buf.length, 0);
++    return buf.subarray(0, n).includes(0);
++  } catch { return false; } finally {
++    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* ignore */ } }
++  }
++}
++
+ export function isTrackedFile(vaultRoot, file) {
+   const rel = relPathFor(vaultRoot, file);
+   if (engine.isTracked(untrackedPaths(vaultRoot), rel)) return false;   // veto wins

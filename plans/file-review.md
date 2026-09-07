@@ -488,9 +488,12 @@ in the same directory and outside the v3 contract: the other hosts' directory sc
 the VS Code host reads only the sidecar path. One JSON object per line, each with `ts` (stamped
 by the host script on the owning kernel), `kind`, and `author`:
 
-- `send`: the message as sent, with `sid`, the comment ids, the `desc` and `body` of each, the
-  counts accepted and rejected since the previous send, `queued`, and `watermark`, the largest
-  `ts` among the `you` comments and replies it carried.
+- `send`: the message as sent, with `sid`, the session's display name as `sessionName` when the
+  kernel knows one (so the panel's Log row can name the session after it is renamed or ended and
+  the sid maps to nothing; the same name already reaches the sidecar as the author label of every
+  reply the session writes), the comment ids, the `desc` and `body` of each, the counts accepted
+  and rejected since the previous send, `queued`, and `watermark`, the largest `ts` among the
+  `you` comments and replies it carried.
 - `accept` and `reject`: the change ids and their `oldText` and `newText` at the time, so a
   decision survives the change leaving the sidecar.
 - `set-tracked`: the entry written or removed.
@@ -738,7 +741,8 @@ four reply types.
 - From the viewer: the Comments action, on any file, on a machine whose kernel has node. If the
   action is missing, the gear's row beside "File links open in" names the machine and the reason
   (`no-node`), and the same row warns when the agent-side tooling is not linked and offers to run
-  the link step; the guide says to look there.
+  the link step; the guide says to look there. (Slice 1 ships the row naming the reason and the
+  command to run, without the one-click link step; see decision 39.)
 - From the chat: a file link opens the viewer as today; Comments is one click further.
 - From the session's side: romp's default session prompt (`claude/romp-session-prompt.md`,
   symlinked by `install.sh:173` and appended to the system prompt by both backends) gains one
@@ -992,9 +996,23 @@ that passes untracked files through.
 - **Tracked folders that hold figures.** The guard would send an agent to `track-edit` on an
   image, which corrupts it. Mitigation: the non-text refusal lands in the vendored guard and
   `track-edit` in Slice 1, before folder tracking ships.
-- **A file moved or renamed by the session.** The sidecar is keyed by path. Mitigation: the store
-  layer re-finds a moved file by content hash on load (`store-io` orphan healing), and the
-  comments log keeps the record either way (decision 27); no rename UI.
+- **A file moved or renamed by the session.** The sidecar is keyed by path. This plan first said
+  the store layer re-finds a moved file by content hash on load. The Slice 1 build (2026-09-06)
+  found otherwise: `store-io` heals only when `healOrphanStore` is called explicitly (the VS Code
+  host calls it; `loadStoreStatus` and the CLIs never do), and the host script does not call it,
+  on purpose. A heal is a disk write: on `status` it would run outside the consent gate, and on
+  a mutating verb it would make a sidecar appear under a `""` fence, refusing the very verb that
+  caused it. So today a renamed file starts a fresh sidecar and the old one stays behind as an
+  orphan; the comments log keeps the record either way (decision 27), and there is no rename UI.
+  The follow-up option: heal on a mutating verb only, behind the consent, and let the
+  fence-and-retry shape absorb the appearance (the verb refuses `store-moved` once, the client
+  re-issues `status` and retries by id).
+- **Author chips on a file a remote kernel owns.** `GET /sessions` lists only the local kernel's
+  sessions and no `/remote/<host>/sessions` relay exists, so on such a file the panel cannot map a
+  sidecar `authorId` to a session's name and color: those chips fall back to the neutral chip with
+  the sidecar's own author label. The Send label still names the session, since that comes from
+  the viewer's identity rather than the map (the Slice 1 build, 2026-09-06). A relay route is the
+  fix if the chips matter on a remote file.
 - **Ended session.** Its todo is hidden from Waiting on you and `_send_or_park` revives dormant
   sessions, not ended ones (`kernel.py:24047-24062, 12227-12234`). Mitigation: the guide note
   above; Send to session surfaces the refusal; the comments are already on disk.
@@ -1170,7 +1188,8 @@ document stands on its own, each with the reasoning it was given.
     no git operation; a `.gitignore` line is the opt-out.
 26. **Phone**: reading and commenting work there; region drawing waits.
 27. **Renames** rely on the store layer's content-hash healing; no rename UI, and the log keeps
-    the record.
+    the record. (The Slice 1 build found that healing runs only when a host calls it, and the host
+    script does not; see the rename bullet under Risks for the actual behavior and the follow-up.)
 28. **One send per file**, sending everything unsent in it; a todo naming several files is
     answered by the first send.
 29. **Done** means the per-slice criteria pass and the user completes the motivating loop end to
@@ -1197,6 +1216,15 @@ document stands on its own, each with the reasoning it was given.
     file starts a project of its own. The tracked list, the comments of every file in the project,
     and the commit-or-ignore choice have one home; a file moved within the project keeps its
     comments; and the agent CLIs, the guard, and the other editors look in the same place.
+39. **The gear row names the reason and the command; the one-click link step waits** (the Slice 1
+    build, 2026-09-06). When the agent-side tooling is not linked on a machine, the File comments
+    row says so, says that its sessions cannot reply until it is, and names the command to run
+    (romp's `install.sh` on that machine); it does not offer to run it. Getting into it promised a
+    button. Running the installer from the dashboard needs a kernel op that executes `install.sh`,
+    and Security posture enumerates what the feature may write: the sidecar, the comments log,
+    `config.json`, and the commented file. An installer run writes `~/.claude` and `settings.json`
+    and is outside that list, so the button adds a server-side surface the posture does not name.
+    It awaits the user's ruling; until then the row's sentence is the offer.
 
 ## Open questions for the user
 

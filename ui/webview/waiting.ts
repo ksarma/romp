@@ -25,6 +25,7 @@ import { ageColorReadable } from "./age-color";
 import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
+import { listenForFrames } from "./frame-listener";
 import { linkifyPathTokens } from "./path-links";
 
 type Color = { bg: string; fg: string } | null;
@@ -383,7 +384,8 @@ function applyFrame(m: any): void {
 
 // every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
 // minute, read by `romp perf client`); the handler itself is unchanged
-window.addEventListener("message", perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
+// …and handed the merged frames by direct call from federation.js when this page has it (frame-listener.ts)
+listenForFrames(perfFrameHandler("waiting", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   if (m.type === "feed") { applyFrame(m); return; }   // this pane rides the FEED payload (reads userTodoRows / userTodosOn)

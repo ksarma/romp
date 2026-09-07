@@ -19,6 +19,7 @@ import { liveNow } from "./feed-age";
 import { TIP_GRACE_MS } from "./tip";
 import { linkifyPrRefs, installPrLinkOpener } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
+import { listenForFrames } from "./frame-listener";
 
 type Color = { bg: string; fg: string } | null;
 interface LedgerNode {
@@ -698,7 +699,8 @@ function mountControls() {
 
 // every frame's synchronous handling time is measured (perf-telemetry.ts: one clientDiag row a
 // minute, read by `romp perf client`); the handler itself is unchanged
-window.addEventListener("message", perfFrameHandler("fleet", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
+// …and handed the merged frames by direct call from federation.js when this page has it (frame-listener.ts)
+listenForFrames(perfFrameHandler("fleet", (m) => vscodeApi?.postMessage(m), (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
   if (m.type === "feedDelta") {
