@@ -2094,6 +2094,63 @@ _MODEL_VALUES = {m["value"] for m in MODEL_CHOICES}
 _EFFORT_VALUES = {e["value"] for e in EFFORT_CHOICES}
 
 
+# ONE lock for the kernel's names-registry read-modify-write spans (review, 2026-09-06): _set_name,
+# _set_session_color, _set_session_emoji and _set_palette each read names/<sid>, edit one field and
+# publish the whole line, on independent threads (a WS handler, an HTTP handler for POST /emoji, the
+# pusher) — two overlapping spans lose whichever landed first, and the emoji is the first field an
+# AGENT writes (set_emoji), so a collision no longer needs two simultaneous human gestures. The spans
+# are a read, an edit and an atomic write; one module lock covers them. Out of its reach, and stated
+# as such: the SDK backend's write_name and the Codex backend's _write_name (their own module locks,
+# same process) and bin/romp's rename hook (another process) — each re-reads at write time, which
+# narrows but does not close the window.
+_NAMES_LOCK = threading.RLock()
+_NAMES_REREAD_S = 0.05   # the pause before the one re-read of a record that read with no name (see below)
+
+
+def _names_problem(text):
+    """A names-registry problem, reported where someone sees it: the kernel log AND the dashboard's error
+    center (the bell), the path SDK problems take — never a silent degrade (the fail-loudly rule)."""
+    sys.stderr.write("[names] %s\n" % text)
+    _sdk_problem("names registry: %s" % text)
+
+
+def _names_fields_for_edit(sid, what):
+    """The tab fields of names/<sid> for a read-edit-publish span (the caller holds _NAMES_LOCK), or None
+    when there is nothing to edit: no record, or a record that reads with NO NAME. Every writer puts the
+    name first, so an empty first field is never a real record — it is another writer's window (a
+    launcher or rename hook that truncated the file before its bytes landed: bin/romp's writer is atomic
+    since review round 3, but an older copy of it may still be running its tmux hook) or a damaged file.
+    Publishing over it would erase the session's name and cwd for good — the kernel's os.replace wins
+    over the other writer's pending bytes, the tab falls back to a sid prefix and discover loses the
+    transcript (review round 3, 2026-09-06; set_emoji is the first names write an agent drives, so the
+    collision no longer needs two human gestures). One re-read after a short pause (the window is a
+    printf's worth of time) tells a window from damage; if the record still has no name it is left
+    EXACTLY as it is and the problem is reported, naming the sid."""
+    p = NAMES / str(sid)
+    for attempt in (0, 1):
+        try:
+            text = p.read_text()
+        except Exception:
+            return None
+        parts = text.rstrip("\n").split("\t")
+        if parts[0]:
+            return parts
+        if attempt == 0:
+            time.sleep(_NAMES_REREAD_S)
+    _names_problem("names/%s reads with no name (%d bytes, twice) — %s not written; the record is being "
+                   "rewritten or is damaged" % (sid, len(text), what))
+    return None
+
+
+def _names_refusal(sid):
+    """Why a names write returned False, for the caller's one-line answer: no record at all, or a record
+    that reads with no name (_names_fields_for_edit left it alone and reported it)."""
+    if not (NAMES / str(sid)).exists():
+        return "no names record for that session — is it known to this kernel?"
+    return ("that session's names record reads with no name (being rewritten, or damaged) — nothing written; "
+            "try again, and see the kernel log")
+
+
 def _set_session_color(sid, bg):
     """Override a session's identity color: rewrite the names registry's bg (3rd field) + fg word (4th),
     preserving the name + cwd. Only a value from a known palette is accepted (its own palette supplies
@@ -2102,14 +2159,23 @@ def _set_session_color(sid, bg):
     on the session's next resume."""
     if not pal.find(bg):
         return False
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-    except Exception:
-        return False
-    name = parts[0] if parts else ""
-    cwd = parts[1] if len(parts) > 1 else ""
-    _atomic_write(NAMES / sid, "\t".join([name, cwd, bg, pal.fg_for(bg)]) + "\n")
+    with _NAMES_LOCK:
+        parts = _names_fields_for_edit(sid, "the color")
+        if parts is None:
+            return False
+        parts += [""] * (4 - len(parts))
+        parts[2], parts[3] = bg, pal.fg_for(bg)
+        _atomic_write(NAMES / sid, _names_line(parts))     # name, cwd and the tab emoji ride along
     return True
+
+
+def _names_line(parts):
+    """One names-registry line from its tab fields: the four identity fields always, the fifth (the tab
+    emoji, 2026-09-06) only while it is set — so a record without one stays byte-identical to the
+    four-field shape every reader grew up on. Every kernel-side writer joins through here."""
+    parts = list(parts) + [""] * (5 - len(parts))
+    fields = parts[:5] if parts[4] else parts[:4]
+    return "\t".join(fields) + "\n"
 
 
 def _set_palette(name):
@@ -2131,21 +2197,21 @@ def _set_palette(name):
     except OSError:
         sids = []
     for sid in sids:
-        try:
-            parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        except Exception:
-            continue
-        loc = pal.find(parts[2]) if len(parts) > 2 else None
-        if loc:
-            # palettes may differ in LENGTH now (the romp set grows append-only, 2026-08-28): a
-            # session on a slot the new set lacks wraps modulo — a total, deterministic mapping
-            # beats an IndexError or a stale off-palette color surviving the switch
-            _slot = loc[1] % len(new_bg)
-        if not loc or (parts[2], parts[3] if len(parts) > 3 else "") == (new_bg[_slot], new_fg[_slot]):
-            continue
-        parts += [""] * (4 - len(parts))
-        parts[2], parts[3] = new_bg[_slot], new_fg[_slot]
-        _atomic_write(NAMES / sid, "\t".join(parts[:4]) + "\n")
+        with _NAMES_LOCK:   # one record's read-edit-publish span; the loop yields between records
+            parts = _names_fields_for_edit(sid, "the palette recolor")
+            if parts is None:
+                continue
+            loc = pal.find(parts[2]) if len(parts) > 2 else None
+            if loc:
+                # palettes may differ in LENGTH now (the romp set grows append-only, 2026-08-28): a
+                # session on a slot the new set lacks wraps modulo — a total, deterministic mapping
+                # beats an IndexError or a stale off-palette color surviving the switch
+                _slot = loc[1] % len(new_bg)
+            if not loc or (parts[2], parts[3] if len(parts) > 3 else "") == (new_bg[_slot], new_fg[_slot]):
+                continue
+            parts += [""] * (4 - len(parts))
+            parts[2], parts[3] = new_bg[_slot], new_fg[_slot]
+            _atomic_write(NAMES / sid, _names_line(parts))    # a tab emoji (5th field) rides along
     _write_palette_mirror()
     _send_to_app("chat", {"type": "palette", "colors": new_bg})   # fresh swatches for open right-click menus
     _mark_views_dirty()                                           # tabs/cards/lanes repaint in the new colors
@@ -15372,13 +15438,13 @@ def _tmux_name_of(sid):
 def _set_name(sid, name):
     """Rewrite a session's names-registry DISPLAY name (1st tab field), preserving its dir + identity
     color. Used for a DEAD (read-only) tab, which has no tmux session for the rename hook to sync."""
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-    except Exception:
-        return
-    parts += [""] * (4 - len(parts))
-    parts[0] = name
-    _atomic_write(NAMES / sid, "\t".join(parts[:4]) + "\n")   # atomic publish
+    with _NAMES_LOCK:
+        parts = _names_fields_for_edit(sid, "the name")
+        if parts is None:
+            return
+        parts += [""] * (4 - len(parts))
+        parts[0] = name
+        _atomic_write(NAMES / sid, _names_line(parts))   # atomic publish; a tab emoji (5th field) rides along
 
 
 def _rename_session(sid, name):
@@ -17436,19 +17502,39 @@ def _remote_forward(r, path, body):
     a remote session the kernel forwards the wake here so the remote, idle session starts working immediately
     (not at its next turn). Only the tiny control signal crosses — never the bulk session-data stream. Returns
     the parsed JSON response, or None on failure (caller degrades; the bus re-delivers via the maildir)."""
+    return _remote_forward_status(r, path, body)[1]
+
+
+def _remote_forward_status(r, path, body, method="POST"):
+    """_remote_forward with the HTTP status kept: (status, parsed JSON on a 200 else None). Status 0 means
+    the call never landed (a dead tunnel — the redial is demanded here, as before). A caller that has to
+    tell "answered no" from "did not answer" reads the status: a 404 from a remote kernel that predates a
+    route is an ANSWER — version skew, not a tunnel fault — and folding it to None sent the user to check
+    the tunnel instead of updating the remote (the /emoji review, 2026-09-06). `method="GET"` forwards a
+    READ (GET /emoji?target=…, review round 3): `path` carries its own query, `body` is ignored, and the
+    token joins the query with & — the same tunnel, the same status contract."""
     import urllib.parse
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(r["local_port"]), timeout=8)
-        p = path + (("?token=" + urllib.parse.quote(r["token"])) if r.get("token") else "")
-        c.request("POST", p, json.dumps(body), {"Content-Type": "application/json"})
+        sep = "&" if "?" in path else "?"
+        p = path + ((sep + "token=" + urllib.parse.quote(r["token"])) if r.get("token") else "")
+        if method == "GET":
+            c.request("GET", p)
+        else:
+            c.request("POST", p, json.dumps(body), {"Content-Type": "application/json"})
         resp = c.getresponse()
         data = resp.read()
         c.close()
-        return json.loads(data.decode("utf-8") or "{}") if resp.status == 200 else None
     except Exception as e:
         # a forwarded op hitting a dead tunnel is USER DEMAND — re-send the connect signal
         _demand_redial(r.get("host") or "", "refused" if isinstance(e, ConnectionRefusedError) else "timeout")
-        return None
+        return 0, None
+    if resp.status != 200:
+        return resp.status, None
+    try:
+        return 200, json.loads(data.decode("utf-8") or "{}")
+    except (ValueError, UnicodeDecodeError):
+        return 200, None   # answered, with something that is not JSON: not a tunnel fault, no redial
 
 
 def _poll_remote_version(r):
@@ -44092,8 +44178,7 @@ class Handler(BaseHTTPRequestHandler):
                         '"%s" is not a swatch of any palette — GET /palette lists the choosable ones' % bg}),
                                       "application/json")
                 if not _set_session_color(tsid, bg):
-                    return self._send(200, json.dumps({"ok": False, "error":
-                        "no names record for that session — is it known to this kernel?"}),
+                    return self._send(200, json.dumps({"ok": False, "error": _names_refusal(tsid)}),
                                       "application/json")
                 _mark_views_dirty()
                 return self._send(200, json.dumps({"ok": True, "id": tsid, "bg": bg,
