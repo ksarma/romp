@@ -5,13 +5,13 @@
 // shortcuts dialog names a conflict only with another shell command (conflictOf). So a person who bound a command to
 // Ctrl+Enter, then typed a comment and pressed the chord the hint under the box names, got the command: the dispatcher
 // stopped the event before the box's own listener, nothing saved, and the Save button was the only way out. The panel now
-// claims the chord at the WINDOW in the capture phase while the box is the key's target (Panel.claimSaveChord): the DOM's
-// phase order puts a window listener ahead of a document one whoever registered first, so the chord typed in the box is
-// the box's, as a bare Enter is (the shell refuses to bind that). Three legs: the shell's rule as its pure module states
-// it, the claim driven through the panel tests' DOM stand-in (node's EventTarget stands in for the window), and the order
-// itself in headless Chromium and Firefox — the shell's own decision functions wired as its dispatcher is, ahead of the
-// real panel — which skips LOUDLY without a playwright browser (CI installs none). Synthetic fixtures only: the notes-api
-// world, placeholder ids.
+// claims the chord at the WINDOW in the capture phase while the live panel's box is the key's target (claimSaveChord, one
+// listener the module adds when it loads, keyed on `live`): the DOM's phase order puts a window listener ahead of a document
+// one whoever registered first, so the chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind
+// that). Three legs: the shell's rule as its pure module states it, the claim driven through the panel tests' DOM stand-in
+// (node's EventTarget stands in for the window), and the order itself in headless Chromium and Firefox — the shell's own
+// decision functions wired as its dispatcher is, ahead of the real panel — which skips LOUDLY without a playwright browser
+// (CI installs none). Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -350,12 +350,16 @@ test("the shell lets a command take Ctrl+Enter or Meta+Enter, names no conflict 
 
 // ── pinned at source: the claim, its life, and the dispatcher it precedes ─────────────────────────
 
-test("source: the box's keys are one handler; the claim sits on the window in the capture phase for the panel's life and takes only the box's save chord; the shell's dispatcher is the document-capture listener it precedes", () => {
+test("source: the box's keys are one handler; the claim is the module's one window-capture listener, keyed on the live panel, and takes only its box's save chord; the shell's dispatcher is the document-capture listener it precedes", () => {
   assert.match(SRC, /this\.input\.addEventListener\("keydown", this\.boxKey\);/, "the box's own listener is the named handler the claim hands the chord to");
-  assert.match(SRC, /window\.addEventListener\("keydown", this\.claimSaveChord, true\);/, "registered in the constructor, on the window, capture");
-  assert.match(SRC, /window\.removeEventListener\("keydown", this\.claimSaveChord, true\);/, "…and removed in dispose");
-  assert.match(SRC, /claimSaveChord = \(ev: KeyboardEvent\) => \{\n\s*if \(ev\.target !== this\.input \|\| composerKeyAction\(ev\) !== "save"\) return;\n\s*ev\.stopPropagation\(\);\n\s*this\.boxKey\(ev\);\n\s*\};/,
-    "the box as target and the save verdict, or nothing; then the event stops at the window and boxKey saves");
+  // One listener for the module, added when it loads and reading `live` — not one per panel: a per-panel claim added in the
+  // constructor ran AFTER the chat pane's window-capture history keys (the 2026-09-07 review); the full shape of the
+  // function, its stopImmediatePropagation and dispose's `live = null` are pinned where that finding lives,
+  // file-comments-composer-chat-nav-chord.test.ts.
+  assert.match(SRC, /^if \(typeof window !== "undefined"\) window\.addEventListener\("keydown", claimSaveChord, true\);$/m, "on the window, capture, added when the module loads");
+  assert.match(SRC, /\nfunction claimSaveChord\(ev: KeyboardEvent\): void \{\n\s*const p = live;\n\s*if \(!p \|\| ev\.target !== p\.input \|\| composerKeyAction\(ev\) !== "save"\) return;/,
+    "the live panel's box as target and the save verdict, or nothing");
+  assert.doesNotMatch(SRC, /this\.claimSaveChord/, "no per-panel copy: none added in the constructor, none removed in dispose");
   assert.match(SRC, /boxKey = \(e: KeyboardEvent\) => \{\n\s*if \(e\.key === "Escape"\) e\.stopPropagation\(\);\n\s*const act = composerKeyAction\(e\);\n\s*if \(act === "save"\) \{ e\.preventDefault\(\); void this\.saveComposer\(\); \}/);
   // the shell's side: a capture listener on each pane document, wired at pane load, that stops the event before the command
   assert.match(PALETTE, /f\.contentDocument\.addEventListener\("keydown", onKey, true\)/, "the shell dispatches from a capture listener on each pane document");
