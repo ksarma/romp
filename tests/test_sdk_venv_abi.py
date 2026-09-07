@@ -102,7 +102,7 @@ class EnsureSdkOnPath(unittest.TestCase):
         self.assertNotIn(old, sys.path)
         self.assertEqual(self.err.getvalue(), "")
 
-    def test_a_free_threaded_interpreter_recognises_its_own_venv(self):
+    def test_a_free_threaded_interpreter_recognizes_its_own_venv(self):
         # venv names a 3.99t build's lib dir python3.99t; the match is on the full tag, so the venv that
         # interpreter built is added, not refused as "built for 3.99t but the kernel runs 3.99" (a state
         # neither remedy could exit: romp-sdk-setup saw nothing to rebuild, ROMP_PYTHON named the same binary)

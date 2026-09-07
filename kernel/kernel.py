@@ -43791,7 +43791,7 @@ def _graceful_term(signum, frame):
     its state settles honestly. Parked ops + SDK queues are already mirrored to disk on every
     mutation, and a cut turn keeps its 'working' state tail — the NEXT kernel's boot reconcile
     resumes exactly those. Bounded (~2s) so `romp refresh` stays snappy. Never construct the
-    backend here — no SDK sessions were running if it doesn't exist. A second SIGTERM while the first
+    backend here: no SDK sessions were running if it doesn't exist. A second SIGTERM while the first
     is draining returns at once (_EXIT_ONCE): the first finishes and exits."""
     if not _EXIT_ONCE.acquire(blocking=False):
         return
