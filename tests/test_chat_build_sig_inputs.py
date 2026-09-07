@@ -318,3 +318,433 @@ class Census(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── the differential tests ────────────────────────────────────────────────────────────────────────
+# One hermetic world (a tmux-less session discovery finds, with a fixed liveness row); each test moves one
+# input and requires the signature to miss under exactly that input's label, so a component that stopped
+# covering its input fails here by name. The dependency components are exercised through a hand-made cache
+# record, the way _chat_sig_deps evaluates one; the last test drives the REAL build_session through _push.
+import json
+import re
+import time
+from pathlib import Path
+
+SID = "77777777-8888-9999-aaaa-ccccccccccc1"      # this module's private synthetic sids: goal stores are minted under SID
+PEER = "77777777-8888-9999-aaaa-ccccccccccc2"
+NOW = 1781100000
+T0 = NOW - 3600
+
+
+def _iso(t):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(t, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _uline(t, text, uuid, parent=None):
+    return {"type": "user", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "promptSource": "typed", "message": {"role": "user", "content": text}}
+
+
+def _aline(t, text, uuid, parent=None):
+    return {"type": "assistant", "timestamp": _iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}], "stop_reason": "end_turn"}}
+
+
+class _World(unittest.TestCase):
+    def setUp(self):
+        jd = km.jd
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        self.cdir = td / "launchdir"
+        self.cdir.mkdir()
+        proj = td / "projects"
+        pdir = proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(self.cdir)))
+        pdir.mkdir(parents=True)
+        self.tpath = pdir / (SID + ".jsonl")
+        self.tpath.write_text("\n".join(json.dumps(r) for r in [
+            _uline(T0, "start the notes-api spike", "u1"), _aline(T0 + 40, "Spike is up.", "a1", "u1"),
+            _uline(T0 + 100, "now the tests", "u2", "a1"), _aline(T0 + 140, "Tests pass.", "a2", "u2")]) + "\n")
+        state = td / "state"
+        state.mkdir()
+        self.saved = (jd.STATE, jd.PROJECTS, km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._tmux_sessions, km._sdk,
+                      os.environ.get("CLAUDE_CONFIG_DIR"), os.environ.get("ROMP_HOST_NAME"), km._feed_needs_input[0],
+                      len(km._downtime), km._claude_account_label)
+        jd._rebind_state(state)                       # every STATE-derived dir (goals, states, episodes, gone, sdk, ...)
+        jd.PROJECTS = proj
+        jd.NAMES.mkdir()
+        (jd.NAMES / SID).write_text("web\t%s\t#1EA1EB\twhite\n" % self.cdir)
+        km.NAMES = jd.NAMES
+        km.WORKING_DIR = state / "working"
+        km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+        os.environ["CLAUDE_CONFIG_DIR"] = str(td / "claude")   # the task-store root (_tasks_base)
+        self.row = {"state": "idle", "since": NOW - 100, "model": "", "effort": "", "context": None,
+                    "compactPct": None, "color": None, "backend": "tmux"}
+        self.tmux = {SID: self.row}
+        km._tmux_sessions = lambda: self.tmux
+        km._sdk = lambda: None
+        km._built_chat.clear()
+        km._live_scope.chat_shared = None
+        self.sess = {"sid": SID, "name": "web", "path": str(self.tpath), "anchor": SID}
+
+    def tearDown(self):
+        jd = km.jd
+        (state, proj, names, wdir, gmd, tmux, sdk, cfg, host, needs, ndown, acct) = self.saved
+        jd._rebind_state(state)
+        jd.PROJECTS = proj
+        km.NAMES, km.WORKING_DIR, km._GLOBAL_CLAUDE_MD, km._tmux_sessions, km._sdk = names, wdir, gmd, tmux, sdk
+        km._claude_account_label = acct
+        for k, v in (("CLAUDE_CONFIG_DIR", cfg), ("ROMP_HOST_NAME", host)):
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        km._feed_needs_input[0] = needs
+        del km._downtime[ndown:]
+        for d in (km._tmux_echo, km._tmux_echo_rev, km._node_anchor_rev, km._pending_ops, km._auto_retry_state,
+                  km._interrupt_clicked, km._compact_clicked, km._model_switch_pending):
+            d.pop(SID, None)
+        with km._watch_lock:
+            km._watches[:] = [w for w in km._watches if w.get("sid") != SID]
+        km._rewind_hold_clear(SID)
+        km._built_chat.clear()
+        km._live_scope.names = None
+        km._live_scope.chat_shared = None
+        for k in [k for k in km._PATH_LINK_CACHE if k[0] == SID]:
+            km._PATH_LINK_CACHE.pop(k, None)
+        self.td.cleanup()
+
+    def sig(self, now=NOW, deps=None):
+        return km._chat_build_sig(self.sess, self.tmux, now, deps=deps)
+
+    def moved(self, before, after):
+        return km._chat_sig_miss(before, after)
+
+    def store(self, nodes=None, status=None):
+        km.jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps({"rompUuid": SID, "nodes": nodes or {}, "status": status or {}}))
+
+
+class Differential(_World):
+    def test_a_quiet_world_holds_and_has_one_value_per_label(self):
+        a = self.sig()
+        self.assertEqual(len(a), len(km._CHAT_SIG_LABELS))
+        self.assertEqual(self.sig(), a)
+        self.assertEqual(self.moved(a, self.sig()), ())
+
+    def test_a_transcript_append_misses_under_transcript_alone(self):
+        a = self.sig()
+        with open(self.tpath, "a") as f:
+            f.write(json.dumps(_uline(T0 + 200, "and the docs", "u3", "a2")) + "\n")
+        self.assertEqual(self.moved(a, self.sig()), ("transcript",))
+
+    def test_a_states_row_misses_under_states(self):
+        a = self.sig()
+        km.jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        with open(km.jd.STATESDIR / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"t": T0 + 150, "state": "idle"}) + "\n")
+        self.assertEqual(self.moved(a, self.sig()), ("states",))
+
+    def test_the_goal_store_its_journal_and_its_archive_each_miss_under_store(self):
+        a = self.sig()
+        self.store()
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("store",), "a publish busts the tab at once (the live identity)")
+        jd = km.jd
+        jd._overrides_dir().mkdir(parents=True, exist_ok=True)
+        with open(jd._overrides_dir() / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"t": T0, "op": "noop"}) + "\n")
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("store",), "the override journal is the store triple's second member")
+        jd.GOALARCHDIR.mkdir(parents=True, exist_ok=True)
+        (jd.GOALARCHDIR / (SID + ".json")).write_text(json.dumps({"rompUuid": SID, "nodes": {}, "status": {}}))
+        self.assertEqual(self.moved(c, self.sig()), ("store",), "…and the goals-archive the third")
+
+    def test_a_rewind_hold_misses_under_hold_and_its_clear_restores_the_signature(self):
+        a = self.sig()
+        km._rewind_hold_set(SID, T0 + 10, "u1")
+        self.assertEqual(self.moved(a, self.sig()), ("hold",))
+        km._rewind_hold_clear(SID)
+        self.assertEqual(self.sig(), a)
+
+    def test_the_archive_headline_and_the_episode_log_each_miss_under_their_own_label(self):
+        jd = km.jd
+        a = self.sig()
+        jd.ARCHDIR.mkdir(parents=True, exist_ok=True)
+        (jd.ARCHDIR / (SID + ".json")).write_text(json.dumps({"headline": "the notes-api spike"}))
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("archive",))
+        jd.EPIDIR.mkdir(parents=True, exist_ok=True)
+        with open(jd.EPIDIR / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"head": "u1", "fsid": SID, "t": T0}) + "\n")
+        self.assertEqual(self.moved(b, self.sig()), ("episodes",))
+
+    def test_the_sdk_registry_and_the_death_marker_each_miss_under_their_own_label(self):
+        jd = km.jd
+        a = self.sig()
+        jd.SDKDIR.mkdir(parents=True, exist_ok=True)
+        (jd.SDKDIR / (SID + ".json")).write_text(json.dumps({"sid": SID, "alive": True, "cwd": str(self.cdir)}))
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("reg",))
+        jd.GONEDIR.mkdir(parents=True, exist_ok=True)
+        (jd.GONEDIR / (SID + ".json")).write_text(json.dumps({"t": T0 + 300, "by": "probe"}))
+        self.assertEqual(self.moved(b, self.sig()), ("gone",))
+
+    def test_the_task_store_the_working_note_and_the_needs_bit(self):
+        a = self.sig()
+        tdir = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "tasks" / SID
+        tdir.mkdir(parents=True)
+        (tdir / "1.json").write_text(json.dumps({"id": "1", "subject": "write the tests", "status": "pending"}))
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("tasks",))
+        km._set_working_note(SID, "editing the notes-api tests")
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("note",))
+        km._feed_needs_input[0] = frozenset({SID})
+        self.assertEqual(self.moved(c, self.sig()), ("needs",))
+
+    def test_the_live_tail_misses_under_live_for_an_echo_and_for_its_dropped_mark(self):
+        a = self.sig()
+        km._tmux_echo_add(SID, "a send still in flight")
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("live",), "an echo added to the tail, no transcript write")
+        t = km._tmux_echo_atoms(SID)[0]["t"]
+        km._tmux_echo_settle(SID, human_floor=t + 5)          # the settle marks it dropped in place
+        self.assertTrue(km._tmux_echo_atoms(SID)[0].get("dropped"))
+        self.assertEqual(self.moved(b, self.sig()), ("live",), "a dropped mark on a background tab rebuilds it next cycle")
+
+    def test_the_liveness_row_misses_under_row_and_its_snapshot_stamp_does_not(self):
+        a = self.sig()
+        self.row["snapT"] = 123456.0
+        self.assertEqual(self.moved(a, self.sig()), (), "snapT moves every cycle and is not an input")
+        self.row["model"] = "opus"
+        self.assertEqual(self.moved(a, self.sig()), ("row",))
+
+    def test_each_clock_boolean_misses_under_clock_exactly_at_its_crossing(self):
+        a = self.sig()
+        km._interrupt_clicked[SID] = NOW
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("clock",), "a stop dispatched: interrupting")
+        self.assertEqual(self.sig(now=NOW + 121), a, "past the 120 s cap the stamp is popped and the signature is back")
+        km._model_switch_pending[SID] = {"target": "opus", "until": time.time() + 20}
+        self.assertEqual(self.moved(a, self.sig()), ("clock",), "a model switch pending")
+        km._model_switch_pending.pop(SID, None)
+        self.assertEqual(self.moved(a, self.sig(now=NOW + 4000)), ("clock",), "an hour idle: the faded look")
+        km._compact_clicked[SID] = NOW
+        self.assertEqual(self.moved(a, self.sig()), ("clock",), "a compact click: the optimistic compacting cue")
+        km._compact_clicked.pop(SID, None)
+        self.assertEqual(self.sig(), a)
+
+    def test_parked_ops_miss_under_ops_and_the_limit_hold_is_read_only_while_something_is_queued(self):
+        a = self.sig()
+        self.assertIsNone(a[km._CHAT_SIG_LABELS.index("limit")], "nothing queued: the build never reads the hold")
+        km._pending_ops[SID] = [("send", "hello there", False)]
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("ops",))
+        (km.jd.STATE / "usage.json").write_text(json.dumps({"five_hour": {"pct": 100, "resets_at": time.time() + 3600}}))
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("limit",), "the account hit its window: the queued bubble's hold")
+        self.assertEqual(c[km._CHAT_SIG_LABELS.index("limit")]["reason"], "limit")
+
+    def test_the_retry_state_misses_under_retry(self):
+        a = self.sig()
+        km._auto_retry_state[SID] = {"n": 2, "next": 123.0}
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("retry",))
+        km._suppress_session_retry(SID)
+        self.assertEqual(self.moved(b, self.sig()), ("retry",))
+        km._clear_session_retry_suppress(SID)
+
+    def test_the_live_task_rows_miss_under_bg_and_a_deadline_crossing_is_a_change(self):
+        a = self.sig()
+        self.row["bgTasks"] = [{"toolUseId": "t1", "desc": "the nightly batch", "since": NOW - 50, "type": "local_bash"}]
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("bg", "row"))
+        jd = km.jd
+        jd.SDKDIR.mkdir(parents=True, exist_ok=True)
+        (jd.SDKDIR / (SID + ".json")).write_text(json.dumps(
+            {"sid": SID, "alive": True, "bgLedger": [{"toolUseId": "t1", "deadlineEpoch": time.time() - 100}]}))
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("bg", "reg"), "the ledger's deadline passed: the row is gone from the live set")
+        self.assertEqual(c[km._CHAT_SIG_LABELS.index("bg")], ())
+
+    def test_a_kernel_watch_misses_under_watch(self):
+        a = self.sig()
+        with km._watch_lock:
+            km._watches.append({"id": "w1", "cmd": "true", "every": 60, "timeoutS": 600, "sid": SID,
+                                "note": "the nightly job", "at": NOW})
+        self.assertEqual(self.moved(a, self.sig()), ("watch",))
+
+    def test_the_awaiting_stamp_view_misses_under_stamp_when_a_peers_answer_lands_in_the_postal_log(self):
+        a = self.sig()
+        self.store(nodes={"g1": {"id": "g1", "text": "ask the api session", "t": T0, "parentId": None,
+                                 "awaitingWhy": "waiting on a peer", "awaitingAt": T0 + 5,
+                                 "awaitingKind": "peer", "awaitingPeers": [PEER]}},
+                   status={"g1": "working"})
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("stamp", "store"), "a stamp in a published store")
+        jd = km.jd
+        jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
+        with open(jd.MESSAGES, "a") as f:
+            f.write(json.dumps({"ev": "sent", "id": "m1", "from_id": SID, "to_id": PEER, "t": T0, "kind": "question", "body": "?"}) + "\n")
+            f.write(json.dumps({"ev": "sent", "id": "m2", "from_id": PEER, "to_id": SID, "t": T0 + 100, "kind": "coordinate", "body": "done"}) + "\n")
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("stamp",),
+                         "the peer's answer supersedes the wait: the chip changes with no card and no store write")
+
+    def test_the_anchor_revision_the_suspension_list_and_the_names_revision(self):
+        a = self.sig()
+        km._node_anchor_rev[SID] = 1
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("anchors",))
+        km._downtime.append((NOW, NOW + 10))
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("downtime",))
+        self.assertIsNone(c[km._CHAT_SIG_LABELS.index("names")], "outside a pusher cycle: no names revision")
+        snap = km._names_snapshot()
+        km._live_scope.names = snap
+        d = self.sig()
+        self.assertEqual(self.moved(c, d), ("names",), "inside a cycle the revision is an integer")
+        self.assertEqual(self.sig(), d, "the same snapshot again: the same revision")
+        renamed = dict(snap)
+        renamed[SID] = ["web-2"] + list(snap[SID][1:])
+        km._live_scope.names = renamed
+        self.assertEqual(self.moved(d, self.sig()), ("names",), "a rename moves it")
+
+    def test_the_shared_files_each_miss_under_their_own_label(self):
+        jd = km.jd
+        a = self.sig()
+        km._set_session_flag(SID, "hideFromFeed", True)
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("flags",))
+        km._set_notify_all(True)
+        c = self.sig()
+        self.assertEqual(self.moved(b, c), ("ncards",))
+        other = next(n for n in km.cm.COLORMAPS if n != km.cm.DEFAULT)
+        (jd.STATE / "colormap").write_text(other)
+        d = self.sig()
+        self.assertEqual(self.moved(c, d), ("colormap",))
+        km._claude_account_label = lambda: "someone"
+        e = self.sig()
+        self.assertEqual(self.moved(d, e), ("acct",))
+        with open(jd.STATE / "cleared.jsonl", "a") as f:
+            f.write(json.dumps({"id": "g9", "t": T0}) + "\n")
+        g = self.sig()
+        self.assertEqual(self.moved(e, g), ("cleared",))
+        os.environ["ROMP_HOST_NAME"] = "TESTHOST2"
+        self.assertEqual(self.moved(g, self.sig()), ("host",))
+
+    def test_the_cwd_rows_and_the_claudemd_chain(self):
+        a = self.sig()
+        (self.cdir / "CLAUDE.md").write_text("# project rules\n")
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("claudemd",), "an instruction file appeared on the chain")
+        other = Path(self.td.name) / "otherdir"
+        other.mkdir()
+        (km.jd.NAMES / SID).write_text("web\t%s\t#1EA1EB\twhite\n" % other)
+        self.assertEqual(self.moved(b, self.sig()), ("claudemd", "cwd"), "a move: the cwd rows and the chain both follow")
+
+    def test_a_recorded_task_output_that_grows_misses_under_taskout(self):
+        out = Path(self.td.name) / "task-out.log"
+        out.write_text("hello\n")
+        deps = {"task_outs": [(str(out), km._chat_stat_key(str(out)))], "pl_pending": [], "postal_any": False,
+                "postal_cards": [], "at_build": None}
+        a = self.sig(deps=deps)
+        self.assertEqual(a[km._CHAT_SIG_LABELS.index("taskout")], ((str(out), km._chat_stat_key(str(out))),))
+        self.assertEqual(self.sig(deps=deps), a)
+        with open(out, "a") as f:
+            f.write("more output\n")
+        self.assertEqual(self.moved(a, self.sig(deps=deps)), ("taskout",))
+        out.unlink()
+        self.assertEqual(self.moved(a, self.sig(deps=deps)), ("taskout",), "…and one that vanished")
+
+    def test_a_pending_path_token_whose_file_appears_misses_under_pathlink(self):
+        md = "the numbers are in report.md now"
+        self.assertEqual(km._path_links(md, SID, "u9", {}), {}, "tokens exist, none resolved: the retry is armed")
+        deps = {"task_outs": [], "pl_pending": [("u9", md)], "postal_any": False, "postal_cards": [], "at_build": None}
+        a = self.sig(deps=deps)
+        self.assertEqual(a[km._CHAT_SIG_LABELS.index("pathlink")], (("u9", {}, None),))
+        self.assertEqual(self.sig(deps=deps), a)
+        (self.cdir / "report.md").write_text("42\n")
+        b = self.sig(deps=deps)
+        self.assertEqual(self.moved(a, b), ("pathlink",), "the mention preceded its file; the file landing is the change")
+        self.assertIn("report.md", b[km._CHAT_SIG_LABELS.index("pathlink")][0][1])
+
+    def test_a_postal_dependency_misses_under_postal_when_the_log_moves(self):
+        deps = {"task_outs": [], "pl_pending": [], "postal_any": True, "postal_cards": [], "at_build": None}
+        a = self.sig(deps=deps)
+        self.assertEqual(a[km._CHAT_SIG_LABELS.index("postal")], (None, ()), "no log yet")
+        jd = km.jd
+        jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
+        with open(jd.MESSAGES, "a") as f:
+            f.write(json.dumps({"ev": "sent", "id": "m1", "from_id": PEER, "to_id": SID, "t": T0, "kind": "coordinate", "body": "hi"}) + "\n")
+        self.assertEqual(self.moved(a, self.sig(deps=deps)), ("postal",))
+        nodeps = self.sig()
+        self.assertIsNone(nodeps[km._CHAT_SIG_LABELS.index("postal")], "a tab with no postal traffic ignores the log")
+
+
+class RealBuildIdleBoard(_World):
+    """The real build_session through _push over a quiet world: the first push builds the tab, every later
+    push serves it — judge passes included — and the post-build signature held (nothing moved)."""
+
+    STUBS = ("_tab_list_tmux", "_chat_tab_sessions", "_cached_feed", "_cached_timeline", "build_timeline",
+             "_fleet_view_sig", "_comments_frame", "_retry_parked_creates")
+
+    def setUp(self):
+        super().setUp()
+        self.saved_stubs = {nm: getattr(km, nm) for nm in self.STUBS}
+        self.saved_state2 = (dict(km._prev_chat_events), dict(km._prev_chat_ledger), list(km._last_tab_order), km._judge_gen[0])
+        km._tab_list_tmux = lambda tmux: dict(tmux)
+        km._chat_tab_sessions = lambda now, tmux: [dict(self.sess)]
+        km._cached_feed = lambda now, tmux, sig, connect=False: {"working": [], "awaiting": [], "now": now}
+        km._cached_timeline = lambda now, tmux, sig, connect=False: {"turns": {}, "judging": [], "messages": [], "now": now}
+        km.build_timeline = lambda now, tmux, **kw: {"lanes": [], "now": now}
+        km._fleet_view_sig = lambda now, tmux: {"probe": 1}
+        km._comments_frame = lambda sid, tmux: None
+        km._retry_parked_creates = lambda: None
+        km._prev_chat_events.clear(); km._prev_chat_ledger.clear()
+        self.client = {"app": "chat", "alive": True, "sent": {}, "active": PEER, "send": lambda s: None}
+
+    def tearDown(self):
+        for nm, v in self.saved_stubs.items():
+            setattr(km, nm, v)
+        pe, pl, lo, jg = self.saved_state2
+        km._prev_chat_events.clear(); km._prev_chat_events.update(pe)
+        km._prev_chat_ledger.clear(); km._prev_chat_ledger.update(pl)
+        km._last_tab_order[:] = lo
+        km._judge_gen[0] = jg
+        super().tearDown()
+
+    @staticmethod
+    def _chat():
+        c = km._PERF_STATS.snapshot()["builds"]["chat"]
+        return dict(c, bg_miss=dict(c["bg_miss"]))
+
+    def test_one_build_then_cache_hits_across_judge_passes_with_nothing_moved(self):
+        c0 = self._chat()
+        km._push([self.client])
+        self.assertIn(SID, km._built_chat, "the real build cached")
+        ent = km._built_chat[SID]
+        self.assertEqual(len(ent), 4, "(sig, payload, serialized, deps)")
+        self.assertEqual(ent[1]["id"], SID)
+        self.assertEqual(ent[3]["task_outs"], [])
+        self.assertEqual(ent[3]["pl_pending"], [])
+        self.assertFalse(ent[3]["postal_any"])
+        for _ in range(5):
+            km._judge_gen[0] += 1                          # a producer pass that wrote nothing
+            km._push([self.client])
+        c1 = self._chat()
+        d = {k: c1[k] - c0[k] for k in ("cached", "built", "bg_built", "moved")}
+        self.assertEqual(d, {"cached": 5, "built": 1, "bg_built": 1, "moved": 0},
+                         "one build, five served pushes, none left uncached by a moved signature")
+        self.assertEqual({k: v - c0["bg_miss"].get(k, 0) for k, v in c1["bg_miss"].items() if v - c0["bg_miss"].get(k, 0)},
+                         {"cold": 1})
+        with open(self.tpath, "a") as f:
+            f.write(json.dumps(_uline(T0 + 200, "and the docs", "u3", "a2")) + "\n")
+        km._push([self.client])
+        c2 = self._chat()
+        self.assertEqual(c2["bg_built"] - c1["bg_built"], 1)
+        self.assertEqual({k: v - c1["bg_miss"].get(k, 0) for k, v in c2["bg_miss"].items() if v - c1["bg_miss"].get(k, 0)},
+                         {"transcript": 1})
+        km._push([self.client])
+        self.assertEqual(self._chat()["cached"] - c2["cached"], 1, "served again once nothing moves")
