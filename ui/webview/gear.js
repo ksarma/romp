@@ -147,10 +147,10 @@ var GEAR_HTML =
   "<div id=rs-tabctx-pick style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>File links open in</b>" +
-  '<span class=rs-sub>Where a file clicked in the chat opens. While the Files pane is open, file links open there. When it is closed: over the chat itself, in the Feed pane so the transcript stays readable while the file is up, or in the Files pane, its own column that stays open until you close the file. Browser dashboard only: in VS Code file links open in the editor, and a chat tab opened on its own has no other pane to use.</span>' +
+  '<span class=rs-sub>Where a file or folder clicked in the chat opens. While the Files pane is open, both open there. When it is closed, a file opens over the chat itself, in the Feed pane so the transcript stays readable while the file is up, or in the Files pane, its own column that stays open until you close the file. A folder’s listing follows the same choice, except that it never covers the chat: with the first option it opens in the Feed pane. Browser dashboard only: in VS Code file links open in the editor, and a chat tab opened on its own has no other pane to use.</span>' +
   "<select id=rs-filelink style='margin-top:5px;width:100%;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);" +
   "border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 4px;cursor:pointer'>" +
-  '<option value=chat>The pane you clicked</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>' +
+  '<option value=chat>The pane you clicked (folders: the Feed pane)</option><option value=feed>The Feed pane</option><option value=pane>The Files pane</option>' +
   '</select>' +
   '</span></div>' +
   // File comments (plans/file-review.md Slice 1): a report, not a switch — whether the viewer's Comments
