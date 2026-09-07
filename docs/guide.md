@@ -217,13 +217,27 @@ new browser tab. A file path opens that file in the viewer, in place of the one
 you were reading: a relative path such as `docs/guide.md` is taken from the
 folder of the file you are reading, an absolute or `~/` path as written, on the
 machine of the session the file belongs to, and a line written after the path
-(`src/app.py:12`, or `src/app.py#L12`) scrolls the code view to that line. In a
-Markdown file, a `[link](target)` follows the same two rules: a web target opens a
-tab, a file target opens the file. A path links only when it has a slash and a
-file extension, so import specifiers, routes and fractions stay plain text.
-Links are marked lightly, with a dotted underline that turns solid under the
-pointer; selecting text across a link, and commenting on a line that holds one,
-work as before, and a drag that ends on a link selects rather than opens.
+(`src/app.py:12`, or `src/app.py#L12`) scrolls the Raw view to that line. A
+Markdown file opens in its Raw view for that one open, since the Rendered view
+has no lines; your Raw/Rendered choice is unchanged. A line past the end of the
+file lands on the last line, with a notice saying so. In a Markdown file, a
+`[link](target)` follows the same two rules: a web target opens a tab, a file
+target opens the file. A link to a section of the same document scrolls to it
+when the document has an anchor by that name, and otherwise says so when you
+hover it. One click does one thing: a plain click acts in the dashboard, and a
+Cmd-click (Ctrl on Windows and Linux) or a middle-click opens the link in a
+browser tab of its own. Where a comment highlight or a change mark covers a
+link, a plain click opens the comment or the change and leaves the link alone.
+A path links only when it has a slash and a file extension, starts on its own
+after a space, a quote or a bracket (so `$HOME/docs/a.md`,
+`@scope/pkg/index.js` and `C:/Users/x.txt` stay text), does not start with a
+site name (`www.example.org/docs/index.html`), and is not the package an
+`import` or `require` names (a relative import such as `./app.css` still
+links). Web addresses and paths found in the text wear a dotted underline that
+turns solid under the pointer; a Markdown link that names a file keeps the
+ordinary link look. Selecting text across a link, and commenting on a line that
+holds one, work as before, and a drag that starts or ends on a link selects
+rather than opens.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
