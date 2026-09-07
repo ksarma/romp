@@ -190,6 +190,160 @@ class QueuePersistence(unittest.TestCase):
                          "restores strings only — junk entries never wedge delivery")
 
 
+class TodoIdsRideTheQueue(unittest.TestCase):
+    """A queued message may ANSWER a user todo (SdkBackend.send's user_todo): the id travels WITH the
+    message — on the in-memory entry (_TodoText), through the reg mirror (_persist_queue) and back
+    through the boot seed — so whoever removes or loses the entry later reads the id off the entry
+    itself, with no kernel-side table to lose across a restart. Entries without an id stay bare
+    strings: the mirror is byte-identical to the pre-todo shape for every other send (an older
+    kernel reads those untouched; only an id-carrying answer serializes as a dict), and every
+    rewrite of reg['queue'] keeps a dict entry intact instead of erasing it with a strings-only
+    filter."""
+
+    ANSWER = "Re: need the staging port — 8443."
+
+    def _session(self, queue=None):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-2222-3333-4444-888888888888"
+        reg = _reg(d, sid, **({"queue": queue} if queue is not None else {}))
+        return d, be, sid, sb.SdkSession(be, reg)
+
+    def test_an_answer_entry_mirrors_with_its_id_and_bare_sends_stay_bare(self):
+        d, be, sid, s = self._session()
+        s.enqueue("plain message")
+        s.enqueue(self.ANSWER, todo="ut-9f2c1a34")
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"),
+                         ["plain message", {"text": self.ANSWER, "todo": "ut-9f2c1a34"}])
+
+    def test_a_plain_queue_serializes_exactly_as_before(self):
+        # byte-stability: with no answer queued, the mirror's JSON is the pre-todo list of strings
+        d, be, sid, s = self._session()
+        s.enqueue("first")
+        s.enqueue("second")
+        raw = json.dumps(sb.read_reg(Path(d), sid).get("queue"), sort_keys=True)
+        self.assertEqual(raw, json.dumps(["first", "second"], sort_keys=True))
+
+    def test_the_seed_restores_the_id_onto_the_entry(self):
+        d, be, sid, s = self._session(queue=["held over",
+                                             {"text": self.ANSWER, "todo": "ut-11112222"},
+                                             {"bogus": 1}, "", 42])
+        self.assertEqual(s.pending(), ["held over", self.ANSWER],
+                         "both shapes seed; junk is filtered exactly as before")
+        self.assertEqual([getattr(t, "todo", "") for t in s.pending()], ["", "ut-11112222"])
+
+    def test_unqueue_returns_the_id_bearing_text_and_cleans_the_mirror(self):
+        d, be, sid, s = self._session()
+        s.enqueue(self.ANSWER, todo="ut-9f2c1a34")
+        got = s.unqueue(0)
+        self.assertEqual(got, self.ANSWER, "the text contract is unchanged")
+        self.assertEqual(getattr(got, "todo", ""), "ut-9f2c1a34",
+                         "the id rides the returned entry — a recall's caller reads it here")
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"), [])
+
+    def test_backend_unqueue_hands_the_id_through(self):
+        d, be, sid, s = self._session()
+        with be._lock:
+            be.sessions[sid] = s
+        s.enqueue(self.ANSWER, todo="ut-9f2c1a34")
+        got = be.unqueue(sid, 0)
+        self.assertEqual(got, self.ANSWER)
+        self.assertEqual(getattr(got, "todo", ""), "ut-9f2c1a34")
+
+    def test_pending_queued_decodes_the_persisted_shape_for_a_dormant_session(self):
+        # the chat's queued bubbles for a NOT-running session come from the reg mirror: an
+        # id-carrying entry renders as its text (and keeps its id), junk is filtered as before
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-0000000000e9"
+        _reg(d, sid, queue=["plain", {"text": self.ANSWER, "todo": "ut-22223333"}, {"bogus": 1}, ""])
+        got = be.pending_queued(sid)
+        self.assertEqual(got, ["plain", self.ANSWER])
+        self.assertEqual([getattr(t, "todo", "") for t in got], ["", "ut-22223333"])
+
+    def test_boot_prepend_preserves_id_entries(self):
+        # the cut-turn nudge prepend rewrites reg['queue'] — the dict entry must ride behind it
+        # intact, not be dropped by a strings-only filter
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be._ensure = lambda sid, on_boot_settled=None: on_boot_settled and on_boot_settled()
+        cut = "11111111-aaaa-0000-0000-0000000000f0"
+        _reg(d, cut, queue=[{"text": self.ANSWER, "todo": "ut-33334444"}, "plain backlog"])
+        sb.append_state(Path(d), cut, "working")
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile([sb.read_reg(Path(d), cut)])
+        self.assertEqual(sb.read_reg(Path(d), cut).get("queue"),
+                         [sb.BOOT_RESUME_NUDGE,
+                          {"text": self.ANSWER, "todo": "ut-33334444"}, "plain backlog"])
+
+    def test_a_persisted_answer_alone_earns_the_boot_resume(self):
+        # the reconcile resumes any session with a non-empty persisted queue — an answer entry IS a
+        # queued message, so a dict-only queue must count (a strings-only read saw an empty queue)
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        ensured = []
+        be._ensure = lambda sid, on_boot_settled=None: (ensured.append(sid),
+                                                        on_boot_settled and on_boot_settled())
+        sid = "11111111-aaaa-0000-0000-0000000000f4"
+        _reg(d, sid, queue=[{"text": self.ANSWER, "todo": "ut-44445555"}])
+        sb.append_state(Path(d), sid, "waiting")               # no cut turn: only the queue can earn it
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile([sb.read_reg(Path(d), sid)])
+        self.assertEqual(ensured, [sid], "the persisted answer is owed to the session")
+
+    def test_crash_heal_prepend_preserves_id_entries(self):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be._ensure = lambda sid, on_boot_settled=None: None
+        sid = "11111111-aaaa-0000-0000-0000000000f1"
+        _reg(d, sid, queue=[{"text": self.ANSWER, "todo": "ut-55556666"}])
+        s = sb.SdkSession(be, sb.read_reg(Path(d), sid))
+        be._heal_cut_session(s)
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"),
+                         [sb.CRASH_RESUME_NUDGE, {"text": self.ANSWER, "todo": "ut-55556666"}])
+
+    def test_thread_wake_notice_preserves_id_entries(self):
+        # a dormant comment thread woken with a killed question: _ensure rewrites reg['queue'] to put
+        # the notice first — the dict entry must ride behind it intact, in the reg AND in the dict the
+        # SdkSession seed reads
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-0000000000f2"
+        owner = "11111111-aaaa-0000-0000-0000000000f3"
+        _reg(d, sid, threadOf=owner, pendingAsk=True,
+             queue=[{"text": self.ANSWER, "todo": "ut-99990000"}, "plain reply"])
+        seeded = []
+
+        class _Fake:
+            def __init__(self, backend, reg):
+                seeded.append(reg)
+                self.thread = types.SimpleNamespace(is_alive=lambda: True)
+
+            def start(self):
+                pass
+
+        with mock.patch.object(sb, "SdkSession", _Fake):
+            be._ensure(sid)
+        want = [sb.ASK_DIED_NOTICE, {"text": self.ANSWER, "todo": "ut-99990000"}, "plain reply"]
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"), want)
+        self.assertEqual(seeded[0].get("queue"), want, "the seed reads THIS dict")
+
+    def test_reconcile_strand_rehead_keeps_the_id(self):
+        # the fed-turn twin (_inflight_texts) re-heads the queue when no conversation ever
+        # materialized — the restored entry must still carry its id into the mirror
+        d, be, sid, s = self._session()
+        s.resume_sid = None                          # no init ever streamed: the re-head arm
+        s.enqueue(self.ANSWER, todo="ut-77778888")
+        with s._lock:
+            fed = s._pending.pop(0)                  # the input generator feeds the entry…
+        s.inflight = 1
+        s._inflight_texts.append(fed)                # …and its twin carries it, id and all
+        s._reconcile_stranded()
+        self.assertEqual([getattr(t, "todo", "") for t in s.pending()], ["ut-77778888"])
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"),
+                         [{"text": self.ANSWER, "todo": "ut-77778888"}])
+
+
 def _procps() -> bool:
     """Whether this box's ps is procps (Linux; BSD ps has no --version). The truncation control below
     pins procps behaviour, so it runs only there."""

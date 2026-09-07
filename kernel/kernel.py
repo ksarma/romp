@@ -20426,6 +20426,25 @@ def _forwards_sends(be):
         return False
 
 
+def _backend_send(be, sid, text, user_todo=None):
+    """be.send, carrying the id of the user todo `text` ANSWERS (`user_todo`) WITH the message whenever
+    the backend can act on a later un-delivery. Two capability flags, both getattr-guarded like
+    _forwards_sends (a backend or test fake with neither takes the plain two-argument send — the
+    call it always took, byte for byte; so does every send without an id):
+      * queue_carries_todos (SDK): the id rides the backend queue entry, its persisted reg mirror
+        and the send's echo, so a recall or a loss detected later reads it off the object it acts
+        on, with no kernel-side table to restart away or evict;
+      * send_reports_refusal: the truthy send is NOT the delivery — the backend types the text on a
+        fire-and-forget thread whose own guard can still refuse it — so the id arms that send's
+        refusal report, and the refusal corrects whatever the truthy send stamped optimistically.
+    Returns the backend's own result, whatever its shape (see SessionBackend.send: truthy, not
+    necessarily True)."""
+    if user_todo and (getattr(be, "queue_carries_todos", False)
+                      or getattr(be, "send_reports_refusal", False)):
+        return be.send(sid, text, user_todo=user_todo)
+    return be.send(sid, text)
+
+
 # A leading slash-COMMAND token ("/autocompact auto", "/compact"), not a path ("/tmp/x is broken",
 # "/Users/…"): the token must end at whitespace/EOL before any second "/". Shape-matched, not matched
 # against the session's command list, deliberately — the CLI owns what executes; romp only decides WHEN
@@ -20438,7 +20457,7 @@ def _is_slash_command(text):
     return bool(_SLASH_CMD_RE.match((text or "").strip()))
 
 
-def _send_or_park(be, sid, text, echo=None):
+def _send_or_park(be, sid, text, echo=None, user_todo=None):
     """Deliver `text` now — or PARK it in the sid's FIFO. Park when: (a) the session is COMPACTING (the user
     2026-07-02: a mid-compaction send's live-tail echo opened a turn that KILLED the 'compacting' cue — a
     parked send lands no echo atom, so the cue stays and the send shows as a queued bubble in park order);
@@ -20460,22 +20479,29 @@ def _send_or_park(be, sid, text, echo=None):
     model politely replies to it, and the setting never changes. Parked as a ("command",) op, it fires ALONE
     at turn end (never folded into a send batch, which would bury it as text the same way).
 
-    Returns True when PARKED, False when handed over now, so a route can tell its caller which: POST
-    /send answers `queued` and `romp send` prints it. An agent sending ITSELF a slash command from inside
-    its own turn otherwise read 'ok' and had no way to know the command was waiting for that turn to end
-    (2026-09-03, a /clear that then never fired)."""
+    Returns "parked" when the text joined the FIFO, else the backend send's own result — so a caller
+    whose side effect must key on DELIVERY can tell the three outcomes apart: parked (act later, at the
+    drain), sent (truthy — act now), refused (falsy — be loud, never act). A route tells its caller which
+    arm it took by comparing against "parked" — never by truthiness, since a completed send is truthy
+    too: POST /send answers `queued` and `romp send` prints it. An agent sending ITSELF a slash command
+    from inside its own turn otherwise read 'ok' and had no way to know the command was waiting for that
+    turn to end (2026-09-03, a /clear that then never fired). `user_todo` is the id of the user todo this
+    text ANSWERS: it rides the parked op as a 4th slot (a plain send keeps the three-slot op, byte for
+    byte) so the drain hands it to the backend exactly as the immediate path does (_backend_send) — the
+    id travels with the message, wherever the message waits."""
     cmd = _is_slash_command(text)
-    op = ("command", text, echo) if cmd else ("send", text, echo)
+    op = ("command", text, echo) if cmd else (
+        ("send", text, echo, user_todo) if user_todo else ("send", text, echo))
     if _compacting_now(sid) or _pending_ops.get(sid) or _limit_hold(sid):
         _park_op(sid, op)
-        return True
+        return "parked"
     if _working_now(sid) and (cmd or not _forwards_sends(be)):
         _park_op(sid, op)
-        return True
-    be.send(sid, text)
+        return "parked"
+    got = _backend_send(be, sid, text, user_todo)    # an answer's id rides the queue entry itself
     if echo:
         _optimistic_echo(sid, text, author=echo)
-    return False
+    return got
 
 
 def _compact_or_park(be, sid):
@@ -20653,12 +20679,17 @@ def _deliver_send_batch(be, sid, run):
     queued messages should all go in together, not one turn each). A backend that forwards its own sends
     (SDK) enqueues each — its inputs() folds them into ONE turn; a backend that can't (tmux) has no fold, so
     MERGE them into a single message (the user okayed merging for tmux). Each fired send stamps its optimistic
-    echo (a no-op on the SDK, which echoes inside send(); the kernel-side tmux echo otherwise)."""
+    echo (a no-op on the SDK, which echoes inside send(); the kernel-side tmux echo otherwise).
+
+    A parked op may carry a 4th slot — the id of the user todo its text ANSWERS (_send_or_park's
+    user_todo) — which the drain hands to the backend (_backend_send), so the drained queue entry
+    carries the id exactly like an immediate send's; a three-slot op takes the plain send it always
+    took. The tmux merge carries the texts only: there is no queue entry to put an id on."""
     if not run:
         return
     if _forwards_sends(be):
         for op in run:
-            be.send(sid, op[1])
+            _backend_send(be, sid, op[1], op[3] if len(op) > 3 else None)
             if op[2]:
                 _optimistic_echo(sid, op[1], author=op[2])
         return
@@ -35076,7 +35107,9 @@ class Handler(BaseHTTPRequestHandler):
                 if _route_meta_command(be, sid, body["text"], state=meta):
                     queued = bool(meta.get("queued"))              # a parked /model, /effort or /fast says so too
                 else:
-                    queued = bool(_send_or_park(be, sid, body["text"]))
+                    # "parked" is the FIFO arm; anything else is the backend's own send result (truthy when it
+                    # went, falsy when refused) — so the compare, never truthiness, says which arm it took
+                    queued = _send_or_park(be, sid, body["text"]) == "parked"
                 # `queued` says which arm it took (the /compact route's shape): a sender that IS the
                 # target's open turn — an agent running `romp send <self> /clear` from its own Bash tool —
                 # read 'ok' otherwise and could not know the command waits for that turn to end (2026-09-03).

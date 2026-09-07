@@ -139,6 +139,75 @@ class EchoesSurviveARestart(unittest.TestCase):
                          "a stale /model confirmation must not replay after a restart")
 
 
+class AnswerEchoesKeepTheirId(unittest.TestCase):
+    """A send that ANSWERS a user todo (SdkBackend.send's user_todo) stamps the id on its echo
+    (`_todo`), mirrors it to the registry (`todo`) and gets it back at the boot reseed — the id
+    rides the echo the way it rides the queue entry, so a loss detected later can be tied back to
+    the ask. Every other echo mirrors exactly as before: the plain entry's keys are the pre-todo
+    five, byte for byte."""
+
+    PLAIN_KEYS = ["t", "text", "author", "rompAuto", "dropped"]
+
+    def _backend(self, state):
+        be = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        return be
+
+    def test_send_stamps_the_id_on_the_echo_and_the_queue_entry(self):
+        be = self._backend(tempfile.mkdtemp())
+        fed = []
+        be._ensure = lambda sid: type("S", (), {"enqueue": lambda self, t, todo="": fed.append((t, todo))})()
+        self.assertTrue(be.send(SID, "Re: the staging port — 8443.", user_todo="ut-9f2c1a34"))
+        self.assertTrue(be.send(SID, "plain words"))
+        self.assertEqual(fed, [("Re: the staging port — 8443.", "ut-9f2c1a34"), ("plain words", "")],
+                         "the id reaches the queue entry; a plain send hands an empty id")
+        by_text = {a["_echo_text"]: a for a in be.live_atoms(SID) if a.get("_echo_text")}
+        self.assertEqual(by_text["Re: the staging port — 8443."].get("_todo"), "ut-9f2c1a34")
+        self.assertNotIn("_todo", by_text["plain words"], "a plain echo carries no id key at all")
+
+    def test_the_mirror_carries_the_id_and_a_plain_entry_is_byte_identical(self):
+        state = tempfile.mkdtemp()
+        be = self._backend(state)
+        k1, e1 = _echo("plain words", t=1000, key="echo:p")
+        k2, e2 = _echo("Re: the staging port — 8443.", t=1001, key="echo:a")
+        e2["_todo"] = "ut-9f2c1a34"
+        be._live[SID] = {k1: e1, k2: e2}
+        be._persist_echoes(SID)
+        mirror = sb.read_reg(be.state_dir, SID).get("echoes")
+        plain = next(x for x in mirror if x["text"] == "plain words")
+        self.assertEqual(list(plain.keys()), self.PLAIN_KEYS, "the pre-todo shape, key for key, in order")
+        self.assertEqual(plain, {"t": 1000, "text": "plain words", "author": "human",
+                                 "rompAuto": False, "dropped": False})
+        answer = next(x for x in mirror if x["text"] != "plain words")
+        self.assertEqual(answer.get("todo"), "ut-9f2c1a34")
+        # "kernel restart": the reseeded atom carries the id again; the plain one still has no key
+        be2 = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None)
+        atoms = {a["_echo_text"]: a for a in be2.live_atoms(SID) if a.get("_echo_text")}
+        self.assertEqual(atoms["Re: the staging port — 8443."].get("_todo"), "ut-9f2c1a34")
+        self.assertNotIn("_todo", atoms["plain words"])
+
+    def test_boot_reseed_spares_an_answer_still_queued_as_a_dict_entry(self):
+        # the persisted queue holds the answer as {"text","todo"}: the reseed's "is it still queued?"
+        # check must read the entry's text, or the answer's echo is flagged dropped (and re-delivered
+        # a second time) while its message sits in the queue about to go out
+        state = tempfile.mkdtemp()
+        be = self._backend(state)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True,
+                                         "queue": [{"text": "Re: the staging port — 8443.",
+                                                    "todo": "ut-9f2c1a34"}]})
+        k, e = _echo("Re: the staging port — 8443.")
+        e["_todo"] = "ut-9f2c1a34"
+        be._live[SID] = dict([(k, e)])
+        be._persist_echoes(SID)
+        be2 = sb.SdkBackend(state, "/bin/true", lambda *a, **k: None)
+        atoms = be2.live_atoms(SID)
+        self.assertTrue(atoms and not atoms[0].get("dropped"),
+                        "a queued answer is in flight, not lost")
+        self.assertEqual(sb.read_reg(state, SID).get("queue"),
+                         [{"text": "Re: the staging port — 8443.", "todo": "ut-9f2c1a34"}],
+                         "and the reseed never rewrote the queue (no duplicate, id intact)")
+
+
 class DroppedSendsAnnounceThemselves(unittest.TestCase):
     """Guarantee 4 (the user 2026-07-29): an echo that survives its holder is marked `dropped` at the
     exact event that orphaned it — the boot reseed, or a fresh CLI spawning — so the chat can render

@@ -2194,6 +2194,51 @@ def key_fast_org_env(key: str, log) -> dict[str, str]:
 # The live session (one quarantined asyncio thread).
 # ---------------------------------------------------------------------------
 
+class _TodoText(str):
+    """A queued message that ANSWERS a user todo: a plain str to every consumer (equality, sets,
+    joins, json — all unchanged), with the id of the todo it answers riding as an attribute. The id
+    travels WITH the message — through _pending, the reg mirror, the fed-turn twin and the stranded
+    re-head — so whatever later removes or loses the entry reads the id off the entry it acts on,
+    and no side table (whose lifetime would be the kernel process while the queue it tracked is
+    persisted) has to remember which message answers what. getattr(entry, "todo", "") reads it off
+    any queue text."""
+
+    __slots__ = ("todo",)
+
+    def __new__(cls, text, todo):
+        o = str.__new__(cls, text)
+        o.todo = str(todo or "")
+        return o
+
+
+def _queue_text(e):
+    """One persisted queue entry → the text the in-memory queue holds: a bare string stays a bare
+    string; a {"text","todo"} dict (an answer — see _TodoText) comes back carrying its id. None for
+    malformed junk, exactly as the strings-only filter this replaces treated it. Bare entries are
+    byte-identical to the pre-todo mirror in BOTH directions, so every non-answer send round-trips
+    untouched by any kernel version; an OLDER kernel reading a dict entry drops it from its seed (its
+    filter is isinstance(str)) — accepted for the downgrade path: the message class did not exist
+    before the id rode the entry."""
+    if isinstance(e, str):
+        return e or None
+    if isinstance(e, dict) and isinstance(e.get("text"), str) and e["text"]:
+        todo = str(e.get("todo") or "")
+        return _TodoText(e["text"], todo) if todo else e["text"]
+    return None
+
+
+def _queue_texts(q):
+    """Every well-formed entry of a persisted queue, as texts (id-carrying where recorded)."""
+    return [t for t in map(_queue_text, q or []) if t]
+
+
+def _queue_wire(t):
+    """One in-memory queue text → its persisted shape: bare strings stay bare (byte-compat with
+    every reader of reg['queue']); an id-carrying answer serializes as {"text","todo"}."""
+    todo = getattr(t, "todo", "")
+    return {"text": str(t), "todo": todo} if todo else str(t)
+
+
 class _AskCancelled(Exception):
     pass
 
@@ -2273,6 +2318,8 @@ class SdkSession:
         # thread. Exists for the reconnect teardown: a turn fed into a client being torn down is in NO
         # store (inputs() already removed it from the persisted queue), and without its text the
         # loop-top reconcile could only settle counters while the turn itself vanished (2026-08-16).
+        # Entries keep their _TodoText identity, so a stranded answer RE-HEADED into _pending
+        # (_reconcile_stranded) still carries the id of the ask it answers.
         self._inflight_texts: list[str] = []
         # The CLI's own stderr, last few lines (see _on_cli_stderr). The SDK only PIPES the child's
         # stderr when this callback is registered, so without it a launch failure's real cause — the
@@ -2464,7 +2511,10 @@ class SdkSession:
         # Seeded from the registry's persisted queue (mirrored on every mutation — _persist_queue)
         # so a kernel death can DELAY queued messages but never lose them; the boot reconcile
         # resumes any session with a non-empty persisted queue and this seed delivers it.
-        self._pending: list[str] = [t for t in (reg.get("queue") or []) if isinstance(t, str) and t]
+        # Entries are plain strs, except a message that ANSWERS a user todo, a _TodoText carrying
+        # the id of the ask it answers — the seed restores the id so a post-restart recall still
+        # knows which ask the recalled message was answering.
+        self._pending: list[str] = _queue_texts(reg.get("queue"))
         self._ping_feeding = False   # a rename ping was fed and its turn hasn't streamed yet: hold the
         #                              queue so no message can share its pre-turn window (the CLI batches
         #                              everything pre-start into ONE record — the 2026-08-25 fold); cleared
@@ -2511,10 +2561,15 @@ class SdkSession:
             except Exception as e:
                 self.backend._log("boot-settled callback (%s) failed: %s" % (self.name, e))
 
-    def enqueue(self, text: str):
+    def enqueue(self, text: str, todo: str = ""):
         """Deliver a user turn (called from the kernel thread). Held in self._pending —
         VISIBLE to pending_queued — until the input generator releases it at turn end. Works
-        before the loop is ready too (the generator drains _pending on its first pass)."""
+        before the loop is ready too (the generator drains _pending on its first pass).
+        `todo` is the id of the user todo this text ANSWERS (SdkBackend.send's user_todo): it rides
+        the entry itself (_TodoText), through the reg mirror and back, so a recall reads the id off
+        the entry it removes — never a kernel-side table a restart empties."""
+        if todo:
+            text = _TodoText(text, todo)
         with self._lock:
             self._pending.append(text)
             loop, wake = self.loop, self._input_wake
@@ -2547,7 +2602,9 @@ class SdkSession:
 
     def unqueue(self, idx: int, expect: str | None = None) -> str | None:
         """Remove the queued turn at position `idx` (the chat's queued list is this same _pending order)
-        and return its raw text, or None if it's gone. Lets the user CANCEL a message they queued
+        and return its raw text, or None if it's gone — a message that answers a user todo comes back
+        as its _TodoText, so the caller reads the ask it was clearing off the entry itself. Lets the
+        user CANCEL a message they queued
         behind a busy turn — click it in the chat to pull it back out and re-edit (the user 2026-06-27).
         Only pending (not-yet-started) turns are cancelable; once the input generator has fed a turn to
         the CLI there is no recall (the control protocol has no queue-remove), so a miss here is the
@@ -2568,11 +2625,13 @@ class SdkSession:
         seed re-delivers it. Called on every mutation (enqueue / unqueue / the input generator's
         pop), from the kernel thread AND the loop thread — _update_reg serializes the writes. A
         turn already FED to the SDK is out of the persisted queue by design: it reaches the
-        transcript as a user atom, which is the cut-turn resume's territory, not replay's."""
+        transcript as a user atom, which is the cut-turn resume's territory, not replay's.
+        Serialization: bare strings, except an id-carrying answer's {"text","todo"} (_queue_wire)
+        — every non-answer entry is byte-identical to the pre-todo mirror."""
         with self._lock:
             snap = list(self._pending)
         try:
-            self.backend._update_reg(self.sid, queue=snap)
+            self.backend._update_reg(self.sid, queue=[_queue_wire(t) for t in snap])
         except Exception:
             self.backend._log("persist queue (%s): %s" % (self.name, traceback.format_exc()))
 
@@ -5262,7 +5321,7 @@ class SdkBackend:
                     # heals the same way for ones that respawn.
                     if r.get("effortPending") or r.get("modelPending"):
                         self._update_reg(sid, effortPending=False, modelPending=False)
-                    queued = [t for t in (r.get("queue") or []) if isinstance(t, str) and t]
+                    queued = _queue_texts(r.get("queue"))
                     if r.get("threadOf") and not queued:
                         # a comment THREAD is never auto-resumed at boot (the user 2026-09-01: threads
                         # persist on disk and come alive only on an explicit reply/branch; a deploy
@@ -5298,8 +5357,11 @@ class SdkBackend:
                     if prepend or dead_tasks:
                         with self._reg_lock:
                             reg = read_reg(self.state_dir, sid) or dict(r)
-                            reg["queue"] = prepend + [t for t in (reg.get("queue") or [])
-                                                      if isinstance(t, str) and t and t not in prepend]
+                            # keep entries in their PERSISTED shape (an id-carrying answer stays a
+                            # dict — a strings-only filter here would silently drop it); the
+                            # not-in-prepend dedup compares texts either way
+                            reg["queue"] = prepend + [e for e in (reg.get("queue") or [])
+                                                      if (qt := _queue_text(e)) and qt not in prepend]
                             if dead_tasks:
                                 reg["bgTasks"] = []   # reported — never re-notify for the same deaths
                             if ask_died:
@@ -6572,8 +6634,8 @@ class SdkBackend:
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     with self._reg_lock:                   # _lock → _reg_lock: the rider's order above
                         cur = read_reg(self.state_dir, sid) or dict(reg)
-                        rest = [t for t in (cur.get("queue") or [])
-                                if isinstance(t, str) and t and t not in notices]
+                        rest = [e for e in (cur.get("queue") or [])          # persisted shape kept: an
+                                if (qt := _queue_text(e)) and qt not in notices]   # answer's dict rides intact
                         # a resume nudge at the head stays there — continuation context first, then
                         # the notices, the sweep's order; the crash resume prepends one before it
                         # calls here
@@ -6623,7 +6685,7 @@ class SdkBackend:
             q = (read_reg(self.state_dir, str(sid)) or {}).get("queue")
         except Exception:
             return []
-        return [t for t in q if isinstance(t, str) and t] if isinstance(q, list) else []
+        return _queue_texts(q) if isinstance(q, list) else []
 
     def unqueue(self, sid: str, idx: int, expect: str | None = None) -> str | None:
         """Cancel the queued turn at `idx` for an SDK session (the kernel's cancelQueued route). Returns
@@ -6672,7 +6734,10 @@ class SdkBackend:
                         or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
                         or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
-    def send(self, sid: str, text: str) -> bool:
+    def send(self, sid: str, text: str, user_todo: str | None = None) -> bool:
+        """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send): it
+        rides the queue entry (_TodoText) and the echo below, so a recall or a loss detected later
+        can name exactly that ask — the id travels with the message end to end."""
         s = self._ensure(sid)
         if not s:
             return False
@@ -6687,7 +6752,10 @@ class SdkBackend:
             # conversation exists) / the turn's ResultMessage.
             s._clearing = True
         sent_t = int(time.time())              # the echo's stamp, minted BEFORE the CLI can see the text: the
-        s.enqueue(text)                         # record it writes is then at or after it by construction (T237b)
+        if user_todo:                          # record it writes is then at or after it by construction (T237b)
+            s.enqueue(text, todo=user_todo)    # an answer's id rides the queue entry itself (_TodoText)
+        else:
+            s.enqueue(text)                    # every other send: the call it always was
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -6706,6 +6774,8 @@ class SdkBackend:
             "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
         if injected and "<!-- romp-auto -->" in text:
             echo["rompAuto"] = True                          # auto-nudge → romp-logo on the chat/timeline
+        if user_todo:
+            echo["_todo"] = str(user_todo)                   # the ask this message answers, for whoever finds the echo lost
         self._live.setdefault(sid, {})[key] = echo
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
         self._wake_push()
@@ -6721,9 +6791,15 @@ class SdkBackend:
         Command-feedback lines (/model etc.) are deliberately not mirrored — replaying a stale confirmation
         after a restart would assert something that may no longer be true."""
         d = self._live.get(sid) or {}
-        snap = [{"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
+        snap = []
+        for a in d.values():
+            if not a.get("_echo_text") or a.get("command"):
+                continue
+            e = {"t": a.get("t", 0), "text": a["_echo_text"], "author": a.get("author") or "human",
                  "rompAuto": bool(a.get("rompAuto")), "dropped": bool(a.get("dropped"))}
-                for a in d.values() if a.get("_echo_text") and not a.get("command")]
+            if a.get("_todo"):
+                e["todo"] = str(a["_todo"])   # an answer's echo keeps its ask's id across restarts; every other entry is the pre-todo shape
+            snap.append(e)
         try:
             self._update_reg(sid, echoes=snap)
         except Exception as e:
@@ -6752,9 +6828,13 @@ class SdkBackend:
                     atom["rompAuto"] = True
                 if e.get("dropped"):
                     atom["dropped"] = True
+                if e.get("todo"):
+                    atom["_todo"] = str(e["todo"])   # the ask this answer names survives the restart too
                 self._live.setdefault(reg["sid"], {})[key] = atom
             if self._live.get(reg["sid"]):
-                self._mark_dropped_echoes(reg["sid"], reg.get("queue") or [])
+                # decoded texts, not raw entries: an answer persisted as {"text","todo"} IS still queued,
+                # and must not read as a lost send (a dropped flag plus a second delivery)
+                self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
 
     def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True) -> None:
         """A fresh CLI is spawning for this sid, or the kernel just booted: whatever process held any
@@ -6813,7 +6893,7 @@ class SdkBackend:
                 with self._lock:
                     s = sess_map.get(sid)
             if s is not None:
-                have = set(s.pending())
+                have = {str(t) for t in s.pending()}
                 for a in redeliver:                        # already in send order (sorted above)
                     if a["_echo_text"] in have:
                         continue                           # already back in the queue — never duplicate
@@ -6821,21 +6901,34 @@ class SdkBackend:
                         s._compacting = True               # same enqueue-time semantics as send()
                     if _is_clear_cmd(a["_echo_text"]):
                         s._clearing = True
-                    s.enqueue(a["_echo_text"])
+                    # `todo`: a re-delivered answer keeps the id its echo carries (_TodoText through
+                    # enqueue), so a recall or a later loss can still name exactly that ask
+                    s.enqueue(a["_echo_text"], todo=str(a.get("_todo") or ""))
                     self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
                               % (sid[:8], a["_echo_text"]))
             else:
                 with self._reg_lock:
                     reg = read_reg(self.state_dir, sid)
                     if reg is not None:
-                        have = [t for t in (reg.get("queue") or []) if isinstance(t, str) and t]
-                        add = [a["_echo_text"] for a in redeliver if a["_echo_text"] not in have]
+                        # dict-aware like every other reg['queue'] rewrite: a strings-only filter here
+                        # would silently ERASE a persisted answer's {"text","todo"} entry — the message
+                        # never delivered, and nothing left to say which ask it answered. _queue_texts
+                        # keeps every well-formed entry (id-carrying included); _queue_wire writes them back.
+                        have = _queue_texts(reg.get("queue"))
+                        have_texts = {str(t) for t in have}
+                        add = []
+                        for a in redeliver:
+                            if a["_echo_text"] in have_texts:
+                                continue
+                            todo = str(a.get("_todo") or "")   # a re-delivered answer keeps its ask's id
+                            add.append(_TodoText(a["_echo_text"], todo) if todo else a["_echo_text"])
                         if add:
-                            reg["queue"] = have + add      # behind the surviving queue: original send order
+                            # behind the surviving queue: original send order
+                            reg["queue"] = [_queue_wire(t) for t in have + add]
                             write_reg(self.state_dir, sid, reg)
-                            for a in redeliver:
+                            for t in add:
                                 self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
-                                          % (sid[:8], a["_echo_text"]))
+                                          % (sid[:8], str(t)))
         rekeyed = {a["_echo_text"] for a in redeliver}
         for a in newly:
             if a["_echo_text"] in rekeyed:
@@ -6921,7 +7014,7 @@ class SdkBackend:
         reg = read_reg(self.state_dir, sid)
         if not reg or not reg.get("alive"):
             return False, "the session is not running — revive it first"
-        if any(t for t in (reg.get("queue") or []) if isinstance(t, str) and t):
+        if _queue_texts(reg.get("queue")):             # an answer persisted as a dict is a queued message too
             return False, "messages are queued for this session — send or cancel them first"
         if self.busy(sid) or self.compacting(sid):
             # Delete-while-busy (the user 2026-08-29): at an explicit DELETE the old data-loss
@@ -7128,6 +7221,11 @@ class SdkBackend:
         an interrupt. So the kernel hands composer sends straight to send() even mid-turn instead of parking
         them; the reconciliation renders the still-waiting message as a queued bubble until it forwards."""
         return True
+
+    # send() can carry the id of the user todo a message ANSWERS on the queue entry itself (send's
+    # user_todo → _TodoText): the kernel's _backend_send probes this the way _forwards_sends probes its
+    # capability, and hands the plain two-argument send to any backend without it (tmux, fakes).
+    queue_carries_todos = True
 
     def busy(self, sid: str) -> "bool | None":
         """Authoritative in-flight signal (see SessionBackend.busy): a turn is running (inflight>0) OR one is
@@ -8564,8 +8662,8 @@ class SdkBackend:
                 note = task_death_notice(died)
                 with self._reg_lock:
                     reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
-                    reg["queue"] = [t for t in (reg.get("queue") or [])
-                                    if isinstance(t, str) and t and t != note] + [note]
+                    reg["queue"] = [e for e in (reg.get("queue") or [])          # persisted shape kept:
+                                    if (qt := _queue_text(e)) and qt != note] + [note]   # an answer's dict rides intact
                     reg["bgTasks"] = []           # reported — never re-notify for the same deaths
                     write_reg(self.state_dir, sess.sid, reg)
                 self._ensure(sess.sid)            # wake it to hear the notice (no-op if the heal respawned)
@@ -8594,8 +8692,8 @@ class SdkBackend:
         try:
             with self._reg_lock:
                 reg = read_reg(self.state_dir, sid) or {"sid": sid}
-                reg["queue"] = [CRASH_RESUME_NUDGE] + [t for t in (reg.get("queue") or [])
-                                                       if isinstance(t, str) and t and t != CRASH_RESUME_NUDGE]
+                reg["queue"] = [CRASH_RESUME_NUDGE] + [e for e in (reg.get("queue") or [])   # persisted shape kept
+                                                       if (qt := _queue_text(e)) and qt != CRASH_RESUME_NUDGE]
                 write_reg(self.state_dir, sid, reg)
             append_machine_cut(self.state_dir, sid, "crash")   # romp's cut, romp's resume — never a user stop
             self._ensure(sid)
