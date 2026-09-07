@@ -59,8 +59,9 @@ test("executed: the canonical key ignores list order AND which key the kernel us
 });
 
 test("the tabOrder frame carries the blob and the strip filters on it, composing with #only", () => {
-  // the frame's provenance rides along since T233 (captureViews still runs FIRST)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/,
+  // the frame's provenance rides along since T233 (captureViews still runs before the strip is applied; the
+  // kernel's own name, selfHost, is adopted first of all — pr-links.test.ts pins that line)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/,
     "echo-less frames still reach captureViews — an older kernel must age out a pending edit");
   assert.match(RENDER, /const inViewIds = ids\.filter\(tabInView\);/);
   assert.match(RENDER, /const visibleIds = only \? inViewIds\.filter\(\(id\) => matchesOnly\(nameOf\(id\), only\)\) : inViewIds;/);
@@ -99,7 +100,8 @@ test("the hide MECHANISM is fully retired (the user 2026-08-24) — reveal survi
 test("federation carries the LOCAL kernel's views blob through merged tabOrder re-emits", () => {
   const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
   assert.match(FED, /if \(host === LOCAL && m\.views && typeof m\.views === "object"\) this\.localViews = m\.views;/);
-  assert.match(FED, /\{ type: "tabOrder", order, tabs, views: this\.localViews \?\? undefined \}/,
+  // the merged frame also carries the LOCAL kernel's own name (selfHost), read from its tabOrder frame (pr-links)
+  assert.match(FED, /\{ type: "tabOrder", order, tabs, views: this\.localViews \?\? undefined, selfHost: this\.localSelfHost \|\| undefined \}/,
     "without this the browser dashboard's chat never receives the blob at all");
 });
 
