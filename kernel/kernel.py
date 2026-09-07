@@ -26586,6 +26586,8 @@ def build_feed(now, tmux=None):
     asks, working, awaiting = [], [], []
     serving_folds = []                                # T137: worker mirror cards awaiting the view-side fold
     bg_services = {}          # session name -> live SERVICE descs (judge-classified, _bg_split) → the neutral chip
+    _ut_map = {}              # sid -> OPEN user-todo count (plans/user-todos.md): the feed-card marker's data,
+    #                           riding the payload the way working[]/bgServices do; built behind the ended gate
     alive = _alive_sessions(now, tmux)               # hard filter: living sessions only
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
     _stalls = _stalled_goals()                       # goals romp's nudge gate is holding → the card's Stalled section
@@ -26928,6 +26930,20 @@ def build_feed(now, tmux=None):
                 f = nodes[f]["parentId"]
             if f in nodes and status.get(f) not in ("completed", "cleared"):
                 jauth_top = f
+        # USER TODOS (plans/user-todos.md, slice 2): the open needs this session registered with the
+        # person it works for. The map feeds the quiet per-card marker; ENDED sessions hide theirs
+        # from every surface and aggregate — build_session's exact corroborated gate — and a muted
+        # session never reaches here (the hideFromFeed continue above), so the marker goes quiet for
+        # it. THE MUTE ASYMMETRY IS DESIGNED (2026-08-22 — do not "fix"): the TAB GLYPH reads
+        # build_session's userTodos field, which mute does not touch — mute means "stop interrupting
+        # me about this session" and quiets the feed and its aggregates; the tab stays truthful about
+        # what its session holds. Store values only: the map must serialize identically across builds
+        # when nothing changed.
+        _ut_open = _open_user_todos(fsid)
+        if _ut_open and _user_todo_session_ended(fsid):
+            _ut_open = []
+        if _ut_open:
+            _ut_map[fsid] = len(_ut_open)
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
         had_awaiting = False                         # …and does any of them read AWAITING? → the session's await-green dot (below)
@@ -27581,6 +27597,10 @@ def build_feed(now, tmux=None):
     for _a in asks:
         _a["notify"] = True if _notify_card_effective(_ncards, _a["itemId"], str(_a.get("sid") or "")) else None
     return {"type": "feed", "asks": asks, "now": now,
+            # sid -> open user-todo count (plans/user-todos.md): the quiet per-card marker's data.
+            # Sorted so the serialized payload is byte-stable across builds when nothing changed
+            # (_send_client dedups on the bytes — the firstSeen lesson).
+            "userTodos": {k: _ut_map[k] for k in sorted(_ut_map)},
             "views": _views_client(),   # the rendered views blob — the outline + feed tag mounts read it (2026-08-25)
             # usage-limit-down latch (judge-limit.json): analysis is paused because the account
             # cannot bill judge calls — the dashboard must SAY so, never fail quietly into retries
@@ -32851,7 +32871,11 @@ def _fleet_view_sig(now, tmux):
                  (jd.STATE / "auto-nudge.json", "__nudge__"),      # stalled section, nudge counts/failed stamps
                  (jd.STATE / "nudge-events.jsonl", "__nudgev__"),  # ⚡ marks
                  (jd.STATE / "judge-auth.json", "__jauth__"),      # judge billing refusal latch
-                 (jd.STATE / "judge-limit.json", "__jlimit__")):   # judge quota latch
+                 (jd.STATE / "judge-limit.json", "__jlimit__"),    # judge quota latch
+                 # user todos (plans/user-todos.md): the feed's marker map reads this store, so a
+                 # register/answer/dismiss/withdraw must bust the FEED cache the way it already busts
+                 # the owning session's chat cache — or the new row waits on an unrelated rebuild
+                 (jd.STATE / "user-todos.json", "__utodos__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
@@ -34097,6 +34121,8 @@ _CHAT_MOBILE_CSS = (
     # the working cue is the SAME gold status dot desktop uses (the tab's .tab-dot), not a text bullet
     "#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     "#mcur .wd.await{background:var(--st-awaitbg-bg,#54B204)}"   # green when idle-waiting-on-bg-work
+    # user-todo flag (plans/user-todos.md): the desktop tab glyph, mirrored — quiet, non-numeric
+    "#mcur .utf{flex:0 0 auto;color:#ffffffbf;font-size:.85em;line-height:1}"
     "#mcur .cv{flex:0 0 auto;opacity:.6;font-size:11px}"
     "#mtag-slot{flex:0 0 auto;display:flex;align-items:center;gap:5px}"   # T161: the tag control's slot, sized by the shared button's own inline metrics
     "#madd{flex:0 0 auto;width:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;"
@@ -34127,6 +34153,8 @@ _CHAT_MOBILE_CSS = (
     ".mrow .workdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     ".mrow .workdot.await{background:var(--st-awaitbg-bg,#54B204)}"   # green: idle-waiting-on-bg-work
     ".mrow .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dddddd}"
+    # the per-row user-todo flag sits between the name and the ✕ — same quiet treatment as #mcur .utf
+    ".mrow .utflag{flex:0 0 auto;margin-left:6px;color:#ffffffbf;font-size:.85em;line-height:1}"
     # per-row end-session x (the mobile picker's only way to end a session — desktop has the tab x)
     ".mrow .mclose{flex:0 0 auto;margin-left:8px;padding:0 6px;color:#8a8a8a;font-size:20px;line-height:1}"
     ".mrow .mclose:active{color:#e5484d}"
@@ -34156,7 +34184,7 @@ _CHAT_MOBILE_JS = """
 if(!tabbar||!tabs)return;
 var hdr=document.createElement('div');hdr.id='mhdr';
 var cur=document.createElement('button');cur.id='mcur';cur.type='button';
-cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="cv">▾</span>';
+cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="utf" style="display:none" title="waiting on you — this session flagged something it needs from you">\\u2691</span><span class="cv">▾</span>';
 var add=document.createElement('button');add.id='madd';add.type='button';add.textContent='+';add.title='Open / new session';
 var list=document.createElement('div');list.id='mlist';
 // T161: an empty slot for the chat surface's TAG control — render.js mounts the shared button into
@@ -34171,6 +34199,7 @@ var lab=t.querySelector('.tab-label');
 return {id:t.getAttribute('data-id'),name:(lab?lab.textContent:t.getAttribute('data-id')),lab:lab,
 bg:t.style.getPropertyValue('--chip-bg').trim(),fg:t.style.getPropertyValue('--chip-fg').trim(),
 working:t.classList.contains('tab-working'),awaitbg:!!t.querySelector('.tab-dot.await'),active:t.classList.contains('active'),
+ut:!!t.querySelector('.tab-usertodo'),
 ph:t.classList.contains('tab-placeholder')};});}
 // A name is filled from the desktop label's own CHILD NODES, cloned — not from its flattened text. A
 // federated session's name carries a <span class="host-prefix"> that renders the "host:" as quiet
@@ -34194,6 +34223,12 @@ var wd=row.querySelector('.workdot');
 if(s.working||s.awaitbg){if(!wd){wd=document.createElement('span');wd.className='workdot';row.insertBefore(wd,row.firstChild);}
 wd.classList.toggle('await',!s.working&&!!s.awaitbg);}
 else if(wd)wd.remove();
+// the user-todo flag mirrors the desktop tab glyph (plans/user-todos.md): between the name and the ✕
+var uf=row.querySelector('.utflag');
+if(s.ut){if(!uf){uf=document.createElement('span');uf.className='utflag';uf.textContent='\\u2691';
+uf.title='waiting on you — this session flagged something it needs from you';
+row.insertBefore(uf,row.querySelector('.mclose'));}}
+else if(uf)uf.remove();
 var lbl=row.querySelector('.nm');fillName(lbl,s);lbl.style.color=s.bg||'';}
 function rowMake(s){var row=document.createElement('div');row.className='mrow';row.setAttribute('data-id',s.id);
 var lbl=document.createElement('span');lbl.className='nm';row.appendChild(lbl);
@@ -34212,6 +34247,7 @@ if(!act&&ts.length)act=ts[0];
 var nm=cur.querySelector('.nm');
 var wd=cur.querySelector('.wd');wd.style.display=(act&&(act.working||act.awaitbg))?'':'none';   // gold working / green awaiting dot, matching desktop
 wd.classList.toggle('await',!!(act&&act.awaitbg&&!act.working));
+var cuf=cur.querySelector('.utf');if(cuf)cuf.style.display=(act&&act.ut)?'':'none';   // the active session's user-todo flag, matching desktop
 if(act){fillName(nm,act);
 if(act.bg){cur.classList.add('colored');cur.style.setProperty('--cbg',act.bg);cur.style.setProperty('--cfg',act.fg||'#ffffff');}
 else{cur.classList.remove('colored');cur.style.removeProperty('--cbg');cur.style.removeProperty('--cfg');}}
