@@ -869,7 +869,7 @@ _romp_restart_audit() {   # <action> [reason] [flag]   (flag --quiet: a PARKED r
         # the link's directory is not the repo, and the row carried when=quiet with no sha, so the stand-down
         # matched nothing and the converge pre-empted the window just the same (fold review, 2026-09-07)
         [[ "${3:-}" == "--quiet" ]] \
-            && _ra_sha="$(git -C "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
+            && _ra_sha="$(git -C "$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")/.." && pwd -P)" rev-parse --short=8 HEAD 2>/dev/null || true)"
         RA_ACTION="$1" RA_REASON="${2:-}" RA_WHEN="${3:-}" RA_SHA="$_ra_sha" \
         RA_PPID="$PPID" \
         RA_PARENT="$(ps -o command= -p "$PPID" 2>/dev/null | head -1)" \

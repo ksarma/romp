@@ -659,10 +659,6 @@ class DriftWordingUI(unittest.TestCase):
             os.unlink(path)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ApplyScriptRuns(unittest.TestCase):
     """The apply script RUN against a sandbox host: a scratch git clone at the pushed sha, a stub romp-serve,
     the state root under ROMP_STATE_DIR, and `pkill` shadowed by a no-op first on PATH, so a fall-through
@@ -785,3 +781,7 @@ class ApplyScriptRuns(unittest.TestCase):
         self.assertEqual(out, "SYNCED:%s:DOWN" % self.sha, err)
         self.assertEqual(self._rows(), [])
         self.assertEqual(self._calls(), [], "status was read, nothing restarted, no row for it to note")
+
+
+if __name__ == "__main__":
+    unittest.main()
