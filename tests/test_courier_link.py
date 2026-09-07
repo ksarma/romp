@@ -127,6 +127,12 @@ class CourierLinkRepair(unittest.TestCase):
         src = open(os.path.join(BIN, "romp-judge")).read()
         self.assertIn("_attach_courier_link(cstore, seg[\"id\"], pm0[1])", src)
         self.assertIn('_seg_peer_kind(seg) == "delegate"', src)
+        # the repair lives in the per-session scan the evidence gate runs (_courier_scan, 2026-09-07), so a
+        # skipped session skips it too: pin that the literal sits inside that function's body
+        scan, runner = src.index("def _courier_scan("), src.index("def run_courier(")
+        self.assertLess(scan, runner, "the scan is defined before the runner that gates it")
+        at = src.index("_attach_courier_link(cstore, seg[\"id\"], pm0[1])")
+        self.assertTrue(scan < at < runner, "the link repair is part of the gated scan")
 
 
 class DormantHandoffConverts(unittest.TestCase):

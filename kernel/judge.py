@@ -1068,6 +1068,31 @@ def pass_watermark(tier, fsid):
 #              _blocked_sub_candidates, _newest_done_at, _completed_since). The candidate scan comes
 #              first, so about half the sessions never reach the parse, yet the pair re-arms them on
 #              every transcript append at one load each: accepted (about 10 ms per pass), stated here.
+#  courier     parse pair + candidates (the scan walks the parse's turns for peer-triggered segments;
+#              the sender sid it files under is the ledger's from_id READ THROUGH the parse's postal index,
+#              author_of -> postal_index[m]); store trio (load_goals, placements, the seams _segs applies,
+#              _attach_courier_link's idempotence scan over origin/links msgIds); the episode log
+#              (episode_floor). Four outcomes leave no stamp, so the session is scanned again next pass:
+#              a scan that returned a pending row (the write loop runs after every scan, reads the sender's
+#              store, the ledger and the model, and every branch of it writes or defers); the LINK-ONLY
+#              repair (_attach_courier_link) finding the sender's tracker complete, or the sender a local
+#              session outside the discover window (the two shapes in which a later pass could attach the
+#              link with none of this session's inputs moving; the lookup reads every discovered store, and
+#              every other shape stamps); a repair that raises (it did not run); a store that did not read
+#              (the session stands down; load_goals marked the run). Not in the signature: MESSAGES (the ledger stays out on the framework's reason
+#              below: deliver() appends the sent row BEFORE the wake, so the transcript atom always follows
+#              it and the pinned pair re-arms the scan; a sender-less peer segment, the residual, is placed
+#              by the planner as plain work in the same pass, before the courier reaches it, and the store
+#              move re-arms the courier when the parse next resolves it); _sdk_owned (the parse's
+#              sdk_human: _is_opener opens a turn for human, sdk, romp and peer authors alike, and the scan
+#              reads only dict authors, so the flag cannot change what the scan sees); the settle
+#              (_session_settled reads the bg-launch scan, the reg and the marker) is read at the WRITE
+#              sites only, from the store being written, never on the idle path. The xrows arm (the
+#              cross-host sender-side plant) runs per pass outside the gate; its writes re-arm the
+#              sender's scan once. Behaviour change with the gate (2026-09-07): a crash in the scan
+#              (_segs, episode_floor, load_goals) is caught per session as a pass-crash row ("scan: ...")
+#              and the pass goes on; before, only a parse crash was, and any other aborted the tiers after
+#              the courier for the pass.
 #  group       store trio (_group_tops, _overgrown_tops, _group_sig read the store), cleared.jsonl
 #              (_group_tops -> _view_cleared). NO parse: it is read only after a relink, which follows a
 #              model call, which follows a store change. The archive stays in: compaction rewrites it
@@ -1083,7 +1108,9 @@ def pass_watermark(tier, fsid):
 #              calls _distill_session directly for absent stores and is not gated (a straggler never
 #              holds a stamp to be skipped on).
 # Not in any signature, on purpose: MESSAGES (the parse cache key excludes it too: a delivery appends to
-# the transcript); retry-paused.json and usage.json (a skip on either is a "" call, so the belt marks the
+# the transcript, and the sent row is appended before the wake that produces the atom, so the row is
+# always in the ledger by the time the pinned pair moves; the FsCompleteness test allows it for every
+# parse tier); retry-paused.json and usage.json (a skip on either is a "" call, so the belt marks the
 # run incomplete); session-flags.json (_hidden_from_feed filters run_plan's, run_close's and run_unblock's
 # session lists, and the post-pool eviction drops a hidden sid's stamps, so an unmute costs one full run;
 # the other three runners do not filter on it). A store loaded with the `_unread` mark (the file or the
@@ -1091,9 +1118,10 @@ def pass_watermark(tier, fsid):
 # judged from a fallback view never stamps under the identity of files it did not read; the same holds
 # for the side files a stage reads after the gate stat'd them (cleared.jsonl, the states file, the stall
 # records): a read that fails on a file that exists marks the run incomplete and logs a row (_read_failed).
-GATED_TIERS = ("plan", "close", "unblock", "group", "consolidate", "distill")
-PARSE_TIERS = ("plan", "close", "unblock")   # the tiers whose decision path reads the parse: their signature
-#                                              carries the pinned pair, and _gated checks the served pair
+GATED_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill")   # run_triage's order
+PARSE_TIERS = ("plan", "close", "unblock", "courier")   # the tiers whose decision path reads the parse: their
+#                                                         signature carries the pinned pair, and _gated checks
+#                                                         the served pair
 _STAGE_STAMP = {}        # (tier, fsid) -> (sig, not_before): the inputs the tier last judged to completion
 _STAGE_LOCK = threading.Lock()
 _STAGE_STAMP_MAX = 4096  # belt: a wholesale clear at the cap (one full walk next pass)
@@ -1217,11 +1245,14 @@ def _sig_inputs(tier, fsid, path):
     gone marker and the reg, plan_units reads cleared.jsonl (_live_anchor_gone -> _view_cleared),
     rollup_status reads the stall slice, _sync_declared_plan reads the LEAF stem's task store; the
     closer's idle path is the parse, the store, the marker, the reg, cleared.jsonl and the stall slice;
-    the unblocker's is the parse and the store; the grouper's and consolidator's the store and
-    cleared.jsonl; the distiller's the store, the states file and the stall slice (the inventory above
-    GATED_TIERS). Kept apart from _stage_sig so the completeness test can hold a stage's reads against it."""
+    the unblocker's is the parse and the store; the courier's the parse, the store and the episode log
+    (episode_floor); the grouper's and consolidator's the store and cleared.jsonl; the distiller's the
+    store, the states file and the stall slice (the inventory above GATED_TIERS). Kept apart from
+    _stage_sig so the completeness test can hold a stage's reads against it."""
     ident = [GOALDIR / (fsid + ".json"), _overrides_dir() / (fsid + ".jsonl"), GOALARCHDIR / (fsid + ".json")]
     value = []
+    if tier == "courier":
+        ident += [EPIDIR / (fsid + ".jsonl")]
     if tier in ("plan", "close"):
         ident += [GONEDIR / (fsid + ".json"), STATE / "cleared.jsonl"]
         value += [STATE / "sdk" / (fsid + ".json"), STATE / "auto-nudge.json"]
@@ -14684,14 +14715,58 @@ def courier_llm(message_text, menu_text, declared=""):
     return _judge_run(_triage_model(), COURIER_SYS, user, judge="courier", mark=mk).strip()[:300]
 
 
-_postal_from_memo = [(None, {})]   # ((messages.jsonl mtime, size), {mid: (from, from_host, tracked, ...)}) as ONE
-#                                    tuple, rebound whole: stored as two slots, a reader between the stores paired
-#                                    the new key with the old map and missed a mid the new log has (the 2026-09-06
-#                                    free-threading review, race 7). Tests reset it to (None, {}).
+_postal_from_memo = [(None, ({}, []))]   # ((messages.jsonl mtime, size), (mp, xcands)) as ONE tuple, rebound
+#                                          whole: stored as two slots, a reader between the stores paired the new
+#                                          key with the old map and missed a mid the new log has (the 2026-09-06
+#                                          free-threading review, race 7). mp is {mid: _postal_row's tuple}; xcands
+#                                          the cross-host delegate "sent" rows run_courier plants from. Tests reset
+#                                          it to (None, {}): a non-equal key is a miss and the slot is never unpacked.
+
+
+def _postal_ledger():
+    """One memoized parse of the postal ledger for its two judge-side readers: (mp, xcands), where mp is
+    {mid: _postal_row's tuple} for every "sent" row with an id, and xcands the "sent" rows that are
+    cross-host delegates (kind delegate, a toName, a to_id "peer:..."), the candidates run_courier's
+    sender-side plant filters per pass by discovered sender and by the retry horizon (a clock predicate
+    and this pass's discovered senders, neither frozen here). Keyed on the file's (st_mtime, st_size), published as ONE
+    tuple (key, (mp, xcands)) rebound whole (the pusher thread reads _postal_row concurrently, see
+    _postal_from_memo). run_courier used to parse the whole ledger itself every pass for the candidate
+    rows, beside _postal_row's parse of the same file (J6 of the round-4 perf plan, 2026-09-07); the
+    ledger appends about once every few minutes live, so this refills about once per forty passes.
+    ({}, []) when the ledger is absent or unreadable, the answer both readers gave, and nothing is
+    memoized for it."""
+    try:
+        st = os.stat(MESSAGES)
+        key = (st.st_mtime, st.st_size)
+    except OSError:
+        return {}, []
+    ent = _postal_from_memo[0]
+    if ent[0] == key:
+        return ent[1]
+    mp, xcands = {}, []
+    try:
+        for line in MESSAGES.read_text(errors="replace").splitlines():
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(r, dict) or r.get("ev") != "sent" or not r.get("id"):
+                continue
+            ua = r.get("userAsk")
+            mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
+                           str(r.get("body") or ""),
+                           ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None,
+                           str(r.get("originMid") or ""), str(r.get("from_id") or ""))
+            if r.get("kind") == "delegate" and r.get("toName") and str(r.get("to_id") or "").startswith("peer:"):
+                xcands.append(r)
+    except OSError:
+        return {}, []
+    _postal_from_memo[0] = (key, (mp, xcands))
+    return mp, xcands
 
 
 def _postal_row(mid):
-    """(from_name, from_host, tracked, body, userAsk, originMid) for a delivered postal message id, from the
+    """(from_name, from_host, tracked, body, userAsk, originMid, from_id) for a delivered postal message id, from the
     "sent" row — the AUTHORITATIVE record of who sent it and how (the row schema is the postal
     consumer contract). The sender may be a session of ANOTHER kernel (federated mail), so the local
     names registry cannot resolve it; the log row carries the name the sender wore, the origin host
@@ -14702,34 +14777,15 @@ def _postal_row(mid):
     sending kernel ran its local chain walk at relay time and the bus carried the proof, so a
     cross-host delegate reads user-anchored though the local walk rightly refuses foreign hops.
     originMid (2026-08-28, the dead-session round) is the SENDER-side id deliver() stamps on a
-    relayed row — the durable join key when the two sides mint different mids for one message.
-    ("", "", False, "", None, "") for None/unknown mids. Memoized on the log file's (mtime, size)."""
+    relayed row — the durable join key when the two sides mint different mids for one message. from_id
+    (2026-09-07) is the sender's sid as the row records it, the value the parse's postal index resolves a
+    peer author to; _attach_courier_link reads it to tell a local sender outside the discover window from
+    one whose store holds no tracker. ("", "", False, "", None, "", "") for None/unknown mids. Memoized on
+    the log file's (mtime, size) through _postal_ledger, one parse per ledger version shared with the
+    courier's cross-host candidate rows."""
     if not mid:
-        return ("", "", False, "", None, "")
-    try:
-        st = os.stat(MESSAGES)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        return ("", "", False, "", None, "")
-    k0, mp = _postal_from_memo[0]
-    if k0 != key:
-        mp = {}
-        try:
-            for line in MESSAGES.read_text(errors="replace").splitlines():
-                try:
-                    r = json.loads(line)
-                except Exception:
-                    continue
-                if r.get("ev") == "sent" and r.get("id"):
-                    ua = r.get("userAsk")
-                    mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
-                                   str(r.get("body") or ""),
-                                   ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None,
-                                   str(r.get("originMid") or ""))
-        except OSError:
-            return ("", "", False, "", None, "")
-        _postal_from_memo[0] = (key, mp)
-    return mp.get(mid, ("", "", False, "", None, ""))
+        return ("", "", False, "", None, "", "")
+    return _postal_ledger()[0].get(mid, ("", "", False, "", None, "", ""))
 
 
 def _frame_head(s):
@@ -14856,8 +14912,31 @@ def _attach_courier_link(store, seg_id, mid):
     if not tgt or tgt not in nodes:
         return False
     top = _top_ancestor(nodes, tgt)
-    peer_sid, peer_gid = _handoff_backref(mid)
-    if not (peer_sid and peer_gid):
+    # The tracker lookup reads OTHER sessions' stores (every discovered one), which no per-session
+    # signature carries. The evidence gate (2026-09-07) marks the courier's scan incomplete here only in
+    # the shapes where a later pass could attach the link with none of THIS session's inputs moving, so
+    # the session is scanned again instead of skipped over; every other shape may stamp (the review's
+    # nit: an unconditional mark kept a planner-placed delegate's session hot forever, N+1 store loads
+    # per pass). The shapes:
+    #  - an OPEN tracker: the link attaches now, and the save re-arms the scan on its own;
+    #  - a COMPLETE tracker: no link (a completed tracker is never linked), and a user reopening it moves
+    #    the sender's journal, not this session's inputs: mark;
+    #  - no tracker in any discovered store: nothing can plant one later for a placed local segment (the
+    #    two planters, run_courier's write loop and its cross-host arm, plant for unplaced rows and for
+    #    remote recipients), so the scan may stamp, with one exception: a LOCAL sender outside the
+    #    discover window (the ledger row names it and carries no from_host) was not read here, and its
+    #    return makes an open tracker visible with nothing of this session's moving: mark. A sender on
+    #    another kernel keeps its tracker there, where no local pass can ever link it: stamp.
+    fleet = discover(int(time.time()))
+    hit = _handoff_tracker(mid, fleet)
+    if hit is None:
+        row = _postal_row(mid)
+        if row[6] and not row[1] and row[6] not in {f[0] for f in fleet}:
+            _judge_ctx.stage_incomplete = True
+        return False
+    peer_sid, peer_gid, complete = hit
+    if complete:
+        _judge_ctx.stage_incomplete = True
         return False
     nodes[top].setdefault("links", []).append({"peer": peer_sid, "goalId": peer_gid, "msgId": mid})
     save_goals(store["rompUuid"], store)
@@ -14913,17 +14992,29 @@ def _serving_ref(serving):
     return ref
 
 
-def _handoff_backref(mid):
-    """(sender sid, sender tracking-node id) for a delegate message id — read from the SENDER boards'
-    own handoff nodes (the durable record _plant_handoff_track wrote at send time). '' pair when no
-    sender tracks this message (a delegate from a non-romp source, or the sender's store is gone)."""
-    for fsid, path, anchor, name in discover(int(time.time())):
+def _handoff_tracker(mid, fleet=None):
+    """The sender-side tracking node for a delegate message id, read from the DISCOVERED sessions' stores
+    (the durable record _plant_handoff_track wrote at send time): (sender sid, node id, nodeComplete), an
+    open tracker preferred over a completed one; None when no discovered store tracks the message (a
+    delegate from a non-romp source, a sender on another kernel or outside the discover window, or a
+    message no courier filed). `fleet`: the discover() list to read, when the caller holds it already."""
+    found = None
+    for fsid, path, anchor, name in (discover(int(time.time())) if fleet is None else fleet):
         st = load_goals(fsid)
         for nid, nd in st.get("nodes", {}).items():
             h = nd.get("handoff")
-            if isinstance(h, dict) and h.get("msgId") == mid and not nd.get("nodeComplete"):
-                return fsid, nid
-    return "", ""
+            if isinstance(h, dict) and h.get("msgId") == mid:
+                if not nd.get("nodeComplete"):
+                    return fsid, nid, False
+                found = (fsid, nid, True)
+    return found
+
+
+def _handoff_backref(mid):
+    """(sender sid, sender tracking-node id) for a delegate message id: the OPEN tracker _handoff_tracker
+    finds, else the '' pair (no sender tracks this message, or its tracker is complete)."""
+    hit = _handoff_tracker(mid)
+    return (hit[0], hit[1]) if hit is not None and not hit[2] else ("", "")
 
 
 def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tracked=False):
@@ -15549,64 +15640,130 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     return n
 
 
+def _courier_scan(fsid, path, now):
+    """The courier's per-session SCAN, the gated computation (the evidence gate, 2026-09-07): walk the
+    pass's parse of `fsid` for peer-triggered segments and return the pending rows the pass's write loop
+    files, `(seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path)`, in transcript order.
+    Reads exactly what the courier's signature carries (the inventory above GATED_TIERS): the pinned
+    parse, the store trio and the episode log. Four outcomes leave no stamp, so the session is scanned
+    again next pass: rows returned (the write loop that consumes them runs after every scan and every
+    branch of it writes or defers, so the session stays due until its rows are consumed); the LINK-ONLY
+    repair finding the sender's tracker complete, or the sender a local session outside the discover
+    window (the two shapes in which a later pass could attach the link with none of this session's
+    inputs moving; the mark sits in _attach_courier_link, which stamps every other shape); a repair that
+    raises (it did not run: the next pass retries it); a store that did not read (the session stands
+    down; load_goals marked the run). A parse or walk that raises propagates: _gated counts it incomplete
+    and the runner logs the pass-crash row and goes on to the next session.
+    The settle is NOT read here: run_courier reads it at its write sites, from the store being written
+    (the scan used to read it for every session, every pass)."""
+    session = parsed_session(fsid, [path], now)       # states-aware + cached, so _session_closed is correct
+    cstore = load_goals(fsid)
+    if _fallback_store(cstore):
+        return []                                      # its messages wait until the store reads (load_goals logged it)
+    rows = []
+    placed_ids = cstore["placements"]
+    floor = episode_floor(fsid)
+    for turn in session["turns"]:
+        for seg in _segs(turn, cstore):
+            if seg["id"] in placed_ids:
+                # LINK-ONLY repair (the user 2026-08-23): the planner placed this peer segment
+                # before the courier saw it, so no courier goal was minted and the SENDER's
+                # handoff waits on a completion event that can never fire (12 live handoffs, up
+                # to 240h old). A placed DELEGATE with no courier link gets the link attached to
+                # the placement's TOP — run_propagate completes the sender's tracking node when
+                # that goal lands. No model call; idempotent by msgId.
+                try:
+                    pm0 = _seg_peer(seg)
+                    if pm0 and pm0[0] and pm0[1] and _seg_peer_kind(seg) == "delegate":
+                        _attach_courier_link(cstore, seg["id"], pm0[1])
+                except Exception as e:             # bookkeeping, but its failure is not nothing (T111)
+                    _judge_ctx.stage_incomplete = True         # the repair did not run: no stamp, retried next pass
+                    _log_judge_error("courier", fsid, "pass-crash", note="link-attach: %r" % e)
+                continue
+            if floor and seg["t"] < floor:
+                # pre-episode: conversation the agent can no longer see. The planner retires these
+                # before any model call; the courier needs its own guard because a FORK's copied
+                # history is the first shape that leaves OLD peer segments visible here (a /clear's
+                # null-rooted head drops pre-clear history from the parse for free, so this never
+                # fired before). Defense in depth beside the fork's sealed-placements seed.
+                continue
+            pm = _seg_peer(seg)
+            if not pm or not pm[0]:                # peer-triggered with a KNOWN sender only. This filter
+                #                                    is one half of a partition contract with plan_units:
+                #                                    the courier places exactly the peer segments it can
+                #                                    file under a sender's goal, and plan_units yields a
+                #                                    '#d' unit for exactly those (a sender-less one gets a
+                #                                    plain work unit there instead — a '#d' nothing places
+                #                                    wedges auto-nudge's placement gate, 2026-08-16).
+                continue
+            if _placed_key(placed_ids, seg["id"]):
+                # placed under a key whose parse t has since DRIFTED (the exact check above missed it): the
+                # write loop dedups such a row through the same helper and never files it, so returning it
+                # would mark every scan of this session incomplete and defeat the gate for it forever (the
+                # review's nit 3, 2026-09-07). Checked here, after the peer filter, so the drift-tolerant
+                # walk over the placements runs only for the rows the scan would otherwise return; a drifted
+                # placement gets no link repair (the repair resolves its target by exact key), as before.
+                continue
+            rows.append((seg["t"], fsid, seg["id"], _unit_text(seg["atoms"]), pm[1], pm[0],
+                         _seg_peer_kind(seg), _seg_anchor(seg), path))
+    if rows:
+        _judge_ctx.stage_incomplete = True             # the rows are filed by the write loop, outside the
+        #                                                gate: the session stays due until they are consumed
+    return rows
+
+
 def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
     """One TRIAGE-TIER courier pass: place peer-message (postal) segments as delegations, GLOBAL
     oldest-first across sessions. Idempotent (msgId + seg_id). COORDINATING segments are marked processed
     without a goal-edit; a declared coordinate/question files that way outright, no model call (demote-
     only, the user 2026-07-27). (Sender goals are read as-of-NOW for the MVP; true as-of-send is a
-    refinement.)"""
+    refinement.)
+
+    The per-session scan (_courier_scan) is on the evidence gate (2026-09-07): a session is scanned only
+    when its pinned parse pair, its store trio or its episode log moved since the scan that last
+    completed with no rows and no backref (the inventory above GATED_TIERS); otherwise the gate stamps
+    pass_done and moves on. The scans run inline on this thread in discover order (CPU-bound walks over
+    a cached parse; a pool adds nothing under the GIL). The write loop below is not gated: a session with
+    rows is never stamped, so it is scanned every pass until its rows are consumed by a write, which
+    moves the store and re-arms the scan once more."""
     if now is None:
         now = int(time.time())
     fleet = discover(now)[:sessions_cap]
     id2name = {f: nm for f, p, a, nm in fleet}          # recipient id → name, for the sender's tracking-node label
     paths_map = {f: str(p) for f, p, a, nm in fleet}    # sid → transcript, for the mint-time chain trace
-    pending, closed = [], {}                           # pending: (seg_t, fsid, seg_id, text, mid, sender)
+    pending = []                                       # (seg_t, fsid, seg_id, text, mid, sender, declared, anchor, path)
     for fsid, path, anchor, name in fleet:
         try:
-            session = parsed_session(fsid, [str(path)], now)   # states-aware + cached, so _session_closed is correct
-        except Exception as e:                         # a poisoned transcript must not skip silently (T111)
-            _log_judge_error("courier", fsid, "pass-crash", note="parse: %r" % e)
-            continue
-        cstore = load_goals(fsid)
-        if _fallback_store(cstore):
-            continue                                   # its messages wait until the store reads (load_goals logged it)
-        closed[fsid] = _session_settled(fsid, str(path), session, cstore)
-        placed_ids = cstore["placements"]
-        floor = episode_floor(fsid)
-        for turn in session["turns"]:
-            for seg in _segs(turn, cstore):
-                if seg["id"] in placed_ids:
-                    # LINK-ONLY repair (the user 2026-08-23): the planner placed this peer segment
-                    # before the courier saw it, so no courier goal was minted and the SENDER's
-                    # handoff waits on a completion event that can never fire (12 live handoffs, up
-                    # to 240h old). A placed DELEGATE with no courier link gets the link attached to
-                    # the placement's TOP — run_propagate completes the sender's tracking node when
-                    # that goal lands. No model call; idempotent by msgId.
-                    try:
-                        pm0 = _seg_peer(seg)
-                        if pm0 and pm0[0] and pm0[1] and _seg_peer_kind(seg) == "delegate":
-                            _attach_courier_link(cstore, seg["id"], pm0[1])
-                    except Exception as e:             # bookkeeping, but its failure is not nothing (T111)
-                        _log_judge_error("courier", fsid, "pass-crash", note="link-attach: %r" % e)
-                    continue
-                if floor and seg["t"] < floor:
-                    # pre-episode: conversation the agent can no longer see. The planner retires these
-                    # before any model call; the courier needs its own guard because a FORK's copied
-                    # history is the first shape that leaves OLD peer segments visible here (a /clear's
-                    # null-rooted head drops pre-clear history from the parse for free, so this never
-                    # fired before). Defense in depth beside the fork's sealed-placements seed.
-                    continue
-                pm = _seg_peer(seg)
-                if not pm or not pm[0]:                # peer-triggered with a KNOWN sender only. This filter
-                    #                                    is one half of a partition contract with plan_units:
-                    #                                    the courier places exactly the peer segments it can
-                    #                                    file under a sender's goal, and plan_units yields a
-                    #                                    '#d' unit for exactly those (a sender-less one gets a
-                    #                                    plain work unit there instead — a '#d' nothing places
-                    #                                    wedges auto-nudge's placement gate, 2026-08-16).
-                    continue
-                pending.append((seg["t"], fsid, seg["id"], _unit_text(seg["atoms"]), pm[1], pm[0],
-                                _seg_peer_kind(seg), _seg_anchor(seg), str(path)))
+            skip, sig = _gate_check("courier", fsid, str(path), now)
+            if skip:
+                continue
+            pending.extend(_gated("courier", _courier_scan, fsid, str(path), now, sig, settle=False))
+            pass_done("courier", fsid)
+        except Exception as e:                         # a poisoned transcript or a crashed walk must not skip
+            #                                            silently (T111), nor end the pass for the sessions
+            #                                            after it (before the gate, only a parse crash was
+            #                                            caught here; a _segs crash aborted the triage pass)
+            _log_judge_error("courier", fsid, "pass-crash", note="scan: %r" % e)
+    _gate_evict("courier", {f[0] for f in fleet})
+    closed = {}                                        # fsid -> settled, read at the write sites (settled())
+
+    def settled(fsid, store):
+        """The rollup's settled gate for a store the write loop is about to publish, once per session per
+        pass, from the pass's parse (a frame hit: the scan pinned it) and the store being written. Read at
+        the write moment, not in the scan: the scan computed it for every session every pass and only the
+        sessions with rows ever read it. Equal to or newer than the scan-time value: the courier's own
+        writes never touch awaitingWhy or closedTurns, and a concurrent writer's change is newer
+        evidence. A parse that raises here (outside a frame: a transcript that moved and no longer parses)
+        logs a pass-crash row and reads as not settled, the default the scan-time dict had, rather than
+        ending the write loop mid-list."""
+        if fsid not in closed:
+            try:
+                session = parsed_session(fsid, [paths_map[fsid]], now)
+                closed[fsid] = _session_settled(fsid, paths_map[fsid], session, store, now)
+            except Exception as e:
+                _log_judge_error("courier", fsid, "pass-crash", note="settle: %r" % e)
+                closed[fsid] = False
+        return closed[fsid]
     # CROSS-HOST delegates plant the SENDER-side tracking node here too (the user 2026-08-24, the
     # paused-cards investigation): the recipient lives on a remote kernel, so no inbound segment
     # ever reaches this courier and _plant_handoff_track never ran — the sender's goal waited on a
@@ -15623,20 +15780,12 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     # backfilled; idempotent by msgId, so one plant per message ever.
     placed = 0
     fleet_ids = {f for f, p, a, nm in fleet}
-    try:
-        xrows = []
-        for line in MESSAGES.read_text(errors="replace").splitlines():
-            try:
-                o = json.loads(line)
-            except Exception:
-                continue
-            if (o.get("ev") == "sent" and o.get("kind") == "delegate" and o.get("id")
-                    and o.get("from_id") in fleet_ids and o.get("toName")
-                    and str(o.get("to_id") or "").startswith("peer:")
-                    and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON):
-                xrows.append(o)
-    except OSError:
-        xrows = []
+    # The candidate rows come from the ledger memo (_postal_ledger: one parse per ledger version, shared
+    # with _postal_row; this arm parsed the whole ledger itself every pass before 2026-09-07). The
+    # discovered-sender and horizon filters run here, per pass: the horizon is a clock predicate and the
+    # discovered senders are this pass's, so neither is frozen in the memo.
+    xrows = [o for o in _postal_ledger()[1]
+             if o.get("from_id") in fleet_ids and now - (o.get("t") or 0) <= COURIER_RETRY_HORIZON]
     for o in xrows:
         sstore = load_goals(o["from_id"])
         if _fallback_store(sstore):
@@ -15668,7 +15817,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             _log_judge_error("courier", fsid, "give-up", seg=seg_id,
                              note="peer message unsummarized past the %dh retry horizon (usage-limited) — abandoned"
                                   % (COURIER_RETRY_HORIZON // 3600))
-            rollup_status(store, closed.get(fsid, False))   # the release its demote-only sibling always had
+            rollup_status(store, settled(fsid, store))   # the release its demote-only sibling always had
             #                                                 (2026-08-13): without it, a node this abandoned
             #                                                 unit was holding stayed un-rolled until some
             #                                                 other pass happened to touch the store
@@ -15685,7 +15834,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             store["placements"][seg_id] = "fyi"
             store.get("courierDeferred", {}).pop(seg_id, None)
             store.get("courierFails", {}).pop(seg_id, None)
-            rollup_status(store, closed.get(fsid, False))
+            rollup_status(store, settled(fsid, store))
             save_goals(fsid, store)
             placed += 1
             continue
@@ -15747,7 +15896,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 store["placements"][seg_id] = None
                 _log_judge_error("courier", fsid, "rewind-stand-down", seg=seg_id,
                                  note="the peer segment sits on a rewound-away branch — retired, nothing planted")
-                rollup_status(store, closed.get(fsid, False))
+                rollup_status(store, settled(fsid, store))
                 save_goals(fsid, store)
                 continue
             link_id = menu[edit["n"] - 1]["id"] if edit["n"] else None   # sender's related open goal (or None)
@@ -15830,7 +15979,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 store["placements"][seg_id] = "fyi"    # quiet: processed, no recipient top (the #d
                 #                                        delegation phase retires on this, exactly the
                 #                                        coordinate treatment)
-                rollup_status(store, closed.get(fsid, False))
+                rollup_status(store, settled(fsid, store))
                 save_goals(fsid, store)
                 placed += 1
                 continue
@@ -15860,7 +16009,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             #               head — same content, one hop later
         else:
             store["placements"][seg_id] = "fyi"        # coordinating: no goal, but mark processed
-        rollup_status(store, closed.get(fsid, False))
+        rollup_status(store, settled(fsid, store))
         save_goals(fsid, store)
         placed += 1
     if verbose:

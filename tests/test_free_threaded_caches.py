@@ -375,13 +375,14 @@ class PostalRowMemo(unittest.TestCase):
         jd.MESSAGES.write_text(json.dumps({"ev": "sent", "id": "m1", "from": "web", "body": "please review"}) + "\n")
         self.assertEqual(jd._postal_row("m1")[0], "web")
         self.assertEqual(len(jd._postal_from_memo), 1, "one slot")
-        key, mp = jd._postal_from_memo[0]
+        key, (mp, xcands) = jd._postal_from_memo[0]                    # the payload is (mp, xcands) since J6
         self.assertIsInstance(key, tuple)
         self.assertIn("m1", mp, "the key and the map it was built with travel together")
+        self.assertEqual(xcands, [], "no cross-host delegate row: no candidate")
         jd.MESSAGES.write_text(json.dumps({"ev": "sent", "id": "m2", "from": "api", "body": "done"}) + "\n")
         os.utime(jd.MESSAGES, (time.time() + 10, time.time() + 10))
         self.assertEqual(jd._postal_row("m2")[0], "api")
-        self.assertNotIn("m1", jd._postal_from_memo[0][1], "a new key brings its own map, never the old one")
+        self.assertNotIn("m1", jd._postal_from_memo[0][1][0], "a new key brings its own map, never the old one")
 
 
 # ── race 8: one retry per error episode, two askers at once ──

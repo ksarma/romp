@@ -5,7 +5,10 @@ it to completion. P2 (the same day) put the four store-only tiers on the same ga
 parse pair and the store trio), the grouper and consolidator (the store trio and cleared.jsonl, no parse),
 the distiller (the store trio, the states file and this sid's stall records, no parse); the StoreTiers,
 StoreReArms, StoreOwnWrites, StoreCompleteness, UnblockerHazard and DrainStaysUngated classes and the four
-FsCompleteness checks below are its tests.
+FsCompleteness checks below are its tests. J6 of the round-4 perf plan (the same day) put the courier's
+per-session scan on the gate: the pinned parse pair, the store trio and the episode log, with the scan
+marked incomplete when it produced pending rows or its link repair reached another session's store; the
+CourierGate class and the courier's FsCompleteness check are its tests.
 
 Why: every pass ran every discovered session in full (a parse, a store load, the unit walk, the closed-turn
 walk, a rollup, an unconditional save), with about two of thirty-three sessions holding anything new per
@@ -38,6 +41,7 @@ import builtins
 import io
 import json
 import os
+import pathlib
 import re
 import shutil
 import tempfile
@@ -66,7 +70,10 @@ HOLD_ALL = '{"verdicts":[]}'
 LIFT_ONE = '{"verdicts":[{"n":1,"do":"lift","why":"the port was named two messages later"}]}'
 MIRROR_WHY = "declared in the agent's own to-do list"          # the mirror top's mint reason (_title_mirror_tops)
 STORE_TIERS = ("unblock", "group", "consolidate", "distill")
-ALL_TIERS = ("plan", "close") + STORE_TIERS                     # run_triage's order
+ALL_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill")   # run_triage's order
+DELEGATE_REPLY = '{"verdict": "delegating", "goal": 0, "text": "Wire up the export button"}'
+MID = "1781100000.11111_22222.TESTHOST"                         # a delivered peer message's id (synthetic)
+MID2 = "1781100000.33333_44444.TESTHOST"
 
 
 def iso(t):
@@ -111,6 +118,8 @@ class _Gate(unittest.TestCase):
         jd.end_pass_frame(True)                      # belt: never inherit a frame a crashed test left open
         for c in (jd._PARSE_CACHE, jd._CHAIN_MEMO, jd._BG_SCAN_CACHE, jd._RECON_MEMO, jd._gone_memo):
             c.clear()
+        jd._postal_from_memo[0] = (None, ({}, []))   # the ledger memo keys on (mtime, size), not the path: never
+        #                                              serve another root's rows under this one
         self.cdir = self.td / "launchdir"; self.cdir.mkdir()
         self.proj = self.td / "projects"
         self.pdir = self.proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(self.cdir)))
@@ -132,8 +141,12 @@ class _Gate(unittest.TestCase):
         # the store tiers' helpers (P2): hold every block, land every distill, title every mirror top; and a
         # belt under all of them, since no test here may reach the real model call
         self._saved_store = (jd.unblock_llm, jd.distill_llm, jd.brief_llm, jd.stall_llm, jd.mirror_title_llm,
-                             jd.parsed_session)
-        self.unblock_calls, self.distill_calls, self.title_calls = [], [], []
+                             jd.parsed_session, jd.courier_llm, jd._courier_scan, jd._segs, jd._session_settled,
+                             jd.rollup_status)
+        self.unblock_calls, self.distill_calls, self.title_calls, self.courier_calls = [], [], [], []
+        # the courier (J6): a delegating verdict with no sender link, so a filed row plants the sender's
+        # tracker and files the recipient quiet (the chain walk finds no link to root the mint on)
+        jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or DELEGATE_REPLY)
         jd.unblock_llm = lambda blocks, since, completed="": (self.unblock_calls.append(blocks) or HOLD_ALL)
         jd.distill_llm = lambda text, work, why, **kw: (self.distill_calls.append(text) or "Shipped the search endpoint.")
         jd.brief_llm = lambda text, work, owed, **kw: (self.distill_calls.append(text) or "Pick the port the api binds.")
@@ -151,7 +164,8 @@ class _Gate(unittest.TestCase):
          jd._judge_run_impl, jd._rewound_away, jd._judge_run, jd._fileset_key, jd._close_turn,
          jd._STAGE_STAMP_MAX) = self._saved
         (jd.unblock_llm, jd.distill_llm, jd.brief_llm, jd.stall_llm, jd.mirror_title_llm,
-         jd.parsed_session) = self._saved_store
+         jd.parsed_session, jd.courier_llm, jd._courier_scan, jd._segs, jd._session_settled,
+         jd.rollup_status) = self._saved_store
         if self._env is None:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
         else:
@@ -181,11 +195,56 @@ class _Gate(unittest.TestCase):
         with open(jd.STATESDIR / (sid + ".jsonl"), "a") as f:
             f.write(json.dumps({"t": t, "state": state}) + "\n")
 
+    def _peer_line(self, t, uuid, mid, kind="delegate", body="DELEGATE: wire up the export button", parent=None):
+        """A delivered peer (postal) message as the transcript records it: the body, then the id and kind
+        markers the postal bus appends. The sender is resolved through the ledger row (_ledger_row)."""
+        text = "%s\n<!-- romp-msg-id: %s -->" % (body, mid)
+        if kind:
+            text += "\n<!-- romp-msg-kind: %s -->" % kind
+        return uline(t, text, uuid, parent, ps="sdk")
+
+    def _ledger_row(self, mid, from_id, to_id, kind="delegate", body="DELEGATE: wire up the export button", t=T0 + 190, **extra):
+        """The postal ledger's "sent" row for a delivered message: the authoritative sender record the parse's
+        postal index (author.peer) and the courier's _postal_row read."""
+        jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
+        row = {"t": t, "ev": "sent", "id": mid, "from": "web", "from_id": from_id, "to_id": to_id,
+               "kind": kind, "body": body}
+        row.update(extra)
+        with open(jd.MESSAGES, "a") as f:
+            f.write(json.dumps(row) + "\n")
+
+    def _peer_session(self, sid, sender, mid=MID, kind="delegate", t=T0 + 200, replied=True):
+        """A recipient session whose third turn is a delivered peer message from `sender` (ledger row
+        included), answered when `replied`; the sender session is a plain two-turn one. Returns the path."""
+        recs = list(TWO_TURNS) + [self._peer_line(t, "p1", mid, kind=kind, parent="a2")]
+        if replied:
+            recs.append(aline(t + 30, "On it.", "a3", "p1"))
+        self._ledger_row(mid, sender, sid, kind=kind or "delegate", t=t - 10)
+        path = self._session(sid, recs)
+        self._session(sender, name="api")
+        return path
+
+    def _peer_seg_id(self, sid, path):
+        """The segment id of the session's peer-triggered segment, as the courier files it."""
+        store = jd.load_goals(sid)
+        segs = [sg for turn in jd.parsed_session(sid, [str(path)], NOW)["turns"] for sg in jd._segs(turn, store)]
+        return next(sg["id"] for sg in segs if jd._seg_peer(sg))
+
+    def _scan_log(self):
+        """Wrap _courier_scan to record the sids it ran for; returns the list (cleared by the caller)."""
+        real, seen = self._saved_store[7], []
+
+        def scan(fsid, path, now):
+            seen.append(fsid)
+            return real(fsid, path, now)
+        jd._courier_scan = scan
+        return seen
+
     def _pass(self, now=NOW, tiers=("plan", "close")):
         """One gated pass over the fixture: the named tiers in run_triage's order under one frame."""
         jd._discover_cache.clear()                   # discover's list is cached behind a dir fingerprint, not `now`
-        runners = {"plan": jd.run_plan, "close": jd.run_close, "unblock": jd.run_unblock, "group": jd.run_group,
-                   "consolidate": jd.run_consolidate, "distill": jd.run_distill}
+        runners = {"plan": jd.run_plan, "close": jd.run_close, "unblock": jd.run_unblock, "courier": jd.run_courier,
+                   "group": jd.run_group, "consolidate": jd.run_consolidate, "distill": jd.run_distill}
         own = jd.begin_pass_frame()
         try:
             for t in ALL_TIERS:
@@ -972,6 +1031,11 @@ class FsCompleteness(_Gate):
         self._check("unblock", jd._unblock_session,
                     prep=lambda: self._block(SID, self._tops()[0]["id"], T0 + 150))
 
+    def test_the_couriers_idle_reads_are_all_in_its_signature(self):
+        # the courier's idle scan: the pinned parse (the key files, the states file and the ledger the postal
+        # index reads, allowed for every parse tier), the store trio and the episode log, nothing else
+        self._check("courier", jd._courier_scan)
+
     def test_the_groupers_idle_reads_are_all_in_its_signature(self):
         self._check("group", jd._group_session)
 
@@ -1590,6 +1654,583 @@ class DrainStaysUngated(_Gate):
                          "no transcript, no work: the sentinel, written by the ungated drain")
         self.assertIsNone(self._stamp("distill", SID2), "the drain leaves no stamp")
         self.assertEqual(self._st("distill")["ran"], 0, "the discovered sid skipped; the drain is not a gated run")
+
+
+class CourierGate(_Gate):
+    """The courier's per-session scan on the gate (J6, 2026-09-07). The invariant: the gate never withholds a
+    courier action the ungated pass would have taken from new evidence. A scan is skipped only when the
+    pinned parse pair, the store trio and the episode log are identical to the last scan that completed
+    with no pending row and no backref; a scan that produced rows, reached another session's store, stood
+    down on a fallback store or raised leaves no stamp, so the session is scanned again next pass."""
+
+    def _ran(self, tier="courier"):
+        s = self._st(tier)
+        return (s["ran"], s["skipped"], s["stamped"], s["incomplete"])
+
+    def test_two_idle_passes_scan_once_then_skip_with_no_store_io(self):
+        self._session(SID)
+        self._session(SID2, name="api")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]), "first pass: every discovered session is scanned")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "two complete scans, both stamped")
+        self.assertIsNotNone(self._stamp("courier", SID))
+        self.assertIsNotNone(self._stamp("courier", SID2))
+        wm = jd.pass_watermark("courier", SID)
+        self.assertIsNotNone(wm, "a completed scan stamps pass_done")
+        seen.clear()
+        segs = []
+        real_segs = self._saved_store[8]
+        jd._segs = lambda turn, store: (segs.append(1) or real_segs(turn, store))
+        self._reset()
+        io0 = jd.goal_io_stats()
+        time.sleep(0.002)
+        self._pass(tiers=("courier",))
+        io1 = jd.goal_io_stats()
+        self.assertEqual(seen, [], "second pass: no scan")
+        self.assertEqual(segs, [], "no segment walk")
+        self.assertEqual(self._ran(), (0, 2, 0, 0))
+        self.assertEqual((io1["loads"] - io0["loads"], io1["saves"] - io0["saves"]), (0, 0),
+                         "a skipped session costs no store load and no save")
+        self.assertGreater(jd.pass_watermark("courier", SID), wm, "a skip stamps pass_done too")
+        self.assertEqual(self.courier_calls, [], "no peer mail, no model call, in either pass")
+
+    def test_each_input_re_arms_the_courier_for_its_sid_only(self):
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge()                                                # every tier, so the planner's tops exist
+        seen = self._scan_log()
+
+        def rearms(expect, msg="the follow-on pass: nothing new, both skip"):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertEqual(seen, expect, msg)
+            self.assertEqual(self._st("courier")["skipped"], 2 - len(expect), msg)
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        rearms([SID], "a transcript append (the parse pair)")
+        rearms([], "nothing new: the re-armed scan wrote nothing and stamped")
+        self._states_row(SID, T0 + 300, "idle")
+        rearms([SID], "a states row (in the parse key)")
+        rearms([])
+        store = jd.load_goals(SID)
+        top = self._tops()[0]
+        store["nodes"][top["id"]]["text"] = "Renamed by a kernel-side writer"
+        jd.save_goals(SID, store)
+        rearms([SID], "a save_goals publish (a rename: new identity)")
+        rearms([])
+        jd.append_override(SID, top["id"], "resolve", NOW + 1)          # the user's gesture: the journal only
+        rearms([SID], "a journal append with no store write")
+        rearms([])
+        jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})
+        rearms([SID], "an archive write")
+        rearms([])
+        jd.EPIDIR.mkdir(parents=True, exist_ok=True)
+        with open(jd.EPIDIR / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"head": "u1", "fsid": SID, "t": T0}) + "\n")
+        rearms([SID], "an episodes row (episode_floor is the courier's pre-episode guard)")
+        rearms([])
+        # not courier inputs: captions, cleared.jsonl, the sdk reg, a stall record, the ledger alone
+        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+        with open(jd.CAPDIR / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"id": "seg-x#p", "caption": "Ship the notes-api search"}) + "\n")
+        rearms([], "a captions append re-arms nothing")
+        with open(jd.STATE / "cleared.jsonl", "a") as f:
+            f.write(json.dumps({"id": SID2 + ":g1", "op": "clear", "t": NOW}) + "\n")
+        rearms([], "a cleared.jsonl row re-arms nothing")
+        reg = jd.STATE / "sdk" / (SID + ".json")
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        reg.write_text(json.dumps({"spawnedAt": T0 + 600}))
+        rearms([], "an sdk reg appearing re-arms nothing (the scan reads only peer authors)")
+        (jd.STATE / "auto-nudge.json").write_text(json.dumps(
+            {"enabled": False, "deferred": {top["id"]: {"at": NOW, "why": "waiting on the closer", "sid": SID}}}))
+        rearms([], "a stall record re-arms nothing (the courier rolls up only at its write sites)")
+        self._ledger_row(MID2, SID2, SID, t=NOW)
+        rearms([], "a ledger row alone re-arms nothing: the sent row precedes the transcript atom that carries it")
+
+    def test_a_session_with_a_pending_row_is_scanned_every_pass_and_never_stamped(self):
+        # Exercised for the contract, not because it occurs live: the state copy the round was measured on
+        # holds zero sessions with an unfiled peer row (they are filed on the pass that finds them). A row the
+        # write loop could not consume (an empty courier reply: the account is usage-limited) keeps the session
+        # due; once a reply files it, the store's own move re-arms the scan once more, and then it skips.
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or "")
+        seen = self._scan_log()
+        for i in range(3):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertIn(SID, seen, "pass %d: the session with a row is scanned" % i)
+            self.assertEqual(self._st("courier")["incomplete"], 1, "pass %d: the row marks the run incomplete" % i)
+            self.assertIsNone(self._stamp("courier", SID), "pass %d: never stamped" % i)
+        store = jd.load_goals(SID)
+        self.assertNotIn(seg_id, store["placements"], "an empty reply never places the segment")
+        self.assertIn(seg_id, store.get("courierDeferred") or {}, "the deferral is recorded (once, a write)")
+        self.assertEqual(len(self.courier_calls), 3, "one call per pass: the row is retried every pass")
+        self.assertIsNotNone(self._stamp("courier", SID2), "the sender, with no row, stamped on its first scan")
+        jd.courier_llm = lambda text, menu, declared="": (self.courier_calls.append(text) or DELEGATE_REPLY)
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        store = jd.load_goals(SID)
+        self.assertEqual(store["placements"].get(seg_id), "fyi", "filed quiet: no link to root a recipient top on")
+        self.assertNotIn(seg_id, store.get("courierDeferred") or {}, "a landed reply clears the deferral")
+        trackers = [nd for nd in jd.load_goals(SID2)["nodes"].values()
+                    if isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == MID]
+        self.assertEqual(len(trackers), 1, "the sender's tracking node planted")
+        self.assertIsNone(self._stamp("courier", SID), "the filing pass produced the row: no stamp yet")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]), "both stores moved: both re-armed once")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the placed segment scans clean: both stamp")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "then both skip")
+        self.assertEqual(len(self.courier_calls), 4)
+
+    def _placed_delegate(self, sender_discovered=True, from_host=""):
+        """A recipient whose peer delegate segment was PLACED by another writer under a node with no courier
+        link (the link-repair shape). Returns (seg_id, nid)."""
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, parent="a2"), aline(T0 + 230, "On it.", "a3", "p1")]
+        extra = {"from_host": from_host} if from_host else {}
+        self._ledger_row(MID, SID2, SID, t=T0 + 190, **extra)
+        path = self._session(SID, recs)
+        if sender_discovered:
+            self._session(SID2, name="api")
+        seg_id = self._peer_seg_id(SID, path)
+        store = jd.load_goals(SID)
+        nid = SID + ":g7"
+        store["nodes"][nid] = {"id": nid, "text": "Wire up the export button", "parentId": None, "t": T0 + 200,
+                               "mt": T0 + 200, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
+        store["status"][nid] = "working"
+        store["placements"][seg_id] = nid
+        jd.save_goals(SID, store)
+        return seg_id, nid
+
+    def _tracker(self, complete):
+        snd = jd.load_goals(SID2)
+        tid = SID2 + ":g1"
+        snd["nodes"][tid] = {"id": tid, "text": "delegated to web: wire up the export button", "parentId": None,
+                             "t": T0 + 190, "mt": T0 + 190, "log": [], "trail": [], "nodeComplete": complete,
+                             "cleared": False, "handoff": {"peer": SID, "msgId": MID}}
+        snd["status"][tid] = "completed" if complete else "working"
+        jd.save_goals(SID2, snd)
+        return tid
+
+    def test_a_placed_delegate_with_no_sender_tracker_stamps_after_one_scan(self):
+        # the review's nit (2026-09-07): the repair found no tracker in any discovered store, and nothing can
+        # plant one later for a placed local segment (the two planters plant for unplaced rows and for remote
+        # recipients), so marking the run kept the session hot forever at N+1 store loads per pass. It stamps.
+        seg_id, nid = self._placed_delegate()
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "no tracker anywhere: the scan is complete and stamps")
+        self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid])
+        self.assertEqual(self.courier_calls, [], "a placed segment is never re-judged")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "and skips")
+
+    def test_a_completed_sender_tracker_keeps_the_scan_due_until_a_reopen_links_it(self):
+        # the one shape in which a later pass can attach the link with none of this session's inputs moving:
+        # the sender's tracker exists and is complete (never linked); a user reopening it moves the SENDER's
+        # store, so the recipient's run stays incomplete until the reopened tracker is linked
+        seg_id, nid = self._placed_delegate()
+        tid = self._tracker(complete=True)
+        seen = self._scan_log()
+        for i in range(2):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertIn(SID, seen, "pass %d: scanned" % i)
+            self.assertIsNone(self._stamp("courier", SID), "pass %d: a completed tracker keeps the run incomplete" % i)
+            self.assertNotIn("links", jd.load_goals(SID)["nodes"][nid], "a completed tracker is never linked")
+        self.assertIsNotNone(self._stamp("courier", SID2), "the sender, with nothing pending, stamped")
+        snd = jd.load_goals(SID2)                                        # the user reopens the tracker
+        self.assertTrue(jd.record_verdict(snd, snd["nodes"][tid], "user", "reopen", NOW + 1, why="reopened by the user"))
+        jd.rollup_status(snd, False)
+        jd.save_goals(SID2, snd)
+        self.assertFalse(jd.load_goals(SID2)["nodes"][tid].get("nodeComplete"), "premise: the tracker is open again")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertIn(SID, seen, "still due: the reopened tracker is found")
+        links = jd.load_goals(SID)["nodes"][nid].get("links") or []
+        self.assertEqual(links, [{"peer": SID2, "goalId": tid, "msgId": MID}], "the link attached")
+        self.assertIsNotNone(self._stamp("courier", SID), "the attaching run is complete (its save re-arms it once)")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID], "the link's save moved the recipient's store: one more scan (the sender's "
+                                      "reopen save preceded the linking pass, so its scan there already stamped it)")
+        self.assertEqual(self._ran(), (1, 1, 1, 0), "the link is in the store: the repair stops before the lookup")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "then both skip")
+
+    def test_a_local_sender_outside_the_discover_window_keeps_the_scan_due_and_a_remote_one_does_not(self):
+        # no tracker is visible because the sender's store was not READ (the sender is a local session outside
+        # the discover window): its return makes an open tracker visible with nothing of the recipient's moving,
+        # so the run stays incomplete; once the sender is discovered and holds no tracker, the scan stamps.
+        # A sender on another kernel (the ledger row's from_host) keeps its tracker there: stamp at once.
+        seg_id, nid = self._placed_delegate(sender_discovered=False)
+        seen = self._scan_log()
+        for i in range(2):
+            seen.clear()
+            self._reset()
+            self._pass(tiers=("courier",))
+            self.assertEqual(seen, [SID], "pass %d: the recipient is scanned" % i)
+            self.assertEqual(self._ran(), (1, 0, 0, 1), "pass %d: a local sender outside the window: incomplete" % i)
+        self._session(SID2, name="api")                                  # the sender returns, with no tracker
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "discovered and trackerless: nothing can appear later, both stamp")
+        # the remote sender, from a clean root
+        jd._rebind_state(self.td); jd._STAGE_STAMP.clear()
+        for c in (jd._PARSE_CACHE, jd._discover_cache):
+            c.clear()
+        shutil.rmtree(jd.GOALDIR, ignore_errors=True); shutil.rmtree(jd.NAMES, ignore_errors=True)
+        jd.NAMES.mkdir(parents=True)
+        jd.MESSAGES.unlink()
+        seg_id, nid = self._placed_delegate(sender_discovered=False, from_host="TESTHOST-B")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID])
+        self.assertEqual(self._ran(), (1, 0, 1, 0), "a remote sender's tracker is never local: stamp")
+
+    def test_the_settle_is_read_once_per_written_session_and_never_on_the_idle_path(self):
+        # two peer rows in one session, both filed without a model call (a declared coordinate and a declared
+        # question file fyi): _session_settled runs once for that session, from the store being written, and
+        # every rollup at the write sites gets that value; the idle sender is never settled at all
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, kind="coordinate", body="COORDINATE: the api is on 8080", parent="a2"),
+                                  aline(T0 + 230, "Noted.", "a3", "p1"),
+                                  self._peer_line(T0 + 300, "p2", MID2, kind="question", body="QUESTION: which port do the tests use?", parent="a3"),
+                                  aline(T0 + 330, "The tests use 8081.", "a4", "p2")]
+        self._ledger_row(MID, SID2, SID, kind="coordinate", t=T0 + 190)
+        self._ledger_row(MID2, SID2, SID, kind="question", t=T0 + 290)
+        self._session(SID, recs)
+        self._session(SID2, name="api")
+        settled, rolled = [], []
+        real_settled, real_rollup = self._saved_store[9], self._saved_store[10]
+
+        def ss(fsid, path, session, store, now=None):
+            v = real_settled(fsid, path, session, store, now)
+            settled.append((fsid, v))
+            return v
+
+        def ru(store, session_closed, now=None):
+            rolled.append((store.get("rompUuid"), session_closed))
+            return real_rollup(store, session_closed, now=now)
+        jd._session_settled, jd.rollup_status = ss, ru
+        self._pass(tiers=("courier",))
+        store = jd.load_goals(SID)
+        peer_segs = [k for k, v in store["placements"].items() if v == "fyi"]
+        self.assertEqual(len(peer_segs), 2, "both declared non-delegations filed fyi with no model call")
+        self.assertEqual(self.courier_calls, [])
+        self.assertEqual([f for f, v in settled], [SID], "settled once, for the written session only")
+        value = settled[0][1]
+        self.assertTrue(value, "premise: the turn ended and nothing is awaited, so the session is settled")
+        writes = [v for sid, v in rolled if sid == SID]
+        self.assertEqual(writes, [value, value], "each write site's rollup got the one settled value")
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the sender stamped; the written session produced rows")
+
+    def test_the_settle_guard_logs_and_the_write_still_lands_when_the_parse_raises(self):
+        # outside a frame (romp-judge --courier, tests) the settle's parse can raise on a transcript that moved
+        # and no longer parses; the guard logs a pass-crash row and reads not-settled, and the write loop goes
+        # on. Under the pass frame the settle's parse is the pinned one, so the guard never fires there.
+        path = self._peer_session(SID, SID2, kind="coordinate")
+        seg_id = self._peer_seg_id(SID, path)
+        real = self._saved_store[5]
+        calls = []
+
+        def second_call_raises(fsid, files, now):
+            calls.append(fsid)
+            if fsid == SID and calls.count(SID) == 2:
+                raise RuntimeError("the transcript moved under the write loop")
+            return real(fsid, files, now)
+        jd.parsed_session = second_call_raises
+        jd._discover_cache.clear()
+        jd.run_courier(now=NOW)                                         # no frame: the settle parses on its own
+        self.assertEqual(jd.load_goals(SID)["placements"].get(seg_id), "fyi", "the write landed with settled=False")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r.get("note") or "" for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1, rows)
+        self.assertTrue(notes[0].startswith("settle: "), notes[0])
+
+    def test_a_peer_message_landing_after_the_first_touch_is_filed_next_pass(self):
+        # the frame hazard, on the courier: a tick job touches the session while nothing is pending; the
+        # peer message and the agent's reply land mid-pass; the gated courier judges the pinned (pre-append)
+        # world and stamps THAT pair, so the next pass runs the scan over the new turn and files the row.
+        # A stamp stat'd at the courier's own moment would record the post-append pair and skip the message
+        # until an unrelated write. Without P1a's key pin this test fails.
+        path = self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("courier",))
+        jd.save_goal_archive(SID, {"rompUuid": SID, "nodes": {}, "status": {}})   # re-arm: the run below is a run
+        own = jd.begin_pass_frame()
+        try:
+            jd.parsed_session(SID, [str(path)], NOW)                    # the tick job's first touch
+            pre = jd._frame["keys"][("parse", SID)]
+            self._ledger_row(MID, SID2, SID, t=T0 + 190)
+            self._append(path, self._peer_line(T0 + 200, "p1", MID, parent="a2"), aline(T0 + 230, "On it.", "a3", "p1"))
+            jd.run_courier(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        self.assertEqual(self.courier_calls, [], "under the pinned parse there is no peer segment: nothing filed")
+        self.assertEqual((self._st("courier")["ran"], self._st("courier")["stamped"]), (1, 1), "a run, complete")
+        st = self._stamp("courier", SID)
+        self.assertIsNotNone(st, "the run completed and stamped")
+        self.assertEqual(st[0][0][1], jd._pair_key(pre), "the stamp holds the PRE-append pair")
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._st("courier")["ran"], 1, "the live pair differs from the stamped one: the scan runs")
+        self.assertEqual(len(self.courier_calls), 1, "and the message is judged")
+        self.assertIn("wire up the export button", self.courier_calls[0])
+        seg_id = self._peer_seg_id(SID, path)
+        self.assertEqual(jd.load_goals(SID)["placements"].get(seg_id), "fyi", "filed (quiet: no rooted link)")
+
+    def test_a_cut_arming_between_the_pin_and_the_parse_withholds_the_couriers_stamp(self):
+        path = self._session(SID)
+        self._converge(tiers=("courier",))
+        self._append(path, uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
+        before = self._stamp("courier")
+        own = jd.begin_pass_frame()
+        try:
+            jd._frame_parse_key(SID, [str(path)])                        # the pin, under no cut
+            jd._PENDING_CUT_FN = lambda fsid: "a2"                       # a bare rollback arms before the parse
+            jd.run_courier(now=NOW)
+        finally:
+            jd.end_pass_frame(own)
+        s = self._st("courier")
+        self.assertEqual((s["ran"], s["bypassed"], s["stamped"]), (1, 1, 0), "served under another cut: no stamp")
+        self.assertEqual(self._stamp("courier"), before, "the old stamp stands")
+        jd._PENDING_CUT_FN = None
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._st("courier")["stamped"], 1, "pin and parse under one cut: a stamp")
+
+    def test_a_late_ledger_row_is_filed_once_the_transcript_moves(self):
+        # the ledger is not in the signature (the sent row precedes the transcript atom, so the atom's append
+        # re-arms the scan with the row already in place). The residual: a marker whose row the ledger lacks
+        # when the parse ran is sender-less (author.peer None), which the scan skips and the planner places as
+        # plain work in the same pass. Here only the courier runs, so the segment stays unplaced: the row
+        # appended alone changes nothing the pinned parse saw (the ungated courier served the same cached
+        # parse), and the agent's reply, the transcript's own next append, re-parses with the row in the
+        # index and files the message. No pass files anything the ungated pass would have filed.
+        recs = list(TWO_TURNS) + [self._peer_line(T0 + 200, "p1", MID, parent="a2")]
+        path = self._session(SID, recs)                                 # no ledger row yet
+        self._session(SID2, name="api")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self.courier_calls, [], "sender-less: not the courier's to file")
+        self.assertIsNotNone(self._stamp("courier", SID), "a complete scan with no row stamps")
+        self._ledger_row(MID, SID2, SID, t=T0 + 190)                    # the row lands late, alone
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "nothing in the signature moved")
+        self._append(path, aline(T0 + 230, "On it.", "a3", "p1"))        # the agent replies: the pair moves
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(seen, [SID])
+        self.assertEqual(len(self.courier_calls), 1, "re-parsed with the row in the index: filed")
+        seg_id = self._peer_seg_id(SID, path)
+        self.assertEqual(jd.load_goals(SID)["placements"].get(seg_id), "fyi")
+
+    def test_a_crashed_scan_logs_a_scan_row_stamps_nothing_and_the_pass_goes_on(self):
+        # a parse that raises, then a segment walk that raises: each is caught per session as a pass-crash row
+        # labelled "scan:", the run counts incomplete with no stamp, the other session is still scanned and
+        # stamped, and run_courier returns (before the gate a _segs crash aborted the triage pass at the courier)
+        self._session(SID)
+        self._session(SID2, name="api")
+        real = self._saved_store[5]
+
+        def poisoned(fsid, files, now):
+            if fsid == SID:
+                raise ValueError("not a transcript")
+            return real(fsid, files, now)
+        jd.parsed_session = poisoned
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the crash counts incomplete; the other session stamped")
+        self.assertIsNone(self._stamp("courier", SID))
+        self.assertIsNotNone(self._stamp("courier", SID2))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("scan: ValueError"), notes[0])
+        jd.parsed_session = real
+        real_segs = self._saved_store[8]
+
+        def walk_crashes(turn, store):
+            if store.get("rompUuid") == SID:
+                raise RuntimeError("a seam without a segment")
+            return real_segs(turn, store)
+        jd._segs = walk_crashes
+        self._reset()
+        self._pass(tiers=("courier",))                                  # returns: the crash is per session
+        self.assertEqual(self._ran(), (1, 1, 0, 1), "the walk crash: incomplete, no stamp; the other sid skipped")
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 2)
+        self.assertTrue(notes[1].startswith("scan: RuntimeError"), notes[1])
+        jd._segs = real_segs
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual(self._ran(), (1, 1, 1, 0), "healed: the crashed sid runs and stamps")
+
+    def _ledger_reads(self, fn):
+        """Run fn counting the opens of the ledger file (Path.read_text and the event model's incremental
+        reader both open it); returns the count."""
+        n, target = [0], os.path.abspath(str(jd.MESSAGES))
+        reals = {(builtins, "open"): builtins.open, (io, "open"): io.open}
+        # Python 3.10: Path.open calls pathlib._NormalAccessor.open, a class attribute bound to io.open when
+        # pathlib was imported, so a patched io.open never sees Path.read_text (3.11 removed the accessor and
+        # Path.open calls io.open directly). Patch that slot too, as a staticmethod so the path stays the
+        # first argument, the way the unbound builtin behaved.
+        acc = getattr(pathlib, "_NormalAccessor", None)
+        if acc is not None:
+            reals[(acc, "open")] = acc.open
+
+        def wrap(real):
+            def w(p, *a, **k):
+                if isinstance(p, (str, bytes, os.PathLike)) and os.path.abspath(os.fsdecode(p)) == target:
+                    n[0] += 1
+                return real(p, *a, **k)
+            return w
+        for (mod, name), real in reals.items():
+            setattr(mod, name, staticmethod(wrap(real)) if isinstance(mod, type) else wrap(real))
+        try:
+            fn()
+        finally:
+            for (mod, name), real in reals.items():
+                setattr(mod, name, real)
+        return n[0]
+
+    def _trackers(self, sid):
+        return [nd for nd in jd.load_goals(sid)["nodes"].values() if isinstance(nd.get("handoff"), dict)]
+
+    def test_the_ledger_is_parsed_once_per_version_for_the_cross_host_plant(self):
+        # the xrows arm reads its candidate rows from the postal memo (_postal_ledger): across two passes with
+        # an unchanged ledger the file is opened once (by the first pass), the plant is idempotent, and the
+        # memo slot is the same object; an appended row refills it once and plants once
+        self._session(SID)
+        self._session(SID2, name="api")
+        self._converge(tiers=("courier",))
+        self._ledger_row("px-1.mail.TESTHOST-A", SID, "peer:TESTHOST-B", t=NOW - 100, toName="TESTHOST-B:web",
+                         body="DELEGATE: run the exporter on the far box")
+        jd._postal_from_memo[0] = (None, {})                            # what five suites do: a stale, 2-slot reset
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertGreaterEqual(reads, 1, "the first pass parses the ledger once for the memo")
+        self.assertEqual(len(self._trackers(SID)), 1, "the cross-host delegate planted the sender's tracker")
+        ent = jd._postal_from_memo[0]
+        self.assertEqual(len(ent[1][1]), 1, "one candidate row in the memo")
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertEqual(reads, 0, "an unchanged ledger is not opened again")
+        self.assertIs(jd._postal_from_memo[0], ent, "the memo slot is the same object")
+        self.assertEqual(len(self._trackers(SID)), 1, "idempotent by msgId")
+        self._ledger_row("px-2.mail.TESTHOST-A", SID, "peer:TESTHOST-B", t=NOW - 50, toName="TESTHOST-B:web",
+                         body="DELEGATE: and the importer")
+        reads = self._ledger_reads(lambda: self._pass(tiers=("courier",)))
+        self.assertEqual(reads, 1, "an appended row: one refill")
+        self.assertEqual(len(self._trackers(SID)), 2, "and the new row planted")
+
+    def test_the_sender_and_horizon_filters_run_per_pass_on_the_memoized_rows(self):
+        # the memo holds the ledger's rows under the ledger's identity; who is discovered and what is inside
+        # the retry horizon are this pass's questions. A candidate whose sender is not discovered at pass 1
+        # and past the horizon at pass 2 plants at neither, and plants at pass 3 when both hold, with the
+        # memo never refilled between them (no clock predicate is frozen in it)
+        self._session(SID)
+        self._ledger_row("px-3.mail.TESTHOST-A", SID2, "peer:TESTHOST-B", t=NOW - jd.COURIER_RETRY_HORIZON + 50,
+                         toName="TESTHOST-B:web", body="DELEGATE: run the exporter on the far box")
+        self._pass(tiers=("courier",))                                  # SID2 not discovered: no plant
+        ent = jd._postal_from_memo[0]
+        self.assertEqual(len(ent[1][1]), 1, "the row is a candidate in the memo")
+        self.assertEqual(self._trackers(SID2), [], "its sender is not among this pass's discovered sessions")
+        self._session(SID2, name="api")                                 # now discovered
+        self._pass(now=NOW + 100, tiers=("courier",))                   # but the row is past the horizon at this now
+        self.assertEqual(self._trackers(SID2), [], "past the horizon at the pass's now: never backfilled")
+        self.assertIs(jd._postal_from_memo[0], ent, "the memo did not refill: the filters ran on its rows")
+        self._pass(now=NOW, tiers=("courier",))                         # within the horizon again, sender discovered
+        self.assertEqual(len(self._trackers(SID2)), 1, "both filters hold: planted")
+        self.assertIs(jd._postal_from_memo[0], ent)
+
+    def test_a_link_repair_that_raises_marks_the_run_and_the_pass_goes_on(self):
+        # the placed branch's own guard: a repair that raises is logged as before ("link-attach: ...") and, so
+        # the repair is retried rather than skipped over, marks the run incomplete; the other session stamps
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        store = jd.load_goals(SID)
+        nid = SID + ":g7"
+        store["nodes"][nid] = {"id": nid, "text": "Wire up the export button", "parentId": None, "t": T0 + 200,
+                               "mt": T0 + 200, "log": [], "trail": [], "nodeComplete": False, "cleared": False}
+        store["status"][nid] = "working"
+        store["placements"][seg_id] = nid
+        jd.save_goals(SID, store)
+        real = jd._seg_peer_kind
+
+        def kind_crashes(seg):
+            if jd._seg_peer(seg):
+                raise RuntimeError("a marker the kind reader cannot parse")
+            return real(seg)
+        jd._seg_peer_kind = kind_crashes
+        try:
+            self._pass(tiers=("courier",))
+        finally:
+            jd._seg_peer_kind = real
+        self.assertEqual(self._ran(), (2, 0, 1, 1), "the crashed repair: incomplete; the sender stamped")
+        self.assertIsNone(self._stamp("courier", SID))
+        rows = [json.loads(l) for l in open(jd.ERRORS) if l.strip()]
+        notes = [r["note"] for r in rows if r.get("err") == "pass-crash" and r.get("fsid") == SID]
+        self.assertEqual(len(notes), 1)
+        self.assertTrue(notes[0].startswith("link-attach: RuntimeError"), notes[0])
+
+    def test_a_placed_row_whose_t_drifted_is_placed_for_the_scan_too(self):
+        # the review's nit 3: the write loop dedups a placed row drift-safely (_placed_key), but the scan's
+        # placed check was exact-key, so a row whose parse t drifted after its placement was returned every
+        # pass, marked the run incomplete every pass, and was then deduped by the write loop: the gate was
+        # defeated for that session forever. The scan now asks the same helper: no row, a complete run, a stamp.
+        path = self._peer_session(SID, SID2)
+        seg_id = self._peer_seg_id(SID, path)
+        parts = seg_id.split(":")
+        drifted = ":".join(parts[:-2] + [str(int(parts[-2]) + 7), parts[-1]])   # the same segment, its t moved
+        self.assertNotEqual(drifted, seg_id)
+        store = jd.load_goals(SID)
+        store["placements"][drifted] = "fyi"                            # as the courier filed it, under the old t
+        jd.save_goals(SID, store)
+        self.assertTrue(jd._placed_key(store["placements"], seg_id), "premise: the write loop would dedup it")
+        self.assertNotIn(seg_id, store["placements"], "premise: the exact check misses it")
+        seen = self._scan_log()
+        self._pass(tiers=("courier",))
+        self.assertEqual(sorted(seen), sorted([SID, SID2]))
+        self.assertEqual(self.courier_calls, [], "no row returned, no call")
+        self.assertEqual(self._ran(), (2, 0, 2, 0), "the scan is complete and stamps")
+        seen.clear()
+        self._reset()
+        self._pass(tiers=("courier",))
+        self.assertEqual((seen, self._st("courier")["skipped"]), ([], 2), "and skips")
+
+    def test_counters_add_up_over_the_courier(self):
+        path = self._peer_session(SID, SID2)
+        self._pass(tiers=("courier",))
+        self._append(path, uline(T0 + 400, "task D", "u4", "a3"), aline(T0 + 430, "did D", "a4", "u4"))
+        self._pass(tiers=("courier",))
+        self._pass(tiers=("courier",))
+        s = self._st("courier")
+        self.assertEqual(s["ran"], s["stamped"] + s["bypassed"] + s["incomplete"])
+        self.assertGreater(s["skipped"], 0)
+        ts = jd.tier_stats()
+        self.assertIn("courier", ts)
+        self.assertEqual(set(ts), set(jd.GATED_TIERS) | {"stamps"})
 
 
 if __name__ == "__main__":
