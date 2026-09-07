@@ -39117,15 +39117,23 @@ else if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
-  // phone (one pane at a time): the Feed tab comes forward ONLY in the mobile layout — on desktop the column
-  // is already visible and show() would only persist a stale romp-mobile-tab for a later narrow layout (the
-  // viewFile pane branch's gate, 2026-09-07) — and the tab the click came from is remembered, so the listing's
-  // close puts the person back (the browseClosed arm below; the feed's own dir-link route remembers nothing)
-  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';
-    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}
+  // a phone's tab switch and its way back wait for the feed's browseOpened ack (the arm below), not this relay
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
+// The feed's ack: its browser is up and the listing asked for (file-browse.ts openFileBrowse posts browseOpened
+// after its listDir, the viewFileOpened idiom). ARM ON ACK, and only here: on a phone (one pane at a time) the
+// Feed tab comes forward ONLY in the mobile layout (on desktop the column is already visible and show() would
+// only persist a stale romp-mobile-tab for a later narrow layout, the viewFile pane branch's gate, 2026-09-07),
+// and the tab showing at the ack, the one the click came from, is remembered so the listing's close puts the
+// person back (the browseClosed arm below). Armed at the relay, the memory outlived a relay the feed stood down
+// (its openFileBrowse keeps a viewer with unsaved edits when the person says so: nothing opens, no browseClosed
+// ever consumes it), and a listing the feed later opened for itself replayed the stale tab at its close (review
+// round 2, 2026-09-07). A vetoed relay sends no ack, so nothing arms; a listing the feed opens for itself (a
+// viewer's directory link) acks with the Feed tab already showing, so nothing arms either.
+if(m.romp==='browseOpened'){
+  try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';
+    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}}
 // the browser's close ends the overlay chain, and the feed's browser tells the shell on every close path
-// (file-browse.ts tellShellClosed). First the phone's way back: where the feed browse branch above switched
+// (file-browse.ts tellShellClosed). First the phone's way back: where the browseOpened arm above switched
 // tabs to show the listing, return to the tab the click came from (the filesViewerClosed idiom below); a
 // browse the feed opened for itself remembered nothing and moves nothing. The memory is dropped either way,
 // so a rotation to desktop in between makes the return a no-op, never a stale switch later.

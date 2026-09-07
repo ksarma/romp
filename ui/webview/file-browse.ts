@@ -62,10 +62,12 @@ export type BrowseHost = {
    *  openFileView here. The Files pane routes a pick through its own open (files.ts openHere), so the file
    *  enters its Recent list like every other file opened there (review 2026-09-07). */
   openFile?: (path: string, sid: string | null) => void;
-  /** Whether a close here tells the shell browseClosed. TRUE only for the FEED, the pane the shell lifts for a
-   *  relayed browse and puts back on that message. The Files pane stays up and the chat never asks for a lift,
-   *  so their closes say nothing: a browseClosed from either would consume a flag the feed's relay armed and
-   *  hide the feed under its own browser. Default true, the feed's contract. */
+  /** Whether a close here tells the shell browseClosed, and a real open browseOpened. TRUE only for the FEED,
+   *  the pane the shell lifts for a relayed browse and puts back on that message (and, on a phone, brings
+   *  forward on the ack and leaves on the close). The Files pane stays up and the chat never asks for a lift,
+   *  so their closes and opens say nothing: a browseClosed from either would consume a flag the feed's relay
+   *  armed and hide the feed under its own browser, and a browseOpened would switch a phone to the Feed tab
+   *  for a listing that lives elsewhere. Default true, the feed's contract. */
   shellRestore?: boolean;
 };
 
@@ -84,6 +86,19 @@ function tellShellClosed(): void {
   try {
     if (window.parent !== window) window.parent.postMessage({ romp: "browseClosed" }, "*");
   } catch { /* no shell (standalone /feed) — nothing to restore */ }
+}
+
+// The feed's ack of a browse that OPENED: the box is up and its listing asked for. The shell arms a phone's way
+// back on this ack (the Feed tab comes forward, the tab the click came from is remembered for browseClosed) and
+// never at its relay, so a relay this document stands down (the viewer's veto in openFileBrowse: nothing opens,
+// and no ack follows) leaves nothing cocked for a later close to replay (review round 2, 2026-09-07). A listing
+// this document opens for itself (a viewer's directory link) acks too: the shell finds the Feed tab already
+// showing and arms nothing. Same gate as the close notice: the feed's contract only.
+function tellShellOpened(): void {
+  if (!shellRestore) return;
+  try {
+    if (window.parent !== window) window.parent.postMessage({ romp: "browseOpened" }, "*");
+  } catch { /* no shell (standalone /feed): nothing to bring forward */ }
 }
 
 export function closeFileBrowse(): void {
@@ -246,12 +261,14 @@ export function openFileBrowse(path: string, sid?: string | null): void {
   const hb = document.getElementById("fb-hidden");
   if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   ask(path);
+  tellShellOpened();
 }
 
 // A box built for a click that then stood down (the viewer's veto above): gone again, outside the close
 // protocol. Nothing opened, so nothing is owed: no browseClosed (the shell may have lifted the feed for this
 // listing, and putting it back now would hide the kept viewer, which lives there; the pane parks forward,
-// the same named price a lost relay pays), and no latch to reset (no ask went out).
+// the same named price a lost relay pays), no browseOpened (the shell arms a phone's way back on that ack, and
+// a listing that never opened has none to arm), and no latch to reset (no ask went out).
 function unbuild(): void {
   document.getElementById("romp-filebrowse")?.remove();
   document.body.classList.remove("filebrowse-open");

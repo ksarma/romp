@@ -293,16 +293,29 @@ class BrowseRelay(unittest.TestCase):
 
     def test_the_feed_route_is_the_else_branch_with_the_phone_return_trip(self):
         js = km._LANDING_SETTINGS_JS
-        feed = js.split(self.FEED)[1].split("if(m.romp==='browseClosed'")[0]
+        ACK = "if(m.romp==='browseOpened'){"
+        feed = js.split(self.FEED)[1].split(ACK)[0]
         self.assertIn("window.__rompFeedWasOff=true;", feed)
         self.assertIn("postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*')", feed)
         self.assertNotIn("identity", feed, "the feed resolves its own identity")
-        # phone: the Feed tab comes forward only in the mobile layout (on desktop show() would persist a stale
-        # romp-mobile-tab for a later narrow layout), and the tab the click came from is remembered, the viewFile
-        # pane branch's idiom (review 2026-09-07; the executed cases live in ui/webview/browse-route.test.ts)
+        # phone: the relay itself switches no tab and remembers none. Both ride the feed's browseOpened ack, the arm
+        # that follows (review round 2, 2026-09-07: armed at the relay, the memory outlived a dirty-edit veto in the
+        # feed, which opens nothing and sends nothing, and a later self-opened listing's close replayed the stale tab).
+        # There the Feed tab comes forward only in the mobile layout (on desktop show() would persist a stale
+        # romp-mobile-tab for a later narrow layout) and the tab showing at the ack, the one the click came from, is
+        # remembered; the executed cases live in ui/webview/browse-route.test.ts
+        for tok in ("__rompMobileTab", "__rompFeedTabFrom"):
+            self.assertNotIn(tok, self._code(feed), tok + " waits for the feed's ack")
+        self.assertLess(js.index(self.FEED), js.index(ACK))
+        ack = js.split(ACK)[1].split("if(m.romp==='browseClosed'")[0]
         self.assertIn("try{if(window.__rompMobileOn&&window.__rompMobileOn()){var curf=document.body.getAttribute('data-tab')||'chat';\n"
-                      "    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}", feed)
-        self.assertNotIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", feed, "no unconditional tab switch")
+                      "    if(curf!=='feed'){window.__rompFeedTabFrom=curf;window.__rompMobileTab&&window.__rompMobileTab('feed');}}}catch(e){}", ack)
+        self.assertNotIn("try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}", ack, "no unconditional tab switch")
+        self.assertEqual(js.count(ACK), 1)
+        # the sender: the feed's real open, after its listDir, gated like its close notice (ui/webview/file-browse.ts)
+        browse = (UI / "file-browse.ts").read_text()
+        self.assertIn('if (window.parent !== window) window.parent.postMessage({ romp: "browseOpened" }, "*");', browse)
+        self.assertIn("  ask(path);\n  tellShellOpened();\n}", browse)
         # browseClosed first puts a phone back on the remembered tab (the memory dropped either way, so a rotation
         # to desktop in between replays nothing), THEN restores the pane, consuming either feed flag and only those
         back = ("if(m.romp==='browseClosed'){var backf=window.__rompFeedTabFrom;window.__rompFeedTabFrom=null;\n"

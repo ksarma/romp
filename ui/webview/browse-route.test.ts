@@ -107,6 +107,14 @@ test("file-browse.ts: each hosting document states its contract; only the feed's
   const tell = BROWSE.split("function tellShellClosed(): void {")[1].split("\n}")[0];
   assert.match(tell, /^\n\s*if \(!shellRestore\) return;/, "the gate is the first statement of the one close notice");
   assert.match(tell, /window\.parent\.postMessage\(\{ romp: "browseClosed" \}, "\*"\);/);
+  // the OPEN notice (review round 2, 2026-09-07): the shell arms a phone's way back on this ack, never at its relay,
+  // so a relay the feed stands down (the veto below) leaves nothing cocked. Same gate: the feed's contract only
+  const told = BROWSE.split("function tellShellOpened(): void {")[1].split("\n}")[0];
+  assert.match(told, /^\n\s*if \(!shellRestore\) return;/, "the gate is the first statement of the open notice too");
+  assert.match(told, /window\.parent\.postMessage\(\{ romp: "browseOpened" \}, "\*"\);/);
+  const open = BROWSE.split("export function openFileBrowse")[1].split("\nfunction unbuild")[0];
+  assert.match(open, /\n  ask\(path\);\n  tellShellOpened\(\);\n\}\n/, "the ack follows the ask: the last thing a real open does");
+  assert.equal((BROWSE.match(/tellShellOpened\(\);/g) || []).length, 1, "one call site, the real open");
   // the feed keeps the default contract (it owes the restore); the Files pane and the chat opt out
   assert.match(FEED, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/);
   assert.equal((FILES.match(/shellRestore: false/g) || []).length, 1);
@@ -132,22 +140,26 @@ test("file-browse.ts: a viewer's dirty-edit veto stands the browse down whole, i
   const veto = fn.indexOf("if (!had) unbuild(); return;");
   assert.ok(veto > 0 && veto < fn.indexOf("ask(path);"), "the stand-down precedes the ask");
   assert.ok(veto < fn.indexOf("curSid = sid || null;"), "a vetoed re-invoke leaves the listing beneath as it was, its sid included");
+  assert.ok(veto < fn.indexOf("tellShellOpened();"), "a vetoed click sends no open ack: the shell arms the phone's return trip on that ack alone");
   assert.ok(fn.indexOf("document.body.appendChild(box)") < fn.indexOf("closeFileView()"), "the box still exists before the close (the handoff suppress)");
   const un = BROWSE.split("function unbuild(): void {")[1].split("\n}")[0];
   assert.match(un, /document\.getElementById\("romp-filebrowse"\)\?\.remove\(\);/);
   assert.match(un, /document\.body\.classList\.remove\("filebrowse-open"\);/);
   assert.match(un, /if \(onKeyRef\) \{ document\.removeEventListener\("keydown", onKeyRef\); onKeyRef = null; \}/);
-  assert.doesNotMatch(un, /tellShellClosed|browseClosed/, "nothing opened, so no close notice: a browseClosed here would put back a feed whose kept viewer lives in it");
+  assert.doesNotMatch(un, /tellShellClosed|browseClosed|tellShellOpened|browseOpened/, "nothing opened, so no notice either way: a browseClosed here would put back a feed whose kept viewer lives in it, and an ack would arm a return trip for a listing that never opened");
 });
 
-test("files-pane.css: a narrow column wraps the viewer's title bar, so the path and its directory link keep their width", () => {
+test("files-pane.css: a narrow column wraps the viewer's title bar, so the path and its directory link keep their width, and the action row wraps inside the pane", () => {
   // the row of action buttons alone outgrows a 480px pane; the modal sheets keep their one-line bar (the parity
-  // pair), the pane variant wraps the actions onto a second line (measured in the browser legs below)
+  // pair), the pane variant wraps the actions onto a second line (measured in the browser legs below). The row
+  // itself shrinks and wraps too (review round 2, 2026-09-07: styles.css keeps it one rigid line, flex:0 0 auto,
+  // so a markdown file's six buttons ran 368px and a phone-wide pane clipped the close button off the pane)
   const PANE_CSS = read("files-pane.css");
   assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar\{flex-wrap:wrap;row-gap:6px\}/);
   assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-name\{flex:1 1 0;min-width:12em\}/);
-  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-acts\{margin-left:auto\}/);
+  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-acts\{flex:0 1 auto;min-width:0;margin-left:auto;flex-wrap:wrap;justify-content:flex-end\}/);
   assert.doesNotMatch(CHAT_CSS, /\.fileview-bar \{[^}]*flex-wrap/, "the modal bar stays one line");
+  assert.doesNotMatch(CHAT_CSS, /\.fileview-acts \{[^}]*flex-wrap/, "and so does its action row");
 });
 
 test("files.ts: the Files pane hosts the listing as a column: identity cached, the browser is a pane surface, one close edge", () => {
@@ -184,21 +196,23 @@ function arms(): (w: unknown, d: unknown, m: unknown) => void {
   return new Function("window", "document", "m", js) as (w: unknown, d: unknown, m: unknown) => void;
 }
 // a shell to send messages through: desktop by default; `mobile` answers __rompMobileOn true with `tab` showing;
-// `feedOn` is the po-feed class (the feed pane on screen)
+// `feedOn` is the po-feed class (the feed pane on screen). data-tab follows every switch, the arms' and the
+// person's alike (the shell's show() sets it); `tap` is the person's own tap on the tab bar, which no arm sees.
 function shell(opts: { mobile?: boolean; tab?: string; feedOn?: boolean } = {}) {
   const run = arms();
   const toggles: Array<[string, boolean]> = [], tabs: string[] = [];
   const posted: Record<string, unknown[]> = { "f-files": [], "f-feed": [], "f-chat": [] };
-  const win: any = { __rompPaneToggle: (p: string, on: boolean) => { toggles.push([p, on]); if (p === "feed") feedOn = on; },
-    __rompMobileTab: (t: string) => tabs.push(t), __rompMobileOn: () => !!opts.mobile };
   let feedOn = opts.feedOn !== false;
+  let tab = opts.tab ?? "chat";
+  const win: any = { __rompPaneToggle: (p: string, on: boolean) => { toggles.push([p, on]); if (p === "feed") feedOn = on; },
+    __rompMobileTab: (t: string) => { tabs.push(t); tab = t; }, __rompMobileOn: () => !!opts.mobile };
   const doc = {
     body: { classList: { contains: (c: string) => c === "po-feed" && feedOn },
-            getAttribute: (a: string) => (a === "data-tab" ? opts.tab ?? "chat" : null) },
+            getAttribute: (a: string) => (a === "data-tab" ? tab : null) },
     getElementById: (id: string) => (id in posted ? { contentWindow: { postMessage: (x: unknown) => posted[id].push(x) } } : null),
   };
   const send = (m: unknown) => { run(win, doc, m); return { toggles, tabs, posted, from: win.__rompFilesTabFrom, wasOff: win.__rompFeedWasOff, pend: win.__rompFeedWasOffViewPend }; };
-  return { send, win };
+  return { send, win, tap: (t: string) => { tab = t; }, tab: () => tab };
 }
 
 test("shell, executed: pane:'pane' brings the Files pane forward and forwards the ask with the identity; the feed is untouched", () => {
@@ -242,8 +256,10 @@ test("shell, executed: pane:'feed' (and no pane) take the feed route: lift, reme
     assert.deepEqual(on.posted["f-feed"], [{ romp: "browseFiles", path: ".", sid: SID }], "path + sid only; the feed resolves its own identity");
     assert.deepEqual(on.posted["f-files"], []);
     // DESKTOP: no mobile tab switch (review 2026-09-07: the unconditional show() persisted romp-mobile-tab=feed, and a
-    // later narrow layout booted on the Feed tab), and nothing to remember
+    // later narrow layout booted on the Feed tab), and nothing to remember, at the relay or at the feed's ack
     assert.deepEqual(on.tabs, []);
+    assert.equal(desk.win.__rompFeedTabFrom, undefined);
+    assert.deepEqual(desk.send({ romp: "browseOpened" }).tabs, []);
     assert.equal(desk.win.__rompFeedTabFrom, undefined);
     assert.deepEqual(on.toggles, [], "the feed pane was on: nothing to lift");
     assert.equal(on.wasOff, undefined);
@@ -264,30 +280,42 @@ test("shell, executed: pane:'feed' (and no pane) take the feed route: lift, reme
 test("shell, executed: on a phone the feed route switches to the Feed tab and the listing's close puts the person back, once", () => {
   // the review's medium finding (2026-09-07): with the default setting a phone's folder click showed the listing on
   // the Feed tab and its close left the person on the feed cards; the pane route already returned (filesViewerClosed)
+  // The switch and the memory ride the feed's browseOpened ACK, not the relay (review round 2, 2026-09-07: armed at
+  // the relay, the memory outlived a dirty-edit veto in the feed; the veto scenario is the test below)
   const phone = shell({ mobile: true, tab: "chat" });
-  const opened = phone.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
-  assert.deepEqual(opened.tabs, ["feed"]);
+  const relayed = phone.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  assert.deepEqual(relayed.tabs, [], "the relay itself switches nothing: the feed has opened nothing yet");
+  assert.equal(phone.win.__rompFeedTabFrom, undefined, "and remembers nothing");
+  const opened = phone.send({ romp: "browseOpened" });
+  assert.deepEqual(opened.tabs, ["feed"], "the feed's ack: the listing is up, the Feed tab comes forward");
   assert.equal(phone.win.__rompFeedTabFrom, "chat", "the tab the click came from is remembered");
   const closed = phone.send({ romp: "browseClosed" });
   assert.deepEqual(closed.tabs, ["feed", "chat"], "the listing closed: back to the remembered tab");
   assert.equal(phone.win.__rompFeedTabFrom, null, "the memory is consumed");
   assert.deepEqual(closed.toggles, [], "the feed pane was on: nothing to put back");
   assert.deepEqual(phone.send({ romp: "browseClosed" }).tabs, ["feed", "chat"], "a second close switches nothing");
-  // the feed's own dir-link route (no browseFiles through the shell) remembered nothing: its close moves no tab
-  assert.deepEqual(shell({ mobile: true, tab: "feed" }).send({ romp: "browseClosed" }).tabs, []);
-  // already on the Feed tab: nothing to switch, nothing to remember
+  // the feed's own dir-link route (no browseFiles through the shell): its ack finds the Feed tab showing, so it
+  // remembers nothing, and its close moves no tab
+  const own = shell({ mobile: true, tab: "feed" });
+  assert.deepEqual(own.send({ romp: "browseOpened" }).tabs, []);
+  assert.equal(own.win.__rompFeedTabFrom, undefined);
+  assert.deepEqual(own.send({ romp: "browseClosed" }).tabs, []);
+  // already on the Feed tab when the relay lands: nothing to switch, nothing to remember
   const already = shell({ mobile: true, tab: "feed" });
-  assert.deepEqual(already.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID }).tabs, []);
+  already.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  assert.deepEqual(already.send({ romp: "browseOpened" }).tabs, []);
   assert.equal(already.win.__rompFeedTabFrom, undefined);
   // the feed pane OFF on a phone: the tab return and the pane restore ride the one close
   const off = shell({ mobile: true, tab: "chat", feedOn: false });
   off.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  off.send({ romp: "browseOpened" });
   const back = off.send({ romp: "browseClosed" });
   assert.deepEqual(back.toggles, [["feed", true], ["feed", false]]);
   assert.deepEqual(back.tabs, ["feed", "chat"]);
   // a rotation to desktop between open and close: the memory is dropped, never replayed later
   const rotated = shell({ mobile: true, tab: "chat" });
   rotated.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  rotated.send({ romp: "browseOpened" });
   rotated.win.__rompMobileOn = () => false;
   assert.deepEqual(rotated.send({ romp: "browseClosed" }).tabs, ["feed"]);
   assert.equal(rotated.win.__rompFeedTabFrom, null);
@@ -296,10 +324,37 @@ test("shell, executed: on a phone the feed route switches to the Feed tab and th
   mixed.send({ romp: "browseFiles", pane: "pane", path: ".", sid: SID });
   assert.equal(mixed.win.__rompFilesTabFrom, "chat"); assert.equal(mixed.win.__rompFeedTabFrom, undefined);
   assert.deepEqual(mixed.send({ romp: "browseClosed" }).tabs, ["files"], "a feed close moves nothing for a listing the Files pane holds");
-  // an older shell without __rompMobileOn: neither arm throws, and nothing switches
+  // an older shell without __rompMobileOn: no arm throws, and nothing switches
   const bare = shell(); delete bare.win.__rompMobileOn;
   assert.deepEqual(bare.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID }).tabs, []);
+  assert.deepEqual(bare.send({ romp: "browseOpened" }).tabs, []);
   assert.deepEqual(bare.send({ romp: "browseClosed" }).tabs, []);
+});
+
+test("shell, executed: a relay the feed stood down (the dirty-edit veto) arms nothing, so a listing the feed later opens for itself closes without a tab switch", () => {
+  // review round 2 (2026-09-07): the memory was armed at the relay and only browseClosed consumed it. A vetoed relay
+  // (file-browse.ts unbuild: no listDir, no notice of any kind) left it cocked, and the feed's next self-opened
+  // listing, a viewer's directory link, replayed the stale tab at its close, moving the person off the Feed tab they
+  // had chosen. Armed on the feed's browseOpened ack now, which a veto never sends, and which a self-opened
+  // listing sends with the Feed tab already showing.
+  const phone = shell({ mobile: true, tab: "chat" });
+  phone.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });   // relayed, then vetoed in the feed: no ack follows
+  assert.equal(phone.tab(), "chat", "the click stood down whole: the person stays where they clicked");
+  assert.equal(phone.win.__rompFeedTabFrom, undefined, "nothing remembered for a listing that never opened");
+  phone.tap("feed");                                                        // later, on their own, to the feed
+  const own = phone.send({ romp: "browseOpened" });                         // a viewer's directory link there: the feed's own listing
+  assert.deepEqual(own.tabs, [], "its ack finds the Feed tab showing: nothing to switch, nothing to remember");
+  assert.equal(phone.win.__rompFeedTabFrom, undefined);
+  const closed = phone.send({ romp: "browseClosed" });
+  assert.deepEqual(closed.tabs, [], "the self-opened listing's close moves nothing: no stale tab replays");
+  assert.equal(phone.tab(), "feed", "still on the tab they chose");
+  // the same relay answered with OK instead: the ack arms the return trip and the close makes it
+  const ok = shell({ mobile: true, tab: "chat" });
+  ok.send({ romp: "browseFiles", pane: "feed", path: ".", sid: SID });
+  ok.send({ romp: "browseOpened" });
+  assert.equal(ok.tab(), "feed"); assert.equal(ok.win.__rompFeedTabFrom, "chat");
+  ok.send({ romp: "browseClosed" });
+  assert.equal(ok.tab(), "chat");
 });
 
 // ── the Files pane under the real shell script, in a browser ──────────────────────────────────────
@@ -455,6 +510,33 @@ for (const name of ["firefox", "chromium"]) {
       // (files-pane.css wraps the title bar; before, the row of buttons squeezed the link to 0px, in " + name + ")
       assert.deepEqual(s.recent, ["/repo/notes-api/README.md"]);
       assert.ok((s.dirLink ?? 0) > 40, "the directory link has width in a 480px pane: " + s.dirLink + "px in " + name);
+      // phone widths (review round 2, 2026-09-07): a markdown file's six buttons ran 368px as one rigid row, and a pane
+      // narrower than about 390px clipped the close button off it (.fileview is overflow:hidden); pane mode has no
+      // backdrop to tap and a phone no Escape, so the file could not be closed from inside the pane. The row shrinks
+      // and wraps now: every button's box lies inside the pane, above the body, and the bar overflows nothing
+      for (const w of [320, 360]) {
+        await page.evaluate((w: number) => { (document.getElementById("f-files") as HTMLIFrameElement).style.width = w + "px"; }, w);
+        await page.waitForFunction((w: number) => (document.getElementById("f-files") as HTMLIFrameElement).contentWindow!.innerWidth === w, w, { timeout: 10000 });
+        const m = await page.evaluate(() => {
+          const f = (document.getElementById("f-files") as HTMLIFrameElement).contentWindow!;
+          const bar = f.document.querySelector(".fileview-bar") as HTMLElement;
+          const btns = Array.from(bar.querySelectorAll<HTMLElement>(".fileview-acts .fileview-btn"));
+          const box = (e: Element) => { const b = e.getBoundingClientRect(); return { left: Math.round(b.left), right: Math.round(b.right), top: Math.round(b.top), bottom: Math.round(b.bottom) }; };
+          return {
+            labels: btns.map((b) => b.textContent),
+            minLeft: Math.min(...btns.map((b) => box(b).left)), maxRight: Math.max(...btns.map((b) => box(b).right)),
+            close: box(bar.querySelector(".fileview-close")!), body: box(f.document.querySelector(".fileview-main")!),
+            barOver: bar.scrollWidth - bar.clientWidth,
+          };
+        });
+        assert.ok(m.labels.includes("Copy path") && m.labels.includes("✕") && m.labels.length >= 5, "the markdown file's full action row is what is measured: " + m.labels.join(","));
+        assert.ok(m.close.left >= 0 && m.close.right <= w && m.close.right > m.close.left, `the close button lies inside a ${w}px pane: x ${m.close.left}-${m.close.right} in ${name}`);
+        assert.ok(m.minLeft >= 0 && m.maxRight <= w, `every action lies inside a ${w}px pane: x ${m.minLeft}-${m.maxRight} in ${name}`);
+        assert.ok(m.close.bottom <= m.body.top, `the wrapped actions sit above the body, not over it, at ${w}px in ${name}`);
+        assert.equal(m.barOver, 0, `the title bar overflows nothing at ${w}px in ${name}`);
+      }
+      await page.evaluate(() => { (document.getElementById("f-files") as HTMLIFrameElement).style.width = "480px"; });
+      await page.waitForFunction(() => (document.getElementById("f-files") as HTMLIFrameElement).contentWindow!.innerWidth === 480, null, { timeout: 10000 });
       // Escape: the viewer (topmost) goes, the listing stays, and the pane says NOTHING (a viewer closing back onto
       // its listing is not the pane's close edge)
       await page.keyboard.press("Escape");
