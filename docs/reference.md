@@ -2118,13 +2118,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   last activity, compaction markers and judging marks, held while the lane's
   parsed transcript, goal store and captions are the same objects as the
   previous build's and its other inputs (live, the branch clip, the host's
-  suspensions, the archive file) are unchanged. One outcome per lane per full
-  build: `hit` (served), `miss` (derived and held), `live_tail` (a live tail
-  was merged, so the lane was derived and not held), `complain_skip` (the
-  parse or a stage failed) and `unshared_skip` (a private store with content);
-  `evict` (entries dropped for lanes that left the timeline or past the
-  256-entry bound), the gauge `entries`, and `segs_hit` and `segs_miss`, the
-  segments served against derived, which weight the hit rate by cost.
+  suspensions, the archive file) are unchanged. One outcome per lane per bars
+  build (a full build, or the live-only first paint): `hit` (served), `miss`
+  (derived, and held unless the archive file could not be stat'ed),
+  `live_tail` (a live tail was merged, so the lane was derived and not held),
+  `complain_skip` (the parse or a stage failed, or a mark carries a time the
+  horizon cannot compare) and `unshared_skip` (a private store with content;
+  derived and not held); `evict` (entries dropped for lanes that left a full
+  build's lane set or past the 256-entry bound), the gauge `entries`, and
+  `segs_hit` and `segs_miss`, the segments served against derived, which
+  weight the hit rate by cost.
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

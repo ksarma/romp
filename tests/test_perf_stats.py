@@ -185,8 +185,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]["lanes"]),
                          {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
                           "segs_hit", "segs_miss"},
-                         "the per-lane segment memo (perf round 4, item A): one outcome per lane per full build "
-                         "(served, derived and held, live tail, complained, unshared store), entries dropped, its "
+                         "the per-lane segment memo (perf round 4, item A): one outcome per lane per bars build "
+                         "(served, derived, live tail, complained, unshared store), entries dropped, its "
                          "occupancy, and the segments served against derived")
         for blk in ("captions", "states_overlay", "thread_reg", "lanes"):
             for k, v in snap["memos"][blk].items():
