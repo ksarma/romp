@@ -20680,7 +20680,7 @@ def _undelivered_wake_tail(path):
 
 
 _api_err_cache = {}           # path -> ((mtime, size), err|None)
-_api_last_failed_cache = {}   # path -> ((mtime, size), err|None) — _api_last_failed's own (the latch)
+_api_last_failed_cache = {}   # path -> ((mtime, size), err|None, out_t): _api_last_failed's own (the latch)
 
 
 _SESSION_STAMP_CACHE = {}    # sid -> ((goals mtime,size, overrides mtime,size), ((gid, at, why, kind), stamped tops)) — see _session_stamp_read
@@ -21816,30 +21816,36 @@ def _spend_dialog_showing(pane):
 _API_ERR_TAIL_WINDOW = int(os.environ.get("ROMP_API_ERR_TAIL_WINDOW", "262144"))
 
 
-def _api_error_scan(path, start, user_clears=True):
-    """One pass of _api_error's classification from byte `start` to EOF → (err, decided).
+def _api_error_pass(path, start):
+    """One pass from byte `start` to EOF answering BOTH transcript readers at once (review round 1,
+    2026-09-07) -> (err, decided, latched, decided_latched, out_t).
 
-    The loop is _api_error's original whole-file scan, UNCHANGED (one dedent) except that each of its
-    three `err = ...` sites now also sets `decided`. That flag is the window's own proof of sufficiency:
-    True iff this pass saw a record that ASSIGNS the verdict (an isApiErrorMessage assistant record,
-    fresh assistant output, or a genuine user prompt) — exactly the record the whole-file scan's result
-    depends on, since everything before it is overwritten. False means the window started too late and
-    the caller must widen; True means this window's answer IS the whole file's answer.
+    err / decided are _api_error's. The loop is _api_error's original whole-file scan, UNCHANGED (one dedent)
+    except that each of its three `err = ...` sites also sets `decided`. That flag is the window's own proof
+    of sufficiency: True iff this pass saw a record that ASSIGNS the verdict (an isApiErrorMessage assistant
+    record, fresh assistant output, or a genuine user prompt), exactly the record the whole-file scan's
+    result depends on, since everything before it is overwritten. False means the window started too late
+    and the caller must widen; True means this window's answer IS the whole file's answer.
 
-    A non-zero `start` lands mid-line, so the first partial line is dropped. model_refusal_* records
-    land a few records AFTER the error they annotate and only mutate an err already set, so they need no
-    special handling: with their error out of window nothing is assigned, and the caller widens.
+    latched / decided_latched are _api_last_failed's (the API health cell): the same verdict with the user
+    branch inert, so a genuine prompt neither clears nor decides it and an error record holds until fresh
+    ASSISTANT output, through romp's own injected RETRY_MSG and through a human prompt alike (neither is
+    information about the API; the API's answer is). An assistant record decides both, so decided_latched
+    implies decided. out_t is the newest assistant OUTPUT record's timestamp while that record is the
+    newest assistant record, else 0: the usage-limit pause's recovery signal (_auto_resume_retry).
 
-    `user_clears=False` (the API health cell, 2026-09-07): a genuine user prompt neither clears `err`
-    nor decides, so the verdict is the newest ASSISTANT record's — an error record holds until fresh
-    assistant output, through romp's own injected RETRY_MSG and through a human prompt alike (neither is
-    information about the API; the API's answer is). _api_error keeps the default and its verdicts."""
+    A non-zero `start` lands mid-line, so the first partial line is dropped. model_refusal_* records land a
+    few records AFTER the error they annotate and only mutate an err already set, so they need no special
+    handling: with their error out of window nothing is assigned, and the caller widens."""
     err = None
     decided = False
+    latched = None
+    decided_l = False
+    out_t = 0
     with open(path, errors="replace") as f:
         if start > 0:
             f.seek(start)
-            f.readline()                          # the window cut this line in half — drop it
+            f.readline()                          # the window cut this line in half: drop it
         for line in f:
             if '"type"' not in line:
                 continue
@@ -21856,139 +21862,177 @@ def _api_error_scan(path, start, user_clears=True):
                                      if isinstance(b, dict) and b.get("type") == "text").strip()
                             if isinstance(c, list) else (c.strip() if isinstance(c, str) else ""))
                     # "prompt is too long" is NOT a transient API error (the user 2026-06-29): it means the
-                    # context needs compacting → it's on YOU. Flag it so it (and only it) blocks; other API
+                    # context needs compacting, so it's on YOU. Flag it so it (and only it) blocks; other API
                     # errors are transient (auto-retry recovers them) and stay in Working.
-                    decided = True
-                    err = {"text": text, "status": o.get("apiErrorStatus"),
-                           "category": o.get("error") or "unknown",
-                           # the error RECORD's identity — a new failed attempt writes a new record,
-                           # so this uuid IS the error episode (one auto-retry per episode, apiRetry)
-                           "uuid": o.get("uuid"),
-                           # the record's own time — the event stamp the API health frame's `since`
-                           # carries (never the clock, so an unchanged world serializes identically)
-                           "t": int(em.parse_z(o.get("timestamp")) or 0),
-                           "tooLong": "too long" in text.lower(),
-                           # a spend cap is on YOU (raise it), like tooLong — but ALSO stops the
-                           # auto-retry entirely (no reset to wait out); see _auto_pause_on_spend_limit
-                           "spendLimit": _is_spend_limit(text),
-                           # a model's own allowance is spent — on YOU too (switch model / add
-                           # credits), and the auto-retry keeps running only because the window does
-                           # eventually reset; see _is_model_limit
-                           "modelLimit": _is_model_limit(text),
-                           # a dead credential (no login / refused key) — on YOU, never auto-retried;
-                           # see _is_auth_error (per-session auth, the user 2026-08-08)
-                           "authErr": _is_auth_error(text),
-                           # the error's parent = the refused/failed USER message — kept so the
-                           # system model_refusal_* record below can link itself to THIS episode
-                           "parentUuid": o.get("parentUuid"),
-                           # a safeguards refusal is deterministic on the same input — on YOU
-                           # (rewrite the ask or drop the thread), never auto-retried; see
-                           # _is_refusal_text, and the system-record event path below (the user
-                           # 2026-08-15, after one refused prompt drew 12 auto-retries in ~6min)
-                           "refusal": _is_refusal_text(text)}
+                    decided = decided_l = True
+                    out_t = 0                             # the newest assistant record is a failure again
+                    err = latched = {"text": text, "status": o.get("apiErrorStatus"),
+                                     "category": o.get("error") or "unknown",
+                                     # the error RECORD's identity: a new failed attempt writes a new record,
+                                     # so this uuid IS the error episode (one auto-retry per episode, apiRetry)
+                                     "uuid": o.get("uuid"),
+                                     # the record's own time, the event stamp the API health frame's `since`
+                                     # carries (never the clock, so an unchanged world serializes identically)
+                                     "t": int(em.parse_z(o.get("timestamp")) or 0),
+                                     "tooLong": "too long" in text.lower(),
+                                     # a spend cap is on YOU (raise it), like tooLong, but ALSO stops the
+                                     # auto-retry entirely (no reset to wait out); see _auto_pause_on_spend_limit
+                                     "spendLimit": _is_spend_limit(text),
+                                     # a model's own allowance is spent: on YOU too (switch model / add
+                                     # credits), and the auto-retry keeps running only because the window does
+                                     # eventually reset; see _is_model_limit
+                                     "modelLimit": _is_model_limit(text),
+                                     # a dead credential (no login / refused key): on YOU, never auto-retried;
+                                     # see _is_auth_error (per-session auth, the user 2026-08-08)
+                                     "authErr": _is_auth_error(text),
+                                     # the error's parent = the refused/failed USER message, kept so the
+                                     # system model_refusal_* record below can link itself to THIS episode
+                                     "parentUuid": o.get("parentUuid"),
+                                     # a safeguards refusal is deterministic on the same input: on YOU
+                                     # (rewrite the ask or drop the thread), never auto-retried; see
+                                     # _is_refusal_text, and the system-record event path below (the user
+                                     # 2026-08-15, after one refused prompt drew 12 auto-retries in ~6min)
+                                     "refusal": _is_refusal_text(text)}
                 elif (isinstance(c, list) and any(isinstance(b, dict)
                         and b.get("type") in ("text", "tool_use", "thinking") for b in c)) \
                         or (isinstance(c, str) and c.strip()):
-                    decided = True
-                    err = None                            # fresh assistant output → recovered
+                    decided = decided_l = True
+                    err = latched = None                  # fresh assistant output: recovered
+                    out_t = int(em.parse_z(o.get("timestamp")) or 0)
             elif t == "user":
                 c = (o.get("message") or {}).get("content")
                 is_tool_result = isinstance(c, list) and any(
                     isinstance(b, dict) and b.get("type") == "tool_result" for b in c)
-                if not is_tool_result and user_clears:    # a genuine prompt (e.g. a retry) clears it —
-                    decided = True                        # unless the caller wants the latch (docstring)
+                if not is_tool_result:                    # a genuine prompt (e.g. a retry) clears _api_error's
+                    decided = True                        # verdict and decides it; the latch ignores it
                     err = None
             elif t == "system" and o.get("subtype") in ("model_refusal_no_fallback",
                                                         "model_refusal_fallback"):
-                # The CLI's structured refusal record — the EXACT event behind _is_refusal_text's
+                # The CLI's structured refusal record, the EXACT event behind _is_refusal_text's
                 # wording check (so a future CLI rephrase still classifies). It lands a few records
                 # AFTER the assistant error it explains (queue-operation / file-history-snapshot
                 # lines sit between; none of those clears err), linked by parentUuid: the refusal
                 # record and the error BOTH carry the refused user message's uuid as parentUuid.
-                # Deliberately NOT refusedUserMessageUuid — observed diverging from the episode's
-                # parent in 2 of 13 refusal records of one storm — and deliberately not
+                # Deliberately NOT refusedUserMessageUuid (observed diverging from the episode's
+                # parent in 2 of 13 refusal records of one storm) and deliberately not
                 # record-alone: the CLI also omits this record for some refusal errors, which is
                 # why the text signature above stays co-equal rather than a legacy fallback.
-                if err is not None and o.get("parentUuid") == err.get("parentUuid"):
-                    err["refusal"] = True
-    return err, decided
+                for d in (err, latched):                  # the same dict when both still hold the episode
+                    if d is not None and o.get("parentUuid") == d.get("parentUuid"):
+                        d["refusal"] = True
+    return err, decided, latched, decided_l, out_t
+
+
+def _api_error_scan(path, start, user_clears=True):
+    """_api_error_pass for ONE reader -> (err, decided): _api_error's verdict by default, the latch's with
+    user_clears=False. The differential tests read the scan through this name; the kernel reads the pass."""
+    err, decided, latched, decided_l, _ = _api_error_pass(path, start)
+    return (err, decided) if user_clears else (latched, decided_l)
+
+
+def _api_stat_key(path):
+    """The (mtime, size) both transcript caches key on, or None when the file cannot be stat'ed."""
+    try:
+        st = os.stat(path)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
+_API_UNDECIDED = object()   # _api_error_read's latch slot when the read stopped before an assistant record
+
+
+def _api_error_read(path, key, latch):
+    """The tail-first widening read behind BOTH readers, filling both caches from ONE pass (review round 1,
+    2026-09-07: before it, _api_last_failed re-read and re-parsed the same tail _api_error had just scanned,
+    for every active session, every cycle). `latch` names the verdict the caller needs decided: _api_error's
+    decides at the newest prompt or assistant record and keeps exactly the offsets it always read; the
+    latch's needs an assistant record. Whatever this read settled (or proved by reaching byte 0) is cached
+    for both, so the pusher's second question about the same transcript in the same cycle is a cache hit.
+    -> (err, latched, out_t); latched is _API_UNDECIDED when a non-latch read stopped before an assistant
+    record (the latch's own read then widens, rarely: a tail of prompts longer than the window)."""
+    size = key[1]
+    # TAIL-FIRST: the pusher calls this per session per push, and the old whole-file read cost
+    # O(transcript) on EVERY append, the same unamortized shape the assembly fold retired for the
+    # event-model parse, left behind here. Widen 4x until a pass reports it saw the deciding record.
+    win = max(1, _API_ERR_TAIL_WINDOW)   # a knob of 0 or less would never widen (0*4 stays 0): clamp, don't spin
+    while True:
+        start = size - win if win < size else 0
+        err, decided, latched, decided_l, out_t = _api_error_pass(path, start)
+        whole = start <= 0
+        if whole or decided_l or (decided and not latch):
+            break
+        win *= 4
+    if len(_api_err_cache) > 256:
+        _api_err_cache.clear()
+    _api_err_cache[path] = (key, err)                     # decided, or the whole file: final either way
+    if decided_l or whole:
+        if len(_api_last_failed_cache) > 256:
+            _api_last_failed_cache.clear()
+        _api_last_failed_cache[path] = (key, latched, out_t)
+    else:
+        latched = _API_UNDECIDED
+    return err, latched, out_t
 
 
 def _api_error(path):
     """If the session is sitting BLOCKED on an API error right now, the error; else None. Claude Code
     writes every API failure to the transcript as an assistant record with top-level
-    isApiErrorMessage:true — the human text varies (500 server_error, 'Request timed out', 404
+    isApiErrorMessage:true; the human text varies (500 server_error, 'Request timed out', 404
     model_not_found) but that flag is the invariant, so detection is exact, not a text heuristic (the
     user 2026-06-16). The session is blocked iff such a record is the LAST productive thing in the
     transcript: a later genuine user prompt (a retry) or fresh assistant output (an internal retry that
-    succeeded) clears it. Returns {text,status,category} or None. Event-based; cached by (mtime,size)
-    like _parse, since build_session/build_feed call it per push."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-        size = st.st_size
-    except OSError:
-        key = None
-        size = 0
+    succeeded) clears it. Returns {text,status,category,...} or None. Event-based; cached by (mtime,size)
+    like _parse, since build_session/build_feed call it per push. One read serves this and the latch
+    (_api_error_read)."""
+    key = _api_stat_key(path)
     hit = _api_err_cache.get(path)
     if hit is not None and key is not None and hit[0] == key:
         return hit[1]
-    err = None
+    if key is None:
+        return None
     try:
-        # TAIL-FIRST: the pusher calls this per session per push, and the old whole-file read cost
-        # O(transcript) on EVERY append — the same unamortized shape the assembly fold retired for the
-        # event-model parse, left behind here. Widen 4x until a pass reports it saw the deciding record.
-        win = max(1, _API_ERR_TAIL_WINDOW)   # a knob of 0 or less would never widen (0*4 stays 0): clamp, don't spin
-        while True:
-            start = size - win if win < size else 0
-            err, decided = _api_error_scan(path, start)
-            if decided or start <= 0:
-                break
-            win *= 4
+        return _api_error_read(path, key, latch=False)[0]
     except OSError:
         return None
-    if key is not None:
-        if len(_api_err_cache) > 256:
-            _api_err_cache.clear()
-        _api_err_cache[path] = (key, err)
-    return err
 
 
 def _api_last_failed(path):
-    """The session's newest API error record if no ASSISTANT OUTPUT has followed it, else None — _api_error's
-    latched sibling (the API health cell, 2026-09-07). Same tail-first 4x widening, its own (mtime, size)
-    cache, one difference: the scan runs with user_clears=False, so a user prompt does not clear the record.
-    _api_error answers 'is this session blocked right now', and a retry prompt rightly un-blocks it; but
-    romp's own auto-retry IS a user prompt (RETRY_MSG), so a count keyed on _api_error read '1 waiting' →
-    'ok' → '1 waiting' on every rung of RETRY_BACKOFF during an outage. The API's own answer — output, or
-    a new error record — is the only event that moves this. Returns the scan's err dict (with `t`, the
-    record's time) or None."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-        size = st.st_size
-    except OSError:
-        key = None
-        size = 0
+    """The session's newest API error record if no ASSISTANT OUTPUT has followed it, else None: _api_error's
+    latched sibling (the API health cell, 2026-09-07). Same tail-first widening, its own (mtime, size)
+    cache, one difference: a user prompt does not clear the record. _api_error answers 'is this session
+    blocked right now', and a retry prompt rightly un-blocks it; but romp's own auto-retry IS a user prompt
+    (RETRY_MSG), so a count keyed on _api_error read '1 waiting', 'ok', '1 waiting' on every rung of
+    RETRY_BACKOFF during an outage. The API's own answer, output or a new error record, is the only event
+    that moves this. Returns the pass's err dict (with `t`, the record's time) or None."""
+    key = _api_stat_key(path)
     hit = _api_last_failed_cache.get(path)
     if hit is not None and key is not None and hit[0] == key:
         return hit[1]
-    err = None
+    if key is None:
+        return None
     try:
-        win = max(1, _API_ERR_TAIL_WINDOW)
-        while True:
-            start = size - win if win < size else 0
-            err, decided = _api_error_scan(path, start, user_clears=False)
-            if decided or start <= 0:
-                break
-            win *= 4
+        return _api_error_read(path, key, latch=True)[1]
     except OSError:
         return None
-    if key is not None:
-        if len(_api_last_failed_cache) > 256:
-            _api_last_failed_cache.clear()
-        _api_last_failed_cache[path] = (key, err)
-    return err
+
+
+def _api_last_output_t(path):
+    """The timestamp of the session's newest ASSISTANT OUTPUT record while that record is the newest
+    assistant record (the latch is clear), else 0: a user prompt is not output, a tool result is not output,
+    and an error record after it means no fresh answer stands. Kept beside the latch by the same read, so
+    the pusher pays nothing extra for it. The usage-limit pause lifts on this (_auto_resume_retry), never on
+    the transcript's mtime, which a prompt moves too."""
+    key = _api_stat_key(path)
+    hit = _api_last_failed_cache.get(path)
+    if hit is not None and key is not None and hit[0] == key:
+        return hit[2]
+    if key is None:
+        return 0
+    try:
+        return _api_error_read(path, key, latch=True)[2]
+    except OSError:
+        return 0
 
 
 def _suppress_kernel_driven_ask(sid, ask, now=None):

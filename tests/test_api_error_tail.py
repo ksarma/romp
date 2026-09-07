@@ -170,7 +170,7 @@ class ApiErrorTailWindow(unittest.TestCase):
         above also holds against a scan that always starts at byte 0, i.e. with the speedup silently gone."""
         p = self._write(recs)
         starts = []
-        real = km._api_error_scan
+        real = km._api_error_pass                       # the ONE pass both readers share (round 1, 2026-09-07)
 
         def recording(path, start):
             starts.append(start)
@@ -178,13 +178,14 @@ class ApiErrorTailWindow(unittest.TestCase):
                 raise AssertionError("the widen loop is not terminating: %r" % starts[:8])
             return real(path, start)
         saved = km._API_ERR_TAIL_WINDOW
-        km._api_error_scan = recording
+        km._api_error_pass = recording
         try:
             km._API_ERR_TAIL_WINDOW = window
             km._api_err_cache.clear()
+            km._api_last_failed_cache.clear()
             got = km._api_error(p)
         finally:
-            km._api_error_scan = real
+            km._api_error_pass = real
             km._API_ERR_TAIL_WINDOW = saved
         return starts, got, p
 
@@ -342,12 +343,12 @@ class ApiLastFailedLatch(unittest.TestCase):
         self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5))
         e = km._api_last_failed(self.p)
         self.assertEqual(e["status"], 500)
-        scan = km._api_error_scan
-        km._api_error_scan = lambda *a, **k: self.fail("an unchanged transcript is served from the cache")
+        scan = km._api_error_pass
+        km._api_error_pass = lambda *a, **k: self.fail("an unchanged transcript is served from the cache")
         try:
             self.assertIs(km._api_last_failed(self.p), e)
         finally:
-            km._api_error_scan = scan
+            km._api_error_pass = scan
         self._append(_ts_out_rec(T_BASE + 20))                # the size moved → a fresh scan → a fresh answer
         self.assertIsNone(km._api_last_failed(self.p))
         self.assertIsNotNone(km._api_error(self.p) is None or True, "the sibling keeps its own cache")
@@ -385,6 +386,68 @@ class ApiLastFailedLatch(unittest.TestCase):
 
     def test_missing_file_is_none(self):
         self.assertIsNone(km._api_last_failed(os.path.join(self.td.name, "absent.jsonl")))
+
+    # ── one pass answers both readers (review round 1, 2026-09-07) ──
+    def _recording(self, passes):
+        real = km._api_error_pass
+        km._api_error_pass = lambda path, start: passes.append(start) or real(path, start)
+        return real
+
+    def test_one_cycle_reads_the_tail_once_for_both_verdicts(self):
+        # Every pusher cycle asks _api_error (the spend-cap check, the feed build) and then _api_last_failed
+        # (the health frame) about the same transcript: one pass over the tail must answer both, in either
+        # order, or a streaming session pays two tail reads and two json parses per cycle on the one hot thread.
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=529, category="overloaded"),
+                    _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG))
+        passes = []
+        real = self._recording(passes)
+        try:
+            self.assertIsNone(km._api_error(self.p))
+            self.assertEqual(km._api_last_failed(self.p)["status"], 529)
+            self.assertEqual(len(passes), 1, "the first read decided both verdicts: %r" % passes)
+            km._api_err_cache.clear()
+            km._api_last_failed_cache.clear()
+            del passes[:]
+            self.assertEqual(km._api_last_failed(self.p)["status"], 529)
+            self.assertIsNone(km._api_error(self.p))
+            self.assertEqual(len(passes), 1, "the other order too: %r" % passes)
+        finally:
+            km._api_error_pass = real
+
+    def test_a_read_that_did_not_reach_an_assistant_record_leaves_the_latch_to_its_own_widening(self):
+        # _api_error's window may decide at a prompt without seeing an assistant record; then it must NOT
+        # cache a latch verdict it never saw, and the latch's own read widens back to the assistant record
+        km._API_ERR_TAIL_WINDOW = 64
+        pad = "x" * 200
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5, status=529, category="overloaded"),
+                    *[_ts_prompt_rec(T_BASE + 10 + i, pad) for i in range(6)])
+        passes = []
+        real = self._recording(passes)
+        try:
+            self.assertIsNone(km._api_error(self.p))
+            self.assertNotIn(self.p, km._api_last_failed_cache, "no assistant record seen: no latch verdict cached")
+            n = len(passes)
+            self.assertEqual(km._api_last_failed(self.p)["status"], 529)
+            self.assertGreater(len(passes), n, "the latch widened on its own")
+            self.assertIsNone(km._api_error(self.p), "and _api_error's own cached verdict stands")
+        finally:
+            km._api_error_pass = real
+
+    def test_the_newest_output_record_s_time_is_kept_beside_the_latch(self):
+        # the limit pause's recovery signal (tests/test_retry_pause_autoresume.py): the time of the newest
+        # ASSISTANT OUTPUT record when it is the newest assistant record, else 0
+        self._write(_ts_prompt_rec(T_BASE), _ts_err_rec(T_BASE + 5), _ts_prompt_rec(T_BASE + 9, km.RETRY_MSG),
+                    _ts_out_rec(T_BASE + 20))
+        self.assertEqual(km._api_last_output_t(self.p), T_BASE + 20)
+        self._append(_ts_prompt_rec(T_BASE + 30, "and now?"))
+        self.assertEqual(km._api_last_output_t(self.p), T_BASE + 20, "a prompt is not output")
+        self._append(_ts_tool_result_rec(T_BASE + 31))
+        self.assertEqual(km._api_last_output_t(self.p), T_BASE + 20, "nor is a tool result")
+        self._append(_ts_err_rec(T_BASE + 35))
+        self.assertEqual(km._api_last_output_t(self.p), 0, "an error after it: no fresh output stands")
+        self._write(_prompt_rec(), _out_rec())
+        self.assertEqual(km._api_last_output_t(self.p), 0, "a record without a timestamp reads 0")
+        self.assertEqual(km._api_last_output_t(os.path.join(self.td.name, "absent.jsonl")), 0)
 
 
 if __name__ == "__main__":
