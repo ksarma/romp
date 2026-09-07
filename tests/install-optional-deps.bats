@@ -357,6 +357,69 @@ EOF
     [ ! -e "$TEST_DIR/state/sdkvenv" ]
 }
 
+# ── romp-codex-setup: the Codex venv is built with the kernel's interpreter too ──────────────────
+# The kernel imports codexvenv's site-packages in-process (ensure_codex_sdk), so this venv has the same
+# contract as the SDK venv: built with the python romp-serve will run. romp-codex-setup carried an older
+# picker (newest-first, an unchecked ROMP_PYTHON) until the 2026-09-06 review; tests/romp-serve.bats pins
+# the three copies byte for byte, and these two tests exercise the script end to end.
+
+# A stub python that claims one X.Y: answers pick_python's minor check for that X.Y only, the >= 3.10
+# gate, the version print and the ensurepip probe, and stands in for `python -m venv` by laying down a
+# pip and a python that read stdin and exit 0, logging which python built which venv.
+write_stub_py() {   # $1 path, $2 the X.Y it claims
+    mkdir -p "$(dirname "$1")"
+    cat > "$1" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ] && [ "\${2:-}" = "venv" ]; then
+  echo "venv-build $2 \$3" >> "\$CALL_LOG"
+  mkdir -p "\$3/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "\$3/bin/pip"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nexit 0\n' > "\$3/bin/python"
+  chmod +x "\$3/bin/pip" "\$3/bin/python"
+  printf 'version = $2.0\nexecutable = $1\n' > "\$3/pyvenv.cfg"
+  exit 0
+fi
+case "\$*" in
+  *"version_info >= (3, 10)"*) exit 0 ;;
+  *"(${2%%.*}, ${2#*.})"*)     exit 0 ;;
+  *version_info*)              exit 1 ;;
+  *'print("%d.%d"'*)           echo "$2"; exit 0 ;;
+esac
+exit 0
+EOF
+    chmod +x "$1"
+}
+
+@test "romp-codex-setup: ROMP_PYTHON naming a missing interpreter is refused as such, not called a too-old python" {
+    export ROMP_STATE_DIR="$TEST_DIR/state"
+    PATH="$(bare_path)" ROMP_PYTHON="$TEST_DIR/no-such/python3.12" run "$ROMP_DIR/bin/romp-codex-setup"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ROMP_PYTHON=$TEST_DIR/no-such/python3.12"* ]]
+    [[ "$output" == *"not an executable interpreter"* ]]
+    [[ "$output" != *"needs >= 3.10"* ]]
+    [ ! -e "$TEST_DIR/state/codexvenv" ]
+}
+
+@test "romp-codex-setup: builds its venv with the SDK venv's interpreter (the kernel's), not the newest python on PATH" {
+    # A codexvenv built with the newest python while the kernel runs the SDK venv's 3.11 would fail at
+    # import under the kernel exactly as the SDK venv did on 2026-09-06.
+    export ROMP_STATE_DIR="$TEST_DIR/state"
+    mkdir -p "$TEST_DIR/state/sdkvenv"
+    printf 'home = %s\nversion = 3.11.9\nexecutable = %s\n' "$TEST_DIR/oldpy" "$TEST_DIR/oldpy/python3.11" \
+        > "$TEST_DIR/state/sdkvenv/pyvenv.cfg"
+    write_stub_py "$TEST_DIR/oldpy/python3.11" 3.11          # the SDK venv's interpreter, off PATH
+    write_stub_py "$STUB/python3.12" 3.12                    # a newer python, first on PATH
+
+    PATH="$(bare_path)" run "$ROMP_DIR/bin/romp-codex-setup"
+
+    [ "$status" -eq 0 ]
+    grep -q "venv-build 3.11 $TEST_DIR/state/codexvenv" "$CALL_LOG"
+    [[ "$output" == *"creating venv at $TEST_DIR/state/codexvenv (python: $TEST_DIR/oldpy/python3.11)"* ]]
+    grep -q "executable = $TEST_DIR/oldpy/python3.11" "$TEST_DIR/state/codexvenv/pyvenv.cfg"
+    run grep -q "venv-build 3.12" "$CALL_LOG"                # last, and armed (see the sdk-setup twin)
+    [ "$status" -ne 0 ]
+}
+
 # ── installs ship a PRODUCTION bundle ────────────────────────────────────────
 # Without --production the dashboard shipped a development build: render.js, the chat pane's
 # code, was 578 KB of unminified JS the browser parsed before anything appeared (a slow chat

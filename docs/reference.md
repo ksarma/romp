@@ -494,7 +494,9 @@ does not. `romp new` and the browser's create refuse with the same verdict,
 read from the disk at the moment of the request, so a venv rebuilt while the
 kernel runs is reported on both surfaces as set up after romp started, with
 the restart as the remedy. A free-threaded build (`python3.14t`) is its own
-tag: the venv it builds matches it and no other.
+tag: the venv it builds matches it and no other. The Codex venv (`codexvenv`,
+built by `bin/romp-codex-setup`) is built with the same pick, so it matches the
+kernel too.
 
 ### API keys on disk: the file mode
 

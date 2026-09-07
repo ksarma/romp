@@ -273,9 +273,13 @@ write_venv_cfg() {   # $1 = state root, then the pyvenv.cfg lines
     [ "$output" = "$TEST_DIR/custom/python" ]
 }
 
-@test "pick_python: romp-serve and romp-sdk-setup carry the SAME picker (venv must match the kernel)" {
-    diff <(sed -n '/^pick_python()/,/^}/p' "$ROMP_SERVE") \
-         <(sed -n '/^pick_python()/,/^}/p' "$BIN/romp-sdk-setup")
+@test "pick_python: romp-serve, romp-sdk-setup and romp-codex-setup carry the SAME picker (each venv must match the kernel)" {
+    # The kernel imports both venvs' site-packages in-process, so both setup scripts must pick the
+    # interpreter romp-serve will run, by the same rules, byte for byte. romp-codex-setup carried an
+    # older copy (no venv-follow, no pin check) until the 2026-09-06 review.
+    [ "$(extract_pick "$ROMP_SERVE" | wc -l)" -gt 20 ]     # armed: an empty extraction would diff clean
+    diff <(extract_pick "$ROMP_SERVE") <(extract_pick "$BIN/romp-sdk-setup")
+    diff <(extract_pick "$ROMP_SERVE") <(extract_pick "$BIN/romp-codex-setup")
 }
 
 # ─── pick_python: the pin is checked, and the candidates are checked (review of the 2026-09-06 fix) ──
