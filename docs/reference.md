@@ -2164,8 +2164,10 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   values moved, or because the entry was sealed outside the pusher's names
   snapshot and had to be verified), `hit` (checks that verified the sealed
   cards from their recorded values without hydrating), and `commit_new` (raw
-  postal events hydrated at fold commits; each is hydrated once, when it is
-  first sealed). Before this memo every judge pass re-hydrated every tab's
+  postal events hydrated at fold commits: the events a folding build newly
+  seals, or every relevant event of the prefix a demoted build rebuilds, so a
+  demotion counts its rebuilt tail again; the sealed cards a folding build
+  reuses are not counted). Before this memo every judge pass re-hydrated every tab's
   sealed cards, although a caption is the only judge-written value a card
   carries.
   `chat_ledger` is the chat build's memo of a session's goal-tree walk and

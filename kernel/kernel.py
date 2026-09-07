@@ -496,7 +496,8 @@ class _PerfStats:
                                    _postal_card_deps) -> gate (fold-gate checks that re-hydrated a
                                    tab's sealed cards), hit (checks that verified them from their
                                    recorded values), commit_new (raw postal events hydrated at fold
-                                   commits, each once); chat_ledger (build_session's goal-tree walk
+                                   commits: newly sealed, or a demoted prefix rebuilt); chat_ledger
+                                   (build_session's goal-tree walk
                                    and live roots per sid, interim, see _ledger_memo) -> hit / miss,
                                    bypass_live (live atoms merged), bypass_hold (a rewind hold
                                    armed), bypass_empty (a store with no nodes), evict, and the
@@ -25094,7 +25095,9 @@ def _chat_postal_report():
     """/perf memos.chat_postal: `gate`, fold-gate checks that re-hydrated a tab's sealed postal cards (the
     log or a value a card embeds moved, or the entry was unverified); `hit`, checks that verified the
     sealed cards from their recorded values without hydrating; `commit_new`, raw postal events hydrated
-    at fold commits, each once (the sealed ones are reused)."""
+    at fold commits: the events a folding build newly seals, or every relevant event of the prefix a
+    demoted build rebuilds (a demotion counts its rebuilt tail again); the sealed cards a folding build
+    reuses are not counted."""
     return dict(_chat_postal_stats)
 
 
