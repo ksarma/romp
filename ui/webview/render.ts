@@ -14918,7 +14918,12 @@ function refreshMentionChips(): void {
   for (const v of views.values()) {
     for (const chip of Array.from(v.el.querySelectorAll<HTMLElement>(".mention-chip[data-sid]"))) {
       let s = sessions.get(chip.dataset.sid || "") || null;
-      if (!s) {   // the session is gone; a live one that took its name is what the text names now
+      // The keyed session gone, or closed, while a live one carries the name: the text names THAT one now (the
+      // name is what postal resolves), so the chip re-keys as soon as the namesake is live. Membership in the map
+      // is not the test: a closed session stays in it until its tab is dismissed, and a chip keyed on that read
+      // "Closed" beside a live namesake, then flipped when the tab went, with nothing new about the mention
+      // (review find, 2026-09-07).
+      if (!s || s.status.state === "closed") {
         const again = byName.get((chip.textContent || "").replace(/^@/, ""));
         if (again) { chip.dataset.sid = again.id; s = again; }
       }
@@ -15396,8 +15401,12 @@ function setupComposer() {
   // Escape latches the card closed for THIS "@" (its index in the text) until that "@" is gone, the slash
   // menu's rule: typing more of the same query after an Esc must not re-pop it, and neither may a caret
   // that leaves the token and comes back (review find, 2026-09-07: the latch cleared on any caret move off
-  // the token). Deleting the "@", or the character after it, re-arms.
+  // the token). The latch holds on the bare "@" too (the query backspaced away and retyped is the same "@";
+  // the slash latch holds on a bare "/"), and it follows the "@" through edits before it (Home, a word,
+  // End: the same token, still dismissed), so only deleting the "@", or the whitespace that opens its
+  // word, re-arms (review find, 2026-09-07: both re-popped the card).
   let mDismissedAt = -1;
+  let mLatchText = "";     // the box as the latch last saw it; the diff against it is how the latch follows its "@"
   // an IME composition in progress: its keystrokes and its interim text are the IME's, not the card's
   let mComposing = false;
   // the sessions a mention can name: every live session the webview knows, the one being written to
@@ -15421,9 +15430,37 @@ function setupComposer() {
   // the "@query" the caret ends right now, or null; a selection is not a caret (Ctrl+A, Shift+Home, a drag)
   const caretMention = (): MentionQuery | null =>
     ta.selectionStart === ta.selectionEnd ? mentionQuery(ta.value, ta.selectionStart) : null;
-  // is an "@word" still opening at `start`, the "@" the Escape latch is about?
-  const mentionTokenAt = (text: string, start: number): boolean =>
-    start >= 0 && start + 1 < text.length && text[start] === "@" && (start === 0 || /\s/.test(text[start - 1])) && !/[\s@]/.test(text[start + 1]);
+  // is the "@" the Escape latch is about still at `start`, opening a word? A bare "@" counts: the guide says the
+  // list stays closed for that "@" until it is deleted, not until its query is.
+  const mentionAtOpens = (text: string, start: number): boolean =>
+    start >= 0 && start < text.length && text[start] === "@" && (start === 0 || /\s/.test(text[start - 1]));
+  // Keep the latch on its "@" as the text changes. The box hands over no edit deltas, so each read diffs the text
+  // against the last one seen: the edit replaced prev[start, oldEnd) with the text between the same start and its
+  // new end. Wholly before the "@", it moved the "@" by what the edit added or removed; covering the "@", it
+  // deleted it; wholly after, the "@" stands. Then the "@" must still open a word where it sits, or the latch is
+  // off. The region comes from the caret when it can: after an edit the caret sits at the edit's end, and the text
+  // after the caret is then what followed the region, so the edit ends at the caret and starts at the smallest
+  // edit consistent with that (a longer one retyped identical text, which reads as unchanged). A caret elsewhere
+  // (an undo restores a selection) falls back to the longest common prefix and suffix, which alone reads a
+  // deletion beside repeated text as the later of the two ("@b @bb" less "@b " or less " @b" is "@bb" either
+  // way, and the later region is the "@" itself). The diff reads the text, not the keystrokes: a selection
+  // replaced by text that puts an "@" back where the old one stood reads as that "@", unchanged, as the reader sees it.
+  const followLatch = (text: string, caret: number): void => {
+    const prev = mLatchText;
+    mLatchText = text;
+    if (mDismissedAt < 0 || text === prev) return;
+    const max = Math.min(prev.length, text.length);
+    let p = 0;
+    while (p < max && prev[p] === text[p]) p++;
+    let s = 0;
+    while (s < max - p && prev[prev.length - 1 - s] === text[text.length - 1 - s]) s++;
+    let start = p, oldEnd = prev.length - s;
+    const caretEnd = caret + prev.length - text.length;   // where an edit ending at the caret ended in prev
+    if (caretEnd >= 0 && prev.slice(caretEnd) === text.slice(caret)) { oldEnd = caretEnd; start = Math.min(p, caret, oldEnd); }
+    if (oldEnd <= mDismissedAt) mDismissedAt += text.length - prev.length;
+    else if (start <= mDismissedAt) mDismissedAt = -1;
+    if (!mentionAtOpens(text, mDismissedAt)) mDismissedAt = -1;
+  };
   const pickMention = (c: MentionCandidate) => {
     // The card is about mAt; the pick replaces the token the caret ends NOW, and the two must agree. Splicing
     // the cached token against a caret the card had not followed repeated the draft between them ("ask @ro",
@@ -15487,10 +15524,10 @@ function setupComposer() {
   };
   const updateMention = () => {
     if (mComposing) return;                                    // the IME owns the box until compositionend, which runs this again
+    followLatch(ta.value, ta.selectionStart);                  // the Esc latch stands while its "@" does, wherever an edit moved it
     const at = caretMention();
-    if (!at) { if (!mentionTokenAt(ta.value, mDismissedAt)) mDismissedAt = -1; closeMention(); return; }   // no "@query" at the caret (a space typed, the caret moved, a selection): closed; the Esc latch stands while its "@" does
+    if (!at) { closeMention(); return; }                       // no "@query" at the caret (a space typed, the caret moved, a selection): closed
     if (mDismissedAt === at.start) return;                     // Esc'd this "@": stays closed until it is gone
-    if (!mentionTokenAt(ta.value, mDismissedAt)) mDismissedAt = -1;
     const all = rankMentions(at.query, mentionRoster(), activeId);
     const items = all.slice(0, MENTION_MAX_ROWS);
     if (!items.length) { closeMention(); return; }             // nothing matches: no card, the "@word" is ordinary text
@@ -15631,6 +15668,11 @@ function setupComposer() {
     // Shift+Enter, and the software return key should just return. Mobile sends with the explicit Send
     // button only (the user 2026-07-15). Desktop keeps ⏎ send / ⇧⏎ newline. The `!isCoarsePointer()` guard
     // lets Enter fall through to the textarea's native newline on touch.
+    // An IME's commit Enter (isComposing; keyCode 229 on engines that report the composition that way) is the
+    // composition's, not a send or a stage. The mention card declines it above so the IME can take it, and so
+    // must the two Enter branches here, or the commit sends the box with the half-composed text (review find,
+    // 2026-09-07; the type-from-anywhere handler's guard). Left to the browser, the keystroke commits the text.
+    if (e.key === "Enter" && (e.isComposing || e.keyCode === 229)) return;
     // ⌘⏎ / Ctrl+⏎ stages (the user 2026-08-15) — and focus STAYS in the box, because the whole point
     // is highlighting the next spot and typing again. Checked before the plain-Enter send below.
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {

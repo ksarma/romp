@@ -204,7 +204,7 @@ test("the card owns the keys while open, ahead of the send path: Enter picks, it
 
 test("Escape closes without inserting and latches for that @ until the token is gone; typing narrows, a space or a miss closes", () => {
   assert.match(RENDER, /else \{ mDismissedAt = mAt \? mAt\.start : -1; closeMention\(\); \}/);
-  assert.match(RENDER, /if \(!at\) \{ if \(!mentionTokenAt\(ta\.value, mDismissedAt\)\) mDismissedAt = -1; closeMention\(\); return; \}/, "the latch holds while its @ does (composer-mention-pane.test.ts runs it)");
+  assert.match(RENDER, /followLatch\(ta\.value, ta\.selectionStart\);[^\n]*\n\s*const at = caretMention\(\);\s*\n\s*if \(!at\) \{ closeMention\(\); return; \}/, "the latch holds while its @ does, wherever an edit moved it (composer-mention-pane.test.ts runs it)");
   assert.match(RENDER, /if \(mDismissedAt === at\.start\) return;/);
   assert.match(RENDER, /if \(!items\.length\) \{ closeMention\(\); return; \}/);
   assert.match(RENDER, /updateSlash\(\);[^\n]*\n\s*updateMention\(\);/, "the input handler refreshes the card as the query changes");

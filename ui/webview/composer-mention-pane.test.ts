@@ -87,8 +87,9 @@ ${chipBlock()}
 }
 
 // The page: the composer's textarea and a transcript root. The harness wires the composer's keydown order
-// (the card's keys first, then Cmd/Ctrl+Enter stages, then Enter sends; each clear goes through clearBox) and
-// the input listener, as render.ts does; composer-mention.test.ts pins that order in the source.
+// (the card's keys first, then an IME's Enter is left alone, then Cmd/Ctrl+Enter stages, then Enter sends; each
+// clear goes through clearBox) and the input listener, as render.ts does; the source pins below and in
+// composer-mention.test.ts hold that order.
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>
 body { margin: 0; padding: 200px 20px 20px; } textarea { width: 400px; height: 80px; font: 14px monospace; }
 .mention-pop { position: fixed; }
@@ -106,6 +107,7 @@ window.__setup = (roster, activeId) => {
   const api = w.__mention.mount(ta, env);
   ta.addEventListener("keydown", (e) => {
     if (api.mentionKey(e)) return;
+    if (e.key === "Enter" && (e.isComposing || e.keyCode === 229)) return;
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); if (ta.value.trim()) { env.staged.push(ta.value); api.clearBox(); } return; }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (ta.value.trim()) { env.sent.push(ta.value); api.clearBox(); } }
   });
@@ -243,16 +245,23 @@ test("in Chromium: an IME composition's keys are not the card's, and the card wa
     const fire = (key: string) => { const e = new KeyboardEvent("keydown", { key, isComposing: true, cancelable: true, bubbles: true }); return w.__api.mentionKey(e) || e.defaultPrevented; };
     const enter = fire("Enter"), down = fire("ArrowDown");
     const afterKeys = { ...w.__api.state(), value: ta.value };
+    // and through the composer's whole keydown order: the commit Enter, bare or with Ctrl, neither sends nor stages
+    // (round 2's find: the card passed it on, and the send branch took it with the half-composed text)
+    const commits = [new KeyboardEvent("keydown", { key: "Enter", isComposing: true, cancelable: true, bubbles: true }),
+                     new KeyboardEvent("keydown", { key: "Enter", isComposing: true, ctrlKey: true, cancelable: true, bubbles: true })];
+    for (const k of commits) ta.dispatchEvent(k);
+    const afterCommit = { prevented: commits.some((k) => k.defaultPrevented), value: ta.value, sent: w.__env.sent.slice(), staged: w.__env.staged.slice(), open: w.__api.state().open };
     ta.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     ta.value = "@rom"; ta.setSelectionRange(4, 4); ta.dispatchEvent(new Event("input", { bubbles: true }));
     const composing = w.__api.state();
     ta.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
     const ended = w.__api.state();
-    return { enter, down, afterKeys, composing, ended };
+    return { enter, down, afterKeys, afterCommit, composing, ended };
   });
   assert.equal(r.enter, false, "Enter mid-composition commits the IME's text, not a pick");
   assert.equal(r.down, false, "ArrowDown mid-composition walks the IME's candidates");
   assert.equal(r.afterKeys.open, true); assert.equal(r.afterKeys.sel, 0); assert.equal(r.afterKeys.value, "@ro");
+  assert.deepEqual(r.afterCommit, { prevented: false, value: "@ro", sent: [], staged: [], open: true }, "the commit Enter is the IME's: nothing sent, nothing staged, the browser's default kept");
   assert.equal(r.composing.at.query, "ro", "the interim text is the IME's: the card did not re-read it");
   assert.equal(r.ended.at.query, "rom", "compositionend re-reads the box");
   assert.deepEqual(h.errors, []);
@@ -305,7 +314,30 @@ test("in Chromium: Escape latches the card closed for that @ until it is deleted
   assert.equal(s.open, false, "back at the token's end the card the user dismissed stays dismissed");
   await h.page.keyboard.type("b");
   assert.equal((await h.state()).open, false, "more letters of the same token do not re-pop it");
-  for (let i = 0; i < 4; i++) await h.page.keyboard.press("Backspace");   // "ask "
+  // the query backspaced away to the bare "@", then retyped: the same "@", still dismissed (round 2's find: the
+  // latch dropped on the bare "@" and the next letter reopened the card)
+  for (let i = 0; i < 3; i++) await h.page.keyboard.press("Backspace");   // "ask @"
+  assert.equal(await h.value(), "ask @");
+  assert.equal((await h.state()).dismissedAt, 4, "the latch holds on the bare @");
+  await h.page.keyboard.type("w");
+  s = await h.state();
+  assert.equal(s.open, false, "the query typed again does not reopen the card");
+  assert.equal(s.dismissedAt, 4);
+  // an edit BEFORE the "@" moves it, and the latch follows (round 2's find: keyed on the old offset, the latch
+  // cleared, and End reopened the card over the same unchanged token)
+  await h.page.keyboard.press("Home"); await h.settle();
+  await h.page.keyboard.type("so ");
+  assert.equal(await h.value(), "so ask @w");
+  assert.equal((await h.state()).dismissedAt, 7, "the latch moved with its @");
+  await h.page.keyboard.press("End"); await h.settle();
+  assert.equal((await h.state()).open, false, "back at the token's end, still dismissed");
+  await h.page.keyboard.press("Home"); await h.settle();
+  for (let i = 0; i < 3; i++) await h.page.keyboard.press("Delete");   // "ask @w"
+  assert.equal(await h.value(), "ask @w");
+  assert.equal((await h.state()).dismissedAt, 4, "a deletion before the @ moves it back");
+  await h.page.keyboard.press("End"); await h.settle();
+  assert.equal((await h.state()).open, false);
+  for (let i = 0; i < 2; i++) await h.page.keyboard.press("Backspace");   // "ask "
   assert.equal(await h.value(), "ask ");
   assert.equal((await h.state()).dismissedAt, -1, "the @ is gone: the latch re-arms");
   await h.page.keyboard.type("@we");
@@ -383,11 +415,23 @@ test("in Chromium: chips are exact-name only, keyed by session id, re-dressed on
     out.afterRename = snap();
     // an unchanged roster does nothing (no refresh of the card)
     const before = refreshed; chips.mentionRosterChanged(); out.idle = refreshed - before;
-    // the session is gone: the chip reads Closed and keeps its color
+    // the session closes; its struck tab keeps it in the map: the chip reads Closed in its color
+    a.status = { state: "closed" }; chips.mentionRosterChanged();
+    out.afterClosed = snap();
+    // a live session takes the name the text carries while the closed one is still in the map: the chip is
+    // re-keyed to it now (round 2's find: it waited for the closed tab's dismissal, which says nothing about
+    // the mention, and flipped then)
+    sessions.set("new-1", { id: "new-1", name: "api", color: { bg: "#445566", fg: "#000000" }, status: { state: "working" } });
+    chips.mentionRosterChanged();
+    out.afterNamesake = snap(); out.closedStillHeld = sessions.has(api);
+    // the closed tab is dismissed: nothing about the mention changed, so nothing moves
     sessions.delete(api); chips.mentionRosterChanged();
+    out.afterDismiss = snap();
+    // the session is gone from the map: the chip reads Closed and keeps its color
+    sessions.delete("new-1"); chips.mentionRosterChanged();
     out.afterGone = snap();
     // a new session takes the name the text carries: the chip is re-keyed to it
-    sessions.set("new-1", { id: "new-1", name: "api", color: { bg: "#445566", fg: "#000000" }, status: { state: "working" } });
+    sessions.set("new-2", { id: "new-2", name: "api", color: { bg: "#667788", fg: "#000000" }, status: { state: "ready" } });
     chips.mentionRosterChanged();
     out.afterNew = snap();
     return out;
@@ -402,8 +446,12 @@ test("in Chromium: chips are exact-name only, keyed by session id, re-dressed on
   assert.equal(r.afterState[1].title, "api · Ready"); assert.equal(r.afterState[1].bg, "#112233");
   assert.equal(r.afterRename[1].title, "api2 · Ready"); assert.equal(r.afterRename[1].text, "@api");
   assert.equal(r.idle, 0, "the same roster twice: nothing re-ranked");
-  assert.equal(r.afterGone[1].title, "api · Closed"); assert.equal(r.afterGone[1].bg, "#112233");
-  assert.equal(r.afterNew[1].sid, "new-1"); assert.equal(r.afterNew[1].title, "api · Working"); assert.equal(r.afterNew[1].bg, "#445566");
+  assert.deepEqual(r.afterClosed[1], { text: "@api", sid: SID(2), title: "api2 · Closed", bg: "#112233" }, "closed, no namesake: the chip stays keyed to it");
+  assert.equal(r.closedStillHeld, true, "the closed session was still in the map when the namesake arrived");
+  assert.deepEqual(r.afterNamesake[1], { text: "@api", sid: "new-1", title: "api · Working", bg: "#445566" }, "re-keyed on the namesake going live, not on the closed tab's dismissal");
+  assert.deepEqual(r.afterDismiss, r.afterNamesake, "the dismissal moved nothing");
+  assert.equal(r.afterGone[1].title, "api · Closed"); assert.equal(r.afterGone[1].bg, "#445566"); assert.equal(r.afterGone[1].sid, "new-1");
+  assert.equal(r.afterNew[1].sid, "new-2"); assert.equal(r.afterNew[1].title, "api · Ready"); assert.equal(r.afterNew[1].bg, "#667788");
   assert.deepEqual(h.errors, []);
   await h.page.close();
 });
@@ -439,14 +487,31 @@ test("the caret is followed by selectionchange on the text control; the keyup al
   assert.match(block, /ta\.addEventListener\("compositionend", \(\) => \{ mComposing = false; updateMention\(\); \}\);/);
 });
 
-test("the highlight is kept by session id across a re-rank; the Escape latch keys on the @'s offset and clears only when that @ is gone", () => {
+test("the highlight is kept by session id across a re-rank; the Escape latch keys on the @'s offset, follows it through edits before it and clears only when that @ is gone", () => {
   const block = mentionBlock();
   assert.match(block, /const keep = same \? mItems\[mSel\]\?\.id : undefined;\s*\n\s*const idx = keep \? items\.findIndex\(\(c\) => c\.id === keep\) : -1;\s*\n\s*mSel = idx >= 0 \? idx : 0;/);
-  assert.match(block, /if \(!at\) \{ if \(!mentionTokenAt\(ta\.value, mDismissedAt\)\) mDismissedAt = -1; closeMention\(\); return; \}/);
+  assert.match(block, /if \(mComposing\) return;[^\n]*\n\s*followLatch\(ta\.value, ta\.selectionStart\);[^\n]*\n\s*const at = caretMention\(\);\s*\n\s*if \(!at\) \{ closeMention\(\); return; \}/, "the latch is followed on every read, before the caret is consulted");
+  assert.match(block, /const mentionAtOpens = \(text: string, start: number\): boolean =>\s*\n\s*start >= 0 && start < text\.length && text\[start\] === "@" && \(start === 0 \|\| \/\\s\/\.test\(text\[start - 1\]\)\);/, "a bare @ holds the latch: no next-character requirement");
+  assert.match(block, /if \(caretEnd >= 0 && prev\.slice\(caretEnd\) === text\.slice\(caret\)\) \{ oldEnd = caretEnd; start = Math\.min\(p, caret, oldEnd\); \}\s*\n\s*if \(oldEnd <= mDismissedAt\) mDismissedAt \+= text\.length - prev\.length;\s*\n\s*else if \(start <= mDismissedAt\) mDismissedAt = -1;\s*\n\s*if \(!mentionAtOpens\(text, mDismissedAt\)\) mDismissedAt = -1;/, "an edit before the @ moves the latch; one over it clears it; the caret places an edit the text alone reads two ways");
+  assert.doesNotMatch(block, /mentionTokenAt/, "the next-character test is gone");
   assert.match(block, /if \(mDismissedAt === at\.start\) return;/);
   assert.match(block, /const all = rankMentions\(at\.query, mentionRoster\(\), activeId\);\s*\n\s*const items = all\.slice\(0, MENTION_MAX_ROWS\);/);
   assert.match(block, /mMore = mentionMoreNote\(all\.length\)/);
   assert.match(block, /if \(mMore\) \{ const more = el\("div", "mention-more"\); more\.textContent = mMore; mPop\.appendChild\(more\); \}/, "no data-idx: the card's listener finds no row under it");
+});
+
+test("the composer's keydown declines an IME's commit Enter after the card has and before the stage and the send, with the type-from-anywhere handler's guard", () => {
+  const start = RENDER.indexOf('  ta.addEventListener("keydown", (e) => {\n    if (slashKey(e)) return;');
+  const end = RENDER.indexOf('  ta.addEventListener("input", () => {', start);
+  assert.ok(start > 0 && end > start, "the composer's keydown listener, up to its input listener");
+  const keys = RENDER.slice(start, end);
+  const card = keys.indexOf("if (mentionKey(e)) return;");
+  const guard = keys.indexOf('if (e.key === "Enter" && (e.isComposing || e.keyCode === 229)) return;');
+  const stage = keys.indexOf('if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) {');
+  const send = keys.indexOf('if (e.key === "Enter" && !e.shiftKey && !isCoarsePointer()) {');
+  assert.ok(card > 0 && guard > card && stage > guard && send > stage, "the card, then the IME guard, then the stage, then the send");
+  assert.equal((keys.match(/sendComposer\(\)/g) || []).length, 1, "one send in the listener, behind the guard");
+  assert.match(RENDER, /if \(e\.isComposing \|\| e\.keyCode === 229\) return;   \/\/ IME mid-composition/, "the type-from-anywhere handler's guard, the same test");
 });
 
 test("renderTabs opens with the whole-roster hook, ahead of its guards; the hook re-ranks the card, re-dresses the chips and re-marks on a new name", () => {
