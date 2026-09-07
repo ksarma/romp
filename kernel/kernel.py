@@ -34602,12 +34602,16 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
         # FAIL LOUDLY, the same rule as the task store above (2026-09-07): the shape guard reads a
         # flagged store as EMPTY, which on this card meant the session's open requests simply
         # vanished, with the only word about it on stderr. The card carries the cause instead, on
-        # the `error` the renderer already shows (it supplants the task list while it stands —
-        # the fixed file brings both back). Store-stable text (the path, no clock), so the
-        # serialized-payload dedup holds; the home dir reads as ~ like the task store's line.
+        # its OWN key: `error` is the task store's, and the renderer's error branch supplants the
+        # agent's checklist (rightly — that list could not be read), so a request-store cause
+        # riding it hid a checklist that WAS read under a heading blaming the wrong store. The
+        # renderer heads `userTodosError` as the waiting-on-you section it stands in for, after
+        # the checklist; a flagged store reads empty, so rows and this key never ship together.
+        # Store-stable text (the path, no clock), so the serialized-payload dedup holds; the home
+        # dir reads as ~ like the task store's line.
         _todo_ev = _todo_ev or {"kind": "todo", "tasks": []}
         _sp = str(jd.STATE / "user-todos.json").replace(str(Path.home()), "~", 1)
-        _todo_ev["error"] = " ".join(filter(None, [_todo_ev.get("error"), _USER_TODOS_UNREADABLE_CARD % _sp]))
+        _todo_ev["userTodosError"] = _USER_TODOS_UNREADABLE_CARD % _sp
     if _todo_ev:
         events.append(_todo_ev)
     # The queued indicator (computed above, before the live merge) appends LAST — at the bottom by the

@@ -39,13 +39,21 @@ test("the error card wears the err severity — red rail + dot; the reason reads
   assert.doesNotMatch(CSS, /\.todo-card-error|\.todo-error-msg/);
 });
 
-test("the same fold carries romp's own request store when the kernel cannot read it", () => {
-  // The kernel sets `error` on the todo event for BOTH stores this card reads — Claude's task store
-  // and romp's user-todo store (user-todos.json) — and renderTodo shows the text verbatim, so the
-  // wording is the kernel's; pinned here beside the renderer that displays it. Before this the
-  // shape guard's refusal was stderr-only and a session's open requests vanished from the card.
+test("romp's own request store has its own key on the card when the kernel cannot read it", () => {
+  // The card reads TWO stores — Claude's task store (`error`) and romp's user-todo store
+  // (user-todos.json, `userTodosError`) — and renderTodo shows each text verbatim, so the wording
+  // is the kernel's; pinned here beside the renderer that displays it. Before this the shape
+  // guard's refusal was stderr-only and a session's open requests vanished from the card; then
+  // the cause rode the task store's `error`, whose branch supplants the agent's checklist — so a
+  // corrupt request store hid the checklist under "To-do · unavailable", a heading that blamed
+  // the store that WAS read. Its own key keeps the checklist and heads its own section.
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   assert.match(KERNEL, /Can't read Claude's task store/);
   assert.match(KERNEL, /Can't read romp's request store \(%s\)/);
+  assert.match(KERNEL, /_todo_ev\["userTodosError"\] = _USER_TODOS_UNREADABLE_CARD/);
+  assert.doesNotMatch(KERNEL, /_todo_ev\["error"\] = " "\.join/, "the two causes are never joined on one key");
   assert.match(RENDER, /msg\.textContent = ev\.error;/);
+  assert.match(RENDER, /userTodosError\?: string/, "the event type carries the key");
+  assert.match(RENDER, /if \(ev\.userTodosError\) \{/);
+  assert.match(RENDER, /m\.textContent = ev\.userTodosError;/);
 });

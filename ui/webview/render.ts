@@ -201,7 +201,7 @@ type ChatEvent = (
   // and NOT a blue "you typed this" bubble. blocks = one per sending agent {id, summary?, body}.
   | { kind: "teammate"; blocks: { id: string; summary?: string; body: string }[]; ts?: string; uuid?: string; source?: InjectedSource }
   // Claude Code's Task to-do list, folded into one live checklist.
-  | { kind: "todo"; tasks: TodoTask[]; userTodos?: UserTodo[]; error?: string; ts?: string; uuid?: string }
+  | { kind: "todo"; tasks: TodoTask[]; userTodos?: UserTodo[]; error?: string; userTodosError?: string; ts?: string; uuid?: string }
   // A CLIENT-side optimistic echo of a just-sent message is one of these (uuid OPT_PREFIX), injected at the
   // tail so it shows the instant you hit Enter and STAYS put across pushes — bridging the server-side
   // echo→landed gap where the kernel's own provisional briefly vanished (the user 2026-07-15). It rides the
@@ -3820,6 +3820,21 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       }
       body.appendChild(row);
     }
+  }
+  // The request store's OWN failure (the kernel's shape guard refused user-todos.json): its own key,
+  // never the task store's `error` — that branch supplants the checklist, rightly, since that list
+  // could not be read; this one leaves the checklist standing and heads the section it stands in for.
+  // The kernel ships no rows beside it (a flagged store reads empty), so this is the section's whole
+  // body while it stands; the fixed file brings the rows back. The err severity rides the rail and dot
+  // the way the task store's does; with no checklist to name, the head says what the section says.
+  if (ev.userTodosError) {
+    sev = "err";
+    if (!ev.error && !ev.tasks.length) gist = "unavailable";
+    if (!tip) tip = "the request store could not be read, so what waits on you is not shown — nothing here is guessed";
+    const h = el("div", "ut-head"); h.textContent = "Waiting on you · unavailable";
+    body.appendChild(h);
+    const m = el("div", "notice-md"); m.textContent = ev.userTodosError;
+    body.appendChild(m);
   }
   // OPEN by default (glanceable state, still foldable): the checklist, and what waits on the person, are the point
   return notice({ src: "to-do", glyph: "todo", sev, gist, body, key, open: true, cls: "turn-todo", tip });

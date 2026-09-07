@@ -579,8 +579,10 @@ class UnreadableStoreOnThePayload(_PayloadSandbox):
     """The shape guard's refusal used to be stderr-only: a flagged store read as EMPTY on every
     user-facing surface, so the session's open requests simply vanished from the card with nothing
     saying why. While the switch is ON and the store is the flagged version, build_session's todo
-    event carries `error` — the renderer already shows that field for Claude's unreadable task
-    store — and the chat sig sees the store go bad even for a sid with no rows of its own."""
+    event carries `userTodosError` — its OWN key: the event's `error` is the task store's, and the
+    renderer's error branch supplants the agent's checklist, so a request-store error riding it
+    hid the checklist under a heading that blamed the wrong store — and the chat sig sees the
+    store go bad even for a sid with no rows of its own."""
 
     def _corrupt(self):
         (jd.STATE / "user-todos.json").write_text(json.dumps({"enabled": True, "gt": 1}))
@@ -594,10 +596,29 @@ class UnreadableStoreOnThePayload(_PayloadSandbox):
         self.assertEqual(payload["userTodos"], [], "the flagged store reads empty…")
         evs = self._todo_events(payload)
         self.assertEqual(len(evs), 1, "…and the card says WHY instead of showing nothing")
-        self.assertIn("Can't read", evs[0]["error"])
-        self.assertIn("user-todos.json", evs[0]["error"])
-        self.assertNotIn(str(Path.home()), evs[0]["error"], "the path is shown with ~, never the home dir")
+        self.assertIn("Can't read", evs[0]["userTodosError"])
+        self.assertIn("user-todos.json", evs[0]["userTodosError"])
+        self.assertNotIn(str(Path.home()), evs[0]["userTodosError"], "the path is shown with ~, never the home dir")
         self.assertEqual(evs[0]["tasks"], [])
+        self.assertNotIn("error", evs[0], "the task store's key is not borrowed")
+
+    def test_the_request_store_error_rides_its_own_key_beside_the_checklist(self):
+        # a healthy task store and a flagged request store: the agent's checklist still renders
+        # (rows on `tasks`, no `error`) and the request store's cause rides `userTodosError`. On
+        # the shared key the renderer's error branch dropped the checklist and headed the card
+        # "To-do · unavailable" — false, since Claude's task store WAS read.
+        km._set_user_todos(True)
+        km._parse_cache.clear()
+        km._read_task_store = lambda fsid, fold=None: [
+            {"id": "1", "subject": "Build the fixtures", "activeForm": None, "status": "pending"}]
+        self._corrupt()
+        with contextlib.redirect_stderr(io.StringIO()):
+            payload = km.build_session(SID, NOW)
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(len(evs[0]["tasks"]), 1, "the checklist stays")
+        self.assertNotIn("error", evs[0], "the task store read fine")
+        self.assertIn("Can't read romp's request store", evs[0]["userTodosError"])
 
     def test_the_error_is_quiet_while_off_and_gone_once_the_file_is_fixed(self):
         self._corrupt()
@@ -610,7 +631,8 @@ class UnreadableStoreOnThePayload(_PayloadSandbox):
             {"id": self.tid, "text": "Need the auth-scheme decision to wire login",
              "detail": "OAuth vs cookie", "createdT": NOW}]}))
         payload = km.build_session(SID, NOW)
-        self.assertNotIn("error", self._todo_events(payload)[0], "a fixed file: the rows, no error")
+        self.assertNotIn("userTodosError", self._todo_events(payload)[0], "a fixed file: the rows, no error")
+        self.assertNotIn("error", self._todo_events(payload)[0])
         self.assertEqual([t["id"] for t in payload["userTodos"]], [self.tid])
 
     def test_the_chat_sig_sees_the_store_go_bad_with_no_rows_of_its_own(self):

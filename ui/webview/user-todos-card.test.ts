@@ -75,6 +75,22 @@ test("a task-store error still shows the waiting-on-you section (no early return
     "the error section precedes the waiting-on-you section");
 });
 
+test("a request-store error keeps the agent's checklist and heads its own section", () => {
+  // the two stores fail independently: the task store's cause rides `error` (its branch supplants
+  // the checklist, rightly — that list could not be read), the request store's rides
+  // `userTodosError` and renders AFTER the checklist under the waiting-on-you heading, so a
+  // corrupt user-todos.json no longer hides a checklist that WAS read under "To-do · unavailable"
+  assert.match(TODO, /if \(ev\.userTodosError\) \{/);
+  assert.ok(TODO.indexOf("if (ev.userTodosError)") > TODO.indexOf("else if (ev.tasks.length)"),
+    "the request-store error follows the checklist branch");
+  const sect = TODO.slice(TODO.indexOf("if (ev.userTodosError)"), TODO.indexOf("return notice("));
+  assert.match(sect, /"Waiting on you · unavailable"/, "headed as the section it stands in for");
+  assert.match(sect, /el\("div", "ut-head"\)/);
+  assert.match(sect, /sev = "err";/, "…in the error dress: the severity rides the rail and dot");
+  assert.match(sect, /el\("div", "notice-md"\); m\.textContent = ev\.userTodosError;/);
+  assert.doesNotMatch(TODO, /if \(ev\.error \|\| ev\.userTodosError\)/, "never folded into the task store's branch");
+});
+
 test("reply and dismiss are delegated to the stable root, never per-render listeners", () => {
   // the card rebuilds on every push; a per-render listener eats a mid-press click (click-safe.test.ts)
   assert.match(TODO, /reply\.dataset\.act = "utreply"/);
