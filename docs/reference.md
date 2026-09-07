@@ -40,8 +40,10 @@ mode: it means the page you are looking at runs older code than the kernel, and 
 **User todos.** A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open request is listed under *Waiting on you* on the card at the bottom of that
 session's transcript, with Reply and Dismiss, and a session that resumes after a restart or a
-compaction is handed its open requests back so it can withdraw the ones that no longer apply. The
-feature is off by default. The gear's **User todos** checkbox (under *Sessions*) turns it on for
+compaction is handed its open requests back so it can withdraw the ones that no longer apply. A
+session that withdraws a request you already answered or dismissed, or one it already withdrew, is
+told so plainly, with the time, and not handed an error; only an id that is unknown or another
+session's is refused as one. The feature is off by default. The gear's **User todos** checkbox (under *Sessions*) turns it on for
 one machine at a time: each kernel keeps its own copy, and the choice does not spread to other
 attached machines. While it is off, sessions on that machine are not offered the tools that flag
 or withdraw a request, nothing is listed, and nothing is handed back on resume. Requests flagged
