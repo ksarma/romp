@@ -19,14 +19,25 @@ Pinned here:
 - the per-install SWITCH (the user 2026-09-03, OFF by default): while the kernel's
   user-todos-enabled.json does not say yes, tools/list omits both tools and a call anyway is
   refused plainly, before any post — read from the file per call, because the bus is its own
-  long-lived process and a gear flip must land without a restart (Switch).
+  long-lived process and a gear flip must land without a restart (Switch);
+- a session ALREADY connected learns of the flip too (2026-09-07): the stdio server declares
+  tools.listChanged at initialize, its heartbeat thread polls the switch file (one stat per
+  tick) and writes an unsolicited notifications/tools/list_changed line when the offered list
+  changes, so the pair appears or disappears within a few seconds in both directions; the
+  request loop and the poll thread share stdout under one lock (ListChanged).
 
 The veil on the DESCRIPTIONS and result texts (no romp machinery named) is scanned by
 test_injected_voice.py. SYNTHETIC fixtures only.
 """
 import json
 import os
+import queue
+import shutil
+import socket
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -412,6 +423,203 @@ class Switch(unittest.TestCase):
         out, err = pm._mcp_call("add_user_todo", {"text": "Need the auth-scheme decision"})
         self.assertFalse(err)
         self.assertEqual([p[0] for p in self.posts], ["/usertodo"])
+
+
+class ListChanged(unittest.TestCase):
+    """A flip of the switch reaches a session that is ALREADY connected (2026-09-07). Before this,
+    tools/list read the file live, so a NEW connection saw the right list, but a session running
+    while the gear was flipped kept the list it had until its next restart or revival: the shim
+    declared no listChanged capability and never wrote notifications/tools/list_changed. Now the
+    heartbeat thread also watches the switch file (one stat per tick; the file is read only when
+    its mtime or size moved) and, once the client has finished initializing, writes the
+    notification when the OFFERED list changed — a flip in either direction, never a rewrite that
+    keeps the value. The request loop and the poller share stdout, so both write under one lock.
+
+    Drives the REAL shim (bin/romp-postal-service mcp) as a subprocess over its stdio, hermetic:
+    the bus and kernel ports point at a closed port, the sessions seam is an empty list, no session
+    identity, and the switch poll is shortened through its env knob so the whole class takes
+    seconds. A poll interval this short is a test setting; the shipped default is pinned to a
+    few seconds, which is what the guide promises."""
+    POLL = 0.2
+
+    def setUp(self):
+        _switch(None)
+        self.tmp = tempfile.mkdtemp()
+        seam = os.path.join(self.tmp, "sessions.json")
+        with open(seam, "w") as f:
+            f.write("[]")
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        closed = s.getsockname()[1]          # bound-then-released: nothing answers there
+        s.close()
+        env = dict(os.environ)
+        for k in ("CLAUDE_CODE_SESSION_ID", "ROMP_SID"):
+            env.pop(k, None)
+        env.update({
+            # pm's OWN state root, so the shim reads the very file _switch() writes. Not
+            # os.environ["XDG_STATE_HOME"]: under xdist every test module is imported into each
+            # worker and a sibling module re-points that variable at import (test_injected_voice),
+            # while pm.USER_TODOS_SWITCH was fixed when THIS module loaded. ROMP_STATE_DIR outranks
+            # XDG in the shim, the same way a live kernel's export does.
+            "ROMP_STATE_DIR": str(pm.STATE.parent),
+            "ROMP_POSTAL_SWITCH_POLL": str(self.POLL),
+            "ROMP_POSTAL_PORT": str(closed),
+            "ROMP_KERNEL_PORT": str(closed),
+            "ROMP_POSTAL_CLIENT_ONLY": "1",   # with peers off: ensure() never spawns a bus
+            "ROMP_POSTAL_PEERS": "0",
+            "ROMP_SESSIONS_FILE": seam,
+            "ROMP_SERVE_TOKEN": "test-token",
+        })
+        self.p = subprocess.Popen([sys.executable, os.path.join(BIN, "romp-postal-service"), "mcp"],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.DEVNULL, text=True, bufsize=1, env=env)
+        self.lines = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self):
+        for line in self.p.stdout:
+            self.lines.put(line)
+        self.lines.put(None)
+
+    def tearDown(self):
+        try:
+            self.p.stdin.close()
+            self.p.wait(timeout=10)
+        except Exception:
+            self.p.kill()
+            self.p.wait(timeout=10)
+        _switch(None)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _send(self, obj):
+        self.p.stdin.write(json.dumps(obj) + "\n")
+        self.p.stdin.flush()
+
+    def _recv(self, timeout):
+        """The next stdout line as JSON, or None when nothing arrived within `timeout` (or EOF)."""
+        try:
+            line = self.lines.get(timeout=timeout)
+        except queue.Empty:
+            return None
+        return json.loads(line) if line else None
+
+    def _init(self):
+        self._send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                    "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                               "clientInfo": {"name": "t", "version": "1"}}})
+        res = self._recv(30)
+        self.assertIsNotNone(res, "the shim answered initialize")
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return res
+
+    def _tools(self, rid):
+        self._send({"jsonrpc": "2.0", "id": rid, "method": "tools/list"})
+        for _ in range(4):   # an unsolicited notification may interleave; skip it, keep the reply
+            res = self._recv(30)
+            self.assertIsNotNone(res, "the shim answered tools/list")
+            if res.get("id") == rid:
+                return {t["name"] for t in res["result"]["tools"]}
+        self.fail("no tools/list reply")
+
+    def _await_list_changed(self):
+        """The unsolicited line: no id, the list_changed method, within a few polls (generous under load)."""
+        note = self._recv(max(15.0, self.POLL * 20))
+        self.assertIsNotNone(note, "an unsolicited notifications/tools/list_changed line arrived")
+        self.assertEqual(note.get("method"), "notifications/tools/list_changed")
+        self.assertNotIn("id", note, "a notification, not a response")
+        self.assertEqual(note.get("jsonrpc"), "2.0")
+
+    def test_initialize_declares_list_changed(self):
+        res = self._init()
+        self.assertEqual(res["id"], 1)
+        self.assertIs(res["result"]["capabilities"]["tools"].get("listChanged"), True,
+                      "the client is told to expect notifications/tools/list_changed")
+
+    def test_a_flip_on_reaches_the_connected_session(self):
+        self._init()
+        self.assertNotIn("add_user_todo", self._tools(2), "off at connect: not offered")
+        _switch(True)
+        self._await_list_changed()
+        names = self._tools(3)
+        self.assertIn("add_user_todo", names)
+        self.assertIn("withdraw_user_todo", names)
+
+    def test_a_flip_off_reaches_it_too(self):
+        _switch(True)
+        self._init()
+        self.assertIn("add_user_todo", self._tools(2), "on at connect: offered")
+        _switch(False)
+        self._await_list_changed()
+        self.assertNotIn("add_user_todo", self._tools(3))
+        _switch(True)   # and back on, the same session, a third notice
+        self._await_list_changed()
+        self.assertIn("add_user_todo", self._tools(4))
+
+    def test_nothing_changed_nothing_said(self):
+        self._init()
+        self.assertIsNone(self._recv(self.POLL * 6), "several polls with the file untouched: silence")
+        _switch(False)   # absent -> written as false: the offered list is the same
+        self.assertIsNone(self._recv(self.POLL * 6), "a write that keeps the value is not a list change")
+
+    def test_the_default_poll_is_a_few_seconds(self):
+        # the guide's promise: a connected session gains or loses the tools within a few seconds
+        self.assertGreaterEqual(pm.SWITCH_POLL, 1.0, "not a busy loop")
+        self.assertLessEqual(pm.SWITCH_POLL, 5.0)
+
+    def test_both_stdout_writers_take_the_one_lock(self):
+        import inspect
+        src = inspect.getsource(pm.mcp)
+        self.assertIn("out_lock = threading.Lock()", src)
+        self.assertIn("with out_lock:", src, "reply() writes a whole line under the lock")
+        self.assertIn('"capabilities": {"tools": {"listChanged": True}}', src)
+        self.assertIn('"method": "notifications/tools/list_changed"', src)
+        self.assertIn("_switch_poll_loop, args=(", src, "the poll has its own thread: the heartbeat loop "
+                      "ends once the bus calls the session local, and the poll must outlive it")
+
+
+class SwitchWatch(unittest.TestCase):
+    """The change detector behind the poll, in-process and deterministic: one stat per call, the
+    file read only when its signature moved, True only when the OFFERED list changed."""
+
+    def setUp(self):
+        _switch(None)
+
+    def tearDown(self):
+        _switch(None)
+
+    def test_first_call_baselines_and_a_flip_is_one_true(self):
+        w = pm._SwitchWatch()
+        self.assertFalse(w.flipped(), "nothing moved since construction")
+        _switch(True)
+        self.assertTrue(w.flipped(), "off -> on")
+        self.assertFalse(w.flipped(), "already reported")
+        _switch(False)
+        self.assertTrue(w.flipped(), "on -> off")
+        self.assertFalse(w.flipped())
+
+    def test_a_rewrite_that_keeps_the_value_is_not_a_change(self):
+        _switch(True)
+        w = pm._SwitchWatch()
+        pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": True, "gt": 424242}))   # the kernel restamping gt
+        self.assertFalse(w.flipped())
+        _switch(None)
+        self.assertTrue(w.flipped(), "the file going away reads as OFF, a change from on")
+        _switch(False)
+        self.assertFalse(w.flipped(), "absent -> false: the same offered list")
+
+    def test_it_stats_and_reads_only_on_a_moved_signature(self):
+        w = pm._SwitchWatch()
+        reads = []
+        saved = pm._user_todos_on
+        pm._user_todos_on = lambda: reads.append(1) or False
+        try:
+            w.flipped(); w.flipped(); w.flipped()
+            self.assertEqual(reads, [], "an unchanged file is never read, only stat'ed")
+            _switch(False)
+            w.flipped()
+            self.assertEqual(reads, [1], "one read per moved signature")
+        finally:
+            pm._user_todos_on = saved
 
 
 if __name__ == "__main__":

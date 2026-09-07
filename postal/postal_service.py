@@ -4667,6 +4667,58 @@ def _heartbeat_loop(interval=None, stop=None):
             stop.wait(interval)
         else:
             time.sleep(interval)
+SWITCH_POLL = max(0.05, float(os.environ.get("ROMP_POSTAL_SWITCH_POLL", "2")))   # seconds between stats of the user-todos switch file (_SwitchWatch); the tools/list_changed latency a connected session sees. Floored: never a busy loop
+
+class _SwitchWatch:
+    """Change detector for the user-todos switch, behind the stdio server's tools/list_changed
+    poll (2026-09-07). tools/list reads the file live, so a NEW connection always sees the right
+    list; a session ALREADY connected keeps the list it was given until told to re-list, and the
+    kernel writes the file from another process, so the file is the only seam — polled, cheaply:
+    flipped() is one stat per call, reads the file only when its (mtime, size) moved, and answers
+    True only when the OFFERED list changed (_user_todos_on flipped). A rewrite that keeps the
+    value — the kernel restamping `gt` — is not a list change. The first call baselines."""
+
+    def __init__(self):
+        self.sig = self._sig()
+        self.on = _user_todos_on()
+
+    @staticmethod
+    def _sig():
+        try:
+            st = USER_TODOS_SWITCH.stat()
+            return (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return None                        # absent (the shipped default) is a signature too
+
+    def flipped(self):
+        sig = self._sig()
+        if sig == self.sig:
+            return False
+        self.sig = sig
+        on = _user_todos_on()
+        if on == self.on:
+            return False
+        self.on = on
+        return True
+
+def _switch_poll_loop(on_switch_flip, stop=None):
+    """The user-todos switch poll (2026-09-07), on a thread of its own: every SWITCH_POLL seconds stat the
+    switch file (_SwitchWatch) and call `on_switch_flip` once per flip of the OFFERED tool list, so a session
+    connected while the gear is flipped gains or loses the pair within seconds in both directions. Its own
+    thread, not the heartbeat's: in peer mode _heartbeat_loop ENDS on the bus's first `local: true`, while
+    this poll must run for the life of the stdio server. `stop` (a threading.Event) is a test seam."""
+    watch = _SwitchWatch()
+    while not (stop is not None and stop.is_set()):
+        try:
+            if watch.flipped():
+                on_switch_flip()
+        except Exception as e:
+            _log("switch poll: %s" % e)
+        if stop is not None:
+            stop.wait(SWITCH_POLL)
+        else:
+            time.sleep(SWITCH_POLL)
+
 
 # ───────────────────────── stdio MCP server ─────────────────────────
 
@@ -4951,17 +5003,34 @@ def _mcp_call(name, args):
 
 def mcp():
     """Hand-rolled stdio MCP server (newline-delimited JSON-RPC). stdout carries
-    ONLY protocol messages; everything else goes to stderr."""
+    ONLY protocol messages; everything else goes to stderr. Two threads write it — the
+    request loop's replies and the poll thread's unsolicited tools/list_changed — so every
+    write goes through reply(), one whole line per acquisition of out_lock."""
     ensure()
     # Heartbeat presence while this session lives, so an idle REMOTE (federated) session stays addressable
     # over the -R tunnel even before it uses a postal tool. A LOCAL session's loop ends on the bus's first
     # `local: true` answer (the bus ignores local beats anyway; see _heartbeat_loop).
     threading.Thread(target=_heartbeat_loop, daemon=True).start()
     out = sys.stdout
+    out_lock = threading.Lock()
+    ready = threading.Event()      # the client finished initializing; unsolicited notices wait for it
 
     def reply(obj):
-        out.write(json.dumps(obj) + "\n")
-        out.flush()
+        with out_lock:
+            out.write(json.dumps(obj) + "\n")
+            out.flush()
+
+    def list_changed():
+        # The user-todos switch flipped under a connected session: tell the client to re-list
+        # (the listChanged capability declared at initialize). Before the handshake completes
+        # the flip needs no notice — the first tools/list reads the file live — and _SwitchWatch
+        # has already consumed it, so it is not replayed later.
+        if ready.is_set():
+            reply({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+
+    # The user-todos switch poll: fires list_changed on a flip (_switch_poll_loop). Its own thread — the
+    # heartbeat's ends once the bus calls this session local, and the poll must outlive it.
+    threading.Thread(target=_switch_poll_loop, args=(list_changed,), daemon=True).start()
 
     for line in sys.stdin:
         line = line.strip()
@@ -4978,14 +5047,16 @@ def mcp():
                 pv = (msg.get("params") or {}).get("protocolVersion", "2025-06-18")
                 reply({"jsonrpc": "2.0", "id": mid_, "result": {
                     "protocolVersion": pv,
-                    "capabilities": {"tools": {}},
+                    "capabilities": {"tools": {"listChanged": True}},   # the switch poll's notification (list_changed)
                     "instructions": MCP_INSTRUCTIONS,
                     "serverInfo": {"name": "romp-postal-service", "version": "1.0"}}})
             elif method == "notifications/initialized":
-                pass   # notification: no response
+                ready.set()   # notification: no response; unsolicited notices may flow from here on
             elif method == "ping":
                 reply({"jsonrpc": "2.0", "id": mid_, "result": {}})
             elif method == "tools/list":
+                ready.set()   # a client that lists has initialized (set BEFORE the read: a flip the poller
+                              # sees from here on is notified; one it saw earlier is in this answer)
                 reply({"jsonrpc": "2.0", "id": mid_, "result": {"tools": _tools_offered()}})   # the user-todo pair only while the switch is on
             elif method == "tools/call":
                 params = msg.get("params") or {}
