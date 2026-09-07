@@ -18930,19 +18930,25 @@ def _audit_unrequested_signal(signum, pending=False, now=None, manager_stopped=F
 SIGNAL_MANAGER_NOTE_WAIT_S = 0.5   # how long an unexplained SIGTERM waits for the manager's own stop note
 
 
-def _manager_sigterm_row_for_us(now=None, window=90):
+def _manager_sigterm_row_for_us(now=None, window=90, started=None):
     """Whether the audit tail holds a `manager-sigterm` STOP note aimed at THIS kernel (its `pid` is
-    ours, or it names none) within `window` seconds: the manager's note that it is stopping us, which
-    is what _unrequested_signal_reason takes as the manager going down alongside us. Only `reason:
-    stop` counts. A `restart` note means the manager is alive and about to respawn the kernel, and
-    one landing during the drain of an unrelated signal (a stray kill, then the rail's restart button)
-    used to file that exit as a service stop with `managerStopped: true` while the manager's own log
-    showed a requested restart (review round 2)."""
+    ours, or it names none) within `window` seconds and not before this kernel's start (`started`; the
+    default is the process start, _STARTED, in whole seconds as the rows are): the manager's note that
+    it is stopping us, which is what _unrequested_signal_reason takes as the manager going down
+    alongside us. Only `reason: stop` counts. A `restart` note means the manager is alive and about to
+    respawn the kernel, and one landing during the drain of an unrelated signal (a stray kill, then the
+    rail's restart button) used to file that exit as a service stop with `managerStopped: true` while
+    the manager's own log showed a requested restart (review round 2). The start bound is the one
+    _recent_restart_reason applies: the note this waits for lands AFTER our signal, so a stop note for
+    our pid from before the process existed is a predecessor's, left behind when a reboot reused the
+    pid (the box back inside the window, the kernel up under the pid the previous one had, then a stray
+    kill), and without the bound it read as the manager going down now (review round 3)."""
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
     except Exception:
         return False
     t0 = int(now if now is not None else time.time())
+    born = int(_STARTED if started is None else started)
     for line in reversed(tail[-8:]):
         try:
             rec = json.loads(line)
@@ -18950,14 +18956,14 @@ def _manager_sigterm_row_for_us(now=None, window=90):
             continue
         if not (isinstance(rec, dict) and rec.get("action") == "manager-sigterm" and isinstance(rec.get("t"), int)):
             continue
-        if t0 - rec["t"] > window:
+        if t0 - rec["t"] > window or rec["t"] < born:
             return False
         if rec.get("pid") in (None, os.getpid()) and rec.get("reason") == "stop":
             return True
     return False
 
 
-def _unrequested_signal_reason(signum, be=None, wait=None, sleep=time.sleep, now=None):
+def _unrequested_signal_reason(signum, be=None, wait=None, sleep=time.sleep, now=None, started=None):
     """The reason for a SIGTERM that arrived with no request on record, filed as an audit row
     (_audit_unrequested_signal) and returned for the cut row. The manager writes its `manager-sigterm`
     note BEFORE it kills (bin/romp-manager auditSigterm), so a signal here with no note did not come
@@ -18969,7 +18975,8 @@ def _unrequested_signal_reason(signum, be=None, wait=None, sleep=time.sleep, now
     `wait` seconds for that note before concluding. A genuinely stray signal pays the wait and reads
     as unrequested; nothing here asserts who sent it (review 2026-09-06: a `systemctl --user restart`
     with no sessions to drain was filed as a signal the manager did not send, and the docs read that
-    as "came from somewhere else")."""
+    as "came from somewhere else"). `started` bounds the note walk at this kernel's start (the process
+    start by default; the tests pass their own, as _recent_restart_reason's do)."""
     pending = False
     try:
         pending = bool(be.drain_holding()) if be is not None and hasattr(be, "drain_holding") else False
@@ -18980,7 +18987,7 @@ def _unrequested_signal_reason(signum, be=None, wait=None, sleep=time.sleep, now
     if not stopped and mgr.isdigit():
         deadline = time.time() + max(0.0, SIGNAL_MANAGER_NOTE_WAIT_S if wait is None else wait)
         while True:
-            if _manager_sigterm_row_for_us(now=now):
+            if _manager_sigterm_row_for_us(now=now, started=started):
                 stopped = True
                 break
             if time.time() >= deadline:
@@ -19143,11 +19150,17 @@ def _recent_restart_reason(window=90, now=None, started=None):
     a deploy refresh, the kernel's self-update, the rail button, a `romp down`. The walk is newest-first
     over the last eight rows, within `window` seconds of now, with these rules:
       - a row older than THIS kernel's start (`started`; the default is the process start, _STARTED) ends
-        the walk: a request that predates the process was delivered to a predecessor and cannot be the
-        request for this exit. Without the bound, the self-update that restarted the previous kernel was
-        still inside the window when the operator stopped the one that replaced it, and the cut row named
-        the deploy as the reason the service went down (review round 2). A `when: quiet` request made
-        while a predecessor ran is then named by the manager's note for us, which is still correct;
+        the walk: an immediate request that predates the process was delivered to a predecessor and cannot
+        be the request for this exit. Without the bound, the self-update that restarted the previous kernel
+        was still inside the window when the operator stopped the one that replaced it, and the cut row
+        named the deploy as the reason the service went down (review round 2). The one exception is a
+        `when: quiet` request: the manager parks it and restarts whatever kernel is running at the quiet
+        window, so it outlives the kernel that filed it. With the manager's note for us on record the note
+        answers (below); with none (a manager build that wrote no notes) the parked row itself names the
+        cut, unless a row above it shows it delivered or dropped: any `manager-sigterm` note (a restart the
+        manager sent clears the park in passing; a stop takes the park down with the manager) or a verdict
+        that the manager was gone (`parent-gone`, or `signal` with `managerStopped`). Round 2's bound
+        dropped the pending row too (review round 3, tests/test_kernel_tunnel_truth.py);
       - a row with an action is a request and wins: `action`, plus `: reason` when it carries one;
       - a `when: quiet` request is pending until the restart it asked for lands, up to the far manager's
         15-minute backstop, so its window is RESTART_EXPECT_MAX_S and it names a cut well past the
@@ -19178,6 +19191,7 @@ def _recent_restart_reason(window=90, now=None, started=None):
         born = int(_STARTED if started is None else started)
         via_manager = ""
         down_superseded = False
+        park_settled = False                                # a row above showed a parked quiet request delivered or dropped
         for line in reversed(tail[-8:]):
             try:
                 rec = json.loads(line)
@@ -19185,15 +19199,22 @@ def _recent_restart_reason(window=90, now=None, started=None):
                 continue
             if not (isinstance(rec, dict) and isinstance(rec.get("t"), int)):
                 continue
-            win = window
-            if rec.get("when") == "quiet":
-                win = max(window, RESTART_EXPECT_MAX_S)
-            if t0 - rec["t"] > win or rec["t"] < born:
-                break                                       # older rows are older still
             action = str(rec.get("action") or "")
+            quiet = rec.get("when") == "quiet"
+            win = max(window, RESTART_EXPECT_MAX_S) if quiet else window
+            if t0 - rec["t"] > win:
+                break                                       # older rows are older still
+            if rec["t"] < born:
+                # a predecessor's row; only a parked quiet request survives the kernel that filed it
+                if quiet and action and action not in EXIT_VERDICT_ACTIONS + ("manager-sigterm",) and not park_settled:
+                    return action + (": " + str(rec["reason"]) if rec.get("reason") else "")
+                break
             if not action or action in EXIT_VERDICT_ACTIONS:
+                if action == "parent-gone" or (action == "signal" and rec.get("managerStopped")):
+                    park_settled = True                     # the manager was gone, its park with it
                 continue                                    # no request in it; keep looking
             if action == "manager-sigterm":
+                park_settled = True                         # the manager restarted or stopped a kernel: the park went with it
                 if rec.get("pid") in (None, os.getpid()):   # a note about THIS kernel (or one naming none)
                     what = rec.get("trigger") or rec.get("reason")
                     via_manager = via_manager or (action + (": " + str(what) if what else ""))

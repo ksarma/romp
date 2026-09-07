@@ -261,7 +261,7 @@ class UnrequestedSignal(unittest.TestCase):
                 f.write(json.dumps({"t": 1000, "action": "manager-sigterm", "kernel": "main",
                                     "pid": os.getpid(), "reason": "stop"}) + "\n")
         with mock.patch.dict(os.environ, {"ROMP_MANAGER_PID": str(os.getpid())}):
-            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=5, sleep=note_lands, now=1000)
+            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=5, sleep=note_lands, now=1000, started=900)
         self.assertEqual(reason, km.SIGNAL_REASON_MANAGER_STOPPED)
         self.assertEqual([r["action"] for r in self._rows(audit)], ["manager-sigterm", "signal"])
 
@@ -271,7 +271,7 @@ class UnrequestedSignal(unittest.TestCase):
                                               "pid": os.getpid() + 100000, "reason": "stop"}) + "\n")
             self.assertEqual(km._recent_restart_reason(window=90, now=1000, started=900), "",
                              "the manager's note about an aux kernel is not a request on record here")
-            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0, now=1000)
+            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0, now=1000, started=900)
         self.assertEqual(reason, km.SIGNAL_REASON_UNREQUESTED)
 
     def test_the_handler_end_to_end_for_a_service_stop(self):
@@ -313,11 +313,36 @@ class UnrequestedSignal(unittest.TestCase):
                                         "pid": os.getpid(), "reason": "restart", "trigger": "restart"}) + "\n")
             __import__("time").sleep(secs)
         with mock.patch.dict(os.environ, {"ROMP_MANAGER_PID": str(os.getpid())}):
-            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0.2, sleep=note_lands, now=1000)
+            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0.2, sleep=note_lands, now=1000, started=900)
         self.assertEqual(reason, km.SIGNAL_REASON_UNREQUESTED)
         rows = self._rows(audit)
         self.assertEqual([r["action"] for r in rows], ["manager-sigterm", "signal"])
         self.assertIs(rows[1]["managerStopped"], False)
+
+    def test_a_stop_note_for_our_pid_from_before_this_kernel_started_is_a_predecessors(self):
+        # a reboot: the manager notes `stop` for kernel pid P; the box is back inside the window and the
+        # kernel comes up as pid P again; a stray kill then found the pre-reboot note and filed the exit as
+        # a service stop while the manager was alive and about to respawn us (review round 3)
+        self.AUDIT.write_text(json.dumps({"t": 1000, "action": "manager-sigterm", "kernel": "main",
+                                          "pid": os.getpid(), "reason": "stop", "trigger": "stop"}) + "\n")
+        self.assertTrue(km._manager_sigterm_row_for_us(now=1041, started=900), "a kernel running at t=1000: its note")
+        self.assertFalse(km._manager_sigterm_row_for_us(now=1041, started=1003), "a kernel born after it: a predecessor's")
+        self.assertTrue(km._manager_sigterm_row_for_us(now=1005, started=1000.4), "whole seconds, as the rows are")
+        with mock.patch.dict(os.environ, {"ROMP_MANAGER_PID": str(os.getpid())}):
+            reason = km._unrequested_signal_reason(signal.SIGTERM, wait=0, now=1041, started=1003)
+        self.assertEqual(reason, km.SIGNAL_REASON_UNREQUESTED)
+        self.assertIs(self._rows(self.AUDIT)[-1]["managerStopped"], False)
+
+    def test_the_stop_note_bound_defaults_to_this_process_start(self):
+        # as the handler calls it, with no `started`: a note from before _STARTED is not ours, one from its
+        # own second is
+        born = int(km._STARTED)
+        self.AUDIT.write_text(json.dumps({"t": born - 5, "action": "manager-sigterm", "kernel": "main",
+                                          "pid": os.getpid(), "reason": "stop", "trigger": "stop"}) + "\n")
+        self.assertFalse(km._manager_sigterm_row_for_us(now=born + 10))
+        self.AUDIT.write_text(json.dumps({"t": born, "action": "manager-sigterm", "kernel": "main",
+                                          "pid": os.getpid(), "reason": "stop", "trigger": "stop"}) + "\n")
+        self.assertTrue(km._manager_sigterm_row_for_us(now=born + 10))
 
     # ---- a previous kernel's own verdict rows are not this kernel's request ----
 
@@ -476,6 +501,38 @@ class RequestOnRecord(unittest.TestCase):
                     {"t": 1500, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid(),
                      "reason": "restart", "trigger": "restart-all"})
         self.assertEqual(self._reason(now=1501, started=1003), "manager-sigterm: restart-all")
+
+    def test_a_quiet_request_older_than_this_kernel_names_the_cut_when_no_note_does(self):
+        # the manager parks a quiet request and restarts whatever kernel runs at the quiet window, up to
+        # RESTART_EXPECT_MAX_S, so the request outlives the kernel that filed it. A manager build that wrote
+        # no note leaves the row as the only thing on record, and round 2's start bound dropped it (round 3)
+        self._write({"t": 1000, "action": "p2p-update", "reason": "from TESTHOST to 1111111", "when": "quiet"})
+        self.assertEqual(self._reason(now=1600, started=1003), "p2p-update: from TESTHOST to 1111111")
+        self.assertEqual(self._reason(now=1600, started=900), "p2p-update: from TESTHOST to 1111111",
+                         "and the same for the kernel that filed it")
+        self.assertEqual(self._reason(now=1000 + km.RESTART_EXPECT_MAX_S + 1, started=1003), "",
+                         "the far manager's backstop bounds how long the park can be pending")
+
+    def test_a_quiet_request_delivered_or_dropped_before_this_kernel_is_consumed(self):
+        # delivered: any restart the manager sent clears the park in passing (an aux kernel's rail button
+        # here); dropped: the manager stopped, or was gone, park included. None leaves the quiet row as the
+        # request for a later stray kill of this kernel
+        for above in ({"t": 1010, "action": "manager-sigterm", "kernel": "aux", "pid": os.getpid() + 100000,
+                       "reason": "restart", "trigger": "restart"},
+                      {"t": 1010, "action": "manager-sigterm", "kernel": "main", "pid": os.getpid() + 100000,
+                       "reason": "stop", "trigger": "stop"},
+                      {"t": 1010, "action": "parent-gone", "pid": os.getpid() + 100000, "reason": km.PARENT_GONE_REASON},
+                      {"t": 1010, "action": "signal", "pid": os.getpid() + 100000, "managerStopped": True,
+                       "reason": km.SIGNAL_REASON_MANAGER_STOPPED}):
+            with self.subTest(above=above["action"] + ":" + str(above.get("reason"))):
+                self._write({"t": 1000, "action": "kernel-asks-manager-restart-all", "reason": "self-update",
+                             "when": "quiet"}, above)
+                self.assertEqual(self._reason(now=1080, started=1003), "")
+        # a stray kill of the predecessor with the manager alive leaves the park armed: still the request
+        self._write({"t": 1000, "action": "kernel-asks-manager-restart-all", "reason": "self-update", "when": "quiet"},
+                    {"t": 1010, "action": "signal", "pid": os.getpid() + 100000, "managerStopped": False,
+                     "reason": km.SIGNAL_REASON_UNREQUESTED})
+        self.assertEqual(self._reason(now=1080, started=1003), "kernel-asks-manager-restart-all: self-update")
 
     def test_a_previous_kernels_verdict_rows_are_never_the_request(self):
         # the kernel's own `signal` and `parent-gone` rows have an action and the OLD pid; with the bound
