@@ -250,9 +250,7 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 // `inPre` walks the text inside <pre> too (the viewer's code body IS one); `accept` narrows every non-URI
 // token that passed the shape gates (the map narrows a chat message the same way; a surface with no kernel
 // verdict brings its own gate), and is handed the text the token was found in and the token's offset there, so
-// a gate can read what stands before the token, and `above(n)` gives it the text of the nth unit before the token's
-// (a code view's rows above its row: a multi-line import's `from` line reads the line that opened the statement, which
-// a fenced block holds in one unit and a code view spreads over rows), null past the first; `resolve` names what a token opens when the surface knows its
+// a gate can read the token's line; `resolve` names what a token opens when the surface knows its
 // own place (the viewer joins a relative token onto the shown file's directory); `lineSuffix` reads a `:12` (or
 // GitHub's `#L12`) right after a token into the link (data-line) instead of leaving it as prose, off a file://
 // URI too (the URI arm's own grammar admits a colon, so the suffix rode inside the token there); `unit` names
@@ -261,7 +259,7 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 // exactly the chat's.
 export interface PathLinkOptions {
   inPre?: boolean;
-  accept?: (tok: string, ctx: { text: string; at: number; above: (n: number) => string | null }) => boolean;
+  accept?: (tok: string, ctx: { text: string; at: number }) => boolean;
   resolve?: (tok: string) => string;
   lineSuffix?: boolean;
   unit?: string;
@@ -288,9 +286,8 @@ export const DEAD_TEXT = "a, .file-uri-link, svg";
  *  unit too: it is a line break, and a token never crosses one (`a<br>docs/a.md` read as `adocs/a.md` before; the
  *  2026-09-07 review). A unit element with no text under it is an EMPTY unit, in its place: a code view's blank
  *  row is `<span class=fv-cl><span class=fv-ct></span></span>`, and a walk over text nodes alone saw no unit there,
- *  so a gate reading the units above a token (the viewer's import rule, through `above(n)`) never met the blank
- *  line that ends an import list, and refused the English `from "docs/a.md"` in a comment under any `import` row
- *  (the 2026-09-07 review, round 5). `skip` names the ancestors whose text is dead to marking. */
+ *  so the units were not the view's rows: one per row that held text, none for a blank one (the 2026-09-07 review,
+ *  round 5). `skip` names the ancestors whose text is dead to marking. */
 export function textUnits(root: HTMLElement, unit: string | undefined, skip: string): TextUnit[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
   const units: TextUnit[] = [];
@@ -347,11 +344,8 @@ export function rewriteSpan(u: TextUnit, span: TextSpan, marks: Array<{ start: n
 
 export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>, opts?: PathLinkOptions): PathLinkHit[] {
   const hits: PathLinkHit[] = [];
-  const texts: string[] = [];                                            // every unit's text so far, for the gate's above(n)
-  const above = (n: number): string | null => (n >= 1 && texts.length - 1 - n >= 0 ? texts[texts.length - 1 - n] : null);
   const skip = opts && opts.inPre ? DEAD_TEXT : DEAD_TEXT + ", pre";   // a link, an SVG, or (the chat) a fenced code block
   for (const u of textUnits(root, opts && opts.unit, skip)) {
-    texts.push(u.text);
     if (u.spans.every((s) => s.dead)) continue;
     const text = u.text;
     const anyCode = u.spans.some((s) => s.inCode && !s.dead);            // inline code: where bare filenames may link
@@ -372,7 +366,7 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       const span = spanHolding(u, start, start + tok.length);
       if (!span) continue;                          // across a node's edge, or inside a link: as it is
       if (!isUri && !looksLikeFilePath(tok) && !(span.inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc.: leave as prose
-      if (!isUri && opts && opts.accept && !opts.accept(tok, { text, at: start, above })) continue;   // the surface's own gate (the viewer's: an extension on the file)
+      if (!isUri && opts && opts.accept && !opts.accept(tok, { text, at: start })) continue;   // the surface's own gate (the viewer's: an extension on the file)
       const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
       if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
       // what the link opens: a URI's own path; else the kernel's fixed target or the token, placed by the surface's

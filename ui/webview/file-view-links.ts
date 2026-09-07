@@ -143,30 +143,28 @@ const HOST_RE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/i;
 // longer read as an import, which no formatter writes. The word alone is not the verdict: `from` and `export` are
 // English, and `Copied from "docs/a.md"` in a note names a file (the review's round 3). The word counts when the
 // statement around it is code: a call (`require("…")`, `import("…")`), a keyword that starts its line (`import
-// "pkg/x.css"`), or a `from` whose line began with `import` or `export` (`import x from "…"`, `export * from "…"`),
-// holds nothing but the `}` that closes a multi-line import, or continues an import opened on a line above
-// (openedImportAbove, below). Only then is the line read back to its start, so a quote with no keyword before it
-// still costs the quote, the spaces and one word.
+// "pkg/x.css"`), a `from` whose line began with `import` or `export` (`import x from "…"`, `export * from "…"`), or a
+// `from` on a line shaped as the continuation of an import opened above it (continuesImport, below). Only then is the
+// line read back to its start (and, for a `from`, forward to its end), so a quote with no keyword before it still costs
+// the quote, the spaces and one word.
 const IMPORT_WORDS = ["import", "export", "from", "require"];
 const KEYWORD_MAX = 7;                                   // `require`
 const STATEMENT_HEAD_RE = /^\s*(?:import|export)\b/;    // the line began an import or export statement
-const CLOSING_HEAD_RE = /^\s*\}\s*$/;                    // `} from "…"`: the last line of a multi-line import
-// An import or export line that OPENS a list and ends no statement, read by openedImportAbove as the opener a `from`
-// below it continues: the keyword (with `type`, and a default name and its comma) and then nothing (`import`,
-// `import React,`), a brace list still open (`import {`, `import type {`, `export {`, `import React, {`, `import { a,`),
-// or, under `import` alone, a brace list closed with its `from` still to come (`import { a }`; `export { a }` is a
-// whole statement). A complete statement opens nothing: Python's `import os` and `import numpy as np`, a shell's
-// `export DATA=/data`, `export const z = 2;`, `export function build() {`. Round 4 took any quote-free import or export
-// line as the opener, and the English `from "docs/a.md"` in a comment under one was refused as a package specifier
-// (the 2026-09-07 review, round 5).
-const OPEN_LIST_RE = /^\s*(import|export)(?:\s+type)?(?:\s+[\w$]+\s*,)?\s*(?:\{[^{}"'`;]*(\})?)?\s*$/;
-function opensImportList(line: string): boolean {
-  const m = OPEN_LIST_RE.exec(line);
-  return !!m && (m[2] === undefined || m[1] === "import");
-}
+// A line that continues an import opened on a line above it, told by its own shape and nothing else: the whole line is
+// `from` and a quoted specifier, a `;` after it or not (`  from "pkg/x.js";` under `import { a }`, `import * as ns`,
+// `import React`, `export *` or `export type { T }`), or it holds `} from "` with no quote before the brace (`  a, b } from
+// "pkg/x.js";` under `import {`; Prettier's own `} from "pkg/x.js";`). Rounds 4 and 5 read the rows above such a line for
+// the import that opened it, and each round found a shape the read had missed (a blank row between them, a default name
+// alone, `import * as ns`, `export *`): the line says enough by itself, and the one price is a prose line of exactly
+// `from "docs/a.md"`, which now stays text (the 2026-09-07 review, round 6). A `from` with more after its specifier is
+// English wherever it stands: `from "pkg/sub.py" import x`, `from "docs/a.md" and kept it`, `# adapted from "docs/a.md"`
+// under `import os`.
+const FROM_LINE_RE = /^\s*from\s*(?:"[^"]*"|'[^']*')\s*;?\s*$/;
+const CLOSING_FROM_RE = /^[^"'`]*\}\s*from\s*["']/;
+const continuesImport = (line: string): boolean => FROM_LINE_RE.test(line) || CLOSING_FROM_RE.test(line);
 const isWordCh = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
 const isLineSpace = (c: string): boolean => c === " " || c === "\t";
-function importLookBehind(text: string, at: number, above?: (n: number) => string | null): { start: number; isImport: boolean } {
+function importLookBehind(text: string, at: number): { start: number; isImport: boolean } {
   let i = at - 1;
   if (i < 0 || !"\"'`".includes(text[i])) return { start: at, isImport: false };   // no quote before the token: nothing to read
   i--;
@@ -181,43 +179,22 @@ function importLookBehind(text: string, at: number, above?: (n: number) => strin
   if (call) return { start: s, isImport: word === "require" || word === "import" };                          // a call: code wherever it stands
   const lineStart = text.lastIndexOf("\n", s - 1) + 1;
   const head = text.slice(lineStart, s);                 // what the line holds before the keyword: an import clause, or prose
-  const isImport = word === "from" ? STATEMENT_HEAD_RE.test(head) || CLOSING_HEAD_RE.test(head) || openedImportAbove(text, lineStart, head, above) : /^\s*$/.test(head);
+  const isImport = word === "from" ? STATEMENT_HEAD_RE.test(head) || continuesImport(lineOf(text, lineStart, at)) : /^\s*$/.test(head);
   return { start: lineStart, isImport };
 }
-// A `from` on a continuation line of a multi-line import: `import {\n  a, b } from "pkg/x.js"` (the closing line carries
-// names, so it is not the bare `}` CLOSING_HEAD_RE reads) or `import { a }\n  from "pkg/x.js"` (the `from` starts a line
-// of its own). The lines above are read back one at a time to the one that began the statement: an `import` or `export`
-// line that names no specifier yet (no quote on it). The lines are the unit's own first (a fenced block, a rendered
-// paragraph), then, past the unit's first line, the units before it through `above(n)` (a code view's rows: each row is
-// a unit of its own, and the statement's opener sits in the row above; a blank row is an empty unit, path-links.ts
-// textUnits). A line between must read as a list member (no quote, no `;`, not blank), and the walk is bounded (a
-// formatter puts one name per line; IMPORT_LINES_MAX is more than any import). Only a `from` whose own line holds no
-// specifier and ends no statement asks, so the walk runs once per such `from` over at most IMPORT_LINES_MAX lines, and
-// the pass stays linear in the text. Round 3 read the `from` line's head alone, and these two hand-formatted shapes
-// linked the specifier (the 2026-09-07 review, round 4). The opener must itself be unfinished (OPEN_LIST_RE): a whole
-// statement above the `from`, `import os` or `export DATA=/data`, opens nothing, and the `from` is English (round 5).
-const IMPORT_LINES_MAX = 32;
-function openedImportAbove(text: string, lineStart: number, head: string, above?: (n: number) => string | null): boolean {
-  if (/["'`;]/.test(head)) return false;
-  let end = lineStart, up = 0;                            // just past the previous line's break; the units read above this one
-  for (let i = 0; i < IMPORT_LINES_MAX; i++) {
-    let line: string | null;
-    if (end > 0) { const start = text.lastIndexOf("\n", end - 2) + 1; line = text.slice(start, end - 1); end = start; }
-    else line = above ? above(++up) : null;                          // past the unit's first line: the row above (a code view)
-    if (line === null) return false;
-    if (STATEMENT_HEAD_RE.test(line)) return opensImportList(line);   // the opener: an import that names no specifier yet, and ends no statement
-    if (!line.trim() || /["'`;]/.test(line)) return false;          // a blank line, a quoted specifier or a statement's end: nothing open above
-  }
-  return false;
+// The line at `lineStart` through its break (or the text's end), read forward from `at`: bounded by the line, as the
+// look-behind is, so the pass stays linear over a fenced block.
+function lineOf(text: string, lineStart: number, at: number): string {
+  const lineEnd = text.indexOf("\n", at);
+  return text.slice(lineStart, lineEnd < 0 ? text.length : lineEnd);
 }
 /** Where the gate's look-behind for the token at `at` begins: the earliest index whose character it reads as text
  *  (one more before it is looked at only as the keyword's word boundary). Never before the line's start. */
 export function lookBehindStart(text: string, at: number): number { return importLookBehind(text, at).start; }
 
 /** The viewer's gate over a token the shared shape gates passed; `ctx` is the line's text and the token's offset in
- *  it (the walk hands both over, and `above(n)`, the text of the nth unit before this one, for the import rule to read
- *  the row that opened a multi-line statement), without which only the token's own shape is judged. */
-export function viewerPathGate(tok: string, ctx?: { text: string; at: number; above?: (n: number) => string | null }): boolean {
+ *  it (the walk hands both over), without which only the token's own shape is judged. */
+export function viewerPathGate(tok: string, ctx?: { text: string; at: number }): boolean {
   if (isFileUri(tok)) return true;
   if (!tok.includes("/")) return false;
   if (tok.startsWith("~") && !tok.startsWith("~/")) return false;      // `~user/x.md`: a home the kernel does not expand
@@ -244,7 +221,7 @@ export function viewerPathGate(tok: string, ctx?: { text: string; at: number; ab
       STAR_CLOSE_RE.lastIndex = ctx.at + tok.length;
       if (!STAR_CLOSE_RE.test(ctx.text)) return false;
     }
-    if (!anchored && importLookBehind(ctx.text, ctx.at, ctx.above).isImport) return false;   // a package specifier
+    if (!anchored && importLookBehind(ctx.text, ctx.at).isImport) return false;   // a package specifier
   }
   return true;
 }

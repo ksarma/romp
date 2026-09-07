@@ -265,9 +265,10 @@ on its own, at the start of a line or after a space, a quote, a bracket or
 Markdown's `*` (so `$HOME/docs/a.md`, `@scope/pkg/index.js` and
 `C:/Users/x.txt` stay text), is not part of a web address, does not start with a site name
 (`www.example.org/docs/index.html`), and is not the package an `import`
-statement or a `require()` call names (a relative import such as `./app.css`
-still links, and so does a path after the English word "from" in a note, even
-under an `import` line that is a whole statement). After a `*` the path must be
+statement or a `require()` call names, whether the statement fits one line or
+its `from` starts the next (a relative import such as `./app.css` still links,
+and so does a path after the English word "from" in a note, unless that line
+holds nothing but `from` and the quoted path). After a `*` the path must be
 the whole emphasised text, closed by a `*` of its own: `*docs/a.md*` and
 `**./scripts/setup.sh**` link; a glob's `**/docs/a.md`, an operand's
 `w*h/img.size` and the first path in `**docs/a.md and docs/b.md**` stay text. Web

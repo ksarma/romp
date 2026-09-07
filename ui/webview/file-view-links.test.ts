@@ -214,7 +214,7 @@ test("viewerPathGate, the token alone: a slash and a letter-led extension on the
   }
 });
 
-test("viewerPathGate, with the line: a token glued to what stands before it (a substitution, a scope, a drive, a host) is not one, and an unanchored token is not the specifier of an import statement or a require call (the English from and export in prose name files); an opener (Markdown's * with a closing * after the path, every Unicode space and the zero-width space included) or the line's start admits it; a glob's tail after a star, an operand after one and a multi-line import's specifier are refused; emphasis around an anchored path links, and a whole statement above an English from opens no import", async () => {
+test("viewerPathGate, with the line: a token glued to what stands before it (a substitution, a scope, a drive, a host) is not one, and an unanchored token is not the specifier of an import statement or a require call (the English from and export in prose name files); an opener (Markdown's * with a closing * after the path, every Unicode space and the zero-width space included) or the line's start admits it; a glob's tail after a star, an operand after one and a hand-split import's specifier (a line shaped as an import's continuation) are refused; emphasis around an anchored path links, and an English from with more after its path links whatever stands above it", async () => {
   const { viewerPathGate } = await import("./file-view-links");
   const at = (text: string, tok: string) => ({ text, at: text.indexOf(tok) });
   for (const [text, tok] of [
@@ -232,6 +232,9 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
     // a multi-line import whose closing line carries names, or whose `from` starts a continuation line (round 4)
     ['import {\n  a, b } from "pkg/x.js";', "pkg/x.js"], ['import { a }\n  from "pkg/x.js";', "pkg/x.js"], ['export {\n  a,\n  b } from "pkg/x.js";', "pkg/x.js"],
     ['import type {\n  T } from "pkg/t.js";', "pkg/t.js"], ['x = 1\nimport {\n  a,\n  b as c,\n  d } from "pkg/x.js";', "pkg/x.js"],
+    // a hand-split import whose `from` starts the next line, under a namespace, a default name alone, a star or a type list: the line is `from` and a specifier (round 6)
+    ['import * as ns\n  from "pkg/ns.js";', "pkg/ns.js"], ['import React\n  from "react/def.js";', "react/def.js"], ['export *\n  from "pkg/star.js";', "pkg/star.js"], ['export type { T }\n  from "pkg/t.js"', "pkg/t.js"],
+    ["import * as ns\n  from 'pkg/ns.js'", "pkg/ns.js"], ['Copied\nthe text\nfrom "docs/a.md"', "docs/a.md"],   // …the shape alone decides, so a prose line of exactly `from "…"` is the rule's one price
     // a glob's tail after a star, and an operand after one: `*` opens a token only when it is not `/`-led and a closing `*` follows (rounds 4 and 5)
     ["find . -path '**/docs/a.md'", "/docs/a.md"], ["cp src/**/index.ts out/", "/index.ts"], ["ls packages/*/package.json", "/package.json"], ['"**/tsconfig.json"', "/tsconfig.json"],
     ["x = '*/docs/a.md*'", "/docs/a.md"], ["area = w*h/img.size", "h/img.size"], ["echo 2*docs/times.md", "docs/times.md"], ["*docs/a.md", "docs/a.md"], ["a*docs/b.md, c", "docs/b.md"],
@@ -266,8 +269,8 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
     // a whole statement above an English from in one unit (a fenced block): Python's import, a shell's export, a finished export
     ['import os\n# adapted from "docs/a.md"', "docs/a.md"], ['export DATA=/data\n# copied from "docs/c.md"', "docs/c.md"], ['export const z = 2;\n// from "docs/d.md"', "docs/d.md"],
     ['export function build() {\n  // ported from "docs/algo.md"', "docs/algo.md"], ['import numpy as np\nimport os\n# data from "data/raw.csv"', "data/raw.csv"],
-    // the English from under a line that is no open import: a blank line above, a finished import above, prose above (round 4)
-    ['x = 1\n\nfrom "pkg/sub.py" import y', "pkg/sub.py"], ['import "x.css";\nfrom "docs/a.md" we copied', "docs/a.md"], ['Copied\nthe text\nfrom "docs/a.md"', "docs/a.md"],
+    // the English from with more after its path: Python's, a sentence's (round 4 read the lines above these; round 6 reads the line alone)
+    ['x = 1\n\nfrom "pkg/sub.py" import y', "pkg/sub.py"], ['import "x.css";\nfrom "docs/a.md" we copied', "docs/a.md"], ['Copied\nthe text\nfrom "docs/a.md" too', "docs/a.md"],
     ["\u200bdocs/a.md", "docs/a.md"], ["\fdocs/a.md", "docs/a.md"], ["\u2003docs/a.md", "docs/a.md"], ["\u2028docs/a.md", "docs/a.md"], ["\ufeffdocs/a.md", "docs/a.md"], ["\u3000docs/a.md", "docs/a.md"],
   ] as const) {
     assert.equal(viewerPathGate(tok, at(text, tok)), true, JSON.stringify(text));
@@ -279,44 +282,40 @@ test("viewerPathGate, with the line: a token glued to what stands before it (a s
   assert.deepEqual("_docs/a.md_ and *docs/b.md*".match(CLICKABLE_PATH_RE), ["_docs/a.md_", "docs/b.md"], "the scanner's tokens");
   assert.equal(viewerPathGate("_docs/a.md_"), false); assert.equal(viewerPathGate("_docs/a.md"), true);
   assert.equal(viewerPathGate("docs/a.md", at("_docs/a.md_", "docs/a.md")), false, "and at the offset the walk never produces, the underscore is glue");
-  // a code view's rows are units of their own: the `from` line reads the rows above it through ctx.above (round 4)
-  const rows = (...lines: string[]) => (n: number): string | null => lines[lines.length - n] ?? null;   // above(1) is the row just above
-  for (const [text, tok, up] of [
-    ['  a, b } from "pkg/x.js";', "pkg/x.js", rows("import {")], ['  from "pkg/x.js";', "pkg/x.js", rows("import { a }")],
-    ['  d } from "pkg/x.js";', "pkg/x.js", rows("x = 1;", "import {", "  a,", "  b as c,")], ['} from "pkg/x.js";', "pkg/x.js", rows("import {")],
-    // the openers an unfinished import has: a default name and its comma, a list still open, a closed list under `import` (round 5)
-    ['  a, b } from "pkg/x.js";', "pkg/x.js", rows("import React, {")], ['  b } from "pkg/x.js";', "pkg/x.js", rows("import { a,")], ['  from "pkg/t.js";', "pkg/t.js", rows("import type { T }")],
-    ['  { a, b } from "pkg/x.js";', "pkg/x.js", rows("import React,")],
+  // a code view's rows are units of their own, and the `from` line's own shape decides: `from` and a quoted specifier alone
+  // (a `;` or not, either quote), or `} from "` with no quote before the brace. Rounds 4 and 5 read the rows above for the
+  // import that opened the line, and a shape slipped each round; round 6 reads nothing above
+  for (const [text, tok] of [
+    ['  a, b } from "pkg/x.js";', "pkg/x.js"], ['  from "pkg/x.js";', "pkg/x.js"], ['  d } from "pkg/x.js";', "pkg/x.js"], ['} from "pkg/x.js";', "pkg/x.js"],
+    ['  { a, b } from "pkg/x.js";', "pkg/x.js"], ['  b } from "pkg/x.js";', "pkg/x.js"], ['  from "pkg/t.js";', "pkg/t.js"], ["  from 'pkg/t.js'", "pkg/t.js"], ["from\t'pkg/t.js' ;", "pkg/t.js"],
+    ["  h } from 'pkg/gap.js';", "pkg/gap.js"], ['  from "docs/a.md"', "docs/a.md"],   // …wherever it stands: under a blank row, under nothing, in prose
   ] as const) {
-    assert.equal(viewerPathGate(tok, { text, at: text.indexOf(tok), above: up }), false, text);
+    assert.equal(viewerPathGate(tok, at(text, tok)), false, text);
   }
-  for (const [text, tok, up] of [
-    ['  from "docs/a.md" and kept it', "docs/a.md", rows("Copied the text")], ['  from "docs/a.md" and kept it', "docs/a.md", rows("import {", "")],
-    ['  from "docs/a.md"', "docs/a.md", rows('import "x.css";')], ['  from "docs/a.md"', "docs/a.md", rows()],
-    // a whole statement in the rows above is no opener: Python's imports, a shell's export, a finished or opened export (round 4 refused all of these; round 5)
-    ['# adapted from "docs/a.md"', "docs/a.md", rows("import os", "import sys")], ['# data from "data/raw.csv"', "data/raw.csv", rows("import numpy as np")],
-    ['# copied from "docs/c.md"', "docs/c.md", rows("export DATA=/data")], ['// see from "docs/a.md"', "docs/a.md", rows("export const z = 2;")],
-    ['  // ported from "docs/algo.md"', "docs/algo.md", rows("export function build() {")], ['  from "docs/a.md"', "docs/a.md", rows("export { a }")],
-    ['# see from "docs/c.md"', "docs/c.md", rows("import json", "")],
+  for (const [text, tok] of [
+    ['  from "docs/a.md" and kept it', "docs/a.md"], ['# adapted from "docs/a.md"', "docs/a.md"], ['# data from "data/raw.csv"', "data/raw.csv"], ['# copied from "docs/c.md"', "docs/c.md"],
+    ['// see from "docs/a.md"', "docs/a.md"], ['  // ported from "docs/algo.md"', "docs/algo.md"], ['# see from "docs/c.md"', "docs/c.md"], ['from "pkg/sub.py" import x', "pkg/sub.py"],
+    ['x = "}"; } from "docs/a.md"', "docs/a.md"],   // a quote before the brace: not an import's closing line
   ] as const) {
-    assert.equal(viewerPathGate(tok, { text, at: text.indexOf(tok), above: up }), true, text);
+    assert.equal(viewerPathGate(tok, at(text, tok)), true, text);
   }
   // …and through the real walk over rows: the fixture's code view (a .fv-cl per line), the pass over the whole code element
   const { linkifyFileText } = await import("./file-view-links");
   const code = el("code", "hljs", el("span", "fv-cl", "import {"), el("span", "fv-cl", '  a, b } from "pkg/x.js";'), el("span", "fv-cl", "import { g }"), el("span", "fv-cl", '  from "pkg/y.js";'), el("span", "fv-cl", 'x = "docs/a.md"'));
   linkifyFileText(code as unknown as HTMLElement, FILE);
-  assert.deepEqual(links(code).map((l) => l.textContent), ["docs/a.md"], "the two multi-line imports' specifiers stay text over rows, the quoted path links");
+  assert.deepEqual(links(code).map((l) => l.textContent), ["docs/a.md"], "the two hand-split imports' specifiers stay text over rows, the quoted path links");
   // …and over codeBlock's rows with BLANK rows among them (a .fv-cl whose .fv-ct holds no text node): each blank row is an
-  // empty unit to the walk, so the import rule's blank-line stop fires in the code view as it does inside a fence, and a
-  // whole statement above an English from opens nothing (round 4 linked none of the four prose paths here; round 5)
+  // empty unit to the walk, in its place, and a whole statement above an English from opens nothing (round 4 linked none of
+  // the four prose paths here; round 5); a hand-split import's specifier stays text past a blank row too (round 5 linked
+  // pkg/gap.js, its rows-above read stopped by the blank; round 6)
   const { textUnits } = await import("./path-links");
   const rowsWithBlanks = el("code", "hljs", row("import json"), row(), row('# see from "docs/c.md"'), row("import os"), row("import sys"), row('# adapted from "docs/a.md"'),
     row("export DATA=/data"), row('# copied from "docs/b.md"'), row("import {"), row(), row('  a, b } from "pkg/gap.js";'), row("import {"), row('  a, b } from "pkg/x.js";'),
     row("export const z = 2;"), row('// from "docs/d.md"'));
   assert.deepEqual(textUnits(rowsWithBlanks as unknown as HTMLElement, ".fv-cl", "a").map((u) => u.text).slice(0, 3), ["import json", "", '# see from "docs/c.md"'], "the blank row is an empty unit in its place");
   linkifyFileText(rowsWithBlanks as unknown as HTMLElement, FILE);
-  assert.deepEqual(links(rowsWithBlanks).map((l) => l.textContent), ["docs/c.md", "docs/a.md", "docs/b.md", "pkg/gap.js", "docs/d.md"],
-    "the prose paths link; a blank row between `import {` and its `} from` ends the import, as a blank line in a fence does; the hand-formatted import with no blank stays text");
+  assert.deepEqual(links(rowsWithBlanks).map((l) => l.textContent), ["docs/c.md", "docs/a.md", "docs/b.md", "docs/d.md"],
+    "the prose paths link; both hand-split imports' specifiers stay text, a blank row between `import {` and its `} from` or not");
   assert.equal(rowsWithBlanks.querySelectorAll(".fv-cl").length, 15, "no row added or lost");
 });
 
@@ -857,7 +856,7 @@ test("source: a link's line scrolls the code view's row once the text lands, spe
 });
 
 test("source: the shared walk's options, the line units and the anchor marker live in path-links.ts, defaults unchanged for the chat; the module writes attributes, never markup", () => {
-  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number; above: \(n: number\) => string \| null \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*unit\?: string;\n\}/);
+  assert.match(LINKS, /export interface PathLinkOptions \{\n\s*inPre\?: boolean;\n\s*accept\?: \(tok: string, ctx: \{ text: string; at: number \}\) => boolean;\n\s*resolve\?: \(tok: string\) => string;\n\s*lineSuffix\?: boolean;\n\s*unit\?: string;\n\}/);
   assert.match(LINKS, /export function linkifyPathTokens\(root: HTMLElement, sid\?: string \| null, pathLinks\?: Record<string, string>, opts\?: PathLinkOptions\): PathLinkHit\[\] \{/);
   assert.match(LINKS, /export const DEAD_TEXT = "a, \.file-uri-link, svg";/, "a link, and an inline SVG (an element put inside SVG text does not render)");
   assert.match(LINKS, /const skip = opts && opts\.inPre \? DEAD_TEXT : DEAD_TEXT \+ ", pre";/, "the chat still skips fenced blocks");
@@ -867,26 +866,28 @@ test("source: the shared walk's options, the line units and the anchor marker li
   assert.match(LINKS, /LINE_SUFFIX_AT_RE\.lastIndex = start \+ tok\.length; suffix = LINE_SUFFIX_AT_RE\.exec\(text\);/);
   assert.match(LINKS, /const LINE_SUFFIX_AT_RE = new RegExp\(LINE_SUFFIX_RE\.source\.replace\(\/\^\\\^\/, ""\), "y"\);/, "cut from the one source");
   assert.doesNotMatch(MOD, /ctx\.text\.slice\(0, ctx\.at\)/, "the gate never reads the unit's whole text before the token (quadratic over a fence)");
-  assert.match(MOD, /if \(!anchored && importLookBehind\(ctx\.text, ctx\.at, ctx\.above\)\.isImport\) return false;/);
+  assert.match(MOD, /if \(!anchored && importLookBehind\(ctx\.text, ctx\.at\)\.isImport\) return false;/);
   assert.match(MOD, /const OPENER_RE = \/\[\\s\\u200b"'`\(<\[\{=,;\|\*\\u201c\\u2018\\u00ab\]\/u;/, "every space \\s names, the zero-width space, and Markdown's asterisk are openers to the gate (the underscore never reaches it)");
   assert.match(MOD, /const STAR_CLOSE_RE = \/\(\?::\\d\+\(\?::\\d\+\)\?\|#L\\d\+\(\?:-L\?\\d\+\)\?\)\?\\\*\/y;/, "the closing star, read in place (sticky) past a line suffix");
   assert.match(MOD, /if \(before === "\*"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(tok\.startsWith\("\/"\)\) return false;\n\s*STAR_CLOSE_RE\.lastIndex = ctx\.at \+ tok\.length;\n\s*if \(!STAR_CLOSE_RE\.test\(ctx\.text\)\) return false;/, "a star opens a token that is not /-led and is closed by a star, and nothing else (an anchored ./, ../ or ~/ path is emphasis, not a glob's tail)");
-  assert.match(MOD, /if \(STATEMENT_HEAD_RE\.test\(line\)\) return opensImportList\(line\);/, "the opener above a from must itself be an unfinished import, not any import/export line");
-  assert.match(LINKS, /else if \(unit && e\.matches\(unit\) && e\.textContent === ""\) \{ units\.push\(\{ text: "", spans: \[\] \}\); cur = null; \}/, "a unit element with no text is an empty unit, so above(n) sees a code view's blank row");
+  assert.match(MOD, /const FROM_LINE_RE = \/\^\\s\*from\\s\*\(\?:"\[\^"\]\*"\|'\[\^'\]\*'\)\\s\*;\?\\s\*\$\/;/, "a continuation line is `from` and a quoted specifier, a `;` or not");
+  assert.match(MOD, /const CLOSING_FROM_RE = \/\^\[\^"'`\]\*\\\}\\s\*from\\s\*\["'\]\/;/, "or holds `} from \"` with no quote before the brace");
+  assert.doesNotMatch(MOD, /above\(|openedImportAbove|opensImportList/, "nothing above the line is read: the line's shape decides (rounds 4 and 5 read the rows above, and a shape slipped each round)");
+  assert.match(LINKS, /else if \(unit && e\.matches\(unit\) && e\.textContent === ""\) \{ units\.push\(\{ text: "", spans: \[\] \}\); cur = null; \}/, "a unit element with no text is an empty unit in its place: the units are the code view's rows, blank ones included");
   assert.doesNotMatch(MOD, /ctx\.text\.slice\(ctx\.at/, "the closer is read in place, never off a slice of the rest of the unit");
   assert.doesNotMatch(MOD, /OPENERS\.includes/, "the string list is gone: a regex reads the Unicode spaces");
   // the import look-behind reads the line's head only after a keyword stands before the quote, so a quote with none costs the quote, the spaces and one word
-  const lb = MOD.split("function importLookBehind(text: string, at: number, above?: (n: number) => string | null)")[1].split("\n}\n")[0];
+  const lb = MOD.split("function importLookBehind(text: string, at: number)")[1].split("\n}\n")[0];
   assert.ok(lb.indexOf("return { start: s, isImport: false }") < lb.indexOf("lastIndexOf(\"\\n\", s - 1)"), "no keyword: return before the line is read back");
   assert.ok(lb.indexOf("if (call) return") < lb.indexOf("lastIndexOf(\"\\n\", s - 1)"), "a call: return before the line is read back");
-  assert.match(lb, /const isImport = word === "from" \? STATEMENT_HEAD_RE\.test\(head\) \|\| CLOSING_HEAD_RE\.test\(head\) \|\| openedImportAbove\(text, lineStart, head, above\) : \/\^\\s\*\$\/\.test\(head\);/);
-  assert.match(LINKS, /texts\.push\(u\.text\);/, "the walk keeps every unit's text for the gate's above(n)");
-  assert.match(LINKS, /opts\.accept\(tok, \{ text, at: start, above \}\)/, "and hands it over with the token");
-  assert.match(MOD, /else line = above \? above\(\+\+up\) : null;/, "past the unit's first line, the import rule reads the rows above through it");
-  assert.match(MOD, /const STATEMENT_HEAD_RE = \/\^\\s\*\(\?:import\|export\)\\b\/;/); assert.match(MOD, /const CLOSING_HEAD_RE = \/\^\\s\*\\\}\\s\*\$\/;/);
+  assert.match(lb, /const isImport = word === "from" \? STATEMENT_HEAD_RE\.test\(head\) \|\| continuesImport\(lineOf\(text, lineStart, at\)\) : \/\^\\s\*\$\/\.test\(head\);/);
+  assert.match(MOD, /const lineEnd = text\.indexOf\("\\n", at\);\n\s*return text\.slice\(lineStart, lineEnd < 0 \? text\.length : lineEnd\);/, "a from's line is read forward to its break, bounded by the line as the look-behind is");
+  assert.match(LINKS, /opts\.accept\(tok, \{ text, at: start \}\)/, "the walk hands the gate the token's line and offset, and nothing above them");
+  assert.doesNotMatch(LINKS, /texts\.push|above\(/, "the walk keeps no unit's text past its own pass");
+  assert.match(MOD, /const STATEMENT_HEAD_RE = \/\^\\s\*\(\?:import\|export\)\\b\/;/);
   assert.match(LINKS, /for \(const u of textUnits\(root, opts && opts\.unit, skip\)\) \{/, "no unit: every node its own unit, the chat's walk as it was");
   assert.match(LINKS, /const span = spanHolding\(u, start, start \+ tok\.length\);\n\s*if \(!span\) continue;/, "a token across a node's edge is left as it is");
-  assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start, above \}\)\) continue;/);
+  assert.match(LINKS, /if \(!isUri && opts && opts\.accept && !opts\.accept\(tok, \{ text, at: start \}\)\) continue;/);
   assert.match(LINKS, /if \(isUri && opts && opts\.lineSuffix\) \{ const tail = URI_LINE_TAIL_RE\.exec\(tok\); if \(tail\) tok = tok\.slice\(0, tail\.index\); \}/);
   assert.match(LINKS, /export const LINE_SUFFIX_RE = \/\^\(\?::\(\\d\+\)\(\?::\\d\+\)\?\|#L\(\\d\+\)\(\?:-L\?\\d\+\)\?\)\(\?!\[\\w\/\]\)\/;/);
   assert.match(LINKS, /export function markPathLink\(a: HTMLElement, open: string, relative = false, sid\?: string \| null\): HTMLElement \{\n\s*const cls = a\.getAttribute\("class"\) \|\| "";\n\s*if \(!\(" " \+ cls \+ " "\)\.includes\(" file-uri-link "\)\) a\.setAttribute\("class", \(cls \? cls \+ " " : ""\) \+ "file-uri-link"\);\n\s*a\.setAttribute\("title", "Open " \+ open\);/, "attributes, so an SVG <a> is marked too");
