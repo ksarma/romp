@@ -562,6 +562,17 @@ class Differential(_World):
         (d / "1.json").write_text(json.dumps({"id": "1", "subject": "write the tests", "status": "pending"}))
         self.assertEqual(self.moved(a, self.sig()), ("tasks",))
 
+    def test_a_user_todo_write_misses_under_usertodos_for_its_own_session_alone(self):
+        a = self.sig()
+        km._add_user_todo(PEER, "need the auth scheme picked")
+        self.assertEqual(self.moved(a, self.sig()), (), "another session's request moves nothing of this tab's key")
+        tid = km._add_user_todo(SID, "need the plural form confirmed for the collection route")
+        b = self.sig()
+        self.assertEqual(self.moved(a, b), ("usertodos",), "a register changes the card with no transcript write")
+        self.assertEqual(self.moved(b, self.sig()), ())
+        km._resolve_user_todo(SID, tid, "withdrawn")
+        self.assertEqual(self.moved(b, self.sig()), ("usertodos",), "...and so does the stamp that clears it")
+
     def test_the_live_tail_misses_under_live_for_an_echo_and_for_its_dropped_mark(self):
         a = self.sig()
         km._tmux_echo_add(SID, "please also fix the header")
