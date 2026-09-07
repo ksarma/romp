@@ -18668,7 +18668,7 @@ def _fold_tasks(session):
     """Fold a session's TaskCreate/TaskUpdate tool calls into ONE checklist — the FALLBACK for _read_task_store
     when a session has no live task store (mirrors the old TS transcript.foldTasks the Python rewrite dropped).
     Task id = the number in TaskCreate's RESULT text ('Task #N created…'); status rides each TaskUpdate
-    {taskId,status}. NOTE this is lossy — it can't see a completion a subagent wrote only to the store (see
+    {taskId,status} the CLI accepted. NOTE this is lossy — it can't see a completion a subagent wrote only to the store (see
     _read_task_store). Returns the tasks in creation
     order, or None if there were none. The webview renders this as a todo card (kind:'todo') and hides the
     raw Task* calls (ACK_TOOLS) — so the kernel emits the folded card and skips the raw tool events."""
@@ -18713,6 +18713,13 @@ def _fold_tasks(session):
                                   "activeForm": str(af) if af else None, "status": "pending"}
                     order += 1
                 elif b.get("name") == "TaskUpdate":
+                    # A TaskUpdate the CLI REJECTED — its paired tool_result carries is_error (a status value
+                    # outside its set, a transition it refused) — wrote nothing to the store, so it moves no
+                    # checklist item; applied, the refused status stood in for the store's. Keyed on the
+                    # result's is_error like the TaskCreate skip above, so this fold and event_model's
+                    # declared_plan stay identical. An update whose result has not landed still applies.
+                    if b.get("id") in rejected:
+                        continue
                     t = tasks.get(str(inp.get("taskId", "")))
                     if t:
                         t["status"] = str(inp.get("status") or t["status"])
