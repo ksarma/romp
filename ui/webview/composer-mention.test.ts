@@ -255,7 +255,12 @@ test("the CSS: the card rides the menu tokens, the highlighted row wears the row
   assert.doesNotMatch(CSS.slice(CSS.indexOf(".mention-pop {"), CSS.indexOf(".mention-chip {")), /#[0-9a-fA-F]{3,6}\b/, "no hex in the menu rules: tokens only");
 });
 
-test("the guide's chat section says how to name another session", () => {
+test("the guide's chat section says how to name another session: the trigger, the cap, the keys, the two token forms, the Escape rule", () => {
   assert.match(GUIDE, /\*\*Naming another session\.\*\* Type `@` and the first letters of a session's name/);
-  assert.match(GUIDE, /`@host:name`/);
+  assert.match(GUIDE, /twelve at most; when\s+more match, the last row says how many/);
+  assert.match(GUIDE, /press \*\*⏎\*\* or \*\*Tab\*\*, or click it/);
+  assert.match(GUIDE, /Writing to a session on this machine, a session on another machine is inserted\s+as `@host:name`/);
+  assert.match(GUIDE, /Writing to a session on another machine,\s+every name is inserted bare/);
+  assert.match(GUIDE, /list the candidates as `host:name`/);
+  assert.match(GUIDE, /\*\*Escape\*\* closes the list\s+without inserting, and it stays closed for that `@` until you delete it/);
 });
