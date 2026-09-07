@@ -79,7 +79,7 @@ class T extends N {
     return tail;
   }
 }
-type Init = { key?: string; clientX?: number; clientY?: number; pointerId?: number; button?: number };
+type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
@@ -403,7 +403,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     /** The tags on a card's head, in order. */
     tags: (id: string) => main.querySelector('.fc-card[data-id="' + id + '"] .fc-card-head')!.querySelectorAll(".fc-tag").map((t) => t.textContent),
     float: () => { const f = doc.body.querySelectorAll(".fc-float"); return f[f.length - 1]; },
-    input: () => main.querySelector("input.fc-input")!,
+    input: () => main.querySelector("textarea.fc-input")!,
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
@@ -494,7 +494,7 @@ test("a region drawn on the second of two figures that embed one file under two 
   assert.ok(overlayOf(img2).querySelector(".fc-region-pending"), "the pending rectangle is on the picture drawn on");
   assert.equal(overlayOf(img1).querySelector(".fc-region-pending"), null, "…and not on the other spelling's picture");
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   const at = TWO.indexOf("![b](fig.png)");
@@ -594,7 +594,7 @@ test("a region composer open on a standalone image when the poll reloads the pic
   assert.ok(drawn.length > 0 && drawn.every((a) => a[0] === img2), "the thumbnail is cut from the new picture, not the detached old one");
   assert.equal(h.input().value, "The axis", "the half-typed note stands");
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");

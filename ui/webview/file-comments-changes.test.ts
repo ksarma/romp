@@ -316,7 +316,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  ctrlKey: boolean; metaKey: boolean;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -617,7 +618,7 @@ test("the change cards render first, grouped by paragraph, in text order, the bu
   const input = aside.querySelector(".fc-input")!;
   assert.ok(aside.querySelector(".fc-composer-ref")!.textContent.startsWith("Reply on "));
   input.value = "Trimmed is fine.";
-  dispatch(input, new Ev("keydown", { key: "Enter" })); await flush();
+  dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "reply");
   assert.deepEqual(m.args, { commentId: bound.id, note: "Trimmed is fine." });
 });
@@ -848,7 +849,7 @@ test("Reply on a change card writes a comment bound to the change: comment {sugg
   assert.equal(aside.querySelector(".fc-composer-ref")!.textContent, "Reply on the change reduced → cut");
   const input = aside.querySelector(".fc-input")!;
   input.value = "Keep reduced; the abstract uses it.";
-  dispatch(input, new Ev("keydown", { key: "Enter" })); await flush();
+  dispatch(input, new Ev("keydown", { key: "Enter", ctrlKey: true })); await flush();
   const m = lastOf(w, "fileComments", "comment");
   assert.ok(m, "the comment verb went");
   assert.deepEqual(m.args, { suggestionId: "h1", note: "Keep reduced; the abstract uses it." }, "bound by suggestionId, no anchor");

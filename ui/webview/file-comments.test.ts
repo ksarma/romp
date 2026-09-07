@@ -786,7 +786,7 @@ test("the floating Comment button rides the seam's selection hook — before the
   assert.match(raw, /this\.ctx\.scrollToOffset\(range\.start\);\n\s*this\.repaintPresel\(\);/);
   assert.doesNotMatch(raw, /\.indexOf\(/, "the switch does no lookup of its own — the search and its fallbacks live in rawTarget");
   assert.match(raw, /if \(typeof r\.blockStartLine === "number"\) this\.ctx\.scrollToOffset\(lineStartOffset\(src, r\.blockStartLine\)\);/, "else scrolled to the block's first line");
-  assert.match(SRC, /else if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, "Escape in the composer never closes the viewer");
+  assert.match(SRC, /else if \(act === "cancel"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, "Escape in the composer never closes the viewer");
 });
 
 test("the seam in file-view.ts: every member exists, hooks fire where they should, and both exits drain the close hooks", () => {

@@ -642,8 +642,9 @@ kernel that owns the disk. The sidecar's bytes reach a remote browser over the s
   is reachable; with the panel open a floating **Comment** button also appears beside the
   selection's bounding box (the chip lives in another iframe, so "beside the chip" is not
   possible), and the selection hook runs before the composer gate so it works with no chat pane.
-  The button opens a one-line composer in the panel with the quote shown; Enter saves to the
-  sidecar and the highlight and card appear at once. **Comment on this file** in the panel
+  The button opens a multi-line composer in the panel with the quote shown; Enter adds a line;
+  Cmd+Enter (Ctrl+Enter off a Mac) or Save saves to the sidecar, and the highlight and card
+  appear at once. **Comment on this file** in the panel
   header writes a whole-file comment on any file. The mapping from a selection to a source anchor,
   in both views and every format, is specified in the next subsection.
 - **Send to session** sends everything unsent in the file: comments, replies, and the accept and
@@ -944,6 +945,23 @@ sees a move a status already reported (the consolidation, 2026-09-06; before it,
 and a `file-moved` code re-fetched, and a `store-moved` from a `track-edit` left stale bytes up). The new
 elements (`.fc-change`, `.fc-group`, `.fc-hosted`, `.fc-foot`, `.fc-diff`) wear the Slice 1 classes
 beside their own and need no rule of their own to be usable; the sheets are the painter's.
+
+The composer follow-on (2026-09-07): after walking the loop, the user found the one-line box too
+small for the comments the loop needs. Every composer the panel offers (a passage, the whole file, a
+region, a reply on a card, a comment bound to a change) is now one textarea: three rows to start,
+grown to its content up to twelve rows and scrolling past that, draggable taller or shorter
+(`resize: vertical`; a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter
+on macOS or Ctrl+Enter elsewhere (either modifier works on every platform, the chat composer's rule)
+or the Save button saves; Escape cancels as before, the re-place Escape included; a hint under the
+box names the platform's chord, detected once by the editor's modifier rule. The draft (text, caret,
+chosen height) survives the poll's re-render and a refusal, since the box is one persistent node and
+the typed comment is never discarded; saving trims the blank ends and keeps the line breaks inside; a
+blank comment saves nothing. A card renders a multi-line body with its breaks (`white-space:
+pre-wrap`, both sheets), and the send message carries the body verbatim: the kernel's builder and the
+webview's are pinned to the same two-line text on both sides (`tests/test_file_comments.py`
+TheMessage, `ui/webview/file-comments.test.ts`). Tests: `ui/webview/file-comments-composer.test.ts`
+(driven) and `file-comments-composer-browser.test.ts` (the real cap and the real keys, Chromium and
+Firefox).
 
 ### Slice 3: region comments on images
 

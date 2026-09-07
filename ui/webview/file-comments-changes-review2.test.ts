@@ -126,7 +126,7 @@ class El {
     contains: (c: string) => this.classes.includes(c),
   };
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
     get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,

@@ -1588,10 +1588,16 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-composer-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fc-refused { color: var(--warn); }
-.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; padding: 5px 8px; border-radius: 6px;
-  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg); }
+/* the comment box is a textarea (the 2026-09-07 follow-on): three rows to start, grown to its content by the panel
+   (autosizeNote) and capped here at twelve, then it scrolls; the person may drag it taller or shorter (resize:
+   vertical). One row is 1.4em of the box's own size; the 12px are its padding and border (box-sizing: border-box),
+   so the floor and the cap are exactly NOTE_ROWS and NOTE_MAX_ROWS rows (file-comments.ts). */
+.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; line-height: 1.4; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg);
+  resize: vertical; overflow-y: auto; min-height: calc(3 * 1.4em + 12px); max-height: calc(12 * 1.4em + 12px); }
 .fc-input:focus { outline: none; border-color: var(--accent); }
 .fc-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.fc-hint { margin-right: auto; }   /* the chord hint at the composer row's left; Save and Cancel keep the right */
 .fc-cards { display: flex; flex-direction: column; gap: 8px; }
 .fc-empty { color: var(--dim); font-size: 0.86em; font-style: italic; }
 .fc-card { border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; background: var(--bg);

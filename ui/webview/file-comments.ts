@@ -487,6 +487,42 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
 /** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
+// ── the composer's box (the follow-on of 2026-09-07: a comment is often several lines) ──────────────
+/** The box starts at this many rows and grows with its content to the cap (autosizeNote; the sheets' min-height and
+ *  max-height say the same in em), then scrolls; the person may also drag its handle (resize: vertical). */
+export const NOTE_ROWS = 3;
+export const NOTE_MAX_ROWS = 12;
+/** Which modifier the save chord wears: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
+ *  marks module, the same test; that module stays in the lazy chunk, so the test is repeated here rather than imported),
+ *  detected once. Only the HINT reads it: either modifier saves on every platform. */
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
+export type ComposerKey = "save" | "cancel" | null;
+/** What a keydown in the box means, pure: Escape cancels; Enter with Cmd or Ctrl saves — the chat composer's chord,
+ *  either modifier everywhere, so Ctrl+Enter on a Mac saves too; a plain or Shift+Enter is the browser's own newline
+ *  (null: not ours); a key pressed while an IME is composing is the IME's. */
+export function composerKeyAction(e: { key: string; metaKey?: boolean; ctrlKey?: boolean; isComposing?: boolean }): ComposerKey {
+  if (e.isComposing) return null;
+  if (e.key === "Escape") return "cancel";
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return "save";
+  return null;
+}
+/** The chord the hint under the box names, in the platform's words. */
+export function saveChord(mac: boolean): string { return (mac ? "Cmd" : "Ctrl") + "+Enter"; }
+export function composerHint(mac: boolean): string { return saveChord(mac) + " saves; Enter adds a line"; }
+/** Size the box to its content: height auto, then the scroll height plus the border (box-sizing: border-box). The
+ *  sheet's max-height caps the result at NOTE_MAX_ROWS rows — past that the box scrolls — and its min-height floors it
+ *  at NOTE_ROWS. Returns the height set, or null when the box has no layout to measure (hidden, or a document with no
+ *  renderer), in which case the inline height it had is put back. */
+export function autosizeNote(ta: HTMLTextAreaElement): string | null {
+  const prev = ta.style.height;
+  ta.style.height = "auto";
+  const sh = ta.scrollHeight;
+  if (!(sh > 0)) { ta.style.height = prev; return null; }
+  const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
+  const h = sh + border + "px";
+  ta.style.height = h;
+  return h;
+}
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
  *  sanitizer keeps a rendered figure's data-* attributes (owns() relies on that for data-act), so a raw
@@ -761,7 +797,10 @@ class Panel {
   // persistent composer parts, for the same reason
   composerBox = el("div", "fc-composer");
   composerRef = el("div", "fc-composer-ref");
-  input = el("input", "fc-input") as HTMLInputElement;
+  input = el("textarea", "fc-input") as HTMLTextAreaElement;   // several lines (the 2026-09-07 follow-on): Enter is a newline, the chord saves
+  // the inline height autosize last set: an inline height that is not this one was dragged there by the person (the
+  // sheet's resize: vertical), and their height stands until the composer closes (closeComposer)
+  sizedTo: string | null = null;
   composerActs = el("div", "fc-actions");
   composerErr = el("div");
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
@@ -782,13 +821,16 @@ class Panel {
     ensureListener();
     live = this;
     this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
-    this.input.type = "text";
-    this.input.placeholder = "Your note (Enter saves, Esc cancels)";
+    this.input.rows = NOTE_ROWS;
+    this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
     this.input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); void this.saveComposer(); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
+      // a plain Enter is the browser's own newline in the box; the chord saves (composerKeyAction); Escape cancels
+      const act = composerKeyAction(e);
+      if (act === "save") { e.preventDefault(); void this.saveComposer(); }
+      else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
     });
+    this.input.addEventListener("input", () => this.autosize());
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
     this.float.title = "Comment on the selected passage";
@@ -1675,6 +1717,7 @@ class Panel {
   closeComposer(): void {
     this.composer = null;
     this.input.value = "";
+    this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at NOTE_ROWS, autosized again
     this.errors.delete("composer");
     this.repaintPresel();
     this.renderComposer();
@@ -1714,7 +1757,7 @@ class Panel {
   }
   async saveComposer(): Promise<void> {
     const c = this.composer;
-    const note = this.input.value.trim();
+    const note = this.input.value.trim();              // the blank ends go, the line breaks inside stay; all blank saves nothing
     if (!c || c.kind === "replace" || !note) return;   // a re-place takes a drag, not words
     if (c.kind === "region" && c.refusal) {
       this.errors.set("composer", { text: "Nothing saved: " + c.refusal + ".", reload: false });
@@ -2611,6 +2654,14 @@ class Panel {
     }
     return head;
   }
+  /** The box follows its content (autosizeNote) on every input — unless the person dragged the handle, when their
+   *  height stands until the composer closes; a box with no layout to measure keeps the height it had. */
+  private autosize(): void {
+    const ta = this.input;
+    if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;
+    const h = autosizeNote(ta);
+    if (h !== null) this.sizedTo = h;
+  }
   private renderComposer(): void {
     const c = this.composer;
     const box = this.composerBox;
@@ -2670,7 +2721,9 @@ class Panel {
     // a refused mapping has nothing to save to — Raw or Cancel; Save would silently write a whole-file comment; a
     // refused region likewise, and a re-place saves nothing (the drawn region is the action)
     const noSave = c.kind === "replace" || ((c.kind === "comment" || c.kind === "region") && !!c.refusal);
-    acts.replaceChildren(...(noSave ? [] : [save]), btn("Cancel", "fccancel"));
+    // the hint names the chord in the platform's words and sits at the row's left (fc-hint), the buttons at its right
+    const hint = el("span", "fc-note fc-hint", composerHint(IS_MAC));
+    acts.replaceChildren(...(noSave ? [] : [hint, save]), btn("Cancel", "fccancel"));
     const err = this.composerErr;
     err.replaceChildren(...[this.loader("composer"), this.errRow("composer")].filter((n): n is HTMLElement => !!n));
     if (!box.contains(this.input)) box.replaceChildren(ref, this.input, acts, err);   // built once; the input keeps its focus across renders

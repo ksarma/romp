@@ -110,7 +110,7 @@ class E extends N {
     });
   }
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   private classes(): string[] { return (this.attrs.get("class") || "").split(/\s+/).filter(Boolean); }
   private setClasses(c: string[]): void { this.attrs.set("class", [...new Set(c)].join(" ")); }
