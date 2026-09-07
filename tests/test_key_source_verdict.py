@@ -50,7 +50,7 @@ import time
 import unittest
 import uuid
 import weakref
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -62,7 +62,7 @@ os.environ.pop("ROMP_STATE_DIR", None)
 _NO_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_ENV
 os.environ["ROMP_SERVICE_ENV"] = _NO_ENV
-sb = SourceFileLoader("romp_sdk_backend_ksv", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+sb = load_source("romp_sdk_backend_ksv", os.path.join(BIN, "romp_sdk_backend.py"))
 es = sb._envsrc
 ks = sb._keysrc
 

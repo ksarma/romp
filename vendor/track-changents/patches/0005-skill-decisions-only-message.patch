@@ -1,0 +1,27 @@
+# Patch 0005 — skill: a review message may carry only accept and reject decisions, with no thread id
+# Offered back: yes
+# Files: skill/SKILL.md
+#
+# Reason: the skill describes every `[obsidian-diff]` message as carrying a thread id to reply
+# into. A host that batches a reviewer's decisions (romp sends the accepts and rejects made since
+# the last message as one message per file) can send a message with no comment at all — the
+# person went over the file, accepted or rejected the pending changes, and left nothing to
+# answer. An agent reading such a message by the old description would look for a thread id
+# that is not there. One sentence says the shape exists and that nothing needs a reply. Pinned
+# by the drift test only (prose).
+diff --git a/skill/SKILL.md b/skill/SKILL.md
+index e9a9bb60..8a8c4394 100644
+--- a/skill/SKILL.md
++++ b/skill/SKILL.md
+@@ -125,7 +125,10 @@ for the file named here":
+ - **`[obsidian-diff]`** — a review-panel ping about a change or a comment: the file
+   by ABSOLUTE path, the reviewer's message, and a THREAD id. One message may list
+   several comments on the same file, each with its own thread id; address each one
+-  and reply into each by its own id.
++  and reply into each by its own id. A message may also carry only the reviewer's
++  accept and reject decisions on your earlier changes, with no comment and so no
++  thread id to reply into: nothing needs an answer, and the file already reads as
++  decided.
+ 
+ A thread ping can arrive in EITHER mode — answering a thread is a conversation,
+ separate from how your edits land. Respond so it lands back in that same thread:

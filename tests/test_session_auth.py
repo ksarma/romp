@@ -27,7 +27,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -42,8 +42,8 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 # the developer's actual key instead of the fixture's. conftest.py holds the same floor for pytest.
 os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
-sb = SourceFileLoader("romp_sdk_backend_auth", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
-km = SourceFileLoader("romp_kernel_auth", os.path.join(BIN, "romp-kernel")).load_module()
+sb = load_source("romp_sdk_backend_auth", os.path.join(BIN, "romp_sdk_backend.py"))
+km = load_source("romp_kernel_auth", os.path.join(BIN, "romp-kernel"))
 
 FAKE_KEY = "sk-ant-api03-TESTFIXTUREKEYNOTREAL-wxyz"
 

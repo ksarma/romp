@@ -200,8 +200,8 @@ the bottom bar turns it on.
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
-and press Enter. **Comment on this file** leaves a comment on the file as a whole, which is
-the one kind an image or a PDF takes for now. When a passage cannot be mapped from the
+and press Enter. **Comment on this file** leaves a comment on the file as a whole, which
+every file takes; for a PDF it is the only kind for now. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
@@ -213,14 +213,33 @@ refers to is highlighted in the file. When the session has rewritten the passage
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.
 
+**Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
+drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
+author's chip, and the card shows that part of the image. When the image's bytes change the
+comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
+again where it belongs now; the comment keeps its words and its replies, and only the
+rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
+from the file's own folder, so a relative path shows in the Rendered view; a web address or a
+`data:` image is left as written. A comment on an embedded figure is stored on its embed line,
+with the rectangle: the session's tools and the other editors place it on that line, and this
+viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
+on a phone, comment on the file as a whole instead.
+
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,
 and turn it on for the folder a session will write into *before* it writes: only edits made
 while tracking is on are recorded, and a folder can be tracked before its files exist.
-Accepting and rejecting changes arrive with the next update; until then the viewer's
-**Edit** button refuses while changes are pending, because a direct edit would move them,
-and the session's own track-edit keeps working. A session's tools refuse to rewrite an
-image or a PDF as text, so a tracked folder may hold figures.
+Each change is a card in the panel, grouped by the paragraph it falls in, and is marked in
+the file: an insertion is tinted, and a deletion is struck at its point in the Raw view.
+**Accept** keeps the text as it is and drops the record. **Reject** puts the old text back in
+the file. **Accept all** and **Reject all** decide every change at once; Reject all asks you to
+confirm. A deletion has nothing to mark in the Rendered view, so its card offers **Reveal**,
+which opens the Raw view at the deletion; any change the current view cannot show offers it
+too. Reply on a change's card leaves a comment on the change itself, and the session's answer
+comes back to that card. While changes are pending, the viewer's **Edit** button refuses,
+because a direct edit would move them: accept or reject them first. The session's own
+track-edit keeps working. A session's tools refuse to rewrite an image or a PDF as text, so a
+tracked folder may hold figures.
 
 **Send to session** hands everything unsent to the session that owns the file as one
 message, in your words: the comments and replies you wrote since the last send, each with
@@ -228,7 +247,10 @@ what it refers to and the commands the session needs to answer it. The number on
 is what will go, and the confirm lists it, with the message itself one click away. When the
 file was opened from a request under Waiting on you, a checkbox answers that request with
 the same send; when tracking is off, another turns it on first, so the session's revisions
-come back as changes. Both are checked by default. One send answers a request; a request
+come back as changes. When changes are pending, a third checkbox, **accept the pending
+changes**, accepts them all before the send, so the session's later edits arrive as new
+changes instead of folding into an old one; the message then says how many changes you
+accepted and rejected. All are checked by default. One send answers a request; a request
 that named several files is answered by the first, and later sends show no checkbox. The
 panel then says **Sent to** the session and when, or **Queued for** it when the session has
 gone quiet, in which case the message goes when it wakes.
@@ -239,8 +261,10 @@ session rewrote is shown as it is now. The first comment, like the first save, a
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
-was sent and when, tracking turned on or off, and your direct edits to the file, kept beside
-the comments in the same folder so git keeps it when the project does. Whether
+was sent and when, the changes you accepted or rejected, tracking turned on or off, and your
+direct edits to the file, kept beside the comments in the same folder so git keeps it when the
+project does. Once a change is decided, its card is gone and the Log keeps the decision: the row
+gives the count, and clicking it shows the old and new text of each change. Whether
 `.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out.
 
 If the **Comments** action is missing on a file, the gear's **File comments** row says why:
@@ -386,6 +410,14 @@ the user interface at `127.0.0.1:29855`. You run it on your own machine, with no
 hosted service in between. Everything Romp stores stays local; the only traffic
 that leaves your machine is `claude` itself, both the agents' own model calls and
 the LLM calls in Romp's judge pipeline.
+
+The kernel runs as a login service, so it is up whenever you are logged in. To
+stop it on purpose, run `romp down`: it gives the agents a few seconds to
+finish the turn they are on, then stops the kernel and keeps it stopped, and
+`romp status` says so. `romp up` starts it again, and every session comes back
+with its history; a session that was cut mid-turn is told so, and when, and
+picks its work back up. `romp down --now` skips the wait; `romp down --wait 60`
+lengthens it.
 
 ### Linking kernels on other machines
 

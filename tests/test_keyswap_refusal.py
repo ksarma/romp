@@ -40,7 +40,7 @@ import sys
 import tempfile
 import unittest
 import uuid
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -52,8 +52,8 @@ os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_SERVICE_ENV_FILE"] = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
 os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
 
-sb = SourceFileLoader("romp_sdk_backend_keyswap_refusal", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
-cli = SourceFileLoader("romp_keyswap_cli_refusal", os.path.join(BIN, "romp-keyswap")).load_module()
+sb = load_source("romp_sdk_backend_keyswap_refusal", os.path.join(BIN, "romp_sdk_backend.py"))
+cli = load_source("romp_keyswap_cli_refusal", os.path.join(BIN, "romp-keyswap"))
 ks = sb._keysrc
 assert ks is cli.ks, "the CLI and the kernel must read the key through one module"
 es = sb._envsrc
@@ -528,7 +528,8 @@ class NamedSwapRefused(_Env):
         # (daemon-reload, enable --now)
         self.assertIn("On Linux the install rewrites the unit and reloads systemd but restarts no running\n"
                       "            manager, so restart after it.", out)
-        self.assertIn("systemctl --user daemon-reload\n            systemctl --user enable --now romp-manager.service", svc)
+        # (the systemctl binary is a seam, ROMP_SYSTEMCTL, so tests and `romp down` mocks can stand in for it)
+        self.assertIn('"$SYSTEMCTL" --user daemon-reload\n            "$SYSTEMCTL" --user enable --now romp-manager.service', svc)
         self.assertNotIn("systemctl --user restart", install, "install restarts no running manager on Linux")
         # and for what it costs on BOTH platforms: the rewrite drops a line added to the unit or the plist by
         # hand, so a Linux operator in command mode through a hand-added unit line who follows the install hint

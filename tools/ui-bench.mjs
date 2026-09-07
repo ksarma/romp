@@ -540,7 +540,7 @@ export function synthesizeFrames(app, cards, { seed = 7, now = SYNTH_NOW } = {})
 const PAGE_SERVER_PY = `
 import os, shutil, sys, threading
 from http.server import ThreadingHTTPServer
-from importlib.machinery import SourceFileLoader
+import importlib.util
 root, tmp = sys.argv[1], sys.argv[2]
 def _parent_gone():
     try:
@@ -551,9 +551,11 @@ def _parent_gone():
     os._exit(0)
 threading.Thread(target=_parent_gone, daemon=True).start()
 b = os.path.join(root, "bin")
-SourceFileLoader("romp_event_model", os.path.join(b, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(b, "romp-judge")).load_module()
-km = SourceFileLoader("romp_kernel_ui_bench", os.path.join(b, "romp-kernel")).load_module()
+_spec = importlib.util.spec_from_file_location("romp_loadsource", os.path.join(root, "kernel", "loadsource.py"))
+_ls = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_ls)
+_ls.load_source("romp_event_model", os.path.join(b, "romp-event-model"))
+_ls.load_source("romp_judge", os.path.join(b, "romp-judge"))
+km = _ls.load_source("romp_kernel_ui_bench", os.path.join(b, "romp-kernel"))
 srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
 sys.stdout.write("PORT %d\\n" % srv.server_address[1]); sys.stdout.flush()
 srv.serve_forever()

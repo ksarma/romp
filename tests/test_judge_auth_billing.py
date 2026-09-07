@@ -36,7 +36,7 @@ import json
 import os
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from types import SimpleNamespace
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -48,7 +48,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-jd = SourceFileLoader("romp_judge_authbill", os.path.join(BIN, "romp-judge")).load_module()
+jd = load_source("romp_judge_authbill", os.path.join(BIN, "romp-judge"))
 
 FAKE_KEY = "romp-test-fixture-key-not-real"   # nothing under test validates the shape, so no sk- prefix:
                                               # the maintainer's gitleaks pre-commit hook rightly refuses
@@ -371,7 +371,7 @@ class KernelWiringAndFloorPins(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.km = SourceFileLoader("romp_kernel_authbill", os.path.join(BIN, "romp-kernel")).load_module()
+        cls.km = load_source("romp_kernel_authbill", os.path.join(BIN, "romp-kernel"))
 
     def test_the_kernel_wires_judges_to_the_one_key_claimer(self):
         import inspect

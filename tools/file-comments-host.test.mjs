@@ -1,10 +1,12 @@
 // Conformance tests for tools/file-comments-host.mjs, the host script behind the Files pane's
-// comments panel (plans/file-review.md, "Host script conformance" under Tests, Slice 1 verbs).
+// comments panel (plans/file-review.md, "Host script conformance" under Tests; the Slice 1 verbs
+// and Slice 2's accept, accept-all, reject, reject-all and change comments).
 // Hermetic: every test builds the synthetic `notes-api` world under a scratch directory (from
 // tests/fixtures/file_comments/) and drives the script as the kernel does, a child process with
 // one JSON request on stdin. Where the plan asks for it, the REAL vendored CLIs run as child
 // processes too, so "a sidecar written by track-comment, replied to by the host script, read by
-// track-reply" is exactly that. Run: node --test tools/file-comments-host.test.mjs
+// track-reply" is exactly that, and every change a test decides was recorded by track-edit.
+// Run: node --test tools/file-comments-host.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -19,9 +21,10 @@ import {
 } from '../vendor/track-changents/store-io.mjs';
 import { addComment } from '../vendor/track-changents/cli/track-comment.mjs';
 import {
-  deriveUnsent, writeFileAtomic, checkTooLarge, locateExact, statNs, logPathFor, Refusal,
-  TEXT_MAX_BYTES, LOG_TAIL,
+  deriveUnsent, decidedFor, writeFileAtomic, checkTooLarge, locateExact, statNs, logPathFor, Refusal,
+  applyEdits, TEXT_MAX_BYTES, LOG_TAIL,
 } from './file-comments-host.mjs';
+import { tinyPng, sha256 } from '../tests/fixtures/file_comments/tiny-png.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -384,35 +387,50 @@ test('a passage that is gone refuses anchor-not-found, also when only its surrou
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
 });
 
-test('whole-file and target comments round-trip through store-io unchanged', () => {
+test('a region comment on a png and a whole-file comment round-trip through store-io and track-reply unchanged', () => {
   const w = world();
-  let st = status(w, w.report);
-  const target = { kind: 'image', region: { x: 0.12, y: 0.4, w: 0.35, h: 0.2 }, hash: 'a'.repeat(64) };
-  let r = comment(w, w.report, st, { note: 'Crop the chart.', target });
-  st = status(w, w.report);
-  r = comment(w, w.report, st, { note: 'Whole file: add a date.' });
+  const png = path.join(w.root, 'docs', 'chart.png');
+  const bytes = tinyPng(40, 90, 200);
+  fs.writeFileSync(png, bytes);
+  const region = { x: 0.12, y: 0.4, w: 0.35, h: 0.2 };
+  let st = status(w, png);
+  assert.equal(st.fileHash, sha256(bytes));
+  // The client's hash is not the host's to trust: the stored one is the sha256 of the bytes.
+  let r = comment(w, png, st, { note: 'Crop the chart.', target: { kind: 'image', region, hash: 'a'.repeat(64) } });
+  st = status(w, png);
+  r = comment(w, png, st, { note: 'Whole file: add a date.' });
   const sp = r.storePath;
   const written = readSidecar(sp);
   assert.equal(written.comments.length, 2);
+  const target = { kind: 'image', region, hash: sha256(bytes) };
   assert.deepEqual(written.comments[0].target, target);
   assert.equal('anchor' in written.comments[0], false);
   assert.match(written.comments[0].id, /^\d+-0$/);
   assert.equal('target' in written.comments[1], false);
 
-  // store-io loads (normalizing and rebasing) and writes the whole object back: both survive.
-  const loaded = loadStore(sp, w.text);
-  saveStore(w.root, sp, loaded, w.text);
+  // store-io loads (normalizing and rebasing against the CLIs' lossy UTF-8 reading of the png, the
+  // text the fingerprint is over) and writes the whole object back: both survive.
+  const pngText = fs.readFileSync(png, 'utf8');
+  const loaded = loadStore(sp, pngText);
+  saveStore(w.root, sp, loaded, pngText);
   const again = readSidecar(sp);
   assert.deepEqual(again.comments, written.comments);
   assert.equal(again.v, 3);
-  // ...and the host's own next write keeps them too, with a reply into the target comment.
-  st = status(w, w.report);
+  // track-reply answers the region comment, keeps its target, and leaves the png's bytes alone.
+  cliOk(w, 'reply', ['--file', png, '--thread', written.comments[0].id, '--note', 'Cropped and regenerated.']);
+  const replied = readSidecar(sp);
+  assert.deepEqual(replied.comments[0].target, target);
+  assert.equal(replied.comments[0].replies[0].author, 'web');
+  assert.deepEqual(fileBytes(png), bytes);
+  // ...and the host's own next write keeps them too, with a reply into the region comment.
+  st = status(w, png);
   assert.deepEqual(st.store.comments[0].target, target);
-  r = ok(w, { verb: 'reply', path: w.report, args: { commentId: written.comments[0].id, note: 'Cropped.' }, fence: fenceFor(st) });
+  r = ok(w, { verb: 'reply', path: png, args: { commentId: written.comments[0].id, note: 'Thanks.' }, fence: fenceFor(st) });
   const final = readSidecar(sp);
   assert.deepEqual(final.comments[0].target, target);
   assert.deepEqual({ ...final.comments[1] }, written.comments[1]);
-  assert.equal(r.store.comments[0].replies[0].body, 'Cropped.');
+  assert.equal(r.store.comments[0].replies[1].body, 'Thanks.');
+  assert.equal(r.fileHash, sha256(bytes));
 });
 
 // ── fences ──────────────────────────────────────────────────────────
@@ -454,7 +472,14 @@ test('a v:4 sidecar refuses unsupported-version on every verb and is never repla
   refused(w, { verb: 'reply', path: w.report, args: { commentId: '1', note: 'x' }, fence: { storeMtimeNs: mt } }, 'unsupported-version');
   refused(w, { verb: 'resolve', path: w.report, args: { commentId: '1', on: true }, fence: { storeMtimeNs: mt } }, 'unsupported-version');
   refused(w, { verb: 'set-tracked', path: w.report, args: { on: true, scope: 'file' }, fence: { configMtimeNs: '' } }, 'unsupported-version');
+  const fileNs = statNs(w.report);
+  refused(w, { verb: 'accept', path: w.report, args: { ids: ['1'] }, fence: { storeMtimeNs: mt } }, 'unsupported-version');
+  refused(w, { verb: 'accept-all', path: w.report, args: {}, fence: { storeMtimeNs: mt } }, 'unsupported-version');
+  refused(w, { verb: 'reject', path: w.report, args: { ids: ['1'] }, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'unsupported-version');
+  refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'unsupported-version');
+  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: '1', note: 'x' }, fence: { storeMtimeNs: mt } }, 'unsupported-version');
   assert.deepEqual(fileBytes(sp), bytes);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
   assert.deepEqual(fs.readdirSync(path.dirname(sp)), [path.basename(sp)], 'no temp file, no config, no log');
 });
 
@@ -469,7 +494,14 @@ test('an unparseable sidecar refuses corrupt on every verb and is never replaced
   assert.ok(r.error.includes('~/notes-api/.trackchanges/docs%2Freport.md.json'), r.error);
   refused(w, { verb: 'comment', path: w.report, args: { note: 'x' }, fence: { storeMtimeNs: mt } }, 'corrupt');
   refused(w, { verb: 'reply', path: w.report, args: { commentId: '1', note: 'x' }, fence: { storeMtimeNs: mt } }, 'corrupt');
+  const fileNs = statNs(w.report);
+  refused(w, { verb: 'accept', path: w.report, args: { ids: ['1700000000000-4'] }, fence: { storeMtimeNs: mt } }, 'corrupt');
+  refused(w, { verb: 'accept-all', path: w.report, args: {}, fence: { storeMtimeNs: mt } }, 'corrupt');
+  refused(w, { verb: 'reject', path: w.report, args: { ids: ['1700000000000-4'] }, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'corrupt');
+  refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: { storeMtimeNs: mt, fileMtimeNs: fileNs } }, 'corrupt');
+  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: '1700000000000-4', note: 'x' }, fence: { storeMtimeNs: mt } }, 'corrupt');
   assert.deepEqual(fileBytes(sp), bytes);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
   assert.deepEqual(fs.readdirSync(path.dirname(sp)), [path.basename(sp)]);
   // The vendored track-comment would have replaced it (survey item A2); the host never does.
 });
@@ -793,6 +825,41 @@ test('the log reply is the last 200 entries oldest first with logTruncated, whil
   assert.equal(fileBytes(lp).toString(), lines.join('\n') + '\n', 'reading never rewrites');
 });
 
+test('a decision older than the log tail still reaches the panel: `decided` carries, from the WHOLE log, the accept or reject of every change a comment is bound to that the sidecar no longer holds', () => {
+  const w = world();
+  // a change, a comment bound to it, the change accepted: the accept entry names the id with its texts
+  const st1 = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const h = hunkFor(st1, 'cut p95 latency by 40%');
+  const st2 = comment(w, w.report, st1, { suggestionId: h.id, note: 'Say cut, not reduced.' });
+  assert.deepEqual(st2.decided, {}, 'the change is pending: nothing to remember for it');
+  const st3 = accept(w, w.report, st2, [h.id]);
+  assert.deepEqual(st3.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'decided the moment the sidecar drops the change');
+  assert.equal(st3.log.filter((e) => e.kind === 'accept').length, 1, '…and the tail carries the entry itself while it is recent');
+  // then LOG_TAIL + 5 sends: the accept entry falls out of the tail the reply carries, and stays on disk
+  const lp = logPathFor(st3.storePath);
+  const lines = [];
+  for (let i = 1; i <= LOG_TAIL + 5; i++) {
+    lines.push(JSON.stringify({ ts: new Date(i * 1000).toISOString(), kind: 'send', author: 'you', sid: SID, comments: [], accepted: 0, rejected: 0, queued: false, watermark: null, n: i }));
+  }
+  fs.appendFileSync(lp, lines.join('\n') + '\n');
+  const r = status(w, w.report);
+  assert.equal(r.logTruncated, true);
+  assert.equal(r.log.filter((e) => e.kind === 'accept').length, 0, 'the tail no longer holds the accept');
+  assert.deepEqual(r.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'the decision rides `decided`, read off the whole log');
+  const c = r.store.comments.find((x) => x.suggestionId === h.id);
+  assert.ok(c && c.resolved, 'the bound comment stays in the sidecar (resolved), which is why the panel needs the texts');
+  // the pure derivation, on the edges: a pending or detached change is the sidecar's to describe, never the log's
+  const entries = [{ kind: 'reject', changes: [{ id: 'x', oldText: 'a', newText: '' }] }, { kind: 'accept', changes: [{ id: 'x', oldText: 'a', newText: 'b' }, { id: 'y', oldText: '', newText: 'n' }] }];
+  const bound = (id) => ({ id: 'c1', author: 'you', ts: 1, body: 'k', suggestionId: id, replies: [], resolved: false });
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('x')] }, entries), { x: { decision: 'accepted', oldText: 'a', newText: 'b' } }, 'the NEWEST entry for the id');
+  assert.deepEqual(decidedFor({ suggestions: [{ id: 'x' }], comments: [bound('x')] }, entries), {}, 'pending: the sidecar holds it');
+  assert.deepEqual(decidedFor({ suggestions: [], detached: [{ id: 'x' }], comments: [bound('x')] }, entries), {}, 'detached: the sidecar holds it');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('y'), { id: 'c2', author: 'you', ts: 2, body: 'p', replies: [], resolved: false }] }, entries), { y: { decision: 'accepted', oldText: '', newText: 'n' } }, 'only bound comments ask; a plain comment adds nothing');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('z')] }, entries), {}, 'no entry for the id: nothing claimed');
+  assert.deepEqual(decidedFor(null, entries), {}, 'no sidecar: nothing bound');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('x')] }, [{ kind: 'accept', changes: [{ id: 'x', oldText: 7 }] }, null, { kind: 'edit' }]), { x: { decision: 'accepted', oldText: '', newText: '' } }, 'a hand-edited entry reads defensively');
+});
+
 test('an unreadable log line is skipped with a note on stderr, never rewritten', () => {
   const w = world();
   const st = status(w, w.report);
@@ -878,4 +945,576 @@ test('a binary file takes a whole-file comment; the fingerprint is the CLIs\' UT
   cliOk(w, 'reply', ['--file', png, '--thread', disk.comments[0].id, '--note', 'Regenerated with wider margins.']);
   assert.deepEqual(fileBytes(png), bytes);
   assert.equal(readSidecar(r.storePath).comments[0].replies[0].author, 'web');
+});
+
+// ── accept and reject (Slice 2) ─────────────────────────────────────
+// Every change these tests decide was recorded by the REAL track-edit, as the `web` session
+// records them; the host then decides it the way the panel's buttons ask.
+
+// A tracked edit by the session, then the status the panel would hold afterwards.
+function edit(w, file, oldText, newText) {
+  cliOk(w, 'edit', ['--file', file, '--old', oldText, '--new', newText]);
+  return status(w, file);
+}
+function hunkFor(st, oldText) {
+  const h = st.hunks.find((x) => x.oldText === oldText);
+  assert.ok(h, `no hunk with oldText ${JSON.stringify(oldText)} among ${JSON.stringify(st.hunks.map((x) => x.oldText))}`);
+  return h;
+}
+// The fence the panel sends for the verbs that write the file: the sidecar's mtime and the file's.
+function fileFenceFor(st) { return { ...fenceFor(st), fileMtimeNs: st.fileMtimeNs }; }
+function accept(w, file, st, ids) { return ok(w, { verb: 'accept', path: file, args: { ids }, fence: fenceFor(st) }); }
+function acceptAll(w, file, st) { return ok(w, { verb: 'accept-all', path: file, args: {}, fence: fenceFor(st) }); }
+function reject(w, file, st, ids) { return ok(w, { verb: 'reject', path: file, args: { ids }, fence: fileFenceFor(st) }); }
+function rejectAll(w, file, st) { return ok(w, { verb: 'reject-all', path: file, args: {}, fence: fileFenceFor(st) }); }
+// The reply after pruneIfClean removed the sidecar: the client's absent state.
+function absentShape(r) {
+  assert.equal(r.store, null);
+  assert.equal(r.storeMtimeNs, null);
+  assert.deepEqual(r.hunks, []);
+}
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+test('accept removes the change from the sidecar only: the file keeps its text, the survivor keeps its place, and the next track-edit is a separate change', () => {
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/report.md']);
+  edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  const cur = fs.readFileSync(w.report, 'utf8');
+  assert.deepEqual(st.hunks.map((h) => h.kind), ['sub', 'sub']);
+  const a = hunkFor(st, 'cut p95 latency by 40%');
+  const b = hunkFor(st, 'shipping the cache in v1.2');
+  const r = accept(w, w.report, st, [a.id]);
+  assert.deepEqual(r.accepted, [a.id]);
+  assert.equal('rejected' in r, false);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), cur, 'accept never touches the file');
+  assert.equal(r.fileMtimeNs, st.fileMtimeNs);
+  // The survivor keeps its place in the text (accept moves nothing) while its baseline span
+  // moves: the accepted text is baseline now, so nothing precedes it and baseFrom equals curFrom.
+  assert.equal(r.hunks.length, 1);
+  assert.deepEqual({ ...r.hunks[0], baseFrom: 0, baseTo: 0 }, { ...b, baseFrom: 0, baseTo: 0 });
+  assert.equal(r.hunks[0].baseFrom, b.curFrom);
+  assert.equal(r.hunks[0].baseTo, b.curFrom + b.oldText.length);
+  assert.deepEqual(r.store.suggestions.map((s) => s.id), [b.id]);
+  assert.notEqual(r.storeMtimeNs, st.storeMtimeNs);
+  assert.equal(r.storeMtimeNs, statNs(r.storePath));
+  const disk = readSidecar(r.storePath);
+  assert.equal(disk.v, 3);
+  assert.deepEqual(disk.fingerprint, fingerprintOf(cur));
+  assert.deepEqual(disk.suggestions.map((s) => s.id), [b.id]);
+  assert.equal(disk.suggestions[0].authorId, SID, 'the survivor is the CLI\'s record, untouched');
+  // The session's next edit over the accepted passage is a change of its own with the accepted
+  // text as its baseline, not a revision folded into the old one: accepting is how a session's
+  // later revisions become separate changes.
+  const st2 = edit(w, w.report, 'reduced p95 latency by 40%', 'reduced p95 latency by 42%');
+  assert.equal(st2.hunks.length, 2);
+  const again = hunkFor(st2, 'reduced p95 latency by 40%');
+  assert.equal(again.newText, 'reduced p95 latency by 42%');
+  assert.notEqual(again.id, a.id);
+});
+
+test('accept-all with nothing else in the sidecar prunes it and replies the absent shape; a comment or a detached op keeps it', () => {
+  const w = world();
+  edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  const ids = st.hunks.map((h) => h.id);
+  const sp = st.storePath;
+  const cur = fs.readFileSync(w.report, 'utf8');
+  const r = acceptAll(w, w.report, st);
+  assert.deepEqual(r.accepted, ids);
+  absentShape(r);
+  assert.equal(fs.existsSync(sp), false, 'pruneIfClean removed the sidecar');
+  assert.equal(r.storePath, sp, 'the path is still named, so the client keeps watching it');
+  assert.equal(r.root, w.root);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), cur);
+  assert.deepEqual(r.log.map((e) => e.kind), ['accept']);
+  assert.equal(r.log[0].changes.length, 2);
+  assert.deepEqual(r.unsent, { comments: [], replies: [], accepted: 2, rejected: 0, watermark: null });
+  // The log outlives the prune: status answers the absent state with the counts still unsent.
+  const st2 = status(w, w.report);
+  absentShape(st2);
+  assert.equal(st2.unsent.accepted, 2);
+  assert.deepEqual(fs.readdirSync(path.dirname(sp)), [path.basename(logPathFor(sp))]);
+
+  // A comment, bound or not, keeps the sidecar: suggestions [] and the comment, nothing pruned.
+  const w2 = world();
+  const s2 = edit(w2, w2.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const withComment = comment(w2, w2.report, s2, { note: 'Fine as it is.' });
+  const r2 = acceptAll(w2, w2.report, withComment);
+  assert.ok(fs.existsSync(r2.storePath));
+  assert.deepEqual(r2.store.suggestions, []);
+  assert.deepEqual(r2.hunks, []);
+  assert.equal(r2.store.comments.length, 1);
+  assert.equal(r2.store.comments[0].resolved, false, 'a comment not bound to the change is left as it was');
+  assert.match(r2.storeMtimeNs, NS_RE);
+  assert.deepEqual(readSidecar(r2.storePath).fingerprint, fingerprintOf(fs.readFileSync(w2.report, 'utf8')));
+
+  // A detached op (a change the load-time rebase could not re-place) keeps it too, pruneIfClean's
+  // own rule; accept-all decides the pending changes and preserves the detached one for review.
+  const w3 = world();
+  const s3 = edit(w3, w3.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const disk = readSidecar(s3.storePath);
+  disk.detached = [{ id: '1700000000000-9', author: 'web', ts: 1700000000000, kind: 'sub', from: 0, oldText: 'zzz', newText: 'qqq', anchor: { quote: 'qqq', prefix: '', suffix: '' } }];
+  fs.writeFileSync(s3.storePath, JSON.stringify(disk, null, 2));
+  const s3b = status(w3, w3.report);
+  assert.equal(s3b.store.detached.length, 1);
+  assert.equal(s3b.hunks.length, 1, 'a detached op is not a pending change');
+  const r3 = acceptAll(w3, w3.report, s3b);
+  assert.deepEqual(r3.accepted, [s3b.hunks[0].id]);
+  assert.ok(fs.existsSync(r3.storePath));
+  assert.deepEqual(r3.store.suggestions, []);
+  assert.equal(r3.store.detached.length, 1, 'a detached op is preserved, never dropped by accept');
+});
+
+test('a file created by track-edit is one whole-file insertion: one ins hunk that swallows later same-author edits, and its accept clears the sidecar', () => {
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/']);
+  const created = path.join(w.root, 'docs', 'summary.md');
+  const content = '# Summary\n\nThe cache cut p95 latency by 40%.\n';
+  cliOk(w, 'edit', ['--file', created, '--old', '', '--new', content]);
+  assert.equal(fs.readFileSync(created, 'utf8'), content);
+  const st = status(w, created);
+  assert.equal(st.hunks.length, 1);
+  const h = st.hunks[0];
+  assert.equal(h.kind, 'ins');
+  assert.equal(h.curFrom, 0);
+  assert.equal(h.curTo, content.length);
+  assert.equal(h.oldText, '');
+  assert.equal(h.newText, content);
+  assert.equal(h.baseFrom, 0);
+  assert.equal(h.baseTo, 0);
+  assert.equal(h.author, 'web');
+  assert.equal(status(w, created, { baseline: true }).baseline, '', 'the baseline of a created file is the empty text');
+  // A second edit by the same session inside the insertion coalesces into it: still one change.
+  cliOk(w, 'edit', ['--file', created, '--old', '40%', '--new', '41%']);
+  const revised = content.replace('40%', '41%');
+  const st2 = status(w, created);
+  assert.equal(st2.hunks.length, 1);
+  assert.equal(st2.hunks[0].id, h.id);
+  assert.equal(st2.hunks[0].newText, revised);
+  assert.equal(st2.hunks[0].oldText, '');
+  const r = accept(w, created, st2, [h.id]);
+  assert.deepEqual(r.accepted, [h.id]);
+  absentShape(r);
+  assert.equal(fs.existsSync(st.storePath), false);
+  assert.equal(fs.readFileSync(created, 'utf8'), revised);
+  assert.deepEqual(r.log.map((e) => ({ kind: e.kind, changes: e.changes })), [{ kind: 'accept', changes: [{ id: h.id, oldText: '', newText: revised }] }]);
+  // After the accept the session's next edit is its own change with the accepted text as baseline.
+  const st3 = edit(w, created, '41%', '42%');
+  assert.equal(st3.hunks.length, 1);
+  assert.equal(st3.hunks[0].kind, 'sub');
+  assert.equal(st3.hunks[0].oldText, '41%');
+
+  // Rejecting a whole-file insertion writes the engine's baseline, the empty text: the file stays,
+  // empty, and the emptied sidecar is pruned.
+  const w2 = world();
+  const created2 = path.join(w2.root, 'docs', 'summary.md');
+  cliOk(w2, 'edit', ['--file', created2, '--old', '', '--new', content]);
+  const r2 = rejectAll(w2, created2, status(w2, created2));
+  assert.equal(fs.readFileSync(created2, 'utf8'), '');
+  absentShape(r2);
+  assert.equal(r2.fileMtimeNs, statNs(created2));
+});
+
+test('reject applies the engine\'s reverse edits: the subset\'s baseline lands in the file, survivors are remapped, and the reply carries the fresh file mtime', () => {
+  const w = world();
+  writeTrackedPaths(w.root, ['docs/report.md']);
+  edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 35%');
+  edit(w, w.report, 'Cold starts remain slow on the first request of the day.\n', '');
+  const st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  const cur = fs.readFileSync(w.report, 'utf8');
+  assert.deepEqual(st.hunks.map((h) => h.kind), ['sub', 'del', 'sub'], 'D1: the engine\'s three kinds');
+  const [a, b, c] = st.hunks;
+  assert.equal(b.curFrom, b.curTo, 'a deletion is a point in the current text');
+  assert.equal(b.newText, '');
+  assert.equal(a.oldText, 'cut p95 latency by 40%');
+  const ops = st.store.suggestions;
+  const want = engine.baselineOf(cur, ops.filter((s) => s.id === a.id || s.id === b.id));
+  assert.notEqual(want, cur);
+  assert.notEqual(want, w.text, 'the subset\'s baseline still carries the third change');
+
+  const r = reject(w, w.report, st, [b.id, a.id]);
+  assert.deepEqual(r.rejected, [a.id, b.id], 'document order, whatever order the caller used');
+  assert.equal('accepted' in r, false);
+  const after = fs.readFileSync(w.report, 'utf8');
+  assert.equal(after, want);
+  assert.ok(after.includes('cut p95 latency by 40%') && after.includes('Cold starts remain slow'), 'the rejected changes are undone');
+  assert.ok(after.includes('shipping the cache in v1.3'), 'the survivor\'s text stays');
+  assert.match(r.fileMtimeNs, NS_RE);
+  assert.equal(r.fileMtimeNs, statNs(w.report));
+  assert.notEqual(r.fileMtimeNs, st.fileMtimeNs);
+  assert.equal(r.hunks.length, 1);
+  const c2 = r.hunks[0];
+  assert.equal(c2.id, c.id);
+  assert.equal(c2.newText, c.newText);
+  assert.equal(c2.oldText, c.oldText);
+  assert.equal(after.slice(c2.curFrom, c2.curTo), c2.newText, 'remapped into the new text');
+  const shift = (a.oldText.length - a.newText.length) + (b.oldText.length - b.newText.length);
+  assert.equal(c2.curFrom, c.curFrom + shift);
+  assert.deepEqual(r.store.suggestions.map((s) => s.id), [c.id]);
+  assert.equal(r.storeMtimeNs, statNs(r.storePath));
+  const disk = readSidecar(r.storePath);
+  assert.equal(disk.v, 3);
+  assert.deepEqual(disk.fingerprint, fingerprintOf(after), 'the fingerprint describes the new file');
+  assert.equal(disk.suggestions[0].authorId, SID);
+  // The CLI reads the host's sidecar against the new file and adds to it: nothing was lost.
+  const st2 = edit(w, w.report, 'Cold starts remain slow', 'Cold starts stay slow');
+  assert.equal(st2.hunks.length, 2);
+  // Reject-all from here restores the fixture and, with nothing else in the sidecar, prunes it.
+  const r2 = rejectAll(w, w.report, st2);
+  assert.deepEqual(r2.rejected, st2.hunks.map((h) => h.id));
+  assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
+  absentShape(r2);
+  assert.equal(fs.existsSync(r.storePath), false);
+  assert.equal(r2.fileMtimeNs, statNs(w.report));
+  assert.deepEqual(r2.log.map((e) => [e.kind, e.changes.length]), [['reject', 2], ['reject', 2]]);
+  assert.deepEqual(r2.unsent, { comments: [], replies: [], accepted: 0, rejected: 4, watermark: null });
+});
+
+test('a reject whose file write fails puts the prior sidecar bytes back, changes nothing, logs nothing, and refuses unreadable with the OS text',
+  { skip: typeof process.getuid === 'function' && process.getuid() === 0 ? 'root ignores directory modes' : false }, () => {
+    const w = world();
+    const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+    const cur = fs.readFileSync(w.report, 'utf8');
+    const sidecarBytes = fileBytes(st.storePath);
+    const docs = path.dirname(w.report);
+    const listing = fs.readdirSync(docs).sort();
+    // writeFileAtomic creates its temp file beside the file, so a read-only directory fails the
+    // file write after the sidecar was saved: the case the rollback exists for.
+    fs.chmodSync(docs, 0o555);
+    let r;
+    try {
+      r = refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: fileFenceFor(st) }, 'unreadable');
+    } finally {
+      fs.chmodSync(docs, 0o755);
+    }
+    assert.match(r.error, /EACCES|EPERM/);
+    assert.ok(r.error.includes('~/notes-api/docs/report.md'), r.error);
+    assert.equal(r.error.includes(w.home), false);
+    assert.match(r.error, /put back/);
+    assert.deepEqual(fileBytes(st.storePath), sidecarBytes, 'the prior sidecar bytes are back');
+    assert.equal(fs.readFileSync(w.report, 'utf8'), cur, 'the file is untouched');
+    assert.deepEqual(fs.readdirSync(docs).sort(), listing, 'no temp file left beside the file');
+    assert.equal(fs.existsSync(logPathFor(st.storePath)), false, 'a refused reject logs nothing');
+    assert.deepEqual(fs.readdirSync(path.dirname(st.storePath)), [path.basename(st.storePath)], 'no restore temp left in .trackchanges');
+    // The store is whole: a reload sees the same change, and the reject then succeeds.
+    const st2 = status(w, w.report);
+    assert.deepEqual(st2.hunks, st.hunks);
+    assert.equal(st2.storeMtimeNs, statNs(st.storePath));
+    const r2 = rejectAll(w, w.report, st2);
+    assert.deepEqual(r2.rejected, [st.hunks[0].id]);
+    assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
+  });
+
+test('accept and reject fences: "" over an existing sidecar, a stale sidecar mtime, a stale or "" file mtime, and a missing key', () => {
+  const w = world();
+  const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const id = st.hunks[0].id;
+  const cur = fs.readFileSync(w.report, 'utf8');
+  const bytes = fileBytes(st.storePath);
+  const unchanged = () => {
+    assert.deepEqual(fileBytes(st.storePath), bytes);
+    assert.equal(fs.readFileSync(w.report, 'utf8'), cur);
+    assert.equal(fs.existsSync(logPathFor(st.storePath)), false);
+  };
+  const decisions = [['accept', { ids: [id] }], ['accept-all', {}], ['reject', { ids: [id] }], ['reject-all', {}]];
+  for (const [verb, args] of decisions) {
+    const fileNs = { fileMtimeNs: st.fileMtimeNs };
+    const gone = refused(w, { verb, path: w.report, args, fence: { storeMtimeNs: '', ...fileNs } }, 'store-moved');
+    assert.match(gone.error, /appeared on disk/);
+    const stale = refused(w, { verb, path: w.report, args, fence: { storeMtimeNs: '1', ...fileNs } }, 'store-moved');
+    assert.match(stale.error, /changed on disk/);
+    assert.ok(stale.error.includes('~/notes-api/docs/report.md'), stale.error);
+    unchanged();
+  }
+  for (const [verb, args] of decisions.slice(2)) {
+    const stale = refused(w, { verb, path: w.report, args, fence: { storeMtimeNs: st.storeMtimeNs, fileMtimeNs: '1' } }, 'file-moved');
+    assert.ok(stale.error.includes('~/notes-api/docs/report.md'), stale.error);
+    assert.match(stale.error, /changed on disk/);
+    refused(w, { verb, path: w.report, args, fence: { storeMtimeNs: st.storeMtimeNs, fileMtimeNs: '' } }, 'file-moved');
+    // A missing file fence is a caller bug: a crash before any disk check, never a write.
+    const missing = host(w, { verb, path: w.report, args, fence: { storeMtimeNs: st.storeMtimeNs } });
+    assert.notEqual(missing.code, 0);
+    assert.equal(missing.stdout, '');
+    assert.match(missing.stderr, /fence\.fileMtimeNs is required/);
+    unchanged();
+  }
+  const noStore = host(w, { verb: 'accept', path: w.report, args: { ids: [id] } });
+  assert.notEqual(noStore.code, 0);
+  assert.match(noStore.stderr, /fence\.storeMtimeNs is required/);
+  const noIds = host(w, { verb: 'accept', path: w.report, args: {}, fence: fenceFor(st) });
+  assert.notEqual(noIds.code, 0);
+  assert.match(noIds.stderr, /needs ids/);
+  const emptyIds = host(w, { verb: 'reject', path: w.report, args: { ids: [] }, fence: fileFenceFor(st) });
+  assert.notEqual(emptyIds.code, 0);
+  assert.match(emptyIds.stderr, /needs ids/);
+  const badId = host(w, { verb: 'accept', path: w.report, args: { ids: [''] }, fence: fenceFor(st) });
+  assert.notEqual(badId.code, 0);
+  unchanged();
+  // A raw edit moves only the file's mtime: reject refuses file-moved with the sidecar fence still
+  // good, while accept, which never writes the file, does not fence on it and proceeds.
+  fs.writeFileSync(w.report, cur + '\n');
+  const raw = refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: fileFenceFor(st) }, 'file-moved');
+  assert.match(raw.error, /changed on disk/);
+  assert.deepEqual(fileBytes(st.storePath), bytes);
+  const r = accept(w, w.report, st, [id]);
+  assert.deepEqual(r.accepted, [id]);
+  // A track-edit moves both; the sidecar fence answers first.
+  const w2 = world();
+  const s1 = edit(w2, w2.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  edit(w2, w2.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  refused(w2, { verb: 'reject-all', path: w2.report, args: {}, fence: fileFenceFor(s1) }, 'store-moved');
+  refused(w2, { verb: 'accept', path: w2.report, args: { ids: [s1.hunks[0].id] }, fence: fenceFor(s1) }, 'store-moved');
+});
+
+test('comment {suggestionId} writes a change comment with no anchor and no target, track-reply answers it, and accept keeps it as resolved', () => {
+  const w = world();
+  const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const h = st.hunks[0];
+  const r = ok(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, note: '  Keep the exact number.  ' }, fence: fenceFor(st) });
+  const c = readSidecar(r.storePath).comments[0];
+  assert.deepEqual(Object.keys(c), ['id', 'author', 'ts', 'suggestionId', 'body', 'replies', 'resolved']);
+  assert.equal(c.suggestionId, h.id);
+  assert.equal(typeof c.ts, 'number');
+  assert.equal(c.id, `${c.ts}-${h.curFrom}`);
+  assert.equal(c.author, 'you');
+  assert.equal(c.body, 'Keep the exact number.');
+  assert.deepEqual(c.replies, []);
+  assert.equal(c.resolved, false);
+  assert.equal('anchor' in c, false);
+  assert.equal('target' in c, false);
+  assert.equal('authorId' in c, false);
+  assert.deepEqual(r.store.comments[0], c);
+  assert.equal(r.hunks.length, 1, 'the change stays pending');
+  assert.deepEqual(r.unsent.comments, [c.id]);
+  assert.equal(fs.readFileSync(w.report, 'utf8').includes('reduced p95'), true, 'the file is untouched');
+  // The session answers it with track-reply; the binding survives the CLI's load and save.
+  cliOk(w, 'reply', ['--file', w.report, '--thread', c.id, '--note', 'Kept.']);
+  const after = readSidecar(r.storePath).comments[0];
+  assert.deepEqual({ ...after, replies: [] }, c);
+  assert.equal(after.replies.length, 1);
+  assert.equal(after.replies[0].author, 'web');
+  assert.equal(after.replies[0].body, 'Kept.');
+  // Accept marks it resolved and keeps every field; the comment keeps the sidecar alive.
+  const st2 = status(w, w.report);
+  const r2 = accept(w, w.report, st2, [h.id]);
+  assert.deepEqual(r2.accepted, [h.id]);
+  assert.deepEqual(r2.hunks, []);
+  assert.ok(fs.existsSync(r2.storePath), 'a bound comment keeps the sidecar');
+  const disk = readSidecar(r2.storePath);
+  assert.deepEqual(disk.suggestions, []);
+  assert.deepEqual(disk.comments, [{ ...after, resolved: true }]);
+  assert.equal(disk.comments[0].suggestionId, h.id, 'the binding stays, so the id a sent message named still answers');
+  assert.deepEqual(r2.store.comments, disk.comments);
+  // ...and track-reply still reaches it after the accept.
+  cliOk(w, 'reply', ['--file', w.report, '--thread', c.id, '--note', 'Thanks.']);
+  assert.equal(readSidecar(r2.storePath).comments[0].replies.length, 2);
+  // A change comment on an accepted (no longer pending) change refuses no-change.
+  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, note: 'Again?' }, fence: fenceFor(status(w, w.report)) }, 'no-change');
+  // Anchor or target beside suggestionId is a caller bug.
+  const both = host(w, { verb: 'comment', path: w.report, args: { suggestionId: h.id, anchor: { quote: 'x' }, note: 'n' }, fence: fenceFor(status(w, w.report)) });
+  assert.notEqual(both.code, 0);
+  assert.match(both.stderr, /takes no anchor/);
+});
+
+test('accept resolves every comment bound by suggestionId, anchor or not, and leaves unbound comments alone', () => {
+  const w = world();
+  const { anchor, hintOffset } = anchorAt(w.text, 'cut p95 latency by 40%', 0);
+  let st = comment(w, w.report, status(w, w.report), { anchor, note: 'Say reduced, not cut.', hintOffset });
+  const passage = st.store.comments[0];
+  st = comment(w, w.report, st, { note: 'Add a date.' });
+  const whole = st.store.comments[1];
+  // The session answers the passage comment with a tracked edit bound to it: the comment keeps
+  // its anchor and gains the change's id (store-io's addThreadEditTurn), the shape the plan's
+  // contract section describes.
+  cliOk(w, 'edit', ['--file', w.report, '--thread', passage.id, '--old', 'cut p95 latency by 40%', '--new', 'reduced p95 latency by 40%']);
+  st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  assert.equal(st.hunks.length, 2);
+  const answered = st.store.comments.find((c) => c.id === passage.id);
+  assert.deepEqual(answered.anchor, passage.anchor, 'the passage comment keeps its anchor');
+  assert.equal(answered.suggestionId, hunkFor(st, 'cut p95 latency by 40%').id);
+  assert.equal(answered.replies[0].kind, 'edit');
+  // Accepting only the OTHER change resolves nothing.
+  const other = hunkFor(st, 'shipping the cache in v1.2');
+  let r = accept(w, w.report, st, [other.id]);
+  assert.deepEqual(r.store.comments.map((c) => c.resolved), [false, false]);
+  // accept-all resolves the bound one and keeps both.
+  r = acceptAll(w, w.report, r);
+  assert.deepEqual(r.accepted, [answered.suggestionId]);
+  assert.equal(r.store.comments.length, 2);
+  const byId = Object.fromEntries(r.store.comments.map((c) => [c.id, c]));
+  assert.equal(byId[passage.id].resolved, true);
+  assert.deepEqual(byId[passage.id].anchor, passage.anchor);
+  assert.equal(byId[passage.id].suggestionId, answered.suggestionId);
+  assert.deepEqual(byId[passage.id].replies, answered.replies);
+  assert.deepEqual(byId[whole.id], whole, 'the whole-file comment is untouched');
+  assert.ok(fs.existsSync(r.storePath));
+  assert.deepEqual(readSidecar(r.storePath).comments, r.store.comments);
+  assert.deepEqual(r.hunks, []);
+});
+
+test('a change that is no longer pending refuses no-change by id, after the fence has had its say', () => {
+  const w = world();
+  // Nothing pending at all: no sidecar under a "" fence, on a project file and on a loose file.
+  let r = refused(w, { verb: 'accept', path: w.report, args: { ids: ['1700000000000-4'] }, fence: { storeMtimeNs: '' } }, 'no-change');
+  assert.ok(r.error.includes('1700000000000-4') && r.error.includes('~/notes-api/docs/report.md'), r.error);
+  r = refused(w, { verb: 'accept-all', path: w.report, args: {}, fence: { storeMtimeNs: '' } }, 'no-change');
+  assert.match(r.error, /no changes are pending/);
+  refused(w, { verb: 'reject', path: w.report, args: { ids: ['x'] }, fence: { storeMtimeNs: '', fileMtimeNs: statNs(w.report) } }, 'no-change');
+  refused(w, { verb: 'reject-all', path: w.report, args: {}, fence: { storeMtimeNs: '', fileMtimeNs: statNs(w.report) } }, 'no-change');
+  refused(w, { verb: 'comment', path: w.loose, args: { suggestionId: 'x', note: 'hi' }, fence: { storeMtimeNs: '' } }, 'no-change');
+  refused(w, { verb: 'accept-all', path: w.loose, args: {}, fence: { storeMtimeNs: '' } }, 'no-change');
+  refused(w, { verb: 'reject-all', path: w.loose, args: {}, fence: { storeMtimeNs: '', fileMtimeNs: statNs(w.loose) } }, 'no-change');
+  assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false, 'a refused decision creates nothing');
+  assert.equal(fs.existsSync(path.join(w.looseDir, '.trackchanges')), false);
+  assert.equal(fs.readFileSync(w.report, 'utf8'), w.text);
+
+  // A pending change beside an unknown id: the whole request refuses and nothing is decided.
+  const st = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const id = st.hunks[0].id;
+  const bytes = fileBytes(st.storePath);
+  r = refused(w, { verb: 'accept', path: w.report, args: { ids: [id, 'nope'] }, fence: fenceFor(st) }, 'no-change');
+  assert.ok(r.error.includes('nope') && !r.error.includes(id), r.error);
+  refused(w, { verb: 'reject', path: w.report, args: { ids: ['nope'] }, fence: fileFenceFor(st) }, 'no-change');
+  refused(w, { verb: 'comment', path: w.report, args: { suggestionId: 'nope', note: 'hi' }, fence: fenceFor(st) }, 'no-change');
+  assert.deepEqual(fileBytes(st.storePath), bytes);
+  assert.equal(fs.existsSync(logPathFor(st.storePath)), false);
+  assert.deepEqual(status(w, w.report).hunks, st.hunks);
+
+  // Decided once, the id is gone: a second accept with the fresh fence refuses by id.
+  const r1 = accept(w, w.report, st, [id]);
+  r = refused(w, { verb: 'accept', path: w.report, args: { ids: [id] }, fence: fenceFor(r1) }, 'no-change');
+  assert.ok(r.error.includes(id), r.error);
+
+  // A track-edit landing mid-round: the fence answers first (store-moved); after a reload, an id
+  // that coalesced into an adjacent change by the same author is no longer pending under its name.
+  const w2 = world();
+  const s1 = edit(w2, w2.report, 'p95', 'p90');
+  const idA = s1.hunks[0].id;
+  cliOk(w2, 'edit', ['--file', w2.report, '--old', 'cut ', '--new', 'reduced ']);
+  refused(w2, { verb: 'accept', path: w2.report, args: { ids: [idA] }, fence: fenceFor(s1) }, 'store-moved');
+  const s2 = status(w2, w2.report);
+  assert.equal(s2.hunks.length, 1, 'the adjacent edits coalesced into one change');
+  assert.notEqual(s2.hunks[0].id, idA);
+  assert.equal(s2.hunks[0].newText, 'reduced p90');
+  assert.equal(s2.hunks[0].oldText, 'cut p95');
+  r = refused(w2, { verb: 'accept', path: w2.report, args: { ids: [idA] }, fence: fenceFor(s2) }, 'no-change');
+  assert.ok(r.error.includes(idA), r.error);
+  refused(w2, { verb: 'reject', path: w2.report, args: { ids: [idA] }, fence: fileFenceFor(s2) }, 'no-change');
+  refused(w2, { verb: 'comment', path: w2.report, args: { suggestionId: idA, note: 'x' }, fence: fenceFor(s2) }, 'no-change');
+  // ...and the coalesced change decides under its own id.
+  assert.deepEqual(accept(w2, w2.report, s2, [s2.hunks[0].id]).accepted, [s2.hunks[0].id]);
+});
+
+test('each accept and reject appends one log entry with the ids and their texts, and the unsent counts run until the next log-send', () => {
+  const w = world();
+  edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  edit(w, w.report, 'Cold starts remain slow on the first request of the day.\n', '');
+  let st = edit(w, w.report, 'shipping the cache in v1.2', 'shipping the cache in v1.3');
+  const [a, b, c] = st.hunks;
+  const lp = logPathFor(st.storePath);
+  let r = accept(w, w.report, st, [c.id]);
+  let lines = readLogLines(lp);
+  assert.equal(lines.length, 1);
+  assert.deepEqual({ ...lines[0], ts: 'T' }, { ts: 'T', kind: 'accept', author: 'you', changes: [{ id: c.id, oldText: 'shipping the cache in v1.2', newText: 'shipping the cache in v1.3' }] });
+  assert.match(lines[0].ts, ISO_RE);
+  assert.deepEqual(r.log, lines);
+  assert.deepEqual(r.unsent, { comments: [], replies: [], accepted: 1, rejected: 0, watermark: null });
+  r = reject(w, w.report, r, [a.id, b.id]);
+  lines = readLogLines(lp);
+  assert.equal(lines.length, 2);
+  assert.deepEqual({ ...lines[1], ts: 'T' }, {
+    ts: 'T', kind: 'reject', author: 'you', changes: [
+      { id: a.id, oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' },
+      { id: b.id, oldText: 'Cold starts remain slow on the first request of the day.\n', newText: '' },
+    ],
+  });
+  assert.match(lines[1].ts, ISO_RE);
+  absentShape(r);
+  assert.deepEqual(r.unsent, { comments: [], replies: [], accepted: 1, rejected: 2, watermark: null });
+  assert.deepEqual(deriveUnsent(r.store, lines), r.unsent);
+  // The send carries the counts; after it they are spent.
+  r = ok(w, { verb: 'log-send', path: w.report, args: { sid: SID, sessionName: 'web', comments: [], accepted: 1, rejected: 2, queued: false, watermark: null } });
+  assert.deepEqual(r.unsent, { comments: [], replies: [], accepted: 0, rejected: 0, watermark: null });
+  assert.deepEqual(readLogLines(lp).map((e) => e.kind), ['accept', 'reject', 'send']);
+  // A decision after the send counts again; the earlier lines are the same bytes.
+  const before = fileBytes(lp);
+  st = edit(w, w.report, 'cut p95 latency by 40%', 'trimmed p95 latency by 40%');
+  r = acceptAll(w, w.report, st);
+  assert.deepEqual(r.unsent, { comments: [], replies: [], accepted: 1, rejected: 0, watermark: null });
+  const after = fileBytes(lp);
+  assert.ok(after.length > before.length && after.subarray(0, before.length).equals(before), 'the log is only appended to');
+  assert.deepEqual(readLogLines(lp).map((e) => e.kind), ['accept', 'reject', 'send', 'accept']);
+});
+
+test('reject refuses not-text before any write on a file whose bytes are not UTF-8; accept, which writes no file, proceeds', () => {
+  const w = world();
+  const notes = path.join(w.root, 'docs', 'notes.md');
+  const bytes = Buffer.concat([Buffer.from('Hello world.\n'), Buffer.from([0xff, 0xfe]), Buffer.from('\nMore.\n')]);
+  fs.writeFileSync(notes, bytes);
+  const decoded = bytes.toString('utf8');
+  const sp = storePathFor(w.root, notes);
+  const op = { id: '1700000000000-0', author: 'web', authorId: SID, ts: 1700000000000, kind: 'sub', from: 0, oldText: 'Hi', newText: 'Hello', anchor: engine.makeAnchor(decoded, 0, 5) };
+  saveStore(w.root, sp, { v: 3, path: 'docs/notes.md', suggestions: [op], comments: [] }, decoded);
+  const st = status(w, notes);
+  assert.equal(st.hunks.length, 1);
+  assert.equal(st.hunks[0].id, op.id);
+  const sidecar = fileBytes(sp);
+  const r = refused(w, { verb: 'reject-all', path: notes, args: {}, fence: fileFenceFor(st) }, 'not-text');
+  assert.ok(r.error.includes('~/notes-api/docs/notes.md'), r.error);
+  assert.match(r.error, /not UTF-8 text/);
+  refused(w, { verb: 'reject', path: notes, args: { ids: [op.id] }, fence: fileFenceFor(st) }, 'not-text');
+  assert.deepEqual(fileBytes(notes), bytes, 'the bytes are untouched');
+  assert.deepEqual(fileBytes(sp), sidecar, 'the sidecar is untouched');
+  assert.equal(fs.existsSync(logPathFor(sp)), false);
+  const r2 = acceptAll(w, notes, st);
+  assert.deepEqual(r2.accepted, [op.id]);
+  assert.deepEqual(fileBytes(notes), bytes);
+});
+
+test('reject refuses too-large before any write when the restored text would exceed the 2 MB cap', () => {
+  const w = world();
+  const big = path.join(w.root, 'docs', 'big.md');
+  const filler = 'x'.repeat(TEXT_MAX_BYTES - 100) + '\n';
+  const chunk = 'REMOVE THIS CHUNK ' + 'y'.repeat(500) + '\n';
+  // The baseline is over the cap; the file after the session's deletion is under it.
+  fs.writeFileSync(big, 'head\n' + chunk + filler);
+  cliOk(w, 'edit', ['--file', big, '--old', chunk, '--new', '']);
+  const cur = fs.readFileSync(big, 'utf8');
+  assert.ok(Buffer.byteLength(cur, 'utf8') <= TEXT_MAX_BYTES);
+  const st = status(w, big);
+  assert.equal(st.hunks.length, 1);
+  assert.equal(st.hunks[0].kind, 'del');
+  const sidecar = fileBytes(st.storePath);
+  const r = refused(w, { verb: 'reject-all', path: big, args: {}, fence: fileFenceFor(st) }, 'too-large');
+  assert.ok(r.error.includes('~/notes-api/docs/big.md'), r.error);
+  assert.equal(fs.readFileSync(big, 'utf8'), cur);
+  assert.deepEqual(fileBytes(st.storePath), sidecar);
+  assert.equal(fs.existsSync(logPathFor(st.storePath)), false);
+  assert.equal(st.fileMtimeNs, statNs(big));
+});
+
+test('applyEdits applies the engine\'s reverse edits highest offset first and throws on one that does not fit', () => {
+  assert.equal(applyEdits('abcdef', [{ from: 4, to: 6, insert: 'X' }, { from: 1, to: 2, insert: '' }]), 'acdX');
+  assert.equal(applyEdits('abc', [{ from: 3, insert: 'd' }]), 'abcd');
+  assert.equal(applyEdits('abc', []), 'abc');
+  assert.throws(() => applyEdits('abc', [{ from: 2, to: 4, insert: '' }]), /does not fit/);
+  assert.throws(() => applyEdits('abc', [{ from: -1, to: 0, insert: '' }]), /does not fit/);
+  assert.throws(() => applyEdits('abc', [{ from: 2, to: 1, insert: '' }]), /does not fit/);
+  assert.throws(() => applyEdits('abc', [{ from: 1.5, to: 2, insert: '' }]), /does not fit/);
+  // Ascending order would shift the second edit onto moved text: refused, not applied.
+  assert.throws(() => applyEdits('abcdef', [{ from: 0, to: 1, insert: 'ZZ' }, { from: 2, to: 3, insert: '' }]), /does not fit/);
+  // Applying every reverse edit is the engine's baseline, for the whole set and for a subset.
+  const cur = 'The cat sat on the mat.';
+  const ops = [
+    { id: 'a', author: 'web', ts: 1, kind: 'sub', from: 4, oldText: 'dog', newText: 'cat' },
+    { id: 'b', author: 'web', ts: 2, kind: 'del', from: 12, oldText: 'quietly ', newText: '' },
+    { id: 'c', author: 'api', ts: 3, kind: 'ins', from: 19, oldText: '', newText: 'mat' },
+  ];
+  assert.equal(applyEdits(cur, engine.rejectAll(ops).edits), 'The dog sat quietly on the .');
+  assert.equal(applyEdits(cur, engine.rejectAll(ops).edits), engine.baselineOf(cur, ops));
+  const some = engine.rejectSuggestions(ops, ['a', 'c']);
+  assert.equal(applyEdits(cur, some.edits), engine.baselineOf(cur, ops.filter((o) => o.id !== 'b')));
+  assert.equal(applyEdits(cur, some.edits), 'The dog sat on the .');
+  assert.deepEqual(some.suggestions.map((s) => [s.id, s.from]), [['b', 12]], 'the survivor keeps its place when nothing before it moved');
 });
