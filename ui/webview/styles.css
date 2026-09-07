@@ -3825,7 +3825,11 @@ body.filebrowse-open { overflow: hidden; }
    node enters a row, so the Raw walks' row verification, the selection mapping and unpaint are untouched, and, like the
    row number, the label never enters a selection; a substitution is the point followed by the tint. Both wear the
    author's session colour as a 2px underline (--fc-author, set inline per mark; the accent when no session matches).
-   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). */
+   The tint and the struck wash are the chat diff's own tokens (.diff-add / .diff-del). The Rendered view places the
+   same point in the prose (the inline-display follow-on, 2026-09-07): an inline span, so the label wraps with the words
+   around it and wears the block's own face (a heading's size in a heading); the block's normal white-space folds a
+   multi-line label onto its line, where the Raw rows show its line endings. Show changes inline, in the panel's head,
+   leaves every mark off in both views. */
 .fc-ins { background: color-mix(in srgb, var(--green) 12%, transparent); border-bottom: 2px solid var(--fc-author, var(--accent));
   color: inherit; cursor: pointer; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .fc-del { border-bottom: 2px solid var(--fc-author, var(--accent)); cursor: pointer; user-select: none; -webkit-user-select: none; }

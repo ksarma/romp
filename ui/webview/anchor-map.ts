@@ -19,7 +19,10 @@
 //   - paintChangesRaw / paintChangesRendered / unpaintChanges (Slice 2) paint a session's pending changes:
 //     an insertion is its new text wrapped, a deletion a ZERO-WIDTH point whose struck label is CSS
 //     content, and the author's chip is CSS content too (`data-fc-chip` on a change's last Raw element),
-//     so no text node is ever added under a row and every Raw walk above stays exact.
+//     so no text node is ever added under a row and every Raw walk above stays exact. The Rendered view
+//     places the same point through the index map (paintRenderedPoint; the inline-display follow-on,
+//     2026-09-07), so a deletion reads struck in the prose too and the Rendered walks stay exact for the
+//     same reason.
 //
 // Everything walks a MINIMAL structural DOM (nodeType, childNodes, parentNode, data, splitText,
 // ownerDocument.createElement/createTextNode, getAttribute/setAttribute, insertBefore/appendChild/
@@ -416,7 +419,7 @@ function suffixLineView(raw: View, text: string): View {
   return new View(text, null, map);
 }
 
-type Hole = { reason: string; startN: number };
+type Hole = { reason: string; startN: number; endN: number };
 /** The emitted characters of one top-level block: `chars` are its non-whitespace rendered characters in
  *  order; `pos[k]` is the N index of chars[k], or -(h+1) for a character inside holes[h] (a nested code
  *  block or table the renderer shows but the mapping refuses). */
@@ -598,13 +601,13 @@ function walkBlocks(tokens: Token[], view: View, em: Emitter, p = 0): void {
       case "code": {
         // shown by the renderer, refused by the mapping: a hole the selection may not touch
         const tt = t as Tokens.Code;
-        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? "an indented code block" : "a code block", startN: view.n(p) });
+        em.holes.push({ reason: tt.codeBlockStyle === "indented" ? "an indented code block" : "a code block", startN: view.n(p), endN: view.n(p + raw.length) });
         em.putHole(tt.text, em.holes.length - 1);
         break;
       }
       case "table": {
         const tt = t as Tokens.Table;
-        em.holes.push({ reason: "a table", startN: view.n(p) });
+        em.holes.push({ reason: "a table", startN: view.n(p), endN: view.n(p + raw.length) });
         const h = em.holes.length - 1;
         for (const cell of tt.header) em.putHole(plainInline(cell.tokens), h);
         for (const row of tt.rows) for (const cell of row) em.putHole(plainInline(cell.tokens), h);
@@ -1191,6 +1194,48 @@ function offsetsIndex(c: ChangePaint, source: string): boolean {
 }
 const batchIndexes = (changes: ChangePaint[], source: string): boolean => changes.every((c) => offsetsIndex(c, source));
 
+/** The point element itself — a zero-width `span` with the change's data attributes, the label in
+ *  `data-fc-text` for the sheet's `::before` to draw, and the inline styles — shared by the Raw and the
+ *  Rendered painters so the two views' points are one element, byte for byte. */
+function makePoint(doc: DElement["ownerDocument"], className: string, data: Record<string, string>, label: string,
+                   styles: Record<string, string> | undefined): DElement {
+  if (!doc) throw new Error("anchor-map: node has no ownerDocument");
+  const m = doc.createElement("span");
+  m.setAttribute("class", className);
+  for (const k of Object.keys(data)) m.setAttribute("data-" + k, data[k]);
+  m.setAttribute("data-fc-text", label);
+  applyStyles(m, styles);
+  return m;
+}
+
+/** Insert `m` right after text node `t`. */
+function insertAfterText(t: DText, m: DElement): void {
+  const parent = t.parentNode as DElement;
+  let i = 0;
+  while (i < parent.childNodes.length && parent.childNodes[i] !== t) i++;
+  parent.insertBefore(m, i + 1 < parent.childNodes.length ? parent.childNodes[i + 1] : null);
+}
+
+/** Insert `m` at character `col` of the concatenated text of `nodes` (consecutive text nodes): before the
+ *  node the column begins, inside it after a split, or right after the last node when the column is the
+ *  text's end. False when there are no nodes to place it among. */
+function insertPointAt(nodes: DText[], col: number, m: DElement): boolean {
+  let cum = 0;
+  for (const t of nodes) {
+    const len = t.data.length;
+    if (col < cum + len) {
+      const parent = t.parentNode as DElement;
+      if (col === cum) parent.insertBefore(m, t);
+      else parent.insertBefore(m, t.splitText(col - cum));
+      return true;
+    }
+    cum += len;
+  }
+  if (!nodes.length) return false;
+  insertAfterText(nodes[nodes.length - 1], m);
+  return true;
+}
+
 /**
  * A zero-width marker element at source `offset` in the Raw view: inserted between the row's text nodes,
  * splitting one when the offset falls inside it, never adding a text node. The label is carried in
@@ -1212,34 +1257,8 @@ export function paintRawPoint(codeRoot: Element, source: string, offset: number,
   // a CRLF row's DOM text ends in the "\n" the parser made of its CR: an offset on the line ending sits
   // before it, at the end of the visible text, so the label never opens a new line under the row
   if (col === row.text.length && col > 0 && row.text[col - 1] === "\n") col--;
-  const doc = row.el.ownerDocument;
-  if (!doc) throw new Error("anchor-map: node has no ownerDocument");
-  const m = doc.createElement("span");
-  m.setAttribute("class", className);
-  for (const k of Object.keys(data)) m.setAttribute("data-" + k, data[k]);
-  m.setAttribute("data-fc-text", label);
-  applyStyles(m, styles);
-  const nodes = textNodes(row.el);
-  let cum = 0;
-  for (const t of nodes) {
-    const len = t.data.length;
-    if (col < cum + len) {
-      const parent = t.parentNode as DElement;
-      if (col === cum) parent.insertBefore(m, t);
-      else parent.insertBefore(m, t.splitText(col - cum));
-      return m as unknown as Element;
-    }
-    cum += len;
-  }
-  if (nodes.length) {
-    // at the end of the row's text: right after its last text node
-    const t = nodes[nodes.length - 1];
-    const parent = t.parentNode as DElement;
-    let i = 0;
-    while (i < parent.childNodes.length && parent.childNodes[i] !== t) i++;
-    parent.insertBefore(m, i + 1 < parent.childNodes.length ? parent.childNodes[i + 1] : null);
-    return m as unknown as Element;
-  }
+  const m = makePoint(row.el.ownerDocument, className, data, label, styles);
+  if (insertPointAt(textNodes(row.el), col, m)) return m as unknown as Element;
   // an empty row: the point goes into the row's text cell (its `.fv-ct`), else the row itself
   let host: DElement = row.el;
   for (let i = 0; i < row.el.childNodes.length; i++) {
@@ -1247,6 +1266,69 @@ export function paintRawPoint(codeRoot: Element, source: string, offset: number,
     if (isElement(c) && hasClass(c, "fv-ct")) { host = c; break; }
   }
   host.appendChild(m);
+  return m as unknown as Element;
+}
+
+/** Where source `offset` falls in the rendered text: the text node and the offset in it BEFORE which a
+ *  point at that source position sits. The block is the mapped (not refused) one whose source span holds
+ *  the offset, else the one that ends exactly there (a deletion after a block's last character, or at
+ *  the end of the file). Inside the block the point goes before the first emitted character at or past
+ *  the offset — or right after the last one before it, when the offset follows that character directly
+ *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows.
+ *  Null when no block holds the offset, the block is refused or has no element, or the offset sits inside
+ *  a hole (a nested code block or table the renderer shows but the mapping does not place): a point there
+ *  would land beside the wrong words, so the change keeps its card and Reveal instead. */
+function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: number } | null {
+  let blk: Block | null = null;
+  for (const b of idx.blocks) {
+    const bs = nOf(idx, b.startN), be = nOf(idx, b.endN);
+    if (bs <= offset && offset < be) { blk = b; break; }
+    if (offset === be && b.refused === null && b.dom.length) blk = b;   // the block that ends here, unless one begins here
+  }
+  if (!blk || blk.refused !== null || !blk.dom.length) return null;
+  // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
+  // if any, are hole characters (mapped characters are in source order, the Emitter's own rule).
+  let j = -1, k = -1;
+  for (let i = 0; i < blk.pos.length; i++) {
+    const p = blk.pos[i];
+    if (p < 0) continue;
+    if (nOf(idx, p) < offset) j = i; else { k = i; break; }
+  }
+  if (j < 0 && k < 0) return null;   // a block with no mapped text
+  const gapFrom = j + 1, gapTo = k < 0 ? blk.pos.length : k;
+  let after: boolean;
+  if (gapTo > gapFrom) {
+    // hole characters between the two: the point belongs before the hole or after it, never inside
+    const first = blk.holes[-blk.pos[gapFrom] - 1], last = blk.holes[-blk.pos[gapTo - 1] - 1];
+    if (first && j >= 0 && offset <= nOf(idx, first.startN)) after = true;
+    else if (last && k >= 0 && offset >= nOf(idx, last.endN)) after = false;
+    else return null;
+  } else if (k < 0) after = true;
+  else if (j < 0) after = false;
+  else after = nOf(idx, blk.pos[j]) + 1 === offset && nOf(idx, blk.pos[k]) !== offset;
+  if (!after) return nthNonWs(blk.dom[0], k);
+  const at = nthNonWs(blk.dom[0], j);
+  return at ? { t: at.t, off: at.off + 1 } : null;
+}
+
+/**
+ * The Rendered view's twin of paintRawPoint: the same zero-width element, placed in the rendered text at
+ * the position the index map gives source `offset` (renderedSpot), splitting a text node when the offset
+ * falls inside one and never adding a text node, so mapRenderedSelection and paintRendered read the body
+ * as before. Returns null when the offset cannot be placed (a refused block, a hole, an offset between
+ * blocks): the change stays unpainted and keeps its card.
+ */
+export function paintRenderedPoint(renderedRoot: Element, source: string, offset: number, className: string,
+                                   data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
+  const root = renderedRoot as unknown as DElement;
+  const spot = renderedSpot(renderedIndex(root, source), offset);
+  if (!spot) return null;
+  const m = makePoint(root.ownerDocument, className, data, label, styles);
+  const parent = spot.t.parentNode as DElement | null;
+  if (!parent) return null;
+  if (spot.off <= 0) parent.insertBefore(m, spot.t);
+  else if (spot.off >= spot.t.data.length) insertAfterText(spot.t, m);
+  else parent.insertBefore(m, spot.t.splitText(spot.off));
   return m as unknown as Element;
 }
 
@@ -1291,20 +1373,35 @@ export function paintChangesRaw(codeRoot: Element, source: string, changes: Chan
 /**
  * Paint pending changes over the Rendered view: an `ins` or `sub` through paintRendered over its new
  * text (the source-offset path, the text-match fallback inside a refused block), class `fc-ins`, with the
- * same data attributes and styles as the Raw marks. A `del` is never painted here; its card offers
- * Reveal. Returns which ids got paint and which did not, so the panel can mark the rest card-only; a
- * batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
+ * same data attributes and styles as the Raw marks; a `del` as the Raw view's zero-width `span.fc-del`
+ * point, placed through the index map (paintRenderedPoint) and labelled with the old text (deletionLabel);
+ * a `sub` as that point immediately before its tint, wherever the tint was found, so the struck old text
+ * and the new read together as they do in Raw. No chip: the plan gives the author chip to the Raw view.
+ * Returns which ids got paint and which did not — a deletion whose offset the map cannot place (a refused
+ * block, a hole), an insertion whose text is not on the page — so the panel can mark the rest card-only;
+ * a batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
  */
 export function paintChangesRendered(renderedRoot: Element, source: string, changes: ChangePaint[],
                                      stylesFor: (c: ChangePaint) => Record<string, string>): { painted: string[]; unpainted: string[] } {
   const painted: string[] = [], unpainted: string[] = [];
   if (!batchIndexes(changes, source)) return { painted, unpainted: changes.map((c) => c.id) };
   for (const c of changes) {
-    if (c.kind === "del" || c.curFrom === c.curTo) { unpainted.push(c.id); continue; }
-    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", changeData(c));
+    const data = changeData(c);
+    if (c.kind === "del") {
+      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, deletionLabel(c.oldText), stylesFor(c));
+      (p ? painted : unpainted).push(c.id);
+      continue;
+    }
+    if (c.curFrom === c.curTo) { unpainted.push(c.id); continue; }
+    const marks = paintRendered(renderedRoot, source, { start: c.curFrom, end: c.curTo }, "fc-ins", data);
     if (!marks || !marks.length) { unpainted.push(c.id); continue; }
     const styles = stylesFor(c);
     for (const m of marks) applyStyles(m as unknown as DElement, styles);
+    if (c.kind === "sub") {
+      const first = marks[0] as unknown as DElement;
+      const parent = first.parentNode as DElement | null;
+      if (parent) parent.insertBefore(makePoint(first.ownerDocument, "fc-del", data, deletionLabel(c.oldText), styles), first);
+    }
     painted.push(c.id);
   }
   return { painted, unpainted };
