@@ -807,8 +807,9 @@ _romp_state_dir() { printf '%s' "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.loca
 # the failure on the audit ledger. The `down` row went in before the stop, and the kernel's resume
 # notice reads the NEWEST row: left as it was, a later cut nobody recorded (an OOM, a hand restart)
 # would be reported to every cut turn as this romp down, on purpose. A `down-failed` row after it,
-# with the reason, says the stop did not happen (review 2026-09-06, finding 3).
-_romp_down_release() {   # <state-dir> <kernel-port> <now-flag> <why>
+# with the reason, says the stop did not happen (review 2026-09-06, finding 3). The third argument,
+# when set, skips the cancel: no hold was armed (a --now that found no kernel to ask, or no 200).
+_romp_down_release() {   # <state-dir> <kernel-port> <skip-cancel> <why>
     [[ -z "$3" ]] && { _romp_token_cfg | curl -s -m 5 --config - -H 'Content-Type: application/json' \
         -d '{"cancel": true}' -o /dev/null "http://127.0.0.1:$2/down" 2>/dev/null || true; }
     rm -f "$1/down-by-romp"
@@ -2411,18 +2412,30 @@ case "${1:-}" in
         fi
         _dn_state="$(_romp_state_dir)"
         _dn_kport="${ROMP_KERNEL_PORT:-29855}"
+        _dn_kalive() { [[ "$(curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$_dn_kport/healthz" 2>/dev/null)" == 200 ]]; }
         # 1. quiesce, through the kernel's own route (see the block comment). The kernel keeps the
         #    hold for the wait plus a grace, so the stop below lands on a still-quiet kernel; if the
-        #    stop never comes the hold lapses on its own.
-        if [[ -z "$_dn_now" ]]; then
-            _dn_out="$(_romp_token_cfg | curl -s -m "$(( 10#$_dn_wait_int + 16 ))" --config - \
-                        -H 'Content-Type: application/json' -d "{\"wait\": $_dn_wait}" \
+        #    stop never comes the hold lapses on its own. Under --now there is no wait, but the token
+        #    gate is the same door: when a kernel answers on the port, the request goes out with a
+        #    wait of 0 (the ask the probe makes anyway; a second wait-0 ask never shortens a hold),
+        #    and only a rejected token is reported. Before this, --now sent nothing token-gated until
+        #    the probe, so a --now aimed at another romp's kernel stopped this romp's own service and
+        #    manager first, then took the marker back at the probe's 401, and the kernel it had
+        #    stopped read as a crash (review round 3, finding 2). _dn_nocancel: a failure below skips
+        #    the release's cancel when no hold was armed here (--now with no kernel answering, or an
+        #    answer other than 200).
+        _dn_ask=1 _dn_nocancel="$_dn_now" _dn_qwait="$_dn_wait" _dn_qmax=$(( 10#$_dn_wait_int + 16 ))
+        if [[ -n "$_dn_now" ]]; then _dn_qwait=0 _dn_qmax=10; _dn_kalive || _dn_ask=""; fi
+        if [[ -n "$_dn_ask" ]]; then
+            _dn_out="$(_romp_token_cfg | curl -s -m "$_dn_qmax" --config - \
+                        -H 'Content-Type: application/json' -d "{\"wait\": $_dn_qwait}" \
                         -w '\n%{http_code}' "http://127.0.0.1:$_dn_kport/down" 2>/dev/null)" || true
             _dn_code="${_dn_out##*$'\n'}"
             _dn_body="${_dn_out%$'\n'*}"
             case "$_dn_code" in
-                200) _dn_quiesced=1
-                     DN_BODY="$_dn_body" python3 - <<'PYEOF' || true
+                200) _dn_quiesced=1 _dn_nocancel=""       # a hold is armed: a failure below releases it
+                     if [[ -z "$_dn_now" ]]; then         # --now asked for no wait, so there is none to report
+                         DN_BODY="$_dn_body" python3 - <<'PYEOF' || true
 import json, os
 try:
     d = json.loads(os.environ.get("DN_BODY") or "{}")
@@ -2435,16 +2448,16 @@ else:
     print("[romp] %s session(s) still mid-turn after %ss (%s) — stopping anyway; they pick up where "
           "they stopped at the next romp up" % (d.get("busy", "?"), d.get("waited", "?"), names))
 PYEOF
-                    ;;
-                000|"") echo "[romp] the kernel isn't answering on :$_dn_kport — nothing to quiesce" ;;
-                404)    echo "[romp] this kernel predates the quiesce route — stopping without waiting" ;;
+                     fi ;;
+                000|"") [[ -n "$_dn_now" ]] || echo "[romp] the kernel isn't answering on :$_dn_kport — nothing to quiesce" ;;
+                404)    [[ -n "$_dn_now" ]] || echo "[romp] this kernel predates the quiesce route — stopping without waiting" ;;
                 401|403)
                     # not ours: the kernel answering on this port does not know this romp's token, so
                     # nothing below (marker, service, manager, the probe's signal) may act on it. The
                     # `perf` verb reads a refused token the same way. Loud, and out.
                     echo "romp down: the kernel on :$_dn_kport is not the one this romp manages (it rejected the serve token); not touching it. Check ROMP_KERNEL_PORT and the state dir" >&2
                     exit 1 ;;
-                *)      echo "[romp] quiesce failed (HTTP $_dn_code) — stopping without waiting" >&2 ;;
+                *)      [[ -n "$_dn_now" ]] || echo "[romp] quiesce failed (HTTP $_dn_code) — stopping without waiting" >&2 ;;
             esac
         fi
         # 2. the marker (atomic: temp + mv), then the audit row — AFTER the wait, so the kernel's
@@ -2464,7 +2477,7 @@ PYEOF
         case $_dn_rc in
             0|3|4) ;;
             *)
-                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_now" "the login service did not stop"
+                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_nocancel" "the login service did not stop"
                 echo "romp down: the login service did not stop — the kernel keeps running" >&2
                 exit 1 ;;
         esac
@@ -2487,7 +2500,7 @@ PYEOF
             # still answering: the stop did not land. Release the hold, take the marker back (it would
             # report a running kernel as down on purpose) and name what is still up and where.
             _dn_pid="$(DN_ST="$_dn_st" python3 -c 'import json, os; print((json.loads(os.environ["DN_ST"]).get("manager") or {}).get("pid") or "")' 2>/dev/null || true)"
-            _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_now" "a manager still answers on :$_dn_mport${_dn_pid:+ (pid $_dn_pid)}"
+            _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_nocancel" "a manager still answers on :$_dn_mport${_dn_pid:+ (pid $_dn_pid)}"
             echo "romp down: a manager is still running on :$_dn_mport${_dn_pid:+ (pid $_dn_pid)} after being asked to stop; the kernel keeps running. Stop it by hand, then run romp down again" >&2
             exit 1
         fi
@@ -2503,7 +2516,6 @@ PYEOF
         #    stopped gets that drain's time before it is asked again, since a second SIGTERM inside
         #    the drain writes a second, emptier ledger row over the first. One that still answers
         #    after its own drain time has passed is the same loud failure as a lingering manager.
-        _dn_kalive() { [[ "$(curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$_dn_kport/healthz" 2>/dev/null)" == 200 ]]; }
         _dn_kstop="" _dn_kpid=""
         if [[ "$_dn_rc" -eq 0 || -n "$_dn_mgr" ]]; then
             for _ in $(seq 1 12); do _dn_kalive || break; sleep 0.25; done
@@ -2516,8 +2528,8 @@ PYEOF
             # serve token, a route the kernel gates and answers with its pid, never from the
             # auth-exempt GET /version alone: /version answers any local process, so it proves
             # neither that the kernel is this romp's nor that it quiesced (the 2026-09-06 incident
-            # in the block comment above). The ask is the quiesce with no wait, so under --now it is
-            # the one ask the kernel gets, and a second quiesce never shortens a hold step 1 armed.
+            # in the block comment above). The ask is the quiesce with no wait, the same ask step 1
+            # makes under --now, and a second quiesce never shortens a hold step 1 armed.
             # A 401/403 is another romp's kernel. A 200 without a pid is a kernel from before the
             # field; a /version pid that differs is a kernel other than the one that answered. None
             # of these is signaled: the hold is released, the marker taken back, the reason named.
@@ -2550,8 +2562,8 @@ PYEOF
             esac
             if [[ -n "$_dn_why" ]]; then
                 # a 200 armed a hold (the confirmation's own, under --now too): release it
-                _dn_rel_now="$_dn_now"; [[ "$_dn_ccode" == 200 ]] && _dn_rel_now=""
-                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_rel_now" "the kernel on :$_dn_kport was not confirmed as this romp's ($_dn_why)"
+                _dn_rel_skip="$_dn_nocancel"; [[ "$_dn_ccode" == 200 ]] && _dn_rel_skip=""
+                _romp_down_release "$_dn_state" "$_dn_kport" "$_dn_rel_skip" "the kernel on :$_dn_kport was not confirmed as this romp's ($_dn_why)"
                 echo "romp down: the kernel on :$_dn_kport was not confirmed as the one this romp manages ($_dn_why); not touching it. Check ROMP_KERNEL_PORT and the state dir" >&2
                 exit 1
             fi

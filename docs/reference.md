@@ -730,8 +730,11 @@ Before stopping, `romp down` gives the turns in flight `--wait` seconds
 (default 5, up to 600) to reach a turn boundary. It asks the kernel to quiesce
 (`POST /down`), which holds new turn starts and new session creation, and then
 reports whether the kernel went quiet or which sessions are still mid-turn and
-about to be cut. `--now` skips the quiesce altogether (no wait; the one hold it
-arms is the kernel probe's ownership check, right before the signal). A
+about to be cut. `--now` skips the wait, not the request: when a kernel answers
+on the port, the same `POST /down` goes out with a wait of 0 and nothing is
+reported about it, so the token check below still comes first; the hold it arms
+is the grace the kernel keeps after any wait, and the kernel probe re-arms it
+right before the signal. A
 `romp new` or a dashboard create during the hold is refused with one line
 saying the kernel is being stopped on purpose and no new session can start; the
 line names no command, because inside a session its reader is an agent, and an
@@ -747,9 +750,10 @@ is another romp's or another program's. When the quiesce request is rejected,
 `romp down` prints `romp down: the kernel on :<port> is not the one this romp
 manages (it rejected the serve token); not touching it. Check
 ROMP_KERNEL_PORT and the state dir` and exits 1, before the marker is written
-or anything is stopped. `--now` skips the quiesce, so the first check is the
-kernel probe's, after the marker is written and the service stopped; the probe
-then removes the marker.
+or anything is stopped. Under `--now` the same request goes out with a wait of
+0 whenever a kernel answers on the port, so a rejected token ends the command
+at the same point; the kernel probe asks again right before the signal, and a
+rejection there removes the marker.
 
 The exit code of `romp-service stop` decides the first step; the probes after
 it run every time:

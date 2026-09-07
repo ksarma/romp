@@ -1728,6 +1728,7 @@ MOCK
 start_down_kernel() {   # $1 = the /down reply body; $2 = "" | ignore-term | exit-after-down | refuse-401 | no-pid
                         #      | exit-before-confirm (leaves before answering the second POST /down)
                         #      | exit-before-version (answers every POST /down, leaves before answering GET /version)
+                        #      | refuse-second-401 (accepts the first POST /down, answers 401 to every later one)
     printf '%s' "$1" > "$TEST_DIR/down-reply"
     export ROMP_SERVE_TOKEN="test-token-DO-NOT-USE"
     rm -f "$TEST_DIR/kport" "$TEST_DIR/kpid"
@@ -1785,7 +1786,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if mode == "exit-before-confirm" and ndown == 2:
                 note("exiting before answering POST /down #2")   # gone between the quiesce and the probe
                 os._exit(0)
-        if mode == "refuse-401" and self.path == "/down":
+        if self.path == "/down" and (mode == "refuse-401" or (mode == "refuse-second-401" and ndown >= 2)):
             self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
         if not ok:
             self.send_response(403); self.send_header("Content-Length", "0"); self.end_headers(); return
@@ -1904,12 +1905,16 @@ MOCK
     [ "$status" -ne 0 ]
 }
 
-@test "romp down --now: no quiesce, the marker and audit say --now, the stop still goes through the service" {
-    start_down_kernel '{"ok": true, "quiet": true}'
+@test "romp down --now: no wait (the one ask is the token check with a wait of 0, unreported), the marker and audit say --now, the stop still goes through the service" {
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
     mock_service 0
     run run_romp down --now
     [ "$status" -eq 0 ]
-    [ ! -e "$TEST_DIR/kreq" ]                        # the kernel was never asked
+    # the kernel was asked once, with no wait: the token gate answers before anything is stopped
+    # (review round 3, finding 2), and --now reports nothing about a wait it did not make
+    [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 1 ]
+    grep -q '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq"
+    [[ "$output" != *"quiet:"* && "$output" != *"mid-turn"* ]]
     grep -q '"cmd": "romp down --now"' "$XDG_STATE_HOME/romp/down-by-romp"
     grep -q '"action": "down"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
     grep -q '"reason": "--now"' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
@@ -2135,30 +2140,67 @@ PY
 }
 
 @test "romp down --now: a bare kernel is confirmed under the token before the signal (the quiesce with no wait)" {
-    # --now skips step 1, so the ownership check is the probe's own: POST /down {"wait": 0}, no wait
+    # --now skips the wait, not the check: POST /down {"wait": 0} goes out first (before the marker) and
+    # again at the probe, right before the signal; neither ask shortens the hold the other armed
     start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}'
     mock_service 3
     mock_manager 1
     local kpid; kpid="$(cat "$TEST_DIR/kpid")"
     run run_romp down --now
     [ "$status" -eq 0 ]
-    [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 1 ]
-    grep -q '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq"
+    [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 2 ]
+    [ "$(grep -c '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq")" -eq 2 ]
     grep -q '^SIGTERM$' "$TEST_DIR/kget"
     [[ "$output" == *"[romp] down: a kernel was running on :$ROMP_KERNEL_PORT (pid $kpid) with no manager; stopped it. \`romp up\` starts it again"* ]]
     kernel_port_closed; KERNEL_PID=""
     [ -f "$XDG_STATE_HOME/romp/down-by-romp" ]
 }
 
-@test "romp down --now: a kernel that rejects the token at the probe is left alone, marker taken back, exit 1" {
-    start_down_kernel '{"ok": true}'
-    export ROMP_SERVE_TOKEN="some-other-token"
+@test "romp down --now: a kernel that rejects the token is refused before the marker, the service and the manager: exit 1, nothing touched" {
+    # review round 3, finding 2: --now sent nothing token-gated until the probe, so a --now aimed at
+    # another romp's kernel first stopped this romp's own service and manager, then took the marker
+    # back at the probe's 401, and the kernel it had stopped read as a crash. Both codes a gate answers.
+    mock_service 0
+    mock_manager 0
+    local code kpid
+    for code in 403 401; do
+        : > "$MOCK_LOG"; rm -f "$TEST_DIR/kreq" "$TEST_DIR/kget"
+        if [ "$code" = 403 ]; then
+            start_down_kernel '{"ok": true}'
+            export ROMP_SERVE_TOKEN="some-other-token"       # the token this romp holds is not that kernel's
+        else
+            start_down_kernel '{"ok": true}' refuse-401
+        fi
+        kpid="$(cat "$TEST_DIR/kpid")"
+        run run_romp down --now
+        [ "$status" -eq 1 ]
+        [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT is not the one this romp manages (it rejected the serve token); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+        [[ "$output" != *"[romp] down"* ]]
+        [ "$(grep -c '^/down' "$TEST_DIR/kreq")" -eq 1 ]   # asked once, with a wait of 0; it said no; that was the end
+        grep -q '{"wait": 0}$' "$TEST_DIR/kreq"
+        [ ! -e "$XDG_STATE_HOME/romp/down-by-romp" ]        # no marker: nothing of ours was stopped
+        run grep -q '"action": "down' "$XDG_STATE_HOME/romp/restart-audit.jsonl"
+        [ "$status" -ne 0 ]                                 # no down row, no down-failed row
+        run grep -q 'called' "$MOCK_LOG"                    # neither the service nor the manager
+        [ "$status" -ne 0 ]
+        run grep -q '/version\|SIGTERM' "$TEST_DIR/kget"    # its pid was never asked for, let alone signaled
+        [ "$status" -ne 0 ]
+        kill -0 "$kpid"                                     # alive
+        kill -9 "$KERNEL_PID"; KERNEL_PID=""
+    done
+}
+
+@test "romp down --now: a kernel that accepted the token at the start but rejects it at the probe is left alone, marker taken back, exit 1" {
+    # the probe's own gate stays: the kernel on the port at the signal need not be the one that
+    # answered at the start
+    start_down_kernel '{"ok": true, "quiet": true, "busy": 0, "inflight": [], "waited": 0}' refuse-second-401
     mock_service 3
     mock_manager 1
     local kpid; kpid="$(cat "$TEST_DIR/kpid")"
     run run_romp down --now
     [ "$status" -eq 1 ]
     [[ "$output" == *"romp down: the kernel on :$ROMP_KERNEL_PORT is not the one this romp manages (it rejected the serve token); not touching it. Check ROMP_KERNEL_PORT and the state dir"* ]]
+    [ "$(grep -c '^/down token=ok {"wait": 0}$' "$TEST_DIR/kreq")" -eq 2 ]
     run grep -q 'SIGTERM' "$TEST_DIR/kget"
     [ "$status" -ne 0 ]
     kill -0 "$kpid"
