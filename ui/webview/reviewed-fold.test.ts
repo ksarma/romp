@@ -32,7 +32,7 @@ test("kernel: summaryStale = followupAt postdates the read summary; self-clears 
 
 test("kernel: reviewedEarlier keys on the SHARED review boundary, never a second derivation", () => {
   // the flatten call moved into the per-session memo's tree() (2026-09-07); the boundary is still jd.review_boundary
-  assert.match(KERNEL, /self\.flatten\(nid, rows, self\.anchor_deps, writes, boundary=jd\.review_boundary\(self\.nodes\[nid\]\)\)/);
+  assert.match(KERNEL, /self\.flatten\(nid, rows, deps, writes, boundary=jd\.review_boundary\(self\.nodes\[nid\]\)\)/);
   assert.match(KERNEL, /"tree": E\.tree\(nid\)\}/);
   assert.match(KERNEL, /"reviewedEarlier": bool\(boundary and out and done\s*\n\s*and jd\._done_since\(nd\) <= boundary\) or None,/);
   // the shared helper: settle boundary advanced to the summary watermark on a reopen past it
