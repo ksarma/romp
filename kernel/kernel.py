@@ -6195,7 +6195,14 @@ def _write_user_todos(cur):
 def _add_user_todo(sid, text, detail=""):
     """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
     for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
-    optional longer context; empty means the short line carries it all and no key is stored."""
+    optional longer context; empty means the short line carries it all and no key is stored.
+    REFUSES (ValueError, before any write) a sid the store's own reader rejects: this is the one
+    writer that mints a NEW top-level key, and one key that fails _user_todo_store_shaped flags the
+    whole file — every open row then reads as empty on every surface and every later write (a
+    register, an answer stamp, a dismiss, a withdraw, a reopen) is refused until the file is
+    hand-edited. The stamp and reopen helpers touch existing keys only and need no such check."""
+    if not _safe_id(sid):
+        raise ValueError("user-todo sid must be a session id (a safe path component): %r" % (str(sid)[:80],))
     with _user_todos_lock:                           # full read-modify-write under the lock: a racing
         cur = dict(_user_todos())                    # register otherwise loses CONFIRMED rows (copy:
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]   # never mutate the cache)
@@ -47940,6 +47947,11 @@ _CHAT_MOBILE_CSS = (
     "body.theme-light #mcur{color:var(--menu-fg)}"
     "body.theme-light #mcur.colored{color:var(--cbg)}"
     "body.theme-light #madd{color:var(--text-muted)}"
+    # the two user-todo flags are text tiers too (white-on-dark literals in this sheet), so they take
+    # the same override as .mclose/#madd — or the flag shows on a dark phone and vanishes on a light
+    # one: white on the light chip and on the cream dropdown
+    "body.theme-light #mcur .utf{color:var(--text-muted)}"
+    "body.theme-light .mrow .utflag{color:var(--text-muted)}"
     ".mrow{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;"
     "border-bottom:1px solid #ffffff12;font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     ".mrow:last-child{border-bottom:0}"
@@ -54955,6 +54967,14 @@ class Handler(BaseHTTPRequestHandler):
                 text = str((body or {}).get("text") or "").strip() if isinstance(body, dict) else ""
                 if not sid or not text:
                     return self._send(400, json.dumps({"ok": False, "error": "id and text required"}), "application/json")
+                if not _safe_id(sid):
+                    # A shape error like the two above, so it comes BEFORE the switch and the forward:
+                    # the store's reader (_user_todo_store_shaped) refuses a key that is not a session
+                    # id, and this route is the one writer that can mint such a key — one row under
+                    # it would hide every open todo and refuse every later write until the file is
+                    # hand-fixed. _add_user_todo refuses it too; answering here keeps it a 400 the
+                    # bus can word, not a 500, and never relays a malformed id to another kernel.
+                    return self._send(400, json.dumps({"ok": False, "error": "id must be a session id"}), "application/json")
                 if not _user_todos_on():
                     # The feature switch (the user 2026-09-03): refuse in one plain line — never a
                     # silent no-op the bus would echo back as saved. Nothing is written; rows already
