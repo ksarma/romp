@@ -51,10 +51,9 @@ os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
 # A runtime provider can also be selected directly from the manager's environment. Remove its
 # inherited reference before module loading, so an auth test cannot resolve a developer's vault
 # merely because the isolated service.env is absent. Tests set synthetic references explicitly. The
-# credential command (keysource's command kind) is selected by the same door, and an empty value is an
-# explicit, invalid choice rather than an absent one, so the variable is removed rather than blanked.
+# credential command (keysource's command kind) is selected by the same door and is removed with its
+# tuning variables below (_CREDENTIAL_VARS).
 os.environ.pop("ROMP_API_KEY_REF", None)
-os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
 # Every shell under a romp-managed session inherits ROMP_SUPERVISED=1 from the kernel (the service
 # unit exports it), and keysource gives that variable authority: a supervised manager reads the env
 # file only and ignores a startup key. Twenty-five tests that stage a startup key went red when the
@@ -75,6 +74,17 @@ def _reset_keysource_state():
             m._CACHE = ((), "")
 
 
+def _reset_envsource_state():
+    """envsource (the command kind's runtime, kernel/envsource.py) caches the set the last command run
+    printed, keyed on the source and the selector file; under one pytest process a set one module's
+    fake command printed would otherwise be served to the next module's first read. Every loaded copy
+    is reset beside keysource's."""
+    import sys
+    for name, m in list(sys.modules.items()):
+        if "envsource" in name and callable(getattr(m, "_reset", None)) and hasattr(m, "SELECTOR_FILE_VAR"):
+            m._reset()
+
+
 @pytest.fixture(autouse=True)
 def _no_real_service_env():
     """Re-asserted, not defaulted: a module-level write in one test file executes during collection
@@ -84,7 +94,6 @@ def _no_real_service_env():
     for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
         os.environ[var] = _NO_SERVICE_ENV
     os.environ.pop("ROMP_API_KEY_REF", None)
-    os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
     os.environ.pop("ROMP_SUPERVISED", None)
     _reset_keysource_state()
     yield
@@ -164,6 +173,98 @@ def _no_cli_scope():
     for v in _CLI_SCOPE_LIMIT_VARS:
         os.environ.pop(v, None)
     yield
+
+
+# No test may run the REAL credential command: kernel/envsource.py runs the command keysource selects
+# (ROMP_CREDENTIAL_COMMAND, an installation's secret-store command) at backend construction and on
+# every stale read, and a self-hosted romp's tool shells inherit the manager's environment, variable
+# included. Popped, so every test starts with no command source, no names and the default timeout; a
+# test that exercises the command source writes its own fake script and builds or sets what it needs
+# in setUp (which runs after this fixture). Popped rather than blanked: keysource selects the command
+# kind by the variable's PRESENCE at the environment door, as it does the reference, so an empty value
+# is an explicit, invalid choice rather than an absent one. Import-time for collection, per-test
+# re-assert below, on the same reasoning as the manager-port floor. The env-file floor above already
+# keeps the same lines from being read out of the real service.env.
+_CREDENTIAL_VARS = ("ROMP_CREDENTIAL_COMMAND", "ROMP_CREDENTIAL_NAMES", "ROMP_CREDENTIAL_TIMEOUT_S")
+for _v in _CREDENTIAL_VARS:
+    os.environ.pop(_v, None)
+
+# ...and no test may read the REAL selector file: envsource.selector_path defaults to
+# ${XDG_CONFIG_HOME:-~/.config}/romp/credential-selector, so a command-source test that wrote its fake
+# command and forgot this variable would read this machine's selector file (its token as `$1`, its
+# stat identity in the cache key) and pass or fail on what the box had selected. FLOORED to a path
+# under the state root that is never created, not popped like the three above: an absent variable is
+# the one unsafe state here, since absent means the default. The "no selector" case is the result
+# (read_selector() answers ("", ""), the command runs with an empty `$1`), exactly as on a box that
+# never ran `romp keyswap <name>`. A test that needs a selector points the variable at a temp path in
+# setUp, which runs after the fixture; tests/test_envsource.py's Floor class pins this.
+_NO_SELECTOR = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-credential-selector")
+os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = _NO_SELECTOR
+
+
+@pytest.fixture(autouse=True)
+def _no_credential_command():
+    for var in _CREDENTIAL_VARS:
+        os.environ.pop(var, None)
+    os.environ["ROMP_CREDENTIAL_SELECTOR_FILE"] = _NO_SELECTOR
+    _reset_envsource_state()
+    yield
+
+
+_SELECTOR_FLOOR_VIOLATION = None   # the refusal below, held for pytest_runtest_setup when this process is an xdist worker
+
+
+def _selector_floor_violation():
+    """The refusal's text when ROMP_CREDENTIAL_SELECTOR_FILE is absent or names a file that exists; None
+    while the floor holds."""
+    p = os.environ.get("ROMP_CREDENTIAL_SELECTOR_FILE") or ""
+    if p and not os.path.exists(p):
+        return None
+    return ("ROMP_CREDENTIAL_SELECTOR_FILE is %s after collection: a test module popped it, or pointed it at a "
+            "real file, at import. Floor it at module level to a path that does not exist, as tests/conftest.py "
+            "and tests/test_envsource.py do." % ("absent" if not p else "a path that exists (%s)" % p))
+
+
+def pytest_collection_finish(session):
+    """The import-time half of the selector floor, checked where it can fail: collection runs every test
+    module's top level after the floor above, and a module that pops ROMP_CREDENTIAL_SELECTOR_FILE there
+    (or points it at a file that exists) undoes the floor for every module collected after it. A later
+    module reading the selector at import would read the developer's own selector file, the read the
+    floor exists to prevent, before any per-test re-assert runs. Refused here, naming the fix, rather
+    than left to pass on what the box has selected.
+
+    Refused two ways, because a pytest-xdist worker cannot refuse here. The controller never collects
+    (xdist skips its collection), so this hook runs only in the workers, and a UsageError raised there
+    ends the worker before it reports anything: the controller then dies on an internal assertion,
+    forty lines that never name the variable or the fix. In a worker the refusal is held instead, and
+    every item fails at setup with it (pytest_runtest_setup below), which the controller reports as it
+    reports any failure. When nothing is selected (a `-k` that deselects everything) no setup runs, so
+    the worker asks for the stop itself: session.shouldfail, the field `-x` sets, which xdist carries
+    to the controller at the worker's finish and the controller reports as `Interrupted: <the
+    refusal>`, exit status 2 (otherwise the held refusal goes unreported and the run ends `no tests
+    ran`, exit status 5, saying nothing). session.items is final by this hook (deselection runs in
+    pytest_collection_modifyitems, before it) and the same on every worker, so an empty list means no
+    item can run anywhere; a worker the scheduler happens to give no item while others run theirs
+    says nothing, since their items carry it. Serially the UsageError stands: one line, nothing runs,
+    a `-k` that deselects everything included; `--collect-only` is serial too, xdist leaves it alone.
+    tests/test_envsource.py's Floor class pins all three."""
+    global _SELECTOR_FLOOR_VIOLATION
+    msg = _selector_floor_violation()
+    if msg is None:
+        return
+    if hasattr(session.config, "workerinput"):     # an xdist worker: the message would die with the process
+        _SELECTOR_FLOOR_VIOLATION = msg
+        if not session.items:                      # nothing will reach pytest_runtest_setup
+            session.shouldfail = msg
+        return
+    raise pytest.UsageError(msg)
+
+
+def pytest_runtest_setup(item):
+    """The worker half of the refusal above when items were selected: every item fails with the message,
+    none runs."""
+    if _SELECTOR_FLOOR_VIOLATION:
+        pytest.fail(_SELECTOR_FLOOR_VIOLATION, pytrace=False)
 
 
 # No test may reach the machine's REAL tmux server (2026-09-06): keysource.claim_op_env scrubs the tmux
