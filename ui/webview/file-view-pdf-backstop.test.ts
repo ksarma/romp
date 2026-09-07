@@ -508,7 +508,7 @@ test("source: the constant, exported and the one figure the notice names; armed 
   assert.match(show, /\}\)\.then\(\(h\) => \{\n\s*if \(my !== pdfSeq \|\| !wrap\.isConnected\) \{ h\.dispose\(\); return; \}[^\n]*\n\s*disarmBackstop\(\);/,
     "the render settling disarms it, after its stale guard and before the page-less check");
   assert.match(VIEW, /const disarmBackstop = \(\) => \{ clearTimeout\(pdfBackstop\); pdfBackstop = undefined; \};/);
-  assert.match(VIEW, /const dropPdf = \(\) => \{ pdfSeq\+\+; disarmBackstop\(\); if \(pdfHandle\) \{ pdfHandle\.dispose\(\); pdfHandle = null; \} \};/,
-    "retiring the attempt disarms it: the panel closing, a reload, both of the viewer's exits");
+  assert.match(VIEW, /const dropPdf = \(\) => \{ pdfSeq\+\+; disarmBackstop\(\); abortPdfAttempt\(\); if \(pdfHandle\) \{ pdfHandle\.dispose\(\); pdfHandle = null; \} \};/,
+    "retiring the attempt disarms it, and aborts it while unsettled (file-view-pdf-lifecycle.test.ts): the panel closing, a reload, both of the viewer's exits");
   assert.equal((VIEW.match(/setTimeout\(/g) || []).length, 3, "the viewer's timers: the two label restores and this one deadline — a new timer here needs an event it approximates named, or this rule's failsafe carve-out");
 });
