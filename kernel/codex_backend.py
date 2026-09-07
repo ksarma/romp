@@ -820,13 +820,14 @@ class CodexBackend:
                 old = []
             bg = bg or (old[2] if len(old) > 2 else "")
             fg = fg or (old[3] if len(old) > 3 else "")
+            emoji = old[4] if len(old) > 4 else ""   # the kernel's tab emoji (5th field) rides along
             tmp = d / (s.sid + ".tmp")
             try:
                 tmp.unlink(missing_ok=True)   # a planted FIFO at the fixed staging name blocks
             except OSError:                   # open(); a leaked stray must not shadow the write
                 pass
             try:
-                tmp.write_text("%s\t%s\t%s\t%s\n" % (s.name, s.cwd, bg, fg))
+                tmp.write_text("%s\t%s\t%s\t%s%s\n" % (s.name, s.cwd, bg, fg, ("\t" + emoji) if emoji else ""))
                 os.replace(str(tmp), str(d / s.sid))
             finally:
                 tmp.unlink(missing_ok=True)   # never LEAK the staging file: names consumers
