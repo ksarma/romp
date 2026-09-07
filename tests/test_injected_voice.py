@@ -139,6 +139,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the user's own words; the quoting frame around them is romp-authored and scanned here
             "comment thread opener": km._comment_first_message(
                 "Cap the retry delay at two minutes.", "Why two minutes and not five?"),
+            # the reply to a USER TODO (plans/user-todos.md): the todo's own short line anchors the
+            # user's answer (`Re: <text> — <reply>`) — the frame is romp-authored and scanned here
+            "user-todo answer": km._user_todo_answer_body(
+                "Need the auth-scheme decision to wire login — building the open routes meanwhile",
+                "Go with the session cookie for now."),
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
@@ -263,15 +268,16 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the wrap-up is a stop order, not a status ask; a TYPED follow-up carries the user's OWN
             # words as its body, so there is no romp-authored ask in it to check; the DEBT reminder
             # asks for a reply to a PEER, not a progress report to the user; a comment thread's
-            # opener is the user's own comment on a quoted passage — a conversation, never a nudge
+            # opener is the user's own comment on a quoted passage — a conversation, never a nudge;
+            # a user-todo answer is the user's own reply to a need the agent flagged — same class
             # …and the edit trace is an FYI about something the user already DID (a file changed under
             # the session) — telling, not asking; a status question bolted on would be noise
             # …and the MERGE handoff is a record handed over with direction ("account for it"),
             # never a status ask — bolting a progress question onto it would be noise
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
-                        "debt reminder (several)", "comment thread opener", "edit trace",
-                        "comment-thread merge", "compaction suggestion"):
+                        "debt reminder (several)", "comment thread opener", "user-todo answer",
+                        "edit trace", "comment-thread merge", "compaction suggestion"):
                 #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()
