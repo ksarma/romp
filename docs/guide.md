@@ -443,9 +443,11 @@ A session gets two tools alongside its mail tools (see
   description tells the session what qualifies: something it is waiting on you
   for, never a status update or an FYI. It also tells the session to withdraw
   the request the moment the need is met.
-- `withdraw_user_todo` takes the id and takes the request back. Withdrawing an
-  id that is unknown or already cleared returns a plain refusal, never a silent
-  success.
+- `withdraw_user_todo` takes the id and takes the request back. Withdrawing a
+  request you already answered or dismissed, or one the session already
+  withdrew, gets a plain answer saying so, with the time, and no error: the
+  need is met, which is what the session wanted. An id that is unknown or
+  another session's is refused. Neither is a silent success.
 
 ![The session files a request in the middle of its turn; the section appears under the transcript and the tab gains its flag](assets/guide/user-todos-filed.gif){ width="100%" }
 

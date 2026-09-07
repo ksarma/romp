@@ -466,9 +466,15 @@ A session can flag a decision or an input it needs from you and keep working
 meanwhile. Each open request is listed under *Waiting on you* on the card at the
 bottom of that session's transcript, with Reply and Dismiss, and a session that
 resumes after a restart or a compaction is handed its open requests back so it
-can withdraw the ones that no longer apply. The guide's
-[User todos](guide.md#user-todos) section covers what you see and what the
-session sees.
+can withdraw the ones that no longer apply. A session that withdraws a request
+you already answered or dismissed, or one it already withdrew, is told so
+plainly, with the time, and not handed an error; only an id that is unknown or
+another session's is refused as one. A withdrawal the kernel cannot carry out is
+refused, never reported as closed: a request held on an attached machine the
+kernel cannot reach, or one running older romp, is reported as still standing,
+and a stored request whose closing record is damaged is reported as unreadable,
+with the record named. The guide's [User todos](guide.md#user-todos) section
+covers what you see and what the session sees.
 
 The feature is off by default. The gear's **User todos** checkbox (under
 *Sessions*) turns it on for one machine at a time: each kernel keeps its own
