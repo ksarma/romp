@@ -2036,16 +2036,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   the awaiting-lift job's per-session identity gate: `skip` and `load`
   (session-cycles that took no store read against the ones that read it, a
   probe on the shared read-only view), `shared` (probes the shared cache
-  answered), `writer` (writer loads taken because a lift was due) and `noop`
+  answered), `writer` (session-ticks that loaded the writer's copy because a
+  lift was due) and `noop`
   (writer loads whose fresh decision filed nothing, the store having moved
   between the probe and the load), and the gauge `entries` (sessions
   remembered). `bg_tops` is the placed-launch memo behind that lift and the
   feed's background-task classification, keyed on the parse object and the
   store object: `hit` and `miss` (calls answered from the per-version map
-  against resolved), `resolve` (launch ids resolved), `walk` and `walk_neg`
-  (transcript walks, and the walks that left a launch unresolved),
-  `idx_build` (placement indexes built, one per store version asked) and the
-  gauge `entries` (sessions holding a map). `goals_shared`
+  against looked up), `resolve` (launch ids looked up on a miss, placed or
+  not), `walk` and `walk_neg` (transcript walks, and the walks that left a
+  launch unresolved: an upper bound on what a negative walk cache would
+  save), `idx_build` (placement indexes built, one per store object asked, a
+  writer's private copy included) and the gauge `entries` (sessions holding a
+  map). `goals_shared`
   is the shared read-only goal-store cache the pusher's read-only sites load
   through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
   did not), `refuse` (a fill under a moving archive, served but not

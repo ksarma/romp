@@ -408,15 +408,18 @@ class _PerfStats:
                                    inputs gate, see _lift_seen) -> skip / load (session-cycles
                                    that took no store read vs the ones that read it, the probe on
                                    the shared view), shared (probes the shared cache answered),
-                                   writer (the writer loads taken because a lift was due) / noop
-                                   (writer loads whose fresh decision filed nothing) and the gauge
+                                   writer (session-ticks that loaded the writer's copy because a
+                                   lift was due) / noop (writer loads whose fresh decision filed
+                                   nothing) and the gauge
                                    entries (sids remembered); bg_tops (the placed-launch memo
                                    behind the lift and the feed's task classification,
                                    _bg_placed_tops, keyed on the parse and store objects) -> hit /
-                                   miss (calls answered from the per-version map vs resolved),
-                                   resolve (tids resolved), walk / walk_neg (transcript walks, and
-                                   the walks that left a tid unresolved), idx_build (placement
-                                   indexes built, one per store version asked) and the gauge
+                                   miss (calls answered from the per-version map vs looked up),
+                                   resolve (tids looked up on a miss, placed or not), walk /
+                                   walk_neg (transcript walks, and the walks that left a tid
+                                   unresolved: an upper bound on what a negative walk cache would
+                                   save), idx_build (placement indexes built, one per store object
+                                   asked, a writer's copy included) and the gauge
                                    entries (sids holding a map); goals_shared (the shared read-only
                                    goal-store cache the pusher's read-only sites load through,
                                    jd.load_goals_shared) -> hit / miss / compare_miss (identity
@@ -9804,9 +9807,10 @@ def _lift_gate_report():
     """The gate's counters plus its occupancy, for /perf: `skip` session-cycles that took no read, `load` the
     ones that read the store (phase 1 of _lift_spent_awaiting), `shared` the phase-1 reads the shared
     read-only cache answered (the rest were load_goals' own store: no file, an unreadable journal, the cache
-    off), `writer` the phase-2 writer loads (a lift was due: one per lift filed, plus the `noop` ones),
-    `noop` the writer loads whose fresh decision filed nothing (the store moved between the probe and the
-    load), `entries` sids remembered."""
+    off), `writer` the phase-2 writer loads: one per session-tick that loaded the writer's copy because a
+    lift was due (a tick filing two lifts on one session counts once; the `noop` ones count too), `noop`
+    the writer loads whose fresh decision filed nothing (the store moved between the probe and the load),
+    `entries` sids remembered."""
     out = dict(_lift_gate_stats)
     out["entries"] = len(_lift_seen)
     return out
@@ -23035,10 +23039,12 @@ def _bg_tops_bump(key, n=1):
 
 def _bg_tops_report():
     """The memo's counters plus its occupancy, for /perf (memos.bg_tops): `hit` calls answered from the
-    per-version map, `miss` calls that resolved at least one tid, `resolve` tids resolved, `walk` transcript
-    walks (_seg_of_tool_uses) and `walk_neg` the walks that left at least one asked tid unresolved (what a
-    negative walk cache would have saved), `idx_build` placement indexes built (one per store version
-    asked), and the gauge `entries` (sids holding a map)."""
+    per-version map, `miss` calls that looked up at least one tid, `resolve` tids looked up on a miss (placed
+    or not), `walk` transcript walks (_seg_of_tool_uses) and `walk_neg` the walks that left at least one
+    asked tid unresolved (an upper bound on what a negative walk cache would save: such a cache, keyed per
+    parse to stay exact, saves only the re-walks under one parse), `idx_build` placement indexes built (one
+    per store object asked, a writer's private copy included), and the gauge `entries` (sids holding a
+    map)."""
     with _BG_TOPS_STATS_LOCK:
         out = dict(_bg_tops_stats)
     out["entries"] = len(_BG_TOPS_CACHE)
