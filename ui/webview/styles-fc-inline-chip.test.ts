@@ -138,7 +138,8 @@ test("both sheets: the inline chip is sized as the card chip's share of var(--fs
     // the facts that make the two equal: the page base IS var(--fs), and the code face is an absolute 12px under it
     assert.equal(decl(ruleBody(css, "html, body", sheet), "font-size"), "var(--fs)", sheet + ": the page base is --fs");
     assert.match(css, /:root \{[^}]*--fs: var\(--vscode-chat-font-size, 13px\);/, sheet + ": --fs is the root's, 13px by default");
-    assert.equal(decl(ruleBody(css, ".fileview-pre", sheet), "font-size"), "12px", sheet + ": the code face is absolute — an em under it cannot reach the page base");
+    // absolute: a px product (the text-size step's factor, 1 by default, file-view.ts TEXT_SIZES), never an em
+    assert.equal(decl(ruleBody(css, ".fileview-pre", sheet), "font-size"), "calc(12px * var(--fv-scale, 1))", sheet + ": the code face is absolute; an em under it cannot reach the page base");
     // the numbers the review measured, for the reader: at the 13px default the card chip is 0.72 × 13 = 9.36px; the
     // old 0.72em under the 12px pre was 8.64px. The browser leg below reads the engine's own.
     assert.ok(Math.abs(parseFloat(factor) * 13 - parseFloat(factor) * 12) > 0.5, "the compounding the calc compensates is visible at the default base");

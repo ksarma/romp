@@ -238,6 +238,19 @@ viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again. The pane is off by default;
 the bottom bar turns it on.
 
+**Text size and width.** The **A−** and **A+** buttons in the viewer's title bar make
+the text of any text file smaller or larger in fixed steps from 70% to 200%: a markdown
+file's Rendered and Raw views, and the code view of every other text file. They appear
+on every surface that shows the viewer (over the chat, over the feed, in this pane), and
+not for a picture or a PDF, which have no text to size. Ctrl (or Cmd) and the mouse
+wheel over the text do the same. Once the size is off 100%, the percentage appears
+between the buttons; click it to go back. The choice is kept in this browser and applies
+to every file you open here. Prose keeps a readable line length that grows with the
+text size, and code blocks keep that width and wrap long lines. A table is as wide as
+its columns need, up to the width of the pane, and scrolls inside its own box beyond
+that; a table inside a quote or a list item stays within the prose width. Pictures
+shrink to fit, so resizing the pane never leaves the page wider than the pane.
+
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
