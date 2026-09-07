@@ -524,6 +524,33 @@ class ReArms(_Gate):
         self.assertIsNotNone(self._stamp("plan", SID))
         self.assertEqual(self._st("plan")["skipped"], 1, "the first sid skipped")
 
+    def test_value_inputs_are_read_by_value_not_by_file_identity(self):
+        # the reg's spawnedAt and this sid's stall records are VALUE inputs: a rewrite in place that keeps
+        # the file's (inode, mtime_ns, size) must still be seen. The kernel publishes both files by rename,
+        # so identity moves there; a test fixture (or another writer) rewriting in place within one
+        # mtime tick does not, and an identity memo served the previous content (17 distiller tests went
+        # red under xdist for it, 2026-09-07)
+        self._session(SID)
+        an = jd.STATE / "auto-nudge.json"
+        an.write_text(json.dumps({"enabled": False, "deferred": {SID2 + ":g1": {"at": NOW, "why": "waiting on the closer", "sid": SID2}}}))
+        st = os.stat(an)
+        self.assertEqual(jd._stall_slice(SID), ())
+        body = json.dumps({"enabled": False, "deferred": {SID + ":g1": {"at": NOW, "why": "waiting on the closer", "sid": SID}}})
+        self.assertEqual(len(body), st.st_size, "fixture: the rewrite keeps the size (the sids have one length)")
+        an.write_text(body)
+        os.utime(an, ns=(st.st_atime_ns, st.st_mtime_ns))              # ...and the mtime: identity unchanged
+        self.assertEqual(os.stat(an).st_ino, st.st_ino, "fixture: written in place")
+        self.assertEqual(jd._stall_slice(SID), ((SID + ":g1", "waiting on the closer", NOW),),
+                         "the slice follows the content, not the identity")
+        reg = jd.STATE / "sdk" / (SID + ".json")
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        reg.write_text(json.dumps({"spawnedAt": 1781100600}))
+        st = os.stat(reg)
+        self.assertEqual(jd._reg_spawned_at(SID), 1781100600)
+        reg.write_text(json.dumps({"spawnedAt": 1781100700}))          # same length, a revival
+        os.utime(reg, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assertEqual(jd._reg_spawned_at(SID), 1781100700, "the value follows the content, not the identity")
+
     def test_a_stall_record_for_this_sid_re_arms_and_another_sids_does_not(self):
         self._session(SID)
         self._converge()

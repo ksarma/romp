@@ -178,10 +178,6 @@ def _rebind_state(path):
     #                         a test's deliberate write-guard trip (the poison flag) so the next class starts clean
     with _STAGE_LOCK:
         _STAGE_STAMP.clear()    # the evidence gate's stamps describe the OLD root's files; a new root is a new world
-    with _SPAWN_LOCK:
-        _SPAWN_MEMO.clear()     # ...as do its sdk-reg value memo
-    with _AUTO_NUDGE_LOCK:
-        _AUTO_NUDGE_MEMO.clear()   # ...and its auto-nudge.json memo
     with _TIER_LOCK:
         for _d in _TIER_STATS.values():
             for _k in _d:
@@ -1013,65 +1009,28 @@ def _ident(p):
     return (st.st_ino, st.st_mtime_ns, st.st_size)
 
 
-_SPAWN_MEMO = {}        # fsid -> (reg identity, spawnedAt): the reg is rewritten on many events that keep
-#                         spawnedAt (40 rewrites in 90 s live); the VALUE is the one thing the stages read
-_SPAWN_LOCK = threading.Lock()
-
-
 def _reg_spawned_at(fsid):
-    """The spawnedAt VALUE of STATE/sdk/<fsid>.json, the only field _cli_epoch reads from it, through an
-    identity memo: model picks, task writes, push notes and subagent events rewrite the reg and leave
-    spawnedAt alone, and each rewrite would otherwise re-arm the planner and closer for nothing. None
-    when the reg is absent, unreadable, or carries no number (the value _cli_epoch derives too)."""
-    p = STATE / "sdk" / (fsid + ".json")
-    idn = _ident(p)
-    if idn is None:
-        return None
-    with _SPAWN_LOCK:
-        hit = _SPAWN_MEMO.get(fsid)
-    if hit is not None and hit[0] == idn:
-        return hit[1]
+    """The spawnedAt VALUE of STATE/sdk/<fsid>.json, the only field _cli_epoch reads from it: model
+    picks, task writes, push notes and subagent events rewrite the reg and leave spawnedAt alone (40
+    rewrites in 90 s live), and keying the signature on the value rather than the file's identity is
+    what keeps those from re-arming the planner and closer. Read directly each time, never through an
+    identity memo: (inode, mtime_ns, size) is exact for the rename and append writers the identity
+    components rely on, but a rewrite in place of equal size within one mtime tick keeps all three, and a
+    memo keyed on them served the previous content (the kernel publishes the reg by os.replace, so it
+    never does that; a test fixture writing in place did, 2026-09-07). The reg is small; one read per
+    session per tier is the whole cost. None when the reg is absent, unreadable, or carries no number
+    (the value _cli_epoch derives too)."""
     try:
-        v = json.loads(p.read_text()).get("spawnedAt")
+        v = json.loads((STATE / "sdk" / (fsid + ".json")).read_text()).get("spawnedAt")
     except Exception:
-        v = None
-    v = v if isinstance(v, (int, float)) else None
-    with _SPAWN_LOCK:
-        if len(_SPAWN_MEMO) > _STAGE_STAMP_MAX:
-            _SPAWN_MEMO.clear()
-        _SPAWN_MEMO[fsid] = (idn, v)
-    return v
-
-
-_AUTO_NUDGE_MEMO = {}   # {"ident": identity or None, "doc": the parsed file or {}} once read
-_AUTO_NUDGE_LOCK = threading.Lock()
-
-
-def _auto_nudge_doc():
-    """auto-nudge.json parsed, memoized on the file's identity (stat before read): one parse per change
-    instead of one per session per tier. {} for an absent or unparseable file. Callers read, never
-    mutate, the returned dict."""
-    p = STATE / "auto-nudge.json"
-    idn = _ident(p)
-    with _AUTO_NUDGE_LOCK:
-        m = _AUTO_NUDGE_MEMO
-        if "ident" in m and m["ident"] == idn:
-            return m["doc"]
-    doc = {}
-    if idn is not None:
-        try:
-            d = json.loads(p.read_text())
-            doc = d if isinstance(d, dict) else {}
-        except Exception:
-            doc = {}
-    with _AUTO_NUDGE_LOCK:
-        _AUTO_NUDGE_MEMO["ident"], _AUTO_NUDGE_MEMO["doc"] = idn, doc
-    return doc
+        return None
+    return v if isinstance(v, (int, float)) else None
 
 
 def _stall_slice(fsid):
     """This session's stall records as a comparable tuple: what rollup_status's stall-warn retire reads
-    (stalled_facts). A record appearing or ending for THIS sid moves it; another sid's does not."""
+    (stalled_facts). A record appearing or ending for THIS sid moves it; another sid's does not. Read by
+    value from the file each time, for the reason _reg_spawned_at gives."""
     return tuple(sorted((g, r.get("why"), r.get("since")) for g, r in stalled_facts(fsid).items()))
 
 
@@ -12745,7 +12704,7 @@ def stalled_facts(fsid):
     {} on an absent/unreadable file — a stall note is an extra surface, never a reason to fail a pass."""
     out = {}
     try:
-        d = _auto_nudge_doc()                          # parsed once per file change, not once per sid
+        d = json.loads((STATE / "auto-nudge.json").read_text())
     except Exception:
         return out
     for gid, rec in ((d.get("deferred") if isinstance(d, dict) else None) or {}).items():
