@@ -1670,12 +1670,21 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-composer { display: flex; flex-direction: column; gap: 6px; }
 .fc-composer[hidden] { display: none; }
 .fc-composer-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.fc-composer-ref[hidden] { display: none; }   /* hidden inside a card, where the comment itself is the reference (placeComposer) */
 .fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .fc-refused { color: var(--warn); }
-.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; padding: 5px 8px; border-radius: 6px;
-  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg); }
+/* the comment box is a textarea (the 2026-09-07 follow-on): three rows to start, grown to its content by the panel
+   (autosizeComposer), which caps it at twelve rows — COMPOSER_MAX_ROWS of the box's computed line-height plus its
+   padding (file-comments.ts) — after which it scrolls; the person may drag it taller or shorter (resize: vertical),
+   past the cap too. The sheet declares only the floor and the row height: a max-height here clamped the drag along
+   with the autosize, since both write the same inline height (the 2026-09-07 review). One row is 1.4em of the box's
+   own size; the 12px are its padding and border (box-sizing: border-box), so the floor is exactly COMPOSER_ROWS rows. */
+.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; line-height: 1.4; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg);
+  resize: vertical; overflow-y: auto; min-height: calc(3 * 1.4em + 12px); }
 .fc-input:focus { outline: none; border-color: var(--accent); }
 .fc-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.fc-hint { margin-right: auto; }   /* the chord hint at the composer row's left; Save and Cancel keep the right */
 .fc-cards { display: flex; flex-direction: column; gap: 8px; }
 .fc-empty { color: var(--dim); font-size: 0.86em; font-style: italic; }
 .fc-card { border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; background: var(--bg);
@@ -1698,6 +1707,14 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-replies { display: flex; flex-direction: column; gap: 5px; }
 .fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
 .fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
+/* a comment on a change card (.fc-hosted; renderHosted) is a column at the turns' own 5px (.fc-replies): its row, its
+   turns, a reply's box (placeComposer) and its buttons. As a plain block it stood the box against the turn above and the
+   buttons below at 0px, and after a turn of yours the two accent washes ran together as one (the 2026-09-07 review). */
+.fc-hosted { display: flex; flex-direction: column; gap: 5px; }
+/* a reply's box stands in the card it answers (the 2026-09-07 follow-on; placeComposer in file-comments.ts), below the
+   turns and above the buttons, in the dress of a reply of yours (.fc-reply-you): the wash and the accent edge, so the
+   reply being written reads as the next turn. In the panel's own slot (every other kind) the box wears no dress of its own. */
+.fc-composer-in { border-radius: 6px; padding: 5px 8px; background: var(--accent-wash); border-left: 3px solid var(--accent); }
 .fc-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
 .fc-sec { background: none; border: 0; padding: 2px 0; color: var(--dim); font: inherit; font-size: 0.82em; font-weight: 600; cursor: pointer; text-align: left; }
 .fc-sec:hover { color: var(--accent); }

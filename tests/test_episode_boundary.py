@@ -9,11 +9,13 @@ mute path (cleared.jsonl + the durable node flag, romp-authored verdict), no age
 cards untouched. The judge's _placed_key fuzzy match is scoped to the current episode so a retyped
 identical prompt plans again instead of deduping against its dead twin. Synthetic data only.
 """
+import inspect
 import json
 import os
 import shutil
 import tempfile
 import unittest
+from contextlib import contextmanager
 from romp_load import load_source
 from pathlib import Path
 
@@ -83,6 +85,38 @@ class EpisodeBoundaryTest(unittest.TestCase):
             return []
         return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
+    @contextmanager
+    def _lineage_calls(self):
+        """Count jd.resume_lineage calls (the boundary check reaches it through the module attribute)
+        and Path.read_text calls on this sid's states file, the file that call reads. Yields a dict
+        {"calls", "reads"}; wrapping builtins.open would see nothing here (pathlib reads through
+        io.open under its own module reference), hence the two counters."""
+        counts = {"calls": 0, "reads": 0}
+        states = jd.STATESDIR / (SID + ".jsonl")
+        orig, real_read = jd.resume_lineage, Path.read_text
+
+        def counted(sid):
+            counts["calls"] += 1
+            return orig(sid)
+
+        def read_text(p, *a, **k):
+            if p == states:
+                counts["reads"] += 1
+            return real_read(p, *a, **k)
+        jd.resume_lineage, Path.read_text = counted, read_text
+        try:
+            yield counts
+        finally:
+            jd.resume_lineage, Path.read_text = orig, real_read
+
+    def _states_row(self, row):
+        jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        with (jd.STATESDIR / (SID + ".jsonl")).open("a") as fh:
+            fh.write(json.dumps(row) + "\n")
+
+    def _lineage_reads(self):
+        return jd.goal_io_stats()["lineage_reads"]
+
     # ── transcript_head ──────────────────────────────────────────────────────────────────────────
 
     def test_head_null_root(self):
@@ -127,11 +161,17 @@ class EpisodeBoundaryTest(unittest.TestCase):
         self._store()
         anchor = self.proj / (SID + ".jsonl")
         _write_jsonl(anchor, [_rec("root1")])
-        km._episode_boundary_check(SID, str(anchor), NOW)
+        with self._lineage_calls() as c:
+            km._episode_boundary_check(SID, str(anchor), NOW)
+        self.assertEqual(c["calls"], 1, "an unrecorded head consults the lineage exactly once (the seed)")
         # /clear: the session's path re-points at a NEW null-rooted transcript
         fork = self.proj / "aaaaaaaa-0000-0000-0000-000000000001.jsonl"
         _write_jsonl(fork, [_rec("root2", ts="2026-01-02T00:00:00Z")])
-        km._episode_boundary_check(SID, str(fork), NOW)
+        l0 = self._lineage_reads()
+        with self._lineage_calls() as c:
+            km._episode_boundary_check(SID, str(fork), NOW)
+        self.assertEqual(c["calls"], 1, "the boundary head consults the lineage exactly once, before its append")
+        self.assertEqual(self._lineage_reads(), l0 + 1, "/perf counts that read under goals.lineage_reads")
 
         rows = jd.episode_rows(SID)
         self.assertEqual([r["head"] for r in rows], ["root1", "root2"])
@@ -190,9 +230,77 @@ class EpisodeBoundaryTest(unittest.TestCase):
         km._episode_boundary_check(SID, str(anchor), NOW)
         fork = self.proj / "aaaaaaaa-0000-0000-0000-000000000002.jsonl"
         _write_jsonl(fork, [_rec("u5", parent="root1")])              # resume: chains into the prior file
-        km._episode_boundary_check(SID, str(fork), NOW)
+        with self._lineage_calls() as c:
+            km._episode_boundary_check(SID, str(fork), NOW)
         self.assertEqual(len(jd.episode_rows(SID)), 1)               # recorded episode unchanged
         self.assertEqual(self._cleared_rows(), [])
+        self.assertEqual(c["calls"], 0, "a parent-linked leaf returns on the head check, before either guard")
+
+    def test_a_recorded_resume_fork_reads_the_lineage_once_per_check(self):
+        # The RECORDED fork shape (a fresh-rooted file the states log names as a resume fork): the head
+        # is never appended, so every check of it is the unrecorded-head path and reads the lineage
+        # once. The one shape that keeps reading after the guard reorder; the state audited on
+        # 2026-09-07 held no such row. Deferred until a live session has a recorded resume-fork leaf: an
+        # identity-keyed memo for resume_lineage on states/<sid>.jsonl (the lineage_reads rate on
+        # `romp perf` shows when one appears).
+        self._store()
+        anchor = self.proj / (SID + ".jsonl")
+        _write_jsonl(anchor, [_rec("root1")])
+        km._episode_boundary_check(SID, str(anchor), NOW)
+        fork = self.proj / "aaaaaaaa-0000-0000-0000-000000000006.jsonl"
+        _write_jsonl(fork, [_rec("f1", ts="2026-01-02T00:00:00Z")])   # fresh root, like a /clear on disk
+        self._states_row({"t": NOW, "resumeFork": {"from": SID, "to": fork.stem}})
+        for _ in range(2):
+            with self._lineage_calls() as c:
+                km._episode_boundary_check(SID, str(fork), NOW)
+            self.assertEqual((c["calls"], c["reads"]), (1, 1), "unrecorded head: one lineage read per check")
+            self.assertEqual([r["head"] for r in jd.episode_rows(SID)], ["root1"], "a fork is no boundary")
+            self.assertEqual(self._cleared_rows(), [])
+
+    def test_a_recorded_head_never_reads_the_states_file(self):
+        # THE STEADY-STATE SHAPE: every discovered session, every pass, its head already in the log.
+        # The check returns on the episode log's memoized read (one stat) and never opens the states
+        # file, which resume_lineage would read and parse whole (2026-09-07: about 70 ms of producer
+        # time per pass on a 33-session kernel, on the serial segment before the tiers start).
+        self._store()
+        self._states_row({"t": NOW, "state": "idle"})                # a states file with rows to parse
+        p = self.proj / (SID + ".jsonl")
+        _write_jsonl(p, [_rec("root1")])
+        with self._lineage_calls() as c:
+            km._episode_boundary_check(SID, str(p), NOW)             # the seed: unrecorded, reads once
+        self.assertEqual((c["calls"], c["reads"]), (1, 1))
+        rows0, l0 = jd.episode_rows(SID), self._lineage_reads()
+        with self._lineage_calls() as c:
+            for _ in range(3):
+                km._episode_boundary_check(SID, str(p), NOW)
+        self.assertEqual((c["calls"], c["reads"]), (0, 0), "recorded head: no lineage call, no states read")
+        self.assertEqual(self._lineage_reads(), l0, "and /perf's goals.lineage_reads did not move")
+        self.assertEqual(jd.episode_rows(SID), rows0, "the log is unchanged")
+        self.assertEqual(self._cleared_rows(), [], "nothing settled")
+        self.assertFalse(jd.load_goals(SID)["nodes"][self.g("g1")].get("cleared"))
+        # a HISTORICAL head re-sighted through a stale path is a recorded head too: same fast return
+        fork = self.proj / "aaaaaaaa-0000-0000-0000-000000000007.jsonl"
+        _write_jsonl(fork, [_rec("root2", ts="2026-01-02T00:00:00Z")])
+        km._episode_boundary_check(SID, str(fork), NOW)              # the real boundary
+        with self._lineage_calls() as c:
+            km._episode_boundary_check(SID, str(p), NOW)             # root1 again, from the old path
+        self.assertEqual((c["calls"], c["reads"]), (0, 0), "a re-sighted historical head reads no lineage")
+
+    def test_guard_order_is_pinned_in_the_source(self):
+        # The two guards are pure predicates on one early return, so the order is free; it is chosen
+        # so a recorded head returns on the episode log's stat before the states file is read and
+        # parsed. jd.episode_rows(sid) appears twice in the body (the guard and the post-append
+        # re-read), so the pin anchors on the guard's full text with the first occurrence.
+        src = inspect.getsource(km._episode_boundary_check)
+        guard = 'any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid))'
+        lineage = "jd.resume_lineage(sid)"
+        append = "jd.append_episode("
+        for needle in (guard, lineage, append):
+            self.assertIn(needle, src, needle)
+        self.assertLess(src.find(guard), src.find(lineage), "the episode-log guard comes first (a stat on a hit)")
+        self.assertLess(src.find(lineage), src.find(append), "the lineage guard still precedes the append")
+        self.assertLess(src.find('if not head or not head["root"]'), src.find(guard),
+                        "the head check stays first: no log read for a headless or parent-linked leaf")
 
     def test_same_head_is_idempotent(self):
         self._store()

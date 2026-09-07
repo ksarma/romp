@@ -120,6 +120,26 @@ class MsgCaption(unittest.TestCase):
         self.assertEqual(self._bar()["summary"], "",
                          "no segment-grain caption yet → empty, the view falls back to the prompt")
 
+    def test_a_second_build_serves_the_lanes_captions_from_the_memo(self):
+        # perf round 4, item C: the captions store is read once per file version, not once per build. The
+        # first build misses (the read), the second hits, and a caption appended between builds is a miss
+        # that the bar then carries — the memo answers what the reader would answer now.
+        self._cap(self.seg["id"], "segment", "Trimmed the empty space")
+        km._caps_memo.clear()
+        st0 = km._caps_memo_report()
+        self.assertEqual(self._bar()["summary"], "Trimmed the empty space")
+        st1 = km._caps_memo_report()
+        self.assertEqual((st1["miss"] - st0["miss"], st1["hit"] - st0["hit"]), (1, 0))
+        self.assertEqual(self._bar()["summary"], "Trimmed the empty space")
+        st2 = km._caps_memo_report()
+        self.assertEqual((st2["miss"] - st1["miss"], st2["hit"] - st1["hit"]), (0, 1),
+                         "an unchanged store: the second build hits and reads nothing")
+        self.assertIn(SID, km._caps_memo, "the lane stays memoized past the build's forget")
+        self._cap(self.seg["id"] + "#p", "prompt", "the empty space below the cards")
+        b = self._bar()
+        self.assertEqual(b["msgCaption"], "the empty space below the cards", "an appended row is a miss and is served")
+        self.assertEqual(km._caps_memo_report()["miss"] - st2["miss"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

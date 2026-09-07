@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -151,17 +151,60 @@ def _set_perf_log(on):
     return _PERF
 
 
+# glibc's mallinfo2 through ctypes (perf round 4, M1-lite, 2026-09-07): the large-object half of the heap.
+# The return type MUST be the struct: without `.restype` ctypes returns an int and the first field read
+# segfaults the process (the refuted M1 crashed the kernel on its first report, exit 139). Resolved once
+# at import; None where the symbol is absent (glibc before 2.33, musl, macOS), and the gauge is null then.
+try:
+    import ctypes as _ctypes
+
+    class _MallInfo2(_ctypes.Structure):
+        _fields_ = [(n, _ctypes.c_size_t) for n in ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks",
+                                                     "fsmblks", "uordblks", "fordblks", "keepcost")]
+    _MALLINFO2 = _ctypes.CDLL(None).mallinfo2
+    _MALLINFO2.restype = _MallInfo2
+    _MALLINFO2.argtypes = ()
+except Exception:
+    _MallInfo2 = None
+    _MALLINFO2 = None
+
+
+def _malloc_stats():
+    """{arena, hblkhd, uordblks, fordblks} in bytes from glibc's mallinfo2, or None where it is absent: the
+    main arena's size, the bytes in mmap'd blocks (large objects, the multi-MB frame strings), the bytes in
+    use and the free bytes held by the allocator. pymalloc's arenas are mmap'd by the interpreter itself and
+    invisible here, so this is the malloc half of the heap only."""
+    if _MALLINFO2 is None:
+        return None
+    try:
+        m = _MALLINFO2()
+    except Exception:
+        return None
+    return {"arena": int(m.arena), "hblkhd": int(m.hblkhd), "uordblks": int(m.uordblks), "fordblks": int(m.fordblks)}
+
+
 def _process_stats():
-    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot. VmRSS from /proc is the CURRENT
-    resident size; where /proc is absent (macOS) ru_maxrss is the PEAK, in bytes there, so it is scaled
-    to KB and the field is still called rss_kb."""
-    rss = 0
+    """rss_kb, thread count, CPU seconds and pid for the /perf snapshot, plus the exact memory gauges
+    (perf round 4, M1-lite): rss_anon_kb and hwm_kb (RssAnon and VmHWM from /proc/self/status, the
+    anonymous and the peak resident size), allocated_blocks (sys.getallocatedblocks, the interpreter's
+    live allocations), gc_gen2 (generation-2 collections so far) and malloc (_malloc_stats). Two
+    snapshots an hour apart answer the RSS question: blocks flat while rss climbs points at the
+    allocator, blocks climbing at an object graph, a `caches` gauge climbing at that cache.
+
+    VmRSS from /proc is the CURRENT resident size; where /proc is absent (macOS) ru_maxrss is the PEAK,
+    in bytes there, so it is scaled to KB and the field is still called rss_kb, and the two /proc gauges
+    are null with `source` "unavailable": a peak is never passed off as an anonymous or current figure."""
+    rss, anon, hwm, source = 0, None, None, "unavailable"
     try:
         with open("/proc/self/status") as fh:
             for line in fh:
                 if line.startswith("VmRSS:"):
                     rss = int(line.split()[1])
-                    break
+                elif line.startswith("RssAnon:"):
+                    anon = int(line.split()[1])
+                elif line.startswith("VmHWM:"):
+                    hwm = int(line.split()[1])
+        source = "proc"
     except Exception:
         try:
             import resource
@@ -169,8 +212,90 @@ def _process_stats():
             rss = int(r // 1024) if sys.platform == "darwin" else int(r)
         except Exception:
             rss = 0
-    return {"rss_kb": rss, "threads": threading.active_count(), "cpu_s": time.process_time(),
-            "pid": os.getpid()}
+    try:
+        blocks = int(sys.getallocatedblocks())
+    except Exception:
+        blocks = None
+    try:
+        gen2 = int(gc.get_stats()[2]["collections"])
+    except Exception:
+        gen2 = None
+    return {"rss_kb": rss, "rss_anon_kb": anon, "hwm_kb": hwm, "source": source,
+            "allocated_blocks": blocks, "gc_gen2": gen2, "malloc": _malloc_stats(),
+            "threads": threading.active_count(), "cpu_s": time.process_time(), "pid": os.getpid()}
+
+
+def _gauge_values(d, tries=3):
+    """A snapshot of a cache dict's values for a summed gauge. Under the GIL list(d.values()) is one C-level
+    pass and cannot see a concurrent resize; without it a resize raises RuntimeError, so the snapshot is
+    retried a few times and gives up as None (the count alone is then reported), never a guess."""
+    for _ in range(tries):
+        try:
+            return list(d.values())
+        except RuntimeError:
+            continue
+    return None
+
+
+def _gauge_bytes(d, pick):
+    """The summed length of the str/bytes values `pick` selects from a cache's entries, or None when the
+    snapshot could not be taken (see _gauge_values)."""
+    vals = _gauge_values(d)
+    if vals is None:
+        return None
+    n = 0
+    for v in vals:
+        try:
+            x = pick(v)
+        except Exception:
+            continue
+        if isinstance(x, (str, bytes)):
+            n += len(x)
+    return n
+
+
+def _cache_gauges():
+    """The `caches` block of the /perf snapshot (perf round 4, M1-lite): exact occupancy for every cache the
+    kernel, the judge and the event model keep, each a len() or a sum of len()s under the cache's own lock
+    where it has one, nothing estimated, O(entries) and always on. The event model's and the judge's
+    blocks come from their own cache_gauges(); the kernel's are: parse (_parse_cache, one parsed session
+    per transcript path), built_chat (the cached chat payloads and the bytes of their materialized
+    serializations), judge_usage (the judge-usage rows held), img (the data-URL previews and their bytes),
+    path_links and space_paths (the per-message link caches), session_stamp, task_seg and session_tok
+    (entries). A block whose accessor raises is left out, so the reader sees the gap instead of a number.
+    The memos keep their own occupancy under `memos`."""
+    out = {}
+    try:
+        out.update(em.cache_gauges())
+    except Exception:
+        pass
+    try:
+        out.update(jd.cache_gauges())
+    except Exception:
+        pass
+    kernel_blocks = (
+        ("parse", lambda: {"entries": len(_parse_cache)}),
+        ("built_chat", lambda: {"entries": len(_built_chat),
+                                "ms_bytes": _gauge_bytes(_built_chat, lambda v: v[2] if isinstance(v, tuple) and len(v) > 2 else None)}),
+        ("judge_usage", _judge_usage_rows_held),
+        ("img", lambda: {"entries": len(_img_cache), "bytes": _gauge_bytes(_img_cache, lambda v: v)}),
+        ("path_links", lambda: {"entries": len(_PATH_LINK_CACHE)}),
+        ("space_paths", lambda: {"entries": len(_SPACE_PATH_CACHE)}),
+        ("session_stamp", lambda: {"entries": len(_SESSION_STAMP_CACHE)}),
+        ("task_seg", lambda: {"entries": len(_task_seg_cache)}),
+        ("session_tok", lambda: {"entries": len(_session_tok_cache)}),
+    )
+    for name, fn in kernel_blocks:
+        try:
+            out[name] = fn()
+        except Exception:
+            pass
+    return out
+
+
+def _judge_usage_rows_held():
+    with _JUDGE_USAGE_LOCK:
+        return {"rows": len(_JUDGE_USAGE_CACHE["rows"])}
 
 
 class _PerfStats:
@@ -188,7 +313,22 @@ class _PerfStats:
     milliseconds of wall time, `*_s` seconds:
       now, since, uptime_s, log    clock; when the counters started (a restart resets them); seconds
                                    since the process started; whether the romp-perf stderr log is on
-      process                      rss_kb, threads, cpu_s (time.process_time), pid
+      process                      rss_kb, threads, cpu_s (time.process_time), pid, and the exact
+                                   memory gauges (perf round 4, M1-lite): rss_anon_kb / hwm_kb (RssAnon
+                                   and VmHWM from /proc; null with source "unavailable" where /proc is
+                                   absent), allocated_blocks (sys.getallocatedblocks), gc_gen2
+                                   (generation-2 collections) and malloc {arena, hblkhd, uordblks,
+                                   fordblks} (glibc mallinfo2 in bytes, the malloc half of the heap;
+                                   null where glibc 2.33+ is absent)
+      caches                       one block per cache the kernel, the judge and the event model keep,
+                                   each an EXACT occupancy (a len() or a sum of len()s under the
+                                   cache's lock, nothing estimated): jsonl {entries, file_bytes,
+                                   records}, asm / asm_keylocks / trailing {entries} (event_model),
+                                   judge_parse / judge_recon / judge_chain {entries} (judge), parse
+                                   {entries}, built_chat {entries, ms_bytes}, judge_usage {rows}, img
+                                   {entries, bytes}, path_links / space_paths / session_stamp /
+                                   task_seg / session_tok {entries}; see _cache_gauges. The memos'
+                                   own occupancy stays under `memos`
       pusher                       cycles (one per _pusher_cycle), wakes (every _pusher_wake.set()
                                    call; a burst coalesces into one cycle), wakes_event /
                                    wakes_backstop (how the loop's wait ended: flag set, or the 0.5 s
@@ -229,7 +369,15 @@ class _PerfStats:
                                    unreadable_stores: a gauge, not a counter: the goals files in a
                                    read-failure episode (the file exists and did not read or parse on
                                    its last read; load_goals answers a fallback, the stages stand down
-                                   and save_goals refuses to publish over it until it reads)
+                                   and save_goals refuses to publish over it until it reads);
+                                   lineage_reads: judge.resume_lineage calls, each a read and parse of
+                                   a session's whole states file (the episode-boundary check's guard
+                                   for an unrecorded head; a recorded head returns on the episode
+                                   log's stat before it, so at steady state this stays near zero; a
+                                   steady non-zero rate is heads changing, a live session whose
+                                   current leaf is a recorded resume fork (never appended to the log,
+                                   so it reads its lineage every pass; benign, one read per such
+                                   session per pass), or a regressed guard order)
       judge                       passes (one per _producer pass), ms_sum / ms_last / ms_mean (wall:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
@@ -258,8 +406,21 @@ class _PerfStats:
                                    and the gauges entries / bytes (memoized paths and their summed
                                    file size); lift_gate (the awaiting-lift job's per-session
                                    inputs gate, see _lift_seen) -> skip / load (session-cycles
-                                   that took no store load vs the ones that did) and the gauge
-                                   entries (sids remembered); goals_shared (the shared read-only
+                                   that took no store read vs the ones that read it, the probe on
+                                   the shared view), shared (probes the shared cache answered),
+                                   writer (session-ticks that loaded the writer's copy because a
+                                   lift was due) / noop (writer loads whose fresh decision filed
+                                   nothing) and the gauge
+                                   entries (sids remembered); bg_tops (the placed-launch memo
+                                   behind the lift and the feed's task classification,
+                                   _bg_placed_tops, keyed on the parse and store objects) -> hit /
+                                   miss (calls answered from the per-version map vs looked up),
+                                   resolve (tids looked up on a miss, placed or not), walk /
+                                   walk_neg (transcript walks, and the walks that left a tid
+                                   unresolved: an upper bound on what a negative walk cache would
+                                   save), idx_build (placement indexes built, one per store object
+                                   asked, a writer's copy included) and the gauge
+                                   entries (sids holding a map); goals_shared (the shared read-only
                                    goal-store cache the pusher's read-only sites load through,
                                    jd.load_goals_shared) -> hit / miss / compare_miss (identity
                                    matched, bytes did not) / refuse / dup / absent / corrupt /
@@ -274,7 +435,21 @@ class _PerfStats:
                                    bars_sig_fallback (bars builds that could not be keyed and took
                                    the whole dump for their signature), default_str (values no
                                    wire encoder could serialize as JSON and shipped as str(), one
-                                   per encode; _wire_default says each type once on stderr)
+                                   per encode; _wire_default says each type once on stderr);
+                                   intr_marks (the _interrupt_marks memo) -> hit / miss / evict and
+                                   the gauge entries; sessions_scope (the cycle's discover memo) ->
+                                   hit / miss / wide_hit / wide_miss; the per-lane reader memos
+                                   (perf round 4, item C, 2026-09-07): captions (_captions, the
+                                   captioner store keyed on (inode, mtime_ns, size)) -> hit / miss /
+                                   fail (reads that failed after a good stat, not memoized) / evict
+                                   (a lane that left the timeline, the LRU bound, or the pop of an
+                                   entry whose file is absent) and the gauge entries; states_overlay
+                                   (_states_awaiting_overlay's fold through _fold_records) -> hit /
+                                   append / refold / fail (a read that failed on a file that exists,
+                                   not memoized) / evict (sessions that left the alive set) and
+                                   entries; thread_reg (_thread_reg, the SDK registry keyed like
+                                   captions) -> hit / miss / fail / evict (the LRU bound or the pop
+                                   of an absent file's entry) and entries
       http                         "METHOD /path" -> {count, ms}, the query string stripped and the
                                    path normalized by _perf_http_key (/dist/*, /media/*,
                                    /remote/*/…), at most HTTP_PATHS keys with the rest folded into
@@ -436,8 +611,11 @@ class _PerfStats:
             goals = {}
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
+                             ("bg_tops", _bg_tops_report),
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
-                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report)):
+                             ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
+                             ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
+                             ("thread_reg", _thread_reg_report)):
             try:
                 memos[name] = report()
             except Exception:
@@ -446,7 +624,7 @@ class _PerfStats:
         return {"now": now, "since": since, "uptime_s": now - _STARTED, "log": _PERF,
                 "process": _process_stats(), "pusher": pusher, "stages_ms": stages,
                 "builds": builds, "sends": sends, "goals": goals, "judge": judge, "http": http,
-                "memos": memos}
+                "memos": memos, "caches": _cache_gauges()}
 
 
 _PERF_STATS = _PerfStats()
@@ -8004,12 +8182,14 @@ def _retry_pause_lifted_at():
 
 def _account_limited():
     """The ACCOUNT-WIDE usage windows the report says are at 100% with their reset still ahead: the 5h and
-    7d keys of _usage().limited, never fable (model-scoped). The ONE authority for the limit pause's two
-    edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty and
-    _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says the
-    limit does and lifts at the reset with no session having to serve first. Raises what _usage raises;
-    both callers treat no reading as no change."""
-    lim = (_usage() or {}).get("limited") or {}
+    7d keys of _usage_limits()["limited"], never fable (model-scoped). The ONE authority for the limit
+    pause's two edges (review round 2, 2026-09-07): _auto_pause_on_limit engages while this is non-empty
+    and _auto_resume_retry lifts once it is empty, so the pause holds exactly as long as the report says
+    the limit does and lifts at the reset with no session having to serve first. Reads the limits half
+    only: `limited` derives from usage.json and the clock, and the spend ledger _usage() parses for the
+    rail is not an input (perf round 4 P18, 2026-09-07). Raises what _usage_limits raises; both callers
+    treat no reading as no change."""
+    lim = (_usage_limits() or {}).get("limited") or {}
     return [k for k, v in lim.items() if v and k != "fable"]
 
 
@@ -8022,7 +8202,7 @@ def _retry_resume_at():
     if not _retry_paused_on():
         return None
     try:
-        u = _usage() or {}
+        u = _usage_limits() or {}              # the limits half: resetsAt is not a ledger figure
     except Exception:
         return None
     outs = []
@@ -8782,7 +8962,9 @@ def _interrupt_block_tick(now, tmux):
                 # every verdict about that turn, so their ruling outranks this lift on arrival order
                 _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0)
                 _set_intr_blocked(sid, None)
-    _intr_marks_forget({s["sid"] for s in alive})       # a sid that left the alive set releases its memo entries
+    _alive_sids = {s["sid"] for s in alive}
+    _intr_marks_forget(_alive_sids)                     # a sid that left the alive set releases its memo entries
+    _states_overlay_forget(_alive_sids)                 # and its states-overlay fold entry (perf round 4, item C3)
     # a flip's writer marked the views dirty and woke the pusher: the next cycle carries it (docstring)
 
 
@@ -9595,6 +9777,9 @@ def _stamp_written_at(nd):
 # key shares the coarse-mtime blind spot of every stat-keyed memo here (two equal-size publishes inside
 # one clock tick on a filesystem without fine-grained timestamps) except for an atomic republish, which
 # the inode catches; plan C1's byte compare closes the rest.
+# Since performance plan 4 (P16) the read the gate fronts is the shared read-only view
+# (jd.load_goals_shared), and a session whose candidates decide nothing costs that read alone; the
+# writer's load_goals runs only when a lift is due (_lift_spent_awaiting's two-phase note).
 def _sid_inputs_fp(sid, path, extra=()):
     """(stat, …) of the recorded inputs a per-session tick ruling reads — the goal store, its override
     journal, the goals-archive, the transcript, the postal log and the SDK reg — plus `extra` live facts.
@@ -9615,12 +9800,17 @@ def _sid_inputs_fp(sid, path, extra=()):
 
 
 _lift_seen = {}   # sid -> the inputs fingerprint the awaiting lift last ruled on — see _lift_spent_awaiting
-_lift_gate_stats = {"skip": 0, "load": 0}    # /perf memos.lift_gate: session-cycles skipped vs loaded
+_lift_gate_stats = {"skip": 0, "load": 0, "shared": 0, "writer": 0, "noop": 0}   # /perf memos.lift_gate, see _lift_gate_report
 
 
 def _lift_gate_report():
-    """The gate's counters plus its occupancy, for /perf: `skip` session-cycles that took no load, `load`
-    the ones that did, `entries` sids remembered."""
+    """The gate's counters plus its occupancy, for /perf: `skip` session-cycles that took no read, `load` the
+    ones that read the store (phase 1 of _lift_spent_awaiting), `shared` the phase-1 reads the shared
+    read-only cache answered (the rest were load_goals' own store: no file, an unreadable journal, the cache
+    off), `writer` the phase-2 writer loads: one per session-tick that loaded the writer's copy because a
+    lift was due (a tick filing two lifts on one session counts once; the `noop` ones count too), `noop`
+    the writer loads whose fresh decision filed nothing (the store moved between the probe and the load),
+    `entries` sids remembered."""
     out = dict(_lift_gate_stats)
     out["entries"] = len(_lift_seen)
     return out
@@ -9640,11 +9830,11 @@ def _lift_spent_awaiting(now, tmux):
     awaiting flavors are untouched: we lift only when this goal DID dispatch background work of its own by
     stamp time, every one of those has come back, and at least one came back AFTER the stamp's anchor —
     a return already sitting in a turn the stamping judge had audited can't be what the stamp waits on
-    (see the loop's _returned_after note, 2026-08-16). A stamp naming a CI run, a scheduled check-back or a
-    peer handoff owns no such dispatches, so it never matches and keeps its stamp — those still rely on the
-    6h awaiting wake (_wake_goal, in the nudge tick's goal walk), which is exactly the case a timer is the
-    only tool for. A kind=job stamp that DOES own dispatches (the standard shape: a watcher armed over an
-    external computation) lifts only on their REAL terminal records: a watcher dying with a restart or
+    (see _lift_decisions' _returned_after note, 2026-08-16). A stamp naming a CI run, a scheduled check-back
+    or a peer handoff owns no such dispatches, so it never matches and keeps its stamp — those still rely on
+    the 6h awaiting wake (_wake_goal, in the nudge tick's goal walk), which is exactly the case a timer is
+    the only tool for. A kind=job stamp that DOES own dispatches (the standard shape: a watcher armed over
+    an external computation) lifts only on their REAL terminal records: a watcher dying with a restart or
     expiring is the CARRIER going, not the job returning — before this, the watcher's silent death lifted
     the stamp while the slurm job ran on (the user 2026-08-15; the wake stays the backstop).
 
@@ -9653,7 +9843,19 @@ def _lift_spent_awaiting(now, tmux):
 
     An alive session whose recorded inputs and live facts are all unchanged since the last ruling is
     skipped before the load (_sid_inputs_fp / _lift_seen above): the same decision, from a few stats
-    instead of a parse."""
+    instead of a parse.
+
+    TWO-PHASE READ (performance plan 4, P16). Every rule lives in _lift_decisions, which decides and writes
+    nothing. Phase 1 runs it on the shared read-only view (jd.load_goals_shared: one parse per store version
+    for every reader; the fingerprint is recorded before the probe, as before). Most stamped sessions end there:
+    the dispatch is still out, so nothing is due and no writer load happens — before this, every stamped
+    alive session paid a private load_goals (a full read plus the journal replay) every cycle to decide
+    nothing. Phase 2 runs only when phase 1 found a lift due: the writer's copy is loaded (jd.load_goals),
+    the decision is made AGAIN on that copy, and that second decision is what record_verdict files and
+    save_goals publishes — never the first. The frozen view is never written to and never reaches
+    save_goals (both would raise), and the copy a lift is written on is the copy it was decided on: a writer
+    that publishes between the probe and the load (the closer re-placing the deciding launch under another
+    card) costs one writer load that decides nothing (`noop`), never a lift from a stale decision."""
     seen = set()
     for s in _alive_sessions(now, tmux):
         sid = s["sid"]
@@ -9680,224 +9882,264 @@ def _lift_spent_awaiting(now, tmux):
                 continue                              # the same inputs were ruled on last cycle
             _lift_gate_stats["load"] += 1
             _lift_seen[sid] = gate                    # recorded now; a ruling that RAISES forgets it below,
-            store = jd.load_goals(sid)                # so the next cycle retries instead of skipping
-            nodes = store.get("nodes") or {}
-            stamped = [nd for nd in nodes.values()
-                       if nd.get("awaitingWhy") and nd.get("awaitingAt") and not nd.get("rolledUp")]
-            # A stamped node the roll-down folded under a RESOLVED ancestor: its card's story ended, but
-            # the stamp survives invisibly (every reader skips rolledUp) — lift it explicitly so the
-            # diary says why it went, instead of an unretired wait no surface can show (the user
-            # 2026-07-27). Guarded on the diary so an unmaterialized lift never re-fires each tick.
-            rolled = [nd for nd in nodes.values()
-                      if nd.get("awaitingWhy") and nd.get("rolledUp")
-                      and not _last_awaiting_is_lift(nd)]
-            # a load that FELL BACK (`_unread`) answered an empty store that is not the files' content:
+            #                                           so the next cycle retries instead of skipping
+            # PHASE 1, the probe: the shared read-only view. A FrozenStore is the cache's answer; anything
+            # else is load_goals' own store handed through (no file, an unreadable journal, the cache off).
+            store = jd.load_goals_shared(sid)
+            if isinstance(store, jd.FrozenStore):
+                _lift_gate_stats["shared"] += 1
+            stamped, rolled = _lift_candidates(store)
+            # a read that FELL BACK (`_unread`) answered an empty store that is not the files' content:
             # forget the fingerprint so the next cycle retries instead of caching the error as a skip
             if store.get("_unread"):
                 _lift_seen.pop(sid, None)
+            if not (stamped or rolled):
+                continue
+            if not _lift_decisions(sid, s, store, now, tmux):
+                continue                              # nothing due: the common stamped case, no writer load
+            # PHASE 2, the write: a fresh private copy, decided on again, and only its own decisions filed.
+            _lift_gate_stats["writer"] += 1
+            wstore = jd.load_goals(sid)
+            wnodes = wstore.get("nodes") or {}
             changed = False
-            for nd in rolled:
-                if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
-                    changed = True
-
-            def _top_of(x):
-                seen = set()
-                while x in nodes and nodes[x].get("parentId") is not None and x not in seen:
-                    seen.add(x); x = nodes[x]["parentId"]
-                return x
-            # SUPERSEDED PEER-WAIT LIFT (the user 2026-08-24): a peer's reply at/after a kind=peer (or
-            # kindless) stamp's WRITE time already ends that wait at every read — _goal_awaiting_stamp_full
-            # hides the stamp from the card and the chip, and the nudge walk (which reads the same
-            # predicate) then never arms the 6h wake. But that supersede was read-time only: it filed
-            # NOTHING, so the stamp sat invisibly forever — the closer was never re-nominated (its
-            # filed-since gate needs a diary row newer than closerLookT, and the newest row was the stamp
-            # itself), the plain-nudge fire gate read the RAW fields and vetoed every fire, and a LIVE
-            # session's Working card wore the quiet floor ("Paused — resumes when its wait ends")
-            # indefinitely — three live specimens on one board, one ~14h, breaking the recorded 2026-08-22
-            # promise that every Working card is nudged/woken until it lands (_dead_wait_block's docstring).
-            # File the lift the readers already act on: the reply is the wait's designed exact ending event
-            # (the reader's own rule), the lift row re-arms the closer's filed-since nomination (a re-audit
-            # can re-stamp a still-real wait with a fresh write time that out-orders the answer — the
-            # designed self-correction the read-only supersede promised but never delivered), and the
-            # ledger drop re-engages the nudge ladder exactly like the dispatch arms below. Peer-scoped
-            # exactly like the reader (job/agents/task/timer stamps stand through mail); DORMANT sessions
-            # never reach here (the sweep's own gate above) — the dead-wait conversion reads the stamp RAW
-            # on purpose (2026-08-23) and owns that ending.
-            answered = _peer_answered(sid)
-            for nd in (list(stamped) if answered[0] else ()):
-                if not _peer_stamp_superseded(nd, answered):
+            for nid, top, drop_rec in _lift_decisions(sid, s, wstore, now, tmux):
+                nd = wnodes.get(nid)
+                if nd is None:
                     continue
-                if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
+                if jd.record_verdict(wstore, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
                     changed = True
-                    stamped.remove(nd)
-                    _drop_auto_nudge_rec(_top_of(nd.get("id")))
-            if not stamped:
-                if changed:
-                    jd.rollup_status(store, False)
-                    jd.save_goals(sid, store)
-                    _mark_views_dirty()
+                    if drop_rec:
+                        # The lift is NEW INFORMATION for the escalation ladder: the wait this goal's last
+                        # nudge/wake episode ended on has returned. Drop the goal's spent ledger record
+                        # (failed/moot/answered alike) so the next tick can re-engage — an idle session
+                        # never produces the genuine turn the arm-key dedup otherwise waits for, and a
+                        # latched record left its cards in Working forever (2026-08-16). Event-keyed and
+                        # bounded: record_verdict lifts a given stamp exactly once.
+                        _drop_auto_nudge_rec(top)
+            if not changed:
+                _lift_gate_stats["noop"] += 1        # the store moved between the probe and the load
                 continue
-            every = _bg_scan_all_cached(s["path"])
-            # the backend's lifecycle set (present-but-empty is AUTHORITATIVE — _bg_live_norm's own
-            # rule) and the CLI epoch it (re)started at: the restart-orphan reconciliation evidence
-            snap = tmux.get(sid) or {}
-            reg_ids = ({str(t.get("toolUseId") or "") for t in snap.get("bgTasks") or []
-                        if isinstance(t, dict)} if "bgTasks" in snap else None)
-            sp = _sdk_spawned_at(sid) or 0
-            # the launch ledger's stop tombstones (sdk_backend's bgLedgerEnded): a TaskStop suppresses
-            # the task notification, so the transcript never learns the Monitor ended — the hook did
-            tombs = ((_thread_reg(sid).get("bgLedgerEnded") or []) if reg_ids is not None else [])
-            if not every and reg_ids is None:
-                if changed:
-                    jd.rollup_status(store, False)
-                    jd.save_goals(sid, store)
-                    _mark_views_dirty()
-                continue
-            # RESTART-ORPHAN reconciliation (the user 2026-08-24): a kernel/backend restart kills
-            # tracked subagents and workflows WITH the claude process — the terminal record never
-            # lands, the transcript pairing shows them "running" forever, and the stamp orphaned
-            # (16h of "awaiting agents" over an empty registry, nothing reconciling). A
-            # transcript-"running" task ABSENT from a PRESENT lifecycle set died with its process;
-            # its return event IS the backend's (re)spawn — an exact event, not a timer. kind=job
-            # stays registry-blind below: the watcher dying is the carrier going, not the job
-            # returning.
-            dead = (set() if reg_ids is None else
-                    {t.get("id") for t in every
-                     if t.get("status") == "running" and t.get("id") and str(t.get("id")) not in reg_ids})
-            # a monitor past its recorded lifetime ceiling counts as RETURNED even with no terminal
-            # record (its CLI died mid-watch; the notification can never arrive) — see em._bg_expired
-            running = {t.get("id") for t in every
-                       if t.get("status") == "running" and not em._bg_expired(t, now)
-                       and t.get("id") not in dead}
-            # kind=job: expiry is not a return (see docstring) — only a real terminal record lifts
-            running_job = {t.get("id") for t in every if t.get("status") == "running"}
-            placed = _bg_placed_tops(sid, s["path"], [t.get("id") for t in every])
-            for nd in stamped:
-                born = nd.get("t") or 0
-                top = _top_of(nd.get("id"))
-                # The dispatches this goal owns. Placement is authoritative when the judge has spoken:
-                # a task placed under ANOTHER card can never retire this stamp (the user 2026-07-27:
-                # unrelated returns were lifting CI-wait stamps — one lifted the same minute it was
-                # re-asserted). The time window survives only for placement-unknown launches (the
-                # conservative pre-verdict shape): launched during the goal's life, at or before the
-                # stamp it explains — bounded by when that stamp was WRITTEN, not by its turn-trigger
-                # anchor, which the launches of that very turn all postdate (see _stamp_written_at).
-                horizon = _stamp_written_at(nd)
-                own = []
-                for t in every:
-                    p = placed.get(t.get("id"))
-                    if p is not None:
-                        if p == top:
-                            own.append(t)             # the goal's own thread, before OR after the stamp:
-                            #                           anything of its own still out keeps the wait honest
-                    elif born <= (t.get("t") or 0) <= horizon:
-                        own.append(t)
-                if not own:                           # nothing dispatched → not a background wait; leave it
-                    # …EXCEPT a stamp standing over an authoritatively EMPTY in-harness world: the
-                    # backend's lifecycle set present and empty, no live subagents, nothing running in
-                    # the transcript. Two shapes, one writer:
-                    #  - kind=agents (the user 2026-08-24): an agents-kind wait ends with task
-                    #    notifications, and with no dispatch recorded ANYWHERE no such event can ever
-                    #    arrive — the shape a closer mints when it misreads peer sessions as agents,
-                    #    orphaned for good the moment a restart clears the world it described. Same
-                    #    evidence-postdates-anchor rule as every lift: the (re)spawn must be newer than
-                    #    the stamp's anchor — or the transcript itself shows NOTHING running at all
-                    #    (2026-08-25 audit: the misread-peer-as-agents shape needs no respawn to prove
-                    #    the notification can never arrive; the pairing already did).
-                    #  - kind=task/job (2026-09-05): a closer stamped a top kind=job for a Monitor plus
-                    #    a background command the session ITSELF was running, the planner placed both
-                    #    launches on a sibling top, and this skip kept the stamp 17 hours over an empty
-                    #    registry with nothing pending anywhere (the wake below it never reached it —
-                    #    nudges off, top all-delegated). The deciding event is the LAST in-harness item
-                    #    ENDING after the stamp (_bg_ended_after: a terminal record, a Monitor's recorded
-                    #    ceiling, the launch ledger's stop tombstone, or the CLI respawn that killed
-                    #    everything) — a world already empty when the judge stamped is a wait on
-                    #    something the registry cannot see (a CI run), and stays the dead-man's. An
-                    #    ARMED kernel watch for this sid (a PR watch) is a carrier still running: its
-                    #    delivery is the ending, so the stamp stands. The owned-dispatch job rule below
-                    #    ("the watcher dying is the carrier going") is untouched: it needs a dispatch of
-                    #    the goal's OWN to protect, and this branch has none.
-                    _kind, _anchor0 = nd.get("awaitingKind"), nd.get("awaitingAt") or 0
-                    _empty = reg_ids is not None and not reg_ids and not snap.get("subagents") and not running
-                    if _empty and (
-                            (_kind == "agents"
-                             and (sp > _anchor0 or not any(t.get("status") == "running" for t in every)))
-                            or (_kind in ("task", "job") and not _kernel_watch_armed(sid)
-                                # endings are measured from the stamp's WRITE time (_stamp_written_at), not
-                                # the audited turn's trigger: an item that returned mid-turn, before the
-                                # closer even wrote the stamp, is not the world emptying after it (review
-                                # find on #936, 2026-09-07)
-                                and _bg_ended_after(every, tombs, sp, _stamp_written_at(nd), now, kind=_kind))):
-                        if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
-                            changed = True
-                            _drop_auto_nudge_rec(top)
-                    continue
-                live_set = running_job if nd.get("awaitingKind") == "job" else running
-                if any(t.get("id") in live_set for t in own):
-                    continue                          # at least one is genuinely still out
-                # The lift's event is a return the stamp was WAITING ON — one that landed after the
-                # stamp's ANCHOR (endT past the audited turn's trigger; a launch past it necessarily
-                # returned past it too; a kindless expiry "returns" at its recorded deadline). A
-                # dispatch already terminal in a turn the stamping judge had ALREADY AUDITED can't
-                # evidence the wait's end: the judge stamped knowing that completion, so the wait is
-                # about something else, and the goal keeps its stamp + 6h wake like any dispatch-less
-                # wait. The boundary is the anchor, NOT the write time (`horizon`): the write postdates
-                # the whole audited turn, so testing against it would also disown mid-turn and
-                # audit-lag returns the judge never saw (the suite pins those as lifting). Without
-                # this, a stamp about external cluster work lifted the same minute it was written off
-                # a workflow hours dead — and the lift row then MOOTED the nudge-failure evaluation,
-                # parking the card in Working with no reviver left (an idle experiment session,
-                # 2026-08-16).
-                _anchor = nd.get("awaitingAt") or 0
-                def _returned_after(t):
-                    return ((t.get("endT") or 0) > _anchor or (t.get("t") or 0) > _anchor
-                            or (t.get("status") == "running" and (t.get("deadline") or 0) > _anchor)
-                            or (t.get("id") in dead and sp > _anchor))
-                if not any(_returned_after(t) for t in own):
-                    continue
-                # THE STAND-DOWN RULE, joined (the 2026-08-19 audit): a writer whose evidence
-                # predates the diary yields — but only on a RE-ASSERT. The flap's signature is the
-                # closer re-affirming the wait AFTER a prior lift of this same stamp: everything
-                # this lift can cite (returns that preceded that lift) was already ruled on once,
-                # so lifting again off it produced the observed 2-3 second stamp↔lift flaps that
-                # reset the nudge ladder (fires 5s after a lift, three first-nudges in 21 minutes —
-                # the session had re-armed a watcher the ownership window cannot see). A FIRST
-                # stamp keeps the designed audit-lag lift: the write postdates the whole audited
-                # turn, and returns the judge never saw must still lift (the suite pins those).
-                _aw = [e for e in (nd.get("log") or []) if e.get("kind") == "awaiting"]
-                _last_lift = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if e.get("lift")), default=0)
-                _last_assert = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if not e.get("lift")), default=0)
-                _evidence = max((max(t.get("endT") or 0, t.get("t") or 0, t.get("deadline") or 0,
-                                     sp if t.get("id") in dead else 0)
-                                 for t in own), default=0)
-                if _last_lift and _last_assert > _last_lift and _evidence <= _last_lift:
-                    continue                          # every citable return was already ruled on by that
-                    #                                   lift — re-lifting off it is the flap. A return
-                    #                                   NEWER than the last lift is new information even
-                    #                                   when the re-assert's WRITE postdates it by seconds:
-                    #                                   the closer's audit segment ended before the return
-                    #                                   landed (2026-08-25 audit — a watcher's stamp written
-                    #                                   17s after its merge notification stood 9.5h because
-                    #                                   write-time was read as the epistemic boundary)
-                if jd.record_verdict(store, nd, "romp", "awaiting", _lift_ev_t(nd, now), lift=True):
-                    changed = True
-                    # The lift is NEW INFORMATION for the escalation ladder: the wait this goal's last
-                    # nudge/wake episode ended on has returned. Drop the goal's spent ledger record
-                    # (failed/moot/answered alike) so the next tick can re-engage — an idle session
-                    # never produces the genuine turn the arm-key dedup otherwise waits for, and a
-                    # latched record left its cards in Working forever (2026-08-16). Event-keyed and
-                    # bounded: record_verdict lifts a given stamp exactly once.
-                    _drop_auto_nudge_rec(top)
-            if changed:
-                jd.rollup_status(store, False)
-                jd.save_goals(sid, store)
-                _mark_views_dirty()
-
+            jd.rollup_status(wstore, False)
+            jd.save_goals(sid, wstore)
+            _mark_views_dirty()
         except Exception:
             _lift_seen.pop(sid, None)                 # a raised ruling is not a ruling — re-run next cycle
             sys.stderr.write("awaiting-lift (session %s): %s\n" % (sid or "?", traceback.format_exc()))
     for sid in [k for k in _lift_seen if k not in seen]:
         del _lift_seen[sid]                           # the sid left the alive set: nothing to gate
+    for cache in (_BG_TOPS_CACHE, _PLACEMENT_IDX):    # …and nothing to place for: release the pinned parse
+        for sid in list(cache):                       # list(): the handler threads fill these concurrently
+            if sid not in seen:
+                cache.pop(sid, None)
+
+
+def _lift_candidates(store):
+    """(stamped, rolled): the (node key, node) pairs one lift tick can rule on, from the store alone. The
+    KEY is what a decision names and what phase 2 resolves on the writer's copy, so a node whose `id`
+    field differs from its key is still found there rather than dropped as a no-op. `stamped` carries a
+    live awaiting stamp. `rolled` is a stamped node the roll-down folded under a RESOLVED ancestor whose
+    newest awaiting row is not yet a lift: its card's story ended, but the stamp survives invisibly (every
+    reader skips rolledUp) — lifted explicitly so the diary says why it went, instead of an unretired wait
+    no surface can show (the user 2026-07-27); guarded on the diary so an unmaterialized lift never re-fires
+    each tick."""
+    nodes = store.get("nodes") or {}
+    stamped = [(nid, nd) for nid, nd in nodes.items()
+               if nd.get("awaitingWhy") and nd.get("awaitingAt") and not nd.get("rolledUp")]
+    rolled = [(nid, nd) for nid, nd in nodes.items()
+              if nd.get("awaitingWhy") and nd.get("rolledUp") and not _last_awaiting_is_lift(nd)]
+    return stamped, rolled
+
+
+def _lift_decisions(sid, s, store, now, tmux):
+    """The lifts due for one alive session, decided on `store` and written NOWHERE: [(nid, top, drop_rec)],
+    one per stamp the tick would retire — `top` the node's top ancestor, `drop_rec` whether the goal's spent
+    nudge record goes with the lift (the rolled-up arm drops none). Every rule of the lift lives here, and
+    the verdict gate is consulted read-only: jd.may_apply is exactly the gate record_verdict asks before it
+    appends, so a decision here is a record_verdict that would have returned True. A decision is a function
+    of (the store, the transcript's task pairing, the backend snapshot, the postal wait maps, now) and of
+    nothing this function writes, so _lift_spent_awaiting can run it on the shared read-only view to learn
+    whether a lift is due, then again on the writer's copy it loads, and file the second run's decisions on
+    that copy (the docstring there). Placement is read from the SAME store object through _bg_placed_tops,
+    so the stamps ruled on and the launches placed come from one version."""
+    out = []
+    nodes = store.get("nodes") or {}
+    stamped, rolled = _lift_candidates(store)
+    for nid, nd in rolled:
+        if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+            out.append((nid, None, False))
+
+    def _top_of(x):
+        seen = set()
+        while x in nodes and nodes[x].get("parentId") is not None and x not in seen:
+            seen.add(x); x = nodes[x]["parentId"]
+        return x
+    # SUPERSEDED PEER-WAIT LIFT (the user 2026-08-24): a peer's reply at/after a kind=peer (or
+    # kindless) stamp's WRITE time already ends that wait at every read — _goal_awaiting_stamp_full
+    # hides the stamp from the card and the chip, and the nudge walk (which reads the same
+    # predicate) then never arms the 6h wake. But that supersede was read-time only: it filed
+    # NOTHING, so the stamp sat invisibly forever — the closer was never re-nominated (its
+    # filed-since gate needs a diary row newer than closerLookT, and the newest row was the stamp
+    # itself), the plain-nudge fire gate read the RAW fields and vetoed every fire, and a LIVE
+    # session's Working card wore the quiet floor ("Paused — resumes when its wait ends")
+    # indefinitely — three live specimens on one board, one ~14h, breaking the recorded 2026-08-22
+    # promise that every Working card is nudged/woken until it lands (_dead_wait_block's docstring).
+    # File the lift the readers already act on: the reply is the wait's designed exact ending event
+    # (the reader's own rule), the lift row re-arms the closer's filed-since nomination (a re-audit
+    # can re-stamp a still-real wait with a fresh write time that out-orders the answer — the
+    # designed self-correction the read-only supersede promised but never delivered), and the
+    # ledger drop re-engages the nudge ladder exactly like the dispatch arms below. Peer-scoped
+    # exactly like the reader (job/agents/task/timer stamps stand through mail); DORMANT sessions
+    # never reach here (the sweep's own gate) — the dead-wait conversion reads the stamp RAW
+    # on purpose (2026-08-23) and owns that ending.
+    answered = _peer_answered(sid)
+    for nid, nd in (list(stamped) if answered[0] else ()):
+        if not _peer_stamp_superseded(nd, answered):
+            continue
+        if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+            out.append((nid, _top_of(nid), True))
+            stamped.remove((nid, nd))
+    if not stamped:
+        return out
+    every = _bg_scan_all_cached(s["path"])
+    # the backend's lifecycle set (present-but-empty is AUTHORITATIVE — _bg_live_norm's own
+    # rule) and the CLI epoch it (re)started at: the restart-orphan reconciliation evidence
+    snap = tmux.get(sid) or {}
+    reg_ids = ({str(t.get("toolUseId") or "") for t in snap.get("bgTasks") or []
+                if isinstance(t, dict)} if "bgTasks" in snap else None)
+    sp = _sdk_spawned_at(sid) or 0
+    # the launch ledger's stop tombstones (sdk_backend's bgLedgerEnded): a TaskStop suppresses
+    # the task notification, so the transcript never learns the Monitor ended — the hook did
+    tombs = ((_thread_reg(sid).get("bgLedgerEnded") or []) if reg_ids is not None else [])
+    if not every and reg_ids is None:
+        return out
+    # RESTART-ORPHAN reconciliation (the user 2026-08-24): a kernel/backend restart kills
+    # tracked subagents and workflows WITH the claude process — the terminal record never
+    # lands, the transcript pairing shows them "running" forever, and the stamp orphaned
+    # (16h of "awaiting agents" over an empty registry, nothing reconciling). A
+    # transcript-"running" task ABSENT from a PRESENT lifecycle set died with its process;
+    # its return event IS the backend's (re)spawn — an exact event, not a timer. kind=job
+    # stays registry-blind below: the watcher dying is the carrier going, not the job
+    # returning.
+    dead = (set() if reg_ids is None else
+            {t.get("id") for t in every
+             if t.get("status") == "running" and t.get("id") and str(t.get("id")) not in reg_ids})
+    # a monitor past its recorded lifetime ceiling counts as RETURNED even with no terminal
+    # record (its CLI died mid-watch; the notification can never arrive) — see em._bg_expired
+    running = {t.get("id") for t in every
+               if t.get("status") == "running" and not em._bg_expired(t, now)
+               and t.get("id") not in dead}
+    # kind=job: expiry is not a return (see docstring) — only a real terminal record lifts
+    running_job = {t.get("id") for t in every if t.get("status") == "running"}
+    placed = _bg_placed_tops(sid, s["path"], [t.get("id") for t in every], store=store)
+    for nid, nd in stamped:
+        born = nd.get("t") or 0
+        top = _top_of(nid)
+        # The dispatches this goal owns. Placement is authoritative when the judge has spoken:
+        # a task placed under ANOTHER card can never retire this stamp (the user 2026-07-27:
+        # unrelated returns were lifting CI-wait stamps — one lifted the same minute it was
+        # re-asserted). The time window survives only for placement-unknown launches (the
+        # conservative pre-verdict shape): launched during the goal's life, at or before the
+        # stamp it explains — bounded by when that stamp was WRITTEN, not by its turn-trigger
+        # anchor, which the launches of that very turn all postdate (see _stamp_written_at).
+        horizon = _stamp_written_at(nd)
+        own = []
+        for t in every:
+            p = placed.get(t.get("id"))
+            if p is not None:
+                if p == top:
+                    own.append(t)             # the goal's own thread, before OR after the stamp:
+                    #                           anything of its own still out keeps the wait honest
+            elif born <= (t.get("t") or 0) <= horizon:
+                own.append(t)
+        if not own:                           # nothing dispatched → not a background wait; leave it
+            # …EXCEPT a stamp standing over an authoritatively EMPTY in-harness world: the
+            # backend's lifecycle set present and empty, no live subagents, nothing running in
+            # the transcript. Two shapes, one writer:
+            #  - kind=agents (the user 2026-08-24): an agents-kind wait ends with task
+            #    notifications, and with no dispatch recorded ANYWHERE no such event can ever
+            #    arrive — the shape a closer mints when it misreads peer sessions as agents,
+            #    orphaned for good the moment a restart clears the world it described. Same
+            #    evidence-postdates-anchor rule as every lift: the (re)spawn must be newer than
+            #    the stamp's anchor — or the transcript itself shows NOTHING running at all
+            #    (2026-08-25 audit: the misread-peer-as-agents shape needs no respawn to prove
+            #    the notification can never arrive; the pairing already did).
+            #  - kind=task/job (2026-09-05): a closer stamped a top kind=job for a Monitor plus
+            #    a background command the session ITSELF was running, the planner placed both
+            #    launches on a sibling top, and this skip kept the stamp 17 hours over an empty
+            #    registry with nothing pending anywhere (the wake below it never reached it —
+            #    nudges off, top all-delegated). The deciding event is the LAST in-harness item
+            #    ENDING after the stamp (_bg_ended_after: a terminal record, a Monitor's recorded
+            #    ceiling, the launch ledger's stop tombstone, or the CLI respawn that killed
+            #    everything) — a world already empty when the judge stamped is a wait on
+            #    something the registry cannot see (a CI run), and stays the dead-man's. An
+            #    ARMED kernel watch for this sid (a PR watch) is a carrier still running: its
+            #    delivery is the ending, so the stamp stands. The owned-dispatch job rule below
+            #    ("the watcher dying is the carrier going") is untouched: it needs a dispatch of
+            #    the goal's OWN to protect, and this branch has none.
+            _kind, _anchor0 = nd.get("awaitingKind"), nd.get("awaitingAt") or 0
+            _empty = reg_ids is not None and not reg_ids and not snap.get("subagents") and not running
+            if _empty and (
+                    (_kind == "agents"
+                     and (sp > _anchor0 or not any(t.get("status") == "running" for t in every)))
+                    or (_kind in ("task", "job") and not _kernel_watch_armed(sid)
+                        # endings are measured from the stamp's WRITE time (_stamp_written_at), not
+                        # the audited turn's trigger: an item that returned mid-turn, before the
+                        # closer even wrote the stamp, is not the world emptying after it (review
+                        # find on #936, 2026-09-07)
+                        and _bg_ended_after(every, tombs, sp, _stamp_written_at(nd), now, kind=_kind))):
+                if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+                    out.append((nid, top, True))
+            continue
+        live_set = running_job if nd.get("awaitingKind") == "job" else running
+        if any(t.get("id") in live_set for t in own):
+            continue                          # at least one is genuinely still out
+        # The lift's event is a return the stamp was WAITING ON — one that landed after the
+        # stamp's ANCHOR (endT past the audited turn's trigger; a launch past it necessarily
+        # returned past it too; a kindless expiry "returns" at its recorded deadline). A
+        # dispatch already terminal in a turn the stamping judge had ALREADY AUDITED can't
+        # evidence the wait's end: the judge stamped knowing that completion, so the wait is
+        # about something else, and the goal keeps its stamp + 6h wake like any dispatch-less
+        # wait. The boundary is the anchor, NOT the write time (`horizon`): the write postdates
+        # the whole audited turn, so testing against it would also disown mid-turn and
+        # audit-lag returns the judge never saw (the suite pins those as lifting). Without
+        # this, a stamp about external cluster work lifted the same minute it was written off
+        # a workflow hours dead — and the lift row then MOOTED the nudge-failure evaluation,
+        # parking the card in Working with no reviver left (an idle experiment session,
+        # 2026-08-16).
+        _anchor = nd.get("awaitingAt") or 0
+        def _returned_after(t):
+            return ((t.get("endT") or 0) > _anchor or (t.get("t") or 0) > _anchor
+                    or (t.get("status") == "running" and (t.get("deadline") or 0) > _anchor)
+                    or (t.get("id") in dead and sp > _anchor))
+        if not any(_returned_after(t) for t in own):
+            continue
+        # THE STAND-DOWN RULE, joined (the 2026-08-19 audit): a writer whose evidence
+        # predates the diary yields — but only on a RE-ASSERT. The flap's signature is the
+        # closer re-affirming the wait AFTER a prior lift of this same stamp: everything
+        # this lift can cite (returns that preceded that lift) was already ruled on once,
+        # so lifting again off it produced the observed 2-3 second stamp↔lift flaps that
+        # reset the nudge ladder (fires 5s after a lift, three first-nudges in 21 minutes —
+        # the session had re-armed a watcher the ownership window cannot see). A FIRST
+        # stamp keeps the designed audit-lag lift: the write postdates the whole audited
+        # turn, and returns the judge never saw must still lift (the suite pins those).
+        _aw = [e for e in (nd.get("log") or []) if e.get("kind") == "awaiting"]
+        _last_lift = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if e.get("lift")), default=0)
+        _last_assert = max((e.get("at") or e.get("ev_t") or 0 for e in _aw if not e.get("lift")), default=0)
+        _evidence = max((max(t.get("endT") or 0, t.get("t") or 0, t.get("deadline") or 0,
+                             sp if t.get("id") in dead else 0)
+                         for t in own), default=0)
+        if _last_lift and _last_assert > _last_lift and _evidence <= _last_lift:
+            continue                          # every citable return was already ruled on by that
+            #                                   lift — re-lifting off it is the flap. A return
+            #                                   NEWER than the last lift is new information even
+            #                                   when the re-assert's WRITE postdates it by seconds:
+            #                                   the closer's audit segment ended before the return
+            #                                   landed (2026-08-25 audit — a watcher's stamp written
+            #                                   17s after its merge notification stood 9.5h because
+            #                                   write-time was read as the epistemic boundary)
+        if jd.may_apply(store, nd, "romp", "awaiting", _lift_ev_t(nd, now)):
+            out.append((nid, top, True))
+    return out
 
 
 _PREV_ALIVE = None                       # last tick's alive sids — a sid LEAVING is the death event
@@ -12573,8 +12815,10 @@ def _seed_fork_stores(parent_sid, sid, path, cut_uuid):
                 o["id"] = sid + cid[len(parent_sid):]
                 rows.append(json.dumps(o))
         if rows:
-            jd.CAPDIR.mkdir(parents=True, exist_ok=True)
-            (jd.CAPDIR / (sid + ".jsonl")).write_text("\n".join(rows) + "\n")
+            # published through a temp + os.replace, never written in place: _captions memoizes the
+            # file on (inode, mtime_ns, size), and an in-place write of equal size inside one mtime tick
+            # would keep all three (perf round 4, item C1); the write_reg idiom, a new inode per publish
+            _atomic_write(jd.CAPDIR / (sid + ".jsonl"), "\n".join(rows) + "\n")
         # 3) the goal store: fresh skeleton whose placements are the parent's, sealed
         pstore = jd.load_goals(parent_sid)
         store = jd.load_goals(sid)                      # the fresh-skeleton path (rompUuid=sid, CAS base set)
@@ -12799,31 +13043,82 @@ def _comment_msg_text(rec):
     return "\n".join(p for p in parts if p).strip()
 
 
-_thread_reg_memo = {}   # tsid -> ((mtime_ns, size), reg dict) — see _thread_reg
+# The _thread_reg memo (perf round 4, item C4, 2026-09-07): tsid -> (key, reg). The key is
+# jd._file_key(STATE/sdk/<tsid>.json) = (st_ino, st_mtime_ns, st_size), taken BEFORE the read, so a file
+# that changes between the stat and the read is caught by the next call's stat (one extra miss, never a
+# stale serve). The key is complete against how the file is written: sdk_backend.write_reg is the one
+# writer of a registry file and publishes through a writer-unique temp + os.replace, so every write is a
+# new inode and an equal-size rewrite inside one mtime tick still changes the key (the round-3 review's
+# hazard with in-place rewrites; jd._reg_spawned_at and sdk_backend._REG_CACHE record the same rule; the
+# kernel's seed-pin migration rewrites regs through _atomic_write, also os.replace). An absent file is {}
+# and its entry is popped; a stat that fails otherwise is a sentinel key that matches nothing (read, not
+# memoized); a read or parse failure after a successful stat is not memoized (the `fail` counter, one
+# stderr line per episode), since a permission or descriptor failure is not a file version. Dict order is
+# LRU (a hit reinserts), one eviction per insert past the cap, never clear-at-cap: sweeps over dormant
+# sids read through this too, and a clear at the cap would drop the live sessions' entries every cycle
+# (the _JSONL_CACHE lesson, event_model.py). Callers read the returned dict and never write it (a
+# source-text test pins that); a hit still hands out a SHALLOW COPY, the rule the 2026-09-03 memo this
+# one replaces set (a caller's edit never reaches the memo, whatever a future caller does). Counters
+# ride /perf under memos.thread_reg; the lock covers the dict ops and the counters, never the read.
+_thread_reg_memo = {}
+_THREAD_REG_MEMO_MAX = 512
+_thread_reg_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
+_thread_reg_failed = set()      # paths whose last read after a good stat failed: one stderr line per episode
+_THREAD_REG_LOCK = threading.Lock()
+
+
+def _thread_reg_report():
+    """The memo's counters plus its occupancy, for /perf (memos.thread_reg)."""
+    with _THREAD_REG_LOCK:
+        out = dict(_thread_reg_stats)
+        out["entries"] = len(_thread_reg_memo)
+    return out
 
 
 def _thread_reg(tsid):
-    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when unreadable.
-    Memoized on the file's (mtime, size, inode) — thirteen callers, two of them per chat build, each decoded
-    the file afresh (2026-09-03). Returns a shallow copy so a caller's edit never leaks into the memo."""
-    p = jd.STATE / "sdk" / (tsid + ".json")
-    try:
-        st = p.stat()
-        key = (st.st_mtime_ns, st.st_size, st.st_ino)
-    except OSError:
-        _thread_reg_memo.pop(tsid, None)
+    """The thread's SDK registry entry (authoritative for cwd/lastSid/threadOf), {} when absent or
+    unreadable. Memoized on the file's identity (see _thread_reg_memo); read-only for every caller, and
+    a shallow copy each call so a caller's edit never leaks into the memo."""
+    p = str(jd.STATE / "sdk" / (tsid + ".json"))
+    key = jd._file_key(p)
+    if key is None:                                       # absent: a state, not an entry
+        with _THREAD_REG_LOCK:
+            if _thread_reg_memo.pop(tsid, None) is not None:
+                _thread_reg_stats["evict"] += 1
         return {}
-    hit = _thread_reg_memo.get(tsid)
-    if hit is not None and hit[0] == key:
-        return dict(hit[1])
+    with _THREAD_REG_LOCK:
+        ent = _thread_reg_memo.get(tsid)
+        if ent is not None and ent[0] == key:
+            _thread_reg_memo.pop(tsid, None)              # a served entry is a USED entry (LRU reinsert)
+            _thread_reg_memo[tsid] = ent
+            _thread_reg_stats["hit"] += 1
+            return dict(ent[1])
+        _thread_reg_stats["miss"] += 1
     try:
-        d = json.loads(p.read_text())
-        d = d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
+        with open(p) as fh:
+            d = json.loads(fh.read())
+    except FileNotFoundError:
+        return {}                                         # unlinked between the stat and the read: the next stat pops it
+    except (OSError, ValueError) as e:
+        with _THREAD_REG_LOCK:
+            _thread_reg_stats["fail"] += 1
+            first = p not in _thread_reg_failed
+            _thread_reg_failed.add(p)
+        if first:
+            sys.stderr.write("thread-reg: %s unreadable after a successful stat (%r); answered {} and not memoized\n"
+                             % (os.path.basename(p), e))
         return {}
-    if len(_thread_reg_memo) > 512:
-        _thread_reg_memo.pop(next(iter(_thread_reg_memo)))
-    _thread_reg_memo[tsid] = (key, d)
+    if _thread_reg_failed:
+        with _THREAD_REG_LOCK:
+            _thread_reg_failed.discard(p)                 # a good read ends the episode; the next failure logs again
+    d = d if isinstance(d, dict) else {}
+    if isinstance(key, tuple):                            # never under the sentinel of a failed stat
+        with _THREAD_REG_LOCK:
+            _thread_reg_memo.pop(tsid, None)
+            while len(_thread_reg_memo) >= _THREAD_REG_MEMO_MAX:
+                _thread_reg_memo.pop(next(iter(_thread_reg_memo)))   # the least recently used goes first
+                _thread_reg_stats["evict"] += 1
+            _thread_reg_memo[tsid] = (key, d)
     return dict(d)
 
 
@@ -22731,68 +23026,157 @@ def _seg_of_tool_uses(ps, store, tool_ids):
     return found
 
 
-_BG_TOPS_CACHE = {}    # sid -> ((transcript stat, goals stat, overrides stat, tid tuple), {tid: top})
+_BG_TOPS_CACHE = {}    # sid -> (parse object, store object, {tid: top or None}) — see _bg_placed_tops
+_PLACEMENT_IDX = {}    # sid -> (store object, {jd._seg_key(placement key): its first value in dict order})
+_bg_tops_stats = {"hit": 0, "miss": 0, "resolve": 0, "walk": 0, "walk_neg": 0, "idx_build": 0}
+_BG_TOPS_STATS_LOCK = threading.Lock()   # the counters are bumped from the pusher and the handler threads
 
 
-def _bg_placed_tops(sid, path, tids):
+def _bg_tops_bump(key, n=1):
+    with _BG_TOPS_STATS_LOCK:
+        _bg_tops_stats[key] += n
+
+
+def _bg_tops_report():
+    """The memo's counters plus its occupancy, for /perf (memos.bg_tops): `hit` calls answered from the
+    per-version map, `miss` calls that looked up at least one tid, `resolve` tids looked up on a miss (placed
+    or not), `walk` transcript walks (_seg_of_tool_uses) and `walk_neg` the walks that left at least one
+    asked tid unresolved (an upper bound on what a negative walk cache would save: such a cache, keyed per
+    parse to stay exact, saves only the re-walks under one parse), `idx_build` placement indexes built (one
+    per store object asked, a writer's private copy included), and the gauge `entries` (sids holding a
+    map)."""
+    with _BG_TOPS_STATS_LOCK:
+        out = dict(_bg_tops_stats)
+    out["entries"] = len(_BG_TOPS_CACHE)
+    return out
+
+
+def _placement_index(placements):
+    """{jd._seg_key(k): v} over a store's placements, the FIRST key in dict order winning (setdefault): for
+    any looked-up key that normalizes to a seg key, exactly the value jd._placement_of's scan returns for
+    it, a None-valued retired entry included."""
+    idx = {}
+    for k, v in placements.items():
+        idx.setdefault(jd._seg_key(k), v)
+    return idx
+
+
+def _placed_via_index(placements, idx, seg_id):
+    """jd._placement_of(placements, seg_id) answered from _placement_index: the exact key when it is
+    present (its value, None included, the scan never runs), else the normalized key's first match."""
+    if seg_id in placements:
+        return placements[seg_id]
+    return idx.get(jd._seg_key(seg_id))
+
+
+def _bg_placed_tops(sid, path, tids, store=None):
     """{tid: owning top node id} for the live background-task launches the JUDGE has PLACED: launch
     tool_use id → the transcript segment holding it (_seg_of_tool_uses via _task_seg_cache — a launch's
-    segment never changes) → the store's placement for that segment → the placed node's top ancestor.
+    segment never changes) → the store's placement for that segment, under the four suffixes
+    jd._placement_of accepts, read from a per-store index (_placement_index) → the placed node's top
+    ancestor.
 
     A tid ABSENT from the result is a launch the judge hasn't spoken for yet (segment unparsed or
     unplaced, no goal store, unreadable evidence) — the AWAITED-conservative default every consumer
-    keys on. Cached on the transcript + goal-store + override-journal file stats and the tid set (the
-    _session_stamp_read pattern): an idle session hits this every render, and load_goals is a full
-    read + override replay."""
+    keys on.
+
+    The answer is a function of (the parse object, the store object, the _task_seg_cache positives — the
+    standing "a launch's segment never changes" assumption), and the memo is keyed on exactly those two
+    objects: _BG_TOPS_CACHE[sid] = (ps, store, {tid: top or None}) holds every tid asked so far under one
+    (parse, store) pair, a hit iff both objects in hand ARE the entry's (identity, not a stat: the awaiting
+    lift asks with every task id the transcript records and the feed with the live ids, a subset that is
+    often empty, so one map answers both and the feed's ask never evicts the lift's fill, and a stat taken
+    after a read can describe a version the read did not see — a publish between the two recorded the new
+    version under the old placements, the 2026-07-27 own-thread misattribution shape). _parse returns one
+    object per transcript version and load_goals_shared one FrozenStore per store version, so identity is
+    the version. `store`: the caller's own store (the lift hands the store it decides on, so the placement
+    it reads and the stamps it rules on come from one object); None reads through load_goals_shared. A
+    store that is not the shared cache's FrozenStore (no file, the cache off, an unreadable journal, a
+    writer's private copy) is computed on and never published as an entry. _PLACEMENT_IDX[sid] = (store,
+    index) is keyed on the store object alone, so the writer's copy misses it harmlessly. While the shared
+    cache is off (_SHARED_OFF: a reader wrote to a shared view, a judge-errors row names the site, off until
+    the kernel restarts) every store=None call is a full load_goals and nothing is memoized; acceptable
+    because that state is a loud error, not a mode the kernel runs in.
+
+    Threads: the pusher and the handler threads (build_session, _session_awaiting) both run this. An entry
+    is read into locals once, a fill builds a NEW dict from it and publishes a NEW tuple; nothing writes
+    into an entry in place, so a reader holding the old tuple keeps a consistent (ps, store, map). Entries
+    are dropped when a session asks with no live tids and the pinned parse is no longer the transcript's
+    current one (below: the pin the bound is for), and when its sid leaves the alive set (the awaiting
+    lift's end-of-tick sweep)."""
     sid = str(sid)
     tids = tuple(sorted(t for t in tids if t))
     if not tids or not path:
+        # Nothing to answer. The feed, chat and timeline builds ask here with an EMPTY live set for a
+        # session whose tasks all returned, several times per cycle, while the lift's ask (every task id
+        # the transcript records) is what filled the entry; evicting on every empty ask made the lift miss
+        # every cycle and re-walk the transcript (review, 2026-09-07). Release the pinned parse only when it
+        # is no longer the transcript's current parse: _parse answers _parse_cache[path][1] on a hit, so an
+        # entry whose parse IS that object costs no memory beyond the parse every build holds anyway, and
+        # one whose parse is not (the transcript was re-parsed, or nothing is cached) is the stale pin the
+        # bound is for.
+        ent = _BG_TOPS_CACHE.get(sid)
+        cur = _parse_cache.get(path) if path else None
+        if ent is None or cur is None or ent[0] is not cur[1]:
+            _BG_TOPS_CACHE.pop(sid, None)
+            _PLACEMENT_IDX.pop(sid, None)
         return {}
     try:
-        st = os.stat(path)
-        tkey = (st.st_mtime, st.st_size)
-    except OSError:
-        tkey = None
-    try:
-        gs = (jd.GOALDIR / (sid + ".json")).stat()
-        gkey = (gs.st_mtime, gs.st_size)
-    except Exception:
-        return {}                                    # no store yet → nothing placed
-    try:
-        ostt = (jd._overrides_dir() / (sid + ".jsonl")).stat()
-        okey = (ostt.st_mtime, ostt.st_size)
-    except Exception:
-        okey = None                                  # no override journal is normal
-    key = (tkey, gkey, okey, tids)
-    hit = _BG_TOPS_CACHE.get(sid)
-    if hit and hit[0] == key:
-        return hit[1]
-    out = {}
-    try:
+        if store is None and not os.path.exists(str(jd.GOALDIR / (sid + ".json"))):
+            return {}                                # no store yet → nothing placed: no parse, no fallback load
         ps = _parse(path, sid, time.time())
-        store = jd.load_goals(sid)
-        nodes = (store or {}).get("nodes") or {}
+        if store is None:
+            store = jd.load_goals_shared(sid)
+        ent = _BG_TOPS_CACHE.get(sid)
+        known = ent[2] if (ent is not None and ent[0] is ps and ent[1] is store) else None
+        if known is not None and all(t in known for t in tids):
+            _bg_tops_bump("hit")
+            return {t: known[t] for t in tids if known[t] is not None}
+        _bg_tops_bump("miss")
+        nodes = store.get("nodes") or {}
         placements = store.get("placements") or {}
-        need = [t for t in tids if (sid, t) not in _task_seg_cache]
+        shared = isinstance(store, jd.FrozenStore)
+        pidx = _PLACEMENT_IDX.get(sid)
+        if pidx is not None and pidx[0] is store:
+            idx = pidx[1]
+        else:
+            idx = _placement_index(placements)
+            _bg_tops_bump("idx_build")
+            if shared:
+                _PLACEMENT_IDX[sid] = (store, idx)
+        todo = tids if known is None else tuple(t for t in tids if t not in known)
+        need = [t for t in todo if (sid, t) not in _task_seg_cache]
         if need and ps and nodes:
-            for tid, sgid in _seg_of_tool_uses(ps, store, need).items():
+            found = _seg_of_tool_uses(ps, store, need)
+            for tid, sgid in found.items():
                 _task_seg_cache[(sid, tid)] = sgid
-        for tid in tids:
+            _bg_tops_bump("walk")
+            if len(found) < len(need):
+                _bg_tops_bump("walk_neg")
+        fill = dict(known) if known is not None else {}
+        for tid in todo:
+            fill[tid] = None
             sgid = _task_seg_cache.get((sid, tid))
             if not sgid:
                 continue                             # unresolvable launch → unplaced (see docstring)
-            nid = next((v for v in (jd._placement_of(placements, sgid + suf)
-                                    for suf in ("", "#live", "#p", "#d")) if v), None)
+            nid = None
+            for suf in ("", "#live", "#p", "#d"):
+                v = _placed_via_index(placements, idx, sgid + suf)
+                if v:
+                    nid = v
+                    break
             seen = set()                             # placed node → its top ancestor (cycle-guarded)
             while nid in nodes and nodes[nid].get("parentId") is not None and nid not in seen:
                 seen.add(nid)
                 nid = nodes[nid]["parentId"]
             if nid in nodes:
-                out[tid] = nid
+                fill[tid] = nid
+        _bg_tops_bump("resolve", len(todo))
+        if shared:
+            _BG_TOPS_CACHE[sid] = (ps, store, fill)  # a new tuple, never a write into the old one
+        return {t: fill[t] for t in tids if fill[t] is not None}
     except Exception:
         return {}                                    # unreadable evidence → nothing placed (conservative)
-    _BG_TOPS_CACHE[sid] = (key, out)
-    return out
 
 
 def _bg_owner_tops(fsid, path, tasks):
@@ -22895,19 +23279,106 @@ def _states_awaiting_overlay(sid):
     chat off a stale awaiting:true from 08:57 — never cleared — while idle on the timeline; the chat's working
     signal is open_now OR awaiting, the timeline's is open_now alone, so a stale awaiting splits them). An
     idle/waiting state after an awaiting:true is consistent with awaiting (idle while the job runs) and does
-    NOT supersede it. State records carry "state", overlay records carry "awaiting"; the two never overlap."""
-    last = None
-    working_after = False
-    for o in _states_rows(sid):
-        if not isinstance(o, dict):
-            continue
-        if "awaiting" in o:
-            last, working_after = o, False             # a fresh overlay record resets the supersede flag
-        elif o.get("state") == "working":
-            working_after = True                       # a real work turn resumed since the last overlay record
+    NOT supersede it. State records carry "state", overlay records carry "awaiting"; the two never overlap.
+
+    Folded append-incrementally since 2026-09-07 (perf round 4, item C3) through _fold_records, the reader
+    `_state_intervals` and `_machine_cut` already use on the same file: the carried state is (the last
+    overlay row or None, working_after), and each row steps it through _states_overlay_step. The identity
+    gate is the shared reader's: (st_mtime, st_size) plus the 64-byte tail compare on growth, a full re-fold
+    on a shrink or a same-size new mtime. Every states writer appends (sdk_backend's append_* helpers, the
+    kernel's _record_idle and picker check, hooks/tmux-status.sh), so an append is the only change the
+    file sees and the gate is exact for it. A missing file folds to the empty state, the None the whole-file
+    scan answered on OSError; a read that fails on a file that exists answers the same None, counts under
+    `fail`, is logged once per episode and is never memoized (_states_overlay_on). The shared reader serves
+    an UNCHANGED file's records from its cache without opening it, so a permission flip shows as a failure
+    only once the file changes (or its reader entry was evicted): `fail` counts reads that were attempted
+    and failed. Counters ride /perf under memos.states_overlay."""
+    p = jd.STATE / "states" / ("%s.jsonl" % sid)
+    last, working_after = _fold_records(_states_overlay_cache, p, _states_overlay_init, _states_overlay_step,
+                                        on=functools.partial(_states_overlay_on, str(p)))
     if last is not None and last.get("awaiting") and working_after:
         return {"awaiting": False, "why": None}            # stale true — superseded by a later work turn
     return last
+
+
+_states_overlay_cache = {}    # str(states path) -> _fold_records entry over (last overlay row or None, working_after)
+_states_overlay_stats = {"hit": 0, "append": 0, "refold": 0, "fail": 0, "evict": 0}
+_states_overlay_failed = set()   # paths whose last read failed on a file that exists: one stderr line per episode
+_STATES_OVERLAY_LOCK = threading.Lock()   # the counters are bumped from the pusher, the chat's connect pushes on
+#                                           WS threads and GET /sessions at once: `+= 1` drifts low without the GIL
+
+
+def _states_overlay_init():
+    return (None, False)
+
+
+def _states_overlay_step(state, o):
+    """One states row into (last overlay row, working_after). Awaiting-first, the scan's if/elif order:
+    a row carrying an `awaiting` key is an overlay row whatever else it carries (it resets the supersede
+    flag and never sets it); a row whose `state` is "working" is a work turn (extra keys such as the
+    picker check's `tier` change nothing); every other row (idle/waiting states, retriesGaveUp,
+    orphanReply, cmdGesture, machineCut, resumeFork, effortApplied) leaves the state alone. Equal to the
+    whole-file scan for every row shape any states writer produces: the scan's substring tests matched a
+    quoted key, and a key's text inside a JSON string is escaped, so they never fired on a why or a
+    gesture's text. ONE deviation from that scan, stated here and pinned by a test: the scan set
+    working_after on an UNPARSEABLE line that happened to carry both substrings, without parsing it; the
+    fold sees parsed records only, so such a line changes nothing. No states writer produces one (every
+    row is one json.dumps and a newline), and a torn tail is the shared reader's business, not a substring
+    heuristic's."""
+    if "awaiting" in o:
+        return (o, False)
+    if o.get("state") == "working":
+        return (state[0], True)
+    return state
+
+
+def _states_overlay_bump(kind, n=1):
+    with _STATES_OVERLAY_LOCK:
+        _states_overlay_stats[kind] = _states_overlay_stats.get(kind, 0) + n
+
+
+def _states_overlay_on(path_s, kind):
+    """The fold's `on` for one states file: count the path the fold took, and on "fail" (the file exists and
+    could not be stat'ed, opened or read; the fold answered the empty state and memoized nothing) write one
+    stderr line per episode, so a failed read is told apart from a rewrite in /perf and in the log. A later
+    successful fold of the same file ends the episode."""
+    _states_overlay_bump(kind)
+    if kind == "fail":
+        with _STATES_OVERLAY_LOCK:
+            first = path_s not in _states_overlay_failed
+            _states_overlay_failed.add(path_s)
+        if first:
+            sys.stderr.write("states-overlay: %s unreadable (the file exists); answered no overlay and memoized nothing\n"
+                             % os.path.basename(path_s))
+    elif _states_overlay_failed:
+        with _STATES_OVERLAY_LOCK:
+            _states_overlay_failed.discard(path_s)
+
+
+def _states_overlay_forget(alive):
+    """Drop the fold entries for sessions outside `alive` (the interrupt tick's alive set, once per cycle):
+    the readers of this overlay are the session chips and lanes of live sessions, so a session leaving the
+    alive set is the event that retires its entry. The shared records stay in the event model's LRU reader;
+    a later read of a departed session's file re-folds them without re-reading the file."""
+    keep = {str(jd.STATE / "states" / ("%s.jsonl" % sid)) for sid in alive}
+    gone = [k for k in list(_states_overlay_cache) if k not in keep]
+    n = 0
+    for k in gone:
+        if _states_overlay_cache.pop(k, None) is not None:
+            n += 1
+    if n:
+        _states_overlay_bump("evict", n)
+
+
+def _states_overlay_report():
+    """The fold's counters plus its occupancy, for /perf (memos.states_overlay): hit (the records were the
+    cached ones), append (only the appended rows stepped), refold (every row stepped: a rewrite, a shrink, or
+    the first fold of a file), fail (a read that failed on a file that exists; not memoized), evict (entries
+    dropped for sessions that left the alive set), and the gauge entries."""
+    with _STATES_OVERLAY_LOCK:
+        out = dict(_states_overlay_stats)
+    out["entries"] = len(_states_overlay_cache)
+    return out
 
 
 def _session_retrying(sid, tm):
@@ -23892,14 +24363,146 @@ def _ask_poll_once():
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
 
+# The _captions memo (perf round 4, items C1 and C2, 2026-09-07): fsid -> (key, _Caps). The key is
+# jd._file_key(CAPDIR/<fsid>.jsonl) = (st_ino, st_mtime_ns, st_size), taken BEFORE the read, so a file that
+# changes between the stat and the read is caught by the next call's stat (one extra miss, never a stale
+# serve). The key is complete against how the file is written: jd.append_caption opens it in append mode
+# (every row grows st_size), and _seed_fork_stores publishes the forked child's file through a temp +
+# os.replace (a new inode). No writer rewrites a captions file in place, so there is no equal-size rewrite
+# inside one mtime tick for the three components to miss (the round-3 review's hazard; a source-text test
+# pins both writers). An absent file is an empty _Caps and its entry is popped; a stat that fails otherwise
+# is a sentinel key that matches nothing (read, not memoized); a read that fails after a successful stat is
+# not memoized (the `fail` counter, one stderr line per episode), since a permission or descriptor failure
+# is not a file version. Dict order is LRU (a hit reinserts), one eviction per insert past the cap, and
+# build_timeline's full builds release the entries of lanes outside the timeline's lane set (_caps_forget).
+# The feed's held-card path reads live sessions, a subset of the lanes; the postal join (_msg_summaries)
+# reads _sessions(now), discover's 48 h window, a superset of the 12 h lane set, so an entry it made for a
+# session outside the lanes is released at the next full build and read again only when that session's
+# transcript changes (the join's own per-session mtime gate). `evict` counts all three drops: a lane that
+# left the timeline, the LRU bound, and the pop of an entry whose file is now absent. Every caller reads the
+# object and never writes it (a source-text test pins that), so a hit hands out the same _Caps, indexes
+# included. Counters ride /perf under memos.captions; the lock covers the dict ops and the counters, never
+# the read or the parse.
+_caps_memo = {}
+_CAPS_MEMO_MAX = 512
+_caps_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0}
+_caps_failed = set()            # paths whose last read after a good stat failed: one stderr line per episode
+_CAPS_LOCK = threading.Lock()
+
+
+class _Caps(dict):
+    """One transcript's captions, {id: row}, as _captions memoizes it, with two indexes built on first use
+    and never while the lines are parsed: they describe the FINAL dict, so a duplicate id (a live caption row
+    and then the final row) is indexed once, by the row the dict serves. `pidx` maps _seg_key(id) to the
+    row for the '#p' (message) rows, first inserted wins, which is what _seg_caption's scan (`next` in
+    dict order) returned. `sidx` maps _seg_key(id) to the grain-'segment' rows in insertion order, the
+    sequence _seg_work_caption's scan visited, so its strict '<' nearest-t pick resolves a tie to the same
+    row. Each index is built into a local and assigned once, so a concurrent reader sees None or a complete
+    index, never a partial one. Read-only by contract for every caller."""
+    __slots__ = ("_pidx", "_sidx")
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._pidx = None
+        self._sidx = None
+
+    @property
+    def pidx(self):
+        idx = self._pidx
+        if idx is None:
+            idx = {}
+            for k, v in self.items():
+                if k.endswith("#p"):
+                    idx.setdefault(_seg_key(k), v)
+            self._pidx = idx
+        return idx
+
+    @property
+    def sidx(self):
+        idx = self._sidx
+        if idx is None:
+            idx = {}
+            for k, v in self.items():
+                if v.get("grain") == "segment":
+                    idx.setdefault(_seg_key(k), []).append(v)
+            self._sidx = idx
+        return idx
+
+
+def _caps_memo_report():
+    """The memo's counters plus its occupancy, for /perf (memos.captions)."""
+    with _CAPS_LOCK:
+        out = dict(_caps_memo_stats)
+        out["entries"] = len(_caps_memo)
+    return out
+
+
+def _caps_forget(keep):
+    """Drop the memo entries for transcripts outside `keep`: build_timeline's lane set at a full build
+    (live sessions plus the dead lanes inside its 12 h window). The feed's callers read a subset of it; the
+    postal join reads discover's 48 h window, a superset, and an entry of its outside the lanes is dropped
+    here and read again only when that transcript changes. Iterates a key snapshot under the lock; a
+    connect-push build on another thread may insert concurrently."""
+    with _CAPS_LOCK:
+        gone = [k for k in _caps_memo if k not in keep]
+        for k in gone:
+            _caps_memo.pop(k, None)
+        if gone:
+            _caps_memo_stats["evict"] += len(gone)
+
+
 def _captions(fsid):
-    """{unit id -> caption row} from captions/<fsid>.jsonl — append-incremental like the states logs
-    (2026-09-03): the chat build, the feed and the timeline each re-read and re-decoded the whole file
-    per build. Rows are the cache's objects: read-only."""
-    out = {}
-    for o in em._read_jsonl_incremental(jd.CAPDIR / (fsid + ".jsonl")):
+    """{id: row} of the captioner's store for one transcript, the last row per id winning (a live caption
+    and then its final), MEMOIZED on the file's identity (see _caps_memo). A hit returns the same _Caps
+    object; an absent file is a fresh empty _Caps and is never memoized. A row that is not a JSON object
+    is skipped like an unparseable line."""
+    p = str(jd.CAPDIR / (fsid + ".jsonl"))
+    key = jd._file_key(p)
+    if key is None:                                       # absent: a state, not an entry
+        with _CAPS_LOCK:
+            if _caps_memo.pop(fsid, None) is not None:
+                _caps_memo_stats["evict"] += 1
+        return _Caps()
+    with _CAPS_LOCK:
+        ent = _caps_memo.get(fsid)
+        if ent is not None and ent[0] == key:
+            _caps_memo.pop(fsid, None)                    # a served entry is a USED entry (LRU reinsert)
+            _caps_memo[fsid] = ent
+            _caps_memo_stats["hit"] += 1
+            return ent[1]
+        _caps_memo_stats["miss"] += 1
+    out = _Caps()
+    try:
+        with open(p, errors="replace") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        return out                                        # unlinked between the stat and the read: the next stat pops it
+    except OSError as e:
+        with _CAPS_LOCK:
+            _caps_memo_stats["fail"] += 1
+            first = p not in _caps_failed
+            _caps_failed.add(p)
+        if first:
+            sys.stderr.write("captions: %s unreadable after a successful stat (%r); answered empty and not memoized\n"
+                             % (os.path.basename(p), e))
+        return out
+    if _caps_failed:
+        with _CAPS_LOCK:
+            _caps_failed.discard(p)                       # a good read ends the episode; the next failure logs again
+    for line in text.splitlines():
+        try:
+            o = json.loads(line)
+        except Exception:
+            continue
         if isinstance(o, dict) and o.get("id"):
             out[o["id"]] = o
+    if isinstance(key, tuple):                            # never under the sentinel of a failed stat
+        with _CAPS_LOCK:
+            _caps_memo.pop(fsid, None)
+            while len(_caps_memo) >= _CAPS_MEMO_MAX:
+                _caps_memo.pop(next(iter(_caps_memo)))    # the least recently used goes first, never the whole memo
+                _caps_memo_stats["evict"] += 1
+            _caps_memo[fsid] = (key, out)
     return out
 
 
@@ -26394,7 +26997,8 @@ def _limit_hold(sid):
     file come from the drain's scope (_live_scope.usage / _live_scope.spend_pause — the same thread-confined
     idiom as the cycle's liveness snapshot and path memo), read ONCE per drain instead of once per held
     session: an account limit parks every session's input for hours, and the per-session re-read was most
-    of the drain's 46 ms on a seventeen-session board (measured 2026-09-05). Elsewhere it reads fresh.
+    of the drain's 46 ms on a seventeen-session board (measured 2026-09-05). Elsewhere it reads fresh. Both
+    readings are the limits half (_usage_limits): the spend ledger is not an input of this gate (P18).
 
     The gap this closes (the user 2026-07-24): hitting a usage limit turned every following gesture into
     its own failure. /compact came back refused ("this would take you over your limit"), the message typed
@@ -26405,8 +27009,8 @@ def _limit_hold(sid):
     /model and /effort are exactly as un-servable as a message, and they hold their place in the sequence.
 
     RELEASE is read from the event, never a timer romp invents:
-      - a rate window carries the API's own resetsAt, and _usage().limited goes false the moment that
-        stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
+      - a rate window carries the API's own resetsAt, and _usage_limits()["limited"] goes false the moment
+        that stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
       (its 0.5 s backstop) of the reset;
       - a spend cap has no readable reset (it lifts when the user raises it), so the hold rides the
         retry-pause _auto_pause_on_spend_limit engaged and lifts when that lifts: the user resumes it, or
@@ -26432,8 +27036,8 @@ def _limit_hold(sid):
     usage = getattr(_live_scope, "usage", _UNSET)
     if usage is _UNSET:
         try:
-            usage = _usage()
-        except Exception:
+            usage = _usage_limits()                   # the limits half: this gate runs per parked session
+        except Exception:                             # per cycle and reads no ledger figure (P18)
             usage = _UNREADABLE
     if usage is _UNREADABLE:
         return None                                   # unreadable usage → never invent a hold (the drain's
@@ -27392,7 +27996,7 @@ def _apply_pending_ops(now=None):
         # a verdict the WS thread's fresh _ops_gate would not share; review find 2026-09-05). Inside the
         # try, so a raise from either read still clears the scope below.
         try:
-            _live_scope.usage = _usage()
+            _live_scope.usage = _usage_limits()       # the limits half: the hold reads no ledger figure (P18)
         except Exception:
             _live_scope.usage = _UNREADABLE
         _live_scope.spend_pause = _retry_paused_on() and _retry_pause_reason() == "spend"
@@ -30028,7 +30632,8 @@ def _episode_boundary_tick(now):
     in the producer thread BEFORE the judge tiers and the pre-pass goals snapshot, so the same pass's
     planner/closer/nudge already see the settled store. Cheap when nothing changed: _sessions() is the
     cached discover, the episode log read is an mtime memo, and a transcript's head record is cached
-    per path (immutable once written)."""
+    per path (immutable once written); the states-file lineage read runs only for a head the log does
+    not hold yet (see the guard order in _episode_boundary_check)."""
     for s in _sessions(now):
         try:
             _episode_boundary_check(s["sid"], s["path"], now)
@@ -30041,6 +30646,17 @@ def _episode_boundary_check(sid, path, now):
     if not head or not head["root"]:
         return                       # no head yet, or a resume-style leaf (chains into a prior file):
     #                                  either way the recorded episode is still the current one
+    # The two guards below are pure predicates on the same early return, so their order is free to
+    # choose, and it is chosen for cost (2026-09-07, the judge-pass performance round): the episode
+    # log read is an mtime memo, one stat per session on a hit; the lineage read parses every row of
+    # the session's states file. A recorded head, which is every session on every pass but the one
+    # where its head changed, returns on the stat and never reads the states file; the lineage is
+    # consulted only for an unrecorded head, still before the append that would record it.
+    if any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid)):
+        return                       # this head is already recorded — the current episode, or a
+    #                                  HISTORICAL one re-sighted through a stale path (a peer writer
+    #                                  mid-transition). A re-sighting is never a new boundary, and
+    #                                  skipping its append keeps the race below from growing the log.
     if any(l.get("to") == Path(path).stem for l in jd.resume_lineage(sid)):
         return                       # a RECORDED resume fork: the CLI resumed a machine-cut turn onto a
     #                                  fresh-headed file, byte-identical to a /clear on disk. The
@@ -30048,11 +30664,6 @@ def _episode_boundary_check(sid, path, now):
     #                                  same states/ rows), so this head is no boundary — treating it as
     #                                  one settled the session's open cards mid-turn and the cut turn's
     #                                  work never carded (the lost PR-watch finding, the user 2026-08-14).
-    if any(r.get("head") == head["uuid"] for r in jd.episode_rows(sid)):
-        return                       # this head is already recorded — the current episode, or a
-    #                                  HISTORICAL one re-sighted through a stale path (a peer writer
-    #                                  mid-transition). A re-sighting is never a new boundary, and
-    #                                  skipping its append keeps the race below from growing the log.
     jd.append_episode(sid, head["uuid"], Path(path).stem, head["t"] or int(now))
     # Seed-vs-boundary is decided by RE-READING the log AFTER the append, never from the pre-append
     # read. Two kernel instances overlapped for about a second on 2026-07-27 (a restart-churn
@@ -32513,20 +33124,43 @@ def _acct_read():
     _ACCT_CACHE["mtime"], _ACCT_CACHE["val"], _ACCT_CACHE["label"] = m, val, label
 
 
-def _usage():
-    """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None. File-based, like the
-    obsidian timeline's readUsage. `fable` is the included-Fable-5 weekly allowance Claude Code added to
-    /usage (the user 2026-07-02) — the CLI's window type is `seven_day_overage_included`, labeled
-    'Fable 5 limit'; the SDK backend writes it to usage.json as `fable` (the statusline payload does NOT
-    carry it — five_hour/seven_day only — so events are its one in-band source)."""
+def _usage_doc():
+    """usage.json parsed, or {} when it is absent or unreadable. A pure API-key host NEVER writes usage.json
+    (both snapshot writers skip keyed sessions), so bailing on the missing file starved the no-login spend
+    arm of _usage() of exactly the machine it was written for — the devbox answered /usage with {} and its
+    spend vanished from the summed spend across hosts (the user 2026-08-13). An empty snapshot falls through
+    instead; every read of it tolerates absence."""
     try:
-        o = json.loads((jd.STATE / "usage.json").read_text())
+        return json.loads((jd.STATE / "usage.json").read_text())
     except Exception:
-        # A pure API-key host NEVER writes usage.json (both snapshot writers skip keyed sessions), so
-        # bailing here starved the no-login spend arm below of exactly the machine it was written for —
-        # the devbox answered /usage with {} and its spend vanished from the fleet sum (the user
-        # 2026-08-13). An empty snapshot falls through instead; every read below tolerates absence.
-        o = {}
+        return {}
+
+
+def _usage_limits(doc=None):
+    """The rate-limit half of _usage(): the 5h, weekly and Fable 5 windows usage.json holds for the CURRENT
+    login, with `limited` derived — and nothing from the spend ledger. Always a dict, {fiveHour, sevenDay,
+    fable, t, acct, acctLabel, limited}: the three windows are None when the file names none (absent,
+    windowless, or stamped by a login that is gone), and `limited` is None when no window is at its cap.
+
+    This is the reading the pause and the hold take — _account_limited (both edges of the limit pause),
+    _retry_resume_at (the API-error card's countdown) and _limit_hold (the queue's account gate). They read
+    `limited` and the windows' resetsAt, which derive from the file's segments, the acct stamp and the clock;
+    spend.json is not an input of any of them, yet every call went through _usage(), which parsed the ledger
+    twice (200 KB, about 6 ms per call, once per pusher cycle for the pause alone) to attach spend figures
+    those callers never read — and on a host in the spend arm, for a `limited` key that arm does not even
+    produce (perf round 4 P18, 2026-09-07). `doc` is the parsed usage.json (_usage_doc); None reads it here.
+    No memo: every call reads the file as it is now, and the clock it reads is the module's. One decision
+    changed with the split, on purpose: a ledger the spend readers cannot use (valid JSON that is not an
+    object) used to raise inside _usage() and read as "no reading" to the three callers, so a capped window
+    never engaged the pause and an engaged pause never lifted; the limits half decides from usage.json alone,
+    so such a ledger no longer disables the pause and the hold (romp never writes that shape, and the file
+    heals on the next recorded turn; the rail's _usage() still fails on it as before).
+
+    `fable` is the included-Fable-5 weekly allowance Claude Code added to /usage (the user 2026-07-02) — the
+    CLI's window type is `seven_day_overage_included`, labeled 'Fable 5 limit'; the SDK backend writes it to
+    usage.json as `fable` (the statusline payload does NOT carry it — five_hour/seven_day only — so events are
+    its one in-band source)."""
+    o = _usage_doc() if doc is None else doc
 
     def seg(s):
         if isinstance(s, dict) and isinstance(s.get("pct"), (int, float)):
@@ -32551,7 +33185,49 @@ def _usage():
         stamped = o.get("acct") or ""
         if stamped and stamped != _claude_account():
             five = seven = fable = None
-    if not five and not seven and not fable:
+    # LIMIT REACHED (the user 2026-07-01): a window at 100% whose reset is still in the future = the account is
+    # rate-limited on it now. Drives the top banner + the auto retry-pause. A window past its resetsAt has rolled
+    # (its pct is stale until the next reading) → not limited.
+    def _lim(s):
+        return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
+    limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
+    t = o.get("t")
+    return {"fiveHour": five, "sevenDay": seven, "fable": fable,
+            "t": t if isinstance(t, (int, float)) else None,
+            # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
+            # SAME account share one set of numbers and must not be drawn twice; two machines on
+            # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
+            # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
+            "acct": _claude_account(),
+            # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
+            # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
+            # this is display only, "" when no login.
+            "acctLabel": _claude_account_label(),
+            "limited": limited if any(limited.values()) else None}
+
+
+def _spend_doc():
+    """spend.json parsed, or {} when it is absent or unreadable: the ONE parse a _usage() call makes of the
+    ledger, handed to _spend_windows and _spend_series as `doc` (each read the file itself before, so one
+    call parsed 200 KB twice; perf round 4 P18, 2026-09-07). {} is what both readers fall to when their own
+    read fails — zero-filled windows, no series — so an unreadable ledger reads the same through either
+    path. A file that parses to something other than an object reaches the readers as it is, and they fail
+    on it as they did."""
+    try:
+        return json.loads((jd.STATE / "spend.json").read_text())
+    except Exception:
+        return {}
+
+
+def _usage():
+    """The /usage rate-limit bars (5h + weekly + Fable 5) from usage.json, or None: _usage_limits() with the
+    spend figures the rail draws beside or instead of the bars attached. File-based, like the obsidian
+    timeline's readUsage. This is the reading for what is DRAWN (_usage_for_client per timeline build,
+    GET /usage, the per-host rows); the pause and the hold read _usage_limits() directly and parse no ledger.
+    The ledger is parsed once per call here (_spend_doc) and handed to both spend readers."""
+    o = _usage_doc()
+    out = _usage_limits(o)
+    if not out["fiveHour"] and not out["sevenDay"] and not out["fable"]:
         # No windows. A machine with NO Claude login shows SPEND where the bars sat (the user
         # 2026-08-04): today's accumulated per-result cost from spend.json. The deciding evidence is
         # the CREDENTIAL STORE (the login's own lifecycle), not a per-session auth report: one session
@@ -32561,8 +33237,8 @@ def _usage():
         # requires spend.json to EXIST: a keyless machine with no recorded spend has nothing to show —
         # and the guard is what keeps unstamped fixtures/CI (temp STATE, no credential file, no spend)
         # reading None instead of coupling to the runner's real login (the deliberate decoupling the
-        # acct-stamp comment above records). A window-less file on a LOGGED-IN machine stays None —
-        # nothing known, draw nothing (never a confident zero).
+        # acct-stamp comment in _usage_limits records). A window-less file on a LOGGED-IN machine stays
+        # None — nothing known, draw nothing (never a confident zero).
         if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):
             # The spend WINDOWS mirror the subscription bars (5h / 7d / month) so the two auth modes
             # read identically; _spend_windows always returns all three, zero-filled on a fresh kernel
@@ -32570,15 +33246,14 @@ def _usage():
             # keyed split: on a no-login machine every turn bills the key, and legacy files predate
             # the split. The rail's label is the constant 'API' — no fragment of the key travels
             # (the user 2026-08-08; hosts are told apart by name in the hover, not by key).
-            out = {"apiKey": True, "spend": _spend_windows(),
-                   "t": o.get("t") if isinstance(o.get("t"), (int, float)) else None,
-                   "acct": _claude_account()}
+            doc = _spend_doc()                # the ledger, parsed once for the windows and the series
+            out = {"apiKey": True, "spend": _spend_windows(doc=doc), "t": out["t"], "acct": out["acct"]}
             # (The telemetryUnavailable flag + its "rate-limit telemetry unavailable under API-key
             # auth" hover line are GONE — the user 2026-08-24: they know which machines are
             # key-only and want the spend without a notice about rate limits that don't apply.
             # Absence of windows on a keyed host is the designed state and now simply looks like
             # what it is: no windows.)
-            ss = _spend_series()          # TOTAL, like the windows above: everything here bills the key
+            ss = _spend_series(doc=doc)       # TOTAL, like the windows above: everything here bills the key
             if ss:
                 out["spendSeries"] = ss   # the hover's money-rate graph (the user 2026-08-13)
             sa = _spend_recorded_at()
@@ -32587,25 +33262,6 @@ def _usage():
                                           # stale "updated 9h ago" sat over the spend and read as its age)
             return out
         return None
-    # LIMIT REACHED (the user 2026-07-01): a window at 100% whose reset is still in the future = the account is
-    # rate-limited on it now. Drives the top banner + the auto retry-pause. A window past its resetsAt has rolled
-    # (its pct is stale until the next reading) → not limited.
-    def _lim(s):
-        return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
-    limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
-    t = o.get("t")
-    out = {"fiveHour": five, "sevenDay": seven, "fable": fable,
-           "t": t if isinstance(t, (int, float)) else None,
-           # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
-           # SAME account share one set of numbers and must not be drawn twice; two machines on
-           # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
-           # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
-           "acct": _claude_account(),
-           # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
-           # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
-           # this is display only, "" when no login.
-           "acctLabel": _claude_account_label(),
-           "limited": limited if any(limited.values()) else None}
     # API-KEY spend BESIDE the bars — the KEYED split only (turns whose session billed the key; a login
     # turn's computed cost is dollars nobody pays), attached only when key turns actually exist, so a
     # host that never uses its key shows nothing extra. This supersedes the same-day rule that bars
@@ -32613,17 +33269,18 @@ def _usage():
     # share one auth; per-session auth (same day, evening) makes one host BOTH, and the key's real
     # dollars belong on the rail next to the login's real %.
     if _auth_key_present():
-        ksp = _spend_windows(keyed_only=True)
+        doc = _spend_doc()                    # once, for the keyed windows and the keyed series
+        ksp = _spend_windows(keyed_only=True, doc=doc)
         if any((ksp.get(k) or {}).get("turns") for k in ("day", "week", "month")):
             out["spend"] = ksp
-            ss = _spend_series(keyed_only=True)   # the keyed split, like the windows it graphs
+            ss = _spend_series(keyed_only=True, doc=doc)   # the keyed split, like the windows it graphs
             if ss:
                 out["spendSeries"] = ss
             sa = _spend_recorded_at()
             if sa:
                 out["spendAt"] = sa               # same own-freshness stamp as the key-only arm
     # (the winSeries per-window utilization series is gone — the user 2026-08-14, who wanted the one
-    # fleet $/h graph and nothing per window. usage-history.json keeps recording — sdk_backend
+    # $/h graph summed across hosts and nothing per window. usage-history.json keeps recording — sdk_backend
     # _record_usage_history — so a future graph starts with history instead of a blank.)
     return out
 
@@ -32698,7 +33355,7 @@ def _ledger_key_unplaced(key, err, effect):
                  "bucket is removed." % (jd.STATE / "spend.json", err, effect))
 
 
-def _spend_series(keyed_only=False, now=None):
+def _spend_series(keyed_only=False, now=None, doc=None):
     """The hover graph's money-rate series (the user 2026-08-13): $/hour over the last 192 hours, a
     DENSE array plus a base hour (h0, epoch-hours), so cross-host summing is an index-wise add after
     aligning on h0 — correct without dedup, because each host records only its own turns even on a
@@ -32707,11 +33364,15 @@ def _spend_series(keyed_only=False, now=None):
     reason. `now` anchors h0 — injectable so a caller with a frozen evidence clock (tests) can't
     straddle an hour boundary between writing a bucket and reading its index (the 23:00 UTC CI run). A
     key the rule cannot place is left out and reported once (_ledger_key_unplaced): this runs in every
-    usage build, and a raise here took the whole timeline down with it."""
-    try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
-    except Exception:
-        return None
+    usage build, and a raise here took the whole timeline down with it. `doc` is the parsed ledger when
+    the caller already holds it (_usage parses it once for this and _spend_windows); None reads the file
+    here, as every standalone caller does."""
+    if doc is None:
+        try:
+            doc = json.loads((jd.STATE / "spend.json").read_text())
+        except Exception:
+            return None
+    d = doc
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
     if not hours:
         return None
@@ -32782,7 +33443,7 @@ def _spend_pre_fix(key):
     return isinstance(key, str) and key[:10] < SPEND_PRE_FIX_DATE
 
 
-def _spend_windows(keyed_only=False, now=None):
+def _spend_windows(keyed_only=False, now=None, doc=None):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
     buckets, month-to-date from its day buckets — each {usd, tok, turns}, plus `budget` where
@@ -32795,11 +33456,14 @@ def _spend_windows(keyed_only=False, now=None):
     user 2026-08-08). The no-login machine keeps the total (everything there IS the key, and legacy
     files predate the split). `now` is the clock the windows end at — the wall clock by default; the
     analytics build passes its own so the modal's keyed guard reads the rail's windows at the modal's
-    instant."""
-    try:
-        d = json.loads((jd.STATE / "spend.json").read_text())
-    except Exception:
-        d = {}
+    instant. `doc` is the parsed ledger when the caller already holds it (_usage parses it once for this
+    and _spend_series); None reads the file here, as the analytics build and every other caller do."""
+    if doc is None:
+        try:
+            doc = json.loads((jd.STATE / "spend.json").read_text())
+        except Exception:
+            doc = {}
+    d = doc
     days = d.get("days") if isinstance(d.get("days"), dict) else {}
     hours = d.get("hours") if isinstance(d.get("hours"), dict) else {}
 
@@ -33337,11 +34001,19 @@ def _seg_caption(caps, seg_id):
     """The captioner's MESSAGE caption for a segment (store id '<seg>#p'), resilient to the same seg-id
     timestamp drift as _seg_placed — the captioner keys its store from the JUDGE's parse. The drift made
     the provisional card silently fall back to the raw prompt instead of its 'Analyzing: <gist>' line, and
-    dropped timeline message-dot gists, for any queued/forwarded SDK message. '' when absent."""
+    dropped timeline message-dot gists, for any queued/forwarded SDK message. '' when absent.
+
+    On an exact miss a memoized _Caps answers from its `pidx` index (perf round 4, item C2: first
+    inserted wins, the same row the scan's `next` returned); a plain dict (the tests' fixtures) takes
+    the scan."""
     hit = caps.get(seg_id + "#p")
     if hit is None:
         want = _seg_key(seg_id + "#p")
-        hit = next((v for k, v in caps.items() if k.endswith("#p") and _seg_key(k) == want), None)
+        pidx = getattr(caps, "pidx", None)
+        if pidx is not None:
+            hit = pidx.get(want)
+        else:
+            hit = next((v for k, v in caps.items() if k.endswith("#p") and _seg_key(k) == want), None)
     return (hit or {}).get("caption", "")
 
 
@@ -33356,7 +34028,11 @@ def _seg_work_caption(caps, seg_id):
     _seg_key (em._segment_id anchors them on their atom uuid, the user 2026-07-22), so they no longer
     collide with each other; the nearest-t pick remains only to absorb a drifted t and to disambiguate
     the rare TWO segments that share real trigger text (e.g. two 'continue's) — drift runs seconds,
-    distinct segments sit minutes apart. '' when absent."""
+    distinct segments sit minutes apart. '' when absent.
+
+    On an exact miss a memoized _Caps answers from its `sidx` index (perf round 4, item C2: the
+    grain-'segment' rows under this key in insertion order, the rows the scan visited, so the strict '<'
+    below resolves a tie to the same row); a plain dict takes the scan."""
     hit = caps.get(seg_id)
     if hit is not None:
         return hit.get("caption", "")
@@ -33368,10 +34044,13 @@ def _seg_work_caption(caps, seg_id):
     except ValueError:
         return ""
     want = _seg_key(seg_id)
+    sidx = getattr(caps, "sidx", None)
+    if sidx is not None:
+        rows = sidx.get(want, ())
+    else:
+        rows = (v for k, v in caps.items() if v.get("grain") == "segment" and _seg_key(k) == want)
     best = None
-    for k, v in caps.items():
-        if v.get("grain") != "segment" or _seg_key(k) != want:
-            continue
+    for v in rows:
         d = abs((v.get("t") or 0) - seg_t)
         if best is None or d < best[0]:
             best = (d, v)
@@ -33794,12 +34473,25 @@ def _session_tokens(path, t0):
 # window (30 days, plus a day of slack) are pruned so memory stays bounded. A shrunken file (rotation,
 # a fresh install) resets cleanly.
 _JUDGE_USAGE_RETAIN = 31 * 86400
-_JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": []}
+_JUDGE_USAGE_CACHE = {"path": None, "size": -1, "mtime": 0.0, "rows": [], "monotone": True, "hi": None}
 _JUDGE_USAGE_LOCK = threading.Lock()   # the seek-read-append-advance below is ONE transaction: the pusher's build
 #                                        and an HTTP analytics call each read from the shared offset and appended,
 #                                        double-counting every row of the chunk (the 2026-09-06 free-threading
 #                                        review, race 6). The file it covers is a local append-only log; nothing
 #                                        under it takes another lock.
+_JUDGE_USAGE_SLACK = 2                 # seconds a row's t may fall below the running maximum and keep the order
+#                                        fact (_judge_usage_row_fault): the writer's pool threads stamp t = int(
+#                                        time.time()) and then append under no lock, so two calls finishing in the
+#                                        same second can land in either order; the bound is what the horizon
+#                                        bisect in _run_judging backs off by.
+
+
+class _JudgeUsageSnapshot(list):
+    """The rows _judge_usage_rows hands out, plus `monotone`: the order fact the reader established for
+    exactly these rows (see _judge_usage_row_fault). The two ride one object because they are read under
+    one lock; a consumer that bisects on t decides from the same state its rows were cut from, never
+    from the cache's current flag, which a later append may have cleared or a reset re-armed."""
+    __slots__ = ("monotone",)
 
 
 def _judge_usage_rows():
@@ -33807,9 +34499,37 @@ def _judge_usage_rows():
     a missing or garbled log never breaks a build; a mid-append partial line is left for the next read.
     Keyed on the PATH too (a test repointing jd.STATE must never inherit another dir's offset — the
     overrides-sandbox lesson) and reset on a same-size mtime change (an in-place rewrite). Returns a
-    snapshot list: the cached one keeps growing and pruning under later reads."""
+    snapshot list (a _JudgeUsageSnapshot carrying the rows' `monotone` flag): the cached one keeps
+    growing and pruning under later reads."""
     with _JUDGE_USAGE_LOCK:
-        return list(_judge_usage_rows_locked())
+        snap = _JudgeUsageSnapshot(_judge_usage_rows_locked())
+        snap.monotone = _JUDGE_USAGE_CACHE["monotone"]
+        return snap
+
+
+def _judge_usage_row_fault(o, hi):
+    """None when a row keeps the order fact _run_judging's horizon bisect needs, else one phrase naming
+    the fact it breaks. Checked ONCE per row, when the reader appends it (round-4 item B). The facts:
+    `t` is a number; `t >= hi - _JUDGE_USAGE_SLACK`, where `hi` is the largest t among the rows before
+    it (None at the head of the list) — bounded disorder, so the writer's pool threads landing two
+    same-second rows in either order keep the fact; and the row's run end — recv, else sent, else t,
+    the same choice _run_judging makes — is at most t + 1. Under the three, every row before a probed
+    index m has t <= hi_(m-1) <= t_m + S, so a probed row with t_m < t0 - 1 - S puts every row before
+    it at t < t0 - 1, hence run end <= t + 1 < t0: exactly the rows the horizon filter drops. The
+    writer stamps t = int(time.time()) after recv, so real rows satisfy the third by construction
+    (measured max recv - t 0.9998 over 43k rows); the reader verifies it rather than trusting it."""
+    t = o.get("t")
+    if not isinstance(t, (int, float)) or t != t:       # absent, a non-number, or NaN: NaN compares False
+        return "t is not a number"                       # against everything, so it is named here rather
+    if hi is not None and t < hi - _JUDGE_USAGE_SLACK:   # than left to the comparisons below
+        return "t is %.1f s below the running maximum" % (hi - t)
+    sent, recv = o.get("sent"), o.get("recv")
+    end = recv if isinstance(recv, (int, float)) else (sent if isinstance(sent, (int, float)) else t)
+    if end != end:
+        return "run end is not a number"
+    if not end <= t + 1:
+        return "run end is %.2f s past t + 1" % (end - t - 1)
+    return None
 
 
 def _judge_usage_rows_locked():
@@ -33819,14 +34539,14 @@ def _judge_usage_rows_locked():
         st = os.stat(p)
         size = st.st_size
     except OSError:
-        c["path"], c["size"], c["rows"] = str(p), -1, []
+        c["path"], c["size"], c["rows"], c["monotone"], c["hi"] = str(p), -1, [], True, None
         return c["rows"]
     if str(p) != c["path"]:
-        c["path"], c["size"], c["rows"] = str(p), -1, []
+        c["path"], c["size"], c["rows"], c["monotone"], c["hi"] = str(p), -1, [], True, None
     if size == c["size"] and st.st_mtime == c["mtime"]:
         return c["rows"]
     if size <= c["size"] or c["size"] < 0:
-        c["size"], c["rows"] = 0, []                    # rotated/truncated/rewritten, or the first read
+        c["size"], c["rows"], c["monotone"], c["hi"] = 0, [], True, None   # rotated/truncated/rewritten, or the first read
     try:
         with open(p, "rb") as fh:
             fh.seek(c["size"])
@@ -33836,6 +34556,13 @@ def _judge_usage_rows_locked():
     cut = chunk.rfind(b"\n")
     if cut < 0:
         return c["rows"]                                # nothing complete beyond the offset yet
+    # the order fact rides the append: while it holds, `hi` is the largest t so far (an upper bound
+    # for every row still in the list once the retention prune below trims the head); once a row
+    # breaks it, it stays cleared for this list and says so once (a reset above re-arms it for the
+    # next list). An empty list holds it. Kept as a flag rather than sorting a late row into place
+    # because an insort would change the order the band draws rows in; the flag keeps the consumer's
+    # output identical to the full scan in every case.
+    monotone, hi = c["monotone"], c["hi"]
     for ln in chunk[:cut].split(b"\n"):
         if not ln.strip():
             continue
@@ -33845,6 +34572,17 @@ def _judge_usage_rows_locked():
             continue
         if isinstance(o, dict):
             c["rows"].append(o)
+            if monotone:
+                fault = _judge_usage_row_fault(o, hi)
+                if fault is None:
+                    t = o["t"]
+                    hi = t if (hi is None or t > hi) else hi
+                else:
+                    monotone = False
+                    sys.stderr.write("judge-usage reader: row %d of the log breaks the time-order fact (%s); the "
+                                     "judging band walks every retained row until the log is rotated or the "
+                                     "kernel restarts\n" % (len(c["rows"]), fault))
+    c["monotone"], c["hi"] = monotone, hi
     c["size"] += cut + 1
     c["mtime"] = st.st_mtime
     # retention keyed to the DATA's own newest row, never the wall clock (a replayed/synthetic log's
@@ -34633,12 +35371,33 @@ def _run_judging(t0, alive_sids, semantic):
     sits at the old completion, off the live edge), and a COORDINATING courier classification (which plants
     no node, so it had no mark at all). Each call borrows its gloss text/kind best-effort from the nearest
     `semantic` artifact mark of the same (sid, judge) — the usage log records timing + tokens but not the
-    unit. Rows missing sent/recv (pre-recording) fall back to a point at the logged time t."""
-    by = {}
+    unit. Rows missing sent/recv (pre-recording) fall back to a point at the logged time t.
+
+    Two bisects instead of two scans (round-4 item B, 2026-09-07; the function was 15% of a timeline
+    build, 56% of it the gloss comprehension and 25% the walk over every retained row). Both lists
+    are sorted by t, so both answers are prefix boundaries: the gloss is the last same-(sid, judge)
+    mark with t <= end + 1, found by bisect_right on the marks' times (ties included, as the <=
+    comparison included them); and the walk over the retained rows starts at bisect_left on the rows'
+    t at t0 - 1 - _JUDGE_USAGE_SLACK — sound only under the order facts the reader verified for this
+    snapshot (_judge_usage_row_fault: every row skipped that way ended before t0), so a snapshot
+    whose flag is clear walks every row as before. Output identical to the scans, in the same order."""
+    by, times = {}, {}
     for mk in semantic:
         by.setdefault((mk["sid"], mk["judge"]), []).append(mk)
-    for v in by.values():
+    for k, v in by.items():
         v.sort(key=lambda m: m["t"])
+        times[k] = [m["t"] for m in v]
+
+    def gloss(sid, judge, t):
+        """The most recent same-judge artifact mark with m["t"] <= t, or None. A NaN t (a row whose
+        recv is NaN passes the horizon filter, since NaN < t0 is False) matches no mark: the scan's
+        <= was False for every mark, where bisect_right would have answered the newest."""
+        marks = by.get((sid, judge))
+        if not marks or t != t:
+            return None
+        i = bisect.bisect_right(times[(sid, judge)], t)
+        return marks[i - 1] if i else None
+
     out = []
     # The SHARED incremental reader, not a per-build full read: this used to read_text + json.loads
     # the whole of judge-usage.jsonl on EVERY bars build (measured 2026-08-18 during the captioner
@@ -34647,8 +35406,14 @@ def _run_judging(t0, alive_sids, semantic):
     # working sessions painted lanes with no bars. _judge_usage_rows already existed for exactly
     # this (the 2026-08-13 analytics freeze); the band just never adopted it.
     rows = _judge_usage_rows()
+    # Start the walk at the horizon when the snapshot's order fact holds: every row the bisect leaves
+    # behind has t < t0 - 1 (the slack covers the bounded disorder the fact allows), so its run end is
+    # at most t + 1 < t0, exactly the rows the filter below drops. A bare list (a test double for the
+    # reader) carries no fact and walks from the head.
+    i0 = (bisect.bisect_left(rows, t0 - 1 - _JUDGE_USAGE_SLACK, key=lambda o: o["t"])
+          if getattr(rows, "monotone", False) else 0)
     done = set()                                      # (sid, judge, sent) of completed runs — to dedup live ones
-    for o in rows:
+    for o in rows[i0:]:
         sid, judge = o.get("fsid"), o.get("judge")
         judge = _JUDGE_FAMILY.get(judge, judge)
         if sid not in alive_sids:
@@ -34661,8 +35426,7 @@ def _run_judging(t0, alive_sids, semantic):
         if isinstance(sent, (int, float)):
             done.add((sid, judge, sent))
         # gloss = the most recent same-judge artifact mark that finished by this call's run time
-        cands = [m for m in by.get((sid, judge), []) if m["t"] <= end + 1]
-        src = cands[-1] if cands else None
+        src = gloss(sid, judge, end + 1)
         out.append({"judge": judge, "sid": sid, "t": start, "t1": end,
                     "kind": (src or {}).get("kind", "run"), "text": (src or {}).get("text", ""),
                     "ms": int(o.get("ms") or 0), "in": int(o.get("in") or 0), "out": int(o.get("out") or 0),
@@ -34679,8 +35443,7 @@ def _run_judging(t0, alive_sids, semantic):
             continue
         if sent < t0 or (sid, judge, sent) in done:
             continue
-        cands = [m for m in by.get((sid, judge), []) if m["t"] <= now + 1]
-        src = cands[-1] if cands else None
+        src = gloss(sid, judge, now + 1)
         out.append({"judge": judge, "sid": sid, "t": sent, "t1": now,
                     "kind": (src or {}).get("kind", "run"), "text": (src or {}).get("text", ""),
                     "ms": 0, "in": 0, "out": 0, "sent": sent, "recv": None, "open": True})
@@ -35006,6 +35769,15 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             judging = []
     else:                                                # SKELETON: the heavy time-plotted detail rides the {type:"bars"} message
         messages, judging = [], []
+    if with_bars and not live_only:
+        # The captions memo releases the lanes that left the timeline here (perf round 4, item C1): a full
+        # build's lane set (live sessions plus the dead lanes inside the 12 h window, dismissed dead lanes
+        # dropped) is the set this build read. The feed's held-card path reads live sessions, a subset; the
+        # postal join (_msg_summaries) reads discover's 48 h window, a superset, so an entry it made for a
+        # session outside the lanes goes here and is read again only when that session's transcript changes
+        # (the join's per-session mtime gate). A skeleton or live-only build reads a subset of the lanes and
+        # so must not evict on it.
+        _caps_forget(set(id2name))
     # compaction-sweep gradient (widest→narrowest): the timeline's scan-bar has no client-side colormap, so
     # ship the GLOBAL map sampled at the same scaleX stops the chat surface uses (render.ts applyCompactSweep),
     # letting the bar slide through the map's hues as it compresses — mirroring the context battery fill.

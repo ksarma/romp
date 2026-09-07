@@ -23,7 +23,7 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   // the spend-only view arms on the legacy apiKey marker OR a login-less machine with recorded spend,
   // and keeps TOTAL sums (everything there bills the key; legacy files predate the split)
   assert.ok(KERNEL.includes('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):'));
-  assert.ok(KERNEL.includes('out = {"apiKey": True, "spend": _spend_windows(),'));
+  assert.ok(KERNEL.includes('out = {"apiKey": True, "spend": _spend_windows(doc=doc),'));
   // the hover's spend rows lead with the rolling hour (the user 2026-08-15); the collapsed cell keeps day+month
   // …'1 month' is ROLLING 30 days and 'this month' the calendar bill figure beneath it (T235, 2026-09-03)
   assert.ok(KERNEL.includes("var SPEND_WINS=[['hour','1 hour'],['day','1 day'],['week','1 week'],['month','1 month'],['monthToDate','this month']];"));
@@ -32,8 +32,8 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(KERNEL.includes('out["spendSeries"] = ss'));
   // the bars payload attaches the KEYED split only — a login turn's computed cost there would be
   // dollars nobody is billed — and only when key turns actually exist (the user 2026-08-08)
-  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False, now=None):"));
-  assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True)"));
+  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False, now=None, doc=None):"));
+  assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True, doc=doc)"));
   assert.match(KERNEL, /if any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\):/);
   // no fragment of the key rides ANY payload (the user 2026-08-08, evening): the tail plumbing is
   // gone from the kernel wholesale, and the keyed-spend gate is a plain existence check
