@@ -242,7 +242,7 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(map, /fcreject: \(x, ev\) => \{ ev\.stopPropagation\(\); void this\.mutate\("reject", \{ ids: \[x\.dataset\.id!\] \}, "change:" \+ x\.dataset\.id!\); \}/);
   assert.match(map, /void this\.mutate\("accept-all", \{\}, "changes"\)/);
   assert.match(map, /fcrejectallgo: \(\) => \{ this\.rejectAllConfirm = false; void this\.mutate\("reject-all", \{\}, "changes"\); \}/, "Reject all goes after its pane-local confirm");
-  assert.match(map, /fcchange: \(x\) => \{ this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \}/, "an inline mark opens its card");
+  assert.match(map, /fcchange: \(x, ev\) => \{ ev\.preventDefault\(\); this\.openPanel\(\); this\.showCard\("chg:" \+ x\.dataset\.id!\); \}/, "an inline mark opens its card, and cancels the click so an anchor around it (a URL the viewer linked) does not open too");
   assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"\]\);/, "…by keyboard too");
   // the fence: fileMtimeNs for reject and reject-all ONLY, from the last status/result reply
   assert.match(SRC, /const FILE_VERBS = new Set\(\["reject", "reject-all"\]\);/);
@@ -542,7 +542,7 @@ function world(over: { todoId?: string | null; src?: string } = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: the bytes and mtime now on disk, repainted, the seam's onRendered fired

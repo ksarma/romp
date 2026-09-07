@@ -819,6 +819,7 @@ class Panel {
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
     ctx.onClose(() => this.dispose());
+    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved note is asked about before the viewer moves on
     ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
@@ -857,7 +858,10 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
-        fcchange: (x) => { this.openPanel(); this.showCard("chg:" + x.dataset.id!); },   // an inline change mark opens its card
+        // an inline change mark opens its card, and only that: painted over a URL the viewer linked (file-view-links.ts),
+        // the mark stands INSIDE the anchor, and the anchor's own open followed the card's on every click and Enter
+        // (the 2026-09-07 review); cancelling the click ends the anchor's activation, as fcopen does below
+        fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
@@ -1122,6 +1126,16 @@ class Panel {
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
     this.stopPoll();
+  }
+  /** The viewer's close ask (ctx.guardClose): a composer holding typed words is a note the person has not saved, and a
+   *  close or a replace-open (a link followed inside the file, a Files-pane row, the shell's relay) used to drop it with
+   *  the panel, silently (the 2026-09-07 review). The ask the editor puts to unsaved edits, in its words (file-view.ts
+   *  confirmDiscard); a re-place takes a drag, not words, and an empty input has nothing to lose. True lets the close go. */
+  draftAsk(): boolean {
+    const c = this.composer;
+    if (!c || c.kind === "replace" || !this.input.value.trim()) return true;
+    const p = this.ctx.path;
+    return window.confirm("Discard the unsaved comment on " + p.slice(p.lastIndexOf("/") + 1) + "?");
   }
   dispose(): void {
     this.stopPoll();

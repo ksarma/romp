@@ -18,12 +18,12 @@
 import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { fileUrl } from "./preview";
+import { fileUrl, wantsOwnTab, openFileTab, canPreview } from "./preview";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction, panelMark } from "./file-comments";
-import { linkifyFileText, linkMarkdownAnchors, URL_LINK_CLASS } from "./file-view-links";
+import { linkifyFileText, linkMarkdownAnchors, viewerWalkTokens, URL_LINK_CLASS, FRAG_LINK_CLASS } from "./file-view-links";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -159,8 +159,14 @@ let saveSeq = 0;
 let editHooks: { reqId: number; logWarning: string | null; saved: (mtimeNs: string, logged: boolean) => void; failed: (err: string, code?: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
-// handler both close through it without knowing an edit is in progress.
+// handler both close through it without knowing an edit is in progress. It runs the editor's own ask
+// and then every ask an action registered through the seam (ctx.guardClose: the comments panel's, for a
+// note typed and not yet saved), so a close or a replace-open (a link followed inside the shown file, a
+// Files-pane row, the shell's relay) meets ONE code path whatever the person has unsaved, and nothing is
+// dropped silently (the 2026-09-07 review: a link click under a comment draft replaced the file and the
+// draft with it, with no ask).
 let closeGuard: (() => boolean) | null = null;
+let closeAsks: Array<() => boolean> = [];
 // ONE live Escape handler at a time. Every open registers its own document-level onKey closure, and
 // the previous one must be UNREGISTERED when its viewer goes: the replace path used to leave it
 // behind, where — with a NEW viewer up, so its `!getElementById` guard no longer no-ops — its stale
@@ -274,6 +280,11 @@ export interface FileViewActionCtx {
   /** the panel's half of editing over a tracked file (Slice 5): registered once per open, null removes it. Read at every
    *  Edit and Save, never cached — the panel's status is the truth about what is pending and where Save must go */
   setTrackedEdit(t: TrackedEdit | null): void;
+  /** register an ask the viewer puts before this open ends by a close or a replace-open (a link followed inside the
+   *  file, a Files-pane row, the shell's relay): false vetoes it and the viewer stays as it was. The editor's own
+   *  unsaved-changes ask runs first; an action with something unsaved of its own (the comments panel's typed note)
+   *  asks here, in the same words, so nothing the person typed is dropped without a word. Per open; dropped with it */
+  guardClose(ask: () => boolean): void;
 }
 /** One decision taken inside the editor (an accept or a reject of a pending change), as the chunk's decisions report
  *  it. "Decisions" is the plan's word for the save verb's two lists and the chunk's canonical name (editor-chunk.ts,
@@ -456,8 +467,9 @@ function composerWindow(): Window | null {
 export function closeFileView(): void {
   const wrap = document.getElementById("romp-fileview");
   if (!wrap) return;
-  if (closeGuard && !closeGuard()) return;   // unsaved edits, and the user chose to keep them
+  if (closeGuard && !closeGuard()) return;   // unsaved edits (or an unsaved comment), and the user chose to keep them
   closeGuard = null;
+  closeAsks = [];
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
@@ -496,6 +508,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
   closeGuard = null;
+  closeAsks = [];
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
@@ -837,6 +850,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     reload: () => { if (!editing) fetchFile(); },
     editing: () => editing,
     setTrackedEdit: (t) => { trackedEdit = t; },
+    guardClose: (ask) => { closeAsks.push(ask); },
   };
   // Registered actions render after the built-ins — the registry walk is the ONE place row
   // conventions live (see registerFileViewAction above). The GitHub link and Comments mount here.
@@ -1006,27 +1020,80 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   box.addEventListener("touchend", onSelect);   // the phone's selection settles on the lift, with no mouseup
 
   // Links inside the file (file-view-links.ts): one listener on the body, which every paint keeps and only
-  // refills (click-safe, ui/CLAUDE.md). A path link opens the file through the host's opener, with this
-  // viewer's session (a relative path was already joined onto this file's directory at mark time; the kernel
-  // reads `~` and the session's machine). A URL anchor opens itself (target _blank) and is left to the browser;
-  // the chat's document-level opener takes it first there, the same way. Two clicks are not the link's: a
-  // click that ends a drag which selected text (the selection is still open at click time; a press on text
-  // collapses it first, so a plain click never sees one), which selects and navigates nowhere; and a click on
-  // a mark the comments panel painted over the link (a highlight, a change mark), which is the card's
-  // opening: the panel's own delegate on the row takes it, as render.ts yields to panelMark (the 2026-09-06
-  // precedent). Enter on a focused path link is its click (path-links.ts) and lands here too.
-  body.addEventListener("click", (ev) => {
-    const t = ev.target as Element | null;
-    const x = t && typeof t.closest === "function" ? t.closest('[data-act="openpath"], a.' + URL_LINK_CLASS) as HTMLElement | null : null;
-    if (!x || !body.contains(x) || panelMark(t)) return;
-    const sel = window.getSelection();
-    if (sel && !sel.isCollapsed && box.contains(sel.anchorNode)) { ev.preventDefault(); return; }   // a drag-select ended on the link
-    if (x.dataset.act !== "openpath") return;                 // the URL anchor: the browser's own open
+  // refills (click-safe, ui/CLAUDE.md). The gesture is the project's (the PDF and folder rule, preview.ts
+  // wantsOwnTab): a PLAIN click acts inside the dashboard, and a Cmd/Ctrl-click or a middle-click opens the
+  // link in a tab of its own. Plain: a path link opens the file through the host's opener, with this viewer's
+  // session (a relative path was already joined onto this file's directory at mark time; the kernel reads `~`
+  // and the session's machine); a URL anchor opens itself (target _blank) and is left to the browser (the
+  // chat's document-level opener takes it first there, the same way); a section link scrolls to its target
+  // in this document, or does nothing where there is none (its title says so), and never moves the hosting
+  // document. Modified: a path link opens in the browser's own tab off the kernel's /file route (openFileTab;
+  // a blocked popup falls through to the viewer, so the file is never unreachable), a URL anchor in a tab from
+  // here. One click does one thing (ui/CLAUDE.md): a click on a mark the comments panel painted over the link
+  // (a highlight, a change mark) is the card's opening and only that, so a plain one is cancelled here when
+  // the link is an anchor (the anchor's own open would follow the card's otherwise) and left to the panel's
+  // delegate on the row, as render.ts yields to panelMark (the 2026-09-06 precedent); a modified click on a
+  // mark is the link's and only the link's, so it stops before the row. A click that ends a drag which
+  // selected text (the selection is still open at click time; a press on text collapses it first, so a plain
+  // click never sees one) selects and navigates nowhere. Enter on a focused path link is its click
+  // (path-links.ts, with a held Cmd/Ctrl carried) and lands here too.
+  const openUrlTab = (href: string) => {
+    if (!href) return;
+    if (canPreview()) window.open(href, "_blank", "noopener,noreferrer");   // the web dashboard: the browser's tab
+    else post({ type: "openLink", href });                                  // the VS Code webview: the host's openExternal
+  };
+  const linkOf = (t: Element | null): HTMLElement | null => {
+    const x = t && typeof t.closest === "function" ? t.closest('[data-act="openpath"], a.' + URL_LINK_CLASS + ", a." + FRAG_LINK_CLASS) as HTMLElement | null : null;
+    return x && body.contains(x) ? x : null;
+  };
+  const openLink = (x: HTMLElement, ev: MouseEvent) => {
+    const own = wantsOwnTab(ev);
+    if (x.classList.contains(FRAG_LINK_CLASS)) {                // a section of this document: this document's scroll, never the page's
+      ev.preventDefault();
+      const id = x.dataset.frag;
+      const hit = id ? Array.from(box.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id) : undefined;
+      if (hit) hit.scrollIntoView({ block: "start" });
+      return;
+    }
+    if (x.dataset.act !== "openpath") {                          // the URL anchor
+      if (!own) return;                                          // a plain click: the browser's own open
+      ev.preventDefault(); ev.stopPropagation();                 // a modified one: one tab, from here, and the row's delegate never sees it
+      openUrlTab(x.getAttribute("href") || "");
+      return;
+    }
     ev.preventDefault();
     const p = x.dataset.path;
     if (!p) return;
+    if (own) {
+      ev.stopPropagation();
+      if (openFileTab(p, sid || null)) return;                   // its own tab; a blocked popup falls through to the viewer
+    }
     const ln = Number(x.dataset.line);
     openLinkedFile(p, sid || null, ln > 0 ? ln : null);
+  };
+  body.addEventListener("click", (ev) => {
+    const t = ev.target as Element | null;
+    const x = linkOf(t);
+    if (!x) return;
+    if (panelMark(t) && !wantsOwnTab(ev)) {                      // a plain click on the panel's mark: the card's, and only the card's
+      if (x.dataset.act !== "openpath") ev.preventDefault();
+      return;
+    }
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && box.contains(sel.anchorNode)) { ev.preventDefault(); return; }   // a drag-select ended on the link
+    openLink(x, ev);
+  });
+  // The middle button: its press would start the browser's autoscroll on a path link (a span, unlike an anchor)
+  // and swallow the auxclick, so the press is cancelled there; the auxclick is the link's own tab. A URL anchor's
+  // middle-click is the browser's (it opens the href in a new tab itself), so neither listener touches one.
+  body.addEventListener("mousedown", (ev) => {
+    const x = ev.button === 1 ? linkOf(ev.target as Element | null) : null;
+    if (x && x.dataset.act === "openpath") ev.preventDefault();
+  });
+  body.addEventListener("auxclick", (ev) => {
+    if (ev.button !== 1) return;
+    const x = linkOf(ev.target as Element | null);
+    if (x && x.dataset.act === "openpath") openLink(x, ev);
   });
 
   // ── edit mode (the raw-mode slice) ── a plain textarea holding the raw bytes: an embedded editor
@@ -1034,7 +1101,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // mtime floor does the real safety work (agents edit these same trees — see _save_file).
   const confirmDiscard = (): boolean =>
     !editing || !dirty || window.confirm("Discard unsaved changes to " + path.slice(cut + 1) + "?");
-  closeGuard = confirmDiscard;
+  closeGuard = () => confirmDiscard() && closeAsks.every((ask) => ask());   // the editor's ask, then the actions' (ctx.guardClose)
   const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
@@ -1539,9 +1606,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   let refetchAfterEdit = false;
   // The row for a 1-based line of the code view, scrolled to the middle (scrollToOffset's own gesture); `pendingLine`
   // is the open's `line`, spent on the first text that lands. A reload keeps the reader's place and does not scroll.
+  // A line past the end (a stale `x.py:400` in a file that shrank) lands on the last row AND says so in the viewer's
+  // notice dress: a silent landing on the wrong row reads as the file's truth (CLAUDE.md, fail loudly).
   const scrollToLine = (n: number) => {
     const rows = body.querySelectorAll("code.hljs .fv-cl");
-    if (rows.length) (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
+    if (!rows.length) return;
+    if (n > rows.length) noteBar("Line " + n + " is past the end of this file, which has " + rows.length + (rows.length === 1 ? " line" : " lines") + "; showing the last line.");
+    (rows[Math.min(Math.max(0, n - 1), rows.length - 1)] as HTMLElement).scrollIntoView({ block: "center" });
   };
   let pendingLine: number | null = opts && typeof opts.line === "number" && opts.line > 0 ? Math.floor(opts.line) : null;
   const fetchFile = () => {
@@ -1729,7 +1800,13 @@ function mdBlock(text: string, path: string, sid: string | null | undefined): HT
   const box = el("div", "fileview-md");
   let rendered = true;                                 // false on the fallback: the bare text, with nothing added to it
   try {
-    const dirty = marked.parse(text) as string;
+    // A link's destination is put in the form the sanitizer keeps BEFORE the HTML exists (file-view-links.ts
+    // viewerWalkTokens: `notes.md:7` reads as a scheme to DOMPurify, `file:///a.md` is a scheme it refuses, and an
+    // anchor it strips is a label nothing can sort afterwards). Handed to THIS parse only: the marked singleton is
+    // the chat's too, and the chat's anchors must not learn the viewer's forms. A walkTokens an extension put on
+    // the defaults runs as well: per-call options replace, not compose.
+    const base = marked.defaults.walkTokens;
+    const dirty = marked.parse(text, { walkTokens: (t) => { viewerWalkTokens(t); if (base) void base.call(marked, t); } }) as string;
     // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
     // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
     box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });

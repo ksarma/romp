@@ -376,7 +376,7 @@ test("it waits with the romp loader and fails with the kernel's own words, never
 });
 
 test("it reuses fileUrl, so a REMOTE session's file is relayed from the host that owns it", () => {
-  assert.match(VIEW, /import \{ fileUrl \} from "\.\/preview";/);
+  assert.match(VIEW, /import \{ fileUrl, wantsOwnTab, openFileTab, canPreview \} from "\.\/preview";/);
   assert.match(VIEW, /fetch\(fileUrl\(path, sid\), \{ cache: "no-store" \}\)/);
 });
 
