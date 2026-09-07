@@ -217,7 +217,12 @@ GLOBALS = {
     "traceback": ("const", "a module"),
 }
 
-BACKEND_LOCALS = ("be", "_be_fk", "_cbe")   # the backend objects build_session binds and calls methods on
+# The local names build_session binds a backend to — derived from its source by AST (_backend_locals: every
+# name assigned from a call to _sdk(), _codex() or Sessions.backend_for(), or from another such name,
+# transitively) and pinned here, so a read through a backend bound to a new name, or a method called
+# directly on _sdk()/_codex() (reported as `_sdk().<attr>`), reaches DOTTED instead of slipping past it.
+BACKEND_LOCALS = ("_be_fk", "_cbe", "be")
+BACKEND_FACTORIES = ("_sdk", "_codex")
 KINDS = ("sig", "pure", "memo", "const", "out")
 
 
@@ -239,10 +244,37 @@ def _module_names():
     return names
 
 
+def _is_backend_factory(call):
+    f = call.func
+    return ((isinstance(f, ast.Name) and f.id in BACKEND_FACTORIES)
+            or (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+                and f.value.id == "Sessions" and f.attr == "backend_for"))
+
+
+def _backend_locals(fn):
+    """Every local name bound to a backend object, transitively: assigned from a backend factory call, or
+    from a name already known to hold one."""
+    names, changed = set(), True
+    while changed:
+        changed = False
+        for x in ast.walk(fn):
+            if not (isinstance(x, ast.Assign) and len(x.targets) == 1 and isinstance(x.targets[0], ast.Name)):
+                continue
+            v = x.value
+            bound = (isinstance(v, ast.Call) and _is_backend_factory(v)) or (isinstance(v, ast.Name) and v.id in names)
+            if bound and x.targets[0].id not in names:
+                names.add(x.targets[0].id)
+                changed = True
+    return names
+
+
 def _census_of(fn_src, module_names):
-    """(calls, dotted, globals): the module-level functions called by name, the attribute-call chains
-    on module objects or backend locals, and the module globals read without a call."""
+    """(calls, dotted, globals, backend_locals): the module-level functions called by name, the
+    attribute-call chains on module objects or backend locals (a method called on a factory's result
+    directly reads `_sdk().<attr>`), the module globals read without a call, and the backend locals the
+    function binds (derived, see _backend_locals)."""
     fn = ast.parse(fn_src).body[0]
+    backends = _backend_locals(fn)
     local = set()
     for x in ast.walk(fn):
         if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Store):
@@ -265,18 +297,20 @@ def _census_of(fn_src, module_names):
                     chain.insert(0, base.attr)
                     base = base.value
                 if isinstance(base, ast.Name) and ((base.id in module_names and base.id not in local)
-                                                   or base.id in BACKEND_LOCALS):
+                                                   or base.id in backends):
                     dotted.add(base.id + "." + ".".join(chain))
+                elif isinstance(base, ast.Call) and _is_backend_factory(base) and isinstance(base.func, ast.Name):
+                    dotted.add(base.func.id + "()." + ".".join(chain))   # a method called on the factory's result
         if isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id in module_names and x.id not in local:
             reads.add(x.id)
-    return calls, dotted, reads - calls
+    return calls, dotted, reads - calls, backends
 
 
 class Census(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.names = _module_names()
-        cls.calls, cls.dotted, cls.reads = _census_of(inspect.getsource(km.build_session), cls.names)
+        cls.calls, cls.dotted, cls.reads, cls.backends = _census_of(inspect.getsource(km.build_session), cls.names)
 
     def test_every_helper_build_session_calls_is_classified_and_nothing_stale_remains(self):
         self.assertEqual(self.calls, set(CENSUS),
@@ -286,6 +320,14 @@ class Census(unittest.TestCase):
 
     def test_every_attribute_call_on_a_module_object_or_backend_is_classified(self):
         self.assertEqual(self.dotted, set(DOTTED), sorted(self.dotted ^ set(DOTTED)))
+
+    def test_the_backend_locals_are_the_pinned_ones(self):
+        self.assertEqual(self.backends, set(BACKEND_LOCALS),
+                         "build_session binds a backend to a new name (or dropped one): pin it so its reads are censused")
+        src = "def f():\n    be = _sdk()\n    x = be\n    y = Sessions.backend_for(sid)\n    z = other()\n    _codex().owns(sid)\n    y.pending_queued(sid)\n"
+        calls, dotted, reads, backends = _census_of(src, {"_sdk", "Sessions", "other", "_codex"})
+        self.assertEqual(backends, {"be", "x", "y"}, "transitive: a name assigned from a backend name is one too")
+        self.assertEqual(dotted, {"_codex().owns", "y.pending_queued", "Sessions.backend_for"})
 
     def test_every_module_global_read_is_classified(self):
         self.assertEqual(self.reads, set(GLOBALS), sorted(self.reads ^ set(GLOBALS)))
