@@ -46,8 +46,36 @@ test("the gear posts kernel ops through ONE shared channel (never re-acquires th
   assert.ok(!GEAR.includes("acquireVsCodeApi"), "a second acquire throws in a real webview");
   for (const op of ["setAutoNudge", "setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort",
     "setDistillModel", "setDistillEffort", "setCommentModel", "setCommentEffort", "setCommentFast",
-    "setFileEditing", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
+    "setFileEditing", "setThinkingSummaries", "setUserTodos", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
+});
+
+test("PER-INSTALL kernel settings are stamped like the queued class but stay OUT of KERNEL_SETTING", () => {
+  // Suggest /compact, Thinking summaries (2026-09-01) and User todos (2026-09-03): each kernel's answer
+  // is its own, so the post goes to the LOCAL kernel only — federation must never queue or broadcast
+  // it — while the kernel still orders applies by `gt` (two dashboards on one kernel race), so the
+  // emitter stamps through the gesture clock under its own store name exactly like the completeness
+  // pin below demands of the queued class. A per-install op that drifted INTO the set would start
+  // walking the mesh; one that shipped unstamped would ride the no-stamp compat path. Extend
+  // PER_INSTALL when adding one.
+  const PER_INSTALL = ["setCompactSuggest", "setThinkingSummaries", "setUserTodos"];
+  const FED = read("ui", "webview", "federation.ts");
+  const setSrc = FED.match(/const KERNEL_SETTING = new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(setSrc, "federation.ts's KERNEL_SETTING set located");
+  const typeSrc = GEAR.match(/var STALE_TYPE = \{([\s\S]*?)\};/);
+  assert.ok(typeSrc, "gear.js's STALE_TYPE map located");
+  const storeType: Record<string, string> = {};
+  for (const m of typeSrc![1].matchAll(/'([a-z-]+)':\s*'(set[A-Za-z]+)'/g)) storeType[m[1]] = m[2];
+  for (const type of PER_INSTALL) {
+    assert.ok(!setSrc![1].includes(type), `${type} must not be a KERNEL_SETTING (per-install)`);
+    assert.ok(!FED.includes(type), `${type} appears nowhere in federation.ts`);
+    const lits: string[] = GEAR.match(new RegExp(`\\{\\s*type:\\s*['"]${type}['"][^}]*\\}`, "g")) || [];
+    assert.equal(lits.length, 1, `exactly one emitter for ${type} (the gear row)`);
+    const stamp = lits[0].match(/\bgt:\s*gclock\.stamp\(['"]([a-z-]+)['"]\)/);
+    assert.ok(stamp, `${type} stamps through the gesture clock inside the literal: ${lits[0]}`);
+    assert.equal(storeType[stamp![1]], type, `${type} stamps under its own store name (STALE_TYPE)`);
+    assert.doesNotMatch(lits[0], /Date\.now\(\)/, "the bare wall clock is the bug the clock replaced");
+  }
 });
 
 test("EVERY queued-class kernel setting is emitted with its gesture time (completeness-pinned to federation's own set)", () => {

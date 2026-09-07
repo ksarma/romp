@@ -17,6 +17,12 @@
 # a session receives. Kernel down/unreachable → silent exit 0, the romp-wake.sh posture: a
 # SessionStart hook must never fail the turn, and the todos stay visible on the user's own
 # surfaces regardless.
+#
+# The feature is switchable and OFF by default (the user 2026-09-03). The kernel is the authority on
+# that too: its /usertodo/context answer carries `enabled`, and while it is false this hook emits
+# NOTHING — no direct read of the switch file here, for the same reason the block itself is not read
+# from the store here. An older kernel that sends no `enabled` field is read as on (the block alone
+# decides), so the hook keeps working across a mixed upgrade.
 set -uo pipefail
 
 [[ -n "${ROMP_SUMMARIZING:-}" ]] && exit 0
@@ -45,11 +51,13 @@ resp="$(printf 'header = "X-Romp-Token: %s"\n' "$esc" \
            -H "Content-Type: application/json" --data "{\"id\":\"$ROMP_SID\"}" 2>/dev/null)" || exit 0
 [[ -n "$resp" ]] || exit 0
 
-# An empty block means nothing to say — print NOTHING at all (a zero-todo session gets no noise).
+# An empty block means nothing to say — print NOTHING at all (a zero-todo session gets no noise),
+# and so does the kernel saying the feature is off (`enabled: false`), whatever else rides along.
 python3 - "$resp" <<'PY'
 import json, sys
 try:
-    block = str(json.loads(sys.argv[1]).get("block") or "").strip()
+    d = json.loads(sys.argv[1])
+    block = "" if d.get("enabled") is False else str(d.get("block") or "").strip()
 except Exception:
     block = ""
 if block:
