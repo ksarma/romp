@@ -626,7 +626,7 @@ test("docs: the guide says Reply opens the box inside the card; the plan's follo
   assert.ok(files.includes("**Reply** opens the reply box inside the card, under the comment and its replies"), "the guide");
   assert.ok(!files.includes("reply into it"), "the old phrase is gone");
   const note = flat(PLAN.slice(PLAN.indexOf("The composer follow-on (2026-09-07)"), PLAN.indexOf("### Slice 3: region comments on images")));
-  for (const phrase of ["inside the card it answers", "below the comment's turns and above its buttons", "across the poll's re-render", "returns to the panel's slot", "a line saying why", "hands the keyboard back to the card's Reply", "file-comments-reply-place.test.ts"]) {
+  for (const phrase of ["inside the card it answers", "below the comment's turns and above its buttons", "across the poll's re-render", "resolved into the closed fold", "its change card behind the \"… N more changes\" row", "gone from the sidecar", "returns to the panel's slot", "a line saying why", "hands the keyboard back to the card's Reply", "file-comments-reply-place.test.ts"]) {
     assert.ok(note.includes(phrase), "the plan's note says: " + phrase);
   }
 });

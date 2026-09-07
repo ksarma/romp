@@ -966,9 +966,10 @@ TheMessage, `ui/webview/file-comments.test.ts`). Tests: `ui/webview/file-comment
 Firefox). The same walk asked for the reply's box to open where the comment is read (2026-09-07): a
 reply's box now stands inside the card it answers, below the comment's turns and above its buttons, and
 stays in that card across the poll's re-render with its words, caret and height; when the list stops
-showing the card (the comment resolved into the closed fold, or gone from the sidecar) the box returns to
-the panel's slot with the words and a line saying why, and Escape or Cancel hands the keyboard back to
-the card's Reply (`file-comments-reply-place.test.ts`). A comment on a change card (`.fc-hosted`) had no
+showing the card (the comment resolved into the closed fold, its change card behind the "… N more
+changes" row, or gone from the sidecar) the box returns to the panel's slot with the words and a line
+saying why, and Escape or Cancel hands the keyboard back to the card's Reply
+(`file-comments-reply-place.test.ts`). A comment on a change card (`.fc-hosted`) had no
 rule of its own until then, so as a plain block it stood the box against the turn above and the buttons
 below at 0px, and after a turn of yours the two washes ran together; it is a flex column at the turns' own
 gap now, in both sheets (`feed-fc-hosted-gap.test.ts`).
