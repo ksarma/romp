@@ -1234,17 +1234,34 @@ def _postal_off(sid):
     except Exception:
         return False
 
+_user_todos_switch_bad = {}   # str(path) -> (mtime_ns, size) of a switch-file version already reported (below)
+
 def _user_todos_on():
     """The kernel's per-install USER TODOS switch (the user 2026-09-03: the feature is off by default
     and per machine). Read from the file on EVERY call — the bus is a separate long-lived process, so
     the file is the seam, and a gear flip must take effect at the next tools/list or call with no
     restart. Absent, unreadable or malformed all read False (the opt-in must be provable), the
-    kernel's own _user_todos_on rule; reading never creates the file."""
+    kernel's own _user_todos_on rule; reading never creates the file. Absent is the shipped default
+    and silent; a file that is not a {"enabled": …} object is said on stderr once per file version,
+    as the kernel says it (2026-09-07), so a hand-edit that turned the tools off is not a mystery."""
     try:
         d = json.loads(USER_TODOS_SWITCH.read_text())
-        return bool(isinstance(d, dict) and d.get("enabled"))
-    except Exception:
+    except FileNotFoundError:
         return False
+    except Exception as e:
+        d, why = None, "unparsable (%s)" % e
+    else:
+        why = None if isinstance(d, dict) else "a JSON %s, not an object" % type(d).__name__
+    if why is None:
+        return bool(d.get("enabled"))
+    try:
+        st = USER_TODOS_SWITCH.stat(); key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if _user_todos_switch_bad.get(str(USER_TODOS_SWITCH)) != key:
+        _user_todos_switch_bad[str(USER_TODOS_SWITCH)] = key
+        sys.stderr.write("user-todos: %s is not a switch file (%s); reading it as OFF\n" % (USER_TODOS_SWITCH, why))
+    return False
 
 def _git_branch(d):
     """Current git branch of a dir (for the agent list — same-branch is what makes

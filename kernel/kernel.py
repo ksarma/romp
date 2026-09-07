@@ -7919,13 +7919,37 @@ _USER_TODOS_UNREADABLE_CARD = ("Can't read romp's request store (%s), so open re
                                "can't be shown until the file is fixed or removed (see the kernel log).")
 
 
+_user_todos_switch_bad = {}   # str(path) -> (mtime_ns,size) of a switch-file VERSION already reported as not a
+#                               switch file (_user_todos_on: read as OFF, said once — the _user_todos_bad idiom)
+
+
 def _user_todos_on():
     """OFF unless this install's switch file says yes: absent, unreadable or malformed all read False —
-    the opt-in must be provable, and reading never creates the file (shipping never turns it on)."""
+    the opt-in must be provable, and reading never creates the file (shipping never turns it on).
+    ABSENT is the shipped default and silent; anything else that is not a {"enabled": …} object (a
+    JSON list, unparsable text, a permission error) is SAID on stderr once per file version, the
+    store guard's idiom (2026-09-07): a hand-edit that turned the feature off should not be a
+    silent mystery, and this read runs on every gated surface, so the latch is what keeps it to one
+    line. The reading stays OFF either way — nothing is repaired, nothing is rewritten."""
+    p = jd.STATE / USER_TODOS_SWITCH_FILE
     try:
-        return bool(json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text()).get("enabled"))
-    except Exception:
+        d = json.loads(p.read_text())
+    except FileNotFoundError:
         return False
+    except Exception as e:
+        d, why = None, "unparsable (%s)" % e
+    else:
+        why = None if isinstance(d, dict) else "a JSON %s, not an object" % type(d).__name__
+    if why is None:
+        return bool(d.get("enabled"))
+    try:
+        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if _user_todos_switch_bad.get(str(p)) != key:
+        _user_todos_switch_bad[str(p)] = key
+        sys.stderr.write("user-todos: %s is not a switch file (%s); reading it as OFF\n" % (p, why))
+    return False
 
 
 def _set_user_todos(enabled, gt=None):

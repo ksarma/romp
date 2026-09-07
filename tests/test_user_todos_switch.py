@@ -74,12 +74,14 @@ class _Sandbox(unittest.TestCase):
         jd.STATE = Path(self.td.name)
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._user_todos_switch_bad.clear()
 
     def tearDown(self):
         jd.STATE = self.saved
         self.td.cleanup()
         km._user_todos_cache.clear()
         km._user_todos_bad.clear()
+        km._user_todos_switch_bad.clear()
 
     @property
     def switch(self):
@@ -142,12 +144,31 @@ class TheSwitch(_Sandbox):
         self.assertFalse(self.switch.exists(), "reading never creates the file")
 
     def test_garbled_or_false_reads_off(self):
+        # …and a file that is not a switch file is SAID, once per file version (the store guard's
+        # idiom), so a hand-edit that turned the feature off is not a silent mystery: the absent
+        # file (the shipped default) and a real `false` stay silent
+        def read():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                on = km._user_todos_on()
+            return on, err.getvalue()
+        self.assertEqual(read(), (False, ""), "absent: the shipped default, silently")
         self.switch.write_text("not json")
-        self.assertFalse(km._user_todos_on())
+        on, err = read()
+        self.assertFalse(on)
+        self.assertEqual(err.count("\n"), 1, err)
+        self.assertIn("is not a switch file", err)
+        self.assertIn("reading it as OFF", err)
+        self.assertIn(str(self.switch), err, "names the file")
+        self.assertEqual(read(), (False, ""), "the same file version is not re-announced")
         self.switch.write_text(json.dumps(["enabled"]))
-        self.assertFalse(km._user_todos_on())
+        on, err = read()
+        self.assertFalse(on)
+        self.assertEqual(err.count("\n"), 1, "a JSON list is the next version: one more line")
         self.switch.write_text(json.dumps({"enabled": False, "gt": 5}))
-        self.assertFalse(km._user_todos_on())
+        self.assertEqual(read(), (False, ""), "a real false is not an error")
+        self.switch.write_text(json.dumps({"enabled": True, "gt": 6}))
+        self.assertEqual(read(), (True, ""))
 
     def test_the_setter_writes_value_and_stamp_and_the_reader_sees_it(self):
         self.assertEqual(km._set_user_todos(True, gt=T_OLD), T_OLD)
@@ -963,6 +984,32 @@ class BusWording(unittest.TestCase):
         # the veil test_injected_voice.py keeps: the agent has never heard of any of these
         for word in ("romp", "card", "board", "goal", "cleared", "dismissal", "nudge", "kernel"):
             self.assertNotIn(word, text.lower(), (word, text))
+
+    def test_the_bus_switch_reader_says_once_when_the_file_is_not_a_switch_file(self):
+        # the kernel's _user_todos_on rule, on the bus's own copy of the reader (it is a separate
+        # long-lived process reading the same file): absent and a real false are silent, anything
+        # else is one stderr line per file version
+        pm = self.pm
+        pm._user_todos_switch_bad.clear()
+
+        def read():
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                on = pm._user_todos_on()
+            return on, err.getvalue()
+        pm.USER_TODOS_SWITCH.unlink()
+        self.assertEqual(read(), (False, ""), "absent is silent")
+        pm.USER_TODOS_SWITCH.write_text("not json")
+        on, err = read()
+        self.assertEqual((on, err.count("\n")), (False, 1), err)
+        self.assertIn("is not a switch file", err)
+        self.assertEqual(read(), (False, ""), "once per file version")
+        pm.USER_TODOS_SWITCH.write_text(json.dumps(["enabled"]))
+        self.assertEqual(read()[1].count("\n"), 1)
+        pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 5}))
+        self.assertEqual(read(), (False, ""))
+        pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": True, "gt": 6}))
+        self.assertEqual(read(), (True, ""))
 
     def test_withdraw_against_an_unreadable_store_says_so_not_no_note_of_yours(self):
         self.canned = {"ok": False, "state": "unknown", "at": None, "owner": None,
