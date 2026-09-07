@@ -461,9 +461,36 @@ class MsgSummariesKey(unittest.TestCase):
         (jd.GOALARCHDIR / (SID_A + ".json")).write_text("{}")
         self.assertEqual(self._scan(), [SID_A], "an archive write rescans its session")
         self.rows[0] = {**self.rows[0], "mtime": 200}
-        self.assertEqual(self._scan(), [SID_A], "the transcript's mtime still keys")
+        self.assertEqual(self._scan(), [SID_A], "the transcript's mtime still keys when the file cannot be stat'd")
+        (jd.STATE / "states").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "states" / (SID_B + ".jsonl")).write_text('{"state": "idle", "t": 1}\n')
+        self.assertEqual(self._scan(), [SID_B], "a states row (an idle atom in the parse) rescans its session")
         self.assertEqual(self._scan(), [])
         self.assertEqual(km._msg_summaries(), {SID_A + ":m": "cap", SID_B + ":m": "cap"})
+
+    def test_the_transcripts_size_and_the_pending_cut_key_too(self):
+        tx = Path(self.td.name) / "a.jsonl"
+        tx.write_text('{"type": "user"}\n')
+        self.rows[0] = {**self.rows[0], "path": str(tx)}
+        cut = {"value": ""}
+
+        class Fake:
+            def pending_cut(self, sid):
+                return cut["value"] if sid == SID_A else ""
+        saved = km._sdk
+        km._sdk = lambda: Fake()
+        self.addCleanup(setattr, km, "_sdk", saved)
+        self._scan()
+        self.assertEqual(self._scan(), [])
+        with open(tx, "a") as f:
+            f.write('{"type": "assistant"}\n')                 # the size moves even where the mtime's clock does not
+        self.assertEqual(self._scan(), [SID_A], "the transcript's size keys")
+        cut["value"] = "uuid-of-the-cut"                     # a pending chat delete changes the parse with no file change
+        self.assertEqual(self._scan(), [SID_A], "the backend's pending cut keys")
+        self.assertEqual(self._scan(), [])
+        key = km._msg_sum_key(self.rows[0])
+        self.assertEqual(len(key), 5, "(transcript, cut, states, captions, store identity)")
+        self.assertEqual(key[1], "uuid-of-the-cut")
 
     def test_the_key_is_taken_before_the_scan_and_names_the_store(self):
         src = inspect.getsource(km._msg_summaries)

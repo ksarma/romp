@@ -34212,7 +34212,10 @@ def _msg_sum_scan_session(sid, path, now):
 
 def _msg_sum_key(s):
     """The key of one session's _msg_summaries submap: every input _msg_sum_scan_session reads, by
-    identity, stat'd BEFORE the scan. The transcript's mtime (discovery's row; the parse), the session's
+    identity, stat'd BEFORE the scan. The parse's own three components, so the submap follows exactly
+    the parse the scan reads: the transcript's (mtime, size) (stat'd here; the row's mtime, discovery's
+    cycle snapshot, stands in when the file cannot be stat'd), the backend's pending cut for the sid and
+    the states file's (mtime, size) (_parse keys on the same three). Then the session's
     captions/<sid>.jsonl as (st_mtime_ns, st_size) (the captions its segments join to) and its goal
     store's identity (jd._store_identity: the store, its override journal and its archive, each
     (ino, mtime_ns, size) or None; the seams decide which segment a message id belongs to). The key was
@@ -34220,14 +34223,30 @@ def _msg_sum_key(s):
     transcript record never reached the union until the session's next turn, and a seam change never
     did (round-4 plan, the P17/P3(c) item). Stat-then-read: a write landing between the stat and the
     scan pairs an old key with new content, which is one extra rescan on the next call, never a stale
-    hit."""
+    hit. The store component shares the coarse-mtime blind spot of every stat-keyed memo here (two
+    equal-size publishes of one store inside one clock tick on a filesystem without fine-grained
+    timestamps reproduce the key; plan C1's byte compare closes it). It is not keyed on the shared
+    store object's identity: load_goals_shared mints a fresh object for an absent or corrupt store, so
+    identity would never hit there."""
     sid = s["sid"]
     try:
-        st = os.stat(jd.CAPDIR / (sid + ".jsonl"))
-        caps = (st.st_mtime_ns, st.st_size)
+        st = os.stat(s["path"])
+        tx = (st.st_mtime, st.st_size)
+    except OSError:
+        tx = (s.get("mtime"), None)
+    _be = _sdk()
+    cut = _be.pending_cut(sid) if _be else ""
+    try:
+        sst = os.stat(jd.STATE / "states" / (sid + ".jsonl"))
+        states = (sst.st_mtime, sst.st_size)
+    except OSError:
+        states = None
+    try:
+        cst = os.stat(jd.CAPDIR / (sid + ".jsonl"))
+        caps = (cst.st_mtime_ns, cst.st_size)
     except OSError:
         caps = None
-    return (s["mtime"], caps, jd._store_identity(sid)[1:])
+    return (tx, cut, states, caps, jd._store_identity(sid)[1:])
 
 
 def _msg_summaries():
@@ -34239,9 +34258,9 @@ def _msg_summaries():
     PER-SESSION incremental cache (the user 2026-07-03, who found startup slow and opening each session slow). The
     old memo keyed the WHOLE map on the fleet's (path, mtime) signature — so ANY session writing (a busy
     fleet is always writing) invalidated it and every build_session re-scanned all ~15 transcripts, ~1.2s
-    per chat-open. Now each session's submap is cached against its OWN inputs (_msg_sum_key: the
-    transcript's mtime, its captions file and its goal store, whose seams place each message id in a
-    segment): a build re-scans only the sessions whose inputs changed (usually just the one being viewed)
+    per chat-open. Now each session's submap is cached against its OWN inputs (_msg_sum_key: the parse's
+    key, its captions file and its goal store, whose seams place each message id in a segment): a build
+    re-scans only the sessions whose inputs changed (usually just the one being viewed)
     and unions the rest from cache. The parses are _parse-mtime-cached too, so an unchanged session
     costs nothing but the key's stats."""
     now = time.time()
