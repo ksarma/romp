@@ -27,6 +27,9 @@ setup() {
     # The env-file path is baked (and, when non-default, exported) into the unit too; a developer shell
     # that carries either variable must not leak it into the default-install assertions below.
     unset ROMP_SERVICE_ENV_FILE XDG_CONFIG_HOME
+    # `status` reads the key source and its tuning from this environment too; a developer shell that
+    # selects a source or declares names must not leak into the status assertions below.
+    unset ROMP_CREDENTIAL_COMMAND ROMP_API_KEY_REF ROMP_CREDENTIAL_NAMES ROMP_CREDENTIAL_SELECTOR_FILE ROMP_CREDENTIAL_TIMEOUT_S
 }
 
 teardown() { rm -rf "$TEST_DIR"; }
@@ -348,4 +351,297 @@ EOF2
     [ "$status" -eq 0 ]
     run grep -q "ROMP_SERVICE_ENV_FILE" "$plist"
     [ "$status" -ne 0 ]
+}
+
+# ── status: the key source and the unit's shape ────────────────────────────────────────────
+# `status` reads the same non-secret configuration the kernel reads and says which key source is in
+# force (the ANTHROPIC_API_KEY line, the 1Password reference, or the credential command with its
+# selector), whether ExecStart runs the manager through a shell, and which credential-shaped NAMES a
+# unit, drop-in, plist or service.env carries. The source is selected as kernel/keysource.py selects
+# it: a line in service.env first (command > reference > key, the last assignment of a name winning),
+# then this shell's environment. The tuning values (ROMP_CREDENTIAL_NAMES, ROMP_CREDENTIAL_SELECTOR_FILE)
+# are read as kernel/envsource.py reads them: this environment, then service.env. Values are assembled
+# at run time and the assertions check none of them is printed.
+
+@test "status (Linux): key source is file by default, command with its selector when the command is configured" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: file"* ]]
+    [[ "$output" == *"ExecStart: runs the manager directly"* ]]
+    [[ "$output" != *"credential-shaped"* ]]
+    # the command in this environment; the selector in its default file under XDG_CONFIG_HOME
+    export XDG_CONFIG_HOME="$TEST_DIR/cfg"
+    mkdir -p "$XDG_CONFIG_HOME/romp"
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: command (no selector)"* ]]
+    [[ "$output" != *"cred.sh"* ]]                            # which source, never the setting's text
+    printf 'hp\n' > "$XDG_CONFIG_HOME/romp/credential-selector"
+    # the token is shown by name only when ROMP_CREDENTIAL_NAMES declares it; undeclared, by length
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector undeclared, 2 chars)"* ]]
+    [[ "$output" != *"selector hp"* ]]
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_CREDENTIAL_NAMES="hp, lp" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector hp)"* ]]
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_CREDENTIAL_NAMES="lp" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector undeclared, 2 chars)"* ]]
+    # a selector file holding something that is not a name is said, not shown
+    local junk="romp-test-fixture-$RANDOM $RANDOM"
+    printf '%s\n' "$junk" > "$XDG_CONFIG_HOME/romp/credential-selector"
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector file holds something that is not a name)"* ]]
+    [[ "$output" != *"fixture"* ]]
+}
+
+@test "status: key source is reference when service.env carries ROMP_API_KEY_REF; a command line beside it wins" {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf 'ROMP_API_KEY_REF=op://vault/item/field\n' > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: reference"* ]]
+    [[ "$output" != *"op://"* ]]                              # which source, never the reference's text
+    [[ "$output" != *"credential-shaped"* ]]                  # a reference is not a credential
+    # the command is the general shape and the reference its built-in default: an explicit command line wins
+    printf 'ROMP_API_KEY_REF=op://vault/item/field\nROMP_CREDENTIAL_COMMAND=%s\n' "$TEST_DIR/cred.sh \"\$1\"" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (no selector)"* ]]
+    [[ "$output" != *"key source: reference"* ]]
+    [[ "$output" != *"cred.sh"* ]]
+    # the reference selects from this shell's environment too (a foreground manager's door), behind a command there
+    rm -f "$ROMP_SERVICE_ENV_FILE"
+    ROMP_API_KEY_REF=op://vault/item/field ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: reference"* ]]
+    ROMP_API_KEY_REF=op://vault/item/field ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (no selector)"* ]]
+}
+
+@test "status: a line in service.env outranks this shell's environment, as the kernel's selection does" {
+    # kernel/keysource.py select_source: a line in the file selects the source for any manager; the
+    # environment is a door only when the file has no line, and only for a foreground manager. `status`
+    # reads them in that order, so it names the source the kernel selects.
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf 'ROMP_API_KEY_REF=op://vault/item/field\n' > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_CREDENTIAL_COMMAND="$TEST_DIR/cred.sh \"\$1\"" ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: reference"* ]]
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    printf 'ANTHROPIC_API_KEY=%s\n' "$v" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_API_KEY_REF=op://vault/item/field ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: file"* ]]
+    [[ "$output" == *"service.env carries credential-shaped lines: ANTHROPIC_API_KEY"* ]]
+    [[ "$output" != *"$v"* ]]
+}
+
+@test "status: the same lines in service.env are read the way the kernel reads them (last wins, one layer of quotes)" {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf 'lp\n' > "$TEST_DIR/sel"
+    printf 'ROMP_EXPECTED_AUTH=key\nROMP_CREDENTIAL_COMMAND=first\nROMP_CREDENTIAL_COMMAND="%s"\n  ROMP_CREDENTIAL_SELECTOR_FILE = %s\nROMP_CREDENTIAL_NAMES=hp,lp\n' \
+        "$TEST_DIR/cred.sh \"\$1\"" "$TEST_DIR/sel" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"not installed"* ]]
+    [[ "$output" == *"key source: command (selector lp)"* ]]
+    [[ "$output" != *"ExecStart"* ]]                          # no unit: nothing to say about its shape
+    [[ "$output" != *"cred.sh"* ]]
+    # an empty assignment last still selects the command kind: the kernel selects by the line's presence,
+    # and an empty command text is its problem line, never a fallback to another source
+    printf 'ROMP_CREDENTIAL_COMMAND=x\nROMP_CREDENTIAL_COMMAND=\n' > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command"* ]]
+    # the tuning values are read this environment first, then the file (kernel/envsource.py config_value)
+    printf 'ROMP_CREDENTIAL_COMMAND=%s\nROMP_CREDENTIAL_SELECTOR_FILE=%s\nROMP_CREDENTIAL_NAMES=hp\n' \
+        "$TEST_DIR/cred.sh \"\$1\"" "$TEST_DIR/sel" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector undeclared, 2 chars)"* ]]
+    ROMP_CREDENTIAL_NAMES=lp ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (selector lp)"* ]]
+}
+
+@test "status (Linux): names credential-shaped lines a unit or drop-in carries (names only) and a shell-wrapped ExecStart" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    {
+        printf '[Service]\n'
+        printf 'Environment=ANTHROPIC_API_KEY=%s "OTHER_TOKEN=%s x" EMPTY_TOKEN= NOT_A_SECRET=1\n' "$v" "$v"
+        printf 'Environment="SECOND_API_KEY=%s"\n' "$v"
+        printf 'ExecStart=\n'
+        printf "ExecStart=/usr/bin/zsh -lc 'exec %s up'\n" "$ROMP_MANAGER_BIN"
+    } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/shell.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: ANTHROPIC_API_KEY, OTHER_TOKEN, SECOND_API_KEY"* ]]
+    [[ "$output" != *"EMPTY_TOKEN"* ]]                        # set to nothing: not a credential
+    [[ "$output" != *"NOT_A_SECRET"* ]]
+    [[ "$output" != *"$v"* ]]                                 # never a value
+    [[ "$output" == *"ExecStart: runs the manager through a shell (its variables freeze until a manager restart)"* ]]
+    # `env` in front of the shell is still the shell; a drop-in that resets to the direct form reads direct
+    printf '[Service]\nExecStart=\nExecStart=/usr/bin/env FOO=1 bash -c "exec %s up"\n' "$ROMP_MANAGER_BIN" \
+        > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/shell.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"through a shell"* ]]
+    printf '[Service]\nExecStart=\nExecStart=%s up\n' "$ROMP_MANAGER_BIN" > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/shell.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"ExecStart: runs the manager directly"* ]]
+    [[ "$output" != *"credential-shaped"* ]]
+}
+
+@test "status (Linux): Environment= bodies split like systemd; a quoted assignment with spaces is ONE assignment" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    {
+        printf '[Service]\n'
+        # A_TOKEN's value has a space; B_TOKEN=b sits INSIDE NOT's quoted value (a value, not a name);
+        # C_TOKEN quotes only its value; D_TOKEN's quoted value is a space and a letter (non-empty);
+        # E_TOKEN's quoted value is empty
+        printf 'Environment="A_TOKEN=%s x" "NOT=a B_TOKEN=%s" C_TOKEN="p q" "D_TOKEN= z" E_TOKEN=""\n' "$v" "$v"
+    } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/env.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN, C_TOKEN, D_TOKEN"* ]]
+    [[ "$output" != *"B_TOKEN"* ]]                            # part of NOT's value, never a variable the unit sets
+    [[ "$output" != *"E_TOKEN"* ]]                            # set to nothing
+    [[ "$output" != *"$v"* ]]
+}
+
+# _split_env_words called directly: the function's text is taken from the script (running the script
+# would dispatch a subcommand) and defined in this shell, which has no `body` variable of its own.
+_load_split_env_words() { eval "$(sed -n '/^_split_env_words() {/,/^}/p' "$SVC")"; }
+
+@test "_split_env_words: splits its ARGUMENT from a caller with no body variable" {
+    # `local body="$1" ... n=${#body}` expanded ${#body} before local assigned body, so n was the
+    # length of the CALLER's body (0 here): nothing was printed. The one caller in the script happens
+    # to hold the same string in a variable of that name, which is why status never showed it.
+    _load_split_env_words
+    unset body
+    run _split_env_words 'A_TOKEN=x "B_TOKEN=y z" C=1'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'A_TOKEN=x\nB_TOKEN=y z\nC=1' ]
+    body="short"                                              # a caller's shorter body: still the argument
+    run _split_env_words 'LONGER_TOKEN=a-value-longer-than-the-word-short D=2'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'LONGER_TOKEN=a-value-longer-than-the-word-short\nD=2' ]
+}
+
+@test "_split_env_words: a backslash escapes the next character inside and outside quotes; an unterminated quote keeps the words before it" {
+    _load_split_env_words
+    unset body
+    run _split_env_words 'A_TOKEN=a\ b "B_TOKEN=c\"d e" C_TOKEN=\"f D=\\x'
+    [ "$status" -eq 0 ]
+    [ "$output" = $'A_TOKEN=a b\nB_TOKEN=c"d e\nC_TOKEN="f\nD=\\x' ]
+    run _split_env_words "'S_TOKEN=it\\'s' T=1"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'S_TOKEN=it\'s\nT=1' ]
+    run _split_env_words 'A_TOKEN=trail\'
+    [ "$status" -eq 0 ]
+    [ "$output" = 'A_TOKEN=trail' ]
+    run _split_env_words 'X=1 "A_TOKEN=open B_TOKEN=b'
+    [ "$status" -eq 1 ]
+    [ "$output" = 'X=1' ]                                     # the words before the quote, as systemd keeps them; nothing from the quote on
+    run _split_env_words '"A_TOKEN=open B_TOKEN=b'
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]                                          # the quote opened the first word: no word stands
+    run _split_env_words ""
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "status (Linux): an escaped quote in an Environment= value is a value, and an unterminated line names the words before its quote" {
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    {
+        printf '[Service]\n'
+        # A_TOKEN's value carries an escaped quote followed by what looks like a second assignment: one word
+        printf 'Environment="A_TOKEN=%s\\" B_TOKEN=%s"\n' "$v" "$v"
+        # an unterminated quote: systemd ignores the assignment it opens, and so does this (C_TOKEN is not named)
+        printf 'Environment="C_TOKEN=%s\n' "$v"
+        printf 'Environment=D_TOKEN=%s\n' "$v"
+        # a word completed before an unterminated quote is kept, by systemd and here (E_TOKEN named, F_TOKEN not)
+        printf 'Environment=E_TOKEN=%s "F_TOKEN=%s\n' "$v" "$v"
+    } > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/env.conf"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN, D_TOKEN, E_TOKEN"* ]]
+    [[ "$output" != *"B_TOKEN"* ]]
+    [[ "$output" != *"C_TOKEN"* ]]
+    [[ "$output" != *"F_TOKEN"* ]]
+    [[ "$output" != *"$v"* ]]
+}
+
+@test "status: a credential-shaped line in service.env is named, never shown" {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    printf 'ROMP_EXPECTED_AUTH=key\nANTHROPIC_API_KEY=%s\nMY_TOKEN=""\n# A_TOKEN=%s\nROMP_TOKEN_COUNT=3\nexport OTHER_API_KEY=%s\n' "$v" "$v" "$v" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"service.env carries credential-shaped lines: ANTHROPIC_API_KEY, OTHER_API_KEY"* ]]
+    [[ "$output" != *"MY_TOKEN"* ]]                           # empty after the quotes: no credential
+    [[ "$output" != *"A_TOKEN"* ]]                            # a comment
+    [[ "$output" != *"export"* ]]                             # the name alone, as the kernel's boot line names it
+    [[ "$output" != *"$v"* ]]
+}
+
+@test "status: under the reference the op variables the kernel claims are not named; under the command they are" {
+    # kernel/keysource.py claims OP_SERVICE_ACCOUNT_TOKEN and the other OP_* names for the op read under
+    # the reference, so they reach no session and the kernel's boot line exempts them. Under the command
+    # kind nothing is claimed: every credential-shaped variable in the service environment reaches every
+    # session's CLI and tool shells, so they are named.
+    ROMP_OS_OVERRIDE=Linux "$SVC" install >/dev/null
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    mkdir -p "$ROMP_SYSTEMD_DIR/romp-manager.service.d"
+    printf '[Service]\nEnvironment=OP_CONNECT_TOKEN=%s UNIT_TOKEN=%s\n' "$v" "$v" > "$ROMP_SYSTEMD_DIR/romp-manager.service.d/env.conf"
+    printf 'ROMP_API_KEY_REF=op://vault/item/field\nOP_SERVICE_ACCOUNT_TOKEN=%s\nOTHER_TOKEN=%s\n' "$v" "$v" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: reference"* ]]
+    [[ "$output" == *"unit carries credential-shaped lines: UNIT_TOKEN"* ]]
+    [[ "$output" == *"service.env carries credential-shaped lines: OTHER_TOKEN"* ]]
+    [[ "$output" != *"OP_"* ]]
+    [[ "$output" != *"$v"* ]]
+    printf 'ROMP_CREDENTIAL_COMMAND=%s\nOP_SERVICE_ACCOUNT_TOKEN=%s\nOTHER_TOKEN=%s\n' "$TEST_DIR/cred.sh \"\$1\"" "$v" "$v" > "$ROMP_SERVICE_ENV_FILE"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" status
+    [[ "$output" == *"key source: command (no selector)"* ]]
+    [[ "$output" == *"unit carries credential-shaped lines: OP_CONNECT_TOKEN, UNIT_TOKEN"* ]]
+    [[ "$output" == *"service.env carries credential-shaped lines: OP_SERVICE_ACCOUNT_TOKEN, OTHER_TOKEN"* ]]
+    [[ "$output" != *"$v"* ]]
+}
+
+@test "status (macOS): the plist's pairs and program are read the same way" {
+    ROMP_OS_OVERRIDE=Darwin "$SVC" install >/dev/null
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"key source: file"* ]]
+    [[ "$output" == *"ExecStart: runs the manager directly"* ]]   # romp-node-launch is the program, not a shell
+    [[ "$output" != *"credential-shaped"* ]]
+    local v="romp-test-fixture-$RANDOM$RANDOM$RANDOM"
+    cat > "$ROMP_LAUNCHD_DIR/com.romp.manager.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.romp.manager</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>-lc</string>
+    <string>exec $ROMP_MANAGER_BIN up</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/bin</string>
+    <key>A_TOKEN</key><string>$v</string>
+    <key>EMPTY_API_KEY</key><string></string>
+  </dict>
+</dict>
+</plist>
+EOF
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unit carries credential-shaped lines: A_TOKEN"* ]]
+    [[ "$output" != *"EMPTY_API_KEY"* ]]
+    [[ "$output" != *"$v"* ]]
+    [[ "$output" == *"ExecStart: runs the manager through a shell"* ]]
 }
