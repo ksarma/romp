@@ -767,9 +767,7 @@ class JudgesDefaultBilling(_Lab):
     question there. Under the reference, the file kind and a removed source the descriptor answers as
     before, and no billing decision resolves the reference."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.km = SourceFileLoader("romp_kernel_cmdsrc", os.path.join(BIN, "romp-kernel")).load_module()
+    km = _KM_CMDSRC   # loaded at import (see the module header), never re-executed at run time
 
     def setUp(self):
         super().setUp()
