@@ -134,6 +134,20 @@ test("the message for ONE comment, tracked, text file — byte for byte", () => 
     "\n" + TAIL_TRACKED);
 });
 
+test("a body with a line break inside — the composer's Enter (2026-09-07) — travels verbatim, byte for byte; the kernel's TheMessage pins the same text", () => {
+  // tests/test_file_comments.py TheMessage::test_a_body_with_a_line_break_keeps_it holds the kernel's builder to this SAME
+  // text: a comment typed over two lines reaches the session as two lines, the break where the person put it
+  const msg = buildSendMessage({ absPath: ABS, comments: [{ id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache?\nSay which." }],
+    accepted: 0, rejected: 0, tracked: true, media: false });
+  assert.equal(msg,
+    "[obsidian-diff] I left 1 comment on " + ABS + ".\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on \"shipping the cache in v1.2\"):\n" +
+    "Which cache?\n" +
+    "Say which.\n" +
+    "\n" + TAIL_TRACKED);
+});
+
 test("the message for SEVERAL comments: one blank line between, the plural, no decisions line when nothing was decided", () => {
   const msg = buildSendMessage({ absPath: ABS, comments: [
     { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
@@ -333,6 +347,7 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     { id: "", desc: "", body: "" },
     { id: "1757145600000-1", desc: "on the region at 0.12, 0.40, 0.35, 0.20 of page 2", body: "  leading and trailing blanks  \n" },
     { id: "1757145600000-2", desc: 'on "naïve — «quoted»"', body: "Ünïcödé, an em dash — and a tab\tinside\r\nand a CRLF." },
+    { id: "1757145600000-3", desc: 'on "shipping the cache in v1.2"', body: "Which cache?\nSay which.\nAnd say why." },   // the composer's Enter: lines, not paragraphs
   ];
   const cases: MessageOpts[] = [
     { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: true },
