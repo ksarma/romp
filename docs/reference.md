@@ -2015,7 +2015,8 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   one (a build that failed is a miss with no populate), and a bypass built
   without memoizing because an input file could not be stat'd. `tiers` holds
   the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
-  `courier`, `group`, `consolidate`, `distill`): `ran` (per-session stage
+  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
+  and archiver): `ran` (per-session stage
   runs), `skipped` (runs the gate declined because nothing the tier reads had
   changed), `stamped` (runs that ended complete and recorded what they
   judged), `bypassed` (runs with no signature to record, or whose parse ran
@@ -2023,8 +2024,18 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   deferral or a failed call left unfinished; for the courier, scans that
   produced pending rows, or whose link repair found the sender's tracker
   completed or the sender outside the discover window, so the next pass scans
-  the session again), `due_clock` (runs a background task's deadline made
-  due), plus `stamps`, the number of per-session records held.
+  the session again; for the index tier, sessions that had a caption or an
+  archive to write this pass, or whose captions file, archive record or unit
+  cache exists and did not read, or whose unit-cache publish failed; the
+  read and publish failures each write one `judge-errors.jsonl` row per
+  failure episode, `captions-unreadable`, `session-archive-unreadable`,
+  `units-cache-unreadable` or `units-cache-write-failed`, beside the
+  `store-unreadable` row a goals file that does not read writes, and the
+  session runs again every pass until the file reads), `due_clock` (runs a
+  background task's deadline made due), plus `stamps`, the number of
+  per-session records held. The index tier's signature is the session's
+  parse pair, captions file, archive record and unit cache, and no goal
+  store: its idle path reads none.
   `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
   `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
   the `judge` line, since the judge's CPU share alone cannot tell a cheaper

@@ -124,6 +124,10 @@ class Collector(unittest.TestCase):
                          "read through jd.tier_stats: the evidence gate's per-tier counters plus the stamps held")
         for t in km.jd.GATED_TIERS:
             self.assertEqual(set(tiers[t]), {"ran", "skipped", "stamped", "bypassed", "incomplete", "due_clock"}, t)
+        self.assertIn("index", km.jd.GATED_TIERS,
+                      "the index tier (captioner and archiver) is counted beside the triage tiers; its incomplete "
+                      "counts sessions with work this pass or a voided read, and ran == stamped + bypassed + incomplete "
+                      "holds for it as for the others")
         self.assertIsInstance(tiers["stamps"], int)
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")

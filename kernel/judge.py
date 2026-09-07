@@ -1108,6 +1108,26 @@ def pass_watermark(tier, fsid):
 #              only after `if not todo`, and every branch of it writes or marks. `_drain_undiscovered`
 #              calls _distill_session directly for absent stores and is not gated (a straggler never
 #              holds a stamp to be skipped on).
+#  index       (the captioner and archiver: run_index, on its own thread beside run_triage) the pinned
+#              parse pair + candidates (tasks_for keys the unit cache on the pair and parses under it on a
+#              miss); captions/<fsid>.jsonl (captioned_ids and _live_natoms decide what is undone,
+#              session_turn_captions is the archiver's input); archive/<fsid>.json (load_archive: the
+#              built-from turn count and the give-up counters); judge-units-cache/<fsid>.json (tasks_for's
+#              hit path, which is the whole of the idle read). NOT the store trio (decision 7 of the round-4
+#              plan, 2026-09-07): the hit path reads no store; the miss path reads it (the seams
+#              _ready_tasks applies) and then either publishes the cache, which moves its identity (one
+#              redundant run next pass, which hits and stamps), or stands down over a fallback view, which
+#              marks the run, so a stamp always stands for a decision the unit cache froze and a store change
+#              alone cannot change what the ungated pass would read. The miss path also reads MESSAGES, the
+#              sdk reg (_sdk_owned) and the pass clock (`now`, through em.parse_session's synthesize_idle):
+#              the same cache freezes those at write time, so the stamp adds no clock dependence the ungated
+#              pass did not have. Not read on the idle path: the strike ledger (captions/<fsid>.fails.json,
+#              read only after a call that ran). A session is never stamped while a body found work for it
+#              (a pending caption task, an archive refresh due; counted before the budget and fairness caps,
+#              so a deferred session stays due), and a strict reader that failed on a file that exists
+#              (captions, archive, unit cache), a failed cache publish, a fallback store on the miss path or
+#              a crash in either body marks it incomplete; the bit is captured per session across the two
+#              bodies and the stamp is written at pass end (_run_index).
 # Not in any signature, on purpose: MESSAGES (the parse cache key excludes it too: a delivery appends to
 # the transcript, and the sent row is appended before the wake that produces the atom, so the row is
 # always in the ledger by the time the pinned pair moves; the FsCompleteness test allows it for every
@@ -1119,10 +1139,11 @@ def pass_watermark(tier, fsid):
 # judged from a fallback view never stamps under the identity of files it did not read; the same holds
 # for the side files a stage reads after the gate stat'd them (cleared.jsonl, the states file, the stall
 # records): a read that fails on a file that exists marks the run incomplete and logs a row (_read_failed).
-GATED_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill")   # run_triage's order
-PARSE_TIERS = ("plan", "close", "unblock", "courier")   # the tiers whose decision path reads the parse: their
-#                                                         signature carries the pinned pair, and _gated checks
-#                                                         the served pair
+GATED_TIERS = ("plan", "close", "unblock", "courier", "group", "consolidate", "distill",   # run_triage's order,
+               "index")                                 # then the index tier (run_index, beside run_triage)
+PARSE_TIERS = ("plan", "close", "unblock", "courier", "index")   # the tiers whose decision path reads the parse:
+#                                                         their signature carries the pinned pair, and the stamp
+#                                                         checks the served pair (_gate_stamp)
 _STAGE_STAMP = {}        # (tier, fsid) -> (sig, not_before): the inputs the tier last judged to completion
 _STAGE_LOCK = threading.Lock()
 _STAGE_STAMP_MAX = 4096  # belt: a wholesale clear at the cap (one full walk next pass)
@@ -1140,8 +1161,11 @@ def tier_stats():
     """The gate's counters for GET /perf, per tier: ran (stage runs), skipped (runs the gate declined:
     stamp matched, clock not due), stamped (runs that ended complete and wrote a stamp), bypassed (runs
     with no signature to stamp, or whose parse was served under another cut), incomplete (runs the
-    completeness bit voided), due_clock (runs the clock input made due); plus `stamps`, the number of
-    stamps held. ran == stamped + bypassed + incomplete over any window."""
+    completeness bit voided: a deferral, a failed call, a read that failed on a file that exists; for the
+    courier, scans that produced rows or consulted another store; for the index tier, sessions a body found
+    work for this pass, a caption owed or an archive refresh due, or whose reader or cache publish failed),
+    due_clock (runs the clock input made due); plus `stamps`, the number of stamps held.
+    ran == stamped + bypassed + incomplete over any window, for every tier."""
     with _TIER_LOCK:
         out = {t: dict(d) for t, d in _TIER_STATS.items()}
     with _STAGE_LOCK:
@@ -1275,8 +1299,12 @@ def _sig_inputs(tier, fsid, path):
     closer's idle path is the parse, the store, the marker, the reg, cleared.jsonl and the stall slice;
     the unblocker's is the parse and the store; the courier's the parse, the store and the episode log
     (episode_floor); the grouper's and consolidator's the store and cleared.jsonl; the distiller's the
-    store, the states file and the stall slice (the inventory above GATED_TIERS). Kept apart from
-    _stage_sig so the completeness test can hold a stage's reads against it."""
+    store, the states file and the stall slice; the index tier's the parse pair, the captions file, the
+    archive record and the unit cache, and NO store (its hit path reads none and its miss path either moves
+    the cache's identity or marks the run; the inventory above GATED_TIERS). Kept apart from _stage_sig so
+    the completeness test can hold a stage's reads against it."""
+    if tier == "index":
+        return [CAPDIR / (fsid + ".jsonl"), ARCHDIR / (fsid + ".json"), PCACHE / (fsid + ".json")], []
     ident = [GOALDIR / (fsid + ".json"), _overrides_dir() / (fsid + ".jsonl"), GOALARCHDIR / (fsid + ".json")]
     value = []
     if tier == "courier":
@@ -3150,6 +3178,12 @@ def tasks_for(fsid, leaf, files, now):
         if t.get("live"):                              # the open segment's live work caption — re-run-gate fields
             task["live"], task["natoms"] = True, t.get("natoms")
         tasks.append(task)
+    if _pending_cut(fsid) != pair[1]:
+        # the parse ran under the LIVE cut (parsed_session) and the memo is keyed on the PINNED pair: a cut
+        # that armed or cleared between the pin and the parse means these tasks describe a world the key
+        # does not name, and a later pass pinning the key's cut would hit them and never caption the turns
+        # the cut hid (2026-09-07). Memoize nothing: the tasks stand for this pass, the next one re-parses.
+        return tasks
     try:
         PCACHE.mkdir(parents=True, exist_ok=True)
         tmp = cf.with_suffix(".tmp.%d" % os.getpid())
@@ -3169,12 +3203,14 @@ def tasks_for(fsid, leaf, files, now):
 def _caption_rows(fsid):
     """The decoded rows of captions/<fsid>.jsonl in file order; a line that does not decode is skipped
     (content, not a read failure). Strict about the FILE (the evidence gate, 2026-09-07): absent is a state
-    and reads as no rows; every other failure on a file that exists (a permission bit, EMFILE, EIO) goes
-    through _read_failed, which marks the running stage incomplete and logs one captions-unreadable row per
-    episode, and reads as no rows for this call, so the caller decides as before and the gate never stamps
-    that decision. The three readers below caught every OSError as "no rows" before, so a failed read of an
-    existing file looked exactly like an empty file, and a stamp taken over it would have held until the
-    file moved."""
+    and reads as no rows ([]); every other failure on a file that exists (a permission bit, EMFILE, EIO)
+    goes through _read_failed, which marks the running stage incomplete and logs one captions-unreadable
+    row per episode, and answers None, so the index bodies stand down for the session (no caption is minted
+    against a done set the pass could not see, no archive is rebuilt from captions it could not read) and
+    the mark keeps it due until the file reads; the three public readers below answer empty for None. They
+    caught every OSError as "no rows" before, so a failed read of an existing file looked exactly like an
+    empty file: the captioner re-captioned every unit against it, and a stamp taken over it would have held
+    until the file moved."""
     p = CAPDIR / (fsid + ".jsonl")
     try:
         text = p.read_text(errors="replace")
@@ -3182,7 +3218,7 @@ def _caption_rows(fsid):
         return []
     except OSError as e:
         _read_failed(str(p), "captions-unreadable", fsid, e)
-        return []
+        return None
     _read_ok(str(p))
     rows = []
     for line in text.splitlines():
@@ -3200,9 +3236,10 @@ def captioned_ids(fsid, rows=None):
     in-progress captions (the open segment's provisional work caption, the user 2026-06-21 via link_audit)
     are SKIPPED: they're not 'done', so run_index keeps re-captioning the open segment until it closes and
     writes the final non-live record — which then dedups normally and supersedes (the reader is last-wins).
-    `rows`: the caption rows when the caller already read them (_caption_rows), else read here."""
+    `rows`: the caption rows when the caller already read them (_caption_rows), else read here; empty when
+    the file exists and did not read (the read marked the stage)."""
     done = set()
-    for o in (_caption_rows(fsid) if rows is None else rows):
+    for o in ((_caption_rows(fsid) if rows is None else rows) or ()):
         if o.get("id") and not o.get("live"):
             done.add(o["id"])
     return done
@@ -3217,9 +3254,10 @@ def _live_natoms(fsid, rows=None):
     """{id: natoms} for the LIVE in-progress captions — the atom count each was built from. run_index
     re-captions an open segment only once its atoms grow by a full LIVE_CAPTION_ATOM_CHUNK past this (event-
     based cadence, no timer), so a busy segment re-captions once per chunk of work, not per atom.
-    `rows`: the caption rows when the caller already read them (_caption_rows), else read here."""
+    `rows`: the caption rows when the caller already read them (_caption_rows), else read here; empty when
+    the file exists and did not read (the read marked the stage)."""
     out = {}
-    for o in (_caption_rows(fsid) if rows is None else rows):
+    for o in ((_caption_rows(fsid) if rows is None else rows) or ()):
         if o.get("live") and o.get("id"):
             out[o["id"]] = o.get("natoms", 0)         # last-wins: the latest live caption's size
     return out
@@ -3357,39 +3395,48 @@ def archive_llm(session_log):
     return rec
 
 
-def session_turn_captions(fsid):
+def session_turn_captions(fsid, rows=None):
     """The session's TURN captions, oldest first — the archiver's input. Strict about the file through
-    _caption_rows: an unreadable captions file reads as no captions and marks the stage."""
+    _caption_rows: a captions file that exists and did not read answers no captions and marks the stage.
+    `rows`: the caption rows when the caller already read them."""
     caps = []
-    for o in _caption_rows(fsid):
+    for o in ((_caption_rows(fsid) if rows is None else rows) or ()):
         if o.get("grain") == "turn" and o.get("caption"):
             caps.append((o.get("t", 0), o["caption"]))
     caps.sort()
     return [c for _, c in caps]
 
 
-def load_archive(fsid):
-    """The session's archive record ({headline, abstract, turns, t, and the fail counters}), or None when
-    there is none. Strict about the FILE (the evidence gate, 2026-09-07): absent is None, a real state; a
-    file that exists and does not read or decode, or decodes to something other than a record, is None for
-    this call too, but through _read_failed, which marks the running stage incomplete and logs one
-    session-archive-unreadable row per episode (a name of its own: the goals archive's row is
-    archive-unreadable). Before, every failure was a silent None, and the archiver would have rebuilt the
-    record over it, or the gate stamped that decision until the file moved. The kernel's two pusher-side
-    callers reach this too; a failure there marks that thread's context only (_mark_unread's note)."""
+def _read_archive(fsid):
+    """(record, failed) for archive/<fsid>.json: the session's archive record ({headline, abstract, turns,
+    t, and the fail counters}) or None, and whether a file that EXISTS failed to read. Strict about the
+    file (the evidence gate, 2026-09-07): absent is (None, False), a real state; a file that exists and
+    does not read or decode, or decodes to something other than a record, is (None, True), through
+    _read_failed, which marks the running stage incomplete and logs one session-archive-unreadable row per
+    episode (a name of its own: the goals archive's row is archive-unreadable). The archiver stands down on
+    `failed` rather than rebuild the record over a file it could not see. Before, every failure was a
+    silent None, the archiver rebuilt over it, and the gate would have stamped that decision until the
+    file moved."""
     p = ARCHDIR / (fsid + ".json")
     try:
         rec = json.loads(p.read_text())
     except (FileNotFoundError, NotADirectoryError):   # absent, as _ident reads it
-        return None
+        return None, False
     except Exception as e:
         _read_failed(str(p), "session-archive-unreadable", fsid, e)
-        return None
+        return None, True
     if not isinstance(rec, dict):
         _read_failed(str(p), "session-archive-unreadable", fsid, TypeError("not a record: %s" % type(rec).__name__))
-        return None
+        return None, True
     _read_ok(str(p))
-    return rec
+    return rec, False
+
+
+def load_archive(fsid):
+    """The session's archive record, or None when there is none or the file did not read (_read_archive:
+    a failed read marks the running stage and logs a row). The kernel's two pusher-side callers reach this
+    too; a failure there marks that thread's context only (_mark_unread's note)."""
+    return _read_archive(fsid)[0]
 
 
 _publish_tmp_lock = threading.Lock()
@@ -7609,9 +7656,10 @@ def _archive_call(fsid, caps):
 
 
 def run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=CONCURRENCY, verbose=False):
-    """One INDEX-TIER pass over the fleet: caption ready units, then refresh per-session archives whose
-    turn set grew. Returns {"captions": n, "archives": m}. Frame-wrapped like run_triage: under the
-    kernel producer it joins the producer's pass frame; standalone it owns one."""
+    """One INDEX-TIER pass over the discovered sessions: caption ready units, then refresh per-session
+    archives whose turn set grew. Returns {"captions": n, "archives": m}. Frame-wrapped like run_triage:
+    under the kernel producer it joins the producer's pass frame; standalone it owns one. Per session, both
+    bodies are on the evidence gate (_run_index)."""
     own = begin_pass_frame()
     try:
         return _run_index(now=now, budget=budget, fairness=fairness, concurrency=concurrency, verbose=verbose)
@@ -7626,6 +7674,10 @@ def _index_caption_tasks(fsid, path, anchor, now):
     captions' sizes come from the same rows) and the ready tasks (tasks_for: the unit cache on a hit; the
     pinned parse and the store on a miss). Empty means the session owes no caption this pass."""
     rows = _caption_rows(fsid)
+    if rows is None:
+        return []                                         # the captions file exists and did not read: the read marked
+        #                                                   the run (no stamp, the session stays due), and no caption
+        #                                                   is minted against a done set the pass could not see
     done = captioned_ids(fsid, rows)
     live_n = _live_natoms(fsid, rows)                    # the open segment's last live-caption sizes (cadence gate)
     out = []
@@ -7646,11 +7698,18 @@ def _index_arch_task(fsid):
     else None. Due means the turn-caption count moved since the record was built and the give-up gate is
     not holding it (the user 2026-07-06: this exact turn set already failed ARCH_FAIL_CAP times, so it is
     quiet until a NEW turn caption changes the count; event-based, no timer). Reads the caption file and
-    the archive record, nothing else."""
-    caps = session_turn_captions(fsid)
+    the archive record, nothing else; a file that exists and did not read stands the session down (the
+    read marked the run, so it stays due) rather than rebuild the record from captions the pass could not
+    see or over a record it could not read."""
+    rows = _caption_rows(fsid)
+    if rows is None:
+        return None
+    caps = session_turn_captions(fsid, rows)
     if not caps:
         return None
-    prev = load_archive(fsid)
+    prev, failed = _read_archive(fsid)
+    if failed:
+        return None
     if prev and prev.get("turns") == len(caps):
         return None                                       # unchanged since last archive
     if prev and prev.get("failTurns") == len(caps) and prev.get("fails", 0) >= ARCH_FAIL_CAP:
@@ -7660,97 +7719,158 @@ def _index_arch_task(fsid):
 
 
 def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=CONCURRENCY, verbose=False):
+    """The index pass: the captioner (every undone caption task across the discovered sessions, one model
+    call each, newest first), then the archiver (one refresh per session whose turn-caption count moved,
+    after the captioner so this pass's turn captions are in it).
+
+    Per session, both bodies are on the evidence gate (J7 of the round-4 plan, 2026-09-07). _gate_check
+    skips a session whose pinned parse pair, captions file, archive record and unit cache are identical to
+    the last run that completed with no work and no voided read; on the live kernel that is nearly every
+    session on nearly every pass, and the idle pass used to read all four files and the unit cache's task
+    list for each of them (about 155 ms of the pass under load). A run is stamped at pass end only when
+    neither body found work for the session (a pending caption task, an archive refresh due; counted
+    BEFORE the budget and fairness caps take their share, so a deferred session stays due) and neither
+    marked the run: a strict reader that failed on a file that exists, a failed cache publish, a fallback
+    store on the miss path, a crash. The completeness bit is thread-local and both bodies run on this
+    thread, so it is reset before each body and captured per session (`incomplete`); the pool workers'
+    bits (the _judge_run belt on an empty caption) are not read, because a session with a task is in
+    `work` already. The invariant every test holds: the gate never withholds a caption or an archive write
+    the ungated pass would have made, since every input the bodies read is in the signature (the inventory
+    above GATED_TIERS), so a skip means the ungated pass would have read the same files and found the same
+    nothing. A crash in a body is caught per session (a pass-crash row, the run incomplete) and the pass
+    goes on; before the gate, a crash anywhere in the captioner loop ended the index pass for every session
+    after it. A pass that raises outside the bodies counts every session it ran as incomplete, so
+    ran == stamped + bypassed + incomplete holds through it."""
     if now is None:
         now = int(time.time())
     fleet = discover(now)
-    # ── captioner: one entry per undone caption task (a model call), newest-first ──
-    pending = []
-    for fsid, path, anchor, name in fleet:
-        pending.extend(_index_caption_tasks(fsid, str(path), anchor, now))
-    pending.sort(key=lambda x: x["t"], reverse=True)      # most recent activity first
-    per_session, selected = {}, []
-    for task in pending:                                  # budget/fairness caps REMOVED (None) → caption everything;
-        if budget is not None and len(selected) >= budget:   # an explicit caller can still bound a pass (tests)
-            break
-        if fairness is not None and per_session.get(task["anchor"], 0) >= fairness:
-            continue
-        per_session[task["anchor"]] = per_session.get(task["anchor"], 0) + 1
-        selected.append(task)
-    if verbose:
-        sys.stderr.write("romp-judge: %d undone caption tasks, %d selected\n" % (len(pending), len(selected)))
-    captions = 0
-    struck = set()                                        # one strike per unit per PASS (grains share ids)
-    gave = {}                                             # fsid → units tombstoned this pass (one log row each)
-    with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = {ex.submit(_caption_call, t): t for t in selected}
-        for fut in as_completed(futs):
-            task = futs[fut]
-            try:
-                cap, cap_paused = fut.result()
-            except Exception as e:
-                cap, cap_paused = "", True                # a crashed worker is not the model's verdict
-                _log_judge_error("captioner", str(task.get("fsid") or ""), "pass-crash",
-                                 note=repr(e))            # …but its REASON must not vanish (T111)
-            if not cap:
-                # A LIVE task retries by design (the open segment's text grows — the chunk cadence
-                # gates it) and a paused/rate-gated skip is not a verdict. A CLOSED unit's empty
-                # capture STRIKES toward the tombstone (CAPTION_FAIL_CAP): the same unchanged input
-                # re-captioned every pass was the 2026-08-18 churn — 2,920 calls for 62 records in 2h.
-                if not task.get("live") and not cap_paused:
-                    _caption_strike(task, struck, gave)
+    sigs, incomplete, work = {}, {}, set()               # per session this pass runs: its signature (None: run,
+    #                                                       stamp nothing), the captured completeness bit, and
+    #                                                       whether a body found work for it
+    try:
+        # ── captioner: one entry per undone caption task (a model call), newest-first ──
+        pending = []
+        for fsid, path, anchor, name in fleet:
+            skip, sig = _gate_check("index", fsid, str(path), now)
+            if skip:
                 continue
-            if not task.get("live"):
-                _caption_unfail(task)                     # only CONSECUTIVE empties tombstone
-            for w in task["writes"]:                      # one call → all the task's records (id-deduped)
-                append_caption(task["fsid"], w["id"], w["grain"], w["t"], cap,
-                               live=task.get("live", False), natoms=task.get("natoms"))
-                captions += 1
+            sigs[fsid] = sig
+            _tier_bump("index", "ran")
+            _judge_ctx.stage_incomplete = False
+            try:
+                rows = _index_caption_tasks(fsid, str(path), anchor, now)
+            except Exception as e:                        # a poisoned transcript, a walk that raises: this
+                rows = []                                 #  session's row, not the pass's end (T111)
+                _judge_ctx.stage_incomplete = True
+                _log_judge_error("captioner", fsid, "pass-crash", note="tasks: %r" % e)
+            incomplete[fsid] = bool(getattr(_judge_ctx, "stage_incomplete", False))
+            if rows:
+                work.add(fsid)
+                pending.extend(rows)
+        pending.sort(key=lambda x: x["t"], reverse=True)  # most recent activity first
+        per_session, selected = {}, []
+        for task in pending:                                  # budget/fairness caps REMOVED (None) → caption everything;
+            if budget is not None and len(selected) >= budget:   # an explicit caller can still bound a pass (tests)
+                break
+            if fairness is not None and per_session.get(task["anchor"], 0) >= fairness:
+                continue
+            per_session[task["anchor"]] = per_session.get(task["anchor"], 0) + 1
+            selected.append(task)
+        if verbose:
+            sys.stderr.write("romp-judge: %d undone caption tasks, %d selected\n" % (len(pending), len(selected)))
+        captions = 0
+        struck = set()                                        # one strike per unit per PASS (grains share ids)
+        gave = {}                                             # fsid → units tombstoned this pass (one log row each)
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = {ex.submit(_caption_call, t): t for t in selected}
+            for fut in as_completed(futs):
+                task = futs[fut]
+                try:
+                    cap, cap_paused = fut.result()
+                except Exception as e:
+                    cap, cap_paused = "", True                # a crashed worker is not the model's verdict
+                    _log_judge_error("captioner", str(task.get("fsid") or ""), "pass-crash",
+                                     note=repr(e))            # …but its REASON must not vanish (T111)
+                if not cap:
+                    # A LIVE task retries by design (the open segment's text grows — the chunk cadence
+                    # gates it) and a paused/rate-gated skip is not a verdict. A CLOSED unit's empty
+                    # capture STRIKES toward the tombstone (CAPTION_FAIL_CAP): the same unchanged input
+                    # re-captioned every pass was the 2026-08-18 churn — 2,920 calls for 62 records in 2h.
+                    if not task.get("live") and not cap_paused:
+                        _caption_strike(task, struck, gave)
+                    continue
+                if not task.get("live"):
+                    _caption_unfail(task)                     # only CONSECUTIVE empties tombstone
+                for w in task["writes"]:                      # one call → all the task's records (id-deduped)
+                    append_caption(task["fsid"], w["id"], w["grain"], w["t"], cap,
+                                   live=task.get("live", False), natoms=task.get("natoms"))
+                    captions += 1
+                    if verbose:
+                        sys.stderr.write("  [%s] %s\n" % (w["grain"], cap))
+        for _fsid, _n in gave.items():
+            _log_judge_error("captioner", _fsid, "give-up",
+                             note="%d unit(s) tombstoned after %d empty captures each; a re-parse minting "
+                                  "new unit ids re-arms" % (_n, CAPTION_FAIL_CAP))
+        # ── archiver: refresh a session's record when its turn-caption count grew (runs AFTER
+        #    captioning, so this pass's new turn captions are included) ──
+        arch_tasks = []
+        for fsid, path, anchor, name in fleet:
+            if fsid not in sigs:
+                continue                                      # the gate skipped this session
+            _judge_ctx.stage_incomplete = False
+            try:
+                task = _index_arch_task(fsid)
+            except Exception as e:
+                task = None
+                _judge_ctx.stage_incomplete = True
+                _log_judge_error("archiver", fsid, "pass-crash", note="archive: %r" % e)
+            if getattr(_judge_ctx, "stage_incomplete", False):
+                incomplete[fsid] = True
+            if task is not None:
+                work.add(fsid)
+                arch_tasks.append(task)
+        arch_tasks = arch_tasks[:ARCH_BUDGET]
+        if verbose:
+            sys.stderr.write("romp-judge: %d sessions need (re)archiving\n" % len(arch_tasks))
+        archives = 0
+        with ThreadPoolExecutor(max_workers=concurrency) as ex:
+            futs = {ex.submit(_archive_call, fsid, caps): (fsid, len(caps))
+                    for fsid, caps in arch_tasks}
+            for fut in as_completed(futs):
+                fsid, nturns = futs[fut]
+                try:
+                    rec = fut.result()
+                except Exception as e:
+                    rec = None
+                    _log_judge_error("archiver", fsid, "pass-crash", note=repr(e))   # reason kept (T111)
+                if not rec:
+                    # archive_llm already logged the DISTINCT error (call vs parse). Bump the per-turn-set
+                    # fail counter on the EXISTING record (keeping the old headline/abstract serving the TOC)
+                    # so the give-up gate above can quiet a persistent failure until the session gains a turn.
+                    prev = load_archive(fsid) or {}
+                    prev["fails"] = prev.get("fails", 0) + 1 if prev.get("failTurns") == nturns else 1
+                    prev["failTurns"] = nturns
+                    write_archive(fsid, prev)
+                    if prev["fails"] == ARCH_FAIL_CAP:     # the transition, exactly once per capped turn set
+                        _log_judge_error("archiver", fsid, "give-up",
+                                         note="%d failures on the same %d-turn set; quiet until the session gains a turn"
+                                              % (ARCH_FAIL_CAP, nturns))
+                    continue
+                rec["turns"] = nturns
+                rec["t"] = int(time.time())
+                write_archive(fsid, rec)                      # fresh rec → fail counters drop with it
+                archives += 1
                 if verbose:
-                    sys.stderr.write("  [%s] %s\n" % (w["grain"], cap))
-    for _fsid, _n in gave.items():
-        _log_judge_error("captioner", _fsid, "give-up",
-                         note="%d unit(s) tombstoned after %d empty captures each; a re-parse minting "
-                              "new unit ids re-arms" % (_n, CAPTION_FAIL_CAP))
-    # ── archiver: refresh a session's record when its turn-caption count grew (runs AFTER
-    #    captioning, so this pass's new turn captions are included) ──
-    arch_tasks = []
-    for fsid, path, anchor, name in fleet:
-        task = _index_arch_task(fsid)
-        if task is not None:
-            arch_tasks.append(task)
-    arch_tasks = arch_tasks[:ARCH_BUDGET]
-    if verbose:
-        sys.stderr.write("romp-judge: %d sessions need (re)archiving\n" % len(arch_tasks))
-    archives = 0
-    with ThreadPoolExecutor(max_workers=concurrency) as ex:
-        futs = {ex.submit(_archive_call, fsid, caps): (fsid, len(caps))
-                for fsid, caps in arch_tasks}
-        for fut in as_completed(futs):
-            fsid, nturns = futs[fut]
-            try:
-                rec = fut.result()
-            except Exception as e:
-                rec = None
-                _log_judge_error("archiver", fsid, "pass-crash", note=repr(e))   # reason kept (T111)
-            if not rec:
-                # archive_llm already logged the DISTINCT error (call vs parse). Bump the per-turn-set
-                # fail counter on the EXISTING record (keeping the old headline/abstract serving the TOC)
-                # so the give-up gate above can quiet a persistent failure until the session gains a turn.
-                prev = load_archive(fsid) or {}
-                prev["fails"] = prev.get("fails", 0) + 1 if prev.get("failTurns") == nturns else 1
-                prev["failTurns"] = nturns
-                write_archive(fsid, prev)
-                if prev["fails"] == ARCH_FAIL_CAP:     # the transition, exactly once per capped turn set
-                    _log_judge_error("archiver", fsid, "give-up",
-                                     note="%d failures on the same %d-turn set; quiet until the session gains a turn"
-                                          % (ARCH_FAIL_CAP, nturns))
-                continue
-            rec["turns"] = nturns
-            rec["t"] = int(time.time())
-            write_archive(fsid, rec)                      # fresh rec → fail counters drop with it
-            archives += 1
-            if verbose:
-                sys.stderr.write("  [archive %s] %s\n" % (fsid[:8], rec["headline"]))
+                    sys.stderr.write("  [archive %s] %s\n" % (fsid[:8], rec["headline"]))
+    except Exception:
+        _tier_bump("index", "incomplete", len(sigs))      # the pass did not complete: no session keyed anything new
+        raise
+    paths = {f: str(p) for f, p, a, nm in fleet}
+    for fsid, sig in sigs.items():                        # the stamp, once per session this pass ran, from the bit
+        _gate_stamp("index", fsid, paths[fsid], now, sig,  #  both bodies left and whether either found work
+                    incomplete[fsid] or fsid in work, settle=False)
+        pass_done("index", fsid)                          # the skip path stamps it too (_gate_check)
+    _gate_evict("index", set(paths))
     return {"captions": captions, "archives": archives}
 
 
