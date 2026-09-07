@@ -312,6 +312,8 @@ class OffOnTheRoutes(_Sandbox):
         # kernel's own copy of the route applies its own switch to a forwarded ask
         with mock.patch.object(km, "_host_for_sid", lambda sid: "otherhost"), \
                 mock.patch.object(km, "_remote_forward",
+                                  side_effect=AssertionError("forwarded while off")), \
+                mock.patch.object(km, "_remote_forward_status",          # the withdraw route's forward
                                   side_effect=AssertionError("forwarded while off")):
             self.assertEqual(_post("/usertodo", {"id": SID, "text": "Need the staging port"})[0], 409)
             self.assertEqual(_post("/usertodo/withdraw", {"id": SID, "todoId": "ut-9f2c1a34"})[0], 409)
