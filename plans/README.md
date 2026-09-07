@@ -1,6 +1,6 @@
 # plans/ — design documents
 
-Three kinds of document live here, and **each file's status header says which it is**:
+Four kinds of document live here, and **each file's status header says which it is**:
 
 - **Shipped design history** (most files): the work landed, and the doc records the
   *why* — the incident that motivated a mechanism, the alternatives weighed, what the
@@ -14,6 +14,10 @@ Three kinds of document live here, and **each file's status header says which it
   wait-taxonomy — to be re-planned together when revived), and `boot-visibility-card.md`
   (parked 2026-08-15 as a long-term consideration; its notes on the boot reconcile's
   existing recovery behavior are current as of filing).
+- **A plan under construction** (status `BUILDING`): `markdown-viewer.md`, the markdown viewer
+  reading a note as GitHub and Obsidian show it, approved 2026-09-07 with rulings on its eight
+  decisions and being built as eight fork PRs (slices 1 to 5, 8, 6, 7); its status header and the
+  per-slice build notes say how far the build has got.
 - **A plan built and awaiting its acceptance walk** (status `BUILT`): `file-review.md`, file
   comments and tracked changes in the file viewer, approved 2026-09-06 and built as six stacked
   fork PRs by 2026-09-07; it moves to shipped design history once the user completes the
