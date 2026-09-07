@@ -215,8 +215,9 @@ recently open here; click one to open it again. The pane is off by default;
 the bottom bar turns it on.
 
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
-the file (below it when the column is narrow). Select a passage in either view, Rendered or
-Raw, and press the **Comment** button that appears next to the selection; type the note
+the file, where each card sits level with the passage it is about and scrolls with the text;
+when the column is narrow the panel drops below the file and lists the cards instead. Select a
+passage in either view, Rendered or Raw, and press the **Comment** button that appears next to the selection; type the note
 and press Enter. **Comment on this file** leaves a comment on the file as a whole, which
 every file takes. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
