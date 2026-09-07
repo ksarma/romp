@@ -1151,8 +1151,9 @@ export type ChangePaint = {
  *  would hand the sheet's `::before` a string of line feeds and nothing to draw: the point sat there with a
  *  2px underline and no glyph, and the row grew by a blank visual line (the review, 2026-09-06). Such a
  *  label shows one ¶ per line ending instead, the mark a text editor draws for the same thing; spaces and
- *  tabs keep their own width and are left as they are. A label with any visible character keeps its line
- *  endings: the rows below show what was removed as it read. */
+ *  tabs keep their own width and are left as they are (the Raw rows are pre-wrap; the Rendered point carries
+ *  that white-space itself when its label is nothing else — renderedPointStyles). A label with any visible
+ *  character keeps its line endings: the rows below show what was removed as it read. */
 export const DEL_LABEL_MAX = 80;
 export const PILCROW = "¶";
 export function deletionLabel(oldText: string): string {
@@ -1370,13 +1371,27 @@ export function paintChangesRaw(codeRoot: Element, source: string, changes: Chan
   return out;
 }
 
+/** The inline styles of a Rendered point: the caller's, plus the Raw rows' `white-space: pre-wrap` when the label
+ *  has no visible character. deletionLabel leaves spaces and tabs as they are, and the Raw rows show them at
+ *  their width; a rendered block's white-space is normal, and the sheet's generated content follows it, so a
+ *  label of one space beside a space that stayed (a doubled space a session collapsed) collapsed to nothing —
+ *  a 0px point with no struck mark, no underline and nothing to hover or tap, while the painter reported it
+ *  shown and its card offered a scroll to it (the review, 2026-09-07). With the rows' white-space on the point
+ *  the label keeps its width in Rendered as in Raw; the sheets need no rule, and a label with a visible
+ *  character keeps the block's white-space, which folds a multi-line label onto its line. */
+function renderedPointStyles(label: string, styles: Record<string, string>): Record<string, string> {
+  return /\S/.test(label) ? styles : { ...styles, "white-space": "pre-wrap" };
+}
+
 /**
  * Paint pending changes over the Rendered view: an `ins` or `sub` through paintRendered over its new
  * text (the source-offset path, the text-match fallback inside a refused block), class `fc-ins`, with the
  * same data attributes and styles as the Raw marks; a `del` as the Raw view's zero-width `span.fc-del`
  * point, placed through the index map (paintRenderedPoint) and labelled with the old text (deletionLabel);
  * a `sub` as that point immediately before its tint, wherever the tint was found, so the struck old text
- * and the new read together as they do in Raw. No chip: the plan gives the author chip to the Raw view.
+ * and the new read together as they do in Raw. No chip: the plan gives the author chip to the Raw view. A
+ * point whose label has no visible character carries the Raw rows' white-space (renderedPointStyles), so a
+ * removed space is a struck space here too and not a 0px point the block's white-space collapsed.
  * Returns which ids got paint and which did not — a deletion whose offset the map cannot place (a refused
  * block, a hole), an insertion whose text is not on the page — so the panel can mark the rest card-only;
  * a batch whose offsets do not index `source` (offsetsIndex) paints nothing and reports every id unpainted.
@@ -1388,7 +1403,8 @@ export function paintChangesRendered(renderedRoot: Element, source: string, chan
   for (const c of changes) {
     const data = changeData(c);
     if (c.kind === "del") {
-      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, deletionLabel(c.oldText), stylesFor(c));
+      const label = deletionLabel(c.oldText);
+      const p = paintRenderedPoint(renderedRoot, source, c.curFrom, "fc-del", data, label, renderedPointStyles(label, stylesFor(c)));
       (p ? painted : unpainted).push(c.id);
       continue;
     }
@@ -1400,7 +1416,8 @@ export function paintChangesRendered(renderedRoot: Element, source: string, chan
     if (c.kind === "sub") {
       const first = marks[0] as unknown as DElement;
       const parent = first.parentNode as DElement | null;
-      if (parent) parent.insertBefore(makePoint(first.ownerDocument, "fc-del", data, deletionLabel(c.oldText), styles), first);
+      const label = deletionLabel(c.oldText);
+      if (parent) parent.insertBefore(makePoint(first.ownerDocument, "fc-del", data, label, renderedPointStyles(label, styles)), first);
     }
     painted.push(c.id);
   }

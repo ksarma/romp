@@ -1,17 +1,12 @@
-// Show changes inline (the inline-display follow-on to plans/file-review.md, 2026-09-07): the Comments panel's
-// header control that turns the read view's change marks on and off, in both views, remembered across opens and
-// pages through the shared settings store — and the Rendered view's struck deletions it governs. Driven AS A PANEL
-// over the changes-review suite's DOM stand-in (its Rendered body is built by hand to marked's shape; its settings
-// store is the stub localStorage every panel suite installs):
-//   • the default: on, beside Track changes, offered only while the file has changes to show;
-//   • Rendered: a deletion is a zero-width point at its place with the struck old text as its label, a substitution
-//     its point right before its tint; the cards are as plain as an insertion's and keep the deletion's Reveal;
-//   • off: one click, no status ask (posted[] unchanged), no change mark in the body while the comment highlights
-//     stay, no "not shown" tag anywhere (nothing is shown by choice), Reveal on every change card still going to Raw;
-//   • remembered: the store's changesInline, read when the next panel opens (Raw too) and written on every flip;
-//   • a flip elsewhere — the settings signal another pane or the gear raises — repaints the live panel.
-// What a stand-in cannot show is pinned at source: the delegate action, the header's order, the store's key and
-// default, the listener's install. Synthetic fixtures only: the notes-api world, placeholder ids.
+// Reveal's title with Show changes inline off (the inline-display follow-on to plans/file-review.md, 2026-09-07; the
+// review's finding): with the marks off every change card offers Reveal, as the plan requires, and paintChanges paints
+// no mark in Raw either — so a title that promised "Show the change in the Raw view" named a mark the click would not
+// show. Off, the title promises what Reveal does — opens the Raw view at the change, the guide's words — and says why
+// nothing is marked there; on, the Slice 2 title stands. Driven AS A PANEL over the inline-toggle suite's DOM stand-in:
+//   • Rendered, marks on → off → on: the title of every offered Reveal, its line number, the click (Raw, the change's start);
+//   • Raw with a store that says off: the same title on every card, and the flip back;
+//   • the bytes in flux with the marks off: no line number, as the on-state title has none either.
+// Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -21,9 +16,6 @@ import type { Status, Hunk, StoreComment } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
-const SETTINGS = web("settings.ts");
-const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
-const PLAN = fs.readFileSync(path.resolve(process.cwd(), "..", "plans", "file-review.md"), "utf8");
 
 // ── fixtures: the notes-api world ──────────────────────────────────────────────────────────────────
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -46,11 +38,6 @@ const passage: StoreComment = {
   id: T0 + "-118", author: "you", ts: T0, body: "Which cache? Say which.",
   anchor: { quote: "shipping the cache in v1.2", prefix: "We recommend ", suffix: "." }, replies: [], resolved: false,
 };
-// a passage comment the session answered with a revision: it keeps its anchor and gains the change's id
-const hosted: StoreComment = {
-  id: T0 + 5000 + "-7", author: "you", ts: T0 + 5000, body: "Cut is the right word.",
-  anchor: { quote: "cut p95 latency", prefix: "The api session ", suffix: " by 40%" }, suggestionId: "h1", replies: [], resolved: false,
-};
 const SUGG = [{ id: "h1", author: "api", authorId: SID, ts: T0 - 90000, kind: "sub", from: h1.curFrom, oldText: "reduced", newText: "cut" },
   { id: "h3", author: "api", ts: T0 - 70000, kind: "del", from: h3.curFrom, oldText: "quickly " }];
 function status(over: Partial<Status> = {}): Status {
@@ -63,8 +50,6 @@ function status(over: Partial<Status> = {}): Status {
     ...over,
   };
 }
-const MOVED_FILE = "the file ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry";
-const MOVED_STORE = "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry";
 
 // ── the DOM stand-in: ancestry, attributes, events, focus, a small selector engine ─────────────────
 class Ev {
@@ -354,16 +339,12 @@ function world(over: WorldOpts = {}): World {
 }
 const flush = () => new Promise<void>((r) => setImmediate(r));
 const lastOf = (w: World, type: string, verb?: string) => [...w.posted].reverse().find((m) => m.type === type && (verb === undefined || m.verb === verb));
-const countOf = (w: World, type: string, verb?: string) => w.posted.filter((m) => m.type === type && (verb === undefined || m.verb === verb)).length;
 function answer(w: World, s: Status, m = lastOf(w, "fileComments", "status"), extra: Record<string, unknown> = {}): void {
   assert.ok(m, "an ask is outstanding");
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: m.reqId, ...s, ...extra } }));
   w.mtimes[w.ctx.path] = s.fileMtimeNs;
   if (s.storePath && s.storeMtimeNs !== null) w.mtimes[s.storePath] = s.storeMtimeNs;
   if (s.root && s.configMtimeNs !== null) w.mtimes[s.root + "/.trackchanges/config.json"] = s.configMtimeNs;
-}
-function refuse(w: World, m: any, code: string, error: string): void {
-  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsFailed", reqId: m.reqId, verb: m.verb, code, error } }));
 }
 async function openPanel(w: World, s: Status = status()): Promise<{ unit: El; button: El; aside: El }> {
   const fc = await import("./file-comments");
@@ -381,217 +362,84 @@ const card = (aside: El, key: string): El | null => aside.querySelector('.fc-car
 const act = (root: El, a: string, id?: string): El | null => root.querySelector('[data-act="' + a + '"]' + (id ? '[data-id="' + id + '"]' : ""));
 const texts = (els: El[]) => els.map((e) => e.textContent);
 const marksOf = (w: World, id?: string): El[] => w.body.querySelectorAll('[data-act="fcchange"]' + (id ? '[data-id="' + id + '"]' : ""));
-const tags = (c: El): string[] => texts(c.querySelectorAll(".fc-card-head .fc-tag"));
-const isLink = (c: El): boolean => c.querySelector(".fc-ref")!.classes.includes("fc-link");
+
 
 // ── helpers of this suite ──────────────────────────────────────────────────────────────────────────
 const SETTINGS_KEY = "romp:settings";
-const stored = (): Record<string, unknown> | null => { const raw = store.get(SETTINGS_KEY); return raw ? JSON.parse(raw) as Record<string, unknown> : null; };
 const toggle = (aside: El): El | null => act(aside, "fcinline");
-/** The text of `block` before `point` and after it, in document order (the point itself holds none). */
-function around(block: El, point: El): [string, string] {
-  let pre = "", post = "", seen = false;
-  const visit = (n: El | Txt) => {
-    if (n === point) { seen = true; return; }
-    if (n instanceof Txt) { if (seen) post += n.data; else pre += n.data; return; }
-    for (const c of n.childNodes) visit(c);
-  };
-  visit(block);
-  return [pre, post];
-}
-const blockOf = (w: World, n: El): El => { let x: El = n; while (x.parentNode && !x.parentNode.classes.includes("fileview-md")) x = x.parentNode; return x; };
 const changeCards = (aside: El): El[] => aside.querySelectorAll(".fc-card.fc-change");
+const ON = "Show the change in the Raw view";
+const OFF = "Open the Raw view at the change";
+const OFF_TAIL = "; the marks are off, so the change is not marked there";
+const revealOf = (aside: El, key: string): El => { const rv = act(card(aside, key)!, "fcreveal", key); assert.ok(rv, key + " offers Reveal"); return rv!; };
+// DOC's lines: 1 "# Report", 3 "## Findings", 4 the p95 sentence (h1, h2), 6 the recommendation (h3), 10 the next steps (h5)
+const LINE: Record<string, number> = { "chg:h1": 4, "chg:h2": 4, "chg:h3": 6 };
 
-// ── the default ────────────────────────────────────────────────────────────────────────────────────
-
-test("the default: Show changes inline is ON, a two-state button beside Track changes and before Comment on this file, offered only while the file has changes; nothing is written to the store until a flip", async (t: TestContext) => {
-  store.delete(SETTINGS_KEY);
-  const w = world({ mode: "rendered" }); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ hunks: [h2, h3] }));
-  const row = aside.querySelector(".fc-head .fc-row")!;
-  assert.deepEqual(row.childNodes.map((c) => (c as El).dataset.act), ["fctrack", "fcinline", "fcfile"], "Track changes · Show changes inline · Comment on this file");
-  const b = toggle(aside)!;
-  assert.equal(b.tagName, "BUTTON"); assert.equal(b.textContent, "Show changes inline");
-  assert.ok(b.classes.includes("fileview-btn") && b.classes.includes("fc-toggle"), "the Track changes toggle's dress: the selected state is the accent fill");
-  assert.equal(b.dataset.on, "1"); assert.equal(b.getAttribute("aria-pressed"), "true");
-  assert.match(b.title, /marked in the text/); assert.match(b.title, /click to read the file without the marks/);
-  assert.equal(stored(), null, "the default is the store's absence: nothing is written until the person flips it");
-  assert.ok(marksOf(w).length > 0, "on: the marks are painted");
-  w.close();
-  // no changes: no control over marks that do not exist
-  const w2 = world({ mode: "rendered" }); t.after(() => w2.close());
-  const { aside: a2 } = await openPanel(w2, status({ hunks: [], store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] } }));
-  assert.equal(toggle(a2), null, "no changes: the header shows Track changes and Comment on this file alone");
-  assert.deepEqual(a2.querySelector(".fc-head .fc-row")!.childNodes.map((c) => (c as El).dataset.act), ["fctrack", "fcfile"]);
-});
-
-// ── Rendered: the struck deletion ──────────────────────────────────────────────────────────────────
-
-test("Rendered: a deletion is a zero-width point before the word it preceded, labelled with the struck old text; a substitution's point sits right before its tint; the cards are plain and link to their marks", async (t: TestContext) => {
+test("Rendered, marks on: a deletion's Reveal says it shows the change in Raw; off: every card's Reveal says it opens Raw at the change and that the marks are off, with the same line number, and the click still goes to Raw at the change's start; on again: the Slice 2 title is back", async (t: TestContext) => {
   store.delete(SETTINGS_KEY);
   const w = world({ mode: "rendered" }); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ hunks: [h1, h2, h3] }));
-  const del = marksOf(w, "h3");
-  assert.equal(del.length, 1);
-  assert.equal(del[0].tagName, "SPAN"); assert.deepEqual(del[0].classes, ["fc-del"]);
-  assert.equal(del[0].dataset.fcText, "quickly ", "the label is the old text, as Raw's is");
-  assert.equal(del[0].childNodes.length, 0, "no text node: the label is the sheet's generated content");
-  assert.equal(del[0].getAttribute("role"), "button"); assert.equal(del[0].tabIndex, 0); assert.equal(del[0].title, "Open this change");
-  const p = blockOf(w, del[0]);
-  assert.equal(p.tagName, "P");
-  assert.deepEqual(around(p, del[0]), ["We recommend ", "shipping the cache in v1.2."], "struck 'quickly ' reads between 'We recommend' and 'shipping'");
-  // the substitution: its point, then its tint, adjacent
-  const sub = marksOf(w, "h1");
-  assert.deepEqual(sub.map((m) => m.classes.join(" ")), ["fc-del", "fc-ins"], "a substitution paints the point and then its new text");
-  assert.equal(sub[0].dataset.fcText, "reduced"); assert.equal(sub[1].textContent, "cut");
-  assert.equal(sub[0].parentNode!.childNodes[sub[0].parentNode!.childNodes.indexOf(sub[0]) + 1], sub[1], "the point is the node right before the mark");
-  // the cards: no tag, a link to the mark, and the deletion's constant Reveal
-  for (const c of changeCards(aside)) {
-    assert.equal(tags(c).includes("not shown"), false, c.dataset.id + " is shown");
-    assert.ok(isLink(c), c.dataset.id + "'s reference links to its mark");
-  }
-  assert.ok(act(card(aside, "chg:h3")!, "fcreveal", "chg:h3"), "a deletion keeps its Reveal (a point is easy to miss)");
-  assert.equal(act(card(aside, "chg:h1")!, "fcreveal", "chg:h1"), null, "a painted substitution needs none");
-  const ref = card(aside, "chg:h3")!.querySelector(".fc-ref")!;
-  ref.click();
-  assert.ok(scrolledInto.includes(del[0]), "the reference scrolls to the point");
-  // the panel owns the point: Enter on it opens its card
-  del[0].focus();
-  assert.equal(doc.activeElement, del[0]);
-  dispatch(del[0], new Ev("keydown", { key: "Enter" }));
-  assert.ok(card(aside, "chg:h3")!.classes.includes("open"), "Enter on the focused point opens the deletion's card");
-});
-
-// ── off ────────────────────────────────────────────────────────────────────────────────────────────
-
-test("off: one click repaints at once with no status ask — no change mark in either view, the comment highlights stay, every change card is plain with Reveal to Raw; on again brings the marks back; each flip writes the store", async (t: TestContext) => {
-  store.delete(SETTINGS_KEY);
-  const w = world({ mode: "rendered" }); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ hunks: [h1, h2, h3] }));
-  assert.equal(marksOf(w).length, 4, "two for the substitution, one each for the insertion and the deletion");
-  assert.equal(w.body.querySelectorAll(".fc-hl").length, 1, "the passage comment's highlight");
-  const asks = w.posted.length;
-  toggle(aside)!.click();
-  await flush();
-  assert.equal(w.posted.length, asks, "no message to the kernel: the hunks are already here");
-  assert.equal(toggle(aside)!.dataset.on, "0"); assert.equal(toggle(aside)!.getAttribute("aria-pressed"), "false");
-  assert.match(toggle(aside)!.title, /marks are off/);
-  assert.equal(marksOf(w).length, 0, "no change mark in the body");
-  assert.equal(w.body.querySelectorAll(".fc-hl").length, 1, "the comment highlight is not governed by the toggle");
-  assert.equal(w.body.querySelector(".fc-hl")!.textContent, "shipping the cache in v1.2");
-  assert.equal(w.body.textContent.includes("We recommend shipping the cache in v1.2."), true, "the text reads as it is");
-  for (const c of changeCards(aside)) {
-    assert.equal(tags(c).includes("not shown"), false, c.dataset.id + ": nothing is shown by choice, so no tag says the view failed to");
-    assert.equal(isLink(c), false, c.dataset.id + ": no mark to link to");
-    assert.ok(act(c, "fcreveal", c.dataset.id), c.dataset.id + " offers Reveal");
-  }
-  assert.equal(stored()!.changesInline, false, "the flip is written to the shared store");
-  act(card(aside, "chg:h2")!, "fcreveal", "chg:h2")!.click();
-  assert.deepEqual(w.modes, ["raw"]); assert.deepEqual(w.scrolls, [h2.curFrom], "Reveal still goes to the change's place");
-  // on again
-  toggle(aside)!.click();
-  await flush();
-  assert.equal(w.posted.length, asks);
-  assert.equal(toggle(aside)!.dataset.on, "1");
-  assert.equal(marksOf(w).length, 4, "the marks are back");
-  assert.equal(marksOf(w, "h3")[0].dataset.fcText, "quickly ");
-  assert.equal(stored()!.changesInline, true);
-  assert.equal(w.body.querySelectorAll(".fc-hl").length, 1);
-  // a poll's repaint keeps the person's choice (the field, not a per-paint read of the DOM)
+  assert.equal(revealOf(aside, "chg:h3").title, ON + " (line 6)", "on: Raw paints the deletion's point, so the title promises it");
+  assert.equal(act(card(aside, "chg:h1")!, "fcreveal", "chg:h1"), null, "a painted substitution needs no Reveal");
+  assert.equal(act(card(aside, "chg:h2")!, "fcreveal", "chg:h2"), null, "nor a painted insertion");
   toggle(aside)!.click(); await flush();
-  w.ctx.reload();   // the viewer re-rendered the body: onRendered → paintAll
-  await flush();
-  assert.equal(marksOf(w).length, 0, "a repaint paints no mark while the toggle is off");
-  assert.equal(toggle(aside)!.dataset.on, "0");
+  assert.equal(marksOf(w).length, 0, "off: nothing is marked in the body");
+  assert.equal(changeCards(aside).length, 3);
+  for (const c of changeCards(aside)) {
+    const key = c.dataset.id;
+    const title = revealOf(aside, key).title;
+    assert.equal(title, OFF + " (line " + LINE[key] + ")" + OFF_TAIL, key + ": the place, the line, and why nothing is marked");
+    assert.doesNotMatch(title, /Show the change/, key + ": no promise of a mark Raw will not paint");
+  }
+  revealOf(aside, "chg:h3").click();
+  assert.deepEqual(w.modes, ["raw"]); assert.deepEqual(w.scrolls, [h3.curFrom], "the click does what the title says: Raw, at the change");
+  toggle(aside)!.click(); await flush();
+  assert.equal(marksOf(w).length, 4, "on again: the marks are back");
+  assert.equal(revealOf(aside, "chg:h3").title, ON + " (line 6)", "…and so is the title that names them");
+  assert.equal(act(card(aside, "chg:h1")!, "fcreveal", "chg:h1"), null);
+  assert.equal(act(card(aside, "chg:h2")!, "fcreveal", "chg:h2"), null);
   store.delete(SETTINGS_KEY);
 });
 
-// ── remembered ─────────────────────────────────────────────────────────────────────────────────────
-
-test("remembered: a store that says off opens the next panel without marks, in Raw as in Rendered, its header saying so; a corrupt store reads as the default", async (t: TestContext) => {
-  store.set(SETTINGS_KEY, JSON.stringify({ compact: true, changesInline: false }));
+test("Raw with a store that says off: every card's Reveal wears the off title, in Raw as in Rendered; the flip to on restores the Slice 2 title on the deletion and drops Reveal from the painted substitution", async (t: TestContext) => {
+  store.set(SETTINGS_KEY, JSON.stringify({ changesInline: false }));
   const w = world(); t.after(() => w.close());   // Raw
   const { aside } = await openPanel(w, status({ hunks: [h1, h3] }));
-  assert.equal(toggle(aside)!.dataset.on, "0", "the stored preference");
-  assert.equal(marksOf(w).length, 0, "Raw paints no mark either");
-  assert.ok(w.body.textContent.includes("cut p95 latency"), "the text reads as it is");
-  for (const c of changeCards(aside)) { assert.equal(tags(c).includes("not shown"), false); assert.ok(act(c, "fcreveal", c.dataset.id)); }
+  assert.equal(toggle(aside)!.dataset.on, "0"); assert.equal(marksOf(w).length, 0, "Raw paints no mark: the title must not claim one");
+  assert.equal(revealOf(aside, "chg:h1").title, OFF + " (line 4)" + OFF_TAIL);
+  assert.equal(revealOf(aside, "chg:h3").title, OFF + " (line 6)" + OFF_TAIL);
   toggle(aside)!.click(); await flush();
-  assert.ok(marksOf(w, "h1").some((m) => m.textContent === "cut"), "on: the Raw tint");
-  assert.equal(marksOf(w, "h3")[0].dataset.fcText, "quickly ", "…and the Raw point");
-  assert.equal(stored()!.changesInline, true);
-  assert.equal(stored()!.compact, true, "the store's other keys are kept");
-  w.close();
-  store.set(SETTINGS_KEY, "{not json");
-  const w2 = world({ mode: "rendered" }); t.after(() => w2.close());
-  const { aside: a2 } = await openPanel(w2, status({ hunks: [h3] }));
-  assert.equal(toggle(a2)!.dataset.on, "1", "a corrupt store costs nothing: the default, on");
-  assert.equal(marksOf(w2, "h3").length, 1);
+  assert.equal(marksOf(w, "h3")[0].dataset.fcText, "quickly ", "on: the Raw point");
+  assert.equal(revealOf(aside, "chg:h3").title, ON + " (line 6)");
+  assert.equal(act(card(aside, "chg:h1")!, "fcreveal", "chg:h1"), null, "painted in Raw: no Reveal");
   store.delete(SETTINGS_KEY);
 });
 
-test("a flip elsewhere — the settings signal another pane or the gear raises, or another tab's storage event — repaints the live panel so its header and its body agree", async (t: TestContext) => {
-  store.delete(SETTINGS_KEY);
-  const w = world({ mode: "rendered" }); t.after(() => w.close());
-  const { aside } = await openPanel(w, status({ hunks: [h2, h3] }));
-  assert.equal(marksOf(w).length, 2);
-  const asks = w.posted.length;
+test("the bytes in flux with the marks off — a reject's reply landed, its reload not yet: the deletion's Reveal keeps the off title with no line number, since an offset into other bytes names no line; the line is back once the bytes land", async (t: TestContext) => {
   store.set(SETTINGS_KEY, JSON.stringify({ changesInline: false }));
-  win.dispatchEvent(new Event("romp:settings"));   // the gear's same-document signal (settings.ts onExternalSettingsChange)
-  await flush();
-  assert.equal(marksOf(w).length, 0, "the other pane's flip reaches this body");
-  assert.equal(toggle(aside)!.dataset.on, "0", "…and this header");
-  assert.equal(w.posted.length, asks, "no status ask for it");
-  store.set(SETTINGS_KEY, JSON.stringify({ changesInline: true }));
-  const ev = new Event("storage"); (ev as unknown as { key: string }).key = SETTINGS_KEY;
-  win.dispatchEvent(ev);   // another same-origin tab's write
-  await flush();
-  assert.equal(marksOf(w).length, 2); assert.equal(toggle(aside)!.dataset.on, "1");
-  // a signal that changes nothing repaints nothing (the marks stay the same nodes)
-  const before = marksOf(w);
-  win.dispatchEvent(new Event("romp:settings"));
-  await flush();
-  assert.deepEqual(marksOf(w), before, "no new information, no repaint");
+  const w = world({ deferReload: true }); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: [h1, h3, h5] }));
+  assert.equal(revealOf(aside, "chg:h5").title, OFF + " (line 10)" + OFF_TAIL, "off: the unpainted insertion offers Reveal with its line");
+  act(card(aside, "chg:h1")!, "fcreject", "h1")!.click(); await flush();
+  const m = lastOf(w, "fileComments", "reject");
+  // the reply: "cut" is "reduced" again, so every survivor sits four characters further on
+  w.disk = DOC.replace("cut", "reduced"); w.diskMtime = "1757145600000000011";
+  answer(w, status({ fileMtimeNs: "1757145600000000011", storeMtimeNs: "1757145600000000012", hunks: [shifted(h3, 4), shifted(h5, 4)],
+    store: { v: 3, path: "docs/report.md", suggestions: [SUGG[1]], comments: [passage] },
+    unsent: { comments: [passage.id], replies: [], accepted: 0, rejected: 1, watermark: null } }), m, { rejected: ["h1"] }); await flush(); await flush();
+  assert.ok(w.landReload, "the reload is held: the view still shows the old bytes");
+  assert.equal(revealOf(aside, "chg:h3").title, OFF + OFF_TAIL, "no line number from offsets into other bytes");
+  assert.equal(act(card(aside, "chg:h5")!, "fcreveal", "chg:h5"), null, "an insertion's Reveal waits for the bytes, marks off or on");
+  w.landReload!(); await flush();
+  assert.equal(revealOf(aside, "chg:h3").title, OFF + " (line 6)" + OFF_TAIL, "the bytes landed: the line is known again");
+  assert.equal(revealOf(aside, "chg:h5").title, OFF + " (line 10)" + OFF_TAIL);
   store.delete(SETTINGS_KEY);
 });
 
-// ── source pins ────────────────────────────────────────────────────────────────────────────────────
-
-test("pins: the delegate action, the header's order, the store's key and default, the paint guard, the tag guard, the listener's install, the guide and the plan", () => {
-  assert.match(SRC, /fcinline: \(\) => this\.toggleInline\(\),/, "the toggle is one of the panel's own delegated actions (click-safe through the one root)");
-  assert.match(SRC, /private toggleInline\(\): void \{\n\s+this\.inline = !this\.inline;\n\s+saveSettings\(\{ changesInline: this\.inline \}\);\n\s+this\.paintAll\(\);\n\s+\}/, "flip, write the store, repaint — no request");
-  const head = SRC.slice(SRC.indexOf("private renderHead("), SRC.indexOf("private renderComposer("));
-  const pos = (s: string) => { const i = head.indexOf(s); assert.ok(i >= 0, s); return i; };
-  assert.ok(pos('btn("Track changes", "fctrack", "fileview-btn fc-toggle")') < pos('btn("Show changes inline", "fcinline", "fileview-btn fc-toggle")'), "beside Track changes, after it");
-  assert.ok(pos('btn("Show changes inline", "fcinline", "fileview-btn fc-toggle")') < pos('btn("Comment on this file", "fcfile")'), "…and before Comment on this file");
-  assert.match(head, /if \(s && \(s\.hunks \|\| \[\]\)\.length && !this\.ctx\.editing\(\)\) \{\n\s+const i = btn\("Show changes inline"/, "offered while the file has changes and the read view is up");
-  assert.match(head, /i\.dataset\.on = this\.inline \? "1" : "0";\n\s+i\.setAttribute\("aria-pressed", this\.inline \? "true" : "false"\);/, "the two-state button's state, as Track changes wears it");
-  assert.match(SRC, /inline = loadSettings\(\)\.changesInline;/, "read from the shared store when the panel is made");
-  assert.match(SRC, /private paintChanges\(root: Element, src: string, rendered: boolean\): void \{\n\s+const s = this\.status;\n\s+if \(!this\.inline\) return;/, "off: the change painters are not called, in either view");
-  assert.match(SRC, /\} else if \(!painted && this\.inline && !editing && !inFlux && src !== null && this\.ctx\.mode\(\) !== "media"\) \{\n[^\n]*\n\s+const t = el\("span", "fc-tag", "not shown"\);/, "the tag is claimed only while the marks are on");
-  assert.doesNotMatch(SRC, /The Rendered view cannot show a deletion/, "the Rendered view shows deletions now: the tag's del-specific title is gone");
-  assert.match(SRC, /onExternalSettingsChange\(\(s\) => \{ if \(live && live\.inline !== s\.changesInline\) \{ live\.inline = s\.changesInline; live\.paintAll\(\); \} \}\);/, "one listener for the module, routed to the live panel");
-  assert.ok(SRC.indexOf("onExternalSettingsChange((s) =>") > SRC.indexOf("function ensureListener(): void {") && SRC.indexOf("onExternalSettingsChange((s) =>") < SRC.indexOf("const KEY_ACTS"), "installed in ensureListener, once");
-  assert.match(SETTINGS, /^\s+changesInline: boolean;/m, "a field of the shared settings (settings.ts), like subgoals: toggled from its surface, not the gear");
-  // Pinned by value, not by the key's place in the literal: new settings are appended at its end (theme, then
-  // changesInline itself), so a tail-anchored pin would go red at the next one with no change to the default.
-  // statusline-branch.test.ts pins showBranch the same way.
-  const DEFAULT_ON = /export const DEFAULT_SETTINGS: RompSettings = \{[^\n]*\bchangesInline: true[,\s}]/;
-  assert.match(SETTINGS, DEFAULT_ON, "ON by default");
-  const literal = SETTINGS.match(/export const DEFAULT_SETTINGS: RompSettings = \{[^\n]*\};/);
-  assert.ok(literal, "the defaults literal is one line");
-  assert.match(literal[0].replace("changesInline: true", "changesInline: true, later: false"), DEFAULT_ON, "…read by value: a setting appended after it keeps the pin green");
-  assert.doesNotMatch(literal[0].replace("changesInline: true", "changesInline: false"), DEFAULT_ON, "…and a flipped default turns it red");
-  assert.match(SETTINGS, /const KEY = "romp:settings";/, "the store this suite's stub localStorage holds");
-  // the guide: both views, both marks, the toggle by its label
-  const files = GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")).replace(/\s+/g, " ");
-  for (const phrase of ["**Show changes inline**", "in both views", "deletion is struck", "insertion is tinted", "**Reveal**"]) assert.ok(files.includes(phrase), "guide: " + phrase);
-  assert.doesNotMatch(files, /A deletion has nothing to mark in the Rendered view/, "the old sentence is gone");
-  // the plan: the follow-on note beside the Slice 2 build note, the exclusion gone, the toggle in the UX paragraph
-  assert.match(PLAN, /^The inline-display follow-on \(2026-09-07\)/m);
-  const notV1 = PLAN.slice(PLAN.indexOf("## Deliberately not in v1"), PLAN.indexOf("## Dependencies"));
-  assert.doesNotMatch(notV1, /inline\s+deletions in the Rendered view/);
-  const ux = PLAN.slice(PLAN.indexOf("**Raw view is exact, Rendered view is best effort.**"), PLAN.indexOf("**Comment on a selection**")).replace(/\s+/g, " ");
-  assert.ok(ux.includes("Show changes inline"), "the UX paragraph names the toggle");
-  assert.ok(ux.includes("struck at its point in both views") || ux.includes("struck at their point in both views"), "…and says deletions read inline in Rendered too");
+test("pins: the title branches on the toggle's field, and both branches share the one line-number computation", () => {
+  const i = SRC.indexOf('const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;');
+  assert.ok(i >= 0);
+  const block = SRC.slice(i, SRC.indexOf("acts.appendChild(rv)", i));
+  assert.match(block, /const line = src !== null && !inFlux \? " \(line " \+ \(rawOffsetToLine\(src, c\.curFrom\) \+ 1\) \+ "\)" : "";/, "one line suffix");
+  assert.match(block, /rv\.title = this\.inline \? "Show the change in the Raw view" \+ line\n\s+: "Open the Raw view at the change" \+ line \+ "; the marks are off, so the change is not marked there";/, "on: the mark; off: the place, and why");
 });

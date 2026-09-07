@@ -913,8 +913,9 @@ for `files.ts` and the relay / ~160 / ~260, plus about 150 lines of tests on eac
 
 User-visible: change cards grouped by paragraph with Accept, Reject, Accept all, Reject all, and
 a Reply bound to the change so the agent's `track-edit --thread` revisions fold into it; inline
-marks in Raw, highlights in Rendered, Reveal for deletions; Send to session states accepts and
-rejects and offers the accept-pending-changes checkbox.
+marks in Raw, highlights and deletion points in Rendered (the points since the inline-display
+follow-on, 2026-09-07), Reveal for a change the Rendered view cannot paint; Send to session states
+accepts and rejects and offers the accept-pending-changes checkbox.
 
 Acceptance: accept changes the sidecar only (the engine's `acceptSuggestions`) and marks bound
 comments resolved without dropping them; reject applies the engine's reverse edits to the file
@@ -1237,9 +1238,11 @@ slice, pinned against the code by `ui/webview/file-review-posture.test.ts`:
   alternative. The comments log has one writer, the host script, appending.
 - **Rendered markdown versus offsets.** Mitigation: Raw is exact; Rendered maps through the
   lexer walk with per-token verification and refuses rather than mis-anchoring; the fallback
-  painter reuses the whitespace-tolerant matcher in `ui/webview/comments.ts:86-162`; deletions
-  are panel-only there; every change and comment has a card; a comment whose selection cannot be
-  mapped offers Raw.
+  painter reuses the whitespace-tolerant matcher in `ui/webview/comments.ts:86-162`; a deletion
+  there is a point placed through the same index map, card-only where the map refuses (the
+  inline-display follow-on, 2026-09-07; before it every Rendered deletion was panel-only); every
+  change and comment has a card, and an unpainted change's Reveal opens Raw; a comment whose
+  selection cannot be mapped offers Raw.
 - **Raw direct edits desync changes before Slice 5.** Mitigation: the Edit refusal from Slice 1
   on.
 - **Tracking off before a session writes.** Mitigation: folder tracking before the files exist,

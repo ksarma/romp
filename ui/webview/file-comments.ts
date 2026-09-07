@@ -869,7 +869,12 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
-        fcchange: (x) => { this.openPanel(); this.showCard("chg:" + x.dataset.id!); },   // an inline change mark opens its card
+        // an inline change mark opens its card — and, like fcopen below, cancels the click: a mark inside the author's
+        // link (a deletion point placed at the start of a link's label, a substitution's point and tint over it, an
+        // insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the
+        // card also opened a tab to the author's URL — the session's URL, on a file under review (the 2026-09-07
+        // review). The chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
+        fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
@@ -2996,7 +3001,11 @@ class Panel {
       if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
         if (c.kind === "del" || !painted) {
           const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-          rv.title = "Show the change in the Raw view" + (src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
+          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "";
+          // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
+          // a mark — the guide's "opens the Raw view at the change"; on, Raw shows every change, a deletion as its point
+          rv.title = this.inline ? "Show the change in the Raw view" + line
+            : "Open the Raw view at the change" + line + "; the marks are off, so the change is not marked there";
           if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
         }
       }
