@@ -6,8 +6,8 @@
 // holds (departure 4) had no rule, so the struck block wrapper's line-through propagated into it and the token read as
 // "the picture is being deleted" — the very misread the rule exists to prevent — with no " still in the file" tag. The panel
 // block's byte-equal pin (file-comments.test.ts) caught the drift, but fileview-parity.test.ts's head list did not name the
-// two kept-embed heads and styles-kept-embed.test.ts reads styles.css alone, so nothing named the FEED sheet's copy. This
-// file does: the static leg holds the rule and its tag in feed.css byte-equal to styles.css's, with the inline-block
+// two kept-embed heads and styles-kept-embed.test.ts reads styles.css alone, so nothing named the FEED sheet's copy. The
+// parity list names them now, and this file does too: the static leg holds the rule and its tag in feed.css byte-equal to styles.css's, with the inline-block
 // mechanism in its text; the browser legs mount the real chunk under feed.css alone over the kept-embed fixture and read
 // the pixels — the removed runs struck, the kept token not, and the same span forced back to `display: inline` struck
 // again, which is what proves the probe sees a strike where there is one. The pixel probe matters here: the span's computed
