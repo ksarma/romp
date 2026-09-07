@@ -21,7 +21,7 @@ import {
 } from '../vendor/track-changents/store-io.mjs';
 import { addComment } from '../vendor/track-changents/cli/track-comment.mjs';
 import {
-  deriveUnsent, writeFileAtomic, checkTooLarge, locateExact, statNs, logPathFor, Refusal,
+  deriveUnsent, decidedFor, writeFileAtomic, checkTooLarge, locateExact, statNs, logPathFor, Refusal,
   applyEdits, TEXT_MAX_BYTES, LOG_TAIL,
 } from './file-comments-host.mjs';
 import { tinyPng, sha256 } from '../tests/fixtures/file_comments/tiny-png.mjs';
@@ -823,6 +823,41 @@ test('the log reply is the last 200 entries oldest first with logTruncated, whil
   assert.equal(r.log[LOG_TAIL - 1].n, total);
   assert.deepEqual(r.unsent, { comments: [], replies: [], accepted: 0, rejected: 0, watermark: c.ts });
   assert.equal(fileBytes(lp).toString(), lines.join('\n') + '\n', 'reading never rewrites');
+});
+
+test('a decision older than the log tail still reaches the panel: `decided` carries, from the WHOLE log, the accept or reject of every change a comment is bound to that the sidecar no longer holds', () => {
+  const w = world();
+  // a change, a comment bound to it, the change accepted: the accept entry names the id with its texts
+  const st1 = edit(w, w.report, 'cut p95 latency by 40%', 'reduced p95 latency by 40%');
+  const h = hunkFor(st1, 'cut p95 latency by 40%');
+  const st2 = comment(w, w.report, st1, { suggestionId: h.id, note: 'Say cut, not reduced.' });
+  assert.deepEqual(st2.decided, {}, 'the change is pending: nothing to remember for it');
+  const st3 = accept(w, w.report, st2, [h.id]);
+  assert.deepEqual(st3.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'decided the moment the sidecar drops the change');
+  assert.equal(st3.log.filter((e) => e.kind === 'accept').length, 1, '…and the tail carries the entry itself while it is recent');
+  // then LOG_TAIL + 5 sends: the accept entry falls out of the tail the reply carries, and stays on disk
+  const lp = logPathFor(st3.storePath);
+  const lines = [];
+  for (let i = 1; i <= LOG_TAIL + 5; i++) {
+    lines.push(JSON.stringify({ ts: new Date(i * 1000).toISOString(), kind: 'send', author: 'you', sid: SID, comments: [], accepted: 0, rejected: 0, queued: false, watermark: null, n: i }));
+  }
+  fs.appendFileSync(lp, lines.join('\n') + '\n');
+  const r = status(w, w.report);
+  assert.equal(r.logTruncated, true);
+  assert.equal(r.log.filter((e) => e.kind === 'accept').length, 0, 'the tail no longer holds the accept');
+  assert.deepEqual(r.decided, { [h.id]: { decision: 'accepted', oldText: 'cut p95 latency by 40%', newText: 'reduced p95 latency by 40%' } }, 'the decision rides `decided`, read off the whole log');
+  const c = r.store.comments.find((x) => x.suggestionId === h.id);
+  assert.ok(c && c.resolved, 'the bound comment stays in the sidecar (resolved), which is why the panel needs the texts');
+  // the pure derivation, on the edges: a pending or detached change is the sidecar's to describe, never the log's
+  const entries = [{ kind: 'reject', changes: [{ id: 'x', oldText: 'a', newText: '' }] }, { kind: 'accept', changes: [{ id: 'x', oldText: 'a', newText: 'b' }, { id: 'y', oldText: '', newText: 'n' }] }];
+  const bound = (id) => ({ id: 'c1', author: 'you', ts: 1, body: 'k', suggestionId: id, replies: [], resolved: false });
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('x')] }, entries), { x: { decision: 'accepted', oldText: 'a', newText: 'b' } }, 'the NEWEST entry for the id');
+  assert.deepEqual(decidedFor({ suggestions: [{ id: 'x' }], comments: [bound('x')] }, entries), {}, 'pending: the sidecar holds it');
+  assert.deepEqual(decidedFor({ suggestions: [], detached: [{ id: 'x' }], comments: [bound('x')] }, entries), {}, 'detached: the sidecar holds it');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('y'), { id: 'c2', author: 'you', ts: 2, body: 'p', replies: [], resolved: false }] }, entries), { y: { decision: 'accepted', oldText: '', newText: 'n' } }, 'only bound comments ask; a plain comment adds nothing');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('z')] }, entries), {}, 'no entry for the id: nothing claimed');
+  assert.deepEqual(decidedFor(null, entries), {}, 'no sidecar: nothing bound');
+  assert.deepEqual(decidedFor({ suggestions: [], comments: [bound('x')] }, [{ kind: 'accept', changes: [{ id: 'x', oldText: 7 }] }, null, { kind: 'edit' }]), { x: { decision: 'accepted', oldText: '', newText: '' } }, 'a hand-edited entry reads defensively');
 });
 
 test('an unreadable log line is skipped with a note on stderr, never rewritten', () => {

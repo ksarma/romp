@@ -135,7 +135,9 @@ test('the build note says the panel sends figureHash on comment-with-target and 
   // the panel: the two verbs, the hash from the status the model reads (figureFenceHash), no retry on figure-changed
   assert.ok(/const FIGURE_VERBS = new Set\(\["comment", "retarget"\]\);/.test(panel), 'the verbs that write about a figure');
   assert.ok(/const fh = FIGURE_VERBS\.has\(verb\) && args\.target \? figureFenceHash\(s, args\.target as Target\) : null;\s*\n\s*if \(fh\) fence\.figureHash = fh;/.test(panel), 'the fence carries the hash the status holds, and only then');
-  assert.ok(/else if \(e\.code === FIGURE_CHANGED\) \{[^}]*this\.ctx\.reload\(\);\s*\n\s*await this\.refresh\(\);\s*\n\s*\}/.test(panel), 'figure-changed: re-read the view and the comments, no retry');
+  // the view through the panel's one reload path (askReload; null asks unconditionally, since the file's own mtime is
+  // unchanged and no status will ask), never ctx.reload() from mutateOnce (file-comments-changes.test.ts pins that)
+  assert.ok(/else if \(e\.code === FIGURE_CHANGED\) \{[^}]*this\.askReload\(null\);\s*\n\s*await this\.refresh\(\);\s*\n\s*\}/.test(panel), 'figure-changed: re-read the view and the comments, no retry');
   assert.ok(!/MOVED = new Set\(\[[^\]]*figure-changed/.test(panel), 'figure-changed is not a moved fence: a retry would stamp the new bytes');
   assert.ok(/export function figureFenceHash\(/.test(model));
   assert.ok(/const v = target\.src \? \(s\.embeddedHashes && typeof s\.embeddedHashes === "object" \? s\.embeddedHashes\[target\.src\] : undefined\) : s\.fileHash;/.test(model), 'fileHash for a standalone picture, embeddedHashes[src] for an embedded one — the reading regionState compares with');

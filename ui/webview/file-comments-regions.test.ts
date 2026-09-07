@@ -792,7 +792,8 @@ test("source pins: the overlay's wiring (data-act names, the coarse gate, the se
   assert.match(SRC, /this\.regionLayers\.set\(img, layer\);\n\s*this\.mark\(layer\.overlay\);/, "so is the overlay the browser's own click lands on after a handed-on press");
   // the overlay pass runs for a media body (where the text pass has nothing to paint) and after the text pass
   assert.match(SRC, /if \(src === null \|\| !root\) \{ this\.paintRegions\(\); this\.render\(\); return; \}/);
-  assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.paintRegions\(\);\n\s*this\.render\(\);/);
+  assert.match(SRC, /this\.paintPresel\(root, src, rendered\);\n\s*this\.paintRegions\(\);\n\s*if \(held\) this\.refocusMark\(held\);\n\s*this\.render\(\);/,
+    "after the text pass; the mark that held the keyboard is re-found once every pass has painted (heldMark / refocusMark), then the render");
   // the region card: a region's picture is not ALSO framed; the stale tag from regionState; Reveal scrolls to the picture
   assert.match(SRC, /if \(!painted && rendered && !card\.target\) \{/);
   assert.match(SRC, /const regionSt = c\.target \? regionState\(c\.target, this\.status\) : "current";/);

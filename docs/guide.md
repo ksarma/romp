@@ -211,8 +211,10 @@ session rewrote is shown as it is now. The first comment, like the first save, a
 whether the dashboard may write files on that machine; the same switch, **File editing** in
 the gear, turns it off again, and while it is off a send is refused too (it writes the log)
 and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
-was sent and when, tracking turned on or off, and your direct edits to the file, kept beside
-the comments in the same folder so git keeps it when the project does. Whether
+was sent and when, the changes you accepted or rejected, tracking turned on or off, and your
+direct edits to the file, kept beside the comments in the same folder so git keeps it when the
+project does. Once a change is decided, its card is gone and the Log keeps the decision: the row
+gives the count, and clicking it shows the old and new text of each change. Whether
 `.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out.
 
 If the **Comments** action is missing on a file, the gear's **File comments** row says why:

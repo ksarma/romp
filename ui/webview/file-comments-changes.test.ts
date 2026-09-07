@@ -5,12 +5,14 @@
 // data-act names, the fence carrying fileMtimeNs for the file-writing verbs only, the send sequence's order,
 // the third checkbox's default); and the panel is driven AS A PANEL over the behavior suite's DOM stand-in for
 // Accept, Reject with the retry after a file-moved refusal, Accept all through the send confirm, Reveal, the
-// fold, a click on an inline mark, Reply bound to a change, and a comment shown on its change's card. Synthetic
+// fold, a click on an inline mark, Reply bound to a change, a comment shown on its change's card, and the
+// repaints over ONE body (the open's, a poll tick's, an accept's) leaving one mark per change. Synthetic
 // fixtures only: the notes-api world, placeholder ids.
 //
 // The inline marks are painted by anchor-map's change painters (contract D4, built beside this): the driven
 // tests assert only what any conforming painter yields — an element carrying data-act="fcchange" and the
-// change's id for an insertion or substitution — never a painter's own classes or a deletion's mark.
+// change's id for an insertion or substitution — never a painter's own classes, and of a deletion's mark only
+// that a repaint never doubles it.
 import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -139,7 +141,11 @@ test("the glance and the counts: 'Comments · N · M changes'; the send's A and 
 });
 
 // The kernel builds the sent text from the same A and R (contract C3); tests/test_file_comments.py pins the same
-// literal shape on its side, and file-comments.test.ts's cross-run feeds both builders the decisions case.
+// literal shape on its side, and file-comments.test.ts's cross-run feeds both builders the decisions case. A send
+// with NO comments (a manual Accept or Reject carried alone) wears the kernel's decisions-only shape instead —
+// no "0 comments" header, no `--thread <id>` command lines with no id to put in them (the round-1 review,
+// 2026-09-06); file-comments-model-change-desc.test.ts pins that shape in full, and tests/test_kernel_file_comments_decisions_send.py
+// on the kernel's side.
 const TAIL = "To respond:\n" +
   "  • reply in words:     node ~/.claude/hooks/track-reply.mjs --file " + ABS + " --thread <id> --note \"<your reply>\"\n" +
   "  • to revise the text: node ~/.claude/hooks/track-edit.mjs --file " + ABS + " --thread <id> --old \"<exact text>\" --new \"<replacement>\"\n" +
@@ -160,7 +166,7 @@ test("the preview with decisions, ONE comment: the 'I accepted A of your changes
     "\n" + TAIL);
 });
 
-test("the preview with decisions, SEVERAL comments, and with no comments at all; R alone; the line absent when A + R is zero", () => {
+test("the preview with decisions, SEVERAL comments; no comments at all wears the decisions-only shape (R alone); the line absent when A + R is zero", () => {
   const several = buildSendMessage({ absPath: ABS, comments: [
     { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
     { id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache? Say which." },
@@ -176,11 +182,17 @@ test("the preview with decisions, SEVERAL comments, and with no comments at all;
     "\n" +
     "I accepted 2 of your changes and rejected 0.\n" +
     "\n" + TAIL);
-  assert.equal(buildSendMessage({ absPath: ABS, comments: [], accepted: 0, rejected: 3, tracked: true }),
-    "[obsidian-diff] I left 0 comments on " + ABS + ".\n" +
+  const alone = buildSendMessage({ absPath: ABS, comments: [], accepted: 0, rejected: 3, tracked: true });
+  assert.equal(alone,
+    "[obsidian-diff] I went over " + ABS + ".\n" +
     "\n" +
     "I accepted 0 of your changes and rejected 3.\n" +
-    "\n" + TAIL, "decisions alone still make a message");
+    "\n" +
+    "No comments this time, so nothing needs a reply.\n" +
+    "When you have made more changes, ask me for another look the same way you asked for this one,\n" +
+    "naming the file.\n", "decisions alone still make a message, in the decisions-only shape");
+  assert.doesNotMatch(alone, /I left 0 comments/, "the retired shape's header is gone");
+  assert.doesNotMatch(alone, /--thread <id>|track-reply|track-edit|To respond:/, "…and its command lines, which had no id to point at");
   assert.doesNotMatch(buildSendMessage({ absPath: ABS, comments: [{ id: "1", desc: "on this file", body: "Good." }], accepted: 0, rejected: 0, tracked: true }), /I accepted/);
 });
 
@@ -230,10 +242,16 @@ test("the data-act names, all in the one delegate map; the file-writing verbs' f
   assert.match(SRC, /const FILE_VERBS = new Set\(\["reject", "reject-all"\]\);/);
   const once = SRC.split("private async mutateOnce(")[1].split("\n  }\n")[0];
   assert.match(once, /if \(FILE_VERBS\.has\(verb\)\) fence\.fileMtimeNs = s \? s\.fileMtimeNs : "";/);
-  assert.equal((once.match(/fileMtimeNs/g) || []).length, 4, "fileMtimeNs enters the fence in that one place; the other reads compare the reply's against the view's");
-  assert.match(once, /if \(FILE_VERBS\.has\(verb\) && r\.fileMtimeNs && this\.ctx\.mtimeNs\(\) && mtimeMoved\(this\.ctx\.mtimeNs\(\), r\.fileMtimeNs\)\) this\.ctx\.reload\(\);/,
-    "after a reject the file's bytes changed under the view: re-fetch them (the poll never will — the reply re-baselined it)");
-  assert.match(once, /if \(e\.code === "file-moved"\) this\.ctx\.reload\(\);/, "a file-moved refusal repaints the bytes before the one retry");
+  assert.equal((once.match(/fileMtimeNs/g) || []).length, 2, "fileMtimeNs enters the fence in that one place; mutateOnce reads nothing else off it — the re-fetch is applyStatus's");
+  // the re-fetch after a reject (and after any status whose file mtime is not the view's) is ONE rule, in applyStatus:
+  // the poll never will — every reply re-baselines it
+  const apply = SRC.split("applyStatus(s: Reply): boolean {")[1].split("\n  }\n")[0];
+  assert.match(apply, /this\.base = pollBaseline\(s\);[\s\S]*this\.syncBytes\(s\);[\s\S]*this\.paintAll\(\);/, "every applied status brings the bytes to its text, then paints");
+  const sync = SRC.split("private syncBytes(s: Status): void {")[1].split("\n  }\n")[0];
+  assert.match(sync, /if \(!vm \|\| !s\.fileMtimeNs \|\| vm === s\.fileMtimeNs\) return;\n\s*this\.askReload\(s\.fileMtimeNs\);\n\s*this\.awaitBytes\(s\);/,
+    "the view's mtime against the status's: a re-fetch keyed on the mtime, and the loader until the paint shows it");
+  assert.doesNotMatch(once, /this\.ctx\.reload\(\)/, "mutateOnce asks no fetch of its own: a moved fence's fresh status carries the file's mtime");
+  assert.match(once, /await this\.refreshAfterMoved\(e\.code\);/, "a moved fence: the fresh status (and the bytes, when the file is what moved and no status lands)");
   // the send: parts first, set-tracked, accept-all, then the send with A = unsent.accepted + N and R = unsent.rejected
   const send = SRC.split("async doSend(): Promise<void> {")[1].split("\n  }\n")[0];
   const pos = (s: string) => { const i = send.indexOf(s); assert.ok(i >= 0, s); return i; };
@@ -257,9 +275,12 @@ test("the paint pass: unpaintChanges before each repaint, the change painters af
   assert.match(SRC, /import \{ paintChangesRaw, paintChangesRendered, unpaintChanges \} from "\.\/anchor-map";/, "the D4 API by name");
   assert.match(SRC, /import type \{ MapRefusal, SourceRange, Located, ChangePaint \} from "\.\/anchor-map";/);
   const paint = SRC.split("  paintAll(): void {")[1].split("\n  }\n")[0];
-  assert.ok(paint.indexOf("unpaintChanges(this.ctx.body());") < paint.indexOf('this.unpaint(".fc-hl, .fc-presel");'), "unpaint the changes before anything is repainted");
-  assert.ok(paint.indexOf("this.located.set(card.id, { ...loc, painted });") < paint.indexOf("this.paintChanges(root, src, rendered);"), "changes after the comment highlights");
-  assert.ok(paint.indexOf("this.paintChanges(root, src, rendered);") < paint.indexOf("this.paintPresel(root, src, rendered);"), "…and before the composer's target");
+  // each line is asserted PRESENT before its place is compared: a bare indexOf gives -1 for a missing line, and
+  // -1 sorts before everything, so an ordering pin alone would pass with the unpaint deleted
+  const pos = (s: string) => { const i = paint.indexOf(s); assert.ok(i >= 0, "paintAll has: " + s); return i; };
+  assert.ok(pos("unpaintChanges(this.ctx.body());") < pos('this.unpaint(".fc-hl, .fc-presel");'), "unpaint the changes before anything is repainted");
+  assert.ok(pos("this.located.set(card.id, { ...loc, painted });") < pos("this.paintChanges(root, src, rendered);"), "changes after the comment highlights");
+  assert.ok(pos("this.paintChanges(root, src, rendered);") < pos("this.paintPresel(root, src, rendered);"), "…and before the composer's target");
   const pc = SRC.split("private paintChanges(")[1].split("\n  }\n")[0];
   assert.match(pc, /return col && col\.color \? \{ "--fc-author": col\.color\.bg \} : \{\};/, "the author's session colour as --fc-author; nothing when unknown (the sheet's neutral)");
   assert.match(pc, /const aid = authorIdOf\(store, c\.id\);/, "the sidecar record's authorId, since toHunks drops it");
@@ -778,6 +799,39 @@ test("Reveal on a deletion: Raw, then the change's start; the fold past three gr
   assert.ok(c5 && c5.classes.includes("open"), "the folded card is shown and expanded");
   assert.ok(scrolledInto.includes(c5), "…and scrolled to");
   assert.ok(card(aside, "chg:h1")!.querySelector(".fc-ref")!.classes.includes("fc-link"), "a painted change's reference scrolls to its mark");
+});
+
+test("repaints over the SAME body leave one mark per change: the open (status twice, then the colours), a store-only poll tick, and an accept's reply stack nothing", async (t: TestContext) => {
+  // applyStatus repaints without rebuilding the rows — only a status whose file mtime is not the view's reloads them — so
+  // every status reply paints over marks already there (D5: unwrapped before each repaint, never stacked). Counted by what
+  // any conforming painter yields, an element carrying data-act="fcchange" and the change's id: exactly one for an
+  // insertion inside a row, at most one for a deletion's point, and for every change the same number after each repaint.
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ hunks: FIVE }));
+  const marks = (id: string) => w.body.querySelectorAll('[data-act="fcchange"][data-id="' + id + '"]').length;
+  const counts = () => Object.fromEntries(FIVE.map((h) => [h.id, marks(h.id)]));
+  assert.equal(w.reloads, 0, "the rows were never rebuilt: the open's paints all went over the same body");
+  assert.equal(marks("h2"), 1, "an insertion is marked once after the open's repaints");
+  assert.equal(marks("h5"), 1);
+  assert.ok(marks("h3") <= 1, "a deletion's point, when the painter draws one, is one element");
+  for (const h of FIVE) assert.ok(marks(h.id) >= 1, h.id + " is painted");
+  const first = counts();
+  // the poll: the sidecar moved and the file did not — the status lands and the same rows are repainted
+  await repoll(w, t, status({ hunks: FIVE, storeMtimeNs: "1757145600000000007" }));
+  assert.equal(w.reloads, 0, "a store-only move rebuilds nothing");
+  assert.deepEqual(counts(), first, "the poll's repaint stacks no mark");
+  assert.equal(marks("h5"), 1);
+  // an accept: the reply's status repaints; the accepted change's marks are gone, the rest are as before
+  act(card(aside, "chg:h1")!, "fcaccept", "h1")!.click(); await flush();
+  const m = lastOf(w, "fileComments", "accept");
+  assert.ok(m, "the accept verb went");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileCommentsResult", reqId: m.reqId, ...status({ hunks: [h2, h3, h4, h5],
+    store: { v: 3, path: "docs/report.md", suggestions: [SUGG[1]], comments: [passage] }, storeMtimeNs: "1757145600000000008", log: [ACCEPT_LOG],
+    unsent: { comments: [passage.id], replies: [], accepted: 1, rejected: 0, watermark: null } }) } })); await flush();
+  assert.equal(w.reloads, 0, "an accept changes no bytes: the same rows again");
+  assert.equal(card(aside, "chg:h1"), null, "the accepted change's card is gone");
+  assert.deepEqual(counts(), { ...first, h1: 0 }, "…its marks with it, and every other change is painted as before");
 });
 
 test("Reply on a change card writes a comment bound to the change: comment {suggestionId, note}, and the composer names the change", async (t: TestContext) => {

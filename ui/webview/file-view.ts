@@ -976,9 +976,18 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
 
   // The fetch pipeline, as a function: the open runs it once, and the seam's reload() runs it again
   // (the comments panel's poll saw the file's mtime move — an agent wrote it) with the action row
-  // and the aside left standing; only the body and the mtime change.
+  // and the aside left standing; only the body and the mtime change. The newest fetch wins
+  // (fetchSeq, the quote seed's own idiom): two reloads in flight answer in any order, and an older
+  // response landing last would otherwise put ITS bytes in the body under the newer response's mtime —
+  // a view that claims the new text and shows the old, which the comments panel would then paint its
+  // marks over (it trusts mtimeNs() to say which text it sees). An overtaken response changes nothing:
+  // not the body, not the mtime, not the Edit verdicts, and no error row for a failure nobody awaits.
+  let fetchSeq = 0;
   const fetchFile = () => {
+    const seq = ++fetchSeq;
+    const overtaken = () => seq !== fetchSeq;
     fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
+      if (overtaken()) return Promise.resolve("");   // a newer fetch is out: read nothing, set nothing
       // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
       // "not a type I serve" from "too big" from "not text after all", and that is exactly what the
       // person who clicked needs to know (a 413 names the size and the cap). The status rides along so
@@ -1002,6 +1011,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       isSvgImage = ct === "image/svg+xml";
       return isImage || isPdf ? r.blob() : r.text();
     }).then((t) => {
+      if (overtaken()) return;                                   // a newer fetch's bytes are what show
       if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
       if (t instanceof Blob) {
         // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
@@ -1027,6 +1037,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       text = t;
       renderBody();
     }).catch((err) => {
+      if (overtaken()) return;                                   // the newer fetch answers for the view, success or failure
       if (!document.getElementById("romp-fileview")) return;
       const why = el("div", "fileview-err");
       const msg = String(err && err.message || err);
