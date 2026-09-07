@@ -26283,9 +26283,9 @@ def _chat_build_sig(sess, tmux=None, now=None, deps=None):
     re-evaluate what that build embedded. Returns None only when the session has no transcript path at
     all; a transcript that does not exist yet is a component (None), so a just-created session caches
     like any other. `deps=False` appends the three components EMPTY: for a signature whose dependency
-    tail is discarded — the active tab's, which never checks the cache, and every post-build signature,
-    compared on the static components only — the re-evaluation (stats, token resolves, card values) is
-    skipped. The components shared by every tab come from _chat_sig_shared, once per push. The
+    tail is discarded — every post-build signature, compared on the static components only — the
+    re-evaluation (stats, token resolves, card values) is skipped; every pre-build signature evaluates
+    it, since every tab checks the cache. The components shared by every tab come from _chat_sig_shared, once per push. The
     session chip is NOT a component: it is a function of components that are (the parse and live tail,
     the row, the backend brackets, the clock booleans, the task rows, the watches, the states overlay,
     the store), so the build derives it once and the key derives nothing twice.
@@ -30739,7 +30739,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # user 2026-06-22), the SAME signal _nudge + build_feed use. Only meaningful when the main turn is idle
     # (_session_awaiting returns None while open_now). Session-scoped chat-view chip → the durable stamp too,
     # so the composer's awaiting chip survives a kernel restart like the feed card.
-    _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True, live=tm0)   # the handed row (see _session_awaiting)
+    _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True, live=tmux.get(sid))   # the handed row (see _session_awaiting)
     awaiting_why = _aw["why"] if _aw else None
     awaiting_kind = _aw["kind"] if _aw else None
     # The in-flight ROWS ride the payload in BOTH turn states (2026-09-06): _session_awaiting answers
@@ -41322,8 +41322,9 @@ def _push(targets, connect=False, tmux=None):
                 #                                          signature is unchanged (upstream's 2026-09-03 rule for the
                 #                                          watched tab, on the one key since round-4 plan P4)
                 try:
-                    # the active tab never checks the cache, so its dependency tail is not evaluated (deps=False)
-                    sig = _chat_build_sig(s, chat_tmux, now, deps=False if is_active else None)
+                    # every tab checks the cache, so every pre-build signature evaluates the dependency tail
+                    # over the tab's own record; the post-build one below skips it (deps=False)
+                    sig = _chat_build_sig(s, chat_tmux, now)
                 except Exception:
                     # a signature that cannot be taken is no signature: the tab rebuilds and is not cached,
                     # and the cause is said (never a silent forever-miss)

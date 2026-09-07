@@ -721,6 +721,36 @@ class Differential(_World):
         out.unlink()
         self.assertEqual(self.moved(a, self.sig(deps=deps)), ("taskout",), "…and one that vanished")
 
+    def test_the_agent_files_a_build_reads_are_taskout_deps_and_a_growing_agent_transcript_misses(self):
+        """The Agent cards read files no parent-transcript write records — the subagents sidecar directory
+        (the toolUseId -> agentId map) and each agent's own transcript (its steps and running gist; main's
+        b6940c5f). Both readers report the identity they read under to the running build's record, the way
+        _read_task_output does, so the taskout component re-stats them per cycle: a sidecar landing or an
+        agent's transcript growing moves the key with the parent transcript untouched."""
+        subdir = km._subagents_dir(str(self.tpath))
+        subdir.mkdir(parents=True)
+        afile = subdir / "agent-a1111111111111111.jsonl"
+        afile.write_text(json.dumps(dict(_uline(T0 + 5, "Do the delegated work.", "a1-u0"), isSidechain=True)) + "\n")
+        km._SUBAGENT_META_CACHE.clear(); km._AGENT_GIST_CACHE.clear()
+        km._chat_dep_scope.deps = {"task_outs": [], "postal_any": False}     # a chat build is running on this thread
+        try:
+            self.assertEqual(km._subagent_meta_map(str(self.tpath)), {})
+            km._agent_steps(afile)
+            rec = dict(km._chat_dep_scope.deps["task_outs"])
+        finally:
+            km._chat_dep_scope.deps = None
+        self.assertEqual(set(rec), {str(subdir), str(afile)}, "both reads are recorded")
+        self.assertEqual(rec[str(afile)], km._chat_stat_key(str(afile)), "under the identity they were read under")
+        deps = {"task_outs": list(rec.items()), "pl_pending": [], "postal_any": False, "postal_cards": [], "at_build": None}
+        a = self.sig(deps=deps)
+        self.assertEqual(self.sig(deps=deps), a)
+        with open(afile, "a") as f:                                   # the running agent took another step
+            f.write(json.dumps(dict(_aline(T0 + 7, "Reading the tests.", "a1-a0", "a1-u0"), isSidechain=True)) + "\n")
+        b = self.sig(deps=deps)
+        self.assertEqual(self.moved(a, b), ("taskout",), "the agent's transcript grew: the parent tab rebuilds")
+        (subdir / "agent-a2222222222222222.meta.json").write_text(json.dumps({"toolUseId": "toolu_x", "agentType": "Explore"}))
+        self.assertEqual(self.moved(b, self.sig(deps=deps)), ("taskout",), "a sidecar landed: the directory's identity moved")
+
     def test_a_pending_path_token_whose_file_appears_misses_under_pathlink(self):
         md = "the numbers are in report.md now"
         self.assertEqual(km._path_links(md, SID, "u9", {}), {}, "tokens exist, none resolved: the retry is armed")
@@ -835,8 +865,9 @@ class RealBuildIdleBoard(_World):
         self.assertEqual(self._chat()["cached"] - c0["cached"], 1, "the same key: served, and correct")
 
     def test_the_dependency_tail_is_evaluated_only_where_it_is_compared(self):
-        """Review should-fix 3: the active tab never checks the cache and every post-build signature is
-        compared on the static part, so neither evaluates the dependency tail (deps=False)."""
+        """Review should-fix 3: every post-build signature is compared on the static part, so it never
+        evaluates the dependency tail (deps=False); every pre-build signature does, once, since every tab —
+        the watched one included (upstream's 2026-09-03 rule, on the one key) — checks the cache."""
         calls = []
         real = km._chat_sig_deps
         km._chat_sig_deps = lambda sid, deps: calls.append(deps) or real(sid, deps)
@@ -847,8 +878,12 @@ class RealBuildIdleBoard(_World):
             self.assertEqual(km._chat_build_sig(self.sess, self.tmux, NOW)[:-3], a[:-3], "the static part is the same")
             del calls[:]
             watched = {"app": "chat", "alive": True, "sent": {}, "active": SID, "send": lambda s: None}
-            km._push([watched], tmux=self.tmux)            # our tab is the watched one: built, never checked
-            self.assertEqual(calls, [], "an active tab's pre-build and post-build signatures skip the tail")
+            km._push([watched], tmux=self.tmux)            # our tab is the watched one, cold: one pre-build check, built
+            self.assertEqual(len(calls), 1, "a watched tab's pre-build signature evaluates the tail once; the post-build one skips it")
+            del calls[:]
+            km._push([watched], tmux=self.tmux)            # served: the one check
+            self.assertEqual(len(calls), 1)
+            del calls[:]
             km._built_chat.clear()
             km._push([self.client], tmux=self.tmux)        # a cold background tab: one pre-build check, no tail after the build
             self.assertEqual(len(calls), 1)

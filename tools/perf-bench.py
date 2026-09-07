@@ -422,6 +422,8 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
         "mcp_config": None, "append_prompt_path": None, "cli_scope": False, "thread_wake_model": None,
         "_bench_dormant": bool(dormant_rows), "_bench_all_regs": bool(all_regs),
         "_owns_memo": {},  # the owns() memo sdk_backend sets in __init__; read on the liveness path since the 2026-09-07 fold
+        "_live_rev": {},   # the live-tail revision map __init__ sets (_touch_live / live_rev): every chat signature
+        #                    reads it (round-4 plan P4), and without it the guard above turned each into no signature
     })
     return be
 
