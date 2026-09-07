@@ -19,7 +19,13 @@ The design, in four rules:
 * ``op``'s OWN credential (a service-account token, a session token) is the one secret that must
   reach the kernel's environment for headless use — and nothing else: claim_op_env() takes those
   names out of os.environ at startup and resolve() hands them back to the ``op read`` subprocess
-  alone, so no Claude session, judge child or tmux launch inherits a vault-wide credential.
+  alone, so no Claude session, judge child or tmux launch inherits a vault-wide credential. The
+  tmux SERVER is scrubbed of the same names — and of a stale ``ANTHROPIC_API_KEY`` — whenever romp
+  becomes the op consumer, not only at kernel start (2026-09-06: a keyswap to a reference with no
+  restart left both in the server's globals, and every new pane billed the old key).
+* An op source selected from the FILE is remembered on disk (``service.env.source``, beside the file),
+  so a supervised restart after the reference line vanished still refuses to fall to a login
+  (2026-09-06: the memory was process-local and a kernel restart forgot it).
 
 Legacy environment/file keys and Claude login remain supported without 1Password.
 """
@@ -43,10 +49,23 @@ OP_ENV_NAMES = ("OP_SERVICE_ACCOUNT_TOKEN", "OP_CONNECT_HOST", "OP_CONNECT_TOKEN
 OP_ENV_PREFIX = "OP_SESSION_"
 _OP_ENV: dict[str, str] = {}
 _OP_CLAIM_SAID = False
+_TMUX_SCRUBBED: set = set()      # names already unset from the tmux server's globals by this process
+# The sibling file that remembers, across kernel restarts, that the env file's source was a 1Password
+# reference: `service.env.source` (sibling_path), containing the word `op` and never a value.
+SOURCE_MARKER = "source"
 
 
 def is_op_env_name(name: str) -> bool:
     return name in OP_ENV_NAMES or name.startswith(OP_ENV_PREFIX)
+
+
+def is_tmux_scrub_name(name: str) -> bool:
+    """The ONE list of names romp removes from a tmux server's globals and a tmux launch's client env
+    while it is the op consumer: op's credential names, and ANTHROPIC_API_KEY — the key the manager
+    started with, which a keyswap to a reference retired but the tmux server still carried, so every new
+    pane billed it (review find, 2026-09-06). A pane without it falls to Claude Code's own auth (login or
+    apiKeyHelper). Never applied on a box with no reference: static-key panes rely on the inheritance."""
+    return is_op_env_name(name) or name == KEY_VAR
 
 
 def op_consumer() -> bool:
@@ -75,6 +94,15 @@ def claim_op_env() -> dict[str, str]:
         import sys
         sys.stderr.write("op credentials claimed from the environment for `op read`: %s — sessions, judge "
                          "calls and tmux launches will not see them\n" % ", ".join(sorted(names)))
+    # The tmux server the manager started carries the same environment the kernel did, and every pane
+    # inherits the SERVER's globals: scrub it of what was just claimed, plus the manager's startup
+    # ANTHROPIC_API_KEY. Here, not only in kernel main() — a `romp keyswap` to a reference on a box that
+    # started without one makes romp the op consumer mid-run, and the first claim after it is the moment
+    # the server still holds the token (review find, 2026-09-06). Once per name per process; best effort.
+    pending = (set(_OP_ENV) | {KEY_VAR}) - _TMUX_SCRUBBED
+    if pending:
+        tmux_unset_global(pending, os.environ.get("ROMP_TMUX_SOCKET", ""))
+        _TMUX_SCRUBBED.update(pending)
     return _OP_ENV
 
 
@@ -88,21 +116,39 @@ def strip_op_env(env: dict) -> dict:
     return env
 
 
+def strip_tmux_env(env: dict) -> dict:
+    """The environment a tmux launch (`romp new -t`, `romp resume --detach`) is spawned with: op's
+    credential (strip_op_env) and, while romp is the op consumer, ANTHROPIC_API_KEY as well — the pane
+    must not bill the key the manager started with once a reference governs (is_tmux_scrub_name). A box
+    with no reference keeps both, as before. Returns `env` for chaining."""
+    strip_op_env(env)
+    if _OP_ENV or op_consumer():
+        env.pop(KEY_VAR, None)
+    return env
+
+
 def tmux_unset_global(names, socket: str = "") -> list:
-    """Remove op's credential names from a tmux SERVER's global environment — the environment every new
+    """Remove credential names from a tmux SERVER's global environment — the environment every new
     pane inherits, which the manager-started server carried from service.env (review find, 2026-09-05:
-    a tmux session's `exec claude` saw the token although the launching client had been scrubbed). Best
-    effort: no tmux, no server, an old tmux → nothing happens. Returns the commands run, for tests."""
+    a tmux session's `exec claude` saw the token although the launching client had been scrubbed). The
+    names are filtered through is_tmux_scrub_name, the one list. Best effort: no tmux, no server, an old
+    tmux → nothing happens. Returns the commands run, for tests."""
     ran = []
-    for name in sorted(set(n for n in names if is_op_env_name(n))):
+    for name in sorted(set(n for n in names if is_tmux_scrub_name(n))):
         cmd = ["tmux"] + (["-L", socket] if socket else []) + ["set-environment", "-gu", name]
         try:
-            subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=5, check=False)
+            _TMUX_RUN(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                      timeout=5, check=False)
             ran.append(cmd)
-        except (OSError, subprocess.TimeoutExpired):
+        except Exception:      # best effort by contract: a scrub that cannot run must never fail a launch
             pass
     return ran
+
+
+# Bound at import, not looked up per call: every suite here fakes `op read` by patching subprocess.run,
+# and the tmux scrub that claim_op_env now runs would otherwise register as a credential retrieval (or
+# raise the fake's "unexpected retrieval"). Tests that want to see the scrub patch THIS name.
+_TMUX_RUN = subprocess.run
 
 
 def runtime_reserved_names(auth: str, source) -> tuple:
@@ -164,10 +210,12 @@ class KeySource:
         if self.kind != "op":
             return self.value
         # op authenticates from the credential names claimed at startup; they ride into THIS subprocess
-        # and no other (see claim_op_env). The rest of the environment goes along so op finds its PATH,
-        # HOME and config the way the manager's shell would have given them.
-        op_env = dict(os.environ)
-        op_env.update(claim_op_env())
+        # and no other (see claim_op_env). The rest of the environment is a whitelist, not a copy
+        # (review find, 2026-09-06: the copy carried ROMP_SERVE_TOKEN — full control of every session —
+        # and the manager's startup ANTHROPIC_API_KEY into a third-party binary). op needs HOME and the
+        # XDG_* names to find `~/.config/op` and the desktop app's socket, PATH to run, TMPDIR/LANG/LC_*/
+        # TERM for ordinary CLI behaviour, USER/LOGNAME for its account defaults; nothing else of romp's.
+        op_env = op_subprocess_env()
         try:
             result = subprocess.run(
                 ["op", "read", "--no-newline", self.value], stdin=subprocess.DEVNULL,
@@ -190,6 +238,20 @@ class KeySource:
         if not value or len(value) > 16384 or any(c.isspace() or c == "\0" for c in value):
             raise KeySourceError("1Password returned an empty or invalid API key")
         return value
+
+
+OP_ENV_PASSTHROUGH = ("PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "TERM")
+OP_ENV_PASSTHROUGH_PREFIXES = ("LC_", "XDG_")
+
+
+def op_subprocess_env() -> dict:
+    """The environment the `op read` subprocess gets and nothing more: the passthrough names above, op's
+    own credential names — the claimed stash, plus any still in os.environ (a caller resolving a
+    reference on a box where romp never became the consumer) — and no romp variable of any kind."""
+    env = {k: v for k, v in os.environ.items()
+           if k in OP_ENV_PASSTHROUGH or k.startswith(OP_ENV_PASSTHROUGH_PREFIXES) or is_op_env_name(k)}
+    env.update(claim_op_env())
+    return env
 
 
 def service_env_path() -> str:
@@ -301,9 +363,15 @@ def select_source(startup_key: str = "") -> KeySource:
     source = read_source(path)
     if source.kind != "none":
         if source.kind != "error":
+            if _AUTHORITATIVE_PATHS.get(path) != source.kind:      # a transition: mirror it to disk once
+                remember_file_source(path, source.kind)
             _AUTHORITATIVE_PATHS[path] = source.kind
         return source
-    previous = _AUTHORITATIVE_PATHS.get(path)
+    # The op memory is DURABLE (2026-09-06): a supervised kernel restart forgot the process-local entry,
+    # and with the reference line gone from the file and none in the manager's environment every
+    # session without an explicit pick launched on the login — the silent fallback this module exists
+    # to end. The marker beside the file says `op` until a non-op source is selected or written.
+    previous = _AUTHORITATIVE_PATHS.get(path) or ("op" if read_marker(path) == "op" else None)
     if previous == "op":
         return KeySource("error", error="The 1Password reference was removed; configure an API key source explicitly")
     if previous:
@@ -320,6 +388,50 @@ def select_source(startup_key: str = "") -> KeySource:
     if path in _ENV_PROVIDER_PATHS:
         return KeySource("error", error="The 1Password reference was removed from the environment; configure an API key source explicitly")
     return KeySource("environment", startup_key) if startup_key else source
+
+
+def marker_path(path: str | None = None) -> str:
+    """`service.env.source` beside the env file: the durable memory that the file's selected source was a
+    1Password reference. Holds the word `op` (never a reference, never a value); absent otherwise."""
+    return sibling_path(SOURCE_MARKER, path)
+
+
+def read_marker(path: str | None = None) -> str:
+    try:
+        with open(marker_path(path), "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read(16).strip()
+    except OSError:
+        return ""
+
+
+def remember_file_source(path: str | None, kind: str) -> None:
+    """Mirror a source selected from (or written to) the env file onto the marker: `op` writes it, any
+    other kind removes it, so an operator's intentional switch to a static key is not an error at the
+    next restart. Atomic, 0600, same directory, like write_source. Best effort — a read-only config
+    directory must not fail the selection; the process-local memory still governs this process."""
+    mp = marker_path(path)
+    try:
+        if kind != "op":
+            if os.path.lexists(mp):
+                os.unlink(mp)
+            return
+        if read_marker(path) == "op":
+            return
+        d = os.path.dirname(mp) or "."
+        fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(mp) + ".")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write("op\n")
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, mp)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError:
+        pass
 
 
 def read_key(path: str | None = None) -> str:
@@ -415,6 +527,9 @@ def write_source(source: KeySource, path: str | None = None) -> dict:
         except OSError:
             pass
         raise
+    # The durable op memory follows the write: a swap to a reference arms it, a swap to a static key
+    # clears it, so the marker never outlives the choice it records (select_source consults it).
+    remember_file_source(given, "op" if source.kind == "op" else "file")
     return {"path": given, "old": old, "new": source, "mode": mode, "tightened": tightened,
             "lines": len(lines), "target": p}
 

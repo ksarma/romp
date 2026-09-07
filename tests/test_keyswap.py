@@ -232,8 +232,10 @@ class _Backend(_EnvFile):
         self.state = tempfile.mkdtemp()
         self._stash = sb._WORK_KEY
         self._checked = sb._KEY_FILE_CHECKED
+        self._seen_fp = sb._FILE_KEY_SEEN_FP
         sb._WORK_KEY = self.BOOT              # the startup claim, already made
         sb._KEY_FILE_CHECKED = True           # the one-shot agreement line is asserted on its own
+        sb._FILE_KEY_SEEN_FP = ""             # the key-line-gone notice is armed per test, asserted on its own
         self._fetch = sb._fetch_key_fast_org
         sb._fetch_key_fast_org = lambda key: None      # never a real HTTPS GET from a test
         sb._FAST_ORG_VERDICTS.clear()
@@ -256,6 +258,7 @@ class _Backend(_EnvFile):
             sys.modules.pop("claude_agent_sdk", None)
         sb._WORK_KEY = self._stash
         sb._KEY_FILE_CHECKED = self._checked
+        sb._FILE_KEY_SEEN_FP = self._seen_fp
         sb._fetch_key_fast_org = self._fetch
         sb._FAST_ORG_VERDICTS.clear()
         super().tearDown()
@@ -403,6 +406,55 @@ class StartupFallback(_Backend):
         self.assertNotIn(OLD_KEY, said)
         self.assertNotIn(BOOT_KEY, said)
         self.assertIn(ks.fingerprint(OLD_KEY), said)
+
+
+class KeyLineGone(_Backend):
+    """Review find (2026-09-06): the file stays authoritative when its static key line is removed
+    mid-run — correct — but nothing said so, and every session without an explicit Billing pick had
+    silently started billing the login."""
+
+    BOOT = ""
+
+    def test_removing_the_static_key_line_mid_run_is_said_once_with_fingerprints_only(self):
+        import io
+        from contextlib import redirect_stderr
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(self.be.work_key, OLD_KEY)
+            self.assertEqual(err.getvalue(), "", "a configured file has nothing to say")
+            with open(self.path, "w") as f:
+                f.write("ROMP_PERF=1\n")                                 # the line is deleted
+            ks._CACHE = ((), "")
+            self.assertEqual(self.be.work_key, "", "the file stays authoritative: no startup key comes back")
+            self.be.work_key; self.be.work_key                          # later reads say nothing more
+        said = err.getvalue()
+        self.assertEqual(said.count("is GONE"), 1, said)
+        self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said)
+        self.assertIn(self.path, said)
+        self.assertIn("launch on the login", said)
+        self.assertNotIn(OLD_KEY, said, "fingerprints only")
+        # the line coming back re-arms the notice: a second removal is a second event
+        self.write_env(NEW_KEY)
+        with redirect_stderr(err):
+            self.assertEqual(self.be.work_key, NEW_KEY)
+            with open(self.path, "w") as f:
+                f.write("ROMP_PERF=1\n")
+            ks._CACHE = ((), "")
+            self.assertEqual(self.be.work_key, "")
+        self.assertEqual(err.getvalue().count("is GONE"), 2)
+        self.assertIn("sha256:" + ks.fingerprint(NEW_KEY), err.getvalue())
+
+    def test_a_file_that_never_had_a_line_says_nothing(self):
+        import io
+        from contextlib import redirect_stderr
+        with open(self.path, "w") as f:
+            f.write("ROMP_PERF=1\n")
+        ks._CACHE = ((), "")
+        sb._FILE_KEY_SEEN_FP = ""            # setUp's backend construction saw the fixture's line; this process did not
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.be.work_key
+        self.assertEqual(err.getvalue(), "")
 
 
 class CycleReconnects(_Backend):
@@ -579,6 +631,15 @@ class KeyswapCli(_EnvFile):
         self.assertEqual(ks.read_key(self.path), OLD_KEY, "a swap is asked for by name")
         self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said)
         self.assertIn("lowprio", said, "the candidates it could swap to")
+
+    def test_the_durable_op_marker_is_not_listed_as_a_candidate(self):
+        ks.remember_file_source(self.path, "op")
+        self.assertTrue(os.path.exists(ks.marker_path(self.path)))
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 0)
+        self.assertIn("lowprio", said)
+        self.assertNotIn(ks.SOURCE_MARKER + " ", said.replace("key source", ""), "the memory file is not a profile")
+        self.assertNotIn("(no key source)", said)
 
     def test_it_refuses_a_source_with_no_key_line_and_touches_nothing(self):
         self.sibling("empty", "ROMP_PERF=1\n")
@@ -784,7 +845,9 @@ class KeyswapCli(_EnvFile):
         for line in self.OTHER_LINES:
             self.assertIn(line, body)
         self.assertEqual(stat.S_IMODE(os.stat(self.path).st_mode), 0o600)
-        self.assertEqual(sorted(os.listdir(self.d)), ["service.env", "service.env.lowprio", "service.env.vault"])
+        self.assertEqual(sorted(os.listdir(self.d)),
+                         ["service.env", "service.env.lowprio", "service.env.source", "service.env.vault"],
+                         "no temp file left; `.source` is the durable op memory a reference selection writes")
         self.assertIn("no key was copied to disk", said)
         self.assertNotIn(ref, said)
 

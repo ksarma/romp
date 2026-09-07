@@ -235,8 +235,13 @@ the key option is labelled plainly `API key` — no fragment of the key, not
 even a last-4 tail, ever reaches a browser or a screen. A new session
 defaults to the last pick made anywhere, and before any pick to the key when
 one is configured — exactly what an ambient key did before the selector
-existed. tmux sessions are not covered: their CLI lives in the tmux server's
-environment, which the kernel does not control.
+existed. tmux sessions are not covered by the picker: their CLI lives in the
+tmux server's environment, which the kernel does not control. What Romp does
+do there, when a 1Password reference is configured, is keep the manager's
+startup `ANTHROPIC_API_KEY` out of the server's globals, so a terminal
+session falls to Claude Code's own auth (login or `apiKeyHelper`) rather than
+billing a key nobody chose; see [API keys from 1Password at
+runtime](#api-keys-from-1password-at-runtime).
 
 Each chat tab's hover tooltip carries the same fact as a `Billing` row —
 `API key`, or `Login (name@example.com)` — whenever the session's backend
@@ -383,21 +388,39 @@ and give the account read access to that one vault, and nothing else. When a
 reference is configured, Romp takes `op`'s own credential names
 (`OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`, `OP_CONNECT_*`, `OP_ACCOUNT`) out
 of its environment as its first act at startup, says which names it claimed in
-the kernel log, hands them to the `op read` subprocess alone, and scrubs them
-from the tmux server's global environment: no Claude session, judge call, or
-tmux launch inherits them, so an agent running `env` sees neither the API key
-nor the credential. This keeps the token out of every agent's shell by
-default; it is inheritance hygiene, not isolation. The file stays readable to
-the same OS user (keep it `chmod 600`), and a same-user process can read the
-manager's original environment, which is why the account must see only the
-one vault. Like the rest of `service.env`, the token line loads when the
-manager starts; changing it needs a manager restart, where the reference
-itself is read live. Do not put the token in a per-session environment
-(`romp new --env`), which is copied into per-session files.
+the kernel log, and hands them to the `op read` subprocess alone: no Claude
+session, judge call, or tmux launch inherits them, so an agent running `env`
+sees neither the API key nor the credential. The `op read` subprocess itself
+gets a minimal environment, not a copy of the kernel's: `PATH`, `HOME`, `USER`,
+`LOGNAME`, `TMPDIR`, `LANG`, `LC_*`, `TERM`, the `XDG_*` names (op finds
+`~/.config/op` and the desktop app's socket through `HOME` and `XDG_*`), and
+the claimed `OP_*` names. Nothing of Romp's (the serve token, a startup
+`ANTHROPIC_API_KEY`, the reference variable) reaches it.
 
-On a box where the sessions fetch their key through Claude Code's
-`apiKeyHelper` calling `op`, and no reference is configured, Romp leaves
-`op`'s environment alone: the sessions need it.
+The tmux server needs the same care, because every pane inherits the
+**server's** globals, not the launching client's. Whenever Romp becomes the
+op consumer — at kernel start, or later when `romp keyswap` selects a
+reference on a box that started without one, with no manager restart — it
+unsets the `OP_*` names **and** the manager's startup `ANTHROPIC_API_KEY`
+from the tmux server's global environment; the manager starts the server
+without them, and `romp new -t` scrubs them again before the pane exists
+(reading the reference from its own environment or from `service.env`'s
+line). A terminal session on a reference-governed box therefore never bills
+the key the manager started with: with no `ANTHROPIC_API_KEY` in its
+environment it falls to Claude Code's own auth (login or `apiKeyHelper`).
+Panes that already existed when the reference was selected keep the
+environment they launched with; end or relaunch them. A box with no reference
+configured is untouched: static-key panes rely on inheriting the key, and an
+`apiKeyHelper` box's sessions need `op`'s environment.
+
+This keeps the token out of every agent's shell by default; it is
+inheritance hygiene, not isolation. The file stays readable to the same OS
+user (keep it `chmod 600`), and a same-user process can read the manager's
+original environment, which is why the account must see only the one vault.
+Like the rest of `service.env`, the token line loads when the manager starts;
+changing it needs a manager restart, where the reference itself is read live.
+Do not put the token in a per-session environment (`romp new --env`), which
+is copied into per-session files.
 
 A supervised manager (the systemd or launchd service) reads its key source
 from `service.env` **only**. A key that reaches the manager some other way, a
@@ -426,17 +449,33 @@ To migrate an existing service:
    `ROMP_API_KEY_REF=op://vault/item/field`. Replace any sibling profiles used
    by `romp keyswap` in the same way, and remove obsolete plaintext copies.
 3. Refresh the kernel once to load this version of Romp. Future source edits
-   take effect without restarting the manager.
-4. Reconnect existing key-billed sessions with `romp keyswap --cycle-all`
+   take effect without restarting the manager: the next session launch or
+   judge call reads the reference, and that first read also scrubs the tmux
+   server of `op`'s names and the retired `ANTHROPIC_API_KEY`.
+4. Reconnect existing key-billed SDK sessions with `romp keyswap --cycle-all`
    when they are quiet. Newly launched sessions and subsequent judge/model
-   requests use the configured source immediately.
+   requests use the configured source immediately. Terminal (tmux) sessions
+   launched before the migration still carry the plaintext key they started
+   with; end and relaunch them.
+
+Once a reference has been selected from `service.env`, Romp remembers it on
+disk in the sibling file `service.env.source` (the word `op`, mode 600, never
+a reference or a key), so the memory survives kernel restarts: deleting the
+reference line and restarting does not make sessions fall to the login.
+Selecting a static key — `romp keyswap <static profile>`, or writing an
+`ANTHROPIC_API_KEY=` line — removes the marker, so an intentional switch is
+not an error. `romp keyswap` does not list the marker as a profile.
 
 Removing or emptying an explicit service-file key source cannot revive the
 key inherited when the kernel started. After removing a selected provider,
 API-key operations fail until a valid source is selected; choose **Login**
-explicitly to use that mode. Removing a source does not revoke a credential
-already held by a running Claude process; reconnect or end those sessions too.
-Rotate a previously exposed key with its issuer as appropriate.
+explicitly to use that mode. Removing a static `ANTHROPIC_API_KEY=` line
+while the kernel runs is different: the file stays authoritative and
+sessions without an explicit Billing pick launch on the login, and the
+kernel log says so once, with the removed key's fingerprint and the file's
+path. Removing a source does not revoke a credential already held by a
+running Claude process; reconnect or end those sessions too. Rotate a
+previously exposed key with its issuer as appropriate.
 
 #### Existing API keys and Claude login
 
@@ -496,7 +535,12 @@ After the rewrite:
   would kill that work — so re-run `--cycle` for those sessions once they are
   quiet;
 * **the judges and direct model-catalog refreshes** pick the new source up on
-  their next call, with no cycling at all.
+  their next call, with no cycling at all;
+* **terminal (tmux) sessions** are not cycled. A swap from a static key to a
+  reference removes the old `ANTHROPIC_API_KEY` from the tmux server's
+  globals at the kernel's next key read and at the next `romp new -t`, so new
+  panes fall to Claude Code's own auth; panes already open keep what they
+  launched with — end and relaunch them.
 
 No key value is printed or sent in Romp's status/control responses. Legacy
 keys are identified by the first 12 hex of their sha256, such as

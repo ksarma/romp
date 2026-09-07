@@ -42,14 +42,18 @@ def env(tmp_path, monkeypatch):
     ks._CACHE = ((), "")
     ks._AUTHORITATIVE_PATHS.clear()
     ks._ENV_PROVIDER_PATHS.clear()
-    # Unexpected retrieval fails locally: no test may invoke the real executable.
+    ks._TMUX_SCRUBBED.clear()
+    # Unexpected retrieval fails locally: no test may invoke the real executable. The tmux scrub the
+    # claim runs has its own runner (keysource._TMUX_RUN, bound at import for exactly this reason):
+    # recorded here, never run — no test may touch a tmux server, private socket dir or not.
     with mock.patch.object(
         ks.subprocess, "run", side_effect=AssertionError("unexpected credential retrieval")
-    ) as op:
-        yield SimpleNamespace(path=path, root=tmp_path, op=op)
+    ) as op, mock.patch.object(ks, "_TMUX_RUN") as tmux:
+        yield SimpleNamespace(path=path, root=tmp_path, op=op, tmux=tmux)
     ks._CACHE = ((), "")
     ks._AUTHORITATIVE_PATHS.clear()
     ks._ENV_PROVIDER_PATHS.clear()
+    ks._TMUX_SCRUBBED.clear()
 
 
 def result(value=OLD_KEY.encode(), returncode=0):
@@ -434,7 +438,11 @@ def test_atomic_reference_selection_removes_competing_keys_without_resolving(env
     real_replace = os.replace
     replacements = []
 
+    marker = Path(ks.marker_path(str(env.path)))
+
     def observe_replace(source_path, destination_path):
+        if Path(destination_path) == marker:          # the durable op memory rides its own atomic write
+            return real_replace(source_path, destination_path)
         source_path = Path(source_path)
         assert Path(destination_path) == env.path
         assert source_path.parent == env.path.parent
@@ -453,7 +461,8 @@ def test_atomic_reference_selection_removes_competing_keys_without_resolving(env
     assert len(replacements) == 1
     assert stat.S_IMODE(env.path.stat().st_mode) == 0o600
     assert env.path.read_text() == f"# keep this comment\nROMP_PERF=1\nROMP_API_KEY_REF={REF}\n"
-    assert sorted(env.root.iterdir()) == [env.path]
+    assert sorted(env.root.iterdir()) == [env.path, marker], "no temp file left; the marker is the memory"
+    assert marker.read_text() == "op\n"
     assert ks.select_source(BOOT_KEY).value == REF
     env.op.assert_not_called()
 
@@ -528,7 +537,7 @@ def test_op_credentials_are_claimed_out_of_the_environment_and_reach_only_the_op
         sub_env = env.op.call_args.kwargs["env"]
         assert sub_env["OP_SERVICE_ACCOUNT_TOKEN"] == "synthetic-op-token"
         assert sub_env["OP_SESSION_my_account"] == "synthetic-op-session"
-        assert sub_env["UNRELATED_VAR"] == "kept", "op still sees the ordinary environment (PATH, HOME, config)"
+        assert "UNRELATED_VAR" not in sub_env, "op sees a whitelist, not the process environment (2026-09-06)"
         assert "OP_SERVICE_ACCOUNT_TOKEN" not in os.environ, "resolving hands nothing back to the process"
         # a child env built before the claim is scrubbed the same way
         child = {"OP_SERVICE_ACCOUNT_TOKEN": "x", "OP_SESSION_acct": "y", "PATH": "/bin", "OPTIONAL": "keep"}
@@ -576,11 +585,132 @@ def test_a_garbled_key_line_is_an_error_while_a_garbled_comment_is_not(env):
 
 
 def test_tmux_server_scrub_runs_one_unset_per_credential_name(env):
-    with mock.patch.object(ks.subprocess, "run") as run:
-        ran = ks.tmux_unset_global(["OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_acct", "PATH", "OP_ACCOUNT"], socket="probe")
-    assert ran == [["tmux", "-L", "probe", "set-environment", "-gu", "OP_ACCOUNT"],
+    ran = ks.tmux_unset_global(["OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_acct", "PATH", "OP_ACCOUNT",
+                                "ANTHROPIC_API_KEY", "HOME"], socket="probe")
+    assert ran == [["tmux", "-L", "probe", "set-environment", "-gu", "ANTHROPIC_API_KEY"],
+                   ["tmux", "-L", "probe", "set-environment", "-gu", "OP_ACCOUNT"],
                    ["tmux", "-L", "probe", "set-environment", "-gu", "OP_SERVICE_ACCOUNT_TOKEN"],
                    ["tmux", "-L", "probe", "set-environment", "-gu", "OP_SESSION_acct"]]
-    assert run.call_count == 3
-    with mock.patch.object(ks.subprocess, "run", side_effect=FileNotFoundError):
-        assert ks.tmux_unset_global(["OP_ACCOUNT"]) == [], "no tmux: nothing to do, nothing raised"
+    assert env.tmux.call_count == 4, "one list for the server scrub: op's names and the startup key, nothing else"
+    env.op.assert_not_called(), "a tmux scrub is not a credential retrieval"
+    env.tmux.side_effect = FileNotFoundError
+    assert ks.tmux_unset_global(["OP_ACCOUNT"]) == [], "no tmux: nothing to do, nothing raised"
+    env.tmux.side_effect = RuntimeError("anything at all")
+    assert ks.tmux_unset_global(["OP_ACCOUNT"]) == [], "best effort by contract: never raises"
+
+
+def _tmux_unsets(tmux):
+    return sorted(c.args[0][-1] for c in tmux.call_args_list if c.args[0][-3:-1] == ["set-environment", "-gu"])
+
+
+def test_becoming_the_op_consumer_mid_run_scrubs_the_tmux_server(env, monkeypatch):
+    """Review find (2026-09-06): the tmux server scrub ran once, in kernel main(), and only if the claim
+    happened THEN. A box that started with op's token but no reference (an apiKeyHelper box, or an operator
+    adding the token first) and then `romp keyswap`ped to a reference with no restart claimed the token
+    out of the kernel's environment on the next launch — while the tmux server, started by the manager
+    with the same environment, kept it (and the manager's startup ANTHROPIC_API_KEY) for every new pane.
+    Reproduced against a real private-socket tmux server before this fix."""
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "synthetic-op-token")
+    monkeypatch.setenv("ROMP_TMUX_SOCKET", "probe")
+    env.path.write_text("ROMP_PERF=1\n")                              # no reference: not the consumer
+    ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+    try:
+        assert ks.claim_op_env() == {}
+        env.tmux.assert_not_called()
+        env.path.write_text("ROMP_PERF=1\nROMP_API_KEY_REF=%s\n" % REF)   # the keyswap, no restart
+        ks._CACHE = ((), "")
+        assert set(ks.claim_op_env()) == {"OP_SERVICE_ACCOUNT_TOKEN"}
+        assert _tmux_unsets(env.tmux) == ["ANTHROPIC_API_KEY", "OP_SERVICE_ACCOUNT_TOKEN"]
+        assert all(c.args[0][:3] == ["tmux", "-L", "probe"] for c in env.tmux.call_args_list), "the kernel's server"
+        n = env.tmux.call_count
+        ks.claim_op_env(); ks.claim_op_env()
+        assert env.tmux.call_count == n, "once per name per process"
+        monkeypatch.setenv("OP_SESSION_acct", "synthetic-session")      # a name that appears later
+        ks.claim_op_env()
+        assert _tmux_unsets(env.tmux) == ["ANTHROPIC_API_KEY", "OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_acct"]
+    finally:
+        ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+
+
+def test_a_tmux_launch_env_drops_the_startup_key_only_while_a_reference_governs(env, monkeypatch):
+    child = {"OP_SERVICE_ACCOUNT_TOKEN": "x", "ANTHROPIC_API_KEY": "synthetic-stale-key", "PATH": "/bin"}
+    ks._OP_ENV.clear()
+    env.path.write_text("ANTHROPIC_API_KEY=%s\n" % OLD_KEY)             # a static-key box
+    assert ks.strip_tmux_env(dict(child)) == child, "static-key panes rely on the inheritance"
+    env.path.write_text("ROMP_API_KEY_REF=%s\n" % REF)
+    ks._CACHE = ((), "")
+    assert ks.strip_tmux_env(dict(child)) == {"PATH": "/bin"}
+    assert ks.is_tmux_scrub_name("ANTHROPIC_API_KEY") and ks.is_tmux_scrub_name("OP_SESSION_x")
+    assert not ks.is_tmux_scrub_name("ANTHROPIC_AUTH_TOKEN") and not ks.is_tmux_scrub_name("PATH")
+
+
+def test_the_op_memory_survives_a_kernel_restart_and_follows_an_intentional_switch(env):
+    """Review find (2026-09-06): "op was authoritative" lived in a process dict. A supervised kernel
+    restart with the reference line gone from the file, and no ROMP_API_KEY_REF in the manager's
+    environment, launched every session without an explicit pick on the login. The memory is now a
+    sibling marker (`service.env.source`, the word `op`, 0600) that a non-op selection removes."""
+    env.path.write_text("ROMP_PERF=1\nROMP_API_KEY_REF=%s\n" % REF)
+    assert ks.select_source().kind == "op"
+    marker = env.root / "service.env.source"
+    assert marker.read_text() == "op\n" and stat.S_IMODE(marker.stat().st_mode) == 0o600
+    assert ks.marker_path(str(env.path)) == str(marker)
+    # the restart: memory gone, line gone
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    env.path.write_text("ROMP_PERF=1\n")
+    src = ks.select_source(BOOT_KEY)
+    assert src.kind == "error" and "reference was removed" in src.error
+    safe_failure(lambda: src.resolve())
+    # an intentional swap to a static profile clears it, so the next restart is not an error
+    ks.write_source(ks.KeySource("file", NEW_KEY), str(env.path))
+    assert not marker.exists()
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    assert ks.select_source().value == NEW_KEY
+    env.path.write_text("ROMP_PERF=1\n")
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    assert ks.select_source(BOOT_KEY).kind == "environment", "no op memory: the old behaviour"
+    # a swap back to a reference re-arms it, and a hand edit to a static key is a selection too
+    ks.write_source(ks.KeySource("op", REF), str(env.path))
+    assert marker.read_text() == "op\n"
+    env.path.write_text("ANTHROPIC_API_KEY=%s\n" % OLD_KEY)
+    ks._AUTHORITATIVE_PATHS.clear(); ks._CACHE = ((), "")
+    assert ks.select_source().value == OLD_KEY and not marker.exists()
+    env.op.assert_not_called()
+
+
+def test_the_marker_never_fails_a_selection(env, monkeypatch):
+    env.path.write_text("ROMP_API_KEY_REF=%s\n" % REF)
+    monkeypatch.setattr(ks.tempfile, "mkstemp", mock.Mock(side_effect=OSError("read-only")))
+    assert ks.select_source().kind == "op"
+    assert not (env.root / "service.env.source").exists()
+
+
+_REAL_RUN = subprocess.run     # captured before any fixture patches it
+
+
+def test_op_read_gets_a_minimal_environment(env, tmp_path, monkeypatch):
+    """Review find (2026-09-06): resolve() copied all of os.environ into the `op read` subprocess — the
+    kernel's ROMP_SERVE_TOKEN (full control of every session), the manager's startup ANTHROPIC_API_KEY,
+    the reference itself — into a third-party binary that needs none of it. Proved with a fake `op` on
+    PATH that answers with the NAMES it was given."""
+    shim = tmp_path / "bin"; shim.mkdir()
+    (shim / "op").write_text("#!/bin/sh\nprintf '%s' \"$(env | cut -d= -f1 | sort | paste -sd, -)\"\n")   # --no-newline, like op
+    (shim / "op").chmod(0o755)
+    monkeypatch.setenv("PATH", str(shim) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("ROMP_SERVE_TOKEN", "synthetic-serve-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-startup-key")
+    monkeypatch.setenv("ROMP_API_KEY_REF", REF)
+    monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "synthetic-op-token")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("LC_ALL", "C")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+    env.op.side_effect = _REAL_RUN
+    try:
+        names = set(ks.KeySource("op", REF).resolve().split(","))
+    finally:
+        ks._OP_ENV.clear(); ks._OP_CLAIM_SAID = False
+    for absent in ("ROMP_SERVE_TOKEN", "ANTHROPIC_API_KEY", "ROMP_API_KEY_REF", "ROMP_SERVICE_ENV_FILE"):
+        assert absent not in names, absent
+    for present in ("PATH", "HOME", "XDG_CONFIG_HOME", "LC_ALL", "OP_SERVICE_ACCOUNT_TOKEN"):
+        assert present in names, present
+    assert not any(n.startswith("ROMP_") for n in names), "nothing of romp's reaches op"

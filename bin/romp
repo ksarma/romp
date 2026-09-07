@@ -727,6 +727,25 @@ if [[ "${1:-}" == "keyswap" ]]; then
     exec romp-keyswap "$@"
 fi
 
+# Is romp itself the one running `op`? Yes when a 1Password reference is configured — in this
+# environment, or as a ROMP_API_KEY_REF= line of the service env file (the same file and the same
+# line-by-line read as bin/romp-node-launch and bin/romp-service, never sourced). The kernel's
+# keysource.op_consumer answers the same question from Python; a kernel-spawned `romp new` may lack
+# the variable when the reference was swapped in with no manager restart, so the file decides too.
+_romp_op_consumer() {
+    [[ -n "${ROMP_API_KEY_REF:-}" ]] && return 0
+    local _f="${ROMP_SERVICE_ENV_FILE:-${ROMP_SERVICE_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/service.env}}"
+    [[ -f "$_f" ]] || return 1
+    local _line
+    while IFS= read -r _line || [[ -n "$_line" ]]; do
+        _line="${_line#"${_line%%[![:space:]]*}"}"
+        case "$_line" in
+            ROMP_API_KEY_REF=*) return 0 ;;
+        esac
+    done < "$_f"
+    return 1
+}
+
 # The kernel serve token — required on EVERY kernel/bus request, loopback included (Jupyter's
 # model: the 0600 file, not the socket, is the same-user trust boundary). Same resolution order
 # as the kernel's _load_token: env override, else the state file.
@@ -2255,10 +2274,19 @@ else
     # op's credential never rides a session: when romp itself runs `op` (a reference is configured), the
     # tmux SERVER's globals — what every new pane inherits — are scrubbed of it before the pane exists
     # (review, 2026-09-05: the server the manager started carried service.env's token to `exec claude`).
-    if [[ -n "${ROMP_API_KEY_REF:-}" ]]; then
-        while IFS= read -r op_var; do
-            [[ -n "$op_var" ]] && tmux set-environment -gu "$op_var" 2>/dev/null || true
-        done < <(tmux show-environment -g 2>/dev/null | sed -n -E 's/^(OP_SERVICE_ACCOUNT_TOKEN|OP_CONNECT_HOST|OP_CONNECT_TOKEN|OP_ACCOUNT|OP_SESSION_[A-Za-z0-9_]*)=.*/\1/p')
+    # The manager's startup ANTHROPIC_API_KEY goes with it: once a reference governs, a pane billing the
+    # key the manager started with bills a key nobody chose (a keyswap retired it); without the variable
+    # the pane falls to Claude Code's own auth. A box with no reference keeps both — static-key panes rely
+    # on the inheritance. "Configured" is the client's environment OR the env file's own line
+    # (2026-09-06): a kernel-spawned `romp new` on a box that swapped to a reference without a manager
+    # restart carries no ROMP_API_KEY_REF, and the guard on the variable alone left the token in place.
+    # The name list mirrors kernel/keysource.py is_tmux_scrub_name.
+    if _romp_op_consumer; then
+        tmux show-environment -g 2>/dev/null \
+            | sed -n -E 's/^(OP_SERVICE_ACCOUNT_TOKEN|OP_CONNECT_HOST|OP_CONNECT_TOKEN|OP_ACCOUNT|OP_SESSION_[A-Za-z0-9_]*|ANTHROPIC_API_KEY)=.*/\1/p' \
+            | while IFS= read -r op_var; do
+                [[ -n "$op_var" ]] && tmux set-environment -gu "$op_var" 2>/dev/null || true
+            done
     fi
     # Create new detached session in working directory
     tmux new-session -d -s "$name" -c "$work_dir"

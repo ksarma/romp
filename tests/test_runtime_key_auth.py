@@ -240,6 +240,12 @@ class OpCredentialAndDiscardNotice(unittest.TestCase):
         sid = self.be.spawn("synthetic", "/tmp", auth=auth)
         return sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
 
+    def forget_file_source(self):
+        """A box that NEVER selected the reference from its file: since 2026-09-06 that memory is also on
+        disk (keysource.marker_path), written when setUp's backend read the file — a test standing up a
+        fresh box must drop it too, or it is testing the (correct) removed-reference refusal instead."""
+        Path(ks.marker_path(str(self.path))).unlink(missing_ok=True)
+
     def test_op_credentials_never_reach_a_session_but_do_reach_op(self):
         for name in ("OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION_acct"):
             self.assertNotIn(name, os.environ, "claimed at backend init, like the token credentials")
@@ -263,6 +269,7 @@ class OpCredentialAndDiscardNotice(unittest.TestCase):
         # a FRESH supervised kernel: no memory of a selected source (that memory is the resurrection guard,
         # exercised elsewhere), the manager's inherited key still in the environment, no file line
         self.path.unlink()
+        self.forget_file_source()
         os.environ["ROMP_SUPERVISED"] = "1"
         os.environ.pop("ROMP_API_KEY_REF", None)              # an (even empty) reference in the env is a selection
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-old-startup-key"
@@ -317,6 +324,7 @@ class OpCredentialAndDiscardNotice(unittest.TestCase):
 
     def test_the_notice_names_the_reference_when_the_environment_selected_it(self):
         self.path.unlink()
+        self.forget_file_source()
         os.environ["ROMP_API_KEY_REF"] = REF; os.environ["ANTHROPIC_API_KEY"] = "synthetic-old-startup-key"
         ks._CACHE = ((), ks.KeySource("none")); ks._AUTHORITATIVE_PATHS.clear(); ks._ENV_PROVIDER_PATHS.clear()
         sb._WORK_KEY = None; sb._STARTUP_KEY_DISCARD_SAID = False; self.err.truncate(0); self.err.seek(0)

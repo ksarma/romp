@@ -139,7 +139,10 @@ def _candidates(path, out):
     d = os.path.dirname(path) or "."
     base = os.path.basename(path) + "."
     try:
-        names = sorted(n[len(base):] for n in os.listdir(d) if n.startswith(base) and not n.endswith("~"))
+        # `service.env.source` is the kernel's durable "the source was a reference" marker (keysource
+        # .SOURCE_MARKER), not a candidate profile — it holds no key line and would list as "(no key source)"
+        names = sorted(n[len(base):] for n in os.listdir(d)
+                       if n.startswith(base) and not n.endswith("~") and n[len(base):] != ks.SOURCE_MARKER)
     except OSError:
         names = []
     live = ks.read_source(path)

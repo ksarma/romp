@@ -8113,7 +8113,8 @@ def _spawn_session(name, cwd=None):
     cwd = cwd or _default_create_dir()
     _commands_for_cwd(cwd)   # pre-warm the slash-command list — a new session predicts a composer (the user 2026-08-13)
     env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE")}
-    jd._keysrc.strip_op_env(env)     # op's credential stays with the kernel; a tmux launch may predate the backend's claim
+    jd._keysrc.strip_tmux_env(env)   # op's credential stays with the kernel (a tmux launch may predate the backend's
+                                     # claim), and so does the startup key once a reference governs (2026-09-06)
     try:
         subprocess.run([str(BIN / "romp"), "new", "-t", "--detach", name], cwd=cwd, env=env, timeout=25,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -11111,7 +11112,7 @@ def _revive_session(sid, client=None):
             workdir = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
             r = subprocess.run([str(BIN / "romp"), "resume", sid, "--name", name, "--detach"],
                                cwd=workdir, capture_output=True, text=True, timeout=40,
-                               env=jd._keysrc.strip_op_env(dict(os.environ)))
+                               env=jd._keysrc.strip_tmux_env(dict(os.environ)))
             ok = r.returncode == 0
             if not ok:
                 detail = (r.stderr or r.stdout or "romp exited %d" % r.returncode).strip()[:200]
@@ -37259,9 +37260,9 @@ def main():
     # is spawned — the bundler, the postal bus, tmux launches, the SDK backend's own claim later is a
     # no-op re-assert — and the tmux server the manager started with that environment is scrubbed too,
     # since every pane inherits the SERVER's globals, not the launching client's (review, 2026-09-05).
-    _claimed = jd._keysrc.claim_op_env()
-    if _claimed:
-        jd._keysrc.tmux_unset_global(_claimed, os.environ.get("ROMP_TMUX_SOCKET", ""))
+    # The scrub lives INSIDE the claim since 2026-09-06 (keysource.claim_op_env): a keyswap to a reference
+    # with no restart makes romp the op consumer mid-run, and the server must be scrubbed then too.
+    jd._keysrc.claim_op_env()
     _ensure_bundles()
     try:                                                      # the diary boot sweep (2026-07-07): migrate every
         _death_boot_pass()                                    # deaths no kernel was up to see: stamp them

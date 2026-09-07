@@ -1953,6 +1953,7 @@ def _cli_refusal(e: BaseException) -> bool:
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
 _STARTUP_KEY_DISCARD_SAID = False   # the one-line "your startup key is ignored" notice, once per process
 _KEY_FILE_CHECKED = False      # the startup-vs-file agreement check (one line, once per process)
+_FILE_KEY_SEEN_FP = ""         # fingerprint of the file's last CONFIGURED static key, "" once its loss was said
 _STARTUP_AUTH_ENV: dict | None = None
 _WORK_AUTH_LOCK = threading.RLock()
 
@@ -2006,6 +2007,7 @@ def work_api_key_source():
         source = _keysrc.select_source(startup)
         if source.kind == "file":
             _check_key_file_agrees(startup, source.value)
+            _note_key_file_gone(source.value)
         if source.kind in ("file", "op"):
             # A real selection retires the startup key for good. Said ONCE when that key was non-empty:
             # an operator who delivers the key through a systemd drop-in or a launchd plist rather than
@@ -2038,6 +2040,25 @@ def work_api_key() -> str:
     descriptor instead, and no resolved provider value is cached by this module.
     """
     return work_api_key_source().resolve()
+
+
+def _note_key_file_gone(live: str) -> None:
+    """Say ONCE, on stderr, when the env file's static key line is REMOVED while this process runs. The
+    file stays authoritative (select_source returns an empty file source, never the startup key), so
+    every session without an explicit Billing pick quietly starts launching on the login — a change of
+    who pays with nothing in the log to find it by (review find, 2026-09-06). Fingerprint and path only.
+    A line that comes back re-arms the notice, so a second removal is said too."""
+    global _FILE_KEY_SEEN_FP
+    if live:
+        _FILE_KEY_SEEN_FP = _keysrc.fingerprint(live)
+        return
+    if not _FILE_KEY_SEEN_FP:
+        return
+    sys.stderr.write("work key: the %s line (sha256:%s) is GONE from %s — the file stays authoritative, so "
+                     "sessions without an explicit Billing pick now launch on the login. Restore the line or "
+                     "select a source with `romp keyswap`.\n"
+                     % (_keysrc.KEY_VAR, _FILE_KEY_SEEN_FP, _keysrc.service_env_path()))
+    _FILE_KEY_SEEN_FP = ""
 
 
 def _check_key_file_agrees(startup: str, live: str) -> None:
