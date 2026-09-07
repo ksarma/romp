@@ -7306,6 +7306,84 @@ class SdkBackend:
             self._log("credential command: %s completed a turn on the credential last refused (sha256:%s); a later "
                       "refusal re-runs the command again" % (getattr(sess, "name", "?"), fp))
 
+    def _cycle_key_command(self, s, source, expected_source_fp=None, probe=False) -> str:
+        """cycle_key's compare under the COMMAND kind (kernel/envsource.py): the credential and the role
+        variables a launch would hand the session NOW against the stamps its current client launched
+        with (_options records both at every connect), from ONE read of the cached set. Nothing is
+        retrieved that a launch would not read anyway, and a failed run stands on the last good set, so
+        the request-level resolve-once the reference needs does not apply: the /keycycle route calls
+        cycle_key per session with no probe pass and no current_key_fp under this kind.
+
+        Which fingerprint a session converges on follows the decision _options makes at a launch. A
+        session a launch would inject the set's ANTHROPIC_API_KEY into (the set carries one and the
+        session's pick is not the login: "keyed") compares the key's fingerprint. A session the kernel
+        injects nothing into but whose CLI reported the key at init (auth_live "key": its apiKeyHelper
+        found one) compares the helper output's fingerprint, which _options stamped (envsource runs the
+        helper and hashes inside; the kernel never sees the value); a helper the kernel cannot
+        fingerprint has nothing to converge on and reconnects on every run, with the reason in the log.
+        A session launched on the set's key that a launch would now inject none into moves too: its new
+        process bills through the helper or the login. Every session compares the role variables'
+        fingerprint. Equal stamps read "current", so a repeated --cycle-all converges instead of
+        churning every quiet helper-billed session; the base's compare reads such a session as
+        login-billed and skips it, which made --cycle-all a no-op on a box whose every session bills
+        through the helper. "login" is a session with nothing to converge on: not keyed now or at its
+        launch, its CLI did not report the key, and no role variables now or at its launch. Known skew:
+        the CLI refreshes its helper on its own TTL and on a 401, so one needless reconnect per
+        rotation is possible.
+
+        A session that is current is said so before the in-flight check (the compare is free here, and
+        a busy session already on the current set needs no second --cycle). `probe` classifies only
+        ("login" / "current" / "working" / "cycle"); a stale `expected_source_fp` raises where the
+        reconnect would happen, as the base's arm does."""
+        snap, vals = self._cred_take(source)          # ONE read of the set for the whole compare, noted
+        cur_key = vals.get(_envsrc.KEY_VAR, "")
+        keyed = bool(cur_key) and s.effective_auth(cur_key) == "key"     # _options' decision at a launch now
+        cur_fp = _keysrc.fingerprint(cur_key) if keyed else ""
+        cur_role = self.role_fingerprint(vals, source)
+        stamped_key = getattr(s, "_launched_key_fp", None) or ""
+        stamped_role = getattr(s, "_launched_set_fp", None) or ""
+        launched_keyed = bool(getattr(s, "_launched_keyed", False))
+        helper_billed = (not keyed) and getattr(s, "auth_live", "") == "key"
+        if not keyed and not launched_keyed and not helper_billed and not cur_role and not stamped_role:
+            return "login"
+        reasons = []
+        if keyed:
+            if stamped_key != cur_fp:
+                reasons.append("the work key is now sha256:%s (launched on sha256:%s)"
+                               % (cur_fp, stamped_key or "(none)"))
+        elif launched_keyed:
+            reasons.append("the set no longer carries ANTHROPIC_API_KEY (launched on sha256:%s); the apiKeyHelper "
+                           "or the login bills its new process" % (stamped_key or "(none)"))
+        elif helper_billed:
+            # the helper's own fingerprint, whatever the set carries: this session was launched without
+            # the set's key (a login pick, or no key in the set) and its CLI found one through the
+            # helper. _options stamped the helper's output, so that is the compare
+            hfp, hreason = self._helper_fingerprint(snap, vals, source)
+            if hfp:
+                if stamped_key != hfp:
+                    reasons.append("the apiKeyHelper now prints sha256:%s (launched on sha256:%s)"
+                                   % (hfp, stamped_key or "(none)"))
+            else:
+                reasons.append("its CLI bills through a helper the kernel could not fingerprint (%s), so there "
+                               "is nothing to converge on; its new process re-runs the helper"
+                               % (hreason or "no fingerprint"))
+        if stamped_role != cur_role:
+            reasons.append("the role variables are now sha256:%s (launched with sha256:%s)"
+                           % (cur_role or "(none)", stamped_role or "(none)"))
+        if not reasons:
+            return "current"
+        with s._sub_lock:
+            live_work = len(s._subagents) + len(s._bg_tasks)
+        if live_work or s.inflight > 0 or s._pending:
+            return "working"
+        if probe:
+            return "cycle"
+        if expected_source_fp is not None and source.fingerprint() != expected_source_fp:
+            raise _keysrc.KeySourceError("API key source changed; check it before cycling again")
+        s.request_reconnect(defer=False)
+        self._log("keyswap (%s): reconnecting: %s" % (s.name, "; ".join(reasons)))
+        return "cycling"
+
     def cycle_key(self, sid: str, expected_source_fp: str | None = None, current_key_fp: str | None = None,
                   probe: bool = False, resolve_error: str | None = None) -> str:
         """Re-present the CURRENT work key to one LIVE session by reconnecting it — the apply half of
@@ -7346,6 +7424,11 @@ class SdkBackend:
         caller can resolve once only when some session needs it; `resolve_error` is that request-level
         failure, raised here at the point retrieval would have happened, so the rows that never needed
         a key keep their own classification.
+
+        Under the command kind (kernel/envsource.py) the compare is _cycle_key_command's: the stamps a
+        connect recorded against the cached set's credential and role fingerprints, nothing retrieved,
+        so `current_key_fp` and `resolve_error` do not apply there. The reference and the file kind
+        keep every line below.
         """
         if not self.owns(sid):
             return "unknown"
@@ -7353,6 +7436,8 @@ class SdkBackend:
         if s is None:
             return "dormant"
         source = self._work_key_source()
+        if source.kind == "command":
+            return self._cycle_key_command(s, source, expected_source_fp, probe)
         if s.effective_auth(source.configured) != "key":
             return "login"
         with s._sub_lock:

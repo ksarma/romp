@@ -1084,9 +1084,16 @@ class KeycycleRoute(unittest.TestCase):
         code, resp = self._with(fake, {"sessions": ["web", "api", "gone"]})
         self.assertEqual(code, 200)
         self.assertEqual(fake.asked, ["s-web", "s-api", "s-gone"])
-        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling"},
-                                        {"session": "api", "status": "login"},
-                                        {"session": "gone", "status": "dormant"}])
+        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling", "from": ""},
+                                        {"session": "api", "status": "login", "from": ""},
+                                        {"session": "gone", "status": "dormant", "from": ""}])
+        self.assertEqual(resp["keySource"], "file", "a backend without the key-source surface reads as the file kind")
+        self.assertEqual(resp["keyKind"], "")
+        self.assertEqual(resp["keyErr"], "")
+        self.assertEqual(resp["setFp"], "")
+        self.assertEqual(resp["selector"], "")
+        self.assertEqual(resp["launched"], {})
+        self.assertIsNone(resp["refreshed"])
 
     def test_all_covers_every_live_session_and_no_dormant_one(self):
         fake = self._Fake({"s-web": object(), "s-api": object()})
@@ -1125,6 +1132,80 @@ class KeycycleRoute(unittest.TestCase):
             code, body = self._post({"sessions": ["web"]})
             self.assertEqual([r["status"] for r in body["rows"]], ["cycling"])
             self.assertEqual(woke, [1], "a cycle does")
+
+    class _Live:
+        def __init__(self, fp):
+            self._launched_key_fp = fp
+
+    class _Full(_Fake):
+        """A backend with the key-source surface (SdkBackend has it; the _Fake above stands for one
+        that does not, so the route's getattr fallbacks are exercised too)."""
+
+        def __init__(self, sessions):
+            super().__init__(sessions)
+            self.calls = []
+
+        def key_source_status(self):
+            self.calls.append("status")
+            return {"source": "command", "fp": ks.fingerprint(NEW_KEY), "fpKind": "key", "err": "",
+                    "setFp": "0123456789ab", "selector": "hp",
+                    "launched": {ks.fingerprint(NEW_KEY): 2, ks.fingerprint(OLD_KEY): 1, "": 1}}
+
+        def refresh_key_source(self):
+            self.calls.append("refresh")
+            return {"from": ks.fingerprint(OLD_KEY), "to": ks.fingerprint(NEW_KEY), "err": ""}
+
+        def cycle_key(self, sid):
+            self.calls.append("cycle " + sid)
+            return super().cycle_key(sid)
+
+    def test_the_answer_carries_the_key_source_fields_and_each_rows_launch_fingerprint(self):
+        fake = self._Full({"s-web": self._Live(ks.fingerprint(OLD_KEY)), "s-api": self._Live("")})
+        code, resp = self._with(fake, {"sessions": ["web", "api", "gone"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(resp["keySource"], "command")
+        self.assertEqual(resp["keyKind"], "key")
+        self.assertEqual(resp["keyErr"], "")
+        self.assertEqual(resp["setFp"], "0123456789ab")
+        self.assertEqual(resp["selector"], "hp")
+        self.assertEqual(resp["launched"], {ks.fingerprint(NEW_KEY): 2, ks.fingerprint(OLD_KEY): 1, "": 1})
+        self.assertEqual([r["from"] for r in resp["rows"]], [ks.fingerprint(OLD_KEY), "", ""],
+                         "the fingerprint each live CLI launched on; a dormant one has none")
+        self.assertIsNone(resp["refreshed"], "no refresh was asked for")
+        self.assertNotIn("refresh", fake.calls)
+        self.assertNotIn(NEW_KEY, json.dumps(resp))
+        self.assertNotIn(OLD_KEY, json.dumps(resp))
+
+    def test_refresh_re_runs_the_command_first_and_reports_what_moved(self):
+        fake = self._Full({"s-web": self._Live(ks.fingerprint(OLD_KEY))})
+        code, resp = self._with(fake, {"sessions": ["web"], "refresh": True})
+        self.assertEqual(code, 200)
+        self.assertEqual(resp["refreshed"], {"from": ks.fingerprint(OLD_KEY), "to": ks.fingerprint(NEW_KEY), "err": ""})
+        self.assertEqual(fake.calls[0], "refresh", "the refresh precedes the fingerprint read and every cycle")
+        self.assertIn("cycle s-web", fake.calls)
+        self.assertLess(fake.calls.index("refresh"), fake.calls.index("status"))
+        self.assertLess(fake.calls.index("refresh"), fake.calls.index("cycle s-web"))
+        code, resp = self._with(fake, {"sessions": [], "refresh": True})
+        self.assertEqual(resp["rows"], [])
+        self.assertEqual(resp["refreshed"]["to"], ks.fingerprint(NEW_KEY), "a bare --refresh: no rows, one re-run")
+
+    def test_a_refresh_that_raises_is_reported_in_the_refreshed_block_not_fatal(self):
+        fake = self._Full({})
+        fake.refresh_key_source = lambda: (_ for _ in ()).throw(RuntimeError("boom " + NEW_KEY))
+        code, resp = self._with(fake, {"sessions": [], "refresh": True})
+        self.assertEqual(code, 200)
+        self.assertTrue(resp["ok"])
+        self.assertEqual(resp["refreshed"], {"from": "", "to": "", "err": "API credential source failed"})
+        self.assertNotIn(NEW_KEY, json.dumps(resp))
+
+    def test_a_key_error_rides_the_answer(self):
+        fake = self._Full({})
+        fake.key_source_status = lambda: {"source": "command", "fp": "", "err": "exited 3 after 0.4s, stderr 87 bytes",
+                                          "launched": {}}
+        code, resp = self._with(fake, {"sessions": []})
+        self.assertEqual(resp["keyErr"], "exited 3 after 0.4s, stderr 87 bytes")
+        self.assertEqual(resp["keySource"], "command")
+        self.assertEqual(resp["keyKind"], "")
 
     def test_a_sessions_value_that_is_not_a_list_is_a_400(self):
         code, resp = self._with(self._Fake({}), {"sessions": "web"})
@@ -1175,6 +1256,10 @@ class KeycycleRoute(unittest.TestCase):
         self.assertEqual(scheduled, [])
         resolve.assert_not_called()
         self.assertNotIn(source.value, json.dumps(resp))
+        self.assertEqual(resp["keySource"], "op", "the selected kind, read from the source when the backend has no status surface")
+        self.assertEqual(resp["keyKind"], "")
+        self.assertEqual(resp["launched"], {})
+        self.assertIsNone(resp["refreshed"])
 
     def test_invalid_provider_configuration_stops_the_route_before_retrieval_or_reconnect(self):
         from unittest import mock
@@ -1227,7 +1312,7 @@ class KeycycleRoute(unittest.TestCase):
             code, resp = self._with(backend, {"sessions": ["web"]})
         self.assertEqual(code, 200)
         self.assertEqual(resp["sourceFp"], source.fingerprint())
-        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling"}])
+        self.assertEqual(resp["rows"], [{"session": "web", "status": "cycling", "from": ks.fingerprint(OLD_KEY)}])
         self.assertEqual(scheduled, [False])
         resolve.assert_called_once_with()
         self.assertNotIn(NEW_KEY, json.dumps(resp))
@@ -1239,7 +1324,8 @@ class KeycycleRoute(unittest.TestCase):
         with mock.patch.object(ks.KeySource, "resolve", side_effect=ks.KeySourceError("1Password credential retrieval failed")):
             code, resp = self._with(backend, {"sessions": ["web"]})
         self.assertEqual(code, 200)
-        self.assertEqual(resp["rows"], [{"session": "web", "status": "error: 1Password credential retrieval failed"}])
+        self.assertEqual(resp["rows"], [{"session": "web", "status": "error: 1Password credential retrieval failed",
+                                        "from": ks.fingerprint(OLD_KEY)}])
         self.assertEqual(scheduled, [])
 
     def test_the_cli_reports_provider_failure_from_the_real_route_as_nonzero(self):

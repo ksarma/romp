@@ -37740,7 +37740,18 @@ class Handler(BaseHTTPRequestHandler):
                 # re-read it. So the door cannot be used to point a session at a key of the caller's
                 # choosing, and the response carries only a FINGERPRINT (sha256 head) so the caller can
                 # confirm that the kernel reads what it just wrote without either side printing a key.
-                # Body: {"sessions": [<id-or-name>…]} or {"all": true}.
+                # Body: {"sessions": [<id-or-name>…]} or {"all": true}, plus "refresh": true to make the
+                # kernel re-run its credential command FIRST (the command kind, kernel/envsource.py; a
+                # plain re-read under the reference and the file kind): `romp keyswap --refresh`, and
+                # the first step of every cycle there. Beside keyFp, sourceFp and the rows the answer
+                # carries keySource ("file" | "op" | "command"), keyKind (what keyFp is of: "key" |
+                # "helper" | "login" | ""; "login" is a command set with no key and no apiKeyHelper
+                # configured, so there is nothing to fingerprint and no error), keyErr (why there is no
+                # fingerprint, or the last run's failure; ""), setFp (the command's whole set, role
+                # variables included), selector (the declared token, or "(undeclared, N chars)"),
+                # launched ({fingerprint: live sessions on it}), refreshed ({"from", "to", "err"} when
+                # asked, else null) and each row's "from" (the fingerprint its CLI launched on).
+                # Fingerprints and reasons with counts, never a value.
                 try:
                     b = json.loads(raw_body or b"{}")
                 except Exception:
@@ -37750,6 +37761,14 @@ class Handler(BaseHTTPRequestHandler):
                 if be is None:
                     return self._send(503, json.dumps({"ok": False, "error": "no SDK backend"}),
                                       "application/json")
+                refreshed = None
+                if b.get("refresh"):
+                    fn = getattr(be, "refresh_key_source", None)
+                    if fn is not None:
+                        try:
+                            refreshed = fn()
+                        except Exception as e:
+                            refreshed = {"from": "", "to": "", "err": jd._credential_error_note(e)}
                 try:
                     source_reader = getattr(be, "_work_key_source", None)
                     if source_reader is not None:
@@ -37760,10 +37779,25 @@ class Handler(BaseHTTPRequestHandler):
                         # sufficient to confirm that keyswap and this kernel see the same source.
                         keyfp = "" if source.kind == "op" else sourcefp
                     else:
+                        source = None
                         keyfp = sourcefp = _work_key_fp()  # older backend/test doubles
                 except Exception as e:
                     return self._send(200, json.dumps({"ok": False,
                         "error": jd._credential_error_note(e)}), "application/json")
+                command_kind = source is not None and source.kind == "command"
+                # The value-free key-source facts beside the rows (SdkBackend.key_source_status; a backend
+                # without it answers from the source alone). Under the command kind keyFp is the CREDENTIAL's
+                # fingerprint, the set's ANTHROPIC_API_KEY or else the apiKeyHelper's output, read from the
+                # cached set: the source fingerprint hashes the command text and is sourceFp.
+                try:
+                    kstat = getattr(be, "key_source_status", lambda: {})() or {}
+                except Exception as e:
+                    kstat = {"err": "status failed: %s" % jd._credential_error_note(e)}
+                if command_kind:
+                    keyfp = kstat.get("fp") or ""
+                key_source = kstat.get("source") or (
+                    "file" if source is None else "op" if source.kind == "op"
+                    else "command" if source.kind == "command" else "file")
                 expected_source_fp = b.get("expectedSourceFp")
                 if "expectedSourceFp" in b:
                     if not isinstance(expected_source_fp, str):
@@ -37791,10 +37825,12 @@ class Handler(BaseHTTPRequestHandler):
                 # timeout (review find, 2026-09-05). Only when there is a session to cycle: a status read
                 # retrieves nothing. A failure, or a source that changed while retrieving, is reported on
                 # every row and reconnects nothing — the per-session contract, kept. The reconnects this
-                # schedules still resolve afresh at launch.
+                # schedules still resolve afresh at launch. Not under the command kind: its compare reads
+                # the cached set (a failed run stands on the last good one), so every row comes from
+                # cycle_key directly, with no probe pass and nothing resolved here.
                 current_key_fp, resolve_error = None, None
                 probes = {}
-                if source_reader is not None and hasattr(be, "_work_key_and_source"):
+                if source_reader is not None and hasattr(be, "_work_key_and_source") and not command_kind:
                     for who, sid in who_list:
                         try:
                             probes[sid] = be.cycle_key(sid, probe=True)
@@ -37814,6 +37850,8 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:
                         resolve_error = jd._credential_error_note(e)
                 for who, sid in who_list:
+                    live = (getattr(be, "sessions", None) or {}).get(sid)
+                    frm = str(getattr(live, "_launched_key_fp", "") or "") if live is not None else ""
                     try:
                         pre = probes.get(sid)
                         if pre is not None and pre != "cycle":
@@ -37825,11 +37863,18 @@ class Handler(BaseHTTPRequestHandler):
                             status = be.cycle_key(sid)
                     except Exception as e:
                         status = "error: %s" % jd._credential_error_note(e)
-                    rows.append({"session": _name_of(sid) or who, "status": status})
+                    rows.append({"session": _name_of(sid) or who, "status": status, "from": frm})
                 if any(r["status"] == "cycling" for r in rows):
                     _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
                 return self._send(200, json.dumps({"ok": True, "keyFp": keyfp,
-                                                  "sourceFp": sourcefp, "rows": rows}),
+                                                  "sourceFp": sourcefp, "rows": rows,
+                                                  "keySource": key_source,
+                                                  "keyKind": kstat.get("fpKind") or "",
+                                                  "keyErr": kstat.get("err") or "",
+                                                  "setFp": kstat.get("setFp") or "",
+                                                  "selector": kstat.get("selector") or "",
+                                                  "launched": kstat.get("launched") or {},
+                                                  "refreshed": refreshed}),
                                   "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so

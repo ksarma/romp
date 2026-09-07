@@ -25,6 +25,16 @@ What these pin, in the order a launch meets them:
     source never run, nothing about a credential command in the log).
   NothingLeaks: no fixture value reaches a log line, the problem ring or a record, and os.environ is
     unchanged after every reader.
+  HelperSessionsConverge: cycle_key under the command kind compares each live session's connect stamps
+    with the credential and role fingerprints a launch would get now: a keyed session on the set's key, a
+    helper-billed session (its CLI reported the key while the kernel injected none) on the apiKeyHelper
+    output's fingerprint, every session on the role variables; equal reads "current", a difference
+    reconnects once, a repeated --cycle-all converges; a helper the kernel cannot fingerprint reconnects
+    on every run with the reason; in-flight work still skips; a probe classifies without reconnecting;
+    the file kind's compare is the base's.
+  KeycycleRouteOnTheCommandKind: POST /keycycle with a real backend under the command kind answers with
+    the set's credential fingerprint as keyFp, the source fingerprint as sourceFp, the key-source fields,
+    a "refresh" that re-runs the command first, and rows from cycle_key on the cached set.
 
 Synthetic throughout: every value is "romp-test-fixture-" + a uuid assembled at run time, the fake
 command is a script in a temp dir, a temp CLAUDE_CONFIG_DIR carries no apiKeyHelper unless a test
@@ -117,6 +127,7 @@ class _Lab(unittest.TestCase):
         self.reset_sources()
         self.logged = []
         self.write_command_env(key=self.KEY_LINE)
+        self.before_construct()
         self.be = self.construct()
         import sys
         import types
@@ -146,6 +157,10 @@ class _Lab(unittest.TestCase):
         ks._AUTHORITATIVE_PATHS.clear()
         ks._ENV_PROVIDER_PATHS.clear()
         es._reset()
+
+    def before_construct(self):
+        """A hook a class fills to shape the lab before the backend is constructed (a helper the boot
+        should see, a set the first run should print); the base does nothing here."""
 
     def construct(self):
         # NB `log=` is a keyword: the third positional is `notify`. A line reaches self.logged only
@@ -191,6 +206,24 @@ class _Lab(unittest.TestCase):
     def _sess(self, n=1, **reg):
         return sb.SdkSession(self.be, {"sid": "11111111-2222-3333-4444-%012d" % n,
                                        "name": "s%d" % n, "cwd": self.lab, **reg})
+
+    def _live(self, auth_live="", auth="", n=1):
+        """A LIVE session object the backend owns (a registry entry, no CLI: cycle_key answers "unknown"
+        for a sid it does not own), its CLI's billing report set to `auth_live`, its reconnects recorded
+        on self.reconnects and self.defers."""
+        reg = {"auth": auth} if auth else {}
+        s = self._sess(n, **reg)
+        sb.write_reg(self.be.state_dir, s.sid, {"sid": s.sid, "name": s.name, "cwd": self.lab, **reg})
+        s.auth_live = auth_live
+        if not hasattr(self, "reconnects"):
+            self.reconnects, self.defers = [], []
+        s.request_reconnect = lambda defer=True: (self.reconnects.append(s.sid), self.defers.append(defer))
+        self.be.sessions[s.sid] = s
+        return s
+
+    def connect(self, s):
+        """What a connect does for the stamps: _options on the live session object."""
+        return self.be._options(s, dict)
 
     def _env_for(self, n, auth, **reg):
         if auth:
@@ -819,6 +852,412 @@ class NothingLeaks(_Lab):
                 self.assertTrue(os.environ.get(name) == before.get(name), "%s changed after reader %d" % (name, i))
                 self.assertFalse(os.environ.get(name) == self.values[name],
                                  "a set value reached os.environ under %s after reader %d" % (name, i))
+
+
+class HelperSessionsConverge(_Lab):
+    """cycle_key under the command kind converges each live session on what a launch would hand it NOW.
+    The lab's set carries no ANTHROPIC_API_KEY and a fake apiKeyHelper is configured before the boot: the
+    helper-billed installation the convergence exists for. The base's compare (a non-keyed session reads
+    "login") made --cycle-all a no-op on such a box."""
+
+    def before_construct(self):
+        self.helper_value = fixture_value("helper")
+        self.rotate_helper(self.helper_value)
+
+    def rotate_helper(self, value):
+        self.helper("echo '%s'" % value)
+
+    def keyswap_lines(self):
+        return [m for m in self.logged if m.startswith("keyswap (s1)")]
+
+    def test_a_connect_stamps_the_helpers_fingerprint_when_nothing_is_injected(self):
+        s = self._live("key")
+        kw = self.connect(s)
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "the set carries no key: nothing injected")
+        self.assertEqual(kw["env"]["A_TOKEN"], self.values["A_TOKEN"], "the role variables ride the launch")
+        self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
+        self.assertEqual(s._launched_set_fp, es.set_fingerprint(self.values))
+        self.assertFalse(s._launched_keyed)
+        self.assertFalse(any(self.helper_value in m for m in self.logged), "the helper's output is hashed inside envsource")
+
+    def test_a_session_on_the_current_helper_output_is_current_not_reconnected(self):
+        s = self._live("key")
+        self.connect(s)
+        self.assertFalse(s._launched_keyed, "the kernel injected nothing: the set carries no key")
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.assertEqual(self.be.cycle_key(s.sid), "current", "idempotent: a repeated --cycle-all leaves it alone")
+        self.assertEqual(self.reconnects, [])
+
+    def test_a_rotation_behind_the_helper_cycles_once_then_reads_current(self):
+        s = self._live("key")
+        self.connect(s)
+        self.rotate_helper(fixture_value("rotated"))
+        self.assertEqual(self.be.cycle_key(s.sid), "current", "cached: the kernel has not re-run the helper yet")
+        self.be.refresh_key_source()                              # what --cycle does first
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        self.assertEqual(self.reconnects, [s.sid])
+        self.assertEqual(self.defers, [False], "immediate-only, like every key cycle")
+        lines = self.keyswap_lines()
+        self.assertEqual(len(lines), 1, self.logged)
+        self.assertIn("apiKeyHelper now prints sha256:", lines[0])
+        self.assertNotIn(self.helper_value, lines[0])
+        self.connect(s)                                           # the reconnect lands: new stamps
+        self.assertEqual(self.be.cycle_key(s.sid), "current", "converged: the second run names nothing")
+        self.assertEqual(self.reconnects, [s.sid])
+
+    def test_a_rotation_of_a_role_variable_cycles_a_helper_session_too(self):
+        s = self._live("key")
+        self.connect(s)
+        self.values["ANTHROPIC_LP_API_KEY"] = fixture_value("lp2")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        self.assertIn("role variables are now sha256:", self.keyswap_lines()[0])
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+
+    def test_a_login_billed_session_with_role_variables_cycles_on_their_rotation_only(self):
+        s = self._live("login", auth="login")
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(s.sid), "current", "the set it launched with is the current one")
+        self.rotate_helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "current", "a helper rotation is not its business: its CLI reported the login")
+        self.values["A_TOKEN"] = fixture_value("role2")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+
+    def test_a_login_billed_session_with_no_role_variables_is_left_alone(self):
+        # a set with no role variables is the key alone (a run that prints nothing is a failure and the
+        # previous set stands, so a set is never empty after a success): a login pick has nothing to
+        # converge on, whether or not its CLI has reported yet
+        self.print_set({"ANTHROPIC_API_KEY": fixture_value("key")})
+        self.rerun()
+        s = self._live("login", auth="login")
+        self.assertEqual(self.be.cycle_key(s.sid), "login", "nothing to re-present: a reconnect would cost a turn")
+        s = self._live("", auth="login", n=2)
+        self.assertEqual(self.be.cycle_key(s.sid), "login", "no init yet, nothing injected: nothing in play")
+        # a command that never succeeded: an empty set, nothing injected, nothing in play for any pick
+        self.fail_command()
+        self.reset_sources()
+        self.logged.clear()
+        self.be = self.construct()
+        s = self._live("login", auth="login", n=3)
+        self.assertEqual(self.be.cycle_key(s.sid), "login")
+        s = self._live("", n=4)
+        self.assertEqual(self.be.cycle_key(s.sid), "login")
+        self.assertEqual(self.reconnects, [])
+
+    def test_a_helper_the_kernel_cannot_fingerprint_reconnects_on_every_run_with_the_reason(self):
+        os.remove(os.path.join(os.environ["CLAUDE_CONFIG_DIR"], "settings.json"))
+        self.rerun()                          # the boot fingerprinted the helper; the operator's refresh forgets it
+        s = self._live("key")
+        self.connect(s)
+        self.assertEqual(s._launched_key_fp, "", "no helper the kernel can see")
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling", "nothing to converge on: reconnect, by its rule")
+        self.assertEqual(self.reconnects, [s.sid, s.sid])
+        line = self.keyswap_lines()[0]
+        self.assertIn("could not fingerprint", line)
+        self.assertIn("no apiKeyHelper in", line)
+
+    def test_in_flight_work_still_skips_a_helper_session(self):
+        s = self._live("key")
+        self.connect(s)
+        self.rotate_helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
+        s._bg_tasks["t1"] = {"since": 1}
+        self.assertEqual(self.be.cycle_key(s.sid), "working")
+        s._bg_tasks.clear()
+        s.inflight = 1
+        self.assertEqual(self.be.cycle_key(s.sid), "working")
+        self.assertEqual(self.reconnects, [], "a reconnect would kill the work: the base's rule")
+
+    def test_an_explicit_login_pick_whose_cli_still_reports_a_key_converges_on_the_helper(self):
+        # the pick says login, the CLI says a key (the helper found one anyway): the kernel injects
+        # nothing either way, and the helper's fingerprint is what its new process would change
+        s = self._live("key", auth="login")
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.rotate_helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+
+    def test_a_login_pick_beside_a_set_that_carries_a_key_converges_on_the_helper_not_the_key(self):
+        # the set has a key (other sessions inject it); THIS session picked login and its CLI still
+        # reported a key, the helper's. Its compare is the helper's fingerprint, never the set's key
+        self.values["ANTHROPIC_API_KEY"] = fixture_value("key")
+        self.print_set(self.values)
+        self.rerun()
+        s = self._live("key", auth="login")
+        kw = self.connect(s)
+        self.assertFalse("ANTHROPIC_API_KEY" in kw["env"], "ANTHROPIC_API_KEY present")
+        self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.values["ANTHROPIC_API_KEY"] = fixture_value("key2")   # the set's key rotates: not this session's concern
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.rotate_helper(fixture_value("rotated"))                # the helper rotates: it is
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        self.assertEqual(self.reconnects, [s.sid])
+
+    def test_a_keyed_session_converges_on_the_sets_key(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.rerun()
+        s = self._live("key", auth="key")
+        kw = self.connect(s)
+        self.assertEqual(kw["env"]["ANTHROPIC_API_KEY"], k)
+        self.assertEqual(s._launched_key_fp, es.fingerprint(k))
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.values["ANTHROPIC_API_KEY"] = fixture_value("key2")
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        self.assertIn("the work key is now sha256:", self.keyswap_lines()[0])
+        self.assertNotIn(k, self.keyswap_lines()[0])
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+
+    def test_a_session_launched_on_the_sets_key_moves_when_the_set_loses_it(self):
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.rerun()
+        s = self._live("key")                 # no pick: the set's key is injected
+        kw = self.connect(s)
+        self.assertEqual(kw["env"]["ANTHROPIC_API_KEY"], k)
+        self.assertTrue(s._launched_keyed)
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.values.pop("ANTHROPIC_API_KEY")  # the set loses its key: a launch now injects nothing
+        self.print_set(self.values)
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        line = self.keyswap_lines()[0]
+        self.assertIn("no longer carries ANTHROPIC_API_KEY", line)
+        self.assertNotIn(k, line)
+        self.connect(s)                       # its new process bills through the helper
+        self.assertFalse(s._launched_keyed)
+        self.assertEqual(s._launched_key_fp, es.fingerprint(self.helper_value))
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+
+    def test_a_probe_classifies_from_the_cached_set_and_a_stale_expected_source_raises(self):
+        s = self._live("key")
+        self.connect(s)
+        self.assertEqual(self.be.cycle_key(s.sid, probe=True), "current")
+        self.rotate_helper(fixture_value("rotated"))
+        self.be.refresh_key_source()
+        runs, hruns = es._runs, es.helper_runs()
+        self.assertEqual(self.be.cycle_key(s.sid, probe=True), "cycle", "a probe classifies; nothing reconnects")
+        self.assertEqual(self.reconnects, [])
+        self.assertEqual((es._runs, es.helper_runs()), (runs, hruns), "the compare reads the cached set and the cached helper fingerprint")
+        with self.assertRaisesRegex(ks.KeySourceError, "source changed"):
+            self.be.cycle_key(s.sid, expected_source_fp="stale-source")
+        self.assertEqual(self.reconnects, [])
+        self.assertEqual(self.be.cycle_key(s.sid, expected_source_fp=self.source().fingerprint()), "cycling")
+        self.assertEqual(self.reconnects, [s.sid])
+        s.inflight = 1
+        self.assertEqual(self.be.cycle_key(s.sid, probe=True), "working")
+        idle = self._live("", auth="login", n=2)
+        self.print_set({"ANTHROPIC_API_KEY": fixture_value("key")})    # no role variables: the key alone
+        self.be.refresh_key_source()
+        self.assertEqual(self.be.cycle_key(idle.sid, probe=True), "login")
+
+    def test_a_refresh_between_a_connects_read_and_its_helper_fingerprint_leaves_no_stale_entry_current(self):
+        # a connect takes the set, then asks for the helper's fingerprint with it; an invalidate that
+        # lands between the two (a --refresh, a refusal on another session) must not leave the
+        # fingerprint of the connect's pre-refresh overlay stored as the current one. The helper here
+        # reads a role variable, so the overlay decides what it prints.
+        h = fixture_value("helper")
+        self.helper('echo "%s-${A_TOKEN:-none}"' % h)
+        es.invalidate("the helper changed")
+        role_a, role_b = self.values["A_TOKEN"], fixture_value("role-b")
+        real_take = es.take
+
+        def take_then_rotate(source=None, environ=None):
+            out = real_take(source, environ)
+            self.values["A_TOKEN"] = role_b
+            self.print_set(self.values)
+            es.invalidate("a refresh landed between the connect's read and its helper fingerprint")
+            return out
+
+        s = self._live("key")
+        es.take = take_then_rotate
+        try:
+            self.connect(s)
+        finally:
+            es.take = real_take
+        self.assertEqual(s._launched_key_fp, es.fingerprint("%s-%s" % (h, role_a)),
+                         "stamped with what its CLI's helper prints in the environment it launched with")
+        hruns = es.helper_runs()
+        fp, kind = self.be.credential_fingerprint()
+        self.assertEqual((fp, kind), (es.fingerprint("%s-%s" % (h, role_b)), "helper"),
+                         "the current fingerprint is of the current set's overlay, not the connect's")
+        self.assertEqual(es.helper_runs(), hruns + 1, "the connect's entry was stale: the helper ran again")
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling", "the stale stamp is a difference the cycle sees")
+
+    def test_the_file_kind_compare_is_the_bases(self):
+        # the command line gone (and the marker the boot wrote beside the file with it): a non-keyed
+        # session reads "login" whatever its CLI reported; a keyed one converges on the file key's
+        # fingerprint. The command source is never read.
+        self.write_command_env(command=False)
+        try:
+            os.unlink(ks.marker_path(self.path))
+        except OSError:
+            pass
+        self.reset_sources()
+        runs = es._runs
+        s = self._live("key")
+        self.assertEqual(self.be.cycle_key(s.sid), "login")
+        self.write_command_env(key=OLD_KEY, command=False)
+        s = self._live("key", auth="key")
+        s._launched_key_fp = ks.fingerprint("sk-ant-TEST-1111")          # launched on a previous key
+        self.assertEqual(self.be.cycle_key(s.sid), "cycling")
+        s._launched_key_fp = ks.fingerprint(OLD_KEY)
+        self.assertEqual(self.be.cycle_key(s.sid), "current")
+        self.assertEqual(es._runs, runs, "the command source is never read under the file kind")
+
+
+class KeycycleRouteOnTheCommandKind(_Lab):
+    """POST /keycycle over the real kernel handler on loopback with a REAL backend under the command kind
+    (tests/test_keyswap.py's KeycycleRoute uses doubles, and pins the reference path). keyFp is the set's
+    credential fingerprint, never the command text's; sourceFp is the source's; "refresh" re-runs the
+    command before the read and the rows; the rows come from cycle_key on the cached set with no
+    request-level resolve; a failed run rides the answer as keyErr and the rows stand on the last good
+    set. No value reaches the wire."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from http.server import ThreadingHTTPServer
+        cls.km = SourceFileLoader("romp_kernel_cmdsrc", os.path.join(BIN, "romp-kernel")).load_module()
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def before_construct(self):
+        self.helper_value = fixture_value("helper")
+        self.helper("echo '%s'" % self.helper_value)
+
+    def _post(self, body):
+        import urllib.error
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:%d/keycycle" % self.port, method="POST",
+                                     data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json",
+                                              "X-Romp-Token": self.km.TOKEN})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read().decode() or "{}")
+
+    def _with(self, body):
+        from unittest import mock
+        names = {s.name: sid for sid, s in self.be.sessions.items()}
+        with mock.patch.object(self.km, "_sdk", lambda: self.be), \
+             mock.patch.object(self.km, "_sid_of", lambda w: names.get(str(w), str(w))), \
+             mock.patch.object(self.km, "_name_of", lambda sid: getattr(self.be.sessions.get(sid), "name", None)), \
+             mock.patch.object(self.km, "_push_soon", lambda: None):
+            return self._post(body)
+
+    def _keyed_and_helped(self):
+        """A set that carries a key; one session launched on it, one on a login pick whose CLI found the
+        helper's key."""
+        k = fixture_value("key")
+        self.values["ANTHROPIC_API_KEY"] = k
+        self.print_set(self.values)
+        self.rerun()
+        keyed = self._live("key", auth="key", n=1)
+        self.connect(keyed)
+        helped = self._live("key", auth="login", n=2)
+        self.connect(helped)
+        return k, keyed, helped
+
+    def test_the_answer_reports_the_set_and_the_rows_come_from_the_cached_set(self):
+        k, keyed, helped = self._keyed_and_helped()
+        source_fp = self.source().fingerprint()
+        runs = es._runs
+        code, resp = self._with({"sessions": []})
+        self.assertEqual(code, 200, resp)
+        self.assertTrue(resp["ok"])
+        self.assertEqual(resp["keySource"], "command")
+        self.assertEqual((resp["keyFp"], resp["keyKind"]), (es.fingerprint(k), "key"))
+        self.assertEqual(resp["sourceFp"], source_fp)
+        self.assertNotEqual(resp["keyFp"], resp["sourceFp"], "the credential's fingerprint, not the command text's")
+        self.assertEqual(resp["setFp"], es.set_fingerprint(self.values))
+        self.assertEqual(resp["selector"], "")
+        self.assertEqual(resp["keyErr"], "")
+        self.assertEqual(resp["launched"], {es.fingerprint(k): 1, es.fingerprint(self.helper_value): 1})
+        self.assertEqual(resp["rows"], [])
+        self.assertIsNone(resp["refreshed"])
+        self.assertEqual(es._runs, runs, "a status read serves the cached set")
+        code, resp = self._with({"all": True, "expectedSourceFp": source_fp})
+        self.assertEqual(sorted((r["session"], r["status"], r["from"]) for r in resp["rows"]),
+                         [("s1", "current", es.fingerprint(k)), ("s2", "current", es.fingerprint(self.helper_value))])
+        self.assertEqual(self.reconnects, [])
+        self.assertEqual(es._runs, runs, "the rows compare against the cached set: no run, no resolve")
+        # the set's key rotates: the refresh re-runs first, the keyed session moves, the helper-billed one stays
+        k2 = fixture_value("key2")
+        self.values["ANTHROPIC_API_KEY"] = k2
+        self.print_set(self.values)
+        code, resp = self._with({"all": True, "refresh": True, "expectedSourceFp": source_fp})
+        self.assertEqual(code, 200, resp)
+        self.assertEqual(resp["refreshed"], {"from": es.fingerprint(k), "to": es.fingerprint(k2), "err": ""})
+        self.assertEqual(resp["keyFp"], es.fingerprint(k2))
+        self.assertEqual(resp["sourceFp"], source_fp, "the source did not move; its credential did")
+        rows = {r["session"]: r for r in resp["rows"]}
+        self.assertEqual((rows["s1"]["status"], rows["s1"]["from"]), ("cycling", es.fingerprint(k)))
+        self.assertEqual((rows["s2"]["status"], rows["s2"]["from"]), ("current", es.fingerprint(self.helper_value)))
+        self.assertEqual(self.reconnects, [keyed.sid])
+        self.assertEqual(es._runs, runs + 1, "the refresh is the one run; the read and the rows use it")
+        blob = json.dumps(resp)
+        for v in (k, k2, self.helper_value) + tuple(self.values.values()):
+            self.assertNotIn(v, blob)
+
+    def test_a_stale_expected_source_is_refused_before_any_row(self):
+        k, keyed, helped = self._keyed_and_helped()
+        code, resp = self._with({"all": True, "expectedSourceFp": "stale-source"})
+        self.assertEqual(code, 409)
+        self.assertFalse(resp["ok"])
+        self.assertIn("source changed", resp["error"])
+        self.assertEqual(self.reconnects, [])
+
+    def test_a_failed_run_rides_the_answer_and_the_rows_stand_on_the_last_good_set(self):
+        k, keyed, helped = self._keyed_and_helped()
+        self.fail_command("echo 'the store is unreachable' >&2; exit 3")
+        code, resp = self._with({"sessions": ["s1"], "refresh": True})
+        self.assertEqual(code, 200, resp)
+        self.assertTrue(resp["ok"], "a failed run is not a failed request: the last good set stands")
+        self.assertIn("exited 3", resp["refreshed"]["err"])
+        self.assertEqual((resp["refreshed"]["from"], resp["refreshed"]["to"]), (es.fingerprint(k), es.fingerprint(k)))
+        self.assertIn("exited 3", resp["keyErr"])
+        self.assertEqual(resp["keyFp"], es.fingerprint(k), "the last good set's key")
+        self.assertEqual(resp["rows"], [{"session": "s1", "status": "current", "from": es.fingerprint(k)}])
+        self.assertEqual(self.reconnects, [])
+        self.assertEqual(len([m for m in self.problems() if m.startswith("credential command: failed")]), 1,
+                         "one problem line for the episode, however many readers met it")
+        blob = json.dumps(resp) + "\n".join(self.logged) + json.dumps(self.be.problems())
+        self.assertNotIn("the store is unreachable", blob, "stderr is a byte count, never quoted")
+        self.assertNotIn(k, blob)
+
+    def test_a_removed_source_is_the_base_error_answer(self):
+        # the command line gone while the marker says a command governed: keysource's removed-source error,
+        # answered the way the base answers an invalid reference (ok False, the error note)
+        self.write_command_env(command=False)
+        self.reset_sources()
+        code, resp = self._with({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertFalse(resp["ok"])
+        self.assertIn("credential command was removed", resp["error"])
 
 
 if __name__ == "__main__":
