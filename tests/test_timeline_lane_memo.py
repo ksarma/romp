@@ -46,6 +46,7 @@ SID = "44444444-5555-6666-7777-888888888801"      # private synthetic sids: this
 SID2 = "44444444-5555-6666-7777-888888888802"
 PARENT = "44444444-5555-6666-7777-888888888803"
 CHILD = "44444444-5555-6666-7777-888888888804"
+SID3 = "44444444-5555-6666-7777-888888888805"
 
 
 def iso(t):
@@ -680,11 +681,16 @@ class Eviction(LaneMemoBase):
 
     def test_the_memo_is_bounded_least_recently_served_first(self):
         self.add_lane(SID2, "api", self.recs)
-        km._LANES_MEMO_MAX = 1
-        self.build(tmux=self.tmux(SID, SID2))
-        self.assertEqual(self.stats()["entries"], 1)
-        self.assertGreaterEqual(self.stats()["evict"], 1)
-        self.assertEqual(len(km._lanes_memo), 1)
+        km._LANES_MEMO_MAX = 2
+        self.build(tmux=self.tmux(SID, SID2))                            # SID, then SID2, held
+        self.assertEqual(set(km._lanes_memo), {SID, SID2})
+        self.build(tmux=self.tmux(SID), live_only=True)                  # SID served: now the most recently served
+        self.assertEqual(self.outcomes()["hit"], 1)
+        self.add_lane(SID3, "tests", self.recs)                          # a third lane (added now: a fresh transcript
+        self.build(tmux=self.tmux(SID3), live_only=True)                 # would be a dead lane of the first build)
+        self.assertEqual(set(km._lanes_memo), {SID, SID3}, "SID2, the least recently served, went; the served SID stayed")
+        self.assertEqual(self.stats()["evict"], 1)
+        self.assertEqual(self.stats()["entries"], 2)
 
     def test_an_entry_whose_parse_left_the_cache_is_dropped_when_its_lane_cannot_hold(self):
         self.build()
