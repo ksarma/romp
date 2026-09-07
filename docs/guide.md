@@ -26,14 +26,18 @@ complementary panes:
 
 ![Tool calls fold into runs; each expands to one line per call](assets/guide/chat-detail.png){ width="100%" }
 
-**Reviewing a document.** Select any passage in the file viewer and it lands in the
+**Commenting on a file.** Select any passage in the file viewer and it lands in the
 composer as a quote chip, labeled with the file and the line the passage lives on. Type
 what should change and press **⌘⏎** to set the note aside; keep reading, select the next
 passage, and repeat — each staged note remembers its quote and its place. **⏎** sends
 everything you staged along with whatever is in the box, so the session applies the lot
 in one pass, and you never copy a line out of the document by hand. The line in each
 label is checked against the file at the moment you select, so numbers that moved under
-you are caught rather than quietly carried. When several sessions work in the same
+you are caught rather than quietly carried. Chips are one-off notes: they go out with the
+message and are not kept. For anything worth keeping with the file, use the viewer's
+**Comments** panel, described under Files: a file comment is stored beside the file, the
+session replies into it, and its edits to a tracked file come back as changes for you to
+accept or reject. When several sessions work in the same
 repository, or in worktrees of it, the viewer's title bar says which one you opened the
 file from: a chip with the session's name, in the same color as its tab. The title bar's
 **GitHub ↗** button opens the file on GitHub. When there is nothing to open, the button stays
@@ -170,6 +174,57 @@ a passage in it puts the quote in the chat's composer, as it does from the
 viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again. The pane is off by default;
 the bottom bar turns it on.
+
+**Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
+the file (below it when the column is narrow). Select a passage in either view, Rendered or
+Raw, and press the **Comment** button that appears next to the selection; type the note
+and press Enter. **Comment on this file** leaves a comment on the file as a whole, which is
+the one kind an image or a PDF takes for now. When a passage cannot be mapped from the
+Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
+Raw view with the passage selected. Comments are stored beside the file, in the
+`.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
+folder that already holds one; a file with none gets the folder created beside it), in the
+format the session's own tools read. A comment made here and a reply the session writes are
+the same object, and the two other editors that read the format see them too. Each comment
+is a card in the panel: click it to expand, reply into it, or resolve it. The passage it
+refers to is highlighted in the file. When the session has rewritten the passage, the card
+says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
+show it.
+
+**Track changes** records a session's edits to the file as changes for you to accept or
+reject, instead of letting them land silently. Turn it on for the file or for its folder,
+and turn it on for the folder a session will write into *before* it writes: only edits made
+while tracking is on are recorded, and a folder can be tracked before its files exist.
+Accepting and rejecting changes arrive with the next update; until then the viewer's
+**Edit** button refuses while changes are pending, because a direct edit would move them,
+and the session's own track-edit keeps working. A session's tools refuse to rewrite an
+image or a PDF as text, so a tracked folder may hold figures.
+
+**Send to session** hands everything unsent to the session that owns the file as one
+message, in your words: the comments and replies you wrote since the last send, each with
+what it refers to and the commands the session needs to answer it. The number on the button
+is what will go, and the confirm lists it, with the message itself one click away. When the
+file was opened from a request under Waiting on you, a checkbox answers that request with
+the same send; when tracking is off, another turns it on first, so the session's revisions
+come back as changes. Both are checked by default. One send answers a request; a request
+that named several files is answered by the first, and later sends show no checkbox. The
+panel then says **Sent to** the session and when, or **Queued for** it when the session has
+gone quiet, in which case the message goes when it wakes.
+
+While the panel is open it checks the file, its comments, and the project's tracking list
+every few seconds, so a reply the session writes appears without a reload and a file the
+session rewrote is shown as it is now. The first comment, like the first save, asks once
+whether the dashboard may write files on that machine; the same switch, **File editing** in
+the gear, turns it off again, and while it is off a send is refused too (it writes the log)
+and asks for the consent back. The **Log** at the foot of the panel is the comments log: what
+was sent and when, tracking turned on or off, and your direct edits to the file, kept beside
+the comments in the same folder so git keeps it when the project does. Whether
+`.trackchanges/` is committed is the project's call; a `.gitignore` line keeps it out.
+
+If the **Comments** action is missing on a file, the gear's **File comments** row says why:
+the kernel that owns the file has no node on its PATH, or it predates the feature. The same
+row warns when sessions on that machine cannot reply because their tooling is not linked
+into `~/.claude`; running romp's `install.sh` there links it.
 
 ## Automatic nudges
 

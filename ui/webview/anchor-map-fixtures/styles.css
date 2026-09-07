@@ -1,0 +1,3 @@
+:root { --accent: #9cd2ff; }
+.lead { font-size: 1.1em; color: var(--accent); }
+.lead strong { font-weight: 600; }

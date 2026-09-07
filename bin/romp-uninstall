@@ -12,6 +12,14 @@
 #   - ~/.claude/settings.json     (ONLY the romp hook entries; your other hooks are untouched)
 #   - ~/.claude/skills/romp*      (skill symlinks)
 #   - ~/.claude/romp-postal.mcp.json
+#   - the tracked-changes tooling: ~/.claude/hooks/track-*.mjs, ~/.claude/skills/tracked-changes,
+#     and the guard's PreToolUse entry — ONLY where they point into THIS clone's
+#     vendor/track-changents/, or into a vendor/track-changents/ that no longer exists (a romp
+#     clone moved or deleted after install.sh ran); the guard's entry also goes when it is the
+#     exact string install.sh writes and nothing is at that path any more (its link removed by
+#     hand before this ran). Links install.sh RE-POINTED from a track-changents install of your
+#     own now lead into this clone, so they go too: re-run that project's install.sh to get them
+#     back. A real file of one of those names, or a link that still points elsewhere, stays.
 #   - the git pre-push hook symlink
 #   - vscode-extension/node_modules, dist, *.vsix   (build artifacts)
 #   - the SDK venv under the state dir
@@ -77,7 +85,7 @@ pkill -f "$ROMP_DIR/bin/romp-kernel"  2>/dev/null || true
 # ── 2. ~/.claude wiring ────────────────────────────────────────────────
 echo "==> ~/.claude hook + skill symlinks"
 for h in romp-summarize.sh romp-postal-drain.sh romp-postal-ensure.sh \
-         romp-postal-revive.sh romp-postal-context.sh romp-wake.sh tmux-status.sh; do
+         romp-postal-revive.sh romp-postal-context.sh romp-usertodo-context.sh romp-wake.sh tmux-status.sh; do
     rm -f "$HOME/.claude/hooks/$h"
 done
 rm -f "$HOME/.claude/skills/romp" "$HOME/.claude/skills/romp-postal"
@@ -87,13 +95,74 @@ rm -f "$HOME/.claude/romp-postal.mcp.json"
 # "~/.claude/hooks/<name>" command strings it registers, drop only those, and leave every other
 # hook (and every non-hook setting) exactly as found. Empty groups/events are pruned so we don't
 # leave `"PostToolUse": [{"hooks": []}]` litter behind.
+#
+# The tracked-changes guard is judged differently: install.sh registers it as
+# ~/.claude/hooks/track-guard.mjs, but track-changents' own installer registers the same basename
+# (with an expanded home path) pointing at a checkout of that project, and that entry is not ours to
+# drop. So a track-guard.mjs entry goes only when the path it names RESOLVES into this clone's
+# vendor/track-changents/ — which is why this step runs BEFORE the tooling links below are removed:
+# the ~/.claude/hooks link has to still be there to resolve.
+#
+# One more case is ours: a path that leads NOWHERE, under some vendor/track-changents/. That is the
+# shape install.sh leaves once the clone it ran from is moved or deleted — the link's target is gone,
+# so it resolves to the OLD path, never into this clone's copy — and a dangling link is nobody's live
+# install, while only romp links into a vendor/track-changents/. Left registered, the guard fails on
+# every Write/Edit in every Claude Code session on the machine until settings.json is edited by hand.
+#
+# And one where there is no path to follow at all: NOTHING at ~/.claude/hooks/track-guard.mjs — not a
+# dangling link, no link — because it was removed by hand, or ~/.claude/hooks/ deleted, before this ran.
+# A path with nothing at it resolves to itself, which is under no vendor/track-changents/, so a
+# resolve-only rule reads install.sh's own entry as someone else's and keeps it — the same failing
+# hook on every Write/Edit as above. With nothing to resolve, the command string is the only evidence:
+# "~/.claude/hooks/track-guard.mjs" is the exact string install.sh writes and track-changents' own
+# installer never does (it writes the expanded home path), so that entry is romp's and goes. Any other
+# form with nothing at its path is not romp's to drop; it stays, with a notice that says what is wrong.
 echo "==> ~/.claude/settings.json"
-python3 - <<'PYEOF'
-import json, os
+python3 - "$ROMP_DIR" <<'PYEOF'
+import json, os, sys
 
 SETTINGS = os.path.expanduser("~/.claude/settings.json")
 OURS = {"tmux-status.sh", "romp-summarize.sh", "romp-postal-drain.sh", "romp-postal-ensure.sh",
-        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-wake.sh"}
+        "romp-postal-revive.sh", "romp-postal-context.sh", "romp-usertodo-context.sh", "romp-wake.sh"}
+VENDORED = os.path.realpath(os.path.join(sys.argv[1], "vendor", "track-changents"))
+VENDOR_PART = os.sep + os.path.join("vendor", "track-changents") + os.sep
+INSTALLED_GUARD = "~/.claude/hooks/track-guard.mjs"     # the exact command string install.sh registers
+
+
+def tooling_verdict(path):
+    """Whose the tracked-changes file at `path` is. "ours": it resolves into this clone's vendored
+    copy. "stale": it leads to a path that no longer exists, under some vendor/track-changents/ —
+    install.sh's shape, from a clone moved or deleted after it ran; judged on the resolved path and,
+    for a link, on the target as written. "foreign": anything else — a live file elsewhere is
+    someone's own. The tooling step below carries an identical copy; keep the two the same."""
+    real = os.path.realpath(path)
+    if real.startswith(VENDORED + os.sep):
+        return "ours"
+    if os.path.exists(real):
+        return "foreign"
+    named = [real] + ([os.readlink(path)] if os.path.islink(path) else [])
+    return "stale" if any(VENDOR_PART in p for p in named) else "foreign"
+
+
+def guard_verdict(cmd):
+    """None when the command names no track-guard.mjs; else whose the entry is: the tooling_verdict of
+    the path it names ("ours", "stale", "foreign"), with one refinement. When that says "foreign" and
+    NOTHING is at the path — no file, no link, dangling or not — there was nothing to judge it by, and
+    the string is the only evidence: "gone" for the exact string install.sh writes (romp registered
+    it, and a command with no file behind it is nobody's live install), "missing" for any other form
+    (not romp's to drop). A missing path under some vendor/track-changents/ is still "stale", judged
+    first. Every whitespace token is tried (a `node <path>` form counts too, as in install.sh's
+    presence check); ~ and $HOME are expanded; a symlink is judged by where it points."""
+    for tok in str(cmd).split():
+        if os.path.basename(tok) != "track-guard.mjs":
+            continue
+        path = os.path.expanduser(os.path.expandvars(tok))
+        verdict = tooling_verdict(path)
+        if verdict == "foreign" and not os.path.lexists(path):
+            return "gone" if tok == INSTALLED_GUARD else "missing"
+        return verdict
+    return None
+
 
 try:
     with open(SETTINGS) as f:
@@ -104,15 +173,27 @@ except (FileNotFoundError, ValueError):
 
 hooks = settings.get("hooks") or {}
 removed = []
+stale_guard, gone_guard, foreign_guard, missing_guard = [], [], [], []
 for event in list(hooks):
     groups = hooks.get(event) or []
     for g in groups:
         keep = []
         for h in g.get("hooks", []):
             cmd = h.get("command", "")
+            guard = guard_verdict(cmd)
             if cmd.startswith("~/.claude/hooks/") and cmd.rsplit("/", 1)[-1] in OURS:
                 removed.append(event + ":" + cmd.rsplit("/", 1)[-1])
+            elif guard in ("ours", "stale", "gone"):
+                removed.append(event + ":track-guard.mjs")
+                if guard == "stale":
+                    stale_guard.append(cmd)
+                elif guard == "gone":
+                    gone_guard.append(cmd)
             else:
+                if guard == "foreign":
+                    foreign_guard.append(cmd)
+                elif guard == "missing":
+                    missing_guard.append(cmd)
                 keep.append(h)
         g["hooks"] = keep
     groups = [g for g in groups if g.get("hooks")]      # drop groups we emptied
@@ -132,6 +213,81 @@ if removed:
     print("    de-registered %d romp hook entries" % len(removed))
 else:
     print("    no romp hook entries registered")
+for cmd in stale_guard:
+    print("    de-registered a track-guard.mjs entry that led into a vendor/track-changents/ which no longer"
+          " exists — a romp clone moved or deleted since install (%s)" % cmd)
+for cmd in gone_guard:
+    print("    de-registered a track-guard.mjs entry with nothing at the path it names — install.sh's entry,"
+          " its link already removed (%s)" % cmd)
+for cmd in foreign_guard:
+    print("    left alone: a track-guard.mjs entry that points outside this clone (%s)" % cmd)
+for cmd in missing_guard:
+    print("    left alone: a track-guard.mjs entry that names a path where nothing exists, in a form install.sh"
+          " does not write — not romp's to drop; remove it by hand if that guard is gone for good (%s)" % cmd)
+PYEOF
+
+# ── 2b. the tracked-changes tooling (vendor/track-changents) ───────────────
+# install.sh links the four CLIs and the guard into ~/.claude/hooks/ and the skill into
+# ~/.claude/skills/tracked-changes, every link pointing into THIS clone's vendor/track-changents/.
+# Remove exactly those: a link is romp's when its realpath lies inside that directory — or when it
+# dangles into a vendor/track-changents/ that no longer exists, which is what install.sh's links
+# become once the clone they point into is moved or deleted (a dangling link is nobody's live
+# install, and only romp links into a vendor/track-changents/). A link into a checkout of
+# track-changents (the shape its own installer leaves) or a real file of the same name is someone's
+# own and stays, with a notice. install.sh is not symmetrical here: it RE-POINTS such a link at the
+# vendored copy (and leaves a real file alone), so after an install the user's own links resolve into
+# this clone and this step removes them; re-running that project's install.sh restores them. Resolved
+# in python3 (already required above) because `readlink -f` is not on every macOS.
+echo "==> ~/.claude tracked-changes tooling"
+python3 - "$ROMP_DIR" "$HOME" <<'PYEOF'
+import os, sys
+
+romp_dir, home = sys.argv[1], sys.argv[2]
+VENDORED = os.path.realpath(os.path.join(romp_dir, "vendor", "track-changents"))
+VENDOR_PART = os.sep + os.path.join("vendor", "track-changents") + os.sep
+links = [os.path.join(home, ".claude", "hooks", n + ".mjs")
+         for n in ("track-edit", "track-comment", "track-reply", "track-config", "track-guard")]
+links.append(os.path.join(home, ".claude", "skills", "tracked-changes"))
+
+
+def tooling_verdict(path):
+    """Identical to the settings step's copy above: "ours" (resolves into this clone's vendored copy),
+    "stale" (leads to a path that no longer exists, under some vendor/track-changents/ — a clone moved
+    or deleted since install.sh ran) or "foreign" (a live file elsewhere: someone's own)."""
+    real = os.path.realpath(path)
+    if real.startswith(VENDORED + os.sep):
+        return "ours"
+    if os.path.exists(real):
+        return "foreign"
+    named = [real] + ([os.readlink(path)] if os.path.islink(path) else [])
+    return "stale" if any(VENDOR_PART in p for p in named) else "foreign"
+
+
+removed, stale, left = [], [], []
+for link in links:
+    if not os.path.lexists(link):
+        continue
+    shown = "~/" + os.path.relpath(link, home)
+    if not os.path.islink(link):
+        left.append("%s is a real file, not a link" % shown)
+        continue
+    verdict = tooling_verdict(link)
+    if verdict == "foreign":
+        left.append("%s points outside this clone (%s)" % (shown, os.readlink(link)))
+        continue
+    os.unlink(link)
+    removed.append(os.path.basename(link))
+    if verdict == "stale":
+        stale.append(os.path.basename(link))
+if removed:
+    print("    removed %d links into vendor/track-changents/: %s" % (len(removed), ", ".join(removed)))
+else:
+    print("    no links into this clone's vendor/track-changents/")
+if stale:
+    print("    %d of them led into a vendor/track-changents/ which no longer exists — a romp clone moved or"
+          " deleted since install: %s" % (len(stale), ", ".join(stale)))
+for line in left:
+    print("    left alone: " + line)
 PYEOF
 
 # ── 3. the git pre-push hook ───────────────────────────────────────────

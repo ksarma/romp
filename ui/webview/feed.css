@@ -1449,6 +1449,12 @@ a.fileview-gh-note { border-style: dashed; }
 /* the way out of a refusal: when the file exists but cannot render (413/415), the kernel's words are
    followed by the Download the view could not be — same button treatment as the title bar's */
 .fileview-err-dl { display: block; margin-top: 10px; }
+/* a button inside the dress (the viewer's Download and Reload file, the comments panel's Reload and ✕) is
+   .fileview-btn's 0.82em OF THE VIEWER, not of the 0.86em row it sits in: em nesting compounds (ui/CLAUDE.md,
+   font sizes), and 0.86 × 0.82 rendered them at 0.705em, smaller than every button beside them. Dividing the
+   dress back out keeps ONE button size; the row's words stay the dress's 0.86em. feed.css carries the same
+   rule — the viewer mounts there too (styles-fileview-err-sizes.test.ts computes both). */
+.fileview-err .fileview-btn { font-size: calc(0.82em / 0.86); }
 /* the romp loader, per the loading-state rule: swirl + wordmark + three pulsing accent dots */
 .fileview-load { display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 30px 0; color: var(--dim); font-size: 0.86em; }
@@ -1527,6 +1533,99 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-md th, .fileview-md td { border: 1px solid var(--box-border); padding: 4px 10px; text-align: left; }
 .fileview-md th { background: var(--box-bg, rgba(255, 255, 255, 0.03)); }
 .fileview-md img { max-width: 100%; }
+
+/* ── file comments panel (plans/file-review.md Slice 1; file-comments.ts) ── the viewer's ASIDE: the body row
+   holds the body and the panel side by side, and folds the panel below the body when the column is narrower
+   than two readable columns (a container query on the row — the feed's stacking idiom; the Files pane column
+   is often that narrow, the chat modal seldom). `.fileview-body` stays the plain overflow block the editor's
+   height: 100% relies on; only the row around it is new. Colours through tokens only; every size is one the
+   viewer already wears (buttons 0.82em, body text 0.86em, chips 0.72em, tags 0.66em). Mirrored byte-equal
+   in feed.css — the viewer mounts there too (fileview-parity.test.ts / file-comments.test.ts). */
+.fileview-main { flex: 1 1 auto; min-height: 0; display: flex; container-type: inline-size; }
+.fileview-aside { flex: 0 0 340px; min-height: 0; overflow: auto; border-left: 1px solid var(--card-border); }
+@container (max-width: 680px) {
+  .fileview-main { flex-direction: column; }
+  .fileview-aside { flex: 0 0 45%; border-left: 0; border-top: 1px solid var(--card-border); }
+}
+.fileview-fc { display: inline-flex; align-items: center; }
+.fileview-fc[hidden] { display: none; }
+.fileview-btn-blocked { opacity: 0.7; }
+.fc-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.fc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fc-head { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--card-border); }
+.fc-toggle[data-on="1"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.fc-note { color: var(--dim); font-size: 0.86em; }
+.fc-warn { color: var(--warn); font-size: 0.86em; }
+.fc-err { padding: 6px 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.fc-err .fileview-btn { display: inline-flex; margin: 0; }
+.fc-x { padding: 0 6px; }
+.fc-load { padding: 6px 0; justify-content: flex-start; }
+.fc-composer { display: flex; flex-direction: column; gap: 6px; }
+.fc-composer[hidden] { display: none; }
+.fc-composer-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.fc-quote { color: var(--fg); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.fc-refused { color: var(--warn); }
+.fc-input { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.86em; padding: 5px 8px; border-radius: 6px;
+  border: 1px solid var(--box-border); background: var(--input-bg); color: var(--fg); }
+.fc-input:focus { outline: none; border-color: var(--accent); }
+.fc-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.fc-cards { display: flex; flex-direction: column; gap: 8px; }
+.fc-empty { color: var(--dim); font-size: 0.86em; font-style: italic; }
+.fc-card { border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; background: var(--bg);
+  display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+.fc-card:hover { border-color: var(--accent); }
+.fc-card.open { cursor: default; }
+.fc-card-detached { opacity: 0.85; border-left: 3px dashed var(--text-faint); }
+.fc-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fc-ref { flex: 1 1 auto; min-width: 0; font-size: 0.86em; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-link { cursor: pointer; }
+.fc-link:hover { color: var(--accent); text-decoration: underline; }
+.fc-chip { flex: 0 0 auto; font-size: 0.72em; font-weight: 600; padding: 1px 7px; border-radius: var(--radius-pill);
+  background: var(--overlay-10); color: var(--fg); max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-chip-you { background: var(--accent-wash); color: var(--accent); }
+.fc-tag { flex: 0 0 auto; font-size: 0.66em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 1px 6px; border-radius: var(--radius-pill); color: var(--dim); background: var(--overlay-05); white-space: nowrap; }
+.fc-time { flex: 0 0 auto; margin-left: auto; color: var(--text-faint); font-size: 0.72em; font-variant-numeric: tabular-nums; }
+.fc-preview { color: var(--dim); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-body { font-size: 0.86em; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; }
+.fc-replies { display: flex; flex-direction: column; gap: 5px; }
+.fc-reply { border-radius: 6px; padding: 5px 8px; background: var(--overlay-05); }
+.fc-reply-you { background: var(--accent-wash); border-left: 3px solid var(--accent); }
+.fc-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.fc-sec { background: none; border: 0; padding: 2px 0; color: var(--dim); font: inherit; font-size: 0.82em; font-weight: 600; cursor: pointer; text-align: left; }
+.fc-sec:hover { color: var(--accent); }
+.fc-send { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--card-border); }
+.fc-confirm { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--card-border); border-radius: 8px; padding: 8px 10px; }
+.fc-list { margin: 0; padding-left: 1.2em; font-size: 0.86em; }
+.fc-list li { margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-list-desc { color: var(--dim); }
+.fc-opts { display: flex; flex-direction: column; gap: 3px; }
+.fc-opt { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.86em; }
+.fc-msg { margin: 0; padding: 8px; border-radius: 6px; background: var(--overlay-05); font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.82em; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+.fc-primary { color: var(--accent); border-color: var(--accent); }
+.fc-sent { color: var(--green); }
+.fc-log { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--card-border); }
+/* the row carries no size of its own: its time is the SAME .fc-time a card head wears, and a 0.72em time inside a
+   0.86em row compounds to 0.62em (ui/CLAUDE.md, font sizes) — the body size sits on the text span beside it */
+.fc-log-row { display: flex; gap: 8px; align-items: baseline; }
+.fc-log-row > :not(.fc-time) { font-size: 0.86em; }
+.fc-log-row .fc-time { margin-left: 0; }
+/* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
+   colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
+   wears a dashed ring; the composer's pending target wears the accent. Adapted from the Obsidian host's stylesheet
+   with romp's tokens in place of its palette. Each highlight is a <mark>, and the UA sheet gives a mark its own ink
+   (`mark { color: MarkText }`, black in every engine) — a declaration on the element, so it beats whatever the
+   passage inherits; without `color: inherit` the passage's glyphs went black over the wash, and a code token or a
+   link lost its colour (the chat's mark.cmt-hl sets the same). */
+.fc-hl { background: color-mix(in srgb, var(--warn) 14%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--warn) 85%, transparent);
+  color: inherit; border-radius: 5px; padding: 0 2px; -webkit-box-decoration-break: clone; box-decoration-break: clone; cursor: pointer; }
+.fc-hl-context { box-shadow: none; outline: 1.5px dashed color-mix(in srgb, var(--warn) 70%, transparent); outline-offset: -1.5px; }
+.fc-presel { background: var(--accent-wash); box-shadow: inset 0 0 0 1.5px var(--accent); color: inherit; border-radius: 5px; padding: 0 2px;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.fc-float { position: fixed; z-index: 1300; user-select: none; -webkit-user-select: none; background: var(--surface-raised); box-shadow: var(--shadow-menu); }
+.fc-float[hidden] { display: none; }
+/* ── end file comments panel ── */
 
 /* ── the viewer's image + PDF bodies (a .png used to open as line-numbered mojibake). The <img>
    wears the lightbox image's own treatment (.romp-lightbox-img: capped, object-fit contain, the
