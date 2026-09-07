@@ -472,6 +472,20 @@ class OffOnThePayloads(unittest.TestCase):
         self.assertEqual(self._todo_events(payload), [], "no split card either: the section has nothing to show")
         self.assertEqual(len(km._user_todos()[SID]), 1, "…while the store still holds the row")
 
+    def test_the_everyday_card_is_byte_identical_while_off(self):
+        # the agent's own to-do card (Claude's task store, an in-progress item) with the switch OFF
+        # and a row IN the store serializes exactly as it did before the seam existed: no `userTodos`
+        # key at all. The ON-side pin (BuildSessionSeam's pre-existing-shape test) runs with the
+        # switch on, so until this test the OFF claim held by shared code — _open_user_todos's one
+        # gated read — and not by anything that built the card.
+        km._read_task_store = lambda fsid, fold=None: [
+            {"id": "1", "subject": "Build the fixtures", "activeForm": None, "status": "pending"}]
+        payload = km.build_session(SID, NOW)
+        evs = self._todo_events(payload)
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(set(evs[0]), {"kind", "tasks"})
+        self.assertEqual(payload["userTodos"], [])
+
     def test_the_same_build_shows_the_row_once_on(self):
         km._set_user_todos(True)
         km._parse_cache.clear()
