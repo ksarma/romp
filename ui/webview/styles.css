@@ -3810,9 +3810,8 @@ body.filebrowse-open { overflow: hidden; }
 .fc-imgwrap { position: relative; display: inline-block; max-width: 100%; }
 .fc-imgwrap > img { display: block; }
 .fc-overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
-.fc-overlay-off { pointer-events: none; cursor: default; }
+.fc-overlay-off { pointer-events: none; cursor: default; touch-action: auto; }
 .fc-overlay-off .fc-region { pointer-events: auto; }
-.fc-overlay-off { touch-action: auto; }
 .fc-overlay.fc-replacing { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .fc-region { position: absolute; box-sizing: border-box; border: 2px solid var(--fc-author, var(--warn)); border-radius: 4px;
   background: color-mix(in srgb, var(--fc-author, var(--warn)) 12%, transparent); cursor: pointer; }
