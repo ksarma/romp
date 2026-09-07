@@ -8,7 +8,8 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { langNameFor, extensionsFor } from "./editor-chunk";
+import { createRequire } from "node:module";
+import { langNameFor, extensionsFor, trackSetup } from "./editor-chunk";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
@@ -17,6 +18,14 @@ const VIEW = W("file-view.ts");
 const CHUNK = W("editor-chunk.ts");
 const RENDER = W("render.ts");
 const ESBUILD = fs.readFileSync(path.resolve(process.cwd(), "esbuild.js"), "utf8");
+const WEBVIEW_DIR = path.resolve(process.cwd(), "..", "ui", "webview");
+/** Every source that can reach a shipped bundle: the .ts files under ui/webview that are not tests. */
+const BUNDLE_SOURCES = fs.readdirSync(WEBVIEW_DIR).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !f.endsWith(".d.ts"));
+// The two files that ARE the editor bundle: everything else is a main-bundle source and must not reach them.
+const CHUNK_FILES = new Set(["editor-chunk.ts", "track-decorations.ts"]);
+// esbuild.js exports its configs when require()d (it builds only as a script), so a test can bundle one entry
+// with the real options; esbuild itself resolves from this package, the way the build does.
+const pkgRequire = createRequire(path.resolve(process.cwd(), "package.json"));
 
 // ── long lines wrap while editing, as they do in the read view (the user 2026-09-04) ─────────────
 // The read view has always soft-wrapped since 2026-08-24 (no toggle — the user's call then); edit mode
@@ -34,8 +43,9 @@ test("the editor's state carries lineWrapping — a display facet, so the buffer
   assert.ok(attrs.some((a) => typeof a === "object" && a !== null && (a as { class?: string }).class === "cm-lineWrapping"),
     "lineWrapping is in the mounted extension set");
   assert.equal(state.doc.toString(), doc, "wrapping is visual: the document is byte-identical, newlines included");
-  // the pure set is what mount() builds the view from — the executed check above is the shipped set
-  assert.match(CHUNK, /state: EditorState\.create\(\{ doc: opts\.text, extensions: extensionsFor\(opts\.ext, opts\) \}\),/);
+  // the pure set is what mount() builds the view from — the executed check above is the shipped set (the
+  // third argument is the track option's setup, null for an untracked file: the set is otherwise the same)
+  assert.match(CHUNK, /let state = EditorState\.create\(\{ doc: opts\.text, extensions: extensionsFor\(opts\.ext, opts, track\) \}\);/);
   assert.match(CHUNK, /\.\.\.langExt\(ext\),\n(?:\s*\/\/[^\n]*\n)*\s*EditorView\.lineWrapping,\n\s*rompTheme\(\),/,
     "lineWrapping sits in extensionsFor, unconditionally — no toggle, like the view");
   // a plain-text file (no highlighter) wraps too
@@ -70,6 +80,104 @@ test("the chunk is its own esbuild entry, and no main-bundle source imports Code
       f + " must not import the editor — the lazy chunk is reached only via the window global");
   }
   // …and the test's own import of langNameFor is fine: tests bundle to out-tests, never to dist.
+});
+
+// ── Slice 5: the track option lives INSIDE the chunk's bundle, and nowhere else ──────────────────
+// Two bundles that each carry @codemirror/state cannot share a page (fields and facets compare by identity),
+// so the track field, the marks and the click handling are bundled inside editor-chunk.ts and reached
+// through the typed `track` mount option (plans/file-review.md, decision 14) — never a second chunk.
+
+test("no main-bundle source imports CodeMirror, the derived marks module, or the vendored Obsidian modules", () => {
+  assert.ok(BUNDLE_SOURCES.includes("file-view.ts") && BUNDLE_SOURCES.includes("render.ts") && BUNDLE_SOURCES.includes("files.ts"),
+    "the sweep sees the main-bundle entries");
+  for (const f of BUNDLE_SOURCES) {
+    if (CHUNK_FILES.has(f)) continue;
+    assert.doesNotMatch(W(f), /@codemirror|from "\.\/editor-chunk"|track-decorations|vendor\/track-changents\/obsidian/,
+      f + " is a main-bundle source: the editor, its marks and the vendored CodeMirror modules stay in the lazy chunk");
+  }
+  // the engine itself is fair game for the main bundles (anchor-map.ts reads anchors through it); the
+  // Obsidian-side modules are CodeMirror code and belong to the chunk alone
+});
+
+test("track-decorations.ts is imported by editor-chunk.ts and by no other bundle source", () => {
+  const importers = BUNDLE_SOURCES.filter((f) => /from "\.\/track-decorations"/.test(W(f)));
+  assert.deepEqual(importers, ["editor-chunk.ts"]);
+  // and the derived module never reaches for Obsidian: every host need is a parameter (the five callbacks)
+  assert.doesNotMatch(W("track-decorations.ts"), /require\(['"]obsidian['"]\)|from ['"]obsidian['"]/);
+});
+
+test("the chunk exports the track mount option and handle (decision 14), typed, consumed through mount() only", () => {
+  // the option and the handle, as file-view.ts passes and reads them. The contract's word is `decisions` (the
+  // 2026-09-06 review: the plan's word for the save verb's two lists; the slice's first word is one CONTEXT.md
+  // avoids for the comments log, and editor-chunk-decisions.test.ts pins that it appears nowhere in the webview)
+  assert.match(CHUNK, /export interface TrackOpts \{\n\s*\/\*\*[^\n]*\*\/\n\s*suggestions: unknown\[\];/);
+  assert.match(CHUNK, /authorColor\?: \(author: string\) => string \| null;/);
+  assert.match(CHUNK, /onDecisions\?: \(decisions: TrackDecisions\) => void;/);
+  assert.match(CHUNK, /export interface TrackDecision \{ id: string; oldText: string; newText: string \}/);
+  assert.match(CHUNK, /export interface TrackDecisions \{ accepted: TrackDecision\[\]; rejected: TrackDecision\[\] \}/);
+  assert.match(CHUNK, /export interface TrackHandle \{\n\s*suggestions\(\): unknown\[\];\n\s*decisions\(\): TrackDecisions;\n\}/,
+    "the handle: the records and the decisions, nothing else");
+  assert.match(CHUNK, /export interface EditorHandle \{\n\s*value\(\): string;\n\s*focus\(\): void;\n\s*destroy\(\): void;\n\s*track\?: TrackHandle;\n\}/);
+  assert.match(CHUNK, /track\?: TrackOpts;/);
+  // the handle reads the LIVE state, so a save gets the records as remapped by every keystroke since the mount
+  assert.match(CHUNK, /if \(track\) handle\.track = \{\n\s*suggestions: \(\) => track\.suggestions\(view\.state\),\n\s*decisions: \(\) => track\.decisions\(view\.state\),/);
+  // the caller's spelling is one the chunk declares — a rename on one side alone (round 2 renamed the chunk and left
+  // this file's pins behind) fails HERE, by name, not on a stale literal. file-view.ts imports nothing from the chunk
+  // (lazy discipline), so the two files agree only by this check.
+  const passed = VIEW.match(/\btrack: \{[^\n]*\b(on[A-Z]\w*): /);
+  assert.ok(passed, "file-view.ts passes a callback inside the track option");
+  assert.equal(passed![1], "onDecisions", "the one spelling: the aliases went with the consolidation pass");
+  assert.match(CHUNK, new RegExp(`^\\s*${passed![1]}\\?: \\(decisions: TrackDecisions\\) => void;`, "m"),
+    `TrackOpts declares ${passed![1]}, the spelling file-view.ts passes`);
+  const read = VIEW.match(/cm\.track \? cm\.track\.(\w+)\(\)/);
+  assert.ok(read, "file-view.ts reads the handle's decisions for the save");
+  assert.equal(read![1], "decisions");
+  assert.match(CHUNK, new RegExp(`^\\s*${read![1]}\\(\\): TrackDecisions;`, "m"),
+    `TrackHandle declares ${read![1]}, the spelling file-view.ts reads`);
+  assert.match(CHUNK, new RegExp(`^\\s*${read![1]}: \\(\\) => track\\.decisions\\(view\\.state\\),`, "m"),
+    `mount() serves ${read![1]} from the live decisions field`);
+  // the window global is unchanged: the option rides the mount call, not a new global
+  assert.match(CHUNK, /__rompEditor = \{ mount, langNameFor \};/);
+  // the vendored field, unchanged, and the derived marks — bundled by relative path, no alias in the source
+  assert.match(CHUNK, /from "\.\.\/\.\.\/vendor\/track-changents\/obsidian\/src\/track-cm\.js";/);
+  assert.match(CHUNK, /from "\.\/track-decorations";/);
+  assert.doesNotMatch(CHUNK, /@ts-ignore/, "the vendored modules are typed through vendor-track-changents.d.ts");
+  // keymap-free: the track extensions add no key bindings; the one keymap stays the editor's own
+  assert.equal((CHUNK.match(/keymap\.of\(/g) || []).length, 1);
+  // executed: the same extension set, with a setup, carries the field; without one it is the plain editor
+  const noop = () => {};
+  const t = trackSetup({ suggestions: [{ id: "c1", author: "web", ts: 1, kind: "ins", from: 4, newText: "big ", oldText: "" }] });
+  const tracked = EditorState.create({ doc: "The big cat.", extensions: extensionsFor("md", { onChange: noop, onSave: noop }, t) }).update(t.seed).state;
+  assert.deepEqual(t.suggestions(tracked).map((s) => s.id), ["c1"]);
+  assert.deepEqual(t.decisions(tracked), { accepted: [], rejected: [] });
+  const plain = EditorState.create({ doc: "The big cat.", extensions: extensionsFor("md", { onChange: noop, onSave: noop }) });
+  assert.equal(plain.doc.toString(), tracked.doc.toString(), "the option adds no text: the buffer is the file");
+});
+
+test("exactly one copy of @codemirror/state (and commands, view) ends up in the built editor chunk", async () => {
+  // The real hazard: @codemirror/state and /commands ship dual builds, and esbuild resolves an ESM `import`
+  // to dist/index.js but a CommonJS require() (the vendored track-cm.js) to dist/index.cjs — two copies, and
+  // the vendored field is an "Unrecognized extension value" to the chunk's EditorState. esbuild.js's alias
+  // collapses both to the ESM file; this bundles the chunk with the shipped config and reads the metafile.
+  const { webview } = pkgRequire("./esbuild.js") as { webview: Record<string, unknown> };
+  const esbuild = pkgRequire("esbuild") as typeof import("esbuild");
+  const r = await esbuild.build({ ...(webview as object), entryPoints: ["../ui/webview/editor-chunk.ts"], write: false, metafile: true, logLevel: "silent" });
+  const inputs = Object.keys(r.metafile!.inputs);
+  const copies = (pkg: string) => inputs.filter((k) => k.includes(`node_modules/@codemirror/${pkg}/`)).sort();
+  assert.deepEqual(copies("state"), ["node_modules/@codemirror/state/dist/index.js"]);
+  assert.deepEqual(copies("commands"), ["node_modules/@codemirror/commands/dist/index.js"]);
+  assert.deepEqual(copies("view"), ["node_modules/@codemirror/view/dist/index.js"]);
+  // the vendored modules ride inside the chunk; track-cm.js's require('track-changents/engine') resolves by
+  // self-reference through the vendored package.json, with no alias for it
+  for (const f of ["obsidian/src/track-cm.js", "obsidian/src/track-logic.js", "engine.js", "display.js"]) {
+    assert.ok(inputs.includes(`../vendor/track-changents/${f}`), `the chunk bundles vendor/track-changents/${f}`);
+  }
+  assert.ok(inputs.includes("../ui/webview/track-decorations.ts"));
+  assert.ok(!inputs.some((k) => k.includes("track-snapshot")), "the vendored source of the derived module is a citation, never bundled");
+  // and both builds carry the alias: the test bundle's executed track tests need one copy for the same reason
+  assert.equal((ESBUILD.match(/alias: oneCodeMirror,/g) || []).length, 2, "the webview build and the test build");
+  assert.match(ESBUILD, /module\.exports = \{ buildAll, failureSummary, extension, webview, testBuild, oneCodeMirror \};/);
+  assert.match(ESBUILD, /if \(require\.main === module\) \{/);
 });
 
 test("file-view loads the chunk from its own bundle's URL (same dir, same ?v= token), latch cleared on failure", () => {

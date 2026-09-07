@@ -79,6 +79,7 @@ for (const [name, css] of SHEETS) {
     const overlay = rules.find(([sel]) => sel === ".fc-overlay");
     assert.ok(overlay && declares(overlay[1], "touch-action: none"), "the armed overlay: touch-action: none, so a drag draws instead of panning");
     const off = rules.filter(([sel]) => sel === ".fc-overlay-off");
+    assert.equal(off.length, 1, "one .fc-overlay-off rule carries pointer-events, cursor and touch-action together (a second rule of the same selector once held touch-action alone)");
     assert.ok(off.some(([, body]) => declares(body, "touch-action: auto")),
       "a .fc-overlay-off rule declares touch-action: auto — the disarmed layer pans; a swipe that starts on a rectangle scrolls the viewer");
     assert.ok(off.some(([, body]) => declares(body, "pointer-events: none")), "and still takes no pointer events");

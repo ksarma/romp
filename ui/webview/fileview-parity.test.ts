@@ -31,6 +31,11 @@ const RULES = [
   // pinned byte-equal end to end by file-comments.test.ts; these heads keep it in the same list
   ".fileview-main {", ".fileview-aside {", ".fileview-fc {", ".fileview-fc[hidden] {", ".fc-panel {", ".fc-card {",
   ".fc-chip {", ".fc-input {", ".fc-hl {", ".fc-presel {", ".fc-float {",
+  // the editor's marks over pending changes (Slice 5; track-decorations.ts CLS): the chat and feed pages both host the editor
+  ".tc-diff-ins {", ".tc-diff-del {", ".tc-diff-sub {", ".tc-diff-del.tc-diff-sub {", ".tc-diff-del-block {", ".tc-diff-del-line {", ".tc-diff-hover {",
+  // the embed token a struck block row still holds (track-decorations.ts, departure 4) and its tag; the pixel legs are
+  // styles-kept-embed.test.ts and feed-css-kept-embed.test.ts
+  ".tc-diff-del-kept-embed {", ".tc-diff-del-kept-embed::after {",
 ];
 
 function ruleOf(css: string, head: string): string {
