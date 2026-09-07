@@ -62,14 +62,17 @@ BASE = f"http://{HOST}:{PORT}"
 KERNEL_BASE = "http://127.0.0.1:%s" % os.environ.get("ROMP_KERNEL_PORT", "29855")  # the dashboard kernel — it owns the backend session query (tmux + SDK)
 
 STATE = Path(os.environ.get("ROMP_STATE_DIR")      # per-kernel state root override (plans/multi-kernel.md)
-             or Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "romp") / "postal"
+             or Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "romp") / "postal"
+# `or`, not a .get default: an EMPTY XDG_STATE_HOME is unset, as in the XDG spec and every bash reader's
+# ${XDG_STATE_HOME:-...}; a .get default kept it and put the mail under the RELATIVE path romp/postal
+# (kernel/event_model.py has the same line and the same note; tests/test_state_root_empty_xdg.py pins them).
 MAILROOT = STATE / "mail"
 MAILPENDING = STATE / "mail-pending"   # touch <sid> here IFF that session has unread mail in new/
 WARNED = STATE / "warned-undelivered"  # marker per msg-id we've already warned a sender is STILL UNDELIVERED (one-time)
 LOG = STATE / "server.log"
 PIDFILE = STATE / "server.pid"
 NAMES_DIR = Path(os.environ.get("ROMP_STATE_DIR")
-                 or Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "romp") / "names"
+                 or Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "romp") / "names"
 TLDIR = STATE.parent / "timeline"     # append-only logs for the timeline view (messages.jsonl)
 SESSION_FLAGS = STATE.parent / "session-flags.json"   # the kernel's per-session view flags {sid:{flag:true}}; we honour postalServiceOff (legacy: postalOff)
 USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's per-install user-todos switch {"enabled": bool, "gt": ms} (kernel USER_TODOS_SWITCH_FILE); NOT user-todos.json, which is the todo STORE

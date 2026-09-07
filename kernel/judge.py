@@ -61,7 +61,9 @@ em = SourceFileLoader("romp_event_model", str(HERE / "event_model.py")).load_mod
 
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
-                or Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local/state"))) / "romp")
+                or Path(os.environ.get("XDG_STATE_HOME") or str(HOME / ".local/state")) / "romp")
+# `or`, not a .get default: an EMPTY XDG_STATE_HOME is unset, as in the XDG spec and every bash
+# reader's ${XDG_STATE_HOME:-...} (event_model.py has the same line and the same note).
 # Keep the romp state root private (0700): it holds session names, prompts,
 # captions, goals, and postal message bodies. The traverse bit on the root is
 # enough to block other local users from reading anything beneath it. Runs on

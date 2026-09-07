@@ -2616,6 +2616,178 @@ SDK_MISSING_TEXT = (
     "then restart romp. tmux-backed sessions are unaffected.")
 
 
+def running_python_tag() -> str:
+    """This interpreter as a venv names its lib dir: `3.14`, or `3.14t` for a free-threaded build. venv
+    appends the abi tag to the directory (lib/python3.14t), so a comparison on major.minor alone made a
+    kernel on 3.14t refuse the venv that very interpreter built as a mismatch (review 2026-09-06). The
+    twin of kernel.py's _running_python_tag, which runs before this module loads."""
+    return "%d.%d%s" % (sys.version_info[0], sys.version_info[1],
+                        "t" if "t" in getattr(sys, "abiflags", "") else "")
+
+
+def sdk_venv_built_for(state_dir) -> list:
+    """The python tags (`3.12`, `3.14t`) the SDK venv under `state_dir` has site-packages for, [] with no
+    venv."""
+    try:
+        lib = Path(state_dir) / "sdkvenv" / "lib"
+        return sorted(p.name[len("python"):] for p in lib.glob("python3.*") if (p / "site-packages").is_dir())
+    except Exception:
+        return []
+
+
+def sdk_venv_has_sdk(state_dir, tag) -> bool:
+    """Whether the venv's site-packages for `tag` holds the claude_agent_sdk package itself."""
+    try:
+        return (Path(state_dir) / "sdkvenv" / "lib" / ("python" + tag) / "site-packages" / "claude_agent_sdk"
+                / "__init__.py").is_file()
+    except Exception:
+        return False
+
+
+def interpreter_runs(path, timeout=5.0) -> bool:
+    """Does the interpreter at `path` start and exit cleanly (`-c pass`)? The test bin/romp-serve's
+    pick_python applies before following the venv's recorded interpreter, applied here for the same
+    reason: an executable file is not a working python. A uv-managed install that lost its shared
+    library or stdlib passes os.access and fails to run, and the mismatch text used to prescribe a
+    ROMP_PYTHON pin to exactly that binary, which romp-serve then execs blindly into a respawn loop
+    (review 2026-09-06). A probe that hangs or errors reads as not running."""
+    if not path or not os.access(path, os.X_OK):
+        return False
+    try:
+        return subprocess.run([path, "-c", "pass"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=timeout).returncode == 0
+    except Exception:
+        return False
+
+
+def sdk_venv_interpreter(state_dir) -> str:
+    """The interpreter the venv's pyvenv.cfg records: `executable` (python >= 3.11), else `home` plus the
+    version line (`version` from venv, `version_info` from uv). "" when there is no cfg or it names none."""
+    try:
+        lines = (Path(state_dir) / "sdkvenv" / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return ""
+    kv = {}
+    for line in lines:
+        if "=" in line:
+            k, v = line.split("=", 1)
+            kv[k.strip()] = v.strip()
+    if kv.get("executable"):
+        return kv["executable"]
+    m = re.match(r"(\d+\.\d+)", kv.get("version") or kv.get("version_info") or "")
+    if kv.get("home") and m:
+        return os.path.join(kv["home"], "python" + m.group(1))
+    return ""
+
+
+def sdk_venv_fingerprint(state_dir) -> tuple:
+    """Everything sdk_venv_verdict reads, as one cheap tuple: the lib/python3.* dirs and whether each
+    holds the SDK, pyvenv.cfg's mtime, and the recorded interpreter's identity (path, mtime, size).
+    Equal fingerprints mean an equal verdict, so a caller on a hot path (every card render asks
+    launch_error) re-derives the verdict, and re-runs the interpreter probe, only when the disk changed."""
+    root = Path(state_dir) / "sdkvenv"
+    parts = []
+    try:
+        for p in sorted((root / "lib").glob("python3.*")):
+            if (p / "site-packages").is_dir():
+                parts.append((p.name, (p / "site-packages" / "claude_agent_sdk" / "__init__.py").is_file()))
+    except Exception:
+        pass
+    try:
+        parts.append(("cfg", (root / "pyvenv.cfg").stat().st_mtime_ns))
+    except Exception:
+        parts.append(("cfg", None))
+    interp = sdk_venv_interpreter(state_dir)
+    try:
+        st = os.stat(interp) if interp else None
+        parts.append(("interp", interp, st.st_mtime_ns if st else None, st.st_size if st else None))
+    except Exception:
+        parts.append(("interp", interp, None, None))
+    return tuple(parts)
+
+
+def sdk_venv_verdict(state_dir, runs=None) -> dict:
+    """What the disk says about the SDK venv against THIS interpreter, read now. `kind` is one of
+      none      no venv (or none with a lib/python3.*): the install remedy fits;
+      broken    a venv for this python with no claude_agent_sdk in it (a half-built install): same remedy;
+      present   a venv for this python WITH the SDK in it. A process that could not import the SDK has one
+                answer for this: the venv was built after it started (bin/romp-sdk-setup run while the
+                kernel ran, the 2026-09-06 recovery), and the remedy is the restart;
+      mismatch  venv(s) for other python(s) only. bin/romp-serve's pick_python follows the venv's
+                interpreter, so this means ROMP_PYTHON chose another python, or the venv's own is gone or
+                will not run (2026-09-06: two hours of "isn't installed" over a venv that was present,
+                intact and built for the previous python). `interp` is the recorded interpreter and
+                `interp_runs` whether it actually starts (interpreter_runs; `runs` is the test seam), which
+                decides between the two remedies: point romp back at it, or rebuild for the one romp runs.
+    ONE function, so every surface that refuses (the session card, the boot log, the creation refusal)
+    reads the same facts at the same moment."""
+    running = running_python_tag()
+    built = sdk_venv_built_for(state_dir)
+    v = {"kind": "none", "built": built, "running": running, "interp": "", "interp_runs": False}
+    if not built:
+        return v
+    if running in built:
+        v["kind"] = "present" if sdk_venv_has_sdk(state_dir, running) else "broken"
+        return v
+    v["kind"] = "mismatch"
+    v["interp"] = sdk_venv_interpreter(state_dir)
+    v["interp_runs"] = bool(v["interp"]) and bool((runs or interpreter_runs)(v["interp"]))
+    return v
+
+
+def _mismatch_remedy(v, then="then restart romp") -> str:
+    """The ONE remedy the disk supports for a mismatch verdict: the recorded interpreter still runs, so
+    point romp back at it; or it is gone or broken, so rebuild for the one romp runs. Never both, and
+    never a pin to an interpreter nothing has seen run."""
+    if v["interp_runs"]:
+        return "Set ROMP_PYTHON=%s in service.env, %s." % (v["interp"], then)
+    return "Re-run bin/romp-sdk-setup to rebuild it for Python %s, %s." % (v["running"], then)
+
+
+def sdk_unavailable_text(state_dir, verdict=None, started_missing=True) -> str:
+    """The session card's text when claude_agent_sdk will not import, from the venv verdict (read now
+    unless the caller passes one). SDK_MISSING_TEXT when nothing on disk says otherwise. A venv for
+    ANOTHER python makes the install claim false and the fix different, so the text says what happened
+    and gives the one remedy the disk supports. A venv for THIS python holding the SDK, in a process that
+    found none at construction (`started_missing`), was built after romp started: the restart is the
+    remedy, and "isn't installed" would send the user back to the command they just ran. In a process
+    that HAD the SDK at construction the same disk state means the import itself broke, and the install
+    text with its rebuild is right."""
+    v = verdict or sdk_venv_verdict(state_dir)
+    if v["kind"] == "present" and started_missing:
+        return ("romp's Agent SDK backend was set up for Python %s after romp started, so this session can't "
+                "run yet. Its messages are being kept, not sent. Restart romp to use it. tmux-backed sessions "
+                "are unaffected." % v["running"])
+    if v["kind"] != "mismatch":
+        return SDK_MISSING_TEXT
+    return ("romp's Agent SDK backend was set up for Python %s, but romp is running on Python %s, so this "
+            "session can't run. Its messages are being kept, not sent. %s tmux-backed sessions are unaffected."
+            % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v)))
+
+
+SDK_SETUP_REFUSAL = ("Session not created: romp's Agent SDK backend isn't installed. "
+                     "Run bin/romp-sdk-setup, then try again. (tmux sessions still work.)")
+
+
+def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
+    """The session-creation refusal (`romp new`, the browser's create) for a venv verdict: the same
+    facts as sdk_unavailable_text, in the voice of a session that does not exist yet. Built HERE, next
+    to the card's text and from the same verdict, so the two surfaces cannot tell different stories
+    (review 2026-09-06: after a rebuild while the kernel ran, `romp new` said "isn't installed" while
+    the card said mismatch, and the refusal offered a ROMP_PYTHON pin without checking the interpreter
+    existed). `default` is the plain install refusal (the kernel passes its own SDK_SETUP_HINT, the
+    same words) for the verdicts where the install remedy fits."""
+    v = verdict
+    if v["kind"] == "present":
+        return ("Session not created: romp's Agent SDK backend was set up for Python %s after romp started. "
+                "Restart romp, then try again. (tmux sessions still work.)" % v["running"])
+    if v["kind"] != "mismatch":
+        return default
+    return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running on "
+            "Python %s. %s (tmux sessions still work.)"
+            % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v, then="restart romp and try again")))
+
+
 def sdk_importable() -> bool:
     """Is claude_agent_sdk actually importable RIGHT NOW? Checked at backend construction so the failure
     is reported ONCE, up front, for every session — rather than one session at a time as each one's
@@ -7435,9 +7607,13 @@ class SdkBackend:
         # The dependency check, done ONCE here: absent → every session this backend owns reports the same
         # launch error (launch_error), instead of each one silently dying at its own lazy import.
         self._sdk_missing = not sdk_importable()
+        # The venv verdict every refusing surface reads (unavailable_verdict): re-derived from the disk
+        # at request time, cached on its fingerprint, so a venv built for another python is named as
+        # such rather than as a missing install, and a venv built AFTER this check names the restart.
+        self._venv_verdict_cache = None
         if self._sdk_missing and log:
             self._log("claude_agent_sdk is NOT importable — every SDK session will report itself unable to "
-                      "start (run bin/romp-sdk-setup). tmux sessions are unaffected.", problem=True)
+                      "start. %s" % self.unavailable_text(), problem=True)
         # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
         # _options reads it at every connect. The probe runs here, never per session.
         self.cli_scope = cli_scope_supported(log=self._log)
@@ -8370,6 +8546,30 @@ class SdkBackend:
         user created a session from the browser, got no error at all, and got a session that could never
         run (the user 2026-07-28)."""
         return not self._sdk_missing
+
+    def unavailable_verdict(self) -> dict:
+        """The disk's verdict on the SDK venv against this interpreter (sdk_venv_verdict), read at
+        REQUEST time. The one source every refusing surface consults: the session card (launch_error)
+        and the kernel's creation refusal (_sdk_setup_hint) read this function, so a rebuild while the
+        kernel runs moves both to "restart romp" together instead of one saying "isn't installed" while
+        the other says mismatch (review 2026-09-06). Cached on the venv's on-disk fingerprint, so a
+        card render costs a few stats and the interpreter probe runs once per disk state."""
+        fp = sdk_venv_fingerprint(self.state_dir)
+        cached = self._venv_verdict_cache
+        if cached is not None and cached[0] == fp:
+            return cached[1]
+        v = sdk_venv_verdict(self.state_dir)
+        self._venv_verdict_cache = (fp, v)
+        return v
+
+    def unavailable_text(self) -> str:
+        """The session card's text for a backend whose SDK did not import at construction, from the
+        verdict as it stands now (sdk_unavailable_text)."""
+        return sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(), started_missing=True)
+
+    def creation_refusal(self, default=SDK_SETUP_REFUSAL) -> str:
+        """The session-creation refusal from the same verdict the card reads (sdk_creation_refusal)."""
+        return sdk_creation_refusal(self.unavailable_verdict(), default=default)
 
     def busy_count(self) -> int:
         """How many SDK sessions have a turn IN FLIGHT right now — the manager's quiet-window gate
@@ -11633,7 +11833,13 @@ class SdkBackend:
         # named 'claude_agent_sdk'" tells a user nothing about what to run.
         dep = isinstance(exc, ImportError)
         tail = "" if dep else sess.stderr_tail()   # what the CLI itself said before it exited
-        text = SDK_MISSING_TEXT if dep else launch_failure_text(exc, tail)
+        # read the disk NOW, not a construction-time verdict: this path is the import that failed after
+        # the check passed, and the venv may have been rebuilt or the interpreter changed since. A venv
+        # for this python that is present is not "built after start" here (the SDK WAS importable at
+        # construction): the import itself broke, and the install text's rebuild is the remedy.
+        text = (sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(),
+                                     started_missing=self._sdk_missing)
+                if dep else launch_failure_text(exc, tail))
         rec = {"text": text, "at": int(time.time()), "limit": is_launch_limit(text), "dep": dep}
         try:
             self._update_reg(sess.sid, launchError=rec)
@@ -11676,7 +11882,7 @@ class SdkBackend:
         A MISSING SDK outranks any per-session record: it is true of every session immediately, needs no
         session to have died to be known, and it is the actionable one."""
         if self._sdk_missing:
-            return {"text": SDK_MISSING_TEXT, "at": 0, "limit": False, "dep": True}
+            return {"text": self.unavailable_text(), "at": 0, "limit": False, "dep": True}
         try:
             rec = (read_reg(self.state_dir, str(sid)) or {}).get("launchError")
         except Exception:

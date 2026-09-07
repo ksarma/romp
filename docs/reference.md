@@ -471,6 +471,33 @@ service unit bakes in whatever is set at install time, so a renumbered port
 that only lives in your shell leaves the supervised manager on the old one, and
 the two collide.
 
+### The kernel's Python
+
+The kernel and its Agent SDK venv (`sdkvenv` under the state directory) must
+run the same Python: the venv's compiled extensions import into the kernel
+process. `bin/romp-serve` picks the interpreter in this order: `ROMP_PYTHON` if
+set; otherwise the interpreter the venv's `pyvenv.cfg` records, if it still
+runs; otherwise the newest `pythonX.Y` on `PATH` or in `~/.local/bin`, the rule
+for a machine with no venv yet. So installing a newer Python does not change
+what the kernel runs at its next restart. On a machine that runs romp as a
+service, pin it anyway: `ROMP_PYTHON=/usr/bin/python3.12` in `service.env`
+makes the choice explicit and holds if the venv is deleted or rebuilt. Moving
+romp to another Python takes four steps, and skipping any one of them leaves a
+kernel that cannot start sessions: set `ROMP_PYTHON` to the new interpreter in
+`service.env`, run `bin/romp-sdk-setup` with the same value (it rebuilds the
+venv and says so), run the test suite on that interpreter, then restart the
+manager. A kernel that does come up on a Python the venv was not built for logs
+one line naming both versions, and each SDK session reports the mismatch and
+the remedy that fits: the `ROMP_PYTHON` pin when the venv's recorded
+interpreter still runs (the kernel checks by running it), the rebuild when it
+does not. `romp new` and the browser's create refuse with the same verdict,
+read from the disk at the moment of the request, so a venv rebuilt while the
+kernel runs is reported on both surfaces as set up after romp started, with
+the restart as the remedy. A free-threaded build (`python3.14t`) is its own
+tag: the venv it builds matches it and no other. The Codex venv (`codexvenv`,
+built by `bin/romp-codex-setup`) is built with the same pick, so it matches the
+kernel too.
+
 ### API keys on disk: the file mode
 
 `~/.config/romp/service.env` holds non-secret settings only
@@ -1597,6 +1624,38 @@ into the pane.
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+Two ledgers there record restarts. `restart-audit.jsonl` gets a row from
+whatever asks for one: `romp refresh`, the dashboard's restart button, the
+kernel's own update, and the manager before each SIGTERM it sends (action
+`manager-sigterm`). When a SIGTERM arrives, the kernel reads the last eight
+rows, newest first, for a request within the last 90 seconds (20 minutes for a
+request that asked to wait for a quiet window). A row with an action names the
+request. The manager's `manager-sigterm` row is a note that the manager sent
+the signal, not a request: it answers only when no request row sits beneath it
+within the window, so a `down` followed by the manager's stop note still reads
+as the stop, and a note aimed at another kernel's pid is ignored. A row with no
+action (the `romp refresh` row on builds that do not label it) is skipped, and
+the manager's `restart` note beneath it is what names the refresh.
+
+When no row qualifies, the kernel writes a row with action `signal`: the signal
+name, its pid and its parent's pid, the manager pid it was started with,
+whether a manager restart was pending, `managerRequested: false`, and
+`managerStopped`. That last field is what the kernel can see of a service stop
+or restart, which signals the kernel and the manager at once: the manager's pid
+is already gone, or the manager's own stop note lands while the kernel drains
+or within half a second after. With `managerStopped: true` the reason reads
+`signal; the manager was stopped too (a service stop or restart)`; otherwise
+`signal, not requested through the manager`, which means no request was on
+record when the kernel read the ledger, not that the sender is known. The
+sender's pid is never recorded; a Python signal handler does not receive it. A
+kernel whose manager disappears writes a row with action `parent-gone` before
+it exits. `restart-cuts.jsonl` gets one row per exit naming the turns the drain
+cut and the reason: the audit row's `action: reason`, the `signal` row's
+reason, or `parent-gone: the manager exited; the kernel followed it`. A second
+SIGTERM during the drain is ignored; the first writes the row. The manager's
+log says `exited without a restart request (signal or crash); respawning` when
+a kernel exits that it did not ask to stop or restart.
 
 ## Switches
 

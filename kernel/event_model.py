@@ -32,7 +32,10 @@ from pathlib import Path
 
 HOME     = Path.home()
 STATE    = Path(os.environ.get("ROMP_STATE_DIR")   # per-kernel state root override (plans/multi-kernel.md)
-                or Path(os.environ.get("XDG_STATE_HOME", str(HOME / ".local/state"))) / "romp")
+                or Path(os.environ.get("XDG_STATE_HOME") or str(HOME / ".local/state")) / "romp")
+# `or`, not a .get default: an EMPTY XDG_STATE_HOME is unset (the XDG spec, and every bash reader's
+# ${XDG_STATE_HOME:-...}); a .get default kept it and resolved the state root to the relative path
+# `romp`, so the kernel and bin/romp-serve used different roots and the kernel found no SDK venv.
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR") or str(HOME / ".claude")) / "projects"   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 NAMES    = STATE / "names"
 STATES_DIR   = STATE / "states"

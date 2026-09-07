@@ -12698,19 +12698,90 @@ def _claude_bin():
     return os.environ.get("ROMP_CLAUDE_BIN") or shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 
+# The python tags the SDK venv on disk was built for, when NONE of them is the one this process runs;
+# [] otherwise. Set by _ensure_sdk_on_path, read by _sdk_import_notice (so the boot log does not add
+# an "install it" line over an installed venv) and by _sdk_setup_hint's fallback for a kernel whose
+# backend module never loaded. The surfaces a user reads (the session card, the creation refusal)
+# take their verdict from the backend at request time (SdkBackend.unavailable_verdict), not from here.
+_SDK_VENV_BUILT_FOR = []
+
+
+def _running_python_tag():
+    """This interpreter as venv names its lib dir: `3.14`, or `3.14t` for a free-threaded build (venv
+    appends the abi tag to the directory, lib/python3.14t). Matching on major.minor alone made a kernel
+    on 3.14t refuse the venv that very interpreter built as a mismatch, and neither remedy it named
+    could exit that state (review 2026-09-06). Twin of sdk_backend.running_python_tag, which cannot be
+    imported here: this runs before the backend module loads."""
+    return "%d.%d%s" % (sys.version_info[0], sys.version_info[1],
+                        "t" if "t" in getattr(sys, "abiflags", "") else "")
+
+
 def _ensure_sdk_on_path():
     """Make claude_agent_sdk importable by the kernel's interpreter. Prefer an already-installed
-    copy; otherwise add the dedicated venv's site-packages (built by bin/romp-sdk-setup with the
-    SAME python, so the ABI matches) — the SDK dependency lives under ~/.local/state/romp/sdkvenv and
-    never touches system python. Returns True when importable."""
+    copy; otherwise add the dedicated venv's site-packages (built by bin/romp-sdk-setup under
+    ~/.local/state/romp/sdkvenv, never touching system python), but ONLY the one built for the python
+    this process runs (_running_python_tag). The venv's compiled extensions are per-interpreter: adding
+    a 3.X venv to a 3.Y kernel fails deep inside the import with a message that blamed a missing
+    install (2026-09-06, when a newer python appeared on the box between two respawns and every SDK
+    session died for two hours). A venv present for another version adds nothing and is named on
+    stderr, once, with both remedies (a log line; the user-facing surfaces name the one remedy the disk
+    supports, see SdkBackend.unavailable_verdict). Returns True when importable."""
     import importlib.util
     import glob
+    global _SDK_VENV_BUILT_FOR
     if importlib.util.find_spec("claude_agent_sdk"):
         return True
-    for sp in sorted(glob.glob(str(jd.STATE / "sdkvenv" / "lib" / "python3.*" / "site-packages"))):
+    running = _running_python_tag()
+    found = sorted(glob.glob(str(jd.STATE / "sdkvenv" / "lib" / "python3.*" / "site-packages")))
+    match = [sp for sp in found if Path(sp).parent.name == "python" + running]
+    for sp in match:
         if sp not in sys.path:
             sys.path.insert(0, sp)
+    if found and not match:
+        built = sorted(Path(sp).parent.name[len("python"):] for sp in found)
+        if built != _SDK_VENV_BUILT_FOR:          # one line per verdict, not one per caller
+            _SDK_VENV_BUILT_FOR = built
+            sys.stderr.write("sdk-backend: sdkvenv is built for python %s but the kernel runs %s: re-run "
+                             "bin/romp-sdk-setup to rebuild it for %s, or set ROMP_PYTHON to the venv's "
+                             "interpreter and restart romp\n" % (" and ".join(built), running, running))
+        return False
+    _SDK_VENV_BUILT_FOR = []
     return importlib.util.find_spec("claude_agent_sdk") is not None
+
+
+def _sdk_import_notice():
+    """The boot log's one line when claude_agent_sdk will not import, and _sdk_locked's gate: "not found,
+    run bin/romp-sdk-setup" ONLY when no venv mismatch explains it. A mismatch was already named by
+    _ensure_sdk_on_path, and a second line prescribing an install over an installed venv was the
+    misleading message of 2026-09-06. Returns whether the SDK is importable."""
+    ok = _ensure_sdk_on_path()
+    if not ok and not _SDK_VENV_BUILT_FOR:
+        sys.stderr.write("sdk-backend: claude_agent_sdk not found — run bin/romp-sdk-setup to "
+                         "enable the non-tmux backend (tmux sessions are unaffected)\n")
+    return ok
+
+
+def _sdk_setup_hint():
+    """The session-creation refusal (`romp new`, the browser's create) when _sdk_ready() is False. ONE
+    source of truth with the session card: the backend's venv verdict, read at request time
+    (SdkBackend.creation_refusal reads the same unavailable_verdict the card's launch_error does), so a
+    venv rebuilt while the kernel runs makes both say "restart romp", and a ROMP_PYTHON pin is offered
+    only for an interpreter that was seen to run (review 2026-09-06: the two surfaces told two stories,
+    and this one offered a pin without looking). Without a backend to ask (its module failed to load)
+    the fallback names a mismatch _ensure_sdk_on_path saw with the rebuild remedy alone, the one this
+    process can vouch for without a probe; otherwise the plain install hint."""
+    be = _sdk_backend
+    try:
+        if be and hasattr(be, "creation_refusal"):
+            return be.creation_refusal(default=SDK_SETUP_HINT)
+    except Exception:
+        pass
+    if _SDK_VENV_BUILT_FOR:
+        return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running "
+                "on Python %s. Re-run bin/romp-sdk-setup to rebuild it for Python %s, restart romp and try "
+                "again. (tmux sessions still work.)"
+                % (" and ".join(_SDK_VENV_BUILT_FOR), _running_python_tag(), _running_python_tag()))
+    return SDK_SETUP_HINT
 
 
 def _sdk():
@@ -12743,16 +12814,15 @@ def _sdk_locked():
     global _sdk_backend
     if _sdk_backend is None:
         try:
-            if not _ensure_sdk_on_path():
-                sys.stderr.write("sdk-backend: claude_agent_sdk not found — run bin/romp-sdk-setup to "
-                                 "enable the non-tmux backend (tmux sessions are unaffected)\n")
-                # The backend is STILL built, deliberately: it owns the registry, the persisted queues and
-                # the chat those sessions render from, and dropping it would take the user's unsent
-                # messages off screen along with it. What it must not do is pretend to work — it detects
-                # the missing dep itself and reports every session as unable to start (launch_error), which
-                # is what puts this line in front of the user instead of only in the kernel log. Before
-                # that, a fresh install whose romp-sdk-setup had bailed looked like romp silently eating
-                # every message (the user 2026-07-28).
+            # _sdk_import_notice: the SDK will not import, and the log line says which way (not found,
+            # or a venv for another python). The backend is STILL built, deliberately: it owns the
+            # registry, the persisted queues and the chat those sessions render from, and dropping it
+            # would take the user's unsent messages off screen along with it. What it must not do is
+            # pretend to work — it detects the missing dep itself and reports every session as unable
+            # to start (launch_error), which is what puts the line in front of the user instead of only
+            # in the kernel log. Before that, a fresh install whose romp-sdk-setup had bailed looked
+            # like romp silently eating every message (the user 2026-07-28).
+            _sdk_import_notice()
             sbmod = SourceFileLoader("romp_sdk_backend", str(HERE / "sdk_backend.py")).load_module()
             # ONE claimer for the manager env's API key: the backend's work_api_key pops it out of
             # os.environ (so no session CLI inherits it ambiently), and judges read that same stash
@@ -18417,6 +18487,120 @@ def _audit_restart_request(action, **kw):
         pass
 
 
+SIGNAL_REASON_UNREQUESTED = "signal, not requested through the manager"
+SIGNAL_REASON_MANAGER_STOPPED = "signal; the manager was stopped too (a service stop or restart)"
+PARENT_GONE_REASON = "the manager exited; the kernel followed it"
+
+
+def _audit_unrequested_signal(signum, pending=False, now=None, manager_stopped=False):
+    """The audit row for a SIGTERM that no request on record explains. Before this there was NOTHING
+    on disk for such a cut (2026-09-06: a direct signal to the kernel pid restarted it onto a
+    different python, and the two-hour outage that followed had no first cause anywhere;
+    restart-cuts.jsonl carried an empty reason). Records what a signal.signal handler can know: no
+    siginfo reaches it, so the sender's pid is out of reach; what IS knowable is the signal, this pid,
+    the parent's pid, the manager pid the kernel was spawned with (ROMP_MANAGER_PID, None standalone),
+    whether a manager restart was parked (the drain lease), that nothing asked for it through the
+    manager, and (`manager_stopped`, decided by _unrequested_signal_reason) whether the manager was
+    going down at the same moment. The wording claims exactly that much: a stray `kill`, a test that
+    fired a real restart and a supervisor stop that signalled both processes at once all arrive with
+    no row, and only the last leaves a trace the kernel can see. Returns the reason text the cut row
+    carries, so the two ledgers agree. Best-effort, never raises."""
+    reason = SIGNAL_REASON_MANAGER_STOPPED if manager_stopped else SIGNAL_REASON_UNREQUESTED
+    try:
+        try:
+            name = signal.Signals(signum).name
+        except Exception:
+            name = str(signum)
+        mgr = os.environ.get("ROMP_MANAGER_PID") or ""
+        rec = {"t": int(now if now is not None else time.time()), "action": "signal", "signal": name,
+               "pid": os.getpid(), "ppid": os.getppid(),
+               "managerPid": int(mgr) if mgr.isdigit() else None,
+               "managerRequested": False, "managerStopped": bool(manager_stopped),
+               "managerRestartPending": bool(pending), "reason": reason}
+        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+    return reason
+
+
+SIGNAL_MANAGER_NOTE_WAIT_S = 0.5   # how long an unexplained SIGTERM waits for the manager's own stop note
+
+
+def _manager_sigterm_row_for_us(now=None, window=90):
+    """Whether the audit tail holds a `manager-sigterm` row aimed at THIS kernel (its `pid` is ours,
+    or it names none) within `window` seconds: the manager's note that it sent a SIGTERM here."""
+    try:
+        tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
+    except Exception:
+        return False
+    t0 = int(now if now is not None else time.time())
+    for line in reversed(tail[-8:]):
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if not (isinstance(rec, dict) and rec.get("action") == "manager-sigterm" and isinstance(rec.get("t"), int)):
+            continue
+        if t0 - rec["t"] > window:
+            return False
+        if rec.get("pid") in (None, os.getpid()):
+            return True
+    return False
+
+
+def _unrequested_signal_reason(signum, be=None, wait=None, sleep=time.sleep, now=None):
+    """The reason for a SIGTERM that arrived with no request on record, filed as an audit row
+    (_audit_unrequested_signal) and returned for the cut row. The manager writes its `manager-sigterm`
+    note BEFORE it kills (bin/romp-manager auditSigterm), so a signal here with no note did not come
+    from the manager. What distinguishes a supervisor stop (`systemctl --user stop|restart`, `launchctl
+    bootout`: SIGTERM to the kernel and the manager at once) from a stray kill is the manager going
+    down at the same moment, and that is visible two ways: its pid (ROMP_MANAGER_PID) is already gone,
+    or its own stop note lands moments after our signal did (node dispatches its handler after the
+    kernel's Python one has run; shutdownAll then notes and kills each kernel). So this waits up to
+    `wait` seconds for that note before concluding. A genuinely stray signal pays the wait and reads
+    as unrequested; nothing here asserts who sent it (review 2026-09-06: a `systemctl --user restart`
+    with no sessions to drain was filed as a signal the manager did not send, and the docs read that
+    as "came from somewhere else")."""
+    pending = False
+    try:
+        pending = bool(be.drain_holding()) if be is not None and hasattr(be, "drain_holding") else False
+    except Exception:
+        pass
+    mgr = os.environ.get("ROMP_MANAGER_PID") or ""
+    stopped = bool(mgr.isdigit()) and not _pid_alive(int(mgr))
+    if not stopped and mgr.isdigit():
+        deadline = time.time() + max(0.0, SIGNAL_MANAGER_NOTE_WAIT_S if wait is None else wait)
+        while True:
+            if _manager_sigterm_row_for_us(now=now):
+                stopped = True
+                break
+            if time.time() >= deadline:
+                break
+            sleep(0.05)
+    reason = _audit_unrequested_signal(signum, pending=pending, now=now, manager_stopped=stopped)
+    sys.stderr.write("romp-kernel: this SIGTERM matched no restart request on record%s "
+                     "(restart-audit.jsonl has a 'signal' row for it)\n"
+                     % ("; the manager was stopped too" if stopped else ""))
+    return reason
+
+
+def _audit_parent_gone(manager_pid, now=None):
+    """The audit row for the exit _parent_watch forces when the manager that spawned the kernel is
+    gone (a manager crash, a SIGKILL, a stop that escalated past its timeout). Before this the kernel
+    left by os._exit with nothing in either ledger, so a whole outage could begin with no first cause
+    on disk (review 2026-09-06). Returns the cut row's reason. Best-effort, never raises."""
+    try:
+        rec = {"t": int(now if now is not None else time.time()), "action": "parent-gone",
+               "pid": os.getpid(), "ppid": os.getppid(), "managerPid": manager_pid,
+               "reason": PARENT_GONE_REASON}
+        with open(jd.STATE / "restart-audit.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    except Exception:
+        pass
+    return "parent-gone: " + PARENT_GONE_REASON
+
+
 RESTART_CUTS_FILE = jd.STATE / "restart-cuts.jsonl"
 
 
@@ -18512,21 +18696,52 @@ def _mark_boot(kind):
 
 
 def _recent_restart_reason(window=90, now=None):
-    """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
-    (deploy refresh, self-update, the rail button…). Best-effort: an anonymous SIGTERM has no row
-    and reads as ""."""
+    """The request on record that explains a SIGTERM arriving now, from the restart-audit tail, or ""
+    when there is none (and _graceful_term then files a row of its own). Joins the cut row to WHO asked:
+    a deploy refresh, the kernel's self-update, the rail button, a `romp down`. The walk is newest-first
+    over the last eight rows, within `window` seconds of now, with these rules:
+      - a row with an action is a request and wins: `action`, plus `: reason` when it carries one;
+      - a `when: quiet` request is pending until the restart it asked for lands, up to the far manager's
+        15-minute backstop, so its window is RESTART_EXPECT_MAX_S and it names a cut well past the
+        immediate window (T238); any other row older than the window ends the walk;
+      - a `manager-sigterm` row (bin/romp-manager auditSigterm, written before every SIGTERM it sends) is
+        a mechanism note, not a request: it says the manager was the messenger. It never outranks a
+        request row beneath it within the window (a `down` followed by the manager's `stop` note reads
+        as the deliberate stop), answers only when no request is on record (a `romp on restart`, a
+        service stop that noted before it killed), and one aimed at another kernel pid is not about us;
+      - a row with no action is skipped, never taken as the answer. The CLI's `romp refresh` writes its
+        caller-attribution row with no action field ({t, ppid, parent, sid, name, tty, tmux}), and taking
+        that row's empty label as the verdict filed every deploy as an unrequested signal (review
+        2026-09-06). Until the writer labels the row, the manager's `restart` note beneath it is what
+        names a refresh; a row that does carry `action: refresh` names it directly."""
     try:
         tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
         if not tail:
             return ""
-        rec = json.loads(tail[-1])
         t0 = int(now if now is not None else time.time())
-        if isinstance(rec, dict) and rec.get("when") == "quiet":
-            # a QUIET-WINDOW request is pending until the restart it asked for lands — up to the far
-            # manager's 15-minute backstop — so it names the cut well past the immediate window (T238)
-            window = max(window, RESTART_EXPECT_MAX_S)
-        if isinstance(rec, dict) and isinstance(rec.get("t"), int) and t0 - rec["t"] <= window:
-            return str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
+        via_manager = ""
+        for line in reversed(tail[-8:]):
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if not (isinstance(rec, dict) and isinstance(rec.get("t"), int)):
+                continue
+            win = window
+            if rec.get("when") == "quiet":
+                win = max(window, RESTART_EXPECT_MAX_S)
+            if t0 - rec["t"] > win:
+                break                                       # older rows are older still
+            action = str(rec.get("action") or "")
+            if not action:
+                continue                                    # no verdict in it; keep looking
+            label = action + (": " + str(rec["reason"]) if rec.get("reason") else "")
+            if action == "manager-sigterm":
+                if rec.get("pid") in (None, os.getpid()):   # a note about THIS kernel (or one naming none)
+                    via_manager = via_manager or label
+                continue
+            return label
+        return via_manager
     except Exception:
         pass
     return ""
@@ -41297,7 +41512,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 if be_req == "sdk":
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
-                        return self._send(200, json.dumps({"ok": False, "error": SDK_SETUP_HINT}),
+                        return self._send(200, json.dumps({"ok": False, "error": _sdk_setup_hint()}),
                                           "application/json")
                     a = (b or {}).get("auth")
                     sid, extra = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""),
@@ -42701,7 +42916,7 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         # NEVER silently fall back to tmux (the user asked for SDK and got a mystery tmux
                         # session on a remote host without the venv, 2026-07-02). Say what's missing.
-                        client["send"](json.dumps({"type": "warn", "text": SDK_SETUP_HINT}))
+                        client["send"](json.dumps({"type": "warn", "text": _sdk_setup_hint()}))
                 elif msg.get("backend") == "codex":   # an OpenAI Codex thread (plans/codex-backend.md)
                     if _codex_ready():
                         try:
@@ -43544,16 +43759,29 @@ def _pid_alive(pid):
         return True
 
 
+_EXIT_ONCE = threading.Lock()   # ONE exit path runs to completion: a second SIGTERM mid-drain (a service
+#                                 stop signals us, then the manager's shutdownAll signals us again) used
+#                                 to nest a second handler inside the first, and the inner one wrote the
+#                                 cut row from a second, partial drain and exited, discarding the first
+#                                 drain's count; the parent watch noticing the manager gone while the
+#                                 handler drains would do the same. Whoever takes this lock finishes.
+
+
 def _parent_watch():
     """Exit if the manager that spawned us (ROMP_MANAGER_PID) dies, so a supervisor crash doesn't
-    orphan the kernel. No-op when launched standalone (no ROMP_MANAGER_PID)."""
+    orphan the kernel. No-op when launched standalone (no ROMP_MANAGER_PID). The exit leaves the same
+    two rows every other exit does (an audit row, action `parent-gone`, and a cut row with the drained
+    turns), so a manager crash is not the one outage with no first cause on disk (review 2026-09-06);
+    if the SIGTERM handler is already on its way out, it owns the exit and this stands down."""
     pid = os.environ.get("ROMP_MANAGER_PID")
     if not (pid and pid.isdigit()):
         return
     pid = int(pid)
     while _pid_alive(pid):
         time.sleep(2)
-    os._exit(0)
+    if not _EXIT_ONCE.acquire(blocking=False):
+        return
+    _drain_and_exit(_audit_parent_gone(pid), what="the manager is gone")
 
 
 def _graceful_term(signum, frame):
@@ -43563,15 +43791,30 @@ def _graceful_term(signum, frame):
     its state settles honestly. Parked ops + SDK queues are already mirrored to disk on every
     mutation, and a cut turn keeps its 'working' state tail — the NEXT kernel's boot reconcile
     resumes exactly those. Bounded (~2s) so `romp refresh` stays snappy. Never construct the
-    backend here — no SDK sessions were running if it doesn't exist."""
+    backend here: no SDK sessions were running if it doesn't exist. A second SIGTERM while the first
+    is draining returns at once (_EXIT_ONCE): the first finishes and exits."""
+    if not _EXIT_ONCE.acquire(blocking=False):
+        return
     _broadcast_restarting()                        # T217: announce the death FIRST — the frame is
     #                                                the shims' eager-reconnect event, and its
     #                                                sub-second budget cannot widen the shutdown
+    # WHO asked, read NOW, at signal time: the audit tail names the requester, or the manager's own
+    # note of a kill it sent (written before the kill, so it is here already if the manager sent
+    # this). A row that lands during the drain below did not send this signal.
+    _drain_and_exit(_recent_restart_reason(), signum=signum, what="SIGTERM")
+
+
+def _drain_and_exit(reason, signum=None, what="SIGTERM"):
+    """Drain the SDK sessions, write the restart-cut row, exit: the tail every kernel exit shares
+    (_graceful_term, _parent_watch). `reason` is the request on record when the exit was decided;
+    empty with a `signum` means the signal reached this pid with no request on record, which is worth a
+    row of its own plus a cut reason that says so (_unrequested_signal_reason; 2026-09-06: an empty
+    reason was all the ledger had for the restart that started a two-hour outage)."""
     res = {}
     err = ""
+    be = _sdk_backend or None
     try:
-        sys.stderr.write("romp-kernel: SIGTERM — draining SDK sessions\n")
-        be = _sdk_backend or None
+        sys.stderr.write("romp-kernel: %s — draining SDK sessions\n" % what)
         if be is not None and hasattr(be, "drain"):
             res = be.drain(2.0)
     except Exception:
@@ -43582,8 +43825,10 @@ def _graceful_term(signum, frame):
         # the restart-cut ledger (T121): one row per restart, ALWAYS — an empty cutTurns row is the
         # clean-drain metric, and a drain that errored writes what it knew plus the error (T143).
         try:
+            if not reason and signum is not None:
+                reason = _unrequested_signal_reason(signum, be)
             row = _restart_cut_row(res, watches_armed=len(_pr_watches) + len(_watches),
-                                   audit_reason=_recent_restart_reason())
+                                   audit_reason=reason)
             if err:
                 row["drainError"] = err.strip().splitlines()[-1][:200]
             _append_restart_cut(row)
