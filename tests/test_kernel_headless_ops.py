@@ -220,12 +220,12 @@ class HeadlessRoutes(unittest.TestCase):
 
 
 class CodexRuntimeSelection(unittest.TestCase):
+    # The kernel loads codex_backend.py through load_source (kernel/loadsource.py), the fork's loader kept
+    # over upstream's SourceFileLoader.load_module() in the 2026-09-07 fold (flags.md kernel): patch that.
     def test_path_codex_does_not_override_managed_runtime(self):
         fake_mod = mock.Mock()
-        fake_loader = mock.Mock()
-        fake_loader.load_module.return_value = fake_mod
         with mock.patch.object(km, "_codex_backend", None), \
-             mock.patch.object(km, "SourceFileLoader", return_value=fake_loader), \
+             mock.patch.object(km, "load_source", return_value=fake_mod), \
              mock.patch.object(km.shutil, "which", return_value="/TESTBIN/codex"):
             backend = km._codex()
             self.assertIs(backend, fake_mod.CodexBackend.return_value)
@@ -238,9 +238,8 @@ class CodexRuntimeSelection(unittest.TestCase):
         # PATH is ignored, but the one explicit knob the judges already read (ROMP_CODEX_BIN) governs
         # sessions too — an opt-in, not the ambient PATH accident #929 closed (review fold, 2026-09-07)
         fake_mod = mock.Mock()
-        fake_loader = mock.Mock(); fake_loader.load_module.return_value = fake_mod
         with mock.patch.object(km, "_codex_backend", None), \
-             mock.patch.object(km, "SourceFileLoader", return_value=fake_loader), \
+             mock.patch.object(km, "load_source", return_value=fake_mod), \
              mock.patch.dict(km.os.environ, {"ROMP_CODEX_BIN": "/opt/codex/bin/codex"}), \
              mock.patch.object(km.shutil, "which", return_value="/TESTBIN/codex"):
             km._codex()

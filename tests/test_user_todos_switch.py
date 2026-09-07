@@ -144,7 +144,9 @@ class TheSwitch(_Sandbox):
         self.assertTrue(km._user_todos_on(), "the newer choice survives the stale flush")
         self.assertIn("user-todos", err.getvalue())
         self.assertIn("stale gesture stood down", err.getvalue())
-        self.assertEqual(km._pop_stale_notice(), {"setting": "user-todos", "storedGt": T_NEW},
+        # the notice carries the refused gesture's own stamp too: upstream's _tell_stale_gesture(client, msg),
+        # the stale-toast liveness offer come home (upstream fold 2026-09-07, flags.md kernel)
+        self.assertEqual(km._pop_stale_notice(), {"setting": "user-todos", "storedGt": T_NEW, "gt": T_OLD},
                          "the stand-down is recorded for the settingStale reply")
 
     def test_equal_stamps_keep_the_stored_value(self):
@@ -213,7 +215,10 @@ class TheWsOpAndVersion(_Sandbox):
         self.dispatch({"type": "setUserTodos", "enabled": False, "gt": T_OLD})
         self.assertTrue(km._user_todos_on())
         stale = [m for m in self.sent if m.get("type") == "settingStale"]
-        self.assertEqual(stale, [{"type": "settingStale", "setting": "user-todos", "storedGt": T_NEW, "kept": True}])
+        # `gt` (the refused stamp, the toast's fold key) and `gesture` (the message minus its stamp, for the
+        # toast's re-issue) are upstream's _tell_stale_gesture(client, msg): upstream fold 2026-09-07, flags.md kernel
+        self.assertEqual(stale, [{"type": "settingStale", "setting": "user-todos", "storedGt": T_NEW, "gt": T_OLD,
+                                  "kept": True, "gesture": {"type": "setUserTodos", "enabled": False}}])
         self.assertEqual(len(self.dirtied), 1, "a stood-down gesture repaints nothing — no new information")
 
     def test_a_full_disk_toggle_does_not_tear_the_ws_down(self):

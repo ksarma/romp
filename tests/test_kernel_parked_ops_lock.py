@@ -32,7 +32,7 @@ import time
 import unittest
 from contextlib import redirect_stderr
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -42,7 +42,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_parkedlock", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_parkedlock", os.path.join(BIN, "romp-kernel"))
 
 # The ACCOUNT gate is a separate axis (tests/test_kernel_limit_queue.py); pinned off so the real
 # machine's usage.json can never make these tests park for a reason none of them is about.
@@ -204,7 +204,7 @@ class OneLockAroundEveryMutation(_Drain):
         def send(sid, text):
             self.be.calls.append(("send", text))
             if text == "/clear":                           # a pane send lands while the backend still has the /clear…
-                self.assertTrue(km._send_or_park(self.be, SID, "hello", echo="human"), "…and PARKS")
+                self.assertEqual(km._send_or_park(self.be, SID, "hello", echo="human"), "parked", "…and PARKS")
             self.be.open = True                            # only now does busy() flip
             return True
         self.be.send = send
@@ -334,7 +334,7 @@ class OneLockAroundEveryMutation(_Drain):
         km._pending_ops[SID] = [("compact",)]
         with mock.patch.object(km, "_ops_gate", lambda sid: False):
             km._set_model_or_park(self.be, SID, "opus")
-            self.assertTrue(km._send_or_park(self.be, SID, "hello"))   # (its own first gate reads the queue too)
+            self.assertEqual(km._send_or_park(self.be, SID, "hello"), "parked")   # (its own first gate reads the queue too)
         self.assertEqual(self.be.calls, [], "nothing handed over past an existing queue")
         self.assertEqual(km._pending_ops[SID], [("compact",), ("model", "opus"), ("send", "hello", None)])
 
@@ -547,7 +547,7 @@ class OneLockAroundEveryMutation(_Drain):
         with mock.patch.object(km, "_working_now", gate_probe), \
              mock.patch.object(km, "_park_op_locked", park_probe):
             km._pending_ops[SID] = [("compact",)]          # …but a queue exists: everything parks BEHIND it
-            self.assertTrue(km._send_or_park(self.be, SID, "hello"))
+            self.assertEqual(km._send_or_park(self.be, SID, "hello"), "parked")
             km._set_model_or_park(self.be, SID, "opus")
             self.assertTrue(km._compact_or_park(self.be, SID))
             self.assertEqual([op[0] for op in km._pending_ops[SID]], ["compact", "send", "model", "compact"],
@@ -555,7 +555,9 @@ class OneLockAroundEveryMutation(_Drain):
             self.assertEqual(owned["park"], [True] * 3, "the queue check + park is one locked step")
             self.assertEqual(self.be.calls, [])
             km._pending_ops.clear()                        # no queue: everything hands over
-            self.assertFalse(km._send_or_park(self.be, SID, "hello"))
+            # the fork's three-outcome contract (kept in the 2026-09-07 fold, R8): a handover returns the backend
+            # send's own result (True here), a park returns "parked"; never a bare parked-or-not bool
+            self.assertIs(km._send_or_park(self.be, SID, "hello"), True)
             km._set_model_or_park(self.be, SID, "opus")
             self.assertEqual(owned["handover"], [False, False], "the handover to the backend is outside the lock")
             self.assertEqual(self.be.calls, [("send", "hello"), ("model", "opus")])

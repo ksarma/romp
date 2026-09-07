@@ -8,7 +8,7 @@ import tempfile
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import patch
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 ROOT = Path(__file__).resolve().parents[1]
 _IMPORT_STATE = tempfile.mkdtemp(prefix="romp-runtime-auth-")
@@ -17,7 +17,7 @@ os.environ.pop("ROMP_STATE_DIR", None)
 os.environ["ROMP_SERVICE_ENV_FILE"] = _IMPORT_STATE + "/absent.env"
 os.environ["ROMP_SERVICE_ENV"] = os.environ["ROMP_SERVICE_ENV_FILE"]
 os.environ.pop("ROMP_API_KEY_REF", None)
-sb = SourceFileLoader("romp_sdk_runtime_auth", str(ROOT / "kernel/sdk_backend.py")).load_module()
+sb = load_source("romp_sdk_runtime_auth", str(ROOT / "kernel/sdk_backend.py"))
 ks = sb._keysrc
 REF = "op://test-vault/test-item/credential"
 KEY = "synthetic-runtime-credential"

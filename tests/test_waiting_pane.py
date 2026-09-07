@@ -241,7 +241,10 @@ class Shell(unittest.TestCase):
         self.assertIn("'f-waiting':'waiting-pane'", km._LANDING_FOCUS_JS)
         self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
         self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", self.html)   # Esc wiring
-        self.assertIn("waiting:'Waiting'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
+        # the Log's connection-lost label: PN is json.dumps(dict(_PANE_ORDER)) since the 2026-09-07 fold (kernel-code.md
+        # H56, upstream's one-list map), so the pin is the map plus the pane's row in _PANE_ORDER
+        self.assertIn("var PN=" + json.dumps(dict(km._PANE_ORDER)) + ";", km._LANDING_ERRS_JS)
+        self.assertEqual(dict(km._PANE_ORDER).get("waiting"), "Waiting")
         self.assertIn("waiting:document.getElementById('f-waiting')", km._LANDING_MOBILE_JS)
         self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
         self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34,files:40}", self.html)

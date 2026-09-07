@@ -35,7 +35,7 @@ import threading
 import time
 import unittest
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -45,14 +45,14 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # touch the live push store or rotate the real VAPID key).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 from pathlib import Path
 _STATE_TD = tempfile.TemporaryDirectory()
 jd.STATE = Path(_STATE_TD.name)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-km = SourceFileLoader("romp_kernel_notify_popover", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_notify_popover", os.path.join(BIN, "romp-kernel"))
 
 SID_WEB = "11111111-2222-4333-8444-555555555501"
 SID_API = "11111111-2222-4333-8444-555555555502"

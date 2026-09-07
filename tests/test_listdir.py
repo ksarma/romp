@@ -72,7 +72,8 @@ class ListDirShape(_Tree):
         # a PDF opens in its own browser tab (2026-09-06), decided before any request — a row the view route
         # would 413 must therefore be marked download-only here, or the tab lands on the refusal. Sparse
         # files: the caps are on st_size, no bytes are written.
-        for name, over in (("big.pdf", km._PREVIEW_MAX_BYTES + 1), ("huge.log", km._TEXT_MAX_BYTES + 1),
+        # _MEDIA_MAX_BYTES is the fork's name for upstream's _PREVIEW_MAX_BYTES (file-review Slice 4; kernel-code.md)
+        for name, over in (("big.pdf", km._MEDIA_MAX_BYTES + 1), ("huge.log", km._TEXT_MAX_BYTES + 1),
                            ("paper.pdf", 4096), ("notes.log", 4096)):
             with open(os.path.join(self.tmp, name), "wb") as f:
                 f.truncate(over)

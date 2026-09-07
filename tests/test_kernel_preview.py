@@ -111,7 +111,7 @@ class FilePreviewEndpoint(unittest.TestCase):
         # an <iframe>/<img> load or a HEAD probe keeps the plain text they parse.
         big = os.path.join(self.tmp.name, "thesis <draft> & \"final\".pdf")
         with open(big, "wb") as f:
-            f.truncate(km._PREVIEW_MAX_BYTES + 1)           # sparse: no bytes written, the cap is on st_size
+            f.truncate(km._MEDIA_MAX_BYTES + 1)           # sparse: no bytes written, the cap is on st_size
         try:
             sid = "11111111-2222-3333-4444-555555555555"
             qp = "/file?path=" + urllib.parse.quote(big) + "&sid=" + sid
@@ -151,7 +151,7 @@ class FilePreviewEndpoint(unittest.TestCase):
             # an oversize IMAGE navigated to keeps the text — only a PDF can open in its own tab
             bigpng = os.path.join(self.tmp.name, "huge.png")
             with open(bigpng, "wb") as f:
-                f.truncate(km._PREVIEW_MAX_BYTES + 1)
+                f.truncate(km._MEDIA_MAX_BYTES + 1)
             code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(bigpng), headers={"Sec-Fetch-Dest": "document"})
             self.assertEqual((code, hdrs.get("Content-Type")), (413, "text/plain"))
             os.unlink(bigpng)
