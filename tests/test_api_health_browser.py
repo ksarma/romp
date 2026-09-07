@@ -108,7 +108,7 @@ const R = await page.evaluate((SID) => {
   b0.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
   window.__rompApiHealth(frame({ text: "overloaded · 2 waiting", waiting: 2, blocked: 2, sessions: [row(1), row(2)] }));
   R.heldKeepsNode = document.contains(b0);
-  R.heldKeepsText = /1 waiting/.test(tip().textContent);
+  R.heldKeepsText = /3 waiting/.test(tip().textContent) && !/2 waiting/.test(tip().textContent);   // the pinned frame stays up
   b0.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
   b0.click();                                          // the click lands on the button that was pressed
   R.clickSent = sent.map((o) => o.type + ":" + String(o.value));

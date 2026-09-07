@@ -235,8 +235,9 @@ class ApiHealthCell(unittest.TestCase):
         self.assertGreater(i_api, self.html.index("<div class=rail-scroll>"))
 
     def test_the_cell_ships_hidden_with_its_own_label_a_dot_and_the_word(self):
-        self.assertIn('<div id=rail-api class="ru-w ru-ah" hidden data-state=ok><span class=ru-name>API</span>'
-                      '<i class=ah-dot></i><span class=ah-text>ok</span></div>', self.html)
+        tag = ('<div id=rail-api class="ru-w ru-ah" hidden role=button tabindex=0 aria-label="API ok" data-state=ok>'
+               '<span class=ru-name>API</span><i class=ah-dot></i><span class=ah-text>ok</span></div>')
+        self.assertTrue(tag in self.html, "the cell's markup: hidden, a keyboard button, its own label, a dot, the word")
         tag = re.search(r"<div id=rail-api[^>]*>", self.html).group(0)
         self.assertNotIn("title", tag, "the rail's no-title rule: the detail is the one hover surface")
         self.assertNotIn("data-keycmd", tag, "no palette command in v1")

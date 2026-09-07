@@ -375,12 +375,19 @@ class Detail(unittest.TestCase):
         self.assertIn("t.textContent=v?RESUME:STOP", press)
         self.assertIn("t.classList.add('romp-acted')", press)
         self.assertLess(press.index("t.classList.add('romp-acted')"), press.index("__rompShellSend("), "acknowledged first")
-        self.assertIn("Not sent", press, "a dead socket is said, not swallowed")
+        self.assertIn("hint=NOTSENT", press, "a dead socket is said, not swallowed")
+        self.assertIn("var NOTSENT='Not sent: the dashboard is disconnected. Try again.';", self.JS)
 
-    def test_a_session_row_jumps_to_its_card_the_way_the_log_does(self):
+    def test_a_session_row_opens_that_session_the_way_the_feed_s_links_do(self):
+        # feed.ts openOrReviveSession posts openSession for a live session; the old route posted revealCard with
+        # an empty itemId (which matched no card and fell to openSession anyway) after forcing the feed pane on,
+        # a layout change persisted to localStorage for no visible reason (review round 1, 2026-09-07)
         row = self.JS[self.JS.index("else if(act==='reveal')"):self.JS.index("else if(act==='usage')")]
-        self.assertLess(row.index("__rompPaneToggle('feed',true)"), row.index("{romp:'revealCard',itemId:'',sid:sid}"))
+        self.assertIn("__rompShellSend({type:'openSession',id:sid})", row)
+        self.assertNotIn("__rompPaneToggle", self.JS, "never a pane toggle from the card")
+        self.assertNotIn("revealCard", self.JS)
         self.assertIn("data-act=reveal data-sid=", self.JS)
+        self.assertIn("else{hint=NOTSENT;dirty=true;}", row, "a dead socket is said here too")
 
     def test_the_coverage_line_appears_only_under_a_tmux_guard(self):
         self.assertIn("if(m.tmux>0)h+=", self.JS)
@@ -396,8 +403,54 @@ class Detail(unittest.TestCase):
 
     def test_the_cell_repaints_only_when_state_or_text_changed_and_shows_on_the_first_frame(self):
         self.assertIn("if(el.hidden)el.hidden=false;", self.JS)
-        self.assertIn("if(el.getAttribute('data-state')!==m.state||txt.textContent!==m.text){el.setAttribute('data-state',m.state);txt.textContent=m.text;}", self.JS)
-        self.assertIn("if(tip.style.display==='block')tip.innerHTML=html(m);", self.JS)
+        self.assertIn("if(el.getAttribute('data-state')!==m.state||txt.textContent!==m.text){el.setAttribute('data-state',m.state);"
+                      "txt.textContent=m.text;el.setAttribute('aria-label','API '+m.text);}", self.JS)
+        self.assertIn("if(tip.style.display!=='block')return;", self.JS)
+        self.assertIn("if(held){dirty=true;return;}render();};", self.JS)
+
+    # ── review round 1 (2026-09-07): the detail's click safety, acknowledgment, hover, keyboard and modal rules ──
+    def test_the_hover_renders_no_controls_and_the_pinned_detail_does(self):
+        self.assertIn("function html(m,full)", self.JS)
+        self.assertIn("if(full)h+=btnHTML(m);", self.JS)
+        self.assertIn("(full?' data-act=reveal data-sid=\"'+esc(r.sid)+'\"':'')", self.JS)
+        self.assertIn("if(full)h+='<div class=\"ru-tip-row ah-foot\">", self.JS)
+        self.assertIn("tip.innerHTML=html(LAST,pinned);", self.JS, "pinned = full; the hover = the reading only")
+
+    def test_a_frame_under_a_held_pointer_is_painted_on_release_never_under_the_press(self):
+        self.assertIn("tip.addEventListener('pointerdown',function(){held=true;});", self.JS)
+        self.assertIn("document.addEventListener('pointerup',release);", self.JS)
+        self.assertIn("document.addEventListener('pointercancel',release);", self.JS)
+        self.assertIn("if(held){dirty=true;return;}render();", self.JS)
+        self.assertIn("tip.contains(ev.target))return;flush();}", self.JS, "a release inside waits for its click")
+        self.assertIn("flush();});", self.JS, "the click handler flushes last")
+
+    def test_the_acknowledgment_survives_frames_until_one_confirms_the_flip(self):
+        self.assertIn("pending=v?1:0;", self.JS)
+        self.assertIn("if(pending!==null)return '<button class=\"ah-btn romp-acted\" disabled data-act=pause", self.JS)
+        self.assertIn("if(pending!==null&&((pending===1)===(m.state==='paused')))pending=null;", self.JS)
+
+    def test_a_failed_send_restores_the_button_and_names_the_reason_under_it(self):
+        press = self.JS[self.JS.index("if(act==='pause')"):self.JS.index("else if(act==='reveal')")]
+        self.assertIn("{pending=null;hint=NOTSENT;dirty=true;}", press)
+        self.assertIn("(hint?'<div class=ah-hint>'+esc(hint)+'</div>':'')", self.JS)
+        self.assertIn("LAST=m;hint='';", self.JS, "a frame means the socket is alive: the notice retires")
+
+    def test_the_hover_re_anchors_after_a_re_render(self):
+        self.assertIn("function render(){if(!LAST)return;tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();}", self.JS)
+        self.assertIn("tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}", self.JS)
+        self.assertIn("lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;", self.JS)
+
+    def test_the_cell_is_a_keyboard_button_and_the_detail_takes_and_returns_focus(self):
+        self.assertIn("el.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' ')", self.JS)
+        self.assertIn("el.setAttribute('aria-label','API '+m.text)", self.JS)
+        self.assertIn("tip.setAttribute('role','dialog')", self.JS)
+        self.assertIn("focusBack=document.activeElement;", self.JS)
+        self.assertIn("try{tip.focus();}catch(e){}", self.JS)
+        self.assertIn("(fb&&fb.focus?fb:el).focus()", self.JS)
+
+    def test_each_modal_closes_the_other_first_so_the_shared_backdrop_serves_one(self):
+        self.assertIn("function open(){if(!LAST)return;try{window.__rompUsageClose&&window.__rompUsageClose();}catch(e){}", self.JS)
+        self.assertIn("try{window.__rompApiClose&&window.__rompApiClose();}catch(e){}", km._LANDING_USAGE_JS)
 
     def test_actions_are_delegated_on_the_stable_tip_node(self):
         self.assertIn("tip.addEventListener('click',function(ev){", self.JS)
