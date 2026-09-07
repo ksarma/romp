@@ -39,6 +39,31 @@ def _frame_keys():
     return {"type", "state", "cls", "reason", "text", "waiting", "retrying", "blocked", "since", "tmux", "sessions", "seq"}
 
 
+class Reference(unittest.TestCase):
+    """docs/reference.md's subsection on the cell documents the frame and the pause file the code writes
+    (review round 3, 2026-09-07: the frame block lacked seq and the file paragraph bills)."""
+
+    def _section(self):
+        doc = Path(os.path.dirname(HERE), "docs", "reference.md").read_text()
+        i = doc.index("### The bottom bar's indicator")
+        return doc[i:doc.index("\n## ", i)]
+
+    def test_the_documented_frame_has_the_code_s_keys(self):
+        sec = self._section()
+        block = sec[sec.index("```json\n") + len("```json\n"):sec.index("\n```", sec.index("```json\n"))]
+        shape = json.loads(block)
+        self.assertEqual(set(shape), _frame_keys(), "the reference's frame block and _api_health_frame drift")
+        self.assertIn("`seq` counts the retry-pause file's writes", sec)
+
+    def test_the_pause_file_paragraph_names_every_field_the_code_writes(self):
+        sec = self._section()
+        for k in ("`paused`", "`t`", "`reason`", "`bills`", "`liftedAt`", "`supersedes`"):
+            self.assertIn(k, sec, k)
+        src = inspect.getsource(km._set_retry_paused)
+        for k in ("paused", "t", "reason", "bills", "liftedAt", "supersedes"):
+            self.assertIn('"%s"' % k, src, "the paragraph names a field the code does not write: " + k)
+
+
 class _Fixture(unittest.TestCase):
     """Fixture sessions: `self.sess` is the alive roster, `self.live` the merged live map, `self.errs`
     the latched error per transcript path. Everything the frame reads is patched at the module seam."""
