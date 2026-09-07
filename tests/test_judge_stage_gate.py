@@ -462,6 +462,20 @@ class ReArms(_Gate):
         reg.write_text(json.dumps({"spawnedAt": T0 + 700, "model": "opus"}))
         self._rearms(1, 1, "the next revival")
 
+    def test_a_reg_appearing_or_vanishing_re_arms_both_through_sdk_owned(self):
+        # _sdk_owned (the reg's existence) is its own input: the parse authors the composer's input as the
+        # human only for an SDK session, so a reg with no spawnedAt still re-arms when it appears or goes
+        self._session(SID)
+        self._converge()
+        reg = jd.STATE / "sdk" / (SID + ".json")
+        reg.parent.mkdir(parents=True, exist_ok=True)
+        reg.write_text(json.dumps({"model": "sonnet"}))                 # no spawnedAt: only the existence changes
+        self.assertIsNone(jd._reg_spawned_at(SID), "premise: the value memo reads None either way")
+        self._rearms(1, 1, "a reg appearing")
+        self._converge()
+        reg.unlink()
+        self._rearms(1, 1, "a reg vanishing")
+
     def test_the_task_store_re_arms_the_planner_under_the_leaf_stem(self):
         # a to-do item created, then flipped in place, under the LEAF stem (what _sync_declared_plan reads:
         # a /clear fork lane's leaf is not the romp sid); a dir under the romp sid on a fork lane is not read
@@ -766,7 +780,7 @@ class DeathDrain(_Gate):
         self.assertNotIn("endedAt", m, "a cut walk never finalizes the marker")
         self._reset()
         self._pass(later + 1, tiers=("close",))
-        self.assertEqual(self._st("close")["ran"], 1, "still due (the rotated marker's identity moved too)")
+        self.assertEqual(self._st("close")["ran"], 1, "still due: the cut run stamped nothing, so there is no stamp to match")
 
 
 class Bounds(_Gate):

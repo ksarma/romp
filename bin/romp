@@ -1378,7 +1378,7 @@ print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms
 # stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline
 # made the run due; bypassed: no signature could be computed, or the parse ran under another cut)
 parts = []
-for t in ("plan", "close", "unblock", "group", "consolidate", "distill"):
+for t in [k for k in ((b.get("judge") or {}).get("tiers") or {}) if k != "stamps"]:   # the gated tiers, as the kernel names them
     ran, sk = dl("judge", "tiers", t, "ran"), dl("judge", "tiers", t, "skipped")
     if not (ran or sk):
         continue
