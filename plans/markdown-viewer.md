@@ -8,7 +8,10 @@ code as built departs from this text and why. Six-lens audit at the fork's origi
 (2026-09-07), each of the 75 findings reproduced in headless Chromium; the raw findings stay outside the
 repo. File and line references describe the fork at that audit commit; as with every plans/ document,
 treat them as dated. Excluded as in flight at audit time: text size, fluid width and table reflow
-(fork PR #348) and links inside viewed files (fork PR #347); the slices build on both.
+(fork PR #348, merged) and links inside viewed files (fork PR #347, open at this commit); the slices
+build on both. The upstream fold (fork PR #349), also merged after the audit, already mints
+`md-`-prefixed GitHub-slug heading ids and lands in-document `#` links on their heading, so the ninth
+High defect below is partly closed on main; Slice 4 keeps that prefix and builds on it.
 
 ## Summary
 
@@ -17,9 +20,10 @@ and figures keep their shape at any width, front matter, callouts, math, footnot
 render as written, heading links jump, a session's edit never moves the reader, comments anchor on
 any passage, and every failure says what happened.
 
-The audit confirmed 75 defects, nine high; eight slices fix them, each useful alone and about one
+The audit confirmed 75 defects, nine high; eight slices fix them, each useful alone and one
 session-day. The user ruled on the eight decisions the audit raised; the rulings are recorded under
-Decisions and the slices below are written to them.
+Decisions, and each slice names the decisions it carries: 6 in Slice 1, 3 and 4 and 5 in Slice 3,
+1 and 2 and 8 in Slice 4, 7 as Slice 8.
 
 ## Why now
 
@@ -117,7 +121,9 @@ A GitHub heading scale, h5 and h6 dimmed at 1em, h1 and h2 ruled; a `--font-doc`
 2em list gutter; bullet-less task items with `accent-color` and `color-scheme`; th weight 600,
 `--overlay-05` fill, even-row striping; `[align]` honoured; `<kbd>` styling; `tab-size: 4`; an
 `@media print` block; the chat's `wrapCodeLines` and `addCopyBtn` shared with mdBlock, plus decision
-5's grammars. Acceptance: h1 to h4 compute 2, 1.5, 1.25 and 1em; a task item computes `list-style:
+5's grammars; the reading measure of decision 4, a centred column near 80ch at about 15px that
+`--fv-scale` (fork PR #348) scales. Acceptance: h1 to h4 compute 2, 1.5, 1.25 and 1em; the prose
+column is centred in the body and measures about 80ch at 100 percent; a task item computes `list-style:
 none`; a `:---:` column computes `text-align: center`; `--hl-cmt` on the code background measures
 4.5:1 or more; a long note prints multi-page in black; every fence has a gutter and Copy;
 anchor-map paints across `.cl` spans. Tests: computed-style leg; wrapped-code anchor-map fixture.
@@ -128,8 +134,15 @@ A `md-config.ts` imported by render.ts, file-view.ts and anchor-map.ts registers
 double-tilde del rule, math (decision 1), front matter (a token spanning the block exactly, rendered
 folded), footnotes, heading ids with GitHub slugs and in-body scrolling for `#` hrefs, callouts as
 titled blocks, `==mark==`, wikilinks and embeds (decision 2), and `video`/`audio`/`source` in
-`rewriteFigureSrcs`. Extensions, not string preprocessing: anchor-map lexes the same source.
-Acceptance: each construct's fixture renders its element, `.katex` included in the files bundle;
+`rewriteFigureSrcs`, which also applies decision 8 to remote figures: a src on an allowed host
+(github.com and its image hosts, the kernel's own `/file` route, localhost) loads on open; any other
+host shows a placeholder naming the host that loads the figure on one click; the list is a gear
+setting, and a host the person allowed stays allowed for the session. A note's own attachments,
+an Obsidian vault's included, are local files through the `/file` route and load on open.
+Extensions, not string preprocessing: anchor-map lexes the same source.
+Acceptance: each construct's fixture renders its element, `.katex` included in the files bundle; a
+fixture with a figure on an unlisted host makes no request for it until the placeholder is clicked,
+and a figure on github.com loads on open;
 anchor-map maps a paragraph after front matter and after a footnote definition to its source offset;
 a `#section` click scrolls `.fileview-body` and opens no tab. Tests: render and anchor-map fixtures;
 a metafile check (math.ts in files.js).
