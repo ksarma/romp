@@ -12264,16 +12264,33 @@ _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier 
 _ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
 
 
+def _envsrc_mod():
+    """kernel/envsource.py, the command source's module, for the read the kernel makes before the backend
+    exists: the object already loaded under its fixed name once sdk_backend has imported (that import
+    executes the module under this name, and the backend's construction pins the mode on it), else loaded
+    here under the same name, so there is one object and one mode for every reader (load_source's
+    sys.modules rule; judge.py reaches keysource the same way). Looked up per call, not at import: the
+    backend's import normally comes first, and a read before it sees the live configuration the backend
+    then pins from."""
+    return sys.modules.get("romp_envsource") or load_source("romp_envsource", HERE / "envsource.py")
+
+
 def _reserved_names_source():
     """The descriptor _env_error's reserved-names rule decides on: the backend's mode-aware read once it
     is built (sdk_backend.reserved_names_source: None in command mode, where nothing beyond the identity
-    names is reserved and the env file's source is never selected; the file/op descriptor otherwise),
-    else keysource.select_source() read directly, the door's answer before the eager boot builds the
-    backend. Without the seam a stale ROMP_API_KEY_REF line refused a per-session token in command mode
-    as reserved for a retrieval that never runs (review find, 2026-09-07)."""
+    names is reserved and the env file's source is never selected; the file/op descriptor otherwise).
+    Before the eager boot has built the backend (None) or when the SDK import failed for good (False),
+    the same two-step rule read here: the command source configured (kernel/envsource.py) answers None,
+    else keysource.select_source(), upstream's file/op descriptor. Without the seam a stale
+    ROMP_API_KEY_REF line refused a per-session token in command mode as reserved for a retrieval that
+    never runs (review find, 2026-09-07); the fallback then went straight to select_source, which on
+    that file did the same and durably wrote the service.env.source marker `op` for a source nobody
+    selected (fold review, 2026-09-07). The command-mode answer selects nothing and writes nothing."""
     fn = getattr(_sdk_backend, "reserved_names_source", None)
     if fn is not None:
         return fn()
+    if _envsrc_mod().configured():
+        return None
     return jd._keysrc.select_source()
 
 
@@ -19349,7 +19366,13 @@ def _update_remote(host):
         # check stands down for a quiet deploy of the code its checkout holds by reading this row, and
         # the owner check's manager status call was a window in which the checkout was already ahead
         # with no row on disk. When no owning manager answers, the fallback below writes its own
-        # IMMEDIATE row, which is then the newest and supersedes this one for every reader. The
+        # IMMEDIATE row, which is then the newest and supersedes this one for every reader. A host
+        # stopped by `romp down` (its marker, below) is the exception (fold review, 2026-09-07): with no
+        # owning manager its branch exits without a restart, so a quiet row written here was one nobody
+        # consumed, naming a restart nobody parked to the kernel `romp up` starts later (a pending quiet
+        # row outlives the kernel that filed it, _recent_restart_audit). So the row is written before the
+        # owner check when the marker is absent, and inside the owned branch when it is present: a manager
+        # running beside a marker still gets its quiet restart attributed, right before it is asked. The
         # restart goes THROUGH THE FAR MANAGER'S QUIET WINDOW (restart-all --quiet: no in-flight turn is cut,
         # the 15-minute backstop still lands the deploy, a second apply arriving while one is pending
         # coalesces into the same bounce) — but ONLY when that manager actually OWNS the kernel on the
@@ -19359,12 +19382,15 @@ def _update_remote(host):
         # = the immediate path below ran (no owning manager reachable — node absent, no manager, or
         # the polled kernel is bare). The quiet audit row says when=quiet; the fallback writes its own
         # row without it, so the cut row joins the right request with the right window.
-        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
-        '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        'qrow() { python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; }; '
+        '[ -f "$LOGDIR/down-by-romp" ] || qrow; '
         'OWNED=0; if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then '
         'OWNED="$("$R/bin/romp-manager" status 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); '
         'print(1 if any(int(k.get(\'port\') or 0)==%d for k in (d.get(\'kernels\') or [])) else 0)" 2>/dev/null || echo 0)"; fi; '
         'if [ "$OWNED" = 1 ]; then '
+        # a manager owning the kernel beside a `romp down` marker (see above): its quiet restart is attributed too
+        '[ ! -f "$LOGDIR/down-by-romp" ] || qrow; '
         'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
         # stopped on purpose (see above): synced, nothing restarted
         'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi; '

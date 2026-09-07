@@ -2284,7 +2284,7 @@ class InheritedEnvironmentNamed(_CommandMode):
     kernel's whole os.environ under the options overlay, judge CLIs copy os.environ, tmux panes take the
     manager-started server's globals, and the kernel takes out only ANTHROPIC_API_KEY, the CLI's token
     names and, as the op consumer, op's OP_* names. Every name listed is therefore inherited by every
-    session, and the line says so; until the upmerge it called them frozen copies the sessions do not
+    session, and the line says so; until the 2026-09-07 upstream fold it called them frozen copies the sessions do not
     receive. Not a scrub: whether to scrub is the owner's ruling, filed separately. A synthetic name,
     never a real one, so a developer's own shell exports are neither read nor moved."""
 
@@ -2804,7 +2804,7 @@ class KeycycleRouteCommandMode(_RouteServer, _CommandMode):
     shell's own run. KeycycleRoute's doubles cannot show this. The fold's first cut applied upstream's
     file-mode rule to the command descriptor and answered the fingerprint of the set's absent
     ANTHROPIC_API_KEY line ("") beside keyKind "helper", so the CLI printed MISMATCH and a --cycle
-    stopped before any reconnect (upmerge review, 2026-09-07)."""
+    stopped before any reconnect (review of the 2026-09-07 upstream fold)."""
 
     def _cli_agrees(self, resp):
         said = []
@@ -2882,7 +2882,7 @@ class KeycycleRouteReferenceSource(_RouteServer, _Backend):
     included (the fork's route calls both beside upstream's source read). The fold's first cut resolved
     the reference twice per status read, once for a fingerprint it then discarded and once inside
     key_source_status; upstream's KeycycleRoute double has neither method, so its test could not see
-    it (upmerge review, 2026-09-07)."""
+    it (review of the 2026-09-07 upstream fold)."""
 
     def setUp(self):
         super().setUp()
@@ -2922,7 +2922,7 @@ class CommandModeEnvDoor(_RouteServer, _CommandMode):
     ROMP_API_KEY_REF line in the env file (an earlier 1Password trial) governs nothing: a per-session
     credential is not reserved for a retrieval that never runs, and checking a payload neither discards
     the startup claim nor prints that the file's reference governs. The fold's first cut read the
-    module-level file/op selector at the backend's door, which did both (upmerge review, 2026-09-07).
+    module-level file/op selector at the backend's door, which did both (review of the 2026-09-07 upstream fold).
     Both copies of the validator, the backend's and the kernel's /new mirror, agree in both modes."""
 
     NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
@@ -2950,6 +2950,53 @@ class CommandModeEnvDoor(_RouteServer, _CommandMode):
                     self.assertEqual(self.km._env_error(payload, auth), "", (name, auth))
         self.assertEqual(err.getvalue(), "", "no 'startup key IGNORED' notice: the file's source was never selected")
         self.assertEqual(sb._WORK_KEY, BOOT_KEY, "checking a payload discards no claim")
+
+    def test_the_kernel_mirror_answers_the_mode_before_the_backend_exists_and_writes_no_marker(self):
+        # the window between the kernel's eager backend thread starting and the construction finishing
+        # (_sdk_backend None), and a kernel whose SDK import failed for good (False): the mirror's fallback
+        # went straight to keysource.select_source, which on this file selects the op source, refuses every
+        # credential name as reserved for a retrieval that never runs, and durably writes the
+        # service.env.source marker `op` for a source nobody selected (fold review, 2026-09-07). The mode is
+        # read off the command source's module instead, without the backend; file mode keeps upstream's rule.
+        import contextlib
+        from unittest import mock
+        self._stale_reference_file()
+        sb._WORK_KEY = BOOT_KEY
+        marker = ks.marker_path(self.path)
+        self.assertFalse(os.path.exists(marker))
+        for absent in (None, False):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), mock.patch.object(self.km, "_sdk_backend", absent):
+                self.assertIsNone(self.km._reserved_names_source(), absent)
+                for auth in ("", "key", "login"):
+                    for name in self.NAMES:
+                        self.assertEqual(self.km._env_error({name: fixture_value("door")}, auth), "", (absent, name, auth))
+            self.assertEqual(err.getvalue(), "", "nothing selected the file's source, so nothing was said")
+            self.assertFalse(os.path.exists(marker), "the door wrote the durable op memory for a source it never selected")
+            self.assertNotIn(self.path, ks._AUTHORITATIVE_PATHS, "the door made the file's reference authoritative for the process")
+        self.assertEqual(sb._WORK_KEY, BOOT_KEY, "checking a payload discards no claim")
+        # file mode, the same window: upstream's rule, read the same way the built backend reads it
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)
+        es._reset()
+        with contextlib.redirect_stderr(io.StringIO()), mock.patch.object(self.km, "_sdk_backend", None):
+            self.assertEqual(self.km._reserved_names_source().kind, "op")
+            self.assertIn("reserved while runtime API key retrieval", self.km._env_error({"ANTHROPIC_API_KEY": fixture_value("door")}))
+
+    def test_the_mode_read_loads_the_command_source_module_when_nothing_has(self):
+        # a kernel whose sdk_backend never imported (the SDK unavailable for good) has no romp_envsource
+        # loaded: the read loads it under that fixed name, live; once the backend's import has it, that
+        # object answers (one module, one mode pin, for every reader)
+        import sys
+        held = sys.modules.pop("romp_envsource", None)
+        self.assertIs(held, es, "the lab's backend loaded the module under its fixed name")
+        try:
+            mod = self.km._envsrc_mod()
+            self.assertIsNot(mod, held)
+            self.assertIs(sys.modules.get("romp_envsource"), mod, "registered under the fixed name for the next loader")
+            self.assertTrue(mod.configured(), "read live: the lab's command is configured")
+        finally:
+            sys.modules["romp_envsource"] = held
+        self.assertIs(self.km._envsrc_mod(), held)
 
     def test_file_mode_keeps_upstreams_rule_on_the_same_file_in_both_copies(self):
         import contextlib
