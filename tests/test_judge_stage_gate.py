@@ -1281,21 +1281,33 @@ class StoreCompleteness(_Gate):
         self._converge(tiers=("distill",))
 
     def test_a_store_that_does_not_parse_never_stamps(self):
-        # the two tiers that write nothing over an empty fallback store (the unblocker: no candidates; the
-        # distiller: no todo). The grouper and consolidator would record their signature on the fallback and
-        # save_goals publishes it over the unparseable file (pre-existing; save_goals pops the mark), after
-        # which the file reads again, so they are not the probe here
+        # every tier stands down over a fallback store (_fallback_store): the file is left byte-identical (the
+        # grouper and consolidator used to record their signature on the empty fallback and publish it over the
+        # file, the planner and closer their whole pass), the run is incomplete so the sid stays due, no save
+        # is attempted (so no refusal and no pass-crash row), and load_goals logs one row per failure episode,
+        # not per tier or per pass
         self._session(SID)
         self._converge()
-        (jd.GOALDIR / (SID + ".json")).write_text("{ not the store")    # exists, unreadable as a store
+        gp = jd.GOALDIR / (SID + ".json")
+        good = gp.read_text()
+        gp.write_text("{ not the store")                                 # exists, unreadable as a store
         for _ in range(2):
             self._reset()
-            self._pass(tiers=("unblock", "distill"))
-            for t in ("unblock", "distill"):
+            self._pass(tiers=ALL_TIERS)
+            for t in ALL_TIERS:
                 s = self._st(t)
                 self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
                                  "%s: a fallback view marks the run incomplete, so the sid stays due" % t)
-        self.assertEqual((jd.GOALDIR / (SID + ".json")).read_text(), "{ not the store", "neither tier wrote")
+        self.assertEqual(gp.read_text(), "{ not the store", "no tier wrote")
+        self.assertEqual(len(self._rows("store-unreadable")), 1, "one row per failure episode")
+        self.assertEqual(len(self._rows("unread-store-save")), 0, "every tier stood down before its save")
+        self.assertEqual(len(self._rows("pass-crash")), 0)
+        gp.write_text(good)                                              # the file reads again: nothing else moved
+        self._reset()
+        self._pass(tiers=ALL_TIERS)
+        self.assertEqual(tuple(self._st(t)["stamped"] for t in ALL_TIERS), (1,) * len(ALL_TIERS),
+                         "readable again: every tier runs to completion and stamps")
+        self.assertEqual(len(self._rows("store-unreadable")), 1)
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_journal_never_stamps(self):

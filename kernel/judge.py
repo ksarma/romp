@@ -91,7 +91,7 @@ EPIDIR   = STATE / "episodes"            # per-session append-only episode log, 
 STATESDIR = STATE / "states"             # per-session real idle/compacting transitions → idle atoms (settled gate)
 PCACHE   = STATE / "judge-units-cache"   # (mtime,size) cache of a transcript's ready units
 MESSAGES = STATE / "timeline" / "messages.jsonl"
-ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — surfaced by `romp judges`
+ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — the card warn modal and the debug feed read it
 USAGE    = STATE / "judge-usage.jsonl"   # one line per successful judge call: tokens/cost/ms — the kernel/UI roll up pipeline cost
 JUDGE_AUTH = STATE / "judge-auth.json"   # judge-auth-down latch {fsid: {t, mode, note}}: set by a credential-class error
 JUDGE_LIMIT = STATE / "judge-limit.json"  # usage-limit-down latch {t, bucket, pct, resets_at, model}: the gate
@@ -848,7 +848,11 @@ def consume_judge_recovery():
 
 
 def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
-    """Append one failure row to ERRORS (judge-errors.jsonl) so `romp judges` can surface it. The row contract
+    """Append one failure row to ERRORS (judge-errors.jsonl). Rows with a `goal` reach the card's warn modal
+    (the kernel's _card_warn_rows joins them onto cards) and the debug feed; a row without one is file-level
+    and reaches nobody by itself (`romp judges`, which listed them all, was retired 2026-07-27), so a
+    condition that needs the user's eye also needs a surface of its own: the goals-store read failures ride
+    the kernel's once-per-episode warn frame and the /perf gauge (unreadable_store_sids). The row contract
     (the user 2026-07-09) — every row answers who/where/what/why on its own:
       judge  who failed — the judge's own one-per-prompt name, never a tier
       fsid   where — the session it was judging ("" only for fleet-level rows like the rate gate)
@@ -1061,9 +1065,10 @@ _UNREADABLE_LOGGED = set()   # path strings whose last read failed and was logge
 _UNREADABLE_LOCK = threading.Lock()
 
 
-def _read_failed(path_s, err, fsid, exc):
+def _read_failed(path_s, err, fsid, exc, note=None):
     """A file the signature stat'd (or reads by value) could not be READ by the stage: mark the running
-    stage incomplete and log one judge-errors row. An absent file is a real state (_ident's None, the
+    stage incomplete and log one judge-errors row (`note` names the consequence when the default, written
+    for the side files, does not fit: a goals store's readers stand down rather than judge without it). An absent file is a real state (_ident's None, the
     scans' FileNotFoundError) and is never this; every other failure (a permission bit, EMFILE, EIO, an
     unparseable document) means the stage decided WITHOUT an input the signature says it saw, and a stamp
     would skip the session until that file moved, which a permission or descriptor failure never does
@@ -1077,14 +1082,29 @@ def _read_failed(path_s, err, fsid, exc):
         _UNREADABLE_LOGGED.add(path_s)
     if first:
         _log_judge_error("romp", fsid or "", err,
-                         note="%s unreadable: %r — the pass judged without it and stays due until it reads"
-                              % (os.path.basename(path_s), exc))
+                         note=note or ("%s unreadable: %r — the pass judged without it and stays due until it reads"
+                                       % (os.path.basename(path_s), exc)))
 
 
 def _read_ok(path_s):
     """A read of `path_s` succeeded: the next failure is a new episode and logs again."""
     with _UNREADABLE_LOCK:
         _UNREADABLE_LOGGED.discard(path_s)
+
+
+_STORE_UNREADABLE_NOTE = ("goals store unreadable: %r — every judge stage and the courier stand down on this session "
+                          "and nothing is published for it until the file reads; the kernel warns the app once per "
+                          "episode and GET /perf counts it (goals.unreadable_stores)")
+
+
+def unreadable_store_sids():
+    """The sids whose goals file is in a read-failure episode: load_goals or load_goals_shared found it
+    unreadable or unparseable and no read of it has succeeded since (_read_failed / _read_ok). The one
+    judge-errors row per episode carries no goal, so no card can hold it; the kernel's once-per-episode warn
+    to the app and the /perf gauge (goal_io_stats' `unreadable_stores`) read this instead."""
+    prefix = str(GOALDIR) + os.sep
+    with _UNREADABLE_LOCK:
+        return sorted(p[len(prefix):-5] for p in _UNREADABLE_LOGGED if p.startswith(prefix) and p.endswith(".json"))
 
 
 def _reg_spawned_at(fsid):
@@ -3478,33 +3498,54 @@ def goal_io_stats():
     the memo (`absent_hits`), or loaded and evaluated because the store's files changed or were new
     (`absent_misses`). The counters stay private to this module; readers get a copy."""
     with _GOAL_IO_LOCK:
-        return dict(_GOAL_IO)
+        out = dict(_GOAL_IO)
+    out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the episodes standing now, not a count
+    return out
 
 
-def _fresh_store(fsid, unread=False):
+def _fresh_store(fsid, unread=None):
     """The store a session has before its first publish (no file, or one that does not parse). Born at the
     current identity version — only stores with history recorded under an OLDER derivation are ever sealed
     (see _migrate_placements). Carries _baseRev 0: a writer that CREATES the file still trips the CAS.
-    `unread`: the file EXISTS and could not be read or parsed, so this store is a fallback, not the file's
-    content, and carries the transient `_unread` mark (see load_goals). An absent file is not marked: the
-    empty store IS its content."""
+    `unread`: the reason for the transient `_unread` mark (see _mark_unread): "store" when the file EXISTS
+    and could not be read or parsed, so this store is a fallback, not the file's content, and save_goals
+    refuses to publish it. None for an absent file: the empty store IS its content, it is not marked, and a
+    first mint saves as ever."""
     store = {"rompUuid": fsid, "seq": 0, "nodes": {}, "placements": {}, "status": {},
              "placementsV": PLACEMENTS_V}
     store["_baseRev"] = 0
     if unread:
-        _mark_unread(store)
+        _mark_unread(store, unread)
     return store
 
 
-def _mark_unread(store):
-    """The store is NOT what its files say (see load_goals): mark it, and mark the running stage incomplete.
+def _mark_unread(store, reason):
+    """The store is NOT what its files say (see load_goals): mark it with the reason, and mark the running
+    stage incomplete. `reason` is "store" (the goals file exists and did not read or parse: the store is an
+    empty fallback, and save_goals refuses to publish it over the file, see UnreadStoreError) or "journal"
+    (the file parsed; the override journal exists and did not read: the content is the file's, the user's
+    gestures are missing from the rollup until the journal reads, and a publish loses nothing durable because
+    the journal replays on every load, so save_goals allows it). Every reader tests the mark's truth; the
+    reason is for save_goals and the stages' stand-down (_fallback_store).
     The evidence gate stamps a complete run under the identity of the files the stage read; a run judged
     from a fallback view would stamp that identity without having read those files, and nothing on disk
     need change before the next read succeeds (an EMFILE, an EIO), so the per-load judge-errors row and the
     retry would become once per boot per tier. The mark keeps both (review finding, 2026-09-07). Thread-
     local, so a loader on the pusher thread marks nothing a stage reads."""
-    store["_unread"] = True
+    store["_unread"] = reason
     _judge_ctx.stage_incomplete = True
+
+
+def _fallback_store(store):
+    """True when `store` loaded as a fallback for a goals file that exists and did not read or parse
+    (`_unread` == "store"). A stage that finds this stands down for the pass: nothing in the store is the
+    session's, so nothing can be decided from it, and save_goals would refuse the publish; standing down at
+    the load spares the model calls the planner or the courier would otherwise make over the empty view
+    (review of the P2 gate, 2026-09-07: the planner re-minted the whole tree into the fallback and published
+    it over the file). load_goals logged the row (store-unreadable) and marked the stage incomplete, so the
+    gate never stamps a stand-down and the session stays due until the file reads. A store whose JOURNAL did
+    not read is not this (see _mark_unread)."""
+    return store.get("_unread") == "store"
 
 
 def _finish_load(fsid, store, lines=None):
@@ -3537,18 +3578,26 @@ def load_goals(fsid):
     (_LIFT_GATE), the absent-store predicate memo (_absent_store_flags), and load_goals_shared's fill,
     which never publishes a marked store as the files' content."""
     _goal_io_bump("loads")
+    path = GOALDIR / (fsid + ".json")
     try:
-        store = _guard_nodes(json.loads((GOALDIR / (fsid + ".json")).read_text()))
+        store = _guard_nodes(json.loads(path.read_text()))
+    except FileNotFoundError:
+        return _fresh_store(fsid)                      # no file: the empty store IS its content
     except Exception as e:
         # the file EXISTS and could not be read or parsed: a fallback, not the file's content, and marked
         # so — a reader that caches "what the file holds" by its identity must not cache this answer (the
-        # kernel's awaiting-lift gate skipped a stamped store for good after one EMFILE, 2026-09-06)
-        return _fresh_store(fsid, unread=not isinstance(e, FileNotFoundError))
+        # kernel's awaiting-lift gate skipped a stamped store for good after one EMFILE, 2026-09-06), no
+        # writer publishes it (save_goals refuses), and one judge-errors row per failure episode says so
+        _read_failed(str(path), "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))
+        return _fresh_store(fsid, unread="store")
+    _read_ok(str(path))
     return _finish_load(fsid, store)
 
 
 def _disk_rev(fsid):
-    """The revision the file holds NOW (0 when absent or unreadable), from a fresh read. save_goals' CAS
+    """The revision the file holds NOW, from a fresh read: 0 when absent (a create's base), None when the file
+    exists and cannot be read or parsed (save_goals' CAS refuses rather than take that for a create: both
+    answered 0 until 2026-09-07, and a fallback store's base 0 matched the unparseable file). save_goals' CAS
     compares its base against this, and the answer must be the file's, never the memo's: the memo's identity
     can, in one rare interleaving, sit on a file it does not describe (see _DISK_CONTENT). The no-op check
     can afford that (it skips a publish of content the file once held); the CAS cannot. Served from the memo,
@@ -3557,18 +3606,26 @@ def _disk_rev(fsid):
     path_s = str(GOALDIR / (fsid + ".json"))
     try:
         fd = os.open(path_s, os.O_RDONLY)
+    except FileNotFoundError:
+        return 0                                     # absent: a create's base
     except OSError:
-        return 0
+        return None                                  # exists and cannot be opened: the CAS refuses (save_goals)
     try:
         data = _disk_read(fd, path_s)
     except OSError:
-        return 0
+        return None
     finally:
         os.close(fd)
     try:
-        return int((json.loads(data) or {}).get("rev") or 0)
+        doc = json.loads(data)
     except Exception:
-        return 0
+        return None                                  # exists and does not parse
+    if not isinstance(doc, dict):
+        return None                                  # exists and is not a store document (a list, a null)
+    try:
+        return int(doc.get("rev") or 0)              # a store without a rev is an old one at 0, not a create
+    except (TypeError, ValueError):
+        return None
 
 
 def _rebase_onto_disk(fsid, store):
@@ -3812,7 +3869,7 @@ def _replay_overrides(fsid, store, lines=None):
         except OSError as e:
             _log_judge_error("romp", fsid, "history-unreadable",
                              note="override journal unreadable: %s — user actions may show undone until it reads" % e)
-            _mark_unread(store)                        # the store is not what its files say (see load_goals);
+            _mark_unread(store, "journal")             # the store is not what its files say (see load_goals);
             return False                               # the running stage must not stamp
     applied = False                                    # any write → load_goals re-runs rollup (one truth)
     arch_nodes = None                                  # the archive is read once, only if a restore entry needs it
@@ -4173,6 +4230,14 @@ class FrozenStoreError(TypeError):
     """A write to a goal store served by load_goals_shared. Writers load their own copy with load_goals."""
 
 
+class UnreadStoreError(RuntimeError):
+    """save_goals refused to publish over a goals file that exists and did not read or parse: the store in
+    hand loaded as a fallback for it (load_goals' `_unread` == "store"), or the CAS found the file unreadable
+    at publish time (_disk_rev None). The file is left as it is and a judge-errors row (unread-store-save) is
+    already written; callers tolerate the raise as they tolerate FrozenStoreError (the tick jobs' except
+    wrappers, _gated's incomplete count and the runner's pass-crash row)."""
+
+
 def _shared_bump(key, n=1):
     with _SHARED_LOCK:
         _SHARED_STATS[key] += n
@@ -4492,7 +4557,7 @@ def load_goals_shared(fsid):
         if ent[1] == data:
             _shared_bump("hit")
             _goal_io_bump("loads_shared")            # a store read the cache answered (see goal_io_stats)
-            return ent[2] if ent[2] is not _SHARED_BAD else _fresh_store(fsid, unread=True)
+            return ent[2] if ent[2] is not _SHARED_BAD else _fresh_store(fsid, unread="store")
         _shared_bump("compare_miss")                 # same identity, other bytes: the blind spot, closed here
     else:
         _shared_bump("miss")
@@ -4513,9 +4578,11 @@ def load_goals_shared(fsid):
         _shared_bump("corrupt")
         sys.stderr.write("goals-shared: %s: %s: %s (served as an empty store until the file changes)\n"
                          % (os.path.basename(path_s), type(e).__name__, e))
+        _read_failed(path_s, "store-unreadable", fsid, e, note=_STORE_UNREADABLE_NOTE % (e,))   # the row, once per episode
         with _SHARED_LOCK:
             _SHARED[path_s] = ((skey, jkey, akey0), data, _SHARED_BAD)
-        return _fresh_store(fsid, unread=True)       # the file exists and is not this: marked, as load_goals marks it
+        return _fresh_store(fsid, unread="store")    # the file exists and is not this: marked, as load_goals marks it
+    _read_ok(path_s)
     store = _finish_load(fsid, store, lines=lines)   # a malformed row raises, as in load_goals
     if store.get("_unread"):
         # the replay marked the store a fallback (see load_goals): not the files' content, so not shared.
@@ -4580,13 +4647,32 @@ def save_goals(fsid, store):
     A store served by load_goals_shared (or a shallow copy of one, whose nodes map is still the shared one)
     is refused here, FIRST — before the no-op check, which would otherwise take a shared view for a
     writer's, and before any write that the frozen containers would turn into a cache-poisoning raise.
-    The row makes the misuse visible through the except-Exception wrappers around every tick job."""
+    The row makes the misuse visible through the except-Exception wrappers around every tick job.
+
+    A store that loaded as a FALLBACK for a goals file that exists and did not read or parse (`_unread` ==
+    "store", see load_goals) is refused next, with a row: its _baseRev is 0, _disk_rev answered 0 for the
+    unparseable file too, and the CAS took the publish for a create, so the grouper's and consolidator's
+    signature write, the planner's and closer's whole pass and the kernel's undo-clear restore each replaced
+    the file with the empty fallback (found by the P2 gate's build, confirmed pre-existing by its refuters,
+    2026-09-07). The CAS itself refuses when _disk_rev answers None (the file exists and cannot be read or
+    parsed at publish time): a writer that cannot read the revision it would write over cannot know what it
+    would erase, so it leaves the file and its own base as they were and raises the same UnreadStoreError. A
+    store whose journal did not read (`_unread` == "journal") still publishes: its content is the file's,
+    and the journal replays on every load (see _mark_unread). An absent file is neither: a first mint saves.
+    """
     if isinstance(store, FrozenDict) or isinstance(store.get("nodes"), FrozenDict):
         _log_judge_error("romp", fsid, "frozen-store-save",
                          note="save_goals was handed the shared read-only store (load_goals_shared); a writer "
                               "loads its own copy with load_goals — nothing was published")
         raise FrozenStoreError("save_goals refuses a shared read-only store (load_goals_shared); load the "
                                "writer's copy with load_goals")
+    if store.get("_unread") == "store":
+        _log_judge_error("romp", fsid, "unread-store-save",
+                         note="the goals file exists and did not read or parse when this store was loaded, so the "
+                              "store is an empty fallback; publishing it would replace the file — nothing was "
+                              "published and the file is left as it is")
+        raise UnreadStoreError("save_goals refuses to publish a store that loaded as a fallback for a goals file "
+                               "that exists and did not read or parse; the file is left as it is")
     _goal_io_bump("saves")
     GOALDIR.mkdir(parents=True, exist_ok=True)
     _h0 = time.perf_counter()
@@ -4597,12 +4683,22 @@ def save_goals(fsid, store):
     if mine is not None and _matches_disk(fsid, store, mine):
         return                                       # nothing of ours to publish → leave the file (and its
     base = store.pop("_baseRev", None)               # mtime) alone.  transient: never serialized
-    store.pop("_unread", None)                       # likewise transient (load_goals' fallback mark)
+    unread = store.pop("_unread", None)              # likewise transient (load_goals' fallback mark)
     rebased = False
     if base is not None:
         disk = 0
         for _ in range(4):                           # a busy store settles in a pass or two
             disk = _disk_rev(fsid)
+            if disk is None:                         # the file exists and cannot be read or parsed NOW: the
+                store["_baseRev"] = base             #   CAS cannot know what it would write over. Leave the
+                if unread is not None:               #   holder as it was and refuse (docstring)
+                    store["_unread"] = unread
+                _log_judge_error("romp", fsid, "unread-store-save",
+                                 note="the goals file exists and did not read or parse at publish time; the CAS "
+                                      "cannot tell what a publish would write over — nothing was published and "
+                                      "the file is left as it is")
+                raise UnreadStoreError("save_goals refuses to publish over a goals file that exists and cannot be "
+                                       "read or parsed at publish time; the file is left as it is")
             if disk == base:
                 break                                # nobody published since we loaded → ours is current
             _rebase_onto_disk(fsid, store)           # fold their events in, then re-check
@@ -4629,14 +4725,37 @@ def load_goal_archive(fsid):
     subtrees moved out of the live store by the kernel's compaction sweep. Same shape as the live store
     (nodes/status). The judge reads this ONLY as read-only context (_cleared_context, for the live re-plan's
     <recently-cleared> block) — its placements dedup + view-cleared sealing keep it from ever re-minting an
-    archived node; the kernel's undo-clear restore and the ledger merge are the mutating readers."""
+    archived node; the kernel's undo-clear restore and the ledger merge are the mutating readers.
+
+    A file that exists and cannot be read or parsed answers the same empty shape marked `_unread` = "archive"
+    (one archive-unreadable row per failure episode, as load_goals' store-unreadable): save_goal_archive refuses
+    to publish it and the undo-clear restore stands down on it, so a failed read never costs the archived
+    history (the same shape save_goals closes for the live store, 2026-09-07). An absent file answers unmarked:
+    empty IS its content."""
+    path = GOALARCHDIR / (fsid + ".json")
     try:
-        return _guard_nodes(json.loads((GOALARCHDIR / (fsid + ".json")).read_text()))
-    except Exception:
+        arch = _guard_nodes(json.loads(path.read_text()))
+    except FileNotFoundError:
         return {"rompUuid": fsid, "nodes": {}, "status": {}}
+    except Exception as e:
+        _read_failed(str(path), "archive-unreadable", fsid, e,
+                     note="cleared-card archive unreadable: %r — nothing is archived or restored for this session "
+                          "until it reads" % (e,))
+        return {"rompUuid": fsid, "nodes": {}, "status": {}, "_unread": "archive"}
+    _read_ok(str(path))
+    return arch
 
 
 def save_goal_archive(fsid, store):
+    """Publish the cleared-card archive. Refuses an archive that loaded as a fallback (load_goal_archive's
+    `_unread`): the compaction sweep would otherwise publish the empty fallback plus the tops it just moved
+    over the file that did not read, and the archived history with it."""
+    if store.get("_unread"):
+        _log_judge_error("romp", fsid, "unread-store-save",
+                         note="the cleared-card archive exists and did not read or parse when it was loaded; publishing "
+                              "the empty fallback would replace it — nothing was published and the file is left as it is")
+        raise UnreadStoreError("save_goal_archive refuses to publish an archive that loaded as a fallback for a file "
+                               "that exists and did not read or parse; the file is left as it is")
     GOALARCHDIR.mkdir(parents=True, exist_ok=True)
     tmp = _publish_tmp(GOALARCHDIR, fsid)
     tmp.write_text(json.dumps(store))
@@ -9152,6 +9271,8 @@ def _plan_session(fsid, path, now):
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to plan from (_fallback_store)
     if _heal_quote_titles(store) + _heal_floor_titles(fsid, store) \
             + _heal_ticket_titles(store):              # + ticket-led titles (T146, the live-failure heal)
         save_goals(fsid, store)                       # own words; raw-head → the landed prompt caption), both
@@ -9801,8 +9922,11 @@ def fast_forward_placements(fsid, path=None, now=None):
         if not hit:
             return 0
         path = str(hit[1])
-    session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                      # the file did not read: nothing to seal, and save_goals would refuse
+        #                                               (see _fallback_store; the kernel's un-mute keeps the mute, below)
+    session = parsed_session(fsid, [path], now)
     placements = store["placements"]
     n = 0
     for u in plan_units(session, store):
@@ -10330,6 +10454,8 @@ def _group_session(fsid, path, now):
     own placements). Event-gated via _group_store; a status re-roll follows a structural change."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to group (_fallback_store)
     before = (store.get("groupedSig"), store.get("groupFails"), store.get("groupFailSig"))
     relinks = _group_store(store, fsid, now)
     after = (store.get("groupedSig"), store.get("groupFails"), store.get("groupFailSig"))
@@ -10434,6 +10560,8 @@ def _consolidate_session(fsid, path, now):
     drop off the top-level status map (they become its sub-nodes)."""
     _judge_ctx.fsid = fsid
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to consolidate (_fallback_store)
     before = (store.get("consolidatedSig"), store.get("consolidateFails"), store.get("consolidateFailSig"))
     changed = _consolidate_store(store, fsid, now)
     after = (store.get("consolidatedSig"), store.get("consolidateFails"), store.get("consolidateFailSig"))
@@ -11598,6 +11726,8 @@ def _close_session(fsid, path, now, cap=CLOSE_FAIRNESS):
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     session = parsed_session(fsid, [path], now)
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return []                                      # the file did not read: nothing to close (_fallback_store)
     seg_by_id = None                                  # built on the first turn the walk judges (below)
     swept = _closed_turns(store)
     sig = dict(store.get("closedSig") or {})
@@ -12093,6 +12223,8 @@ def _unblock_session(fsid, path, now):
     override journal replay on the next pass."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     scan = load_goals(fsid)                            # read-only scan; this copy is NOT saved
+    if _fallback_store(scan):
+        return []                                      # the file did not read: nothing to examine (_fallback_store)
     cands = _blocked_sub_candidates(scan)
     if not cands:
         return []
@@ -12123,6 +12255,8 @@ def _unblock_session(fsid, path, now):
     lifts = _parse_unblock(raw, len(due))
     store = load_goals(fsid)                           # FRESH load: apply onto the current store, never the
     nodes = store["nodes"]                             #   pre-call snapshot (a stale save clobbers writers)
+    if _fallback_store(store):
+        return []                                      # the file did not read after the call: nothing to apply onto
     if lifts is None:
         _log_judge_error("unblocker", fsid, "parse", note="reply tail: %r" % raw[-160:],
                          goal=[nid for nid, _nd, _bt in due])
@@ -13195,6 +13329,8 @@ def _distill_session(fsid, path, now):
     distiller line while you decide. Returns the number of goals (re)summarized."""
     _judge_ctx.fsid = fsid                            # usage logging: attribute this session's judge calls
     store = load_goals(fsid)
+    if _fallback_store(store):
+        return 0                                       # the file did not read: nothing to distill (_fallback_store)
     status, nodes = store.get("status", {}), store.get("nodes", {})
     if _title_mirror_tops(store, fsid, path, now):     # T146 amendment: fresh mirror tops get their
         save_goals(fsid, store)                        # one-shot LLM title the same cycle (titledT-keyed)
@@ -14971,6 +15107,9 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         """Save the shared object once and forget it: the next touch re-loads with a fresh CAS base."""
         try:
             save_goals(sid, loaded[sid])
+        except UnreadStoreError:
+            pass                                    # refused and logged by save_goals (the file did not read at
+            #                                         publish time); the completions are re-derived next pass
         finally:
             loaded.pop(sid, None)
             idents.pop(sid, None)
@@ -15146,6 +15285,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             _log_judge_error("courier", fsid, "pass-crash", note="parse: %r" % e)
             continue
         cstore = load_goals(fsid)
+        if _fallback_store(cstore):
+            continue                                   # its messages wait until the store reads (load_goals logged it)
         closed[fsid] = _session_settled(fsid, str(path), session, cstore)
         placed_ids = cstore["placements"]
         floor = episode_floor(fsid)
@@ -15215,6 +15356,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         xrows = []
     for o in xrows:
         sstore = load_goals(o["from_id"])
+        if _fallback_store(sstore):
+            continue                                   # the sender's file did not read: nothing to plant the tracker in
         if any(isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == o["id"]
                for nd in sstore["nodes"].values()):
             continue
@@ -15226,6 +15369,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     pending.sort(key=lambda x: x[0])                  # global cross-session oldest-first
     for seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path in pending:
         store = load_goals(fsid)
+        if _fallback_store(store):
+            continue                                   # the recipient's file did not read: the message stays pending
         if _placed_key(store["placements"], seg_id):  # drift-safe: never re-plant a t-shifted duplicate
             continue
         if now - seg_t > COURIER_RETRY_HORIZON:
@@ -15262,6 +15407,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             placed += 1
             continue
         sender_store = load_goals(sender)
+        if _fallback_store(sender_store):
+            continue                                   # the sender's file did not read: nothing to plant the tracker in
         # cap 40 for the LINK menu (the user 2026-08-24, the resurfaced-ask specimen): open_menu is
         # oldest-first, and a busy sender holds >20 open nodes — the default cap starved exactly the
         # candidates a dispatch usually serves (the fresh ask AND its older original), so the courier

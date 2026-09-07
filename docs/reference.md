@@ -1730,6 +1730,12 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   time `save_goals` spent serializing a held store for its no-op check (the
   cost a conditional tail save would remove); `romp perf` prints it as a rate
   on the `goals` line so that item can be judged from a measurement.
+  `unreadable_stores` is a gauge, not a counter: the goals files currently in
+  a read-failure episode (the file exists and did not read or parse on its
+  last read, so `load_goals` answers an empty fallback, every judge stage
+  stands down on the session and `save_goals` refuses to publish over it until
+  it reads). `romp perf` prints it on the `goals` line when it is not zero, and
+  the kernel warns the chat pane once per episode for a listed session.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the

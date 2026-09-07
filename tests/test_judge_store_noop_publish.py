@@ -120,13 +120,17 @@ class NoOpPublish(unittest.TestCase):
         self.assertEqual(jd._store_content(s), jd._store_content(t),
                          "same content, different revision + key order → the same publish")
 
-    def test_an_unreadable_file_falls_through_to_a_real_write(self):
+    def test_an_unreadable_file_is_never_mistaken_for_a_match(self):
+        # the no-op check answers "not a match" for a file it cannot parse, so the save goes on to the CAS,
+        # which refuses to publish over it (tests/test_unread_store_save.py): the fallback store load_goals
+        # answered is not the session's, and the file is left as it is rather than republished from it (the
+        # republish this test used to pin replaced the file with the empty fallback, 2026-09-07)
         self._seed()
         self._file().write_text("{not json")
-        s = jd.load_goals(SID)                          # load recovers a fresh store
-        jd.save_goals(SID, s)
-        self.assertEqual(json.loads(self._file().read_text())["rompUuid"], SID,
-                         "an unparseable file is republished, never mistaken for a match")
+        s = jd.load_goals(SID)                          # load answers a fallback, marked
+        with self.assertRaises(jd.UnreadStoreError):
+            jd.save_goals(SID, s)
+        self.assertEqual(self._file().read_text(), "{not json", "neither matched nor republished: left as it is")
 
 
 class DiskMemo(unittest.TestCase):
