@@ -124,7 +124,8 @@ class Collector(unittest.TestCase):
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
-                                              "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores"},
+                                              "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores",
+                                              "lineage_reads"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},

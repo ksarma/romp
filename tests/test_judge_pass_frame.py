@@ -213,6 +213,25 @@ class PassFrame(unittest.TestCase):
         self.assertIsNone(fr)
         self.assertIsNone(jd._frame, "no frame was opened")
 
+    def test_a_str_and_a_path_naming_the_same_file_key_once_and_alike(self):
+        # The key set can hold both a str and a Path for one file (a caller's Path leaf beside the str
+        # anchor and states file _parse_key_files appends). sorted() over a mixed str/PosixPath list
+        # raises TypeError, which _frame_parse_key does not catch (only OSError), so the pass aborted
+        # for that session. Every path is normalized at the point it enters the key, and one file named
+        # two ways is one entry, so the mixed key equals the all-Path key and the all-str key.
+        self._states_row(T0 + 20, "working")                        # a str entry beside the caller's Path leaf
+        mixed = jd._fileset_key([str(self.path), self.path])
+        self.assertEqual(len(mixed), 1, "one file, one entry, whichever way it is named")
+        self.assertEqual(mixed, jd._fileset_key([self.path]))
+        self.assertEqual(mixed, jd._fileset_key([str(self.path)]))
+        pair_path, _c, _f = jd._frame_parse_key(SID, [self.path])   # a Path leaf: TypeError before the fix
+        pair_str, _c, _f = jd._frame_parse_key(SID, [str(self.path)])
+        self.assertEqual(pair_path, pair_str)
+        self.assertEqual(pair_str, self._live_pair())
+        self.assertEqual(len(pair_str[0]), 2, "the leaf and the states file")
+        self.assertEqual(jd._judge_candidates(SID, [self.path]), [str(self.path)],
+                         "the candidate list carries one path type")
+
     def test_a_failed_stat_pins_none_for_the_whole_pass(self):
         # the tag is PRESENT with None: a later caller in the same pass whose stat would succeed still gets
         # None, so no fresh key is ever pinned over a parse that was read earlier (the keyless-parse hole)

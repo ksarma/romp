@@ -2616,8 +2616,14 @@ def _ready_tasks(session, store=None):
 
 # ───────────────────────── parse + units, (mtime,size) cached ─────────────────────────
 def _fileset_key(files):
+    """[[mtime, size], ...] of the distinct files in `files`, in path order. Every path is normalized to
+    its string form (os.fspath) before the sort and the set: callers hand in whatever they hold, a str
+    leaf beside a Path anchor or states file, and sorted() over a mixed str/PosixPath list raises
+    TypeError, which aborted the pass for that session (found by the round-4 test sweeps, 2026-09-07:
+    a str path reaching the frame's key set beside Path entries). One file named two ways is one entry,
+    so the key of a mixed list equals the key of the same files named uniformly."""
     out = []
-    for f in sorted(files):
+    for f in sorted({os.fspath(p) for p in files}):
         st = os.stat(f)
         out.append([st.st_mtime, st.st_size])
     return out
@@ -2696,9 +2702,11 @@ def _judge_candidates(fsid, files):
     Shared by parsed_session and the write-moment chain checks so both walk the same graph."""
     leaf = Path(files[0])
     anchor = leaf.with_name(fsid + ".jsonl")
+    files = [os.fspath(f) for f in files]           # one path type in the candidate list: the anchor below
+    #                                                 is a str, and the key set sorts these (_fileset_key)
     if anchor.name != leaf.name and anchor.exists():
-        return list(files) + [str(anchor)]
-    return list(files)
+        return files + [str(anchor)]
+    return files
 
 
 def _chain_key(path, cands, states):
@@ -3645,7 +3653,8 @@ def _guard_nodes(store):
 # added a pass over every session. Plain counters, one lock, no formatting on the path.
 _GOAL_IO = {"loads": 0, "loads_shared": 0, "saves": 0, "writes": 0, "scans": 0, "scan_hits": 0, "scan_parses": 0,
             "disk_hits": 0, "disk_misses": 0, "disk_seeds": 0, "absent_hits": 0, "absent_misses": 0,
-            "noop_hash_ms": 0.0}    # ms spent in save_goals' own-content hash for the no-op check (see save_goals)
+            "noop_hash_ms": 0.0,    # ms spent in save_goals' own-content hash for the no-op check (see save_goals)
+            "lineage_reads": 0}     # resume_lineage calls: whole states-file reads (see goal_io_stats)
 _GOAL_IO_LOCK = threading.Lock()
 
 
@@ -3669,7 +3678,11 @@ def goal_io_stats():
     entries filled from a publish's own temp file (`disk_seeds`). The absent-store predicate memo's
     (_absent_store_flags, the two triage sweeps over stores no discovered session owns): answered from
     the memo (`absent_hits`), or loaded and evaluated because the store's files changed or were new
-    (`absent_misses`). The counters stay private to this module; readers get a copy."""
+    (`absent_misses`). One counter is not goal-store I/O but rides here as the judge's other per-pass
+    file read: `lineage_reads`, resume_lineage calls, each a read and parse of a session's whole states
+    file; the kernel's episode-boundary check consults it only for a head the episode log does not
+    hold yet, so at steady state it stays near zero (2026-09-07). The counters stay private to this
+    module; readers get a copy."""
     with _GOAL_IO_LOCK:
         out = dict(_GOAL_IO)
     out["unreadable_stores"] = len(unreadable_store_sids())   # a gauge: the episodes standing now, not a count
@@ -7144,7 +7157,12 @@ def resume_lineage(sid):
     that a resume of a machine-cut turn FORKED the transcript (fresh head) rather than continuing the
     chain. The episode-boundary check reads this to keep such a fork from being processed as a /clear
     (which settled the session's open cards mid-turn, 2026-08-14); the parser consumes the same rows
-    through parse_session's states plumbing (em.resume_fork_links / FileAdapter._stitch_resume_forks)."""
+    through parse_session's states plumbing (em.resume_fork_links / FileAdapter._stitch_resume_forks).
+    Unmemoized: every call reads and parses the whole file, counted under goal_io_stats' `lineage_reads`
+    (`goals.lineage_reads` in the /perf snapshot and `romp perf --json`; `romp perf` prints it as a rate on
+    the goals line) so the reads the boundary check still makes are visible: the check reads the memoized
+    episode log first and consults this only for a head the log does not hold (2026-09-07)."""
+    _goal_io_bump("lineage_reads")
     out = []
     try:
         lines = (STATESDIR / (sid + ".jsonl")).read_text().splitlines()
@@ -14210,17 +14228,21 @@ def _absent_flags_evict(present):
             del _ABSENT_FLAGS[path_s]
 
 
-def _absent_store_flags(fsid, loaded=None, idents=None):
+def _absent_store_flags(fsid, loaded=None, idents=None, views=None):
     """(open_handoff, owed_distill) for a store no discovered session owns, or None when the load
     itself failed (the caller skips the store this pass, as the sweeps always did). Memoized on
     _store_identity; a miss loads once and evaluates both predicates, so the two sweeps of one pass
     share one load and an unchanged store costs three stats per sweep. A load that FELL BACK (the
-    store's `_unread` mark, see load_goals) is answered but not memoized. `loaded`/`idents` are
-    run_propagate's per-pass dicts: a store this pass already read (identity taken before the read,
-    object unmutated — every dirty sender is saved and dropped before the sweep) is evaluated from
-    that object instead of read again, and a store read here is left in `loaded` for the sender loop."""
+    store's `_unread` mark, see load_goals) is answered but not memoized. `loaded`/`idents`/`views`
+    are run_propagate's per-pass dicts: a store this pass already read — a writer object in `loaded`,
+    or a frozen shared view in `views` (identity taken before the read in both cases; the writer
+    object unmutated, since every dirty sender is saved and dropped before the sweep) — is evaluated
+    from that object instead of read again. A store read HERE is a writer load, left in `loaded` for
+    the sender loop; a view never enters `loaded`."""
     if loaded is not None and fsid in loaded and fsid in idents:
         key, store = idents[fsid], loaded[fsid]
+    elif views is not None and fsid in views and fsid in idents:
+        key, store = idents[fsid], views[fsid]          # read-only: the two predicates only read it
     else:
         key, store = _store_identity(fsid), None
     path_s = key[0]
@@ -15258,32 +15280,65 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     the sender's precise tracking node, planted by _plant_handoff_track). Forward-only + idempotent: it never
     reopens the sender's node, and a node already done (or gone) is a no-op. Returns completions propagated.
 
-    Every store is read at most ONCE per pass (2026-09-06, the judge-pass performance batch): `loaded`
-    holds this pass's load_goals objects and serves the recipient scan, the per-ref done check, _ref_goal's
-    recipient maps and the sender loop; the archive reads ride `archives` the same way. The pass used to
-    load every recipient, load the sender again per ref BEFORE checking whether the tracker was already
-    done (it was, for every live ref), and load every sender a third time in the sender loop. Now the done
-    check reads the shared object and a sender is read only when nothing this pass has read it yet. A ref's
-    verdict lands on the shared object with today's per-ref rollup, and each dirty sender is PUBLISHED ONCE,
-    after the recipient loop (the rebase unions per-node logs by (ev_t, src, kind), so one publish carrying
-    several courier rows merges exactly as several publishes did). A saved object leaves `loaded` in a
-    finally — save_goals pops the CAS base and never re-arms it, so the next touch must come from a fresh
-    load (a failed publish drops it too, never leaving a base-less object for the sender loop). The
-    absent-store sweep answers from _absent_store_flags, memoized across passes on file identity."""
+    Reads and writes take different loaders (2026-09-07, the judge-pass performance round; the 2026-09-06
+    batch before it had every store read at most once per pass, all through load_goals). Every read that
+    decides whether to write goes through load_goals_shared: `views` holds this pass's frozen shared
+    objects, one per sid, filled by _peek and read by the recipient scan, the per-ref done check,
+    _ref_goal's recipient maps and the sender loop's tracker walk. A WRITER object (load_goals, in
+    `loaded`, filled by _get and by the absent-store sweep's misses) is taken only for a sender the view
+    says has something to write: an open tracker a complete recipient goal refs, or a tracker whose
+    recipient has replied. The write predicate is then re-derived on the writer's node — the view is a
+    frozen version, the file may have moved, and a completion published between the view read and the
+    writer load must not be recorded twice — so every write decision is made on this pass's load_goals
+    object, loaded at the first write-side touch of the sid (an earlier ref, or the sweep's miss), with the
+    publish under save_goals' CAS/rebase. _peek serves the writer object when this pass holds one, so a
+    later recipient in the loop sees the verdicts filed earlier in the pass, as before. `loaded` is never
+    filled by _peek, so _publish can never be handed a frozen view (save_goals refuses one with a row). At
+    steady state every read is a byte-verified shared hit (about 0.1 ms against about 2 ms for a parse) and
+    propagate publishes nothing, so plain loads per pass fall by the number of discovered sessions; a store
+    another tier published earlier in the same pass costs one fill on this thread.
+
+    Each dirty sender is PUBLISHED ONCE, after the recipient loop (the rebase unions per-node logs by (ev_t,
+    src, kind), so one publish carrying several courier rows merges exactly as several publishes did), with
+    the per-ref rollup already on the object. A saved object leaves `loaded` in a finally: save_goals
+    re-stamps `_baseRev` after a publish (2026-09-07), so the object could serve a second save, but a refused
+    publish (UnreadStoreError: the file did not read at publish time) leaves an object that is not the
+    file's content, and `idents` describes the pre-publish file; the next touch reads the published file,
+    through the shared cache for a read and load_goals for a write. The absent-store sweep answers from
+    _absent_store_flags, memoized across passes on file identity and evaluated on this pass's writer object
+    or view when it holds one."""
     if now is None:
         now = int(time.time())
     n = 0
     sessions = discover(now)[:sessions_cap]
     seen = {f for f, _p, _a, _n in sessions}
-    loaded, idents, archives = {}, {}, {}   # sid -> store / its pre-read identity (absent sids only) / archive
+    loaded, idents, archives = {}, {}, {}   # sid -> writer store / its pre-read identity (absent sids only) / archive
+    views = {}                              # sid -> this pass's frozen shared view (load_goals_shared); never saved
+
+    def _peek(sid):
+        """This pass's READ of `sid`: the writer object when this pass holds one (its verdicts visible to
+        later refs and to the sender loop), else the shared read-only view, read once per pass. An absent
+        sid's identity is taken BEFORE the read, as _get takes it, so the sweep's memo can be filled from
+        the view under the identity that describes it."""
+        st = loaded.get(sid)
+        if st is not None:
+            return st
+        st = views.get(sid)
+        if st is None:
+            if sid not in seen:
+                idents[sid] = _store_identity(sid)
+            st = views[sid] = load_goals_shared(sid)
+        return st
 
     def _get(sid):
-        """This pass's one load_goals of `sid`."""
+        """This pass's one WRITER load of `sid` (load_goals), taken at the first write-side touch; the view,
+        if any, is dropped so every later read sees the writer's verdicts."""
         st = loaded.get(sid)
         if st is None:
             if sid not in seen:
                 idents[sid] = _store_identity(sid)      # an absent store read here can fill the predicate
             st = loaded[sid] = load_goals(sid)          # memo below: its identity is taken BEFORE the read
+            views.pop(sid, None)
         return st
 
     def _arch(sid):
@@ -15293,7 +15348,10 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         return a
 
     def _publish(sid):
-        """Save the shared object once and forget it: the next touch re-loads with a fresh CAS base."""
+        """Save this pass's writer object once and forget it: the next touch reads the published file (the
+        shared cache for a read, load_goals for a write). save_goals re-stamps `_baseRev` after a publish,
+        so the object could serve a second save; it is dropped anyway because a refused publish leaves an
+        object that is not the file's content and `idents` describes the pre-publish file."""
         try:
             save_goals(sid, loaded[sid])
         except UnreadStoreError:
@@ -15312,7 +15370,7 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
         # specimen sat open seven hours with its completion event already fired and recorded.
         # Read-only on this side: propagate writes SENDER stores only.
         rnodes = dict(_arch(fsid).get("nodes") or {})
-        rnodes.update(_get(fsid).get("nodes") or {})
+        rnodes.update(_peek(fsid).get("nodes") or {})   # a shared read: no parse when the cache holds this version
         for nid, nd in list(rnodes.items()):
             if not nd.get("nodeComplete"):
                 continue                                # B hasn't finished it yet
@@ -15322,10 +15380,16 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                      if isinstance(l, dict) and l.get("peer") and l.get("goalId")]
             for ref in refs:
                 a_sid, a_gid = ref["peer"], ref["goalId"]
-                a_store = _get(a_sid)                   # the shared read: no load when this pass has it
-                a_node = a_store.get("nodes", {}).get(a_gid)
-                if not a_node or a_node.get("nodeComplete"):
+                v_node = (_peek(a_sid).get("nodes") or {}).get(a_gid)
+                if not v_node or v_node.get("nodeComplete"):
                     continue                            # sender's tracking node gone or already done → idempotent
+                #                                         (decided on the view: every live ref, at steady state)
+                a_store = _get(a_sid)                   # the view says open: this pass's writer load of the sender
+                a_node = (a_store.get("nodes") or {}).get(a_gid)
+                if not a_node or a_node.get("nodeComplete"):
+                    continue                            # re-checked on the writer's node: the view is a frozen
+                #                                         version, and a completion published between the two
+                #                                         reads must not be recorded twice
                 # Carry the RECIPIENT'S OWN RESOLUTION across (the user 2026-08-25, the re-asking
                 # umbrella): the bare "completed by <peer>" why gave the sender-side closer nothing
                 # to rule a delegated ask done WITH — the steps-finished nomination saw an ask whose
@@ -15338,7 +15402,7 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                     or (str(nd.get("summary") or "").strip().splitlines() or [""])[0]
                 if sub:
                     why += ": " + sub[:220]
-                record_verdict(a_store, a_store["nodes"][a_gid], "courier", "done", now, why=why)
+                record_verdict(a_store, a_node, "courier", "done", now, why=why)
                 _mark_node_done(a_store, a_gid, why, now, src="courier")
                 if a_sid not in closed:
                     closed[a_sid] = _presumed_closed(a_sid, now)
@@ -15348,8 +15412,9 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                 #                                        sender's own pass settles as before; a dead one
                 #                                        has no pass, so this write is its only settler).
                 #                                        Per ref, as before: a later recipient in this
-                #                                        loop reads the shared object, and this keeps it
-                #                                        exactly what the per-ref publish used to leave.
+                #                                        loop reads the writer object through _peek, and
+                #                                        this keeps it exactly what the per-ref publish
+                #                                        used to leave.
                 dirty[a_sid] = True
                 n += 1
     for a_sid in list(dirty):
@@ -15370,11 +15435,12 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
 
     def _ref_goal(peer_sid, mid):
         """The recipient goal a tracker's msgId joins to (origin or links), live+archive merged. The
-        values are COPIES of the shared objects' nodes, taken at first use: the sender loop below
-        mutates the shared store, and this map must read as the snapshot it always was."""
+        values are COPIES of the nodes of this pass's read of the recipient (a frozen view, or the writer
+        object when the pass holds one), taken at first use: the sender loop below mutates writer stores,
+        and this map must read as the snapshot it always was."""
         if peer_sid not in _rmemo:
             m = {k: dict(v) for k, v in (_arch(peer_sid).get("nodes") or {}).items() if isinstance(v, dict)}
-            m.update({k: dict(v) for k, v in (_get(peer_sid).get("nodes") or {}).items() if isinstance(v, dict)})
+            m.update({k: dict(v) for k, v in (_peek(peer_sid).get("nodes") or {}).items() if isinstance(v, dict)})
             _rmemo[peer_sid] = m
         for rd in _rmemo[peer_sid].values():
             if not isinstance(rd, dict):
@@ -15386,6 +15452,46 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                 return rd
         return None
 
+    def _due_reply(nd, fsid):
+        """The report-back event that completes tracker `nd` of sender `fsid` — (reply t, dismissed, peer
+        key) — or None when nothing is due. Pure over the node, the postal ask maps and _ref_goal's
+        recipient maps. The sender loop evaluates it on the VIEW to decide whether to load the writer, then
+        again on the WRITER's node to decide the write, so the values written (the peer key, the dismissed
+        shape, the reply time in `why`) are the writer's."""
+        h = nd.get("handoff")
+        if not (isinstance(h, dict) and h.get("peer") and not nd.get("nodeComplete")):
+            return None
+        pk = str(h["peer"])
+        dismissed = False
+        if ":" not in pk and not h.get("quiet"):
+            # a LOCAL LINKED recipient: the origin back-link owns it — UNLESS the user DISMISSED
+            # the recipient's card without completion (2026-08-26, the working-column audit: two
+            # trackers sat open 8.3h and 2.6h under a Working hub because the cleared recipient
+            # goal could never reach nodeComplete). A dismissal kills the back-link's event
+            # forever, so the recipient's reply becomes the honest report-back ending — the
+            # exact quiet/cross-host rule, why-stamped as the dismissal shape it is. A LIVE
+            # linked recipient still defers to the back-link: a reply alone must never end a
+            # delegation whose card is still being worked.
+            rg = _ref_goal(pk, h.get("msgId"))
+            if not (isinstance(rg, dict) and rg.get("cleared") and not rg.get("nodeComplete")):
+                return None
+            dismissed = True
+        if ":" not in pk:
+            # a LOCAL QUIET handoff (chain-rooted minting, the user 2026-08-25): no recipient
+            # goal exists BY DESIGN, so the origin back-link can never fire — the recipient's
+            # reply (any kind, at/after the send) is the report-back event, exactly the
+            # cross-host rule. Same coarseness, same honesty: completing on the reply, never on
+            # delivery. (The dismissed-linked shape above ends the same way.)
+            reply = last_any.get((pk, fsid), 0)
+        else:
+            keys = {"peer:" + pk}
+            if alias.get(pk):
+                keys.add(alias[pk])
+            reply = max((last_any.get((k, fsid), 0) for k in keys), default=0)
+        if reply and reply >= (nd.get("t") or 0):
+            return reply, dismissed, pk
+        return None
+
     # SENDER COVERAGE (the user 2026-08-28, the dead-session round): this arm used to walk only
     # DISCOVERED sessions as senders, so a dead session's — or an ext: mailer's, or a remote
     # kernel's local mirror store's — quiet trackers were never swept again and sat Working
@@ -15393,60 +15499,36 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
     # reply is the event and this sweep is its only writer for such stores, so absent stores that
     # still hold open trackers join the walk (the T110 straggler-drain shape; self-retiring — a
     # closed tracker leaves the predicate). The predicate is answered by _absent_store_flags: an
-    # unchanged absent store costs three stats, not a parse, and a store it does read stays in
-    # `loaded` for the loop below.
+    # unchanged absent store costs three stats, not a parse; a store this pass already read (a
+    # writer object, or a view an earlier ref took) is evaluated from that object; a store the
+    # sweep does read is a writer load that stays in `loaded` for the loop below.
     _sw_senders = [f for f, _p, _a, _n in sessions]
     _sw_files = sorted(GOALDIR.glob("*.json"))
     _absent_flags_evict({str(f) for f in _sw_files})
     for _f in _sw_files:
         if _f.stem in seen:
             continue
-        _flags = _absent_store_flags(_f.stem, loaded, idents)
+        _flags = _absent_store_flags(_f.stem, loaded, idents, views)
         if _flags is not None and _flags[0]:
             _sw_senders.append(_f.stem)
     for fsid in _sw_senders:
-        store = _get(fsid)
-        changed = False
+        if not any(_due_reply(nd, fsid) is not None for nd in (_peek(fsid).get("nodes") or {}).values()):
+            continue                                    # nothing due on the view: no writer load, no write
+        store = _get(fsid)                              # something is due: this pass's writer load, and the
+        changed = False                                 #   predicate re-derived on every node of it
         for nid, nd in list(store.get("nodes", {}).items()):
-            h = nd.get("handoff")
-            if not (isinstance(h, dict) and h.get("peer") and not nd.get("nodeComplete")):
+            due = _due_reply(nd, fsid)
+            if due is None:
                 continue
-            pk = str(h["peer"])
-            dismissed = False
-            if ":" not in pk and not h.get("quiet"):
-                # a LOCAL LINKED recipient: the origin back-link owns it — UNLESS the user DISMISSED
-                # the recipient's card without completion (2026-08-26, the working-column audit: two
-                # trackers sat open 8.3h and 2.6h under a Working hub because the cleared recipient
-                # goal could never reach nodeComplete). A dismissal kills the back-link's event
-                # forever, so the recipient's reply becomes the honest report-back ending — the
-                # exact quiet/cross-host rule, why-stamped as the dismissal shape it is. A LIVE
-                # linked recipient still defers to the back-link: a reply alone must never end a
-                # delegation whose card is still being worked.
-                rg = _ref_goal(pk, h.get("msgId"))
-                if not (isinstance(rg, dict) and rg.get("cleared") and not rg.get("nodeComplete")):
-                    continue
-                dismissed = True
-            if ":" not in pk:
-                # a LOCAL QUIET handoff (chain-rooted minting, the user 2026-08-25): no recipient
-                # goal exists BY DESIGN, so the origin back-link can never fire — the recipient's
-                # reply (any kind, at/after the send) is the report-back event, exactly the
-                # cross-host rule. Same coarseness, same honesty: completing on the reply, never on
-                # delivery. (The dismissed-linked shape above ends the same way.)
-                reply = last_any.get((pk, fsid), 0)
-            else:
-                keys = {"peer:" + pk}
-                if alias.get(pk):
-                    keys.add(alias[pk])
-                reply = max((last_any.get((k, fsid), 0) for k in keys), default=0)
-            if reply and reply >= (nd.get("t") or 0):
-                why = (("reported back by %s (delegated; the recipient's card was dismissed)" % pk[:8])
-                       if dismissed else
-                       ("reported back by %s (delegated, quiet-filed)" % pk[:8] if ":" not in pk
-                        else "reported back by %s (delegated cross-host)" % pk))
-                if record_verdict(store, nd, "courier", "done", reply, why=why):
-                    _mark_node_done(store, nid, why, reply, src="courier")
-                    changed = True
-                    n += 1
+            reply, dismissed, pk = due
+            why = (("reported back by %s (delegated; the recipient's card was dismissed)" % pk[:8])
+                   if dismissed else
+                   ("reported back by %s (delegated, quiet-filed)" % pk[:8] if ":" not in pk
+                    else "reported back by %s (delegated cross-host)" % pk))
+            if record_verdict(store, nd, "courier", "done", reply, why=why):
+                _mark_node_done(store, nid, why, reply, src="courier")
+                changed = True
+                n += 1
         if changed:
             rollup_status(store, fsid not in seen and _presumed_closed(fsid, now))
             _publish(fsid)
