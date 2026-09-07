@@ -334,6 +334,49 @@ class ThreadWakeHearsItsDeadLife(unittest.TestCase):
             self.be._ensure(sid)
         self.assertEqual(sb._reg_path(Path(self.d), sid).read_bytes(), before, "no reg churn on a plain wake")
 
+    # The notice prepend REWRITES reg['queue'], and the fork's queue carries a user-todo ANSWER as
+    # a {"text","todo"} dict (_queue_wire). The three tests below pin that rewrite against the
+    # dict-aware rule every other reg['queue'] rewrite already follows (the 2026-08-22 sweep): a
+    # dict entry survives, a string entry behaves exactly as before, and a mixed queue keeps its
+    # order. Before the fix the rewrite's strings-only filter erased the dict, so a thread woken by
+    # its dead life lost the very answer the user had typed (2026-09-07).
+    ANSWER = {"text": "Go with the cookie scheme", "todo": "ut-0badf00d"}
+
+    def test_a_persisted_todo_answer_rides_behind_the_notices_intact(self):
+        sid = "11111111-bbbb-0000-0000-0000000000b6"
+        _reg(self.d, sid, threadOf=self.PARENT, pendingAsk=True, bgTasks=list(self.TASKS),
+             queue=[dict(self.ANSWER)])
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.be._ensure(sid)
+        want = [sb.ASK_DIED_NOTICE, sb.task_death_notice(self.TASKS), self.ANSWER]
+        self.assertEqual(sb.read_reg(Path(self.d), sid).get("queue"), want,
+                         "the answer keeps its persisted shape, id and all, behind the notices")
+        self.assertEqual(self._Rec.made[0].get("queue"), want, "and the seed is handed the same list")
+
+    def test_a_mixed_queue_keeps_its_order_behind_a_resume_nudge_head(self):
+        # a resume nudge at the head stays there; the notices follow it; then the surviving entries
+        # in their original order, whatever shape each one has
+        sid = "11111111-bbbb-0000-0000-0000000000b7"
+        _reg(self.d, sid, threadOf=self.PARENT, pendingAsk=True,
+             queue=[sb.CRASH_RESUME_NUDGE, "first reply", dict(self.ANSWER), "second reply"])
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.be._ensure(sid)
+        self.assertEqual(sb.read_reg(Path(self.d), sid).get("queue"),
+                         [sb.CRASH_RESUME_NUDGE, sb.ASK_DIED_NOTICE,
+                          "first reply", self.ANSWER, "second reply"])
+
+    def test_a_plain_queue_wakes_exactly_as_before(self):
+        # strings only: the notice goes first, a copy of it already queued is not doubled, junk is
+        # dropped, and the surviving texts keep their order. The pre-fix behaviour, pinned so the
+        # dict-aware filter changes nothing for a queue that carries no answer.
+        sid = "11111111-bbbb-0000-0000-0000000000b8"
+        _reg(self.d, sid, threadOf=self.PARENT, pendingAsk=True,
+             queue=["first reply", sb.ASK_DIED_NOTICE, "", 42, "second reply"])
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            self.be._ensure(sid)
+        self.assertEqual(sb.read_reg(Path(self.d), sid).get("queue"),
+                         [sb.ASK_DIED_NOTICE, "first reply", "second reply"])
+
 
 class FireBootSettled(unittest.TestCase):
     def _session(self, d=None):

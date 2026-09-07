@@ -196,7 +196,10 @@ class TodoIdsRideTheQueue(unittest.TestCase):
     (_persist_queue), and back through the boot seed — so a recall after a kernel restart reads
     the id off the entry it removes, with no kernel-side table to lose. Entries without an id
     stay bare strings: the mirror is byte-identical to the pre-todo shape for every other send
-    (an older kernel reads those untouched; only an id-carrying answer serializes as a dict)."""
+    (an older kernel reads those untouched; only an id-carrying answer serializes as a dict), and
+    every rewrite of reg['queue'] keeps a dict entry intact instead of erasing it with a
+    strings-only filter (the thread wake's notice prepend was the one rewrite that still did,
+    2026-09-07)."""
 
     ANSWER = "Re: need the staging port — 8443."
 
@@ -280,6 +283,52 @@ class TodoIdsRideTheQueue(unittest.TestCase):
         self.assertEqual([getattr(t, "todo", "") for t in s.pending()], ["ut-77778888"])
         self.assertEqual(sb.read_reg(Path(d), sid).get("queue"),
                          [{"text": self.ANSWER, "todo": "ut-77778888"}])
+
+    def test_a_plain_queue_serializes_exactly_as_before(self):
+        # byte-stability: with no answer queued, the mirror's JSON is the pre-todo list of strings
+        d, be, sid, s = self._session()
+        s.enqueue("first")
+        s.enqueue("second")
+        raw = json.dumps(sb.read_reg(Path(d), sid).get("queue"), sort_keys=True)
+        self.assertEqual(raw, json.dumps(["first", "second"], sort_keys=True))
+
+    def test_pending_queued_decodes_the_persisted_shape_for_a_dormant_session(self):
+        # the chat's queued bubbles for a NOT-running session come from the reg mirror: an
+        # id-carrying entry renders as its text (and keeps its id), junk is filtered as before
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-0000000000e9"
+        _reg(d, sid, queue=["plain", {"text": self.ANSWER, "todo": "ut-22223333"}, {"bogus": 1}, ""])
+        got = be.pending_queued(sid)
+        self.assertEqual(got, ["plain", self.ANSWER])
+        self.assertEqual([getattr(t, "todo", "") for t in got], ["", "ut-22223333"])
+
+    def test_thread_wake_notice_preserves_id_entries(self):
+        # a dormant comment thread woken with a killed question: _ensure rewrites reg['queue'] to put
+        # the notice first. The dict entry must ride behind it intact, in the reg AND in the dict the
+        # SdkSession seed reads; before the fix the strings-only filter there erased it, and the
+        # user's answer was gone with its ask already stamped answered.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        sid = "11111111-aaaa-0000-0000-0000000000f2"
+        owner = "11111111-aaaa-0000-0000-0000000000f3"
+        _reg(d, sid, threadOf=owner, pendingAsk=True,
+             queue=[{"text": self.ANSWER, "todo": "ut-99990000"}, "plain reply"])
+        seeded = []
+
+        class _Fake:
+            def __init__(self, backend, reg):
+                seeded.append(reg)
+                self.thread = types.SimpleNamespace(is_alive=lambda: True)
+
+            def start(self):
+                pass
+
+        with mock.patch.object(sb, "SdkSession", _Fake):
+            be._ensure(sid)
+        want = [sb.ASK_DIED_NOTICE, {"text": self.ANSWER, "todo": "ut-99990000"}, "plain reply"]
+        self.assertEqual(sb.read_reg(Path(d), sid).get("queue"), want)
+        self.assertEqual(seeded[0].get("queue"), want, "the seed reads THIS dict")
 
 
 def _procps() -> bool:
