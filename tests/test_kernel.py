@@ -5,6 +5,7 @@ consume). The WS transport + HTTP serving aren't unit-tested; the projection —
 UUIDs; no real session data.
 """
 import inspect
+import io
 import json
 import os
 import re
@@ -14,7 +15,7 @@ import time
 import types
 import unittest
 from datetime import datetime, timezone
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -23,15 +24,15 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-em = SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+em = load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+jd = load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 # These exercise tmux BEHAVIOUR (they stub subprocess.run and assert on the argv). Declare a tmux
 # host explicitly so they assert the same thing on a machine without tmux installed, where the
 # backend is otherwise inert by design (see TmuxBackend.available).
 os.environ["ROMP_TMUX_AVAILABLE"] = "1"
 os.environ["ROMP_SERVE_TOKEN"] = "testtok"            # known token for the serve-security test
-km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel", os.path.join(BIN, "romp-kernel"))
 
 # The ACCOUNT gate (_limit_hold: a usage limit / monthly spend cap parks every drive op, tested in
 # tests/test_kernel_limit_queue.py) is a SEPARATE axis from the compaction/busy gates this module
@@ -847,6 +848,153 @@ class ViewBuilder(unittest.TestCase):
         m = km.build_session(SID, NOW)
         self.assertEqual(m["ledger"]["summary"], "Fixing the feed")
         self.assertNotIn("bullets", m["ledger"], "the bullets list retired with its readers (2026-07-07 audit)")
+
+    def test_ledger_carries_the_working_note(self):
+        """The postal set_working note rides the per-session ledger (the chat's section snapshot shows it as
+        a row's own second line under the task; the ledgers attach carries it to the Outline for free).
+        Read from the backend-agnostic store (working/<sid>); "" when the session published none."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "no note → an empty string, never a missing key")
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("  editing the notes-api tests  \n")
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "editing the notes-api tests", "the note, stripped")
+            (km.WORKING_DIR / SID).unlink()
+            self.assertEqual(km.build_session(SID, NOW)["ledger"]["workingNote"], "", "cleared → empty again")
+        finally:
+            km.WORKING_DIR = saved
+
+    def test_muted_session_keeps_its_working_note(self):
+        """hideFromFeed empties the ledger's task tracking (tree, current, recent) but NOT the note: the note
+        is the session's own statement of what it holds, not a goal the judges track. Pinned because the
+        hideFromFeed branch is the natural place to "empty the ledger", and moving the field inside it
+        would flip this with every other test green (review 2026-09-06)."""
+        saved = km.WORKING_DIR
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("editing the notes-api tests\n")
+            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
+            led = km.build_session(SID, NOW)["ledger"]
+            self.assertEqual((led["tree"], led["current"], led["recent"]), ([], None, []), "muted: out of task tracking")
+            self.assertEqual(led["workingNote"], "editing the notes-api tests", "…but the note stays: the session's claim, not a goal")
+        finally:
+            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
+            km.WORKING_DIR = saved
+
+    def test_a_working_note_write_busts_the_chat_build_cache(self):
+        """_chat_build_sig is (transcript, states, judge gen, stores…): a note write (set_working, a shell's
+        `romp mail working`, the kernel's own idle+done lift) touches NONE of them, so a background tab's
+        cached ledger kept the old note until the next producer pass ended (3 s plus the pass, minutes
+        while judges were calling the model; review 2026-09-06). The note is folded into the sig, so the
+        change reaches the row at the next push like every other ledger field."""
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        saved = (km._sdk, km.WORKING_DIR)
+        km._sdk = lambda: None
+        km.WORKING_DIR = jd.STATE / "working"
+        try:
+            before = km._chat_build_sig(sess)
+            km._set_working_note(SID, "editing the notes-api tests")
+            with_note = km._chat_build_sig(sess)
+            self.assertNotEqual(before, with_note, "a note write busts the cache")
+            self.assertEqual(km._chat_build_sig(sess), with_note, "…and is byte-stable while unchanged (no rebuild per push)")
+            km._set_working_note(SID, "")
+            self.assertEqual(km._chat_build_sig(sess), before, "the lift (clear) busts it back")
+        finally:
+            km._sdk, km.WORKING_DIR = saved
+
+    def test_ledger_carries_the_feed_needs_you_verdict(self):
+        """ledger.needsInput is the FEED's per-session needs-you (review 2026-09-06): True when the last feed
+        build filed a card of this session under needs_input (here the fixture's judge-filed block, g2, on
+        an IDLE session, the case the tab's chip rule never sees), False when none, None before the first
+        feed build. Read from the feed build's own payload, never re-derived; a muted session has no cards.
+        The chat-build sig folds the bit so a background row follows a verdict flip at the next push."""
+        tmux = km._tmux_sessions()
+        saved = (list(km._built_feed), km._feed_needs_input[0], km._views_dirty[0], km._sdk)
+        km._built_feed[:] = [None, None, 0.0, 0.0]; km._feed_needs_input[0] = None; km._views_dirty[0] = 0.0
+        km._sdk = lambda: None
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        try:
+            self.assertIsNone(km.build_session(SID, NOW)["ledger"]["needsInput"], "no feed build yet → None, not a verdict")
+            feed = km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
+            self.assertTrue(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]),
+                            "the fixture's blocked goal files a needs_input card for the idle session")
+            self.assertEqual(tmux[SID]["state"], "idle", "…while the chip is idle: the tab's rule alone shows nothing")
+            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], True, "the row's needs-you = the feed's column")
+            sig_blocked = km._chat_build_sig(sess)
+            # the judges rule the block answered: the store now holds the goal working; a dirty mark bypasses
+            # the rebuild throttle the way the reply handler does
+            store = json.loads((jd.GOALDIR / (SID + ".json")).read_text())
+            g2 = "%s:g2" % SID
+            store["nodes"][g2]["blocked"] = False; store["status"][g2] = "working"
+            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+            km._mark_views_dirty()
+            feed = km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
+            self.assertFalse(any(a["sid"] == SID and a["column"] == "needs_input" for a in feed["asks"]))
+            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], False, "no card under needs-you → False")
+            self.assertNotEqual(km._chat_build_sig(sess), sig_blocked, "the flip busts the background tab's cached ledger")
+            # muted: out of the feed altogether → no cards → False, whatever the store says
+            store["nodes"][g2]["blocked"] = True; store["status"][g2] = "blocked"
+            (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(store))
+            km._set_session_flag(SID, "hideFromFeed", True); km._flags_cache.clear()
+            km._mark_views_dirty()
+            km._cached_feed(NOW, tmux, km._fleet_view_sig(NOW, tmux))
+            self.assertIs(km.build_session(SID, NOW)["ledger"]["needsInput"], False, "a muted session is out of task tracking")
+        finally:
+            km._set_session_flag(SID, "hideFromFeed", False); km._flags_cache.clear()
+            km._built_feed[:], km._feed_needs_input[0], km._views_dirty[0], km._sdk = saved
+
+    def test_the_first_feed_build_does_not_bust_every_chat_build(self):
+        """_chat_build_sig folds the feed's needs-you as a BOOL (review r2 2026-09-06). The set behind it is
+        None until the first feed build since start, and a push builds the chat sessions BEFORE the feed, so
+        a raw fold gave every tab a None sig on the first push and a False one on the next, a whole-strip
+        rebuild for a value the row reads the same (needsInput === true). None and False share a signature;
+        True (a card of THIS session under needs-you) differs from both, so a real verdict still busts."""
+        sess = {"path": str(self.tpath), "sid": SID, "anchor": ""}
+        saved = (km._feed_needs_input[0], km._sdk)
+        km._sdk = lambda: None
+        try:
+            km._feed_needs_input[0] = None
+            before_feed = km._chat_build_sig(sess)
+            km._feed_needs_input[0] = frozenset()
+            self.assertEqual(km._chat_build_sig(sess), before_feed,
+                             "the first feed build, no card of this session under needs-you: nothing the row shows changed, no rebuild")
+            km._feed_needs_input[0] = frozenset(["99999999-8888-7777-6666-555555555555"])
+            self.assertEqual(km._chat_build_sig(sess), before_feed, "another session's card: still nothing of this row")
+            km._feed_needs_input[0] = frozenset([SID])
+            self.assertNotEqual(km._chat_build_sig(sess), before_feed, "a card of this session under needs-you is the verdict that busts")
+        finally:
+            km._feed_needs_input[0], km._sdk = saved
+
+    def test_ledgers_attach_carries_the_working_note_and_the_feed_verdict(self):
+        """The Outline's per-session `ledgers` (feed["ledgers"], built in _push from the chat sessions) carry
+        the whole ledger dict, so the Outline gets workingNote and needsInput with no new frame. Executed
+        through _push with an Outline client (app "fleet") and the REAL build_session (the source pin in
+        tests/test_kernel_fleet_ledgers.py covers the attach's shape, not its keys)."""
+        sent = []
+        saved = (km._chat_tab_sessions, km.build_feed, km.build_timeline, km._send_client, km.WORKING_DIR,
+                 list(km._built_feed), km._feed_needs_input[0])
+        km._chat_tab_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath), "anchor": ""}]
+        km.build_feed = lambda now, tmux: {"working": [], "awaiting": [], "asks": [
+            {"itemId": SID + ":g2", "sid": SID, "column": "needs_input"}]}
+        km.build_timeline = lambda now, tmux: None
+        km._send_client = lambda c, key, msg, pre=None, **kw: sent.append((key, msg))
+        km.WORKING_DIR = jd.STATE / "working"
+        km._built_feed[:] = [None, None, 0.0, 0.0]; km._feed_needs_input[0] = frozenset([SID])
+        try:
+            km.WORKING_DIR.mkdir(parents=True, exist_ok=True)
+            (km.WORKING_DIR / SID).write_text("editing the notes-api tests\n")
+            km._push([{"app": "fleet", "alive": True}])
+        finally:
+            (km._chat_tab_sessions, km.build_feed, km.build_timeline, km._send_client, km.WORKING_DIR,
+             km._built_feed[:], km._feed_needs_input[0]) = saved
+        feeds = [msg for (key, msg) in sent if isinstance(msg, dict) and "ledgers" in msg]
+        self.assertTrue(feeds, "the Outline client received a feed frame with ledgers attached")
+        row = next(r for r in feeds[-1]["ledgers"] if r["sid"] == SID)
+        self.assertEqual(row["ledger"]["workingNote"], "editing the notes-api tests", "the note rides the attach")
+        self.assertIs(row["ledger"]["needsInput"], True, "…and so does the feed's verdict")
+        self.assertIn("archivedTops", row["ledger"], "beside the attach's own field")
 
     def test_ledger_tree_and_current(self):
         # The overview's goal TREE: top-level goals, done nodes kept as timed leaves, open nodes expanded.
@@ -5063,6 +5211,245 @@ class ViewBuilder(unittest.TestCase):
         finally:
             km._end_goals_pass()
 
+    # ── the pass snapshot's stat-keyed store memo (performance plan B5, 2026-09-06) ──
+    OTHER_SID = "11111111-2222-3333-4444-666666666666"
+
+    def _publish_store(self, sid, store):
+        """Write a store the way every real writer does: a temp file renamed into place. The temp file
+        is created while the old one still exists, so ONE publish between passes is a new inode and the
+        memo's (ino, mtime_ns, size) key moves on any clock; an in-place write_text keeps the inode and
+        can land inside the same coarse mtime tick on a CI kernel. (Inode numbers do recycle across two
+        publishes; the key-component tests below isolate each component with os.utime.)"""
+        path, tmp = jd.GOALDIR / (sid + ".json"), jd.GOALDIR / (sid + ".json.tmp")
+        tmp.write_text(json.dumps(store))
+        os.replace(tmp, path)
+        return path
+
+    def _count_decodes(self):
+        """Wrap the memo's own decode hook (not json.loads: the punch and _apply_rewind_hold call that
+        for their copies). Returns the call list; the caller restores km._goals_memo_decode."""
+        real, calls = km._goals_memo_decode, []
+        km._goals_memo_decode = lambda data: (calls.append(1), real(data))[1]
+        return real, calls
+
+    def test_a_second_pass_decodes_only_the_stores_whose_file_changed(self):
+        # The pass used to json.loads EVERY goals/*.json at its start (72 files of up to 1.3 MB, about 3%
+        # of the kernel's interpreter time) although a pass changes a few of them. Every writer publishes
+        # by rename, so a file version is named exactly by (ino, mtime_ns, size): a later pass decodes only
+        # the stores whose key moved and serves the rest as the very object an earlier pass parsed.
+        km._user_goal_write.pop(SID, None)                 # no punch pending from another test's gesture
+        g = self._store_with_status("working")
+        self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {},
+                                             "placements": {}, "status": {}})
+        real, calls = self._count_decodes()
+        try:
+            km._begin_goals_pass()
+            first_sid, first_other = km._feed_goals(SID), km._feed_goals(self.OTHER_SID)
+            km._end_goals_pass()
+            self.assertEqual(len(calls), 2, "a cold memo decodes both stores")
+            self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 1, "nodes": {},
+                                                 "placements": {}, "status": {}})
+            del calls[:]
+            km._begin_goals_pass()
+            try:
+                self.assertEqual(len(calls), 1, "one file changed → exactly one decode")
+                self.assertIs(km._feed_goals(SID), first_sid, "the unchanged store is served by identity")
+                served = km._feed_goals(self.OTHER_SID)
+                self.assertIsNot(served, first_other)
+                self.assertEqual(served["seq"], 1, "the changed store is served at its new version")
+                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+                self.assertEqual(card["column"], "working")
+            finally:
+                km._end_goals_pass()
+            km._begin_goals_pass()                         # a third pass with nothing changed: no decode at all
+            try:
+                self.assertEqual(len(calls), 1)
+                self.assertIs(km._feed_goals(SID), first_sid)
+            finally:
+                km._end_goals_pass()
+        finally:
+            km._goals_memo_decode = real
+
+    def test_a_user_punch_copies_the_entry_and_never_mutates_the_memoized_store(self):
+        # A snapshot entry is a memo reference shared with every later pass that finds the file
+        # unchanged, so the punch (the gesture's replay + rollup, both in place) must land on a copy:
+        # otherwise the reopen would be baked into the object the NEXT pass serves for a file that does
+        # not hold it. Contract: the memoized object always equals a fresh raw parse of its file
+        # version; the served copy carries the reopen; a second gesture in the same pass works the same
+        # copy; build_feed reads and never writes.
+        g = self._settled_store()
+        path = jd.GOALDIR / (SID + ".json")
+        raw = json.loads(path.read_bytes())                # the version this pass memoizes
+        km._begin_goals_pass()
+        try:
+            memo_obj = km._goals_memo[0][str(path)][1]
+            self.assertEqual(memo_obj, raw)
+            km._user_goal_write.pop(SID, None)
+            self.assertIs(km._feed_goals(SID), memo_obj, "no gesture yet: served by identity")
+            self.assertTrue(jd.optimistic_followup(SID, g, text="also handle the empty case", now=NOW))
+            km._note_user_goal_write(SID)
+            served = km._feed_goals(SID)
+            self.assertIsNot(served, memo_obj, "the punch worked on a copy")
+            self.assertEqual(served["status"].get(g), "working", "the served copy carries the reopen")
+            self.assertTrue(any(e.get("src") == "user" and e.get("kind") == "reopen"
+                                for e in served["nodes"][g].get("log") or []))
+            self.assertEqual(memo_obj, raw, "the memoized object is untouched: still the raw parse")
+            self.assertIs(km._feed_goals(SID), served, "later reads in the pass serve that one copy")
+            self.assertTrue(jd.optimistic_followup(SID, g, text="and the null case", now=NOW + 1))
+            km._note_user_goal_write(SID)
+            self.assertIs(km._feed_goals(SID), served, "a second gesture punches the copy already made")
+            self.assertEqual(memo_obj, raw)
+            card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+            self.assertEqual(card["column"], "working")
+            self.assertEqual(memo_obj, raw, "build_feed reads the store; it never writes it")
+        finally:
+            km._end_goals_pass()
+        km._begin_goals_pass()                             # the gesture's own save published a new version
+        try:
+            self.assertIsNot(km._goals_memo[0][str(path)][1], memo_obj, "…so the next pass re-decodes it")
+            self.assertEqual(km._feed_goals(SID)["status"].get(g), "working")
+        finally:
+            km._end_goals_pass()
+
+    def test_a_store_that_does_not_decode_is_served_live_and_retried_only_when_it_changes(self):
+        # A version that fails to decode stays out of the snapshot (the feed falls to live load_goals,
+        # as before) and is said on stderr — once per file VERSION, not per pass: the failure is
+        # remembered under the same key, so a corrupt megabyte is not re-decoded and re-reported every
+        # 3 s. The file's next publish is a new key and is decoded again.
+        path = jd.GOALDIR / (SID + ".json")
+        tmp = jd.GOALDIR / (SID + ".json.tmp")
+        tmp.write_text("{not json")
+        os.replace(tmp, path)
+        real, calls = self._count_decodes()
+        err, saved_err = io.StringIO(), sys.stderr
+        sys.stderr = err
+        try:
+            km._begin_goals_pass()
+            try:
+                self.assertNotIn(SID, km._goals_snap[0], "no snapshot entry for a version that did not decode")
+                live = km._feed_goals(SID)
+                self.assertIn("_baseRev", live, "the feed falls to the live loader's object")
+                self.assertEqual(live.get("nodes"), {}, "…a fresh store, as load_goals answers for an unreadable file")
+            finally:
+                km._end_goals_pass()
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(err.getvalue().count("goals-pass: "), 1, "said once, naming the file")
+            self.assertIn(SID + ".json", err.getvalue())
+            km._begin_goals_pass()
+            km._end_goals_pass()
+            self.assertEqual(len(calls), 1, "the same version is not decoded again")
+            self.assertEqual(err.getvalue().count("goals-pass: "), 1, "…and not said again")
+            g = self._store_with_status("working")         # a new version (its size differs, so the key moves on any clock)
+            km._begin_goals_pass()
+            try:
+                self.assertEqual(len(calls), 2, "a changed file is decoded again")
+                self.assertIn(SID, km._goals_snap[0])
+                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
+                self.assertEqual(card["column"], "working")
+            finally:
+                km._end_goals_pass()
+        finally:
+            sys.stderr = saved_err
+            km._goals_memo_decode = real
+
+    def test_the_memo_forgets_a_store_whose_file_is_gone(self):
+        # Entries are keyed by path; a file gone from the directory (a test's unlink, a state rebind)
+        # leaves the memo at the next pass, so it cannot grow across the paths a process has seen.
+        path = self._publish_store(self.OTHER_SID, {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {},
+                                                    "placements": {}, "status": {}})
+        km._begin_goals_pass()
+        km._end_goals_pass()
+        self.assertIn(str(path), km._goals_memo[0])
+        path.unlink()
+        before = km._goals_memo_stats["evict"]
+        km._begin_goals_pass()
+        try:
+            self.assertNotIn(str(path), km._goals_memo[0], "evicted at the next pass")
+            self.assertNotIn(self.OTHER_SID, km._goals_snap[0])
+            self.assertEqual(km._goals_memo_stats["evict"] - before, 1)
+            self.assertIn("_baseRev", km._feed_goals(self.OTHER_SID), "a sid without an entry reads live")
+        finally:
+            km._end_goals_pass()
+
+    # Each component of the memo key is load-bearing on its own, and none of the tests above pins one:
+    # they publish by rename AND change the content's length, so every version differs in two components
+    # at once, and a key missing any one component still passes them. The three tests below isolate one
+    # component each. They rewrite in place or pin mtimes with os.utime, which no real writer does (every
+    # writer publishes by rename): synthetic isolation of one signal, not a model of a writer. mtimes are
+    # moved by os.utime and never by letting the clock run (a same-tick flake on a coarse kernel).
+    def _memo_key_probe(self, mutate):
+        """Publish a seq-0 store, run a pass so the memo holds it, apply mutate(path, st, store) (st is
+        the memoized version's stat, store a copy of its content), and run a second pass. Returns the
+        second pass's decode count, the store it served, and the key before and after."""
+        store = {"rompUuid": self.OTHER_SID, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
+        path = self._publish_store(self.OTHER_SID, store)
+        real, calls = self._count_decodes()
+        try:
+            km._begin_goals_pass()
+            km._end_goals_pass()
+            st = path.stat()
+            old_key = km._goals_memo[0][str(path)][0]
+            mutate(path, st, dict(store))
+            del calls[:]
+            km._begin_goals_pass()
+            try:
+                served = km._feed_goals(self.OTHER_SID)
+                new_key = km._goals_memo[0][str(path)][0]
+            finally:
+                km._end_goals_pass()
+            return len(calls), served, old_key, new_key
+        finally:
+            km._goals_memo_decode = real
+
+    def test_the_memo_key_re_decodes_on_a_size_change_alone(self):
+        # st_size: the inode and the mtime held (in-place rewrite, mtime pinned back); only the length
+        # moved. A key without st_size would serve the seq-0 parse for a file that holds seq 1.
+        def mutate(path, st, store):
+            store["seq"], store["note"] = 1, "a longer version of the same store"
+            path.write_text(json.dumps(store))                          # same inode
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))        # same mtime_ns
+            now = path.stat()
+            self.assertEqual((now.st_ino, now.st_mtime_ns), (st.st_ino, st.st_mtime_ns))
+            self.assertNotEqual(now.st_size, st.st_size)
+        decodes, served, old_key, new_key = self._memo_key_probe(mutate)
+        self.assertEqual(decodes, 1, "the size moved → decoded again")
+        self.assertEqual(served["seq"], 1, "…and the new version is what the pass serves")
+        self.assertNotEqual(old_key, new_key)
+
+    def test_the_memo_key_re_decodes_on_an_mtime_change_alone(self):
+        # st_mtime_ns: same inode, same length (seq 0 → 1 swaps one digit for one digit); only the mtime
+        # moved. This is the component the key rests on in production: inode numbers recycle and equal
+        # sizes are common (the memo note in kernel.py).
+        def mutate(path, st, store):
+            store["seq"] = 1
+            data = json.dumps(store)
+            self.assertEqual(len(data.encode()), st.st_size, "same length by construction")
+            path.write_text(data)                                        # same inode, same size
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))   # moved by 1 ms, deterministically
+            now = path.stat()
+            self.assertEqual((now.st_ino, now.st_size), (st.st_ino, st.st_size))
+            self.assertNotEqual(now.st_mtime_ns, st.st_mtime_ns)
+        decodes, served, old_key, new_key = self._memo_key_probe(mutate)
+        self.assertEqual(decodes, 1, "the mtime moved → decoded again")
+        self.assertEqual(served["seq"], 1, "…and the new version is what the pass serves")
+        self.assertNotEqual(old_key, new_key)
+
+    def test_the_memo_key_re_decodes_on_an_inode_change_alone(self):
+        # st_ino: a real rename publish of same-length content with its mtime pinned to the old value, so
+        # only the inode moved — the shape of a same-tick publish on a coarse-timestamp kernel. One
+        # publish between passes always lands on a fresh inode (the temp file coexists with the old one).
+        def mutate(path, st, store):
+            store["seq"] = 1
+            self._publish_store(self.OTHER_SID, store)                  # new inode, same size
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))        # same mtime_ns
+            now = path.stat()
+            self.assertEqual((now.st_mtime_ns, now.st_size), (st.st_mtime_ns, st.st_size))
+            self.assertNotEqual(now.st_ino, st.st_ino)
+        decodes, served, old_key, new_key = self._memo_key_probe(mutate)
+        self.assertEqual(decodes, 1, "the inode moved → decoded again")
+        self.assertEqual(served["seq"], 1, "…and the new version is what the pass serves")
+        self.assertNotEqual(old_key, new_key)
+
     def test_the_feed_payload_carries_a_build_id_that_advances_per_build(self):
         # buildId is what lets a client tell "this payload predates my click" from "this is the kernel's
         # answer to it" (see _next_feed_build_id / cardMoveAck), so it must advance on every real build and
@@ -5696,8 +6083,8 @@ class ViewBuilder(unittest.TestCase):
             {"message": {"content": [{"type": "text", "text": "hi <!-- romp-msg-id: m1 -->"}]}},
             {"message": {"content": [{"type": "tool_result", "content": "inbox: <!-- romp-msg-id: m2 -->"}]}},
             {"message": {"content": "plain <!-- romp-msg-id: m3 -->"}}]}
-        self.assertEqual(set(km._seg_mids(seg)), {"m1", "m2", "m3"},
-                         "msg ids from text blocks, check_inbox tool_results, and string content")
+        self.assertEqual(km._seg_mids(seg), ["m1", "m2", "m3"],
+                         "msg ids from text blocks, check_inbox tool_results, and string content, in document order")
 
     def test_bind_message_exec_id_join(self):
         """A connector binds its exec to the recipient segment that carries its msg id (process-start),

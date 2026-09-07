@@ -25,6 +25,131 @@ The Python and shell suites are also the CI gate, across Python 3.10 to 3.13 on
 Linux; the macOS cells run on demand from the Actions tab (they are billed even
 on a public repo, so they are not part of the per-push matrix).
 
+## Measuring dashboard pane performance
+
+`tools/ui-bench.mjs` measures, in a headless Chromium, what the browser does
+with the frames the kernel pushes to a pane page, so the cost of a rendering
+change can be measured before and after it lands. It needs the extension's
+`node_modules` (`cd vscode-extension && npm ci`), a built `dist/`
+(`npm run build` there), `python3`, and a Chromium: Playwright's own
+(`npx playwright install chromium` in `vscode-extension/`) or a system Google
+Chrome.
+
+```bash
+# a frame stream with invented content, for a bench that needs no live board
+node tools/ui-bench.mjs --synthesize feed --cards 200 --out /tmp/romp-perf/synth-feed.jsonl
+# replay it into the real feed page and print per-frame timings
+node tools/ui-bench.mjs --replay feed --frames /tmp/romp-perf/synth-feed.jsonl --fast --json /tmp/romp-perf/before.json
+# change the bundle, rebuild, replay again, then compare the two reports
+node tools/ui-bench.mjs --compare /tmp/romp-perf/before.json /tmp/romp-perf/after.json
+# record 90 seconds of what a running kernel sends the feed page, then replay that
+node tools/ui-bench.mjs --record feed --seconds 90 --out /tmp/romp-perf/frames-feed.jsonl
+node tools/ui-bench.mjs --replay feed --frames /tmp/romp-perf/frames-feed.jsonl --json /tmp/romp-perf/live.json
+```
+
+A replay reports, per frame type, the bytes, the synchronous handler time, and
+the time until the main thread is free again (to the second
+`requestAnimationFrame` after the message) as p50, p90, and max; then the
+long-animation-frame entries with script attribution, the JavaScript heap
+after a forced garbage collection, the DOM size, and every console error. The
+long-animation-frame attribution names each task's entry point (the message
+handler, a `requestAnimationFrame` callback, a timer, a script's evaluation),
+not the function inside the bundle that did the work; for that, add
+`--cpu-profile /tmp/romp-perf/feed.cpuprofile`, which samples the page's
+JavaScript with the V8 profiler across the replay, writes a file Chrome
+DevTools loads (Performance panel), and prints the functions with the most self
+and total time as `bundle.js:function:line` with the source position from the
+dist's `.map` files (a `--production` dist is minified and has none; the report
+says so), overall and inside the first content frame and the largest
+frame of each type; for the hottest functions it also names the lines that hold
+the time (a forced synchronous layout, for instance, shows up as one line of
+one function owning most of its self time). The end-of-run layout, style,
+script and task counters are cumulative since navigation, so they include page
+load and idle timers (the timeline redraws every animation frame while it
+follows the present), and `--compare` shows them without percentages when the
+two runs differ in pacing or length. The numbers come from the real pages: the
+kernel's own HTTP handler serves the HTML, the shim, and the bundles from a
+`python3` subprocess under an isolated environment: the pattern of
+`tests/test_color_route.py` with the floors `tests/conftest.py` applies (the
+manager variables and the API-key variables are removed, the manager's key file
+and the boot model-catalog fetch are pointed away, the Claude binary is
+`/bin/false`, the postal peer bus is off, the serve token is minted for the
+run, and the subprocess exits when the bench does). Run state, the browser's
+profile included, lives under one per-user directory in the temp root; a run
+killed with its whole process group leaves its entry there until the next run
+sweeps it. A Node front server answers the page's WebSocket and proxies
+everything else to the subprocess. The default is no CPU throttling,
+a desktop; `--cpu-throttle 4` emulates a machine four times slower. `--iters 3`
+pools three runs. `--fast` sends the frames back-to-back instead of at their
+recorded pacing; settle times then overlap, handler times do not.
+
+A recording holds real session data. `--record` connects to the running kernel
+as one more pane (the same URL and capabilities, the token as the page's
+cookie), sends the ready handshake and nothing else, and writes only under
+`/tmp` (private to your user: directory 0700, file 0600), refusing a path
+inside a git checkout or through a symlink. Never copy one into the repo; the
+tests use synthetic streams. Apps: `feed`, `fleet` (the Outline pane),
+`waiting`, `chat`, `timeline`, `files`. Two cannot be synthesized, only
+recorded: the chat's session frame is built by `build_session` and is too rich
+to fake, and the Files pane parses no frames at all (its socket carries
+keepalives and op replies).
+
+`tests/ui-bench.test.mjs` (`node --test tests/ui-bench.test.mjs`) covers the
+tool, including the recording client against a local WebSocket server and the
+Handler subprocess's isolation, and replays synthetic feed and timeline streams
+in a real browser. The browser tests skip, saying why, when no Chromium, no
+`python3` or no built `dist/` is available; with `ROMP_UI_BENCH_REQUIRE=1` in
+the environment (CI sets it) that skip is a failure instead.
+
+### A message listener from another world clones every frame it can see
+
+The pane pages receive the kernel's frames as `message` events on `window`.
+Blink hands a listener in the page's own JavaScript world the event's data
+object itself, but a listener in another world, a browser extension's content
+script, that reads `event.data` receives a structured clone of the whole
+object, made synchronously inside the dispatch: 35-46 ms and about 7 MB of
+garbage per dispatch of a 7 MB frame in a Chromium probe (2026-09-06), against
+0 ms for a direct call. The headless bench has no such listener and cannot show
+this cost; the live `romp perf client` rows can, as a `fed:<type>` share far
+above federation's own compute (about 1 ms per frame).
+
+`federation.js` therefore hands its merged frames (`feed`, `tabOrder`, `data`,
+`bars`) to the pane's handler by direct call (`window.__rompFed.onFrame`,
+through `ui/webview/frame-listener.ts`) and dispatches them on `window` only
+when nothing registered. Every other frame still arrives as a `window` event,
+so a foreign listener still sees those, and a new frame type that grows large
+should go through the registry too.
+
+To check a browser for such a listener before or after a deploy: open DevTools
+on the dashboard, pick the feed iframe in the console's context selector, and
+time a dispatch of a large frame:
+
+```js
+const big = Array.from({ length: 150000 }, (_, i) => ({ i, s: "x" }));
+const t = performance.now();
+window.dispatchEvent(new MessageEvent("message", { data: big }));
+performance.now() - t
+```
+
+Under a millisecond means no foreign reader: only same-world listeners saw the
+event. Tens of milliseconds means a listener in another world read
+`event.data` and paid for the clone. This timing is the detection step.
+`getEventListeners(window).message` cannot be, because it is per-world: it
+lists only the listeners registered from the world whose context the console
+is running in, so in the page's own context it shows romp's listeners and
+nothing else, whether or not a content script is present. To see a content
+script's listener, switch the console's context selector to that extension's
+context (listed under the frame by extension name) and run the enumeration
+there. Every romp listener on a kernel pane page comes from that page's pane
+bundle (`feed.js` on the feed page, `render.js` on the chat, and so on; the
+kernel-served timeline's is its inline boot; under a dev build with source
+maps DevTools may show the source file names), and any other URL, in
+particular a `chrome-extension://` one, is the foreign listener. With no
+foreign listener present, a large `fed:<type>` share in the live rows is not
+the clone and needs another explanation before anything is built on this one.
+
+## Test environment
+
 Three things about the test environment are worth knowing, because all have
 produced confusing failures:
 

@@ -5,7 +5,7 @@ Drives OpenAI Codex sessions through the official openai-codex Python SDK's sync
 (JSON-RPC to `codex app-server` over stdio) and materializes each thread as Claude-transcript-shaped
 JSONL via kernel/codex_events.ThreadNormalizer, so romp's entire read side parses Codex sessions
 unchanged. Duck-types the SessionBackend ABC exactly like SdkBackend does (the kernel loads backends
-via SourceFileLoader; a conformance test asserts every abstract method exists).
+by file path; a conformance test asserts every abstract method exists).
 
 Shape of the machine:
 - ONE CodexClient per backend — the app-server hosts many threads, unlike Claude's one-CLI-per-
@@ -34,11 +34,15 @@ import threading
 import time
 import traceback
 import uuid as uuidlib
-from importlib.machinery import SourceFileLoader
+import importlib.util
 from pathlib import Path
 
 HERE = Path(os.path.dirname(os.path.realpath(__file__)))
-_events = SourceFileLoader("romp_codex_events", str(HERE / "codex_events.py")).load_module()
+_ls_spec = importlib.util.spec_from_file_location("romp_loadsource", str(HERE / "loadsource.py"))
+_ls_mod = importlib.util.module_from_spec(_ls_spec)
+_ls_spec.loader.exec_module(_ls_mod)
+load_source = _ls_mod.load_source   # file-path imports with load_module()'s sys.modules semantics (kernel/loadsource.py)
+_events = load_source("romp_codex_events", HERE / "codex_events.py")
 
 SDK_PIN = "openai-codex==0.144.4"     # bin/romp-codex-setup installs exactly this into codexvenv
 SETUP_HINT = ("Session not created: the Codex backend isn't installed. "
@@ -820,13 +824,14 @@ class CodexBackend:
                 old = []
             bg = bg or (old[2] if len(old) > 2 else "")
             fg = fg or (old[3] if len(old) > 3 else "")
+            emoji = old[4] if len(old) > 4 else ""   # the kernel's tab emoji (5th field) rides along
             tmp = d / (s.sid + ".tmp")
             try:
                 tmp.unlink(missing_ok=True)   # a planted FIFO at the fixed staging name blocks
             except OSError:                   # open(); a leaked stray must not shadow the write
                 pass
             try:
-                tmp.write_text("%s\t%s\t%s\t%s\n" % (s.name, s.cwd, bg, fg))
+                tmp.write_text("%s\t%s\t%s\t%s%s\n" % (s.name, s.cwd, bg, fg, ("\t" + emoji) if emoji else ""))
                 os.replace(str(tmp), str(d / s.sid))
             finally:
                 tmp.unlink(missing_ok=True)   # never LEAK the staging file: names consumers

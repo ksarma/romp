@@ -1,0 +1,32 @@
+name: PR orphans
+
+# After every push to main, report any merged PR whose merge commit is not an ancestor of main:
+# the PR that was merged into another PR's branch after that base had already merged, so its
+# content never reached main (scripts/pr-orphans.sh has the history). A red run here names the PR;
+# the fix is a PR from that branch to main. Read-only: no write permission, no token beyond the
+# job's own.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  orphans:
+    name: Merged PRs reach main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The ancestry test needs the whole history: a default checkout has one commit, and
+          # every merge commit would then read as unreachable.
+          fetch-depth: 0
+      - name: pr-orphans.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/pr-orphans.sh

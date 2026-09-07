@@ -14,6 +14,7 @@
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
 import { applyFeedDelta } from "./feed-delta";
+import { adoptViews, capsAdopts, announcedSeq, announcedAfter } from "./views-writes";
 import { hostOf, bareId } from "./host-prefix";
 import { installPerfTelemetry, classifyFrame, type RompPerf } from "./perf-telemetry";
 
@@ -27,6 +28,8 @@ export function perfCollectorFor(app: string): RompPerf | null {
 
 export const SEP = ":";
 export const LOCAL = ""; // the local kernel's host key — no prefix, so the single-kernel path is untouched
+/** The merged emits a hidden pane can owe: the feed frame; the timeline's lanes skeleton and its bars. */
+export type HoldSlot = "feed" | "data" | "bars";
 
 /** `host:id` for a remote host; the bare id unchanged for the local host. */
 export function prefixId(host: string, id: string): string {
@@ -251,6 +254,13 @@ export function routeOutbound(msg: any, knownHosts?: ReadonlySet<string>): Route
     const { host, ...rest } = msg;
     return [{ host: host || LOCAL, msg: rest }];
   }
+
+  // The VIEWS store is per kernel and a dashboard edits only its LOCAL one: a tag edit or a whole-blob
+  // views write goes to the local socket whatever fields it carries (the 2026-09-05 review: the tag
+  // op's fields rode at the top level, so a tag `name` that happened to look like a remote lane's
+  // display name would have taken the name-addressed route below to that host — tag names and
+  // session names share a field name, not a meaning).
+  if (msg.type === "tagEdit" || msg.type === "setTimelineViews") return [{ host: LOCAL, msg }];
 
   // order[] (reorderTabs / the timeline's writeOrder): split across the hosts it touches.
   if (Array.isArray(msg.order) && msg.order.some((x: any) => typeof x === "string")) {
@@ -645,6 +655,19 @@ export function socketVerdict(readyState: number, lastRecv: number, connT: numbe
 // and window.__rompFed.outbound(m) for sends (both no-ops when this module isn't loaded, e.g. the timeline
 // pane), and exposes window.__rompLocalSend + window.__rompApp.
 
+/** A pane's frame handler: the window "message" listener's signature, so one function serves both paths. */
+export type FrameHandler = (e: MessageEvent) => void;
+
+/** Report a subscriber's exception the way the DOM reports a listener's: through reportError where the page has
+ *  it (window.onerror / the console, as an uncaught exception), else console.error. Never throws. */
+export function reportListenerError(e: unknown): void {
+  const g: any = globalThis;
+  try {
+    if (typeof g.reportError === "function") { g.reportError(e); return; }
+  } catch (_) { /* fall through to the console */ }
+  try { console.error(e); } catch (_) { /* nothing left to report to */ }
+}
+
 interface Conn {
   host: string;
   ws: WebSocket | null;
@@ -666,6 +689,11 @@ export class FederationManager {
   private perHostOrder: Record<string, string[]> = {};
   private perHostTabs: Record<string, any[]> = {};
   private localViews: any = null;   // the LOCAL kernel's session-views blob, carried on merged tabOrder re-emits
+  private localSelfHost = "";       // the LOCAL kernel's own name (its tabOrder frame's selfHost), carried the same way
+  private localViewsRejected: any = null;   // the last LOCAL tabOrder blob the seq gate turned away since it last adopted one — the caps frame adopts it (inbound)
+  private tlViewsRejected: any = null;      // the same for the LOCAL lanes payload's blob (perHostTl[LOCAL].views)
+  private localViewsAnnounced: number | null = null;   // the seq the last LOCAL caps frame announced as the kernel's current store when the tabOrder store adopted no kept blob — a LATER blob at exactly that seq is adopted below the stored one (announcedSeq); cleared by the next adoption that changes the stored blob (announcedAfter)
+  private tlViewsAnnounced: number | null = null;      // the same for the lanes payload's store
   private perHostSids: Record<string, Set<string>> = {};
   private perHostFeed: Record<string, any> = {}; // last feed snapshot per host — merged so they don't clobber
   private perHostFeedAt: Record<string, number> = {}; // host -> local ms its snapshot ARRIVED (feed or the delta that updated it): the merged frame's clock anchor (mergeHostFeeds `nowAt`), so a re-emit anchors exactly as the arrival did
@@ -678,6 +706,49 @@ export class FederationManager {
   // frames to; inbound() times its own merge and dispatch through it as fed:<type>, nested outside the pane's
   // handler. Public so a test can hand it a stand-in.
   perf: RompPerf | null = null;
+  // The pane's frame handlers, registered through onFrame (window.__rompFed.onFrame): the merged frames this
+  // layer emits reach them by direct call, never as a window "message" event. See emit() for why.
+  private frameSubs: FrameHandler[] = [];
+
+  /** Register a handler for the merged frames this manager emits (`feed`, `tabOrder`, `data`, `bars`); returns
+   *  the unsubscribe. The pane registers the SAME wrapped handler it installs on window (frame-listener.ts), so
+   *  the perf brackets nest as before and every frame reaches it exactly once: federation picks one path per
+   *  frame (emit). Every other frame — the passthrough, `closed`, `hostUp`, `warn`, the shell's `romp:` posts —
+   *  still arrives through the window listener. */
+  onFrame(handler: FrameHandler): () => void {
+    this.frameSubs.push(handler);
+    return () => {
+      const i = this.frameSubs.indexOf(handler);
+      if (i >= 0) this.frameSubs.splice(i, 1);
+    };
+  }
+
+  /** Hand one merged frame to the pane. With a subscriber registered: ONE MessageEvent, called into each handler
+   *  directly, in registration order, over a snapshot of the list. Here the direct path deliberately differs from
+   *  dispatchEvent on removal: the DOM skips a listener removed during dispatch, while a handler unsubscribed by
+   *  an earlier handler in the same frame still runs once here (the snapshot is simpler, and nobody unsubscribes
+   *  mid-delivery today). With none: window.dispatchEvent, exactly as before, so a pane bundle that predates the
+   *  registry keeps working.
+   *
+   *  Why not always dispatch on window: Blink hands a same-world listener the event's data object itself, but a
+   *  "message" listener in ANOTHER JavaScript world — a browser extension's content script on the pane's page —
+   *  that reads event.data receives a STRUCTURED CLONE of it, made synchronously inside dispatchEvent. For a
+   *  merged feed of several megabytes that is tens of milliseconds and as many megabytes of garbage per frame, in
+   *  every feed-consuming pane, counted under this layer's fed:<type> bracket (its own work is under a
+   *  millisecond); the probe measured 35-46 ms per dispatch of a 7 MB frame and 0 ms for a direct call
+   *  (2026-09-06). Nothing outside romp's bundles receives a merged frame now, so nothing can clone it.
+   *
+   *  A throwing handler is reported and the rest still run — the DOM's report-and-continue for event listeners.
+   *  Without this a throw would propagate through inbound into the shim's socket callback and skip this layer's
+   *  remaining work (the passthrough after a caps re-emit, the bars emission after a detach's lanes emission). */
+  private emit(data: any): void {
+    const ev = new MessageEvent("message", { data });
+    const subs = this.frameSubs;
+    if (!subs.length) { window.dispatchEvent(ev); return; }
+    for (const h of subs.slice()) {
+      try { h(ev); } catch (e) { reportListenerError(e); }
+    }
+  }
 
   start(): void {
     const w = window as any;
@@ -689,14 +760,21 @@ export class FederationManager {
     w.__rompFed = {
       inbound: (h: string, m: any) => this.inbound(h, m),
       outbound: (m: any) => this.outbound(m),
+      onFrame: (h: FrameHandler) => this.onFrame(h),   // the pane's direct-delivery registration (emit)
       hosts: () => this.hostSeq.filter((h) => h !== LOCAL), // attached hosts (the + modal's host picker)
       // Hosts that are attached but NOT reachable right now. Their sessions stay on screen — dropping
       // them would lose the thread — but every surface that shows one has to say the link is down, or
       // you are reading a transcript that stopped updating with nothing telling you (the user
       // 2026-07-29). `lastSeen` dates what is on screen.
       down: () => [...this.downHosts],
+      // the attached hosts THIS pane is still waiting on, by its own channel (pendingFor): attached, and up
+      // as far as the kernel knows, but their sessions are not on this pane's screen yet — the chat's pin
+      // prune leaves their entries alone until they are (render.ts reachableHosts; round 6 of the
+      // 2026-09-06 review); the shell's network panel says "loading sessions…" from the same set
+      pending: () => this.pendingFor(),
       lastSeen: (h: string) => this.lastSeen[h] || 0,
     };
+    this.installPaneHold(w);   // the shell's on-screen word + the first-show resize (the hidden-pane hold below)
     // A drag in ANY pane rewrites the arrangement; every other pane hears it through `storage` (which fires
     // only in other same-origin contexts) and this one through the writer's own CustomEvent. Both land here,
     // and re-emitting all three merged payloads is what moves the tabs, lanes and feed groups together.
@@ -775,6 +853,42 @@ export class FederationManager {
     if (m && m.type === "session" && typeof m.id === "string") {
       (this.perHostSids[host] ||= new Set()).add(m.id);
     }
+    // a kernel's `caps` frame describes THAT kernel; the panes hold only the LOCAL kernel's (its views
+    // store is the one they write). A remote's would read as the local kernel's — dropped here.
+    if (m && m.type === "caps" && host !== LOCAL) return;
+    // The local kernel's caps frame is the reconnect event: each replayed views store adopts the blob its
+    // gate last turned away when the frame names it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts),
+    // as the panes do — the kernel sends its connect push before this frame and `viewsSeq` is the seq of
+    // the views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
+    // restored while it was down) was rejected a frame ago and is adopted here; a healthy reconnect's push
+    // was adopted, nothing is kept, and the stores stand; a pusher frame kept because it arrived between
+    // the push and this frame carries a seq the frame does not name and is discarded. A store that adopted
+    // RE-EMITS before the caps frame is handed on: the panes see the local blob only through these re-emits
+    // (a rejected push reached them wearing the stored blob), so the restored blob must meet their own gate
+    // — and be turned away there — before their caps door adopts it. Nothing is re-emitted otherwise. When a
+    // store kept nothing the frame names (the connect push carried no blob for it — a sentinel cycle sends no
+    // tabOrder), the frame's viewsSeq is remembered as the kernel's announced store for that store, and the
+    // later blob carrying exactly that seq is adopted below the stored one on arrival (round 8 of the review;
+    // announcedSeq): one slot per store, overwritten by each local caps frame, cleared by the next adoption
+    // that CHANGES the stored blob and never by a re-arrival of the blob already stored (round 9; announcedAfter);
+    // null (no store at all) and a missing field announce nothing. The panes hold the same slot from the same
+    // frame, handed on below; the merged re-emits between that frame and the pusher's next one (a remote host's
+    // push, a `closed` frame, a storage event, a host drop) hand them the STORED blob at their own held seq,
+    // which leaves their slot standing by the same rule, so the re-emit of that later adoption meets an open
+    // door there too.
+    if (m && m.type === "caps") {
+      if (capsAdopts(this.localViewsRejected, m.viewsSeq)) {
+        this.localViews = this.localViewsRejected; this.localViewsAnnounced = null;
+        this.emitMergedOrder();
+      } else this.localViewsAnnounced = announcedSeq(m.viewsSeq);
+      this.localViewsRejected = null;
+      const tl = this.perHostTl[LOCAL];
+      if (tl && capsAdopts(this.tlViewsRejected, m.viewsSeq)) {
+        this.perHostTl[LOCAL] = { ...tl, views: this.tlViewsRejected }; this.tlViewsAnnounced = null;
+        this.emitMergedTimeline(false);
+      } else this.tlViewsAnnounced = announcedSeq(m.viewsSeq);
+      this.tlViewsRejected = null;
+    }
     // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
     // to touch the per-host store (T233, the user 2026-09-03). The 2026-08-02 rule below forbids
     // ARRANGEMENT writes on a re-emit (a stale pane pruning another pane's drag); a `closed` frame is new
@@ -801,8 +915,18 @@ export class FederationManager {
       // session VIEWS (the user 2026-08-18): the blob is the LOCAL kernel's viewer pref (ids arrive
       // host-prefixed inside it already) — remote kernels' copies are their own dashboards' prefs.
       // Without this passthrough the merged re-emit silently dropped the field and the browser
-      // dashboard's chat never learned the views at all.
-      if (host === LOCAL && m.views && typeof m.views === "object") this.localViews = m.views;
+      // dashboard's chat never learned the views at all. Kept ONLY when its write sequence is at
+      // least the stored one (2026-09-05): the re-emit below replays this copy on every merged order,
+      // and a frame the kernel built before a write must not roll the replayed blob back behind an
+      // ack the pane already adopted. The last blob turned away is kept for the caps frame (above), and a
+      // blob at the seq the last caps frame announced is adopted below the stored one (round 8).
+      if (host === LOCAL && m.views && typeof m.views === "object") {
+        if (adoptViews(this.localViews, m.views, this.localViewsAnnounced)) { this.localViewsAnnounced = announcedAfter(this.localViews, m.views, this.localViewsAnnounced); this.localViews = m.views; this.localViewsRejected = null; }
+        else this.localViewsRejected = m.views;
+      }
+      // the LOCAL kernel's own name rides its tabOrder frame too (selfHost): the chat reads a postal card's
+      // sender host against it, and a remote kernel's frame names ITSELF, so only the local one is kept
+      if (host === LOCAL && typeof m.selfHost === "string" && m.selfHost) this.localSelfHost = m.selfHost;
       this.ensureHost(host);
       this.absorbHostReport(host, prevOrder, prevTabs);   // a host just reported its sessions → the one
       this.emitMergedOrder(true, host);                   //   moment the stored arrangement may be touched
@@ -837,7 +961,18 @@ export class FederationManager {
     }
     // timeline snapshots replace the panel's state wholesale (update/applyBars) — merge per host like the feed.
     if (m && m.type === "data" && m.data && typeof m.data === "object") {
-      this.perHostTl[host] = m.data;
+      // the LOCAL lanes payload carries the views blob the merged re-emit replays: a payload whose blob
+      // has a LOWER write sequence than the stored one keeps the stored blob (its lanes still land) —
+      // the same rule the tabOrder store applies above (2026-09-05), the same keep of the last blob
+      // turned away, for the caps frame, the same door for the blob at the announced seq (round 8), and the same
+      // slot rule on adoption (round 9: a re-arrival of the stored blob leaves the slot)
+      const held = host === LOCAL ? this.perHostTl[LOCAL] : null;
+      if (held && held.views && m.data.views && !adoptViews(held.views, m.data.views, this.tlViewsAnnounced)) {
+        this.perHostTl[host] = { ...m.data, views: held.views }; this.tlViewsRejected = m.data.views;
+      } else {
+        this.perHostTl[host] = m.data;
+        if (host === LOCAL && m.data.views) { this.tlViewsRejected = null; this.tlViewsAnnounced = announcedAfter(held && held.views, m.data.views, this.tlViewsAnnounced); }
+      }
       this.ensureHost(host);
       this.emitMergedTimeline(false);
       return;
@@ -860,6 +995,72 @@ export class FederationManager {
 
   private lastFeedCounts = "";   // last per-host ask-count signature — breadcrumb only on change
 
+  // ── the hidden-pane hold (2026-09-06) ──────────────────────────────────────────────────────────
+  // The shell hides a pane with display:none on its iframe — the Outline and Waiting panes by default, the
+  // timeline band when toggled off, every pane but the current tab on the phone — and this layer went on
+  // merging and dispatching every frame to it, so the pane rendered a board nobody could see. In the live
+  // minute rows about 58% of all recorded handler time was spent this way (the dispatch and the pane's own
+  // handler together). The hold lives HERE, above the panes: the per-host state this class keeps
+  // (perHostFeed, perHostTl, perHostTlBars) must keep updating while hidden — a delta applies onto it and
+  // nothing ever has to ask for a full frame — and one emit on show hands the pane the newest merge, the
+  // very frame it would have built last. Only the newest matters: the intermediate states were never on
+  // screen (the feed pane's hover-freeze queue is the precedent).
+  //   HIDDEN is the shell's word, not a viewport probe. The shell posts {romp:'panes', on:{key:bool}} to every
+  // pane iframe on each toggle, on the iframe's load and on a mobile tab switch (kernel.py
+  // _LANDING_COLLAPSE_JS), and on[app] is the same state that drives display:none. The zero-viewport probe
+  // (innerWidth 0) is right only for a pane hidden since load: once shown and hidden again the iframe KEEPS
+  // its last size, and a same-size re-show fires no resize (Chromium 151, measured 2026-09-06) — so the
+  // probe is the boot-time default, until the shell's first word arrives. The show event is the panes
+  // message turning on[app] true, plus the resize a first show fires (0 → size) under a shell that never
+  // posts the message.
+  //   Not held: the chat (its frames do not pass through these emits) and the feed pane — never hidden in
+  // the recorded minutes, and its message handlers read the board's DOM (a bell jump reveals the pane and
+  // posts revealCard in one gesture) while its render animates column moves, which a catch-up render after
+  // an hour hidden would replay as flights. The FIRST frame of each slot always goes through while hidden:
+  // the timeline posts {romp:'ready'} from its first lanes, and the panes' loaders resolve on it.
+  private paneOn: boolean | null = null;   // on[app] from the shell's last panes message; null until one arrives
+  private slotEmitted: Record<HoldSlot, boolean> = { feed: false, data: false, bars: false };
+  private slotOwed: Record<HoldSlot, boolean> = { feed: false, data: false, bars: false };
+
+  /** Is this pane off screen right now? The shell's word once it has spoken; the zero-viewport probe before. */
+  paneHidden(): boolean {
+    if (this.paneOn !== null) return !this.paneOn;
+    try { const w = window as any; return w.parent !== w && (w.innerWidth === 0 || w.innerHeight === 0); } catch (e) { return false; }
+  }
+  /** Which panes the hold applies to (see the block comment: not the chat, not the feed). */
+  private holdEligible(): boolean { return this.app !== "chat" && this.app !== "feed"; }
+  /** Hold this slot's emit while the pane is hidden (after its first frame): records the debt and says so. */
+  private holdWhileHidden(slot: HoldSlot): boolean {
+    if (this.slotEmitted[slot] && this.holdEligible() && this.paneHidden()) { this.slotOwed[slot] = true; return true; }
+    this.slotEmitted[slot] = true;
+    return false;
+  }
+  /** The show event: emit each owed slot once — the feed; the lanes, then the bars. Nothing owed → nothing. */
+  private flushOwed(): void {
+    if (this.paneHidden()) return;
+    if (this.slotOwed.feed) { this.slotOwed.feed = false; this.emitMergedFeed(); }
+    if (this.slotOwed.data) { this.slotOwed.data = false; this.emitMergedTimeline(false); }
+    if (this.slotOwed.bars) { this.slotOwed.bars = false; this.emitMergedTimeline(true); }
+  }
+  /** The shell's word for this pane, on[app] of its panes message (a test drives this directly). */
+  setPaneOn(on: boolean): void {
+    const was = this.paneHidden();
+    this.paneOn = on;
+    if (was && !this.paneHidden()) this.flushOwed();
+  }
+  /** Wire the hold's inputs on a window: the shell's panes message and the resize a first show fires.
+   *  Publishes the answer as window.__rompPaneHidden, which perf-telemetry's hidden_pane row and the
+   *  shim's paneHidden read, so the telemetry stops under-reporting a pane hidden after its first show. */
+  installPaneHold(w: any): void {
+    if (!w || typeof w.addEventListener !== "function") return;
+    w.addEventListener("message", (e: any) => {
+      const m = e && e.data;
+      if (m && m.romp === "panes" && m.on && typeof m.on === "object") this.setPaneOn(m.on[this.app] === true);
+    });
+    w.addEventListener("resize", () => this.flushOwed());
+    w.__rompPaneHidden = () => this.paneHidden();
+  }
+
   private emitMergedFeed(): void {
     // MERGE-INPUT TRIPWIRE (the user 2026-07-31): one breadcrumb whenever any host's contribution to
     // the merged feed CHANGES SIZE — so a card blinking out is attributable to the host snapshot that
@@ -875,8 +1076,9 @@ export class FederationManager {
       this.diag("feedmerge", { counts });
     }
     this.publishPending();
+    if (this.holdWhileHidden("feed")) return;   // a hidden pane owes one emit on show (the hold above)
     const dead = this.deadHosts();
-    window.dispatchEvent(new MessageEvent("message", { data: mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt) }));
+    this.emit(mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead, this.perHostFeedAt));
   }
 
   // the hosts whose link is DOWN right now (this manager knows its sockets) — the merges' pendingDead input
@@ -927,11 +1129,12 @@ export class FederationManager {
     // discipline as the lanes hold above: the local kernel pushes bars on connect, so the hold is
     // momentary, and the local arrival itself emits.
     if (bars && !(LOCAL in this.perHostTlBars)) return;
+    if (this.holdWhileHidden(bars ? "bars" : "data")) return;   // a hidden pane owes one emit on show (the hold above)
     const data = bars
       // the bars message carries no lanes — hand the merged lane list in for the connector stitch
       ? mergeHostBars(this.perHostTlBars, this.hostSeq, mergeHostTimelines(this.perHostTl, this.hostSeq, this.view()).sessions)
       : { type: "data", data: mergeHostTimelines(this.perHostTl, this.hostSeq, this.view(), this.deadHosts()) };
-    window.dispatchEvent(new MessageEvent("message", { data }));
+    this.emit(data);
   }
 
   // Every caller re-emits WITHOUT touching the stored arrangement — a drag landing here through the
@@ -943,7 +1146,7 @@ export class FederationManager {
     const order = mergeHostOrder(this.perHostOrder, this.hostSeq, this.view());
     const tabs = this.hostSeq.flatMap((h) => this.perHostTabs[h] || []);
     this.publishPending();
-    const data: any = { type: "tabOrder", order, tabs, views: this.localViews ?? undefined };
+    const data: any = { type: "tabOrder", order, tabs, views: this.localViews ?? undefined, selfHost: this.localSelfHost || undefined };
     // Provenance for the chat's close backstop (T233): a FRESH emission is driven by one host's own
     // tabOrder push and names that host (`freshHost`) — only ITS ids are that kernel's current word; the
     // other hosts' slices ride along from the store. A SYNTHETIC re-emit (a view-order storage event, a
@@ -951,7 +1154,7 @@ export class FederationManager {
     // confirms a close by absence like any order, but is never evidence that a kernel still has a tab.
     if (fresh) data.freshHost = freshHost;
     else data.reemit = true;
-    window.dispatchEvent(new MessageEvent("message", { data }));
+    this.emit(data);
   }
 
   // Fold a host's OWN report — the one moment with fresh evidence about what exists — into the stored

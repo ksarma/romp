@@ -47,6 +47,25 @@ in full. A file on a branch that is not on origin keeps its link, drawn with a d
 and the caption says the branch is not on origin yet. That check reads the local tracking
 ref, so after a branch is deleted on GitHub the link looks normal until `git fetch --prune`
 has refreshed it.
+A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
+`owner/repo#123`) links to that pull request on GitHub, in the repository the session's
+directory has as its `origin` remote; when that remote is not on GitHub, the number stays
+plain text.
+
+**Sending while the session is working.** The session takes your message at its next
+step, and the chat places it at the time you sent it, above the steps that were already
+running: the bubble says "joined mid-turn", and where it had been waiting at the bottom a
+note says when the session took it (to the minute), with a link that jumps to it.
+
+**While a message is on its way.** A message you have sent shows as a dashed bubble
+marked "sending…" until the session records it, however long that takes; the bubble
+never gives up on its own. If the connection drops before romp has confirmed it received
+the message, the bubble reads "not confirmed"; it returns to "sending…" once romp
+confirms, and clears when the message lands. ✕ puts the text back in the composer to
+send again. Each bubble reports its own state, so one dropped message and one still on
+its way read "not confirmed · sending…", and ✕ acts on the bubble you press it on.
+Sending the same text twice shows two bubbles; romp confirms them one at a time, as it
+receives each copy, and each clears when its own copy lands.
 
 **Tags and groups.** A tag is a named, colored set of sessions; a session can be in
 several. Right-click a tab and open **Tags** to add or remove them. Tags filter every
@@ -54,15 +73,43 @@ surface (the tag button in the strip narrows the tabs to the tags you pick), and
 the tabs: as soon as any session carries a tag, the strip shows one section per tag, in your
 tag order, each with a header in the tag's color, and the untagged sessions after a divider
 at the end. A session with several tags sits under the first of them in your tag order; its
-other tags still filter. Click a header to fold that section down to a count, plus one pip
-when a member is working or waiting on you; the section of the tab you are reading never
-folds (its header says so, and a click there changes nothing), and the `archived` section
-starts folded. Drag a header to reorder the groups, which
+other tags still filter. Each header shows a chevron, the tag's color, its name, and a
+member count. Click a header, or press Enter on it, to fold its section down to the header
+alone; the count then says how many tabs are folded away, and a small dot after it says when
+one of them is working or waiting on you (hover it for their names). A folded header keeps the ⚑ flag
+of any session in it that has asked you for something; when several have, the flag shows how
+many, and hovering it names them. Click the flag to open the section. To keep one tab visible
+while its section is folded, right-click the tab and pick **Show when folded** under **Tags**;
+the header's count and flag then leave that tab out; when every tab in a section is set to
+show, the folded header shows the full count and its tooltip says nothing is hidden. Pick it
+again to fold the tab with the rest. A tab set to show when folded keeps that setting when its
+group is renamed. The `archived` section starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tab's current group tag, leaving its other tags alone. The row's
 **+** adds the tag without moving the tab. **Group tabs by tag**, at the foot of the tag
 button's menu, turns the sections off for this browser.
+
+**A section at a glance.** Clicking a header also shows the section in the transcript's place:
+one row per session, with its color and emoji, a dot for its state (yellow working, red stopped on a
+prompt or an API error only you can clear, amber retrying an API error on its own, teal compacting,
+green waiting on background work, none while it is idle), a **needs you** or **waiting** word, a ⚑
+when it has asked you for something, what it is doing now in a few words, and how long ago it last
+did anything.
+**Needs you** appears when the feed shows one of the session's cards under Blocked, when the
+session is stopped on a prompt or an API error only you can clear, or when it has flagged a todo
+for you; **waiting**, when it is waiting on background work. A session that asked a question and
+went quiet shows the word with no dot: the dot follows the session's own state, the word follows
+the feed. What it is doing now comes from its current task, else from the headline of
+its work so far, else from the last task it had; a session that has published a note of what it is
+working on shows the note as a quieter second line. Hover a row for its last message, shown without
+its formatting; click one to open that session, which also opens its section. The rows update as
+the sessions work and change only when something about a session changes; the **needs you** word
+follows the feed, at most a moment behind it. The section of the tab you are reading folds like
+any other; its header then stands in for the tab (the name is underlined, ←/→ step from there).
+The transcript comes back when you pick a session, press Escape, or click that header again while
+its section is open and holds the tab you are reading. Sections, and this view with them, are for
+the desktop layout; the phone layout keeps its flat list.
 
 ### The feed
 
@@ -302,6 +349,21 @@ a subproject that became its own repository, right-click its tab and choose
 name, mail and history stay with the session, and from the next turn on the
 agent works in the new folder and reads its `CLAUDE.md`.
 
+A session's tab can carry one emoji before its name, so you can tell the
+sessions apart at a glance by role or state: a moon on the one left running
+overnight, a flag on the release manager. Right-click the tab and choose **Emoji…**, or run
+`romp emoji <session> <emoji>` (`romp emoji <session> --clear` removes it; with
+no emoji argument it prints the current one). A session can also set or change
+its own, with the `set_emoji` tool it gets alongside its mail tools, so you can
+ask one to show a moon while it works unattended and a checkmark when it is
+done. Exactly one emoji is accepted (a skin tone, a flag or a joined sequence
+counts as one); letters, digits, a bare text symbol such as `©`, or a second
+emoji are refused with the reason. The tab draws the emoji with the viewing
+machine's own emoji font, so one from the newest Unicode release, accepted by
+Romp, can still show as an empty box on a machine whose font predates it. The
+emoji is stored with the session's name and color, so every dashboard shows the
+same one, including a dashboard on another machine that has linked to this one.
+
 A session started from another one joins its tags. Forking a session, breaking
 a comment thread out into its own session, and running `romp new` inside a
 session's shell all put the new session in the parent's groups, so a session's
@@ -345,6 +407,14 @@ the user interface at `127.0.0.1:29855`. You run it on your own machine, with no
 hosted service in between. Everything Romp stores stays local; the only traffic
 that leaves your machine is `claude` itself, both the agents' own model calls and
 the LLM calls in Romp's judge pipeline.
+
+The kernel runs as a login service, so it is up whenever you are logged in. To
+stop it on purpose, run `romp down`: it gives the agents a few seconds to
+finish the turn they are on, then stops the kernel and keeps it stopped, and
+`romp status` says so. `romp up` starts it again, and every session comes back
+with its history; a session that was cut mid-turn is told so, and when, and
+picks its work back up. `romp down --now` skips the wait; `romp down --wait 60`
+lengthens it.
 
 ### Linking kernels on other machines
 
@@ -637,7 +707,11 @@ Full details, including how to report a vulnerability, are in
 
 Romp spends tokens on top of what you spend yourself. If you are running models
 like Opus or Fable at high effort, the judging costs much less than the sessions
-themselves. The analytics modal in settings shows what you actually spent,
-separating your sessions from the judge pipeline. You can also reconfigure the
+themselves. The analytics modal in settings separates your sessions from the
+judge pipeline. The judge dollars are the exact cost each judge call reported;
+the session dollars are the CLI's own per-turn cost from romp's spend ledger,
+plus an estimate from transcript tokens and a price table for any part of the
+period the ledger predates (the footnote names each amount; the estimate
+stands alone only where there is no ledger). You can also reconfigure the
 judges from the gear: the high-volume indexing tier defaults to Haiku, and the
 judgment tier defaults to Sonnet.

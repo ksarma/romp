@@ -33,7 +33,7 @@ import os
 import re
 import tempfile
 import unittest
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -42,11 +42,11 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
-SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+load_source("romp_event_model", os.path.join(BIN, "romp-event-model"))
+load_source("romp_judge", os.path.join(BIN, "romp-judge"))
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
-km = SourceFileLoader("romp_kernel_voice", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_voice", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 SID = "11111111-2222-3333-4444-555555555555"
@@ -504,8 +504,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # it, the line must speak plainly — no markers (it joins an EXISTING message and would
         # re-author it), no romp nouns, one line
         import os as _os
-        from importlib.machinery import SourceFileLoader as _L
-        sb = _L("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
         line = sb.RENAME_NUDGE % "tests"
         self.assertTrue(line.startswith("[romp] "), "the sanctioned mechanics prefix")
         self.assertNotIn("\n", line, "one line")
@@ -522,8 +521,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # from the session, never that they died: under the per-session scopes a task's shell can
         # outlive the CLI, so the ask is to check whether each still runs before relaunching it.
         import os as _os
-        from importlib.machinery import SourceFileLoader as _L
-        sb = _L("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
         for tasks in ([{"desc": "watching the CI run"}],
                       [{"desc": "watching the CI run"}, {"desc": "tailing the deploy log"}, {}]):
             text = sb.task_death_notice(tasks)
@@ -725,7 +723,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
     with the product's name on it; these two must not teach the model a tracking system.)"""
 
     def test_the_descriptions_carry_no_romp_vocabulary(self):
-        pm = SourceFileLoader("romp_postal_voice", os.path.join(BIN, "romp-postal-service")).load_module()
+        pm = load_source("romp_postal_voice", os.path.join(BIN, "romp-postal-service"))
         tools = {t["name"]: t for t in pm.MCP_TOOLS}
         for name in ("add_user_todo", "withdraw_user_todo"):
             self.assertIn(name, tools, "the tool exists to be scanned")
@@ -744,13 +742,12 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         # identity refusal is out of scope on purpose: it is every postal tool's answer, and
         # the bus names romp deliberately (visible tooling); identity is stubbed so no branch
         # here can reach it.
-        pm = SourceFileLoader("romp_postal_voice_results",
-                              os.path.join(BIN, "romp-postal-service")).load_module()
-        saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        pm = load_source("romp_postal_voice_results",
+                              os.path.join(BIN, "romp-postal-service"))
+        saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
         canned = {}
         pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
-        pm.my_name = lambda: "api"
-        pm.my_id = lambda: SID
+        pm._self_identity = lambda: (SID, "api")     # the one resolver every tool call reads (2026-09-06)
         pm._heartbeat = lambda *a, **k: None
         # the per-install switch (2026-09-03) is OFF by default: turn it on for the live branches,
         # then off again for the two refusals a still-connected session hears
@@ -773,7 +770,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
         finally:
-            pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = saved
+            pm._kernel_post, pm._self_identity, pm._heartbeat = saved
             pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])

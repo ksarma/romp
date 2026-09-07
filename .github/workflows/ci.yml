@@ -15,8 +15,10 @@ name: CI
 # are caught before the push rather than waiting on this manual run.
 #
 # Python spans 3.10 (the floor docs/install.md promises) through 3.13 (the dev
-# version); the older versions run on Linux only, since a version gap and a
-# platform gap rarely fail the same way.
+# version), plus free-threaded 3.14t with the GIL off (the kernel's builders, judge
+# tiers and handlers are threads, and only there do they run at once); the older
+# versions and the free-threaded cell run on Linux only, since a version gap and
+# a platform gap rarely fail the same way.
 
 on:
   push:
@@ -59,17 +61,31 @@ jobs:
             python-version: '3.11'
           - os: ubuntu-latest
             python-version: '3.12'
+          - os: ubuntu-latest
+            python-version: '3.14t'   # setup-python's spelling for the free-threaded build (see the header)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
+        run: python -m pip install --upgrade pip pytest pytest-timeout
+      - name: Install cryptography
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
-        # kernel itself still degrades loudly without it (that path has its own test).
-        run: python -m pip install --upgrade pip pytest pytest-timeout cryptography
+        # kernel itself still degrades loudly without it (that path has its own test). It ships
+        # free-threaded (cp314t) wheels since 46.0, so the 3.14t cell installs it like the rest;
+        # that cell alone may continue without it, should a future release lag the interpreter,
+        # and the webpush tests then skip and say so rather than the whole cell going red.
+        continue-on-error: ${{ endsWith(matrix.python-version, 't') }}
+        run: python -m pip install cryptography
       - name: Run pytest
+        env:
+          # The free-threaded cell runs with the GIL off, stated rather than defaulted (a 't'
+          # build disables it by default, and an extension that lacks free-threading support
+          # would otherwise turn it back on silently). Empty on every other cell, which CPython
+          # reads as unset.
+          PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
         # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
@@ -234,3 +250,16 @@ jobs:
         run: node --test tests/manager-*.test.js
       - name: Build
         run: npm run build
+      - name: Dashboard pane bench (node --test)
+        # tools/ui-bench.mjs replays a synthetic frame stream into the real feed and timeline pages in a
+        # headless Chrome (the runner image's Google Chrome through playwright's channel option, so no
+        # browser download), served by the kernel's own page route from the dist the Build step just
+        # wrote; python3 comes with the image. On a contributor's machine the browser tests skip, and
+        # say why, when no browser, python3 or dist is present. Here ROMP_UI_BENCH_REQUIRE makes that
+        # skip a failure: this is the only CI run of the real pane bundles, and a runner image that
+        # drops Chrome from PATH must turn the job red rather than green with the coverage gone (the
+        # same stance as the cryptography and gitleaks installs above, which exist so their tests RUN).
+        working-directory: ${{ github.workspace }}
+        env:
+          ROMP_UI_BENCH_REQUIRE: "1"
+        run: node --test tests/ui-bench.test.mjs

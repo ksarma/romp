@@ -25,17 +25,31 @@ Session control (how romp drives Claude Code) sits behind one seam:
 Shared lookup tables: `colormap.py` (recency tints, single source shared with
 the web bundles) and `palette.py` (session-identity colors).
 
-`keysource.py` is the live source of the manager's API key where an
-installation keeps one in `service.env`: its `ANTHROPIC_API_KEY=` line, re-read
-at every session launch so a rotation there needs no manager restart.
-`cli/keyswap.py` (`romp keyswap`) loads the same module to read and fingerprint
-that line, so the two cannot disagree about the path or the parse. This fork
-does not write API keys to files: the named swap that would write the line is
-refused, and keys reach the sessions through Claude Code's `apiKeyHelper` or the
-manager's environment. A key value never lands in the kernel's own environment
-and never reaches a log — `fingerprint()` (the sha256 head) is the only
-renderable form.
+Two key sources, one switch (`docs/reference.md`, "API keys on disk: the file
+mode" and "Installing without keys on disk"):
 
-Everything here is loaded by file path (`SourceFileLoader`), not installed as a
-package — the repo runs straight from a git clone. Python tests live in
+- `keysource.py` is the file source: where an installation keeps an
+  `ANTHROPIC_API_KEY=` line in `service.env`, it is re-read at every session
+  launch so a rotation there needs no manager restart. `cli/keyswap.py` (`romp
+  keyswap`) loads the same module to read and fingerprint that line, so the
+  two cannot disagree about the path or the parse. This fork does not write API
+  keys to files: the named swap that would write the line is refused in this
+  mode.
+- `envsource.py` is the command source, selected by `ROMP_CREDENTIAL_COMMAND`:
+  the kernel runs that command with the selector file's token as `$1` and
+  merges the `NAME=VALUE` set it prints into every session CLI's launch
+  environment, every judge call's and the catalog fetch's, never into its own
+  environment or a file. The set is event-cached (invalidated by a refresh, a
+  cycle or an authentication failure; a failed run keeps the previous set),
+  concurrent readers coalesce on one run, and every function but the one
+  injection accessor is value-free. The same module fingerprints the configured
+  `apiKeyHelper` when the set carries no key, so a cycle converges on it.
+  `sdk_backend.key_source_verdict` checks the configuration once at boot;
+  `/api-health` reports it as `keySource`; `/keycycle` drives `romp keyswap`.
+
+A key value never lands in the kernel's own environment and never reaches a
+log — the sha256 head (`fingerprint()`) is the only renderable form.
+
+Everything here is loaded by file path (`loadsource.load_source`, the
+`spec_from_loader` + `exec_module` idiom), not installed as a package — the repo runs straight from a git clone. Python tests live in
 `tests/test_*.py`.

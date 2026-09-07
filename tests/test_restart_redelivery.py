@@ -4,7 +4,9 @@ a HUMAN send whose CLI died holding it — provably lost (not in the surviving q
 never-landed by a direct transcript scan — is RE-DELIVERED through the persisted queue in send
 order, recreating the pre-restart state, instead of parking as a never-delivered bubble waiting on
 a manual restore. romp-authored echoes keep the flag path (re-delivering a nudge double-nudges),
-and a landed-but-unpruned echo never re-delivers (the scan is the duplicate guard). SYNTHETIC."""
+and a landed-but-unpruned echo never re-delivers (the scan is the duplicate guard) — nor is it flagged
+lost: it landed, the next build's by-text prune retires it (2026-09-06; the scan also reads the
+queued_command attachment an absorbed send leaves — tests/test_sdk_echo_durability.py). SYNTHETIC."""
 import json
 import os
 import tempfile
@@ -12,7 +14,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest import mock
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -21,8 +23,8 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-sb = SourceFileLoader("romp_sdk_backend_redeliver", os.path.join(BIN, "romp-event-model")).load_module()
-sb = SourceFileLoader("romp_sdk_backend_redeliver2", os.path.join(HERE, "..", "kernel", "sdk_backend.py")).load_module()
+sb = load_source("romp_sdk_backend_redeliver", os.path.join(BIN, "romp-event-model"))
+sb = load_source("romp_sdk_backend_redeliver2", os.path.join(HERE, "..", "kernel", "sdk_backend.py"))
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -43,6 +45,7 @@ class Redelivery(unittest.TestCase):
             state_dir = None
             _live = {}
             _reg_lock = __import__("threading").RLock()
+            _live_lock = __import__("threading").RLock()   # the live tail's lock (_mark_dropped_echoes selects under it)
             _persisted = []
             _logs = []
 
@@ -91,8 +94,8 @@ class Redelivery(unittest.TestCase):
         self._echo("already landed words")
         self.be._mark_dropped_echoes(SID, [])
         self.assertEqual(self._reg_queue(), [], "the transcript scan is the duplicate guard")
-        self.assertTrue(any(a.get("dropped") for a in self.be._live[SID].values()),
-                        "…so it takes the flag path (self-correcting on the next build)")
+        self.assertFalse(any(a.get("dropped") for a in self.be._live[SID].values()),
+                         "…and a found text is not flagged either: it landed, the by-text prune retires it")
 
     def test_romp_authored_echoes_keep_the_flag_path(self):
         self._echo("a nudge body", author="romp")
