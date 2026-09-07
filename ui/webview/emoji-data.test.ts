@@ -70,6 +70,15 @@ test("no duplicate emoji anywhere, no duplicate name within a category; names an
   }
 });
 
+test("names are spelled the American way (the cell's tooltip shows the name; a British form may stay a keyword)", () => {
+  // the two CLDR names that differed (review r1), plus the forms most likely to arrive with a new entry
+  const british = /\b(chequered|doughnut|colour|coloured|grey|centre|theatre|favourite|armour|jewellery|aeroplane|tyre|pyjamas|moustache|whisky|programme|catalogue|dialogue|defence|licence|practise|travelling|cancelled|ageing|mould|plough|sceptical|aluminium|cosy|mum|storey|kerb)\b/;
+  for (const { name } of ALL) assert.doesNotMatch(name, british, name);
+  assert.ok(ALL.some((e) => e.name === "checkered flag"), "the flag's name");
+  assert.ok(ALL.some((e) => e.name === "donut"), "the donut's name");
+  assert.ok(ALL.some((e) => e.name === "checkered flag" && /\bchequered\b/.test(e.keywords)), "the British spelling still finds it");
+});
+
 test("the module is data only, ASCII only, and says skin tones are out of scope", () => {
   const src = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "emoji-data.ts"), "utf8");
   assert.doesNotMatch(src, /^import /m, "no imports: cheap to load");

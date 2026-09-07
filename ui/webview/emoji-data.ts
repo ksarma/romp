@@ -1,6 +1,7 @@
 // Curated emoji list for the tab emoji picker (2026-09-07). Data only, so it is cheap to import: no
 // functions, no imports. Each entry is [emoji, name, keywords], the name a CLDR short name in plain
-// lowercase words, the keywords a few extra lowercase words a person might type to find it, separated
+// lowercase words (American spelling where CLDR's differs: the cell's tooltip shows the name, and the
+// British form stays a keyword), the keywords a few extra lowercase words a person might type, separated
 // by single spaces (the picker splits on spaces and matches word prefixes against name and keywords).
 // Every emoji is one fully-qualified single emoji: a base with the U+FE0F presentation selector where
 // the code point is text-default, a keycap, a flag (two regional indicators), or a joined (ZWJ) sequence.
@@ -288,7 +289,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
     ["\u{1F980}", "crab", "seafood"],
     ["\u{1F990}", "shrimp", "prawn seafood"],
     ["\u{1F368}", "ice cream", "dessert"],
-    ["\u{1F369}", "doughnut", "donut dessert"],
+    ["\u{1F369}", "donut", "doughnut dessert"],
     ["\u{1F36A}", "cookie", "biscuit dessert"],
     ["\u{1F382}", "birthday cake", "celebrate party"],
     ["\u{1F9C1}", "cupcake", "dessert"],
@@ -565,7 +566,7 @@ export const EMOJI_CATEGORIES: readonly EmojiCategory[] = [
     ["\u{2B1C}", "white large square", "block"],
   ] },
   { id: "flags", label: "Flags", icon: "\u{1F3C1}", items: [
-    ["\u{1F3C1}", "chequered flag", "checkered race finish done"],
+    ["\u{1F3C1}", "checkered flag", "chequered race finish done"],
     ["\u{1F6A9}", "triangular flag", "marker"],
     ["\u{1F38C}", "crossed flags", "japan"],
     ["\u{1F3F4}", "black flag", "dark"],
