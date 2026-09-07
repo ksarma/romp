@@ -265,9 +265,25 @@ class ApiHealthCell(unittest.TestCase):
         for rule in re.findall(r"[^{}]*\.ah-dot[^{}]*\{[^}]*\}", self.html):
             self.assertNotIn("var(--accent)", rule, "status colors keep their own meaning")
 
-    def test_the_light_theme_keeps_the_ok_dot_visible(self):
-        # the dark label gray at .55 blended into the light rail; the light label color keeps the glyph
-        self.assertTrue("body.theme-light .ah-dot{background:#5D574E}" in self.html, "no light override for .ah-dot")
+    def test_the_light_theme_keeps_the_ok_dot_visible_and_the_state_dots_their_colors(self):
+        # the dark label gray at .55 blended into the light rail; the light label color keeps the glyph. Scoped to
+        # the ok state (review round 2, 2026-09-07): the bare `body.theme-light .ah-dot` (0,2,1) outranked the
+        # detail's `.ah-dot[data-state=…]` rules (0,2,0), so the card's headline dot lost its amber and red
+        self.assertTrue("body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok]{background:#5D574E}" in self.html,
+                        "the light override names the ok state")
+        self.assertNotIn("body.theme-light .ah-dot{", self.html, "no bare light rule on the dot")
+        self.assertNotIn("body.theme-light .ah-dot[data-state=degraded]", self.html, "the state rules are not restated per theme")
+
+    def test_the_shell_socket_carries_the_dashboard_s_wid_minted_before_it_connects(self):
+        # review round 2 (2026-09-07): the detail's openSession rode a shell socket with no wid, so the kernel's
+        # reveal fell to _send_to_view's broadcast and every open dashboard's chat switched
+        js = km._LANDING_MOBILE_JS
+        self.assertIn("var wid='';try{wid=sessionStorage.getItem('romp:wid')||'';}catch(e){}\n"
+                      "var ws=new WebSocket(proto+location.host+'/ws?app=shell'+(wid?'&wid='+encodeURIComponent(wid):''));", js)
+        mint = "sessionStorage.setItem('romp:wid'"
+        self.assertIn(mint, km._LANDING_SETTINGS_JS, "the shell mints the id in the settings script")
+        self.assertLess(self.html.index(mint), self.html.index("'/ws?app=shell'"), "minted before the shell socket connects")
+        self.assertIn("'/ws?app=shell'", self.html)
 
     def test_an_emptied_usage_cell_collapses_its_gap(self):
         # renderRows empties #rail-usage on a login-only machine; as a zero-width flex item it still paid the
@@ -290,6 +306,38 @@ class ApiHealthCell(unittest.TestCase):
 
     def test_the_cell_s_script_loads_after_the_usage_script_it_borrows_the_backdrop_from(self):
         self.assertLess(self.html.index("getElementById('rail-usage')"), self.html.index("getElementById('rail-api')"))
+
+
+class ShellSocketIdentity(unittest.TestCase):
+    """A reveal the kernel answers to the shell's own op (the API detail's openSession) reaches the asking
+    dashboard alone once the shell client carries its wid, the way a feed pane's does (review round 2,
+    2026-09-07). Synthetic clients; no sockets."""
+
+    def _client(self, app, wid):
+        return {"app": app, "wid": wid, "alive": True, "send": lambda s, w=wid, a=app: self.sink.append((a, w))}
+
+    def setUp(self):
+        self.sink = []
+        self._saved = list(km._clients)
+        km._clients[:] = [self._client("chat", "win-A"), self._client("chat", "win-B"),
+                          self._client("shell", "win-A"), self._client("shell", "win-B"), self._client("feed", "win-A")]
+
+    def tearDown(self):
+        km._clients[:] = self._saved
+
+    def test_a_shell_client_with_a_wid_moves_its_own_dashboard_s_chat_only(self):
+        km._reveal_chat_for({"app": "shell", "wid": "win-A"}, {"type": "focus", "id": "s1"})
+        self.assertEqual(sorted(self.sink), [("chat", "win-A"), ("shell", "win-A")])
+
+    def test_a_shell_client_without_a_wid_still_broadcasts(self):
+        # an older shell page, or a browser with no sessionStorage: today's behavior, not silence
+        km._reveal_chat_for({"app": "shell", "wid": ""}, {"type": "focus", "id": "s1"})
+        self.assertEqual(sorted(w for a, w in self.sink if a == "chat"), ["win-A", "win-B"])
+
+    def test_the_open_session_op_hands_the_asking_client_to_the_router(self):
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        i = src.index('msg.get("type") == "openSession" and msg.get("id")')
+        self.assertIn('_open_or_revive(msg["id"], live=bool(msg.get("live")), client=client)', src[i:i + 600])
 
 
 if __name__ == "__main__":

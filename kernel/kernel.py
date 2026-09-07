@@ -39851,14 +39851,16 @@ _LANDING_APIH_JS = """
 (function(){var el=document.getElementById('rail-api');if(!el)return;
 var txt=el.querySelector('.ah-text');
 var tip=document.createElement('div');tip.id='ah-tip';tip.style.display='none';
-tip.setAttribute('role','dialog');tip.setAttribute('aria-label','API health');tip.tabIndex=-1;document.body.appendChild(tip);
+tip.setAttribute('role','dialog');tip.setAttribute('aria-label','API health');tip.setAttribute('aria-modal','true');tip.tabIndex=-1;document.body.appendChild(tip);
 var back=document.getElementById('ru-back');
 if(!back){back=document.createElement('div');back.id='ru-back';document.body.appendChild(back);}
-// LAST: the newest frame. pinned: the detail is the modal. held / dirty: a pointer is down over the detail and a
-// frame arrived meanwhile (painted on release). pending: a pause press awaiting the frame that confirms it (1 =
-// stop sent, 0 = resume sent, null = none). hint: the last failed send's reason, shown under the button. lastX:
-// where the hover anchored, so a re-anchor keeps its place. focusBack: where focus returns when the detail closes.
-var LAST=null,pinned=false,held=false,dirty=false,pending=null,hint='',lastX=null,focusBack=null;
+// LAST: the newest frame. pinned: the detail is the modal. held / dirty: a PRIMARY pointer is down over the detail
+// and a frame arrived meanwhile (painted on release). pending: a pause press awaiting the frame that answers it (1 =
+// stop sent, 0 = resume sent, null = none); pendSeq: the pause file's write count (frame.seq) when it was pressed,
+// so the frame that answers is the one whose seq moved. hint: the last failed send's reason, shown under the
+// button. lastX: where the hover anchored, so a re-anchor keeps its place. focusBack: where focus returns when the
+// detail closes.
+var LAST=null,pinned=false,held=false,dirty=false,pending=null,pendSeq=null,hint='',lastX=null,focusBack=null;
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 function hm(ep){return new Date(ep*1000).toTimeString().slice(0,5);}
 // The plain-words pause reasons and the ok line: the kernel's `text` is the headline, these say what it means.
@@ -39871,12 +39873,13 @@ var NOTSENT='Not sent: the dashboard is disconnected. Try again.';
 function clsWords(r){if(r.cls==='429')return '429 rate limited';if(r.cls==='529')return '529 overloaded';
 if(r.cls==='offline')return 'offline';return 'error'+(r.status?' '+r.status:'');}
 // The pause control. A press is acknowledged at once (disabled, flipped label, .romp-acted) and STAYS so across
-// frames until one confirms the flip: an in-flight pre-flip frame must not repaint an enabled button.
+// frames until the one that answers it: an in-flight pre-press frame must not repaint an enabled button.
 function btnHTML(m){if(pending!==null)return '<button class="ah-btn romp-acted" disabled data-act=pause data-val='+pending+'>'+(pending?RESUME:STOP)+'</button>';
 var v=m.state==='paused'?0:(m.waiting>0?1:-1);if(v<0)return '';
 return '<button class=ah-btn data-act=pause data-val='+v+'>'+(v?STOP:RESUME)+'</button>'+(hint?'<div class=ah-hint>'+esc(hint)+'</div>':'');}
+// A pinned row is a keyboard button too (role, tabindex; Enter / Space run it from the keydown below).
 function rowHTML(r,full){var bg=r.color&&r.color.bg?esc(r.color.bg):'';
-return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' data-act=reveal data-sid="'+esc(r.sid)+'"':'')+'>'
+return '<div class="ru-tip-row ah-row'+(full?'':' ah-ro')+'"'+(full?' role=button tabindex=0 data-act=reveal data-sid="'+esc(r.sid)+'"':'')+'>'
 +(bg?'<i class=ah-sw style="background:'+bg+'"></i><span class=ah-nm style="color:'+bg+'">':'<i class=ah-sw></i><span class=ah-nm>')+esc(r.name)+'</span>'
 +'<span class=ah-desc>'+(r.kind==='retrying'?'retrying':'stopped')+' · '+clsWords(r)+(r.since?' · since '+hm(r.since):'')
 +(r.suppressed?' · auto-retry off for this session (you interrupted it)':'')+'</span></div>';}
@@ -39894,14 +39897,20 @@ if(rows.length){h+='<div class=ru-tip-win><div class=ru-tip-name><span>Sessions 
 rows.forEach(function(r){h+=rowHTML(r,full);});h+='</div>';}
 if(m.tmux>0)h+='<div class="ru-tip-win ah-line">'+(m.tmux===1?'1 tmux session is seen through its transcript only':m.tmux+' tmux sessions are seen through their transcripts only')
 +', so a retry in progress there shows only when it fails or recovers.</div>';
-if(full)h+='<div class="ru-tip-row ah-foot"><span class=ah-link data-act=usage>Usage and spend</span><span class=ah-link data-act=log>Log</span></div>';
+if(full)h+='<div class="ru-tip-row ah-foot"><span class=ah-link role=button tabindex=0 data-act=usage>Usage and spend</span><span class=ah-link role=button tabindex=0 data-act=log>Log</span></div>';
 return h;}
 // The hover anchors above the rail, centered on the cursor, exactly as the usage tip's showTip does; a re-render
 // re-anchors from the same x, since new rows change the height and the tip hangs ABOVE the rail.
 function anchor(){var r=el.getBoundingClientRect();var x=(typeof lastX==='number')?lastX:(r.left+r.width/2);
 tip.style.left=Math.max(6,Math.min(window.innerWidth-tip.offsetWidth-6,x-tip.offsetWidth/2))+'px';
 tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
-function render(){if(!LAST)return;tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();}
+// A re-render replaces the card's nodes, so a focused control would fall to the page body and the next Tab would
+// leave the dialog: the same control (by act and sid) takes focus again in the new markup, else the card does.
+function focusKey(n){return (n&&n.getAttribute)?(n.getAttribute('data-act')||'')+'|'+(n.getAttribute('data-sid')||''):'';}
+function render(){if(!LAST)return;var a=document.activeElement,key=(pinned&&a&&a!==tip&&tip.contains(a))?focusKey(a):null;
+tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();
+if(key!==null){var n=null,all=tip.querySelectorAll('[data-act]');for(var i=0;i<all.length;i++)if(focusKey(all[i])===key){n=all[i];break;}
+try{if(n)n.focus();if(!n||document.activeElement!==n)tip.focus();}catch(e){}}}
 function show(ev){if(!LAST)return;lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;
 tip.classList.remove('ru-modal');tip.style.display='block';render();}
 function close(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');pinned=false;
@@ -39921,33 +39930,53 @@ el.addEventListener('mouseleave',function(){if(!pinned)tip.style.display='none';
 el.addEventListener('click',function(){if(pinned)close();else open();});
 el.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(pinned)close();else open();}});
 // Click-safe across a frame (ui/CLAUDE.md): a frame that lands while a pointer is DOWN over the detail is painted
-// on release, never under the press, so the pressed button survives to its click. A release inside the detail is
-// followed by the click, so the flush waits for it (a swap between mouseup and click would detach the target); a
-// release anywhere else flushes at once. Event-based, no timer.
-tip.addEventListener('pointerdown',function(){held=true;});
+// on release, never under the press, so the pressed button survives to its click. A PRIMARY release inside the
+// detail is followed by the click, so the flush waits for it (a swap between mouseup and click would detach the
+// target); a release anywhere else flushes at once. Only a primary press arms the defer: no click follows a right
+// or middle button (auxclick and contextmenu do), so a frame deferred under one stayed unpainted until the next
+// frame changed something while the cell already showed the new world. Event-based, no timer.
+tip.addEventListener('pointerdown',function(ev){if(ev.button===0)held=true;});
 function flush(){if(dirty){dirty=false;if(tip.style.display==='block')render();}}
-function release(ev){if(!held)return;held=false;if(ev&&ev.type==='pointerup'&&ev.target&&tip.contains(ev.target))return;flush();}
+function release(ev){if(!held)return;held=false;if(ev&&ev.type==='pointerup'&&ev.button===0&&ev.target&&tip.contains(ev.target))return;flush();}
 document.addEventListener('pointerup',release);
 document.addEventListener('pointercancel',release);
-// The detail's actions are DELEGATED on the stable #ah-tip node via data-act.
-tip.addEventListener('click',function(ev){var t=ev.target;
-while(t&&t!==tip&&!(t.getAttribute&&t.getAttribute('data-act')))t=t.parentNode;
-if(!t||t===tip){flush();return;}var act=t.getAttribute('data-act');
+// The detail's actions are DELEGATED on the stable #ah-tip node via data-act: a click, or Enter / Space on a
+// focused row or footer link (the button's own keys fire its click natively, so the key path skips it).
+function actOf(n){while(n&&n!==tip&&!(n.getAttribute&&n.getAttribute('data-act')))n=n.parentNode;return (n&&n!==tip)?n:null;}
+function run(t){var act=t.getAttribute('data-act');
 if(act==='pause'){var v=t.getAttribute('data-val')==='1';
-t.disabled=true;t.textContent=v?RESUME:STOP;t.classList.add('romp-acted');pending=v?1:0;hint='';   // acknowledged before any round trip
+t.disabled=true;t.textContent=v?RESUME:STOP;t.classList.add('romp-acted');pending=v?1:0;pendSeq=LAST?LAST.seq:null;hint='';   // acknowledged before any round trip
 // the shell socket carries the same op the chat card sends; the handler marks the views dirty, and the next
-// cycle's frame confirms. A dead socket says so instead of a silent no-op (fail loudly): the label and the
-// un-pressed styling come back, and the reason sits under the button.
+// cycle's frame answers (its seq moved: the press wrote the pause file). A dead socket says so instead of a
+// silent no-op (fail loudly): the label and the un-pressed styling come back, and the reason sits under the button.
 if(!(window.__rompShellSend&&window.__rompShellSend({type:'setGlobalRetryPaused',value:v}))){pending=null;hint=NOTSENT;dirty=true;}}
 else if(act==='reveal'){var sid=t.getAttribute('data-sid')||'';
-// the feed's own session links post openSession (feed.ts openOrReviveSession): the session's tab comes forward
-// in this dashboard's chat. No pane is toggled here, so nothing about the layout is persisted.
+// the feed's own session links post openSession (feed.ts openOrReviveSession) on a socket that carries this
+// dashboard's wid, and the shell socket carries it too (shellWS), so the kernel aims the focus at THIS
+// dashboard's chat alone (_reveal_chat_for), never at every open window's. No pane is toggled here, so nothing
+// about the layout is persisted.
 if(window.__rompShellSend&&window.__rompShellSend({type:'openSession',id:sid}))close();else{hint=NOTSENT;dirty=true;}}
 else if(act==='usage'){close();try{window.__rompUsagePanel&&window.__rompUsagePanel();}catch(e){}}
-else if(act==='log'){close();try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}
-flush();});
+else if(act==='log'){close();try{window.__rompOpenErrs&&window.__rompOpenErrs();}catch(e){}}}
+tip.addEventListener('click',function(ev){var t=actOf(ev.target);if(t)run(t);flush();});
+// Keyboard inside the dialog: Tab and Shift+Tab cycle within the card (a focus trap: the page behind a modal is
+// not where Tab should go; Escape is the way out, via _LANDING_ESC_JS). The card itself (tabindex -1) is where
+// focus lands on open, so the first Tab reaches the first control and the first Shift+Tab the last.
+function controls(){var out=[],all=tip.querySelectorAll('[tabindex="0"],button');for(var i=0;i<all.length;i++)if(!all[i].disabled)out.push(all[i]);return out;}
+tip.addEventListener('keydown',function(ev){if(!pinned)return;
+if(ev.key==='Tab'){var f=controls(),i=f.indexOf(document.activeElement);
+if(!f.length){ev.preventDefault();return;}
+if(ev.shiftKey){if(i<=0){ev.preventDefault();f[f.length-1].focus();}}
+else if(i<0||i===f.length-1){ev.preventDefault();f[0].focus();}
+return;}
+if(ev.key!=='Enter'&&ev.key!==' ')return;var t=actOf(ev.target);if(!t||t.tagName==='BUTTON')return;
+ev.preventDefault();run(t);flush();});
 window.__rompApiHealth=function(m){if(!m||!m.state)return;LAST=m;hint='';   // a frame means the socket is alive
-if(pending!==null&&((pending===1)===(m.state==='paused')))pending=null;   // the frame that confirms a press
+// the frame that answers a press: the press wrote the pause file, so the kernel's seq moved past the one we saw (a
+// frame from before the press carries that one and keeps the acknowledgment). Whatever state it brings is the
+// truth the button reads, paused again included: a limit or spend pause re-engages within the cycle, and the old
+// rule (cleared only on a frame whose state matched the press) left a Resume disabled and mislabeled for the window.
+if(pending!==null&&(m.seq==null||m.seq!==pendSeq))pending=null;
 if(el.hidden)el.hidden=false;   // the first frame reveals the cell (an older kernel never sends one: nothing shows)
 if(el.getAttribute('data-state')!==m.state||txt.textContent!==m.text){el.setAttribute('data-state',m.state);txt.textContent=m.text;el.setAttribute('aria-label','API '+m.text);}
 if(tip.style.display!=='block')return;   // an open detail re-renders from the new frame, nothing else does
@@ -40855,7 +40884,12 @@ b.addEventListener('click',function(){var f=A[b.getAttribute('data-act')];if(f)f
 window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.romp==='reveal'&&m.pane)reveal(m.pane);// the chat header's Fleet pill / the fleet's back-to-chat post toggleFleet — on mobile that IS a tab switch
 if(m.romp==='toggleFleet')show(m.to==='chat'?'chat':'fleet');});
 function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
-var ws=new WebSocket(proto+location.host+'/ws?app=shell');
+// this dashboard's id rides the connect, as it does on every pane's socket (the shim, from the same sessionStorage
+// key _LANDING_SETTINGS_JS mints before this script runs): an op the shell sends that the kernel answers with a
+// reveal (the API detail's openSession) then lands on THIS dashboard's chat alone (_reveal_chat_for), the way the
+// feed's own session links do. Without it the shell client's wid was '' and the reveal fell to the broadcast.
+var wid='';try{wid=sessionStorage.getItem('romp:wid')||'';}catch(e){}
+var ws=new WebSocket(proto+location.host+'/ws?app=shell'+(wid?'&wid='+encodeURIComponent(wid):''));
 // the API health detail's pause button sends on THIS socket (the setGlobalRetryPaused handler is
 // app-agnostic); false when the socket is not open, so the button can say so instead of dropping the op
 window.__rompShellSend=function(o){try{if(ws.readyState===1){ws.send(JSON.stringify(o));return true;}}catch(e){}return false;};
@@ -42051,8 +42085,11 @@ def _landing():
             "body.theme-light .ru-pct{color:#1F1E1D}"
             "body.theme-light .ah-text{color:#1F1E1D}"
             # the ok dot: the dark label gray at .55 blended into the light rail (about 1.4:1, review round 1,
-            # 2026-09-07); the light label color at the same opacity keeps the glyph where the eye expects it
-            "body.theme-light .ah-dot{background:#5D574E}"
+            # 2026-09-07); the light label color at the same opacity keeps the glyph where the eye expects it.
+            # Scoped to the ok state (review round 2): a bare `body.theme-light .ah-dot` (0,2,1) outranked the
+            # detail's `.ah-dot[data-state=…]` state rules (0,2,0), so the card's headline dot lost its amber
+            # and red in the light theme while the rail's id-scoped dot kept them
+            "body.theme-light #rail-api[data-state=ok] .ah-dot,body.theme-light .ah-dot[data-state=ok]{background:#5D574E}"
             "body.theme-light #rail-api[data-state=ok] .ah-text{color:#5D574E}"
             "body.theme-light .ah-word{color:#1F1E1D}"
             "body.theme-light .ah-btn{background:#F1EAE2;border-color:rgba(0,0,0,0.12);color:#1F1E1D}"

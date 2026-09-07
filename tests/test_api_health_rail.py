@@ -446,22 +446,47 @@ class Detail(unittest.TestCase):
     def test_the_hover_renders_no_controls_and_the_pinned_detail_does(self):
         self.assertIn("function html(m,full)", self.JS)
         self.assertIn("if(full)h+=btnHTML(m);", self.JS)
-        self.assertIn("(full?' data-act=reveal data-sid=\"'+esc(r.sid)+'\"':'')", self.JS)
+        self.assertIn("(full?' role=button tabindex=0 data-act=reveal data-sid=\"'+esc(r.sid)+'\"':'')", self.JS)
         self.assertIn("if(full)h+='<div class=\"ru-tip-row ah-foot\">", self.JS)
         self.assertIn("tip.innerHTML=html(LAST,pinned);", self.JS, "pinned = full; the hover = the reading only")
 
     def test_a_frame_under_a_held_pointer_is_painted_on_release_never_under_the_press(self):
-        self.assertIn("tip.addEventListener('pointerdown',function(){held=true;});", self.JS)
+        # review round 2 (2026-09-07): only a PRIMARY press arms the defer. No click follows a right or middle
+        # button, so a frame deferred under one stayed unpainted until the next frame changed something.
+        self.assertIn("tip.addEventListener('pointerdown',function(ev){if(ev.button===0)held=true;});", self.JS)
         self.assertIn("document.addEventListener('pointerup',release);", self.JS)
         self.assertIn("document.addEventListener('pointercancel',release);", self.JS)
         self.assertIn("if(held){dirty=true;return;}render();", self.JS)
-        self.assertIn("tip.contains(ev.target))return;flush();}", self.JS, "a release inside waits for its click")
-        self.assertIn("flush();});", self.JS, "the click handler flushes last")
+        self.assertIn("ev.button===0&&ev.target&&tip.contains(ev.target))return;flush();}", self.JS,
+                      "a primary release inside waits for its click; any other release flushes")
+        self.assertIn("tip.addEventListener('click',function(ev){var t=actOf(ev.target);if(t)run(t);flush();});", self.JS,
+                      "the click handler flushes last")
 
-    def test_the_acknowledgment_survives_frames_until_one_confirms_the_flip(self):
-        self.assertIn("pending=v?1:0;", self.JS)
+    def test_the_acknowledgment_holds_until_the_frame_that_answers_the_press(self):
+        # review round 2 (2026-09-07): the frame's seq is the pause file's write count; the press writes it, so
+        # the frame after the press carries a moved seq whatever state it brings (paused again, when a limit or
+        # spend pause re-engaged within the cycle). The old rule cleared only on a frame whose state matched the
+        # press, so a Resume during a usage-limit pause left the button disabled and mislabeled for the window.
+        self.assertIn("pending=v?1:0;pendSeq=LAST?LAST.seq:null;", self.JS)
         self.assertIn("if(pending!==null)return '<button class=\"ah-btn romp-acted\" disabled data-act=pause", self.JS)
-        self.assertIn("if(pending!==null&&((pending===1)===(m.state==='paused')))pending=null;", self.JS)
+        self.assertIn("if(pending!==null&&(m.seq==null||m.seq!==pendSeq))pending=null;", self.JS)
+        self.assertNotIn("(pending===1)===(m.state==='paused')", self.JS, "state matching is gone")
+
+    def test_the_rows_and_footer_links_are_keyboard_buttons_inside_a_focus_trap(self):
+        # review round 2 (2026-09-07): only the pause button was keyboard-operable, and Tab left the dialog
+        self.assertIn("<span class=ah-link role=button tabindex=0 data-act=usage>Usage and spend</span>", self.JS)
+        self.assertIn("<span class=ah-link role=button tabindex=0 data-act=log>Log</span>", self.JS)
+        self.assertIn("tip.setAttribute('aria-modal','true')", self.JS)
+        self.assertIn("tip.addEventListener('keydown',function(ev){if(!pinned)return;", self.JS)
+        self.assertIn("if(ev.key==='Tab'){var f=controls(),i=f.indexOf(document.activeElement);", self.JS)
+        self.assertIn("if(ev.shiftKey){if(i<=0){ev.preventDefault();f[f.length-1].focus();}}", self.JS)
+        self.assertIn("else if(i<0||i===f.length-1){ev.preventDefault();f[0].focus();}", self.JS)
+        self.assertIn("if(ev.key!=='Enter'&&ev.key!==' ')return;var t=actOf(ev.target);if(!t||t.tagName==='BUTTON')return;", self.JS,
+                      "Enter / Space run a row or link; the button's own keys click it natively")
+        self.assertIn("ev.preventDefault();run(t);flush();});", self.JS)
+        # a re-render keeps focus on the same control, else the card: the trap must survive a frame
+        self.assertIn("key=(pinned&&a&&a!==tip&&tip.contains(a))?focusKey(a):null;", self.JS)
+        self.assertIn("try{if(n)n.focus();if(!n||document.activeElement!==n)tip.focus();}catch(e){}", self.JS)
 
     def test_a_failed_send_restores_the_button_and_names_the_reason_under_it(self):
         press = self.JS[self.JS.index("if(act==='pause')"):self.JS.index("else if(act==='reveal')")]
@@ -470,7 +495,7 @@ class Detail(unittest.TestCase):
         self.assertIn("LAST=m;hint='';", self.JS, "a frame means the socket is alive: the notice retires")
 
     def test_the_hover_re_anchors_after_a_re_render(self):
-        self.assertIn("function render(){if(!LAST)return;tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();}", self.JS)
+        self.assertIn("tip.innerHTML=html(LAST,pinned);if(!pinned)anchor();", self.JS)
         self.assertIn("tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}", self.JS)
         self.assertIn("lastX=(ev&&typeof ev.clientX==='number')?ev.clientX:null;", self.JS)
 
@@ -489,6 +514,8 @@ class Detail(unittest.TestCase):
     def test_actions_are_delegated_on_the_stable_tip_node(self):
         self.assertIn("tip.addEventListener('click',function(ev){", self.JS)
         self.assertEqual(self.JS.count("addEventListener('click'"), 2, "one on #rail-api, one on #ah-tip; none per row")
+        self.assertEqual(self.JS.count("addEventListener('keydown'"), 2, "one on #rail-api, one on #ah-tip; none per row")
+        self.assertEqual(self.JS.count("function run(t){var act=t.getAttribute('data-act');"), 1, "one action switch for click and key")
         self.assertNotIn("onclick=", self.JS.split("back.onclick")[0].split("function open")[0], "no inline handlers in the markup")
 
     def test_the_words_are_plain_american_and_free_of_romp_nouns(self):

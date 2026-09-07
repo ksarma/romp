@@ -58,7 +58,9 @@ const R = await page.evaluate((SID) => {
                         cls: "529", status: 529, since: 1700000000 + i, suppressed: false });
   const frame = (over) => Object.assign({ type: "apiHealth", state: "degraded", cls: "529", reason: "",
     text: "overloaded · 1 waiting", waiting: 1, retrying: 0, blocked: 1, since: 1700000000, tmux: 0,
-    sessions: [row(1)] }, over || {});
+    sessions: [row(1)], seq: 1 }, over || {});
+  window.__frame = frame; window.__row = row;                 // the driver's second phase reuses them
+  const bg = (n) => n ? getComputedStyle(n).backgroundColor : "";
   const btn = () => tip().querySelector("button[data-act=pause]");
   // 1. before any frame: the cell is not displayed (the hidden attribute must beat .ru-w's display rule)
   R.preFrameHidden = el.hidden;
@@ -121,9 +123,29 @@ const R = await page.evaluate((SID) => {
   window.__rompApiHealth(frame({ text: "overloaded · 2 waiting", waiting: 2, blocked: 2, since: 1700000005, sessions: [row(1), row(2)] }));
   const b2n = btn();
   R.ackHeld = { disabled: b2n.disabled, label: b2n.textContent, acted: b2n.classList.contains("romp-acted") };
-  window.__rompApiHealth(frame({ state: "paused", reason: "manual", text: "paused by you · 2 waiting", waiting: 2, blocked: 2, sessions: [row(1), row(2)] }));
+  window.__rompApiHealth(frame({ state: "paused", reason: "manual", text: "paused by you · 2 waiting", waiting: 2, blocked: 2, sessions: [row(1), row(2)], seq: 2 }));
   const b3n = btn();
   R.confirmed = { disabled: b3n.disabled, label: b3n.textContent, acted: b3n.classList.contains("romp-acted") };
+  });
+  step('resumeLimit', () => {
+  // 7b. Resume during a usage-limit pause: the kernel lifts, the limit re-engages within the cycle, and the frame
+  //     that answers is paused again with a new since and a moved seq. The button must read that truth (enabled
+  //     Resume), not hold a disabled 'Stop' for the rest of the window (review round 2).
+  const sentR = []; window.__rompShellSend = (o) => { sentR.push(o); return true; };
+  window.__rompApiHealth(frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 5 }));
+  const br = btn(); R.resumeBefore = { disabled: br.disabled, label: br.textContent };
+  br.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  br.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  br.click();
+  R.resumeSent = sentR.map((o) => o.type + ":" + String(o.value));
+  const bp = btn(); R.resumePending = { disabled: bp.disabled, label: bp.textContent, acted: bp.classList.contains("romp-acted") };
+  window.__rompApiHealth(frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 5 }));
+  const bs = btn(); R.resumeSameSeq = { disabled: bs.disabled, label: bs.textContent, acted: bs.classList.contains("romp-acted") };
+  window.__rompApiHealth(frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000020, seq: 7 }));
+  const ba = btn(); R.resumeAfter = { disabled: ba.disabled, label: ba.textContent, acted: ba.classList.contains("romp-acted") };
+  R.resumeLine = (tip().querySelector(".ah-line") || {}).textContent || "";
+  // back to the paused world the ack step left, so the failed-send step below presses the same Resume it always did
+  window.__rompApiHealth(frame({ state: "paused", reason: "manual", text: "paused by you · 2 waiting", waiting: 2, blocked: 2, sessions: [row(1), row(2)], seq: 7 }));
   });
   step('failed', () => {
   // 8. a failed send restores the label, drops the acted styling and says why
@@ -153,8 +175,93 @@ const R = await page.evaluate((SID) => {
   R.lightDot = getComputedStyle(el.querySelector(".ah-dot")).backgroundColor;
   R.lightDotOpacity = getComputedStyle(el.querySelector(".ah-dot")).opacity;
   });
+  step('lightState', () => {
+  // 11. light theme, degraded and paused: the detail's headline dot wears the rail dot's color (review round 2:
+  //     the bare light rule outranked the state rules and painted it the label gray)
+  window.__rompApiHealth(frame({ seq: 8 }));
+  el.click();                                              // pin the detail (the row step closed it)
+  const head = () => tip().querySelector(".ah-head .ah-dot");
+  R.lightDegraded = { rail: bg(el.querySelector(".ah-dot")), head: bg(head()), headOpacity: getComputedStyle(head()).opacity };
+  window.__rompApiHealth(frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 8 }));
+  R.lightPaused = { rail: bg(el.querySelector(".ah-dot")), head: bg(head()) };
+  window.__rompApiHealth(frame({ state: "ok", cls: "", text: "ok", waiting: 0, blocked: 0, since: 0, sessions: [], seq: 8 }));
+  R.lightOkHead = { head: bg(head()), headOpacity: getComputedStyle(head()).opacity };
+  el.click();                                              // close it again
+  document.body.classList.remove("theme-light");
+  });
   return R;
 }, cfg.sid);
+// ── phase 2: a real keyboard and a real mouse (review round 2). Synthetic key events do not move focus, and a
+// synthetic right button fires no contextmenu, so these ride playwright's input instead of page.evaluate. ──
+R.err2 = {};
+const step2 = async (name, fn) => { try { await fn(); } catch (e) { R.err2[name] = String(e && e.stack || e); } };
+const active = () => page.evaluate(() => { const a = document.activeElement, t = document.getElementById("ah-tip");
+  return (a.tagName + (a.getAttribute("data-act") ? "." + a.getAttribute("data-act") : "") + (t.contains(a) ? "" : "!out")); });
+await step2('tab', async () => {
+  // 12. Tab cycles within the open dialog: button, row, Usage, Log, then the button again; Shift+Tab runs back
+  await page.evaluate(() => { window.__sent2 = []; window.__rompShellSend = (o) => { window.__sent2.push(o); return true; };
+    window.__usageOpened = 0; window.__rompUsagePanel = () => { window.__usageOpened++; };
+    window.__rompApiHealth(window.__frame({ state: "paused", reason: "limit", text: "paused · usage limit · 1 waiting", since: 1700000010, seq: 9 }));
+    document.getElementById("rail-api").focus(); });
+  await page.keyboard.press("Enter");
+  R.tabOpened = await page.evaluate(() => document.getElementById("ah-tip").classList.contains("ru-modal") && document.getElementById("ah-tip").contains(document.activeElement));
+  R.tabAria = await page.evaluate(() => document.getElementById("ah-tip").getAttribute("aria-modal"));
+  const seq = [];
+  for (let i = 0; i < 6; i++) { await page.keyboard.press("Tab"); seq.push(await active()); }
+  R.tabSeq = seq;
+  const back = [];
+  for (let i = 0; i < 3; i++) { await page.keyboard.press("Shift+Tab"); back.push(await active()); }
+  R.tabBack = back;
+});
+await step2('enterRow', async () => {
+  // 13. Enter on a focused row opens that session; the dialog closes
+  await page.evaluate(() => { const r = document.querySelector("#ah-tip .ah-row[data-act=reveal]"); r.focus(); });
+  R.rowFocused = await active();
+  await page.keyboard.press("Enter");
+  R.enterRowSent = await page.evaluate(() => window.__sent2.map((o) => o.type + ":" + o.id));
+  R.enterRowClosed = await page.evaluate(() => document.getElementById("ah-tip").style.display === "none");
+});
+await step2('enterUsage', async () => {
+  // 14. Space on the focused Usage link opens the usage modal; a frame while a row is focused keeps focus on it
+  await page.evaluate(() => { document.getElementById("rail-api").focus(); });
+  await page.keyboard.press("Enter");
+  await page.evaluate(() => { document.querySelector("#ah-tip .ah-row[data-act=reveal]").focus();
+    window.__rompApiHealth(window.__frame({ state: "paused", reason: "limit", text: "paused · usage limit · 2 waiting", waiting: 2, blocked: 2, since: 1700000010, seq: 9, sessions: [window.__row(1), window.__row(2)] })); });
+  R.focusAfterFrame = await active();
+  await page.evaluate(() => { document.querySelector("#ah-tip .ah-link[data-act=usage]").focus(); });
+  await page.keyboard.press("Space");
+  R.usageOpened = await page.evaluate(() => window.__usageOpened);
+  R.usageClosedTip = await page.evaluate(() => document.getElementById("ah-tip").style.display === "none");
+});
+await step2('rightButton', async () => {
+  // 15. a right-button press over the detail does not defer a frame (no click follows it). The scratch page has
+  //     no kernel, so the boot splash (#romp-boot, a full-window overlay) never clears and would take every real
+  //     mouse event: it goes first, and each press records that it landed on the card.
+  await page.evaluate(() => { const b = document.getElementById("romp-boot"); if (b) b.remove();
+    window.__rompApiHealth(window.__frame({ seq: 9 })); document.getElementById("rail-api").click(); });
+  const head = () => page.evaluate(() => { const r = document.querySelector("#ah-tip .ah-head").getBoundingClientRect(); return { x: r.left + 8, y: r.top + r.height / 2 }; });
+  const inside = (b) => page.evaluate(([x, y]) => document.getElementById("ah-tip").contains(document.elementFromPoint(x, y)), [b.x, b.y]);
+  const box = await head();
+  R.rightInside = await inside(box);
+  await page.mouse.move(box.x, box.y);
+  await page.mouse.down({ button: "right" });
+  await page.evaluate(() => { window.__rompApiHealth(window.__frame({ text: "overloaded · 5 waiting", waiting: 5, blocked: 5, seq: 9,
+    sessions: [1, 2, 3, 4].map(window.__row).concat([Object.assign(window.__row(1), { sid: "x5", name: "five" })]) })); });
+  R.rightHeldPainted = await page.evaluate(() => /5 waiting/.test(document.getElementById("ah-tip").textContent));
+  await page.mouse.up({ button: "right" });
+  R.rightReleasedPainted = await page.evaluate(() => /5 waiting/.test(document.getElementById("ah-tip").textContent));
+  // and the primary press still defers, then paints on release + click. The five-row frame grew the centered
+  // card, so the head moved: measure again.
+  const box2 = await head();
+  R.primaryInside = await inside(box2);
+  await page.mouse.move(box2.x, box2.y);
+  await page.mouse.down();
+  await page.evaluate(() => { window.__rompApiHealth(window.__frame({ text: "overloaded · 6 waiting", waiting: 6, blocked: 6, seq: 9,
+    sessions: [1, 2, 3, 4].map(window.__row).concat([Object.assign(window.__row(1), { sid: "x5", name: "five" }), Object.assign(window.__row(2), { sid: "x6", name: "six" })]) })); });
+  R.primaryHeldPainted = await page.evaluate(() => /6 waiting/.test(document.getElementById("ah-tip").textContent));
+  await page.mouse.up();
+  R.primaryReleasedPainted = await page.evaluate(() => /6 waiting/.test(document.getElementById("ah-tip").textContent));
+});
 if (cfg.shots) await page.screenshot({ path: cfg.shots });
 fs.writeSync(1, "RESULT:" + JSON.stringify(R) + "\n");
 await browser.close();
@@ -249,11 +356,24 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["clickSent"], ["setGlobalRetryPaused:true"], "the click landed on the pressed button")
         self.assertTrue(self.R["flushedOnClick"], "the deferred frame is painted once the press is over")
 
-    def test_the_acknowledgment_holds_until_a_frame_confirms_the_flip(self):
+    def test_the_acknowledgment_holds_until_the_frame_that_answers_the_press(self):
         acked = {"disabled": True, "label": "Resume all auto-retries", "acted": True}
         self.assertEqual(self.R["ack"], acked)
-        self.assertEqual(self.R["ackHeld"], acked, "a frame that has not flipped yet must not repaint an enabled Stop")
+        self.assertEqual(self.R["ackHeld"], acked, "a frame from before the press (same seq) must not repaint an enabled Stop")
         self.assertEqual(self.R["confirmed"], {"disabled": False, "label": "Resume all auto-retries", "acted": False})
+
+    def test_a_resume_during_a_usage_limit_pause_reads_the_truth_when_the_pause_re_engages(self):
+        # review round 2 (2026-09-07): the old rule cleared the acknowledgment only on a frame whose state matched
+        # the press, and a limit pause re-engages within the cycle, so the button sat disabled and read 'Stop all
+        # auto-retries' for the rest of the window
+        self.assertEqual(self.R["resumeBefore"], {"disabled": False, "label": "Resume all auto-retries"}, "errors: %r" % self.R.get("err"))
+        self.assertEqual(self.R["resumeSent"], ["setGlobalRetryPaused:false"])
+        self.assertEqual(self.R["resumePending"], {"disabled": True, "label": "Stop all auto-retries", "acted": True})
+        self.assertEqual(self.R["resumeSameSeq"], {"disabled": True, "label": "Stop all auto-retries", "acted": True},
+                         "a frame carrying the seq we pressed on predates the press")
+        self.assertEqual(self.R["resumeAfter"], {"disabled": False, "label": "Resume all auto-retries", "acted": False},
+                         "the frame that answers (seq moved) re-enables the button with the truth: paused again")
+        self.assertEqual(self.R["resumeLine"], "Auto-retry and the judges are paused until your usage limit resets.")
 
     def test_a_failed_send_restores_the_label_drops_the_acted_styling_and_says_why(self):
         f = self.R["failed"]
@@ -265,6 +385,41 @@ class ServedCell(unittest.TestCase):
         self.assertEqual(self.R["rowSent"], [{"type": "openSession", "id": SID + "1"}])
         self.assertEqual(self.R["rowToggled"], 0, "no pane toggle, nothing persisted")
         self.assertTrue(self.R["rowClosed"])
+
+    def test_the_light_theme_keeps_the_head_dot_s_state_colors(self):
+        # review round 2 (2026-09-07): the bare light rule outranked the state rules, so the detail's headline dot
+        # was the label gray while the rail's id-scoped dot kept amber and red
+        amber, red, gray = "rgb(230, 126, 34)", "rgb(229, 72, 77)", "rgb(93, 87, 78)"
+        self.assertEqual(self.R["lightDegraded"], {"rail": amber, "head": amber, "headOpacity": "1"}, "errors: %r" % self.R.get("err"))
+        self.assertEqual(self.R["lightPaused"], {"rail": red, "head": red})
+        self.assertEqual(self.R["lightOkHead"], {"head": gray, "headOpacity": "0.55"})
+
+    def test_the_driver_s_second_phase_hit_no_error(self):
+        self.assertEqual(self.R["err2"], {})
+
+    def test_tab_cycles_within_the_open_dialog(self):
+        # review round 2 (2026-09-07): the second Tab used to leave the dialog for the page; rows and footer links
+        # were not focusable at all
+        self.assertTrue(self.R["tabOpened"], "errors: %r" % self.R.get("err2"))
+        self.assertEqual(self.R["tabAria"], "true")
+        self.assertEqual(self.R["tabSeq"], ["BUTTON.pause", "DIV.reveal", "SPAN.usage", "SPAN.log", "BUTTON.pause", "DIV.reveal"])
+        self.assertEqual(self.R["tabBack"], ["BUTTON.pause", "SPAN.log", "SPAN.usage"])
+
+    def test_enter_on_a_row_opens_its_session_and_space_on_a_footer_link_runs_it(self):
+        self.assertEqual(self.R["rowFocused"], "DIV.reveal", "errors: %r" % self.R.get("err2"))
+        self.assertEqual(self.R["enterRowSent"], ["openSession:" + SID + "1"])
+        self.assertTrue(self.R["enterRowClosed"])
+        self.assertEqual(self.R["focusAfterFrame"], "DIV.reveal", "a frame re-renders the card; focus stays on the same row")
+        self.assertEqual(self.R["usageOpened"], 1)
+        self.assertTrue(self.R["usageClosedTip"])
+
+    def test_only_a_primary_press_defers_a_frame(self):
+        self.assertTrue(self.R["rightInside"], "the right press landed on the card; errors: %r" % self.R.get("err2"))
+        self.assertTrue(self.R["rightHeldPainted"], "a right button arms nothing: the frame paints at once")
+        self.assertTrue(self.R["rightReleasedPainted"])
+        self.assertTrue(self.R["primaryInside"], "the primary press landed on the card")
+        self.assertFalse(self.R["primaryHeldPainted"], "the primary press still defers")
+        self.assertTrue(self.R["primaryReleasedPainted"], "and the release (outside any button, no click to wait for) paints it")
 
 
 if __name__ == "__main__":
