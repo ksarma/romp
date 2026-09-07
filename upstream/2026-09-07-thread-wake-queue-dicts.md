@@ -1,7 +1,7 @@
 ---
 title: The thread-wake notice rewrite keeps dict-shaped queue entries (a persisted user-todo answer) instead of erasing them
 status: waiting
-where: fork branch queuedicts (kernel/sdk_backend.py SdkBackend._ensure thread-wake notice prepend; tests/test_sdk_backend_queue.py or the module the fix's tests live in)
+where: fork branch queuedicts (kernel/sdk_backend.py SdkBackend._ensure thread-wake notice prepend; tests/test_sdk_boot_stagger.py ThreadWakeHearsItsDeadLife and tests/test_sdk_lifecycle_hardening.py TodoIdsRideTheQueue)
 added: 2026-09-07
 pr:
 tier: fix

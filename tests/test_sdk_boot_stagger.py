@@ -367,7 +367,7 @@ class ThreadWakeHearsItsDeadLife(unittest.TestCase):
 
     def test_a_plain_queue_wakes_exactly_as_before(self):
         # strings only: the notice goes first, a copy of it already queued is not doubled, junk is
-        # dropped, and the surviving texts keep their order. The pre-fix behaviour, pinned so the
+        # dropped, and the surviving texts keep their order. The pre-fix behavior, pinned so the
         # dict-aware filter changes nothing for a queue that carries no answer.
         sid = "11111111-bbbb-0000-0000-0000000000b8"
         _reg(self.d, sid, threadOf=self.PARENT, pendingAsk=True,
