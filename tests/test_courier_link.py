@@ -156,6 +156,13 @@ class DormantHandoffConverts(unittest.TestCase):
         for f in (jd.STATE / "states").glob("*"):
             f.unlink()
         (jd.NAMES / SENDER).unlink(missing_ok=True)
+        # The sweep's dead-wait block JOURNALS a block row for SENDER:g1 (append_block) and records the
+        # nudge in auto-nudge.json. SENDER is the shared placeholder sid, so both outlive this test into
+        # every later goal-store test under that sid in the same process: load_goals replays the row
+        # onto their fresh g1 (blocked) and the distiller takes the staller path instead of distilling.
+        # Seventeen distiller tests went red once xdist placed them after this one (2026-09-07).
+        (jd._overrides_dir() / (SENDER + ".jsonl")).unlink(missing_ok=True)
+        (jd.STATE / "auto-nudge.json").unlink(missing_ok=True)
 
     def test_dormant_sender_handoff_blocks_with_the_dead_wait_why(self):
         km._dead_wait_sweep(set(), self.nudged, T + 900)
