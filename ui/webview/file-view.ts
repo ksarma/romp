@@ -878,17 +878,25 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // highlight (file-comments.ts paintAll), and a selection with an end inside a mark lost that end with the mark's
   // node: 58 selected characters over a highlight came back as 21 after one A+, 45 as 7 after a pane resize (review
   // 2026-09-07, round 2). The text has not changed, only its elements, so the two ends are taken as offsets into the
-  // body's text before the hooks run and put back from them after, direction kept (setBaseAndExtent). A collapsed
-  // selection, or one with an end outside the body (the bar, the aside's input), is not over the repainted text and
-  // is left alone. The paints that REPLACE the body (renderBody) keep nothing: there the text itself is new.
+  // body's text before the hooks run and put back from them after, direction kept (setBaseAndExtent), but only when
+  // the paint cost the selection an end. A selection the paint left standing (both ends in connected nodes, the same
+  // text between them) is not touched: the browser's record of it is exact where the offsets are not. A selection
+  // holding NO text (a figure alone, the shape a drag across a picture makes) has one offset for both ends, and put
+  // back from them it collapsed after every reflow though the paint had touched nothing near it (review 2026-09-07,
+  // round 3); such a selection is never rebuilt from offsets, so when a paint does disturb it, it stays as the paint
+  // left it. A collapsed selection, or one with an end outside the body (the bar, the aside's input), is not over the
+  // repainted text and is left alone. The paints that REPLACE the body (renderBody) keep nothing: there the text
+  // itself is new.
   const fireRenderedKeepingSelection = () => {
     const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
     const kept = sel && !sel.isCollapsed && sel.anchorNode && sel.focusNode && typeof sel.setBaseAndExtent === "function"
       && typeof document.createRange === "function"
-      ? { a: textOffset(body, sel.anchorNode, sel.anchorOffset), f: textOffset(body, sel.focusNode, sel.focusOffset) } : null;
+      ? { a: textOffset(body, sel.anchorNode, sel.anchorOffset), f: textOffset(body, sel.focusNode, sel.focusOffset), text: sel.toString() } : null;
     fireRendered();
     if (!sel || !kept || kept.a === null || kept.f === null) return;
-    const a = textPoint(body, kept.a); const f = textPoint(body, kept.f);
+    if (!sel.isCollapsed && sel.anchorNode?.isConnected && sel.focusNode?.isConnected && sel.toString() === kept.text) return;   // the paint left it standing
+    if (kept.a === kept.f) return;   // no text between the ends: the offsets cannot rebuild it, and would collapse it
+    const a = textPoint(body, kept.a, kept.a < kept.f); const f = textPoint(body, kept.f, kept.f < kept.a);
     try { sel.setBaseAndExtent(a[0], a[1], f[0], f[1]); } catch { /* a point the layout refuses: the selection stays as the paint left it */ }
   };
   const ctx: FileViewActionCtx = {
@@ -1951,13 +1959,18 @@ function textOffset(root: Node, node: Node, offset: number): number | null {
   r.setStart(root, 0); r.setEnd(node, offset);
   return r.toString().length;
 }
-/** The point at character offset n of root's text, in the text nodes root holds NOW: inside the text node that reaches n
- *  (a point between two nodes lands at the end of the earlier one), root's end when n lies past its text. */
-function textPoint(root: Node, n: number): [Node, number] {
+/** The point at character offset n of root's text, in the text nodes root holds NOW: inside the text node that holds n,
+ *  root's end when n lies past its text. A point BETWEEN two text nodes has two homes, and which is right depends on
+ *  the end of the selection it is: the END lands at the end of the earlier node (the text before it is selected), the
+ *  START at the beginning of the later one (the text after it is). The Raw view's rows (.fv-cl) carry no newline text
+ *  and an empty row holds no text node, so a start at a row's first column has the offset of the last non-empty row's
+ *  end above it; put there, the selection came back with a leading newline and without its trailing one (review
+ *  2026-09-07, round 3). */
+function textPoint(root: Node, n: number, start: boolean): [Node, number] {
   const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let seen = 0; let last: Text | null = null;
   for (let t = w.nextNode() as Text | null; t; t = w.nextNode() as Text | null) {
-    if (seen + t.data.length >= n) return [t, n - seen];
+    if (start ? seen + t.data.length > n : seen + t.data.length >= n) return [t, n - seen];
     seen += t.data.length; last = t;
   }
   return last ? [last, last.data.length] : [root, root.childNodes.length];
