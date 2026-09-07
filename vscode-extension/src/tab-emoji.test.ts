@@ -87,7 +87,8 @@ test("the tab menu's Emoji… row sits with Rename, wears the current emoji as i
 test("the dialog: Set posts the typed value, Clear posts \"\", an empty Set is refused locally, and the pressed button acknowledges BEFORE the post", () => {
   const body = slice("function showEmojiPrompt(sid: string): void {", "\nfunction emojiLanded(");
   assert.match(body, /input\.value = cur;/);   // prefilled with the current emoji
-  assert.match(body, /if \(!v\) \{ input\.classList\.add\("bad"\); input\.focus\(\); return; \}/);
+  // the empty Set: marked, focused and SAID (the hint; the mark alone was invisible on this field, review round 1)
+  assert.match(body, /if \(!v\) \{[^\n]*\n\s*input\.classList\.add\("bad"\); input\.focus\(\);\n\s*hint\.textContent = EMPTY_SET;[^\n]*\n\s*return;/);
   assert.match(body, /submit\(v, go, "Setting…"\)/);
   assert.match(body, /clear\.addEventListener\("click", \(\) => submit\("", clear, "Clearing…"\)\);/);
   // the click-safe rule: acknowledge first (label + disabled + locked input), then the round trip; the dialog

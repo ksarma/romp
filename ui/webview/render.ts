@@ -20,7 +20,7 @@ import { mintWriteId, ackOutcome, adoptViews, seqOf, capsAdopts, announcedSeq, a
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
 import { syncSessionsFromTabMeta, applyMetaToSession, notePendingMeta, emojiConfirmClosesDialog, PendingTabMeta } from "./tab-meta";
-import { EMOJI_RECENT_KEY, gridSections, moveInGrid, parseRecentEmoji, rememberEmoji } from "./emoji-picker";
+import { EMOJI_RECENT_KEY, gridSections, moveInGrid, parseRecentEmoji, rememberEmoji, sameEmoji } from "./emoji-picker";
 import type { GridPos } from "./emoji-picker";
 import { EMOJI_CATEGORIES } from "./emoji-data";
 import { markerLabel, dayContext } from "./time-marker";
@@ -7479,10 +7479,12 @@ function onMoveDirCompletions(m: any): void {
 // network), a Recent row (the last sixteen picks, per browser, in localStorage), the grid by category with a
 // strip of category icons that jumps to each, and a footer for what the list does not carry: a small "or
 // type or paste one" field (a skin-toned or brand-new emoji), Set, and Clear. It floats where the tab menu
-// stood, in the menu vocabulary, and dismisses the way the menu's color swatches do: a mousedown outside it,
-// Escape, or the tab menu opening again. What a pick does is unchanged from the field: the value is posted
+// stood, in the menu vocabulary, and dismisses on a mousedown outside it, Escape, or the tab menu opening
+// again (the menu's own closers, minus scroll and blur: see the window listeners by dismissTabMenu). What
+// a pick does is unchanged from the field: the value is posted
 // with setSessionEmoji and the dialog STAYS OPEN for the kernel's verdict, acknowledging at once (Set reads
-// "Setting…" or Clear "Clearing…", the picked cell dims, the cells lock). The kernel is the validator
+// "Setting…" or Clear "Clearing…", the picked cell dims, the cells, the search box and the field lock). The
+// kernel is the validator
 // (exactly one emoji, nothing textual) and this dialog never pre-judges a value: a cell and a typed value go
 // through the same door, and the kernel's one-line reason lands in the same hint line above the field with
 // the typed value still there to fix. The kernel's {emojiSet} for this session closes it and files the emoji
@@ -7497,10 +7499,16 @@ function onMoveDirCompletions(m: any): void {
 // Keyboard: Tab runs search, the Recent row, the grid, the field, Clear, Set (one roving stop each for the
 // row and the grid: tabIndex 0 on the focused cell, -1 on the rest); arrows move through the cells and
 // across section boundaries (moveInGrid, emoji-picker.ts, tested there); Enter or Space on a cell picks it
-// (the button's own activation); Down from the search box enters the grid and Enter there picks the first
-// result; Enter in the field sets the typed value; Escape closes throughout. The category strip is
-// mouse-only (tabIndex -1): the arrows already walk every category, and a Tab stop between the search box
-// and the grid cost more than it gave.
+// (the button's own activation); Down from the search box goes to the next Tab stop (the Recent row when
+// there is one, else the grid) and Enter in the search box picks the first result; Enter in the field sets
+// the typed value; Escape closes throughout. The category strip is mouse-only (tabIndex -1): the arrows
+// already walk every category, and a Tab stop between the search box and the grid cost more than it gave.
+// Focus never falls to <body>: a submit parks it on the card (tabIndex -1) before disabling the control
+// that held it, and a close hands it back to the session's tab when the card held it (the way the tab bar
+// refocuses its tab after a rebuild); the hint line is a live region (role=status), so a refusal or the
+// backstop is announced wherever focus sits. The scroll box is a listbox of groups (one per section) whose
+// options are the cells; its two Tab stops (the Recent row, the categories) are a deliberate departure from
+// the one-stop listbox, kept because the row is the row people reach for.
 let emojiPrompt: { sid: string; card: HTMLElement; search: HTMLInputElement; scroll: HTMLElement;
                    input: HTMLInputElement; hint: HTMLElement; go: HTMLButtonElement; clear: HTMLButtonElement;
                    pending: boolean; typed: boolean; close: () => void;
@@ -7521,6 +7529,23 @@ function rememberRecentEmoji(emoji: string): void {
   try { localStorage.setItem(EMOJI_RECENT_KEY, JSON.stringify(rememberEmoji(readRecentEmoji(), emoji))); } catch { /* storage blocked */ }
 }
 
+// the hint for Set with an empty field: a local refusal, in the kernel's slot
+const EMPTY_SET = "Pick an emoji, or type or paste one.";
+
+// The category strip's current mark, from the scroll box's geometry (pure, so tab-emoji-picker.test.ts runs
+// it): the last section whose top has reached the top of the box. Two corrections to that rule, both from
+// review round 1: the Recent row has no strip button, so it counts as the first category; and the box clamps
+// at its end, where the last section may never reach the top, so at the end the last section is the one.
+// `ids` and `tops` are the sections in order (data-sec, offsetTop within the box); null marks nothing.
+function stripMarkAt(ids: readonly string[], tops: readonly number[], scrollTop: number, clientHeight: number,
+                     scrollHeight: number): string | null {
+  let at = -1;
+  tops.forEach((t, i) => { if (t <= scrollTop + 1) at = i; });
+  if (scrollHeight > clientHeight && scrollTop + clientHeight >= scrollHeight - 1) at = ids.length - 1;
+  if (at >= 0 && ids[at] === "recent") at = Math.min(at + 1, ids.length - 1);
+  return at >= 0 ? ids[at] || null : null;
+}
+
 function showEmojiPrompt(sid: string): void {
   closeEmojiPrompt();
   const sess = sessions.get(sid);
@@ -7528,6 +7553,7 @@ function showEmojiPrompt(sid: string): void {
   const who = sess?.name || tabMeta.get(sid)?.name || "session";
   const card = el("div", "ctx-menu emoji-picker"); card.id = "emoji-picker";
   card.setAttribute("role", "dialog"); card.setAttribute("aria-label", "Emoji for " + who);
+  card.tabIndex = -1;   // holds focus while a submit disables the control that had it; never a Tab stop
   const title = el("div", "emoji-title"); title.textContent = `Emoji for “${who}”`;
   const search = document.createElement("input");
   search.type = "text"; search.className = "ctx-tag-input emoji-search"; search.placeholder = "Search";
@@ -7542,7 +7568,9 @@ function showEmojiPrompt(sid: string): void {
     cats.appendChild(b);
   }
   const scroll = el("div", "emoji-scroll");
+  scroll.setAttribute("role", "listbox"); scroll.setAttribute("aria-label", "Emoji");
   const hint = el("div", "emoji-hint");   // the kernel's one-line reason for a refused value; empty until then
+  hint.setAttribute("role", "status"); hint.setAttribute("aria-live", "polite");   // announced, wherever focus sits
   const foot = el("div", "emoji-foot");
   const input = document.createElement("input");
   input.type = "text"; input.className = "ctx-tag-input emoji-pick"; input.value = cur;
@@ -7555,7 +7583,14 @@ function showEmojiPrompt(sid: string): void {
   clear.disabled = !cur;
   if (!cur) clear.title = "nothing to clear — this session has no emoji";
   const go = el("button", "picker-action") as HTMLButtonElement; go.type = "button"; go.textContent = "Set";
-  const close = () => card.remove();
+  const close = () => {
+    // focus goes back to this session's tab when the card held it (Escape, the kernel's confirm, an outside
+    // mousedown: the click's own focus move follows this one); when it did not (the tab menu reopening on
+    // a right-click that has already focused ITS tab), nothing here moves it
+    const held = card.contains(document.activeElement);
+    card.remove();
+    if (held) (document.querySelector(`#tabs .tab[data-id="${sid}"]`) as HTMLElement | null)?.focus();
+  };
   emojiPrompt = { sid, card, search, scroll, input, hint, go, clear, pending: false, typed: false, close };
 
   // the grid: sections from emoji-picker.ts; one roving focus for the Recent row, one for the rest
@@ -7567,11 +7602,12 @@ function showEmojiPrompt(sid: string): void {
   const cellAt = (pos: GridPos) =>
     scroll.querySelector(`.emoji-cell[data-s="${pos.section}"][data-i="${pos.index}"]`) as HTMLButtonElement | null;
   const focusedIn = (s: number): number => isRecent(s) ? recentFocus : (gridFocus.section === s ? gridFocus.index : -1);
-  // the strip marks the category whose header has reached the top of the scroll (keyed on the scroll event)
+  // the strip marks the category the scroll box shows (keyed on the scroll event; the math is stripMarkAt)
   const markCat = () => {
-    let atTop: string | null = null;
-    scroll.querySelectorAll<HTMLElement>(".emoji-sec").forEach((sec) => { if (sec.offsetTop <= scroll.scrollTop + 1) atTop = sec.dataset.sec || null; });
-    cats.querySelectorAll<HTMLElement>(".emoji-cat").forEach((b) => b.classList.toggle("cur", b.dataset.cat === atTop));
+    const secs = Array.from(scroll.querySelectorAll<HTMLElement>(".emoji-sec"));
+    const at = stripMarkAt(secs.map((x) => x.dataset.sec || ""), secs.map((x) => x.offsetTop),
+                           scroll.scrollTop, scroll.clientHeight, scroll.scrollHeight);
+    cats.querySelectorAll<HTMLElement>(".emoji-cat").forEach((b) => b.classList.toggle("cur", b.dataset.cat === at));
   };
   const paint = () => {
     sections = gridSections(search.value, recents);
@@ -7585,23 +7621,26 @@ function showEmojiPrompt(sid: string): void {
     if (cur) {
       for (let s = 0; s < sections.length; s++) {
         if (isRecent(s)) continue;
-        const k = sections[s].cells.findIndex((c) => c[0] === cur);
+        const k = sections[s].cells.findIndex((c) => sameEmoji(c[0], cur));
         if (k >= 0) { gridFocus = { section: s, index: k }; break; }
       }
     }
     const frag = document.createDocumentFragment();
     sections.forEach((sec, s) => {
       const box = el("div", "emoji-sec"); box.dataset.sec = sec.id;
-      const h = el("div", "emoji-sec-h"); h.textContent = sec.label; box.appendChild(h);
+      const h = el("div", "emoji-sec-h"); h.textContent = sec.label; h.id = "emoji-sec-" + sec.id; box.appendChild(h);
+      box.setAttribute("role", "group"); box.setAttribute("aria-labelledby", h.id);
       if (!sec.cells.length) {
         const none = el("div", "emoji-none"); none.textContent = "No match. Type or paste one below."; box.appendChild(none);
       } else {
         const grid = el("div", "emoji-grid");
         const f = focusedIn(s);
         sec.cells.forEach(([emoji, nm], i) => {
-          const b = el("button", "emoji-cell" + (emoji === cur ? " cur" : "")) as HTMLButtonElement;
+          const isCur = sameEmoji(emoji, cur);   // U+FE0F-insensitive: the kernel stores either form unchanged
+          const b = el("button", "emoji-cell" + (isCur ? " cur" : "")) as HTMLButtonElement;
           b.type = "button"; b.dataset.act = "pick"; b.dataset.emoji = emoji; b.dataset.s = String(s); b.dataset.i = String(i);
           b.title = nm; b.setAttribute("aria-label", nm); b.textContent = emoji; b.tabIndex = i === f ? 0 : -1;
+          b.setAttribute("role", "option"); b.setAttribute("aria-selected", isCur ? "true" : "false");
           grid.appendChild(b);
         });
         box.appendChild(grid);
@@ -7636,10 +7675,14 @@ function showEmojiPrompt(sid: string): void {
     // emojiSet for this session or a warn with the reason, is what changes this dialog next
     p.pending = true; p.asked = value;
     p.typed = value === input.value.trim();   // the field holds what is being sent: a refusal marks and refocuses it
-    btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true;
+    // a disabled control drops its focus to <body>, where the next Tab leaves the dialog: park it on the card
+    // first (a cell keeps its own focus; the cells lock by pointer-events, not disabled)
+    const a = document.activeElement;
+    if (a === search || a === input || a === go || a === clear) card.focus({ preventScroll: true });
+    btn.textContent = busy; go.disabled = true; clear.disabled = true; input.disabled = true; search.disabled = true;
     card.classList.add("waiting");   // the cells and the strip lock (styles.css .emoji-picker.waiting)
     scroll.querySelectorAll<HTMLElement>(".emoji-cell").forEach((c) => c.classList.toggle("busy", c.dataset.emoji === value));
-    hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint";
+    hint.textContent = ""; hint.title = ""; hint.className = "emoji-hint"; input.classList.remove("bad");
     setSessionEmoji(sid, value);
     p.backstop = window.setTimeout(
       () => emojiRefusedLocal("still waiting — the kernel has not answered; check the kernel log"), 30000);
@@ -7647,7 +7690,11 @@ function showEmojiPrompt(sid: string): void {
   const pick = (emoji: string) => { if (emoji) submit(emoji, go, "Setting…"); };
   const start = () => {
     const v = input.value.trim();
-    if (!v) { input.classList.add("bad"); input.focus(); return; }   // an empty Set is not a clear: that is the Clear button
+    if (!v) {   // an empty Set is not a clear: that is the Clear button; the field is marked and the hint says so
+      input.classList.add("bad"); input.focus();
+      hint.textContent = EMPTY_SET; hint.title = EMPTY_SET; hint.className = "emoji-hint bad";
+      return;
+    }
     submit(v, go, "Setting…");
   };
   delegate(card, { pick: (b) => pick(b.dataset.emoji || ""), cat: (b) => jumpTo(b.dataset.cat || "") });
@@ -7657,7 +7704,7 @@ function showEmojiPrompt(sid: string): void {
   input.addEventListener("input", () => input.classList.remove("bad"));
   search.addEventListener("input", paint);
   search.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown") { e.preventDefault(); focusCell(gridFocus); }
+    if (e.key === "ArrowDown") { e.preventDefault(); focusCell(isRecent(0) ? { section: 0, index: recentFocus } : gridFocus); }   // the next Tab stop: the Recent row when there is one
     else if (e.key === "Enter" && search.value.trim()) {
       e.preventDefault();
       const top = sections[0]?.cells[0];   // the first result, the way a search box picks its top hit
@@ -7716,9 +7763,10 @@ function emojiRefusedLocal(text: string): void {
   p.scroll.querySelectorAll(".emoji-cell.busy").forEach((c) => c.classList.remove("busy"));
   p.go.disabled = false; p.go.textContent = "Set";
   p.clear.disabled = !(sessions.get(p.sid)?.emoji || tabMeta.get(p.sid)?.emoji); p.clear.textContent = "Clear";
-  p.input.disabled = false;
+  p.input.disabled = false; p.search.disabled = false;
   p.hint.textContent = text; p.hint.title = text; p.hint.className = "emoji-hint bad";
   if (p.typed) { p.input.classList.add("bad"); p.input.focus(); }
+  else if (document.activeElement === p.card) (p.asked === "" ? p.clear : p.go).focus();   // parked at submit: back to the pressed button
 }
 
 // the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a

@@ -1772,6 +1772,12 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .emoji-none { padding: 12px 2px; font-size: 0.82em; opacity: 0.6; }
 .emoji-foot { display: flex; align-items: center; gap: 6px; }
 .emoji-foot .emoji-pick { flex: 1 1 auto; min-width: 0; }
+/* the field's refusal mark (Set with it empty, or the kernel refusing what it held): the .picker-dir-input.bad
+   pair, red border and a faint wash, on both themes. The one-field dialog's input wore .fork-name, whose .bad
+   rule this field no longer matches; without a rule of its own the mark was invisible (review round 1). Three
+   classes deep on purpose: it outranks .ctx-tag-input:focus, so the red holds while the field is focused. */
+.emoji-foot .emoji-pick.bad { border-color: #e5484d; background: rgba(229, 72, 77, 0.07); }
+.emoji-picker:focus { outline: none; }   /* the card parks focus while a submit waits; it is not a control */
 /* pending-rewind overlay: turns after an edited message belong to the branch being abandoned — they
    dim until the kernel's rewound payload replaces them (reconcileRewind retires the flag then). */
 .turn.rewound { opacity: 0.35; transition: opacity 0.2s ease; }
@@ -2802,6 +2808,10 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* the emoji picker's footer Set and Clear (2026-09-07): the one button rest above, sized for a menu footer.
    Placed after the base rule on purpose: served-theme.test.ts reads the FIRST `.picker-action {` as the rest. */
 .emoji-foot .picker-action { width: auto; flex: 0 0 auto; padding: 3px 10px; font-size: inherit; }
+/* the base hover above is a white wash, invisible on the light theme's cream card: on the menu card these two
+   wear the menu's own row wash, like the cells and the strip (review round 1). :not(:disabled) keeps the
+   disabled rule's transparent hover, which this rule would otherwise outrank by order. */
+.emoji-foot .picker-action:hover:not(:disabled) { background: var(--menu-hover); }
 
 /* ---- in-webview confirm dialog (showConfirm) — the no-native-modals path ---- */
 .confirm-overlay { display: flex; align-items: center; padding: 16px; }
