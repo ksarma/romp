@@ -2107,8 +2107,13 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
  *  file-comments.ts), the poll's figurePath (file-comments-model.ts) and the host's resolveSrc (file-comments-host.mjs)
  *  — so the picture shown is the file the poll watches and the host hashes (review round 2: the viewer alone left
  *  it a page-origin URL, and a region could be drawn on a broken-image box over a figure the person never saw).
- *  Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL (`//host/…`, which the
- *  browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
+ *  A `~/…` src is a relative one whose first segment is `~`: markdown has no home anchor, so every markdown reader
+ *  and the two readers above take it as a directory named `~` beside the file, and the kernel's `~` expansion
+ *  (_resolve_open_path) never sees it because the joined path no longer starts with it. A LINK's `~/…` is the
+ *  opposite on purpose (joinDocPath leaves it for the kernel to expand): a link has one reader, the kernel at click
+ *  time; a figure has three that must name one file (file-view-figures-absolute.test.ts pins both, and docs/guide.md
+ *  states them). Untouched: a src with a scheme (http:, https:, data:, blob:, …), a protocol-relative URL
+ *  (`//host/…`, which the browser and every markdown reader take as a web address), and an empty one. `..` segments and `./` pass through
  *  as written: the kernel resolves the path and gates it, and a client-side normalization would be a second, weaker
  *  opinion on what it serves. marked percent-encodes destinations (`six seven.png` renders as `six%20seven.png`), so
  *  the attribute is decoded back to a path first (decodeURI; a malformed escape is taken as written). The authored

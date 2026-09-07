@@ -258,7 +258,10 @@ comment is shown as stale until you resolve it, or press **Re-place** and drag t
 again where it belongs now; the comment keeps its words and its replies, and only the
 rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
 from the file's own folder, so a relative path shows in the Rendered view; a web address or a
-`data:` image is left as written. A comment on an embedded figure is stored on its embed line,
+`data:` image is left as written. A figure path that starts with `~/` is not expanded to your
+home folder: it names a folder called `~` next to the file, as other markdown viewers read it,
+while a link that starts with `~/` does open under your home folder. A comment on an embedded
+figure is stored on its embed line,
 with the rectangle: the session's tools and the other editors place it on that line, and this
 viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
 on a phone, comment on the file as a whole instead.
