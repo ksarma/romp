@@ -7227,13 +7227,19 @@ def _bg_unresolved(path, now=None):
 
 
 def _settle_not_before(fsid, path, now):
-    """The evidence gate's one clock input: the earliest instant after `now` at which one of this
+    """The evidence gate's one clock input: the earliest instant AT OR AFTER `now` at which one of this
     session's running background launches expires (em._bg_expiry_t) and the settle can change with no
-    file moving, or None. Ghost launches (before the live CLI's epoch) are filtered by the rule
-    _awaiting_bg_hold applies, so an expiry that could not change a verdict never re-arms one. Read after
-    a complete run from the live fold, which holds every launch the judged world held (the transcript is
-    append-only; a launch that landed after the pass's pin moves the parse pair anyway). Never recomputed
-    on a skip: with an unchanged signature the task set is unchanged, so the stored instant is exact."""
+    file moving, or None. At-or-after, because em._bg_expired is strict (`now > expiry`): a launch whose
+    expiry equals this pass's `now` has NOT expired yet, the run that just completed judged it as still
+    running, and the pass after this one is the first that sees it expired, so the stamp must carry it
+    (the review's boundary case, 2026-09-07: run_triage's `now` is a whole second and transcript
+    timestamps are whole seconds, so an expiry equal to `now` is an ordinary pass, and dropping it left a
+    stamp with no clock that skipped every later pass while the settle waited). Ghost launches (before
+    the live CLI's epoch) are filtered by the rule _awaiting_bg_hold applies, so an expiry that could not
+    change a verdict never re-arms one. Read after a complete run from the live fold, which holds every
+    launch the judged world held (the transcript is append-only; a launch that landed after the pass's
+    pin moves the parse pair anyway). Never recomputed on a skip: with an unchanged signature the task
+    set is unchanged, so the stored instant is exact."""
     tasks = em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)
     sp = _cli_epoch(fsid)
     nb = None
@@ -7241,7 +7247,7 @@ def _settle_not_before(fsid, path, now):
         if sp and t.get("t") and t["t"] < sp:
             continue
         x = em._bg_expiry_t(t)
-        if x is not None and x > now and (nb is None or x < nb):
+        if x is not None and x >= now and (nb is None or x < nb):
             nb = x
     return nb
 

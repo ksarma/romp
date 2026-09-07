@@ -616,6 +616,31 @@ class TheClock(_Gate):
         self.assertEqual(store["status"].get(g1["id"]), "completed", "the expired wait released the settle")
         self.assertIsNone(self._stamp("plan")[1], "no future expiry left: the stamp's not-before is None")
 
+    def test_a_complete_run_at_the_expiry_instant_keeps_the_clock(self):
+        # the review's boundary case (2026-09-07): run_triage's now is int(time.time()) and transcript
+        # timestamps are whole seconds, so a pass lands in the expiry's own second routinely. At that
+        # instant the launch has not expired (em._bg_expired is strict), the run holds the settle, and the
+        # stamp must still carry the expiry: a stamp with no clock would skip every later pass while the
+        # ungated pass at now > expiry releases the hold and completes the top.
+        path, expiry = self._monitor_fixture()
+        self.assertEqual(expiry, int(expiry), "fixture: an integral expiry (launch t + timeout + grace)")
+        self._converge(int(expiry) - 100)
+        watch, g1 = self._tops()
+        with open(jd.STATE / "cleared.jsonl", "a") as f:               # an unrelated re-arm in the expiry's second
+            f.write(json.dumps({"id": "cccccccc-1111-2222-3333-444444444444:g7", "op": "clear", "t": int(expiry)}) + "\n")
+        self._reset()
+        self._pass(int(expiry))
+        self.assertEqual(self._st("plan")["ran"], 1, "re-armed: the planner ran at the instant")
+        self.assertEqual(self._st("plan")["stamped"], 1, "a complete run")
+        self.assertIn(g1["id"], jd.load_goals(SID).get("confirming") or [], "at the instant the wait still holds")
+        self.assertEqual(self._stamp("plan")[1], expiry, "the stamp keeps the expiry that equals now")
+        self.assertEqual(self._stamp("close")[1], expiry)
+        self._reset()
+        self._pass(int(expiry) + 1)
+        self.assertEqual((self._st("plan")["ran"], self._st("plan")["due_clock"]), (1, 1), "past it: run on the clock")
+        self.assertEqual(jd.load_goals(SID)["status"].get(g1["id"]), "completed", "the released settle completes the top")
+        self.assertIsNone(self._stamp("plan")[1])
+
     def test_the_expiry_helper_and_the_predicate_agree(self):
         self.assertEqual(em._bg_expiry_t({"deadline": 1000.0}), 1120.0)
         self.assertEqual(em._bg_expiry_t({"deadline": 1000.0, "deadlineSrc": "hook"}), 1005.0, "hook grace 5")
@@ -629,7 +654,9 @@ class TheClock(_Gate):
     def test_not_before_is_the_earliest_future_non_ghost_expiry(self):
         path, expiry = self._monitor_fixture()
         self.assertEqual(jd._settle_not_before(SID, str(path), expiry - 10), expiry)
-        self.assertIsNone(jd._settle_not_before(SID, str(path), expiry), "at the instant nothing lies ahead")
+        self.assertEqual(jd._settle_not_before(SID, str(path), expiry), expiry,
+                         "at the instant the launch has not expired yet (em._bg_expired is strict), so it stays on the stamp")
+        self.assertIsNone(jd._settle_not_before(SID, str(path), expiry + 1), "past it nothing lies ahead")
         reg = jd.STATE / "sdk" / (SID + ".json")
         reg.parent.mkdir(parents=True, exist_ok=True)
         reg.write_text(json.dumps({"spawnedAt": T0 + 400}))            # a CLI spawned after the launch: a ghost
