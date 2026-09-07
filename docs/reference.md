@@ -492,28 +492,43 @@ the two collide.
 
 The kernel and its Agent SDK venv (`sdkvenv` under the state directory) must
 run the same Python: the venv's compiled extensions import into the kernel
-process. `bin/romp-serve` picks the interpreter in this order: `ROMP_PYTHON` if
-set; otherwise the interpreter the venv's `pyvenv.cfg` records, if it still
-runs; otherwise the newest `pythonX.Y` on `PATH` or in `~/.local/bin`, the rule
-for a machine with no venv yet. So installing a newer Python does not change
-what the kernel runs at its next restart. On a machine that runs romp as a
-service, pin it anyway: `ROMP_PYTHON=/usr/bin/python3.12` in `service.env`
-makes the choice explicit and holds if the venv is deleted or rebuilt. Moving
-romp to another Python takes four steps, and skipping any one of them leaves a
+process. The match is on the tag venv names its `lib` directory with (`3.14`,
+or `3.14t` for a free-threaded build), not on the version alone, so a
+free-threaded build's venv matches that build and no other. `bin/romp-serve`
+picks the interpreter in this order: `ROMP_PYTHON` if set, refused with one
+line when it is not an executable interpreter (a pin naming a removed path
+used to reach the exec and crash-loop the manager); otherwise the interpreter
+the venv's `pyvenv.cfg` records, if it still runs and still reports the
+recorded X.Y (an upgrade that repoints `python3` leaves the recorded path
+runnable while the venv is stale); otherwise another `pythonX.Y` of that same
+minor on `PATH` or in `~/.local/bin`, which the venv still matches, with a line
+saying so; otherwise the newest `pythonX.Y` on `PATH` or in `~/.local/bin`,
+the rule for a machine with no venv yet, with a line saying the venv must be
+rebuilt for it. So installing a newer Python does not change what the kernel
+runs at its next restart. On a machine that runs romp as a service, pin it
+anyway: `ROMP_PYTHON=/usr/bin/python3.12` in `service.env` makes the choice
+explicit and holds if the venv is deleted or rebuilt. Pin the versioned path,
+not `python3`, which an upgrade repoints.
+
+Moving romp to another Python, whether another version or the free-threaded
+build of the same one, takes four steps, and skipping any one of them leaves a
 kernel that cannot start sessions: set `ROMP_PYTHON` to the new interpreter in
-`service.env`, run `bin/romp-sdk-setup` with the same value (it rebuilds the
-venv and says so), run the test suite on that interpreter, then restart the
-manager. A kernel that does come up on a Python the venv was not built for logs
-one line naming both versions, and each SDK session reports the mismatch and
-the remedy that fits: the `ROMP_PYTHON` pin when the venv's recorded
-interpreter still runs (the kernel checks by running it), the rebuild when it
-does not. `romp new` and the browser's create refuse with the same verdict,
-read from the disk at the moment of the request, so a venv rebuilt while the
-kernel runs is reported on both surfaces as set up after romp started, with
-the restart as the remedy. A free-threaded build (`python3.14t`) is its own
-tag: the venv it builds matches it and no other. The Codex venv (`codexvenv`,
-built by `bin/romp-codex-setup`) is built with the same pick, so it matches the
-kernel too.
+`service.env`, run `bin/romp-sdk-setup` with the same value, run the test
+suite on that interpreter, then restart the manager. The setup script compares
+the venv's record (the version `pyvenv.cfg` holds plus the tag of its
+`lib/python3.X` directory, never the venv's own `bin/python`, a symlink that
+follows a repointed base interpreter) against the new interpreter's tag,
+rebuilds on any difference and says from what to what. A kernel that does come
+up on a Python the venv was not built for logs one line naming both tags, and
+each SDK session reports the mismatch and the remedy that fits: the
+`ROMP_PYTHON` pin when the venv's recorded interpreter still runs (the kernel
+checks by running it), the rebuild when it does not. `romp new` and the
+browser's create refuse with the same verdict, read from the disk at the moment
+of the request, so a venv rebuilt while the kernel runs is reported on both
+surfaces as set up after romp started, with the restart as the remedy. The
+Codex venv (`codexvenv`, built by `bin/romp-codex-setup`) follows the same
+pick and the same rebuild check, and the kernel adds only the site-packages
+built for its own tag from it as well.
 
 ### API keys on disk: the file mode
 
@@ -1836,17 +1851,27 @@ are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
 
 Two ledgers there record restarts. `restart-audit.jsonl` gets a row from
-whatever asks for one: `romp refresh`, the dashboard's restart button, the
-kernel's own update, and the manager before each SIGTERM it sends (action
-`manager-sigterm`). When a SIGTERM arrives, the kernel reads the last eight
-rows, newest first, for a request within the last 90 seconds (20 minutes for a
-request that asked to wait for a quiet window). A row with an action names the
-request. The manager's `manager-sigterm` row is a note that the manager sent
-the signal, not a request: it answers only when no request row sits beneath it
-within the window, so a `down` followed by the manager's stop note still reads
-as the stop, and a note aimed at another kernel's pid is ignored. A row with no
-action (the `romp refresh` row on builds that do not label it) is skipped, and
-the manager's `restart` note beneath it is what names the refresh.
+whatever asks for one: `romp refresh`, `romp down`, the dashboard's restart
+button, the kernel's own update, and the manager before each SIGTERM it sends
+(action `manager-sigterm`, with a `trigger` naming what set it off: `restart`,
+`restart-all`, `refresh` for the stale-manager self-bounce, `cli-down` for a
+stop while `romp down`'s marker is on disk, `stop` for any other). When a
+SIGTERM arrives, the kernel reads the last eight rows, newest first, for a
+request within the last 90 seconds (20 minutes for a request that asked to
+wait for a quiet window) and no older than its own start: a request that
+predates the process was delivered to the kernel before it, so the walk ends
+there. A row with an action names the request. The kernel's own `signal` and
+`parent-gone` rows are verdicts a previous kernel filed on its exit, never a
+request, and are passed over. A `down-failed` row (written when a `romp down`
+did not stop the kernel) cancels the `down` written before it. The manager's
+`manager-sigterm` row is a note that the manager sent the signal, not a
+request: it answers only when no request row written before it lies within the
+window and this kernel's lifetime, with `manager-sigterm: <trigger>` as the
+reason, so a `down` followed by the manager's `cli-down` note still reads as
+the `down`, and a note aimed at another kernel's pid is ignored. A row with no
+action (the `romp refresh` row on builds before it labeled the row) is skipped,
+and the manager's `restart-all` note written after it is what names the
+refresh.
 
 When no row qualifies, the kernel writes a row with action `signal`: the signal
 name, its pid and its parent's pid, the manager pid it was started with,
