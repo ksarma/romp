@@ -2032,7 +2032,14 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   against decoded, summed over passes), `fail` (file versions that did not
   decode), `evict` (entries dropped for files gone from the directory), `punch`
   (entries copied so a user gesture could be applied to them), and the gauges
-  `entries` and `bytes` (memoized files and their summed size). `goals_shared`
+  `entries` and `bytes` (memoized files and their summed size). `bg_tops` is
+  the placed-launch memo behind the awaiting lift and the feed's
+  background-task classification, keyed on the parse object and the store
+  object: `hit` and `miss` (calls answered from the per-version map against
+  resolved), `resolve` (launch ids resolved), `walk` and `walk_neg`
+  (transcript walks, and the walks that left a launch unresolved),
+  `idx_build` (placement indexes built, one per store version asked) and the
+  gauge `entries` (sessions holding a map). `goals_shared`
   is the shared read-only goal-store cache the pusher's read-only sites load
   through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
   did not), `refuse` (a fill under a moving archive, served but not

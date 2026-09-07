@@ -407,7 +407,14 @@ class _PerfStats:
                                    file size); lift_gate (the awaiting-lift job's per-session
                                    inputs gate, see _lift_seen) -> skip / load (session-cycles
                                    that took no store load vs the ones that did) and the gauge
-                                   entries (sids remembered); goals_shared (the shared read-only
+                                   entries (sids remembered); bg_tops (the placed-launch memo
+                                   behind the lift and the feed's task classification,
+                                   _bg_placed_tops, keyed on the parse and store objects) -> hit /
+                                   miss (calls answered from the per-version map vs resolved),
+                                   resolve (tids resolved), walk / walk_neg (transcript walks, and
+                                   the walks that left a tid unresolved), idx_build (placement
+                                   indexes built, one per store version asked) and the gauge
+                                   entries (sids holding a map); goals_shared (the shared read-only
                                    goal-store cache the pusher's read-only sites load through,
                                    jd.load_goals_shared) -> hit / miss / compare_miss (identity
                                    matched, bytes did not) / refuse / dup / absent / corrupt /
@@ -598,6 +605,7 @@ class _PerfStats:
             goals = {}
         memos = {}
         for name, report in (("goals_snap", _goals_memo_report), ("lift_gate", _lift_gate_report),
+                             ("bg_tops", _bg_tops_report),
                              ("goals_shared", jd.shared_store_stats), ("wire", lambda: dict(_wire_stats)),
                              ("intr_marks", _intr_marks_memo_report), ("sessions_scope", _sessions_scope_report),
                              ("captions", _caps_memo_report), ("states_overlay", _states_overlay_report),
@@ -10066,6 +10074,10 @@ def _lift_spent_awaiting(now, tmux):
             sys.stderr.write("awaiting-lift (session %s): %s\n" % (sid or "?", traceback.format_exc()))
     for sid in [k for k in _lift_seen if k not in seen]:
         del _lift_seen[sid]                           # the sid left the alive set: nothing to gate
+    for cache in (_BG_TOPS_CACHE, _PLACEMENT_IDX):    # …and nothing to place for: release the pinned parse
+        for sid in list(cache):                       # list(): the handler threads fill these concurrently
+            if sid not in seen:
+                cache.pop(sid, None)
 
 
 _PREV_ALIVE = None                       # last tick's alive sids — a sid LEAVING is the death event
@@ -22952,68 +22964,137 @@ def _seg_of_tool_uses(ps, store, tool_ids):
     return found
 
 
-_BG_TOPS_CACHE = {}    # sid -> ((transcript stat, goals stat, overrides stat, tid tuple), {tid: top})
+_BG_TOPS_CACHE = {}    # sid -> (parse object, store object, {tid: top or None}) — see _bg_placed_tops
+_PLACEMENT_IDX = {}    # sid -> (store object, {jd._seg_key(placement key): its first value in dict order})
+_bg_tops_stats = {"hit": 0, "miss": 0, "resolve": 0, "walk": 0, "walk_neg": 0, "idx_build": 0}
+_BG_TOPS_STATS_LOCK = threading.Lock()   # the counters are bumped from the pusher and the handler threads
 
 
-def _bg_placed_tops(sid, path, tids):
+def _bg_tops_bump(key, n=1):
+    with _BG_TOPS_STATS_LOCK:
+        _bg_tops_stats[key] += n
+
+
+def _bg_tops_report():
+    """The memo's counters plus its occupancy, for /perf (memos.bg_tops): `hit` calls answered from the
+    per-version map, `miss` calls that resolved at least one tid, `resolve` tids resolved, `walk` transcript
+    walks (_seg_of_tool_uses) and `walk_neg` the walks that left at least one asked tid unresolved (what a
+    negative walk cache would have saved), `idx_build` placement indexes built (one per store version
+    asked), and the gauge `entries` (sids holding a map)."""
+    with _BG_TOPS_STATS_LOCK:
+        out = dict(_bg_tops_stats)
+    out["entries"] = len(_BG_TOPS_CACHE)
+    return out
+
+
+def _placement_index(placements):
+    """{jd._seg_key(k): v} over a store's placements, the FIRST key in dict order winning (setdefault): for
+    any looked-up key that normalizes to a seg key, exactly the value jd._placement_of's scan returns for
+    it, a None-valued retired entry included."""
+    idx = {}
+    for k, v in placements.items():
+        idx.setdefault(jd._seg_key(k), v)
+    return idx
+
+
+def _placed_via_index(placements, idx, seg_id):
+    """jd._placement_of(placements, seg_id) answered from _placement_index: the exact key when it is
+    present (its value, None included, the scan never runs), else the normalized key's first match."""
+    if seg_id in placements:
+        return placements[seg_id]
+    return idx.get(jd._seg_key(seg_id))
+
+
+def _bg_placed_tops(sid, path, tids, store=None):
     """{tid: owning top node id} for the live background-task launches the JUDGE has PLACED: launch
     tool_use id → the transcript segment holding it (_seg_of_tool_uses via _task_seg_cache — a launch's
-    segment never changes) → the store's placement for that segment → the placed node's top ancestor.
+    segment never changes) → the store's placement for that segment, under the four suffixes
+    jd._placement_of accepts, read from a per-store index (_placement_index) → the placed node's top
+    ancestor.
 
     A tid ABSENT from the result is a launch the judge hasn't spoken for yet (segment unparsed or
     unplaced, no goal store, unreadable evidence) — the AWAITED-conservative default every consumer
-    keys on. Cached on the transcript + goal-store + override-journal file stats and the tid set (the
-    _session_stamp_read pattern): an idle session hits this every render, and load_goals is a full
-    read + override replay."""
+    keys on.
+
+    The answer is a function of (the parse object, the store object, the _task_seg_cache positives — the
+    standing "a launch's segment never changes" assumption), and the memo is keyed on exactly those two
+    objects: _BG_TOPS_CACHE[sid] = (ps, store, {tid: top or None}) holds every tid asked so far under one
+    (parse, store) pair, a hit iff both objects in hand ARE the entry's (identity, not a stat: the awaiting
+    lift asks with every task id and the feed with the live ids, so one map serves both, and a stat taken
+    after a read can describe a version the read did not see — a publish between the two recorded the new
+    version under the old placements, the 2026-07-27 own-thread misattribution shape). _parse returns one
+    object per transcript version and load_goals_shared one FrozenStore per store version, so identity is
+    the version. `store`: the caller's own store (the lift hands the store it decides on, so the placement
+    it reads and the stamps it rules on come from one object); None reads through load_goals_shared. A
+    store that is not the shared cache's FrozenStore (no file, the cache off, an unreadable journal, a
+    writer's private copy) is computed on and never published as an entry. _PLACEMENT_IDX[sid] = (store,
+    index) is keyed on the store object alone, so the writer's copy misses it harmlessly.
+
+    Threads: the pusher and the handler threads (build_session, _session_awaiting) both run this. An entry
+    is read into locals once, a fill builds a NEW dict from it and publishes a NEW tuple; nothing writes
+    into an entry in place, so a reader holding the old tuple keeps a consistent (ps, store, map). Entries
+    are dropped when a session's live tids are empty (below: nothing to answer, and the parse would stay
+    pinned) and when its sid leaves the alive set (the awaiting lift's end-of-tick sweep)."""
     sid = str(sid)
     tids = tuple(sorted(t for t in tids if t))
     if not tids or not path:
+        _BG_TOPS_CACHE.pop(sid, None)                # nothing live to answer for: release the pinned parse
+        _PLACEMENT_IDX.pop(sid, None)
         return {}
     try:
-        st = os.stat(path)
-        tkey = (st.st_mtime, st.st_size)
-    except OSError:
-        tkey = None
-    try:
-        gs = (jd.GOALDIR / (sid + ".json")).stat()
-        gkey = (gs.st_mtime, gs.st_size)
-    except Exception:
-        return {}                                    # no store yet → nothing placed
-    try:
-        ostt = (jd._overrides_dir() / (sid + ".jsonl")).stat()
-        okey = (ostt.st_mtime, ostt.st_size)
-    except Exception:
-        okey = None                                  # no override journal is normal
-    key = (tkey, gkey, okey, tids)
-    hit = _BG_TOPS_CACHE.get(sid)
-    if hit and hit[0] == key:
-        return hit[1]
-    out = {}
-    try:
         ps = _parse(path, sid, time.time())
-        store = jd.load_goals(sid)
-        nodes = (store or {}).get("nodes") or {}
+        if store is None:
+            store = jd.load_goals_shared(sid)
+        ent = _BG_TOPS_CACHE.get(sid)
+        known = ent[2] if (ent is not None and ent[0] is ps and ent[1] is store) else None
+        if known is not None and all(t in known for t in tids):
+            _bg_tops_bump("hit")
+            return {t: known[t] for t in tids if known[t] is not None}
+        _bg_tops_bump("miss")
+        nodes = store.get("nodes") or {}
         placements = store.get("placements") or {}
-        need = [t for t in tids if (sid, t) not in _task_seg_cache]
+        shared = isinstance(store, jd.FrozenStore)
+        pidx = _PLACEMENT_IDX.get(sid)
+        if pidx is not None and pidx[0] is store:
+            idx = pidx[1]
+        else:
+            idx = _placement_index(placements)
+            _bg_tops_bump("idx_build")
+            if shared:
+                _PLACEMENT_IDX[sid] = (store, idx)
+        todo = tids if known is None else tuple(t for t in tids if t not in known)
+        need = [t for t in todo if (sid, t) not in _task_seg_cache]
         if need and ps and nodes:
-            for tid, sgid in _seg_of_tool_uses(ps, store, need).items():
+            found = _seg_of_tool_uses(ps, store, need)
+            for tid, sgid in found.items():
                 _task_seg_cache[(sid, tid)] = sgid
-        for tid in tids:
+            _bg_tops_bump("walk")
+            if len(found) < len(need):
+                _bg_tops_bump("walk_neg")
+        fill = dict(known) if known is not None else {}
+        for tid in todo:
+            fill[tid] = None
             sgid = _task_seg_cache.get((sid, tid))
             if not sgid:
                 continue                             # unresolvable launch → unplaced (see docstring)
-            nid = next((v for v in (jd._placement_of(placements, sgid + suf)
-                                    for suf in ("", "#live", "#p", "#d")) if v), None)
+            nid = None
+            for suf in ("", "#live", "#p", "#d"):
+                v = _placed_via_index(placements, idx, sgid + suf)
+                if v:
+                    nid = v
+                    break
             seen = set()                             # placed node → its top ancestor (cycle-guarded)
             while nid in nodes and nodes[nid].get("parentId") is not None and nid not in seen:
                 seen.add(nid)
                 nid = nodes[nid]["parentId"]
             if nid in nodes:
-                out[tid] = nid
+                fill[tid] = nid
+        _bg_tops_bump("resolve", len(todo))
+        if shared:
+            _BG_TOPS_CACHE[sid] = (ps, store, fill)  # a new tuple, never a write into the old one
+        return {t: fill[t] for t in tids if fill[t] is not None}
     except Exception:
         return {}                                    # unreadable evidence → nothing placed (conservative)
-    _BG_TOPS_CACHE[sid] = (key, out)
-    return out
 
 
 def _bg_owner_tops(fsid, path, tasks):

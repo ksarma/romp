@@ -134,7 +134,7 @@ class Collector(unittest.TestCase):
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
                          {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
-                          "captions", "states_overlay", "thread_reg"},
+                          "captions", "states_overlay", "thread_reg", "bg_tops"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["memos"]["goals_snap"]),
                          {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
@@ -144,6 +144,11 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "entries"},
                          "the awaiting-lift gate: session-cycles skipped vs loaded, plus its occupancy")
         for k, v in snap["memos"]["lift_gate"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["bg_tops"]),
+                         {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
+                         "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
+        for k, v in snap["memos"]["bg_tops"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["goals_shared"]),
                          {"hit", "miss", "compare_miss", "refuse", "dup", "absent", "corrupt", "unreadable_journal",

@@ -36,11 +36,12 @@ T0 = NOW - 3600
 # rows and hands nothing to rollup_status, record_verdict or save_goals (audited 2026-09-06; the deep
 # freeze would raise if one did).
 WIRED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
-         "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2}
-# NOT wired, on purpose. _lift_spent_awaiting and _bg_placed_tops belong to a sibling change (branch
-# perf2-lift, the probe-then-write two-phase read); _feed_goals' live path is the feed's main store read
-# and stays on the writer's loader until the B5 snapshot memo is replaced (its own change).
-UNWIRED = ("_lift_spent_awaiting", "_bg_placed_tops", "_feed_goals")
+         "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2,
+         "_bg_placed_tops": 1}
+# NOT wired, on purpose. _lift_spent_awaiting belongs to the next commit (the probe-then-write two-phase
+# read); _feed_goals' live path is the feed's main store read and stays on the writer's loader until the
+# B5 snapshot memo is replaced (its own change).
+UNWIRED = ("_lift_spent_awaiting", "_feed_goals")
 
 
 class WiringPins(unittest.TestCase):
@@ -64,6 +65,15 @@ class WiringPins(unittest.TestCase):
     def test_perf_reports_the_cache_beside_the_snapshot_memo(self):
         src = inspect.getsource(km._PerfStats.snapshot)
         self.assertIn('("goals_shared", jd.shared_store_stats)', src, "one (name, report) pair in the memos loop")
+        self.assertIn('("bg_tops", _bg_tops_report)', src, "…and the placed-launch memo beside it")
+
+    def test_bg_placed_tops_keys_on_objects_not_on_a_stat(self):
+        # the per-version map is keyed on the parse and store OBJECTS in hand (a stat taken after the
+        # read can describe a version the read did not see); the gate's three stats are not taken here
+        src = inspect.getsource(km._bg_placed_tops)
+        self.assertEqual(src.count("_lift_gate_key("), 0)
+        self.assertEqual(src.count(".stat()"), 0)
+        self.assertEqual(src.count("os.stat("), 0)
 
 
 class SharedViewInBuilds(unittest.TestCase):
