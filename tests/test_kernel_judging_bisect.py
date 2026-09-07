@@ -167,12 +167,21 @@ class _Base(unittest.TestCase):
             if (jd.STATE / "judge-usage.jsonl").exists() else []
         return _reference_run_judging(t0, ALIVE, semantic, rows, jd.active_runs(), km.time.time())
 
+    def _same(self, got, ref):
+        """Equal lists in the same order. NaN is unequal to itself, so a span carrying a NaN run end (kept:
+        NaN < t0 is False) defeats ==; the JSON text carries NaN literally and compares as text, and the
+        readable diff is only produced when the texts differ."""
+        if json.dumps(got) != json.dumps(ref):
+            self.assertEqual(got, ref)
+
     def _check(self, t0, semantic, expect_monotone=True):
         """The kernel's answer equals the reference, list for list, in the same order; and the reader's
         flag for the file is what the test expects (so each test knows which path it exercised)."""
-        got = km._run_judging(t0, ALIVE, semantic)
-        self.assertEqual(got, self._reference(t0, semantic))
-        self.assertIs(km._judge_usage_rows().monotone, expect_monotone)
+        with contextlib.redirect_stderr(io.StringIO()):
+            got = km._run_judging(t0, ALIVE, semantic)
+            snap = km._judge_usage_rows()
+        self._same(got, self._reference(t0, semantic))
+        self.assertIs(snap.monotone, expect_monotone)
         return got
 
 
@@ -445,6 +454,17 @@ class RunJudgingBisect(_Base):
                 cmp(reads, bound, "flag=%r: %d field reads on the 2000 rows before the horizon" % (flag, reads))
         finally:
             km._judge_usage_rows, jd.active_runs = saved
+
+    def test_a_nan_run_end_borrows_no_gloss(self):
+        # a NaN recv passes the horizon filter (NaN < t0 is False) and reaches the gloss with end + 1 =
+        # NaN. The scan's m["t"] <= NaN was False for every mark, so the span had kind "run" and no text;
+        # bisect_right(times, NaN) would return the newest mark. The NaN end also clears the reader's
+        # flag (it is not <= t + 1), so this is the fallback path, matched to the reference
+        marks = [_mark(T0 + 1, text="a caption"), _mark(T0 + 9, text="the newest")]
+        self._write([_row(T0 + 5), _row(T0 + 6, recv=float("nan"))])
+        got = self._check(T0, marks, expect_monotone=False)
+        self.assertEqual([(m["text"], m["kind"]) for m in got], [("a caption", "segment"), ("", "run")])
+        self.assertNotEqual(got[1]["t1"], got[1]["t1"], "the span carries its NaN end, as before")
 
     def test_gloss_bisect_answers_the_prefix_scan(self):
         # the gloss rule in isolation: the most recent same-judge mark with t <= end + 1, ties resolved

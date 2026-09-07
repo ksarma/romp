@@ -32755,9 +32755,11 @@ def _run_judging(t0, alive_sids, semantic):
         times[k] = [m["t"] for m in v]
 
     def gloss(sid, judge, t):
-        """The most recent same-judge artifact mark with m["t"] <= t, or None."""
+        """The most recent same-judge artifact mark with m["t"] <= t, or None. A NaN t (a row whose
+        recv is NaN passes the horizon filter, since NaN < t0 is False) matches no mark: the scan's
+        <= was False for every mark, where bisect_right would have answered the newest."""
         marks = by.get((sid, judge))
-        if not marks:
+        if not marks or t != t:
             return None
         i = bisect.bisect_right(times[(sid, judge)], t)
         return marks[i - 1] if i else None
