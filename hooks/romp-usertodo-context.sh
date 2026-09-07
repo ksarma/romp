@@ -14,9 +14,11 @@
 # the wrong key anyway (it is the CURRENT transcript fsid, which a /clear fork moves off the
 # stable id every store is keyed by). The KERNEL renders the text (POST /usertodo/context — the
 # store's owner, never a direct file read here), so test_injected_voice.py scans the exact words
-# a session receives. Kernel down/unreachable → silent exit 0, the romp-wake.sh posture: a
-# SessionStart hook must never fail the turn, and the todos stay visible on the user's own
-# surfaces regardless.
+# a session receives; the block is handed on WHOLE, never re-rendered here, which is also why a
+# todo that names a file (the `file` field, 2026-09-07) shows that path after its text in the
+# block the kernel built, with nothing for this hook to add. Kernel down/unreachable → silent
+# exit 0, the romp-wake.sh posture: a SessionStart hook must never fail the turn, and the todos
+# stay visible on the user's own surfaces regardless.
 #
 # The feature is switchable and OFF by default (the user 2026-09-03). The kernel is the authority on
 # that too: its /usertodo/context answer carries `enabled`, and while it is false this hook emits
