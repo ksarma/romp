@@ -469,10 +469,11 @@ and its detail up to 4000; a longer one is refused, never cut short, and the
 session is told to keep the note to one line and put the rest in its reply. If
 the kernel cannot read its request store (`user-todos.json` under
 `~/.local/state/romp/`), the card says so in place of the requests, Reply and
-Dismiss change nothing and say so, and a session's flag or withdrawal is refused
-with the cause; the kernel log names the file and what it found. A withdrawal
-that meets a damaged closing record is refused the same way, with the record
-named, never reported as closed.
+Dismiss change nothing and say so, a session's withdrawal is told the store
+could not be read, and a request a session tries to file is refused (the
+session is told to say the need in its next reply, not why); the kernel log
+names the file and what it found. A withdrawal that meets a damaged closing
+record is told so too, with the record named, never reported as closed.
 
 The feature is off by default. The gear's **User todos** checkbox (under
 *Sessions*) turns it on for one machine at a time: each kernel keeps its own

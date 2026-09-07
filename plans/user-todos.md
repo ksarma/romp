@@ -451,8 +451,9 @@ The store also guards its own shape, because the switch file is easy to mistake 
 reported once per file version in the kernel log, with what was found, and every writer refuses
 to overwrite that version until the file is fixed or removed; without the guard, the next register
 would replace the whole store with a one-row one. Since 2026-09-07 the flagged version is not read
-as empty either: every surface says the store is unreadable (the slice 1 as-built notes list
-them). The switch file has the mirror guard: a `user-todos-enabled.json` that is not an
+as empty either: every user-facing surface, the register route (503) and the withdraw tool say the
+store is unreadable; the add tool hears a refusal without the cause, because the bus reads every
+non-2xx answer as None (the slice 1 as-built notes list them). The switch file has the mirror guard: a `user-todos-enabled.json` that is not an
 `{"enabled": …}` object reads as OFF and is said once per file version in the kernel log and the
 bus's log; an absent file is silent.
 

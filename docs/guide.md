@@ -400,8 +400,13 @@ that point gets a placeholder card in Blocked, titled with its oldest request.
 The card returns to Working when you answer or dismiss the request, or when you
 next speak to the session; if other requests are still open when the session
 settles again, it returns to Blocked for them. Work set off by another
-session's message, a reminder, or a notification does not move it: the card
-stays in Blocked until you act or the session withdraws the request.
+session's message, a reminder, or a notification does not by itself move it:
+the card stays in Blocked until you act or the session withdraws the request.
+What that work runs into still shows while it lasts: if the session sends out
+agents, compacts, files another request, or hits a passing API error, the card
+reads Working until the session settles again; if it stops on a permission
+prompt or an error only you can fix, the card keeps its place and wears that
+badge instead. Either way it comes back for the request at the next settle.
 
 ![The api session idle on two requests: its task cards keep the marker, and the card for its current work sits in Blocked](assets/guide/user-todos-feed.png){ width="100%" }
 
