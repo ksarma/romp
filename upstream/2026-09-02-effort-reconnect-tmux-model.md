@@ -13,3 +13,5 @@ Documentation-or-alignment follow-up; decide which after the model-alias stack m
 Status detail (migrated from the table): **offered** — their PR #950 (2026-09-06), label `tests-only` (docs + pins, no behavior change)
 
 MERGED 2026-09-06T19:49Z as their PR #950 (merge `da05b849`), as offered (docs + pins). The set_model/set_effort docstring and `/fast` badge follow-up is its own entry (`docs-set-model-effort-fast-badge`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #950 is in the folded range).

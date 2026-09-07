@@ -177,6 +177,24 @@ class HeadlessRoutes(unittest.TestCase):
         finally:
             km._pending_ops.clear()
 
+    def test_send_route_reads_the_setters_locked_verdict_not_a_second_gate(self):
+        # #954 moved the deciding park under the queue lock (_gate_or_park); the route must report the
+        # setter's OWN verdict, not a separate unlocked _ops_gate read that can disagree (review find on
+        # #954, 2026-09-07: a parked /model answered queued:false). Force the two apart: _gate_or_park
+        # parks (True) while _ops_gate reads False.
+        fake = mock.Mock(); fake.busy.return_value = None
+        km._pending_ops.clear()
+        try:
+            with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: fake)), \
+                 mock.patch.object(km, "_ops_gate", lambda sid: False), \
+                 mock.patch.object(km, "_gate_or_park", lambda sid, op: (km._pending_ops.setdefault(str(sid), []).append(op) or True)):
+                code, resp = self._post("/send", {"id": "sid-x", "text": "/model sonnet"})
+            self.assertEqual((code, resp), (200, {"ok": True, "queued": True}),
+                             "the route reports the setter's locked park, not the unlocked gate")
+            fake.set_model.assert_not_called()
+        finally:
+            km._pending_ops.clear()
+
     def test_send_route_passes_a_remote_kernels_queued_through(self):
         # a session living on another kernel: its answer's `queued` rides back to the caller; an older
         # remote without the field reads as not queued (today's behaviour)
@@ -199,6 +217,35 @@ class HeadlessRoutes(unittest.TestCase):
         code, resp = self._post("/interrupt", {})
         self.assertEqual(code, 400)
         self.assertFalse(resp.get("ok"))
+
+
+class CodexRuntimeSelection(unittest.TestCase):
+    def test_path_codex_does_not_override_managed_runtime(self):
+        fake_mod = mock.Mock()
+        fake_loader = mock.Mock()
+        fake_loader.load_module.return_value = fake_mod
+        with mock.patch.object(km, "_codex_backend", None), \
+             mock.patch.object(km, "SourceFileLoader", return_value=fake_loader), \
+             mock.patch.object(km.shutil, "which", return_value="/TESTBIN/codex"):
+            backend = km._codex()
+            self.assertIs(backend, fake_mod.CodexBackend.return_value)
+            self.assertIs(km._codex(), backend)
+        fake_mod.CodexBackend.assert_called_once()
+        self.assertIsNone(fake_mod.CodexBackend.call_args.kwargs.get("codex_bin"),
+                          "the backend must resolve its managed runtime even when codex is on PATH")
+
+    def test_romp_codex_bin_overrides_the_session_runtime(self):
+        # PATH is ignored, but the one explicit knob the judges already read (ROMP_CODEX_BIN) governs
+        # sessions too — an opt-in, not the ambient PATH accident #929 closed (review fold, 2026-09-07)
+        fake_mod = mock.Mock()
+        fake_loader = mock.Mock(); fake_loader.load_module.return_value = fake_mod
+        with mock.patch.object(km, "_codex_backend", None), \
+             mock.patch.object(km, "SourceFileLoader", return_value=fake_loader), \
+             mock.patch.dict(km.os.environ, {"ROMP_CODEX_BIN": "/opt/codex/bin/codex"}), \
+             mock.patch.object(km.shutil, "which", return_value="/TESTBIN/codex"):
+            km._codex()
+        self.assertEqual(fake_mod.CodexBackend.call_args.kwargs.get("codex_bin"), "/opt/codex/bin/codex",
+                         "the explicit knob is forwarded; PATH is still not")
 
 
 class SdkSingleFlight(unittest.TestCase):

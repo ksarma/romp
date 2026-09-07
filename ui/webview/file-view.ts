@@ -18,12 +18,18 @@
 import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { fileUrl } from "./preview";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
+import { fileUrl } from "./preview";
+import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
 import { kernelUrl } from "./media";
 import { quoteSrcLabel } from "./docreview";
 import { fileCommentsAction } from "./file-comments";
 import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pure (Slice 4); never the chunk itself
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
+import { delegate } from "./actions";
+import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs } from "./md-links";
+import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -124,18 +130,35 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
+// The romp loader (swirl + wordmark + three pulsing accent dots), per the loading-state rule: the
+// FIRST thing up on any wait, fading the instant real content lands. The viewer's earlier waits
+// build this markup inline; the URL viewer reaches for it here.
+function loaderEl(): HTMLElement {
+  const load = el("div", "fileview-load");
+  load.innerHTML = '<img src="/media/romp-swirl-glyph.svg" alt=""><span>romp</span>'
+    + '<i class="fileview-dot"></i><i class="fileview-dot"></i><i class="fileview-dot"></i>';
+  return load;
+}
+
+// The 2 MB body cap for a URL document — a MIRROR of the kernel's _TEXT_MAX_BYTES (kernel.py), which
+// is what a local .md is already held to on the /file route. The URL viewer fetches from the browser,
+// so no kernel ever sees the body; the cap is applied here — a declared Content-Length refuses before
+// the body is read, and otherwise the streaming reader (capped-read.ts) counts the bytes as they
+// arrive and cancels the source the moment they pass it. md-url-view.test.ts pins the two numbers equal.
+const URL_TEXT_MAX_BYTES = 2 * 1024 * 1024;
+
 // ── raw-mode editing (the file browser's slice 2, the user 2026-08-14) ─────────────────────────────
 // The save op rides the WS poster the pane's boot hands initFileView; replies route back to the OPEN
 // viewer through these module-level hooks (the viewer itself is a per-open closure).
 let post: (m: Record<string, unknown>) => void = () => { /* bound by initFileView */ };
 
 // ── the session the file was opened from (the user 2026-09-03) ────────────────────────────────────
-// The viewer knows only a sid, and its openers mostly know no more: the shell's viewFile relay and the
-// conflict Reload live in this module, the file browser hands over a bare sid. So the session's name
-// and colour are RESOLVED from the sid here, through a lookup each hosting document registers once
-// at boot beside initFileView (render.ts reads its tab set, feed.ts its session list). Unregistered,
-// or a sid the document cannot name, the title bar carries no chip: an identity is looked up, never
-// invented.
+// The viewer knows only a sid, and its openers mostly know no more: the relay branch initFileView
+// keeps and the conflict Reload live in this module, the file browser hands over a bare sid. So the
+// session's name and colour are RESOLVED from the sid here, through a lookup each hosting document
+// registers once at boot beside initFileView (render.ts reads its tab set, feed.ts its session list).
+// Unregistered, or a sid the document cannot name, the title bar carries no chip: an identity is
+// looked up, never invented.
 export interface FileViewIdentity { name: string; color: { bg: string; fg: string } | null }
 let identityOf: (sid: string) => FileViewIdentity | null = () => null;
 export function setFileViewIdentity(fn: typeof identityOf): void { identityOf = fn; }
@@ -189,12 +212,23 @@ function dropMediaUrl(): void {
 // means the browser is taking the pane over, and the shell moves the restore onto the browser's
 // flag rather than hearing a close that would hide the pane mid-open.
 let viaRelay = false;
+// ONE in-flight URL read at a time, the same shape as mediaUrlLive: the URL viewer registers its
+// AbortController here and BOTH exits (closeFileView and either replace path) abort it, so a modal
+// torn down mid-body cancels its fetch and its stream — a stale read must never keep pulling bytes
+// for a viewer that is gone.
+let urlAbort: AbortController | null = null;
+function dropUrlRead(): void {
+  if (urlAbort) {
+    try { urlAbort.abort(); } catch { /* already settled */ }
+    urlAbort = null;
+  }
+}
 
 // ── viewer action registry (the user 2026-08-22) ── INTERNAL SEAM, no compatibility promise:
 // reshape freely. Anything acting on the OPEN file declares itself here instead of hand-wiring into
 // openFileView's action row, where every file-viewer change used to collide. mount() runs once per
 // open and returns the action's element for the row (or null to sit this file out); an action that
-// answers asynchronously (the GitHub link's kernel ask) mounts hidden and reveals itself when its
+// answers asynchronously (the GitHub link's kernel ask) mounts a placeholder and fills it in when its
 // reply lands. Ordering is registration order, after the built-ins.
 // `todoId`: the user todo the file was opened FROM, when it was (the Waiting-on-you pane's detail link,
 // plans/file-review.md Slice 0) — so an action can tie its work back to the todo; absent for every other open.
@@ -313,29 +347,46 @@ function runCloseHooks(): void {
 
 // ── the GitHub link (the user 2026-08-15) — the registry's first entry ─────────────────────────────
 // One unit in the action row: the control and, when the kernel gave one, its reason as a caption
-// beside it. Hidden until the OWNING kernel answers the lazy fileGitLink ask, and the answer ALWAYS
-// shows it (the user 2026-09-05, who could not tell "not committed yet" from "the link is broken" when
-// the button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
+// beside it. The OWNING kernel answers the lazy fileGitLink ask, and until it does the unit holds a
+// PLACEHOLDER — a dimmed disabled button and the loader's pulsing dots where the caption will go —
+// because the check takes up to 3 s when the kernel must ask origin, and an empty slot for that long
+// read as the old no-button state (found in review; the loading-state rule). The answer ALWAYS fills
+// the slot (the user 2026-09-05, who could not tell an uncommitted file from a broken link when the
+// button simply never appeared). A real URL is an anchor — the browser owns the new tab. No URL is
 // a real disabled <button>: assistive tech reads the state and the label, and there is no href to
 // follow or to go stale. The reason rides in the tooltip AND as the caption, because a tooltip alone
 // needs a mouse — touch has no hover, and a disabled button takes no focus — so the caption is what
-// makes the reason glanceable; the sheet truncates it and the tooltip carries the full text. A URL
+// makes the reason glanceable, and it is shown whole: the sheet wraps it inside a bounded width, since
+// nothing in the unit takes a tap, click or focus that could finish a truncated sentence. A URL
 // whose branch is not on origin stays an anchor, dashed, with the note as its caption, since GitHub
-// 404s it until the push. One question per open, reqId-guarded. Exported for the DOM-shape test.
+// 404s it until the push. One question per open, reqId-guarded; a socket drop while it is out is
+// the one thing that loses the reply, and the shim's reconnect event re-asks (initFileView), so the
+// placeholder never outlives its wait. Exported for the DOM-shape test.
 const GH_REASONLESS = "this kernel predates link reasons; restart it after updating";
 /** The note bar's words when a save's late ack finds a new editor mounted over the pre-save file (doSave, the late-ack
  *  branch): what happened, then what Save and Cancel do from here. The bar carries the Reload offer itself. */
 export const SAVE_LANDED_UNDER_NEW_EDITOR = "Your earlier save landed after you reopened the editor, so this editor shows the file as it was before that save. "
   + "Save from it will refuse; Cancel shows the saved file.";
 let gitSeq = 0;
-let gitHooks: { reqId: number; apply: (url: string, reason: string) => void } | null = null;
+let gitHooks: { reqId: number; apply: (url: string, reason: string) => void; ask: () => void } | null = null;
 export const githubLinkAction: FileViewAction = {
   id: "github-link",
   mount({ path, sid }) {
     const unit = el("span", "fileview-gh");
-    unit.hidden = true;
+    // pending: a real disabled button (never an hrefless anchor, which has no role to read) and the
+    // loader's three dots in the caption's place; aria-busy names the wait for assistive tech
+    const wait = el("button", "fileview-btn") as HTMLButtonElement;
+    wait.type = "button"; wait.disabled = true; wait.textContent = "GitHub ↗";
+    wait.title = "Checking GitHub…"; wait.setAttribute("aria-label", wait.title);
+    const dots = el("span", "fileview-gh-dots");
+    for (let i = 0; i < 3; i++) dots.appendChild(el("i", "fileview-dot"));
+    unit.setAttribute("aria-busy", "true");
+    unit.appendChild(dots); unit.appendChild(wait);
+    const reqId = ++gitSeq;
+    const ask = () => post({ type: "fileGitLink", path, sid: sid || undefined, reqId });
     gitHooks = {
-      reqId: ++gitSeq,
+      reqId,
+      ask,
       apply: (url, reason) => {
         let ctl: HTMLElement;
         if (url) {
@@ -354,16 +405,18 @@ export const githubLinkAction: FileViewAction = {
         }
         ctl.textContent = "GitHub ↗";
         const why = reason || (url ? "" : GH_REASONLESS);
+        const parts: HTMLElement[] = [];
         if (why) {
           const cap = el("span", "fileview-gh-why");
-          cap.textContent = why; cap.title = why;            // the sheet truncates; the full text one hover away
-          unit.appendChild(cap);                             // before the control: it annotates what follows
+          cap.textContent = why;                             // whole, wrapped by the sheet — no tooltip to reach for
+          parts.push(cap);                                   // before the control: it annotates what follows
         }
-        unit.appendChild(ctl);
-        unit.hidden = false;
+        parts.push(ctl);
+        unit.replaceChildren(...parts);                      // the placeholder leaves with the wait
+        unit.removeAttribute("aria-busy");
       },
     };
-    post({ type: "fileGitLink", path, sid: sid || undefined, reqId: gitSeq });
+    ask();
     return unit;
   },
 };
@@ -389,7 +442,9 @@ registerFileViewAction(fileCommentsAction);
  *    copy pointing at a popup the local flag keeps from ever re-showing. The same consent is re-offered
  *    here naming the refusing machine; a yes re-broadcasts and the caller retries. Any other refusal
  *    text resolves false at once: there is nothing to re-offer.
- *  The `gt` stamp is the consent's own click time: federation queues the setting per host across a
+ *  The `gt` stamp is the consent's own click, minted through the gesture clock (gesture-clock.js) so it
+ *  lands above every stamp this page has seen for the file-editing store (the /version read on the first
+ *  path teaches the clock every store's current stamp): federation queues the setting per host across a
  *  down socket, and the kernel orders applies by the stamp, so a flush hours later cannot outrank a
  *  newer gesture. Resolves true when the caller may proceed (or retry). */
 export async function ensureEditingAllowed(sid: string | null | undefined, refusal?: string): Promise<boolean> {
@@ -406,26 +461,31 @@ export async function ensureEditingAllowed(sid: string | null | undefined, refus
     if (!window.confirm(
       "Editing is off on " + (host ? "“" + host + "”" : "this machine")
       + (host ? " — it may have connected after you allowed editing here" : "") + ".\n\n" + COPY)) return false;
-    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+    post({ type: "setFileEditing", enabled: true, gt: gclock.stamp("file-editing") });
     return true;
   }
   let on = false;
-  try { on = !!(await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json()).fileEditing; } catch { /* ask below */ }
+  try {
+    const v = await (await fetch(kernelUrl("/version"), { cache: "no-store" })).json();
+    on = !!v.fileEditing;
+    gclock.learnAll(v.settingsGt);   // the same read teaches the clock every store's current stamp
+  } catch { /* ask below */ }
   if (on) return true;
   if (!window.confirm(COPY)) return false;
-  post({ type: "setFileEditing", enabled: true, gt: Date.now() });
+  post({ type: "setFileEditing", enabled: true, gt: gclock.stamp("file-editing") });
   return true;
 }
 
 // ── quote a passage into the composer (the user 2026-08-23, the three-verbs consolidation) ────────
 // Selecting text in the viewer seeds the SAME labeled quote chip a VS Code editor highlight does:
-// the selection posts to our own window in the editorSelection shape, so render.ts's existing
-// handler owns the chip end to end (no import cycle — the browseFiles precedent), labeled path:line
-// via quoteSrcLabel. From there the flow is the chat's own: type a note (or none), Stage, keep
-// going, send once. This REPLACED the viewer's separate review layer — the per-file comment store
-// (romp:fileviewComments), the painted marks, and the one-shot Submit that assembled a message —
-// because batching notes for one hand-off is exactly what quote chips + ⌘⏎ staging already do,
-// and "comment" now means only the transcript's live threads.
+// the selection posts in the editorSelection shape to the composer's window — this document's, or
+// the shell's chat pane (composerWindow below) — so render.ts's existing handler owns the chip end
+// to end (no import cycle — the browseFiles precedent), labeled path:line via quoteSrcLabel. From
+// there the flow is the chat's own: type a note (or none), Stage, keep going, send once. This
+// REPLACED the viewer's separate review layer — the per-file comment store (romp:fileviewComments),
+// the painted marks, and the one-shot Submit that assembled a message — because batching notes for
+// one hand-off is exactly what quote chips + ⌘⏎ staging already do, and "comment" now means only
+// the transcript's live threads.
 
 // The retired store's data would otherwise sit in localStorage forever on every browser that
 // ever commented — sweep it on load.
@@ -434,9 +494,10 @@ try { localStorage.removeItem("romp:fileviewComments"); } catch { /* storage may
 // Where a quote seed lands (2026-09-03, with the Files pane): the composer in THIS document when there
 // is one (the chat-hosted viewer posts to its own window, and render.ts's editorSelection handler owns
 // the chip end to end); otherwise the SHELL, when this document is framed by one. The Files pane and
-// the feed host the viewer without a composer, and the shell forwards the seed into the chat pane (the
-// editorSelection arm in kernel.py's landing shell). Before this, a selection in the feed-hosted viewer
-// was dead air by design. No composer and no shell (a VS Code webview's cross-origin parent throws; a
+// the feed (the file browser's document) host the viewer without a composer, and the shell forwards
+// the seed into the chat pane (the editorSelection arm in kernel.py's landing shell). Before this, a
+// selection in the feed-hosted viewer was dead air. No composer and no shell (a VS Code webview's
+// cross-origin parent throws; a
 // standalone pane has none) → null, and the gesture stands down without a fresh read. Presence is the
 // DOM id, the Back button's import-free idiom (render.ts's inRompShell keys on the same node).
 function composerWindow(): Window | null {
@@ -455,6 +516,7 @@ export function closeFileView(): void {
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
   dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
+  dropUrlRead();                                       // …and a URL view's in-flight read is cancelled
   runCloseHooks();                                     // the panel's poll and listeners leave with the viewer
   wrap.remove();
   document.body.classList.remove("fileview-open");
@@ -476,12 +538,31 @@ export function closeFileView(): void {
   }
 }
 
+/** A click on a file — a path in the chat, a file-browser row — WITH its gesture. A Cmd/Ctrl- or
+ *  middle-click on a PDF (or Cmd/Ctrl+Enter on a file-browser row) opens the browser's own tab (preview.ts
+ *  openPdfTab); a plain click opens the
+ *  viewer below, like an image (the user 2026-09-07). Decided by EXTENSION, synchronously, inside the
+ *  gesture: deciding on the fetched Content-Type would lose the gesture, and every browser would then
+ *  block the tab. Every clicked file lands here, so this is the one place the choice lives; a relayed
+ *  viewFile or a Reload has no gesture and opens the viewer directly. A BLOCKED popup falls through to
+ *  the viewer, so the PDF is never unreachable, and a non-PDF is simply not the opener's business.
+ *  `open`: the plain click's opener when the hosting document has its own (the file browser's BrowseHost.openFile,
+ *  which the Files pane routes through files.ts openHere); absent, the viewer here. The gesture is read first either
+ *  way, so a modified click on a PDF means the tab whichever document hosts the browser. */
+export function openFileClick(ev: MouseEvent | KeyboardEvent | null | undefined, path: string, sid?: string | null,
+                              open?: (path: string, sid: string | null) => void): void {
+  if (wantsOwnTab(ev) && openPdfTab(path, sid ?? null)) return;
+  if (open) open(path, sid ?? null); else openFileView(path, sid);
+}
+
 /** Show `path` in a modal over this pane. Re-opening replaces whatever is up — never stacks.
  *  Returns whether the open actually happened: false means the dirty-edit guard kept the PREVIOUS
  *  viewer, whose provenance the caller must not touch (initFileView's relay branch keys viaRelay
  *  and the shell's viewFileOpened ack on this verdict — a vetoed relay must neither re-tag the
- *  survivor as relay-opened nor arm a restore for an open that never happened). */
-export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null }): boolean {
+ *  survivor as relay-opened nor arm a restore for an open that never happened).
+ *  `opts.todoId`: the user todo the file was opened from (the Waiting-on-you pane's detail link).
+ *  `opts.frag`: a sibling link's `#fragment` to land on after the first rendered paint (mdBlock's fv-open). */
+export function openFileView(path: string, sid?: string | null, opts?: { todoId?: string | null; frag?: string | null }): boolean {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return false;
@@ -489,8 +570,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
-  dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
   runCloseHooks();                                     // …and the old viewer's panel hooks
+  dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
+  dropUrlRead();                                       // …and a URL viewer's in-flight read, if that is what was up
   document.getElementById("romp-fileview")?.remove();
   // backdrop (the whole overlay carries the id every open/closed check targets) + the ~95% card.
   // The backdrop treatment matches the lightbox: dimmed, click outside the card closes, content
@@ -499,6 +581,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   wrap.id = "romp-fileview";
   wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
   const box = el("div", "fileview");
+  // A sibling link's `#fragment` (`[see](report.md#results)`, stamped data-frag by mdBlock) lands on
+  // its heading after the FIRST rendered paint — once; a Raw view has no ids to land on, so the
+  // landing waits for the Rendered toggle rather than being spent (review find on #958, 2026-09-07).
+  let pendingFrag: string | null = opts?.frag || null;
   document.body.classList.add("fileview-open");
 
   const bar = el("div", "fileview-bar");
@@ -535,9 +621,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     });
   }
   name.appendChild(dir); name.appendChild(base);
-  // The SESSION this file was opened from, in the waiting pane's chip idiom: identity colour, "host:"
-  // quiet for a remote session (and marked while its link is down). Resolved through the hosting
-  // document's registered lookup — no sid, or a sid it cannot name, and there is no chip.
+  // The SESSION this file was opened from: a pill in the session's identity colour (the colour its
+  // tab wears), "host:" quiet for a remote session (and marked while its link is down). Resolved
+  // through the hosting document's registered lookup — no sid, or a sid it cannot name, and there is
+  // no chip.
   const owner = sid ? identityOf(sid) : null;
   let sess: HTMLElement | null = null;
   if (owner) {
@@ -717,8 +804,9 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   editBtn.hidden = true;
   // The consent gate (the user 2026-08-22): editing is a kernel-side opt-in the SAVE ROUTE enforces —
   // the popup where the one yes happens is ensureEditingAllowed (module level, shared with the comments
-  // panel's verbs since Slice 1 of plans/file-review.md). While a decision the panel sent is still OUT the
-  // button refuses instead, in words, in place (setEditBlocked, held by the panel from the send to the
+  // panel's verbs since Slice 1 of plans/file-review.md; its consent post stamps through the gesture clock,
+  // and its /version read teaches the clock every store's stamp). While a decision the panel sent is still
+  // OUT the button refuses instead, in words, in place (setEditBlocked, held by the panel from the send to the
   // reply: an editor opened meanwhile would carry records that decision is dropping, and no Save from it
   // could land). Slices 2 to 4 held it for every pending change; Slice 5's editor carries those as marks.
   // The button stays a real button rather than a disabled one so the reason reaches touch and keyboard users too.
@@ -764,6 +852,22 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // stays the plain overflow block the editor's height: 100% relies on — the row wrapper is what changed.
   const main = el("div", "fileview-main");
   const body = el("div", "fileview-body");
+  // A rendered document's RELATIVE links (`[notes](./notes.md)`, `[fig](plots/a.png)`) open the
+  // sibling file in this same viewer — mdBlock stamps each one `data-act="fv-open"` with the joined
+  // path (joinDocPath) instead of a target the page would navigate to. One delegated listener on
+  // the body, installed once per open and keyed off data-act (actions.ts: click-safe across the
+  // Rendered ⇄ Raw swaps that rebuild the body's children, and the press flash acknowledges the
+  // click). The chat's document-level anchor delegate (render.ts) leaves scheme-less hrefs alone,
+  // so the click reaches here in the chat document and in the feed document alike.
+  delegate(body, {
+    "fv-open": (a, ev) => {
+      ev.preventDefault();
+      const target = a.dataset.path;
+      if (target) openFileView(target, sid, { frag: a.dataset.frag || null });
+    },
+    // an in-document `[top](#evidence)` lands on its heading (mdBlock minted the ids) — never a tab
+    "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
+  });
   // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
   // over an ssh tunnel to a phone is a real wait.
   const load = el("div", "fileview-load");
@@ -945,8 +1049,12 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       return;
     }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
-    body.replaceChildren(rendered ? mdBlock(text, path, sid) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
+    body.replaceChildren(rendered ? mdBlock(text, { kind: "file", path, sid: sid || null }) : codeBlock(text, path, true));   // long lines always soft-wrap (the user 2026-08-24)
     fireRendered();                             // the seam's onRendered: every text paint, so highlights follow the view
+    if (rendered && pendingFrag) {              // a sibling link's #fragment lands after the FIRST rendered paint, once
+      const h = pendingFrag; pendingFrag = null;
+      requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, h); });
+    }
   };
 
   // Selection → labeled quote chip (the user 2026-08-23): mouseup is the gesture's settle point.
@@ -1602,6 +1710,202 @@ function offersDownload(status: number | undefined): boolean {
   return status === 413 || status === 415;
 }
 
+// ── URL mode (the user 2026-09-06) ─────────────────────────────────────────────────────────────────
+// A chat message linking a markdown file on the dashboard's OWN origin (`https://<this host>/figs/
+// run-1/evidence.md` — a published report, an evidence doc) used to open the raw text in a new tab.
+// It presents here instead: same modal, same Rendered ⇄ Raw preference (FMT_KEY), same loader-first
+// wait, same mdBlock — fetched by the BROWSER from the URL itself, with no kernel in the loop. Zero new
+// kernel surface is the point: the kernel's /file relay is a preview relay and has stayed one on
+// purpose (_remote_file's docstring), and a same-origin URL needs no relay — the browser already has
+// the cookie. Cross-origin .md links are never routed here (render.ts checks isMarkdownUrl first).
+//
+// The shell is built here rather than threaded through openFileView because almost everything in that
+// row is keyed on the KERNEL's reply — Edit on the text/plain + mtime verdicts, Download on the
+// ?download=1 route, the GitHub link on a fileGitLink ask, ‹ Files on the browser overlay — and none
+// of it exists for a URL. What both modes share is shared by construction: el/loaderEl, the format
+// pref, mdBlock/codeBlock, closeFileView and the module-level teardown registrations.
+export function openUrlView(href: string): void {
+  // The same replace path as openFileView: an editor holding unsaved changes is asked first, and
+  // every module-level registration the old viewer made is dropped before it is torn down.
+  if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return;
+  closeGuard = null;
+  editHooks = null;
+  gitHooks = null;
+  dropOnKey();                                         // …and the old viewer's Escape handler (one live handler at a time)
+  runCloseHooks();                                     // …and the old viewer's panel hooks
+  dropMediaUrl();
+  dropUrlRead();                                       // a previous URL viewer's read stops pulling bytes
+  document.getElementById("romp-fileview")?.remove();
+  // THIS open's read, registered for the teardowns above (the mediaUrlLive pattern): the fetch and the
+  // streaming body read both ride ctrl.signal, so a close or a replace mid-body cancels them.
+  const ctrl = new AbortController();
+  urlAbort = ctrl;
+  const wrap = el("div");
+  wrap.id = "romp-fileview";
+  wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
+  const box = el("div", "fileview");
+  document.body.classList.add("fileview-open");
+
+  // Title: host/dir/ dimmed then the basename, the local viewer's two-element treatment — but the
+  // directory half is NOT a browse link here: there is no listing to open for a URL. Drawn from the
+  // clicked href now and RE-DRAWN from the response's URL once it lands (a redirect moves the document).
+  const bar = el("div", "fileview-bar");
+  const name = el("div", "fileview-name");
+  name.title = href;                                   // the full URL, one hover away
+  let parts = urlTitleParts(href);
+  let loc = href;                                      // where the document LIVES: the response URL once it lands
+  const dir = el("span", "fileview-dir");
+  dir.textContent = parts.dir;
+  const base = el("span", "fileview-base");
+  base.textContent = parts.base;
+  name.appendChild(dir); name.appendChild(base);
+  const acts = el("div", "fileview-acts");
+
+  const fmt = loadFmt();
+  let text: string | null = null;
+  const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
+  for (const mode of ["rendered", "raw"] as const) {
+    const b = el("button", "fileview-btn") as HTMLButtonElement;
+    b.type = "button";
+    b.textContent = mode === "rendered" ? "Rendered" : "Raw";
+    b.title = mode === "rendered" ? "The prose the markdown means" : "The document's actual bytes";
+    b.addEventListener("click", () => { fmt.md = mode; saveFmt(fmt); renderBody(); });
+    segBtns.push([mode, b]);
+    acts.appendChild(b);
+  }
+  // The way OUT to the URL itself, in a new tab — an anchor wearing the button treatment, the
+  // GitHub link's dress: the browser owns the tab. It is also every failure pane's exit below.
+  // data-new-tab: this href IS a same-origin .md, exactly what the chat's anchor delegate routes
+  // back into this viewer — the marker tells it this one click means the tab.
+  const linkOut = (): HTMLAnchorElement => {
+    const a = el("a", "fileview-btn fileview-gh") as HTMLAnchorElement;
+    a.href = href; a.target = "_blank"; a.rel = "noopener";
+    a.dataset.newTab = "1";
+    a.textContent = "Open ↗"; a.title = "Open the URL in a new tab";
+    return a;
+  };
+  acts.appendChild(linkOut());
+  const copy = el("button", "fileview-btn") as HTMLButtonElement;
+  copy.type = "button"; copy.textContent = "Copy URL"; copy.title = href;
+  copy.addEventListener("click", () => {
+    navigator.clipboard?.writeText(href).then(
+      () => { copy.textContent = "Copied"; setTimeout(() => { copy.textContent = "Copy URL"; }, 1200); },
+      () => { copy.textContent = "Copy failed"; });
+  });
+  const close = el("button", "fileview-btn fileview-close") as HTMLButtonElement;
+  close.type = "button"; close.textContent = "✕"; close.title = "Close (Esc)";
+  close.setAttribute("aria-label", "Close the file viewer");
+  close.addEventListener("click", closeFileView);
+  acts.appendChild(copy); acts.appendChild(close);
+  bar.appendChild(name); bar.appendChild(acts);
+
+  const body = el("div", "fileview-body");
+  // In-document links land on their heading (mdBlock's fv-anchor stamp): one delegated listener, the
+  // local viewer's pattern. No fv-open here — a URL document's sibling links are made absolute and
+  // the chat's own anchor delegate routes them.
+  delegate(body, {
+    "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
+  });
+  body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
+  box.appendChild(bar); box.appendChild(body);
+  wrap.appendChild(box);
+  document.body.appendChild(wrap);
+
+  // The URL's own #fragment (`evidence.md#results`) lands after the FIRST RENDERED paint — once. A
+  // Raw view has no heading ids, so a saved Raw preference does not SPEND the landing: it waits for
+  // the Rendered toggle (review find on #958, 2026-09-07: landed was set before the mode check).
+  let landed = false;
+  const landFragment = () => {
+    if (landed) return;
+    let hash = "";
+    try { hash = new URL(href).hash; } catch { /* not a URL — nothing to land on */ }
+    if (!hash) { landed = true; return; }
+    if (fmt.md !== "rendered") return;                 // nothing to land on yet; the next rendered paint tries again
+    landed = true;
+    requestAnimationFrame(() => { if (wrap.isConnected) scrollToFragment(body, hash); });
+  };
+  const renderBody = () => {
+    for (const [mode, b] of segBtns) {
+      const on = fmt.md === mode;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", String(on));
+    }
+    if (text === null) return;                         // the loader holds the body until the bytes land
+    body.replaceChildren(fmt.md === "rendered"
+      ? mdBlock(text, { kind: "url", href: loc })      // relative refs resolve against where it LIVES
+      : codeBlock(text, parts.base, true));            // basename → langFor → markdown highlighting
+    landFragment();                                    // after the paint, and only a rendered one lands
+  };
+  renderBody();
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !document.getElementById("romp-fileview")) return;
+    e.preventDefault();
+    closeFileView();
+    document.removeEventListener("keydown", onKey);
+  };
+  document.addEventListener("keydown", onKey);
+  onKeyLive = onKey;                                   // registered for BOTH exits' dropOnKey, like the local viewer's
+
+  // Every failure says WHY, in the pane, with the way out: never a console-only failure, never a
+  // blank pane. The lines name the host and the URL rather than the viewer's mechanics.
+  const fail = (words: string) => {
+    if (!wrap.isConnected) return;                     // closed or replaced while in flight — paint nothing
+    const why = el("div", "fileview-err");
+    why.textContent = words;
+    const hint = el("div", "fileview-err-hint");
+    hint.textContent = href;
+    why.appendChild(hint);
+    why.appendChild(linkOut());
+    body.replaceChildren(why);
+  };
+  const hostWord = (u: string) => urlTitleParts(u).dir.split("/")[0] || u;
+  // Redraw the title from where the response actually CAME from: `/latest.md` → 302 →
+  // `/reports/run-1/evidence.md` names the second, and relative figures resolve against it (loc feeds
+  // mdBlock). The clicked href stays what Open ↗ and Copy URL hand back — the link the user was given.
+  const relocate = (r: Response) => {
+    loc = r.url || href;
+    parts = urlTitleParts(loc);
+    dir.textContent = parts.dir; base.textContent = parts.base; name.title = loc;
+  };
+  // Same-origin, cookie-authed, cache: no-store like every viewer fetch, on this open's abort signal.
+  // mode: "same-origin" holds the rule through REDIRECTS too: the clicked URL passed isMarkdownUrl, but
+  // a same-origin alias that 302s to a foreign host answering with a permissive CORS header would
+  // otherwise be fetched and rendered with that host as the base for every relative figure (review
+  // find on #958, 2026-09-07); the browser now rejects such a redirect and the .catch below says so.
+  // No Content-Type sniffing beyond one refusal: the URL was intercepted because its PATH is markdown,
+  // so the body is read as text and rendered as markdown whatever the server labelled it — except a
+  // 200 labelled text/html, which is a web page standing in for the document (settleUrlResponse).
+  fetch(href, { cache: "no-store", mode: "same-origin", signal: ctrl.signal }).then(async (r) => {
+    // EVERY exit that stops short of consuming the body aborts this open's controller — once the
+    // response has resolved that is what tears the transfer down (the review: a refused response's
+    // bytes kept arriving for a modal already closed, because .finally had let go of the controller
+    // and nothing had aborted it). settleUrlResponse fires the abort itself on each refusal verdict.
+    if (!wrap.isConnected) { ctrl.abort(); return; }
+    relocate(r);
+    const v = settleUrlResponse(r, URL_TEXT_MAX_BYTES, () => ctrl.abort());
+    if (v.kind === "http") { fail("HTTP " + v.status + " from " + hostWord(loc)); return; }
+    if (v.kind === "not-document") { fail("the server answered with a web page, not a document (" + v.type + ")"); return; }
+    if (v.kind === "declared-too-large") { fail(overCapWords(v.bytes, URL_TEXT_MAX_BYTES)); return; }
+    if (v.kind === "no-body") { fail("this document could not be loaded from this page — the response carried no body"); return; }
+    // Streamed under the cap: bytes counted as they arrive, the source cancelled the moment they pass
+    // it (never the whole body buffered first), decoded as a stream so a codepoint split across two
+    // chunks survives, and aborted with the viewer (ctrl.signal).
+    const got = await readTextCapped(r.body!, URL_TEXT_MAX_BYTES, ctrl.signal);   // read verdict: the body is there
+    if (!wrap.isConnected) { ctrl.abort(); return; }
+    if ("tooLarge" in got) { ctrl.abort(); fail(overCapWords(null, URL_TEXT_MAX_BYTES)); return; }
+    text = got.text;
+    renderBody();                                      // paints, and lands the fragment if this paint is rendered
+  }).catch((err) => {
+    // Only the TEARDOWN's abort is silent (the modal is gone, or a refusal already painted its words);
+    // an independently errored stream that merely wears the AbortError name still paints its failure.
+    if (ctrl.signal.aborted) return;
+    fail("this document could not be loaded from this page — " + String(err && (err as Error).message || err));
+  }).finally(() => {
+    if (urlAbort === ctrl) urlAbort = null;              // this read is over; a later open's registration stands
+  });
+}
+
 // Kick the browser's downloader at `url` without touching the pane: a clicked <a download> starts a
 // same-origin, cookie-authed request the BROWSER owns (its progress UI, its save location), and since
 // the kernel answers with Content-Disposition: attachment the page never navigates — the viewer, the
@@ -1675,28 +1979,108 @@ function codeBlock(text: string, path: string, wrapLines: boolean): HTMLElement 
   return wrap;
 }
 
+// Land an in-document fragment on its heading. The fragment — as typed, percent-encoded or not —
+// slugs the same way the heading ids were minted, so `#Evidence%20Results`, `#evidence-results` and
+// `#Evidence Results` all find md-evidence-results inside THIS rendered box (never the page's own ids).
+// Nothing found → nothing happens: inert, never a scroll to the top and never a navigation.
+function scrollToFragment(box: HTMLElement, fragment: string): boolean {
+  let frag = fragment.replace(/^#/, "");
+  try { frag = decodeURIComponent(frag); } catch { /* a stray % — match the bytes as written */ }
+  if (!frag) return false;
+  const target = box.querySelector('[id="md-' + headingSlug(frag) + '"]');   // the slug's alphabet needs no escaping
+  if (!target) return false;
+  target.scrollIntoView({ block: "start" });
+  return true;
+}
+
+// Where the rendered document LIVES, so its relative references can be resolved against it (the user
+// 2026-09-06: a `![fig](fig.png)` in a viewed document pointed at the dashboard's root). Two homes:
+//   • url  — the document was fetched from `href` by the browser (openUrlView); a relative src/href
+//            resolves against that URL, exactly as it would have on the page itself.
+//   • file — the document is `path` on the session's disk (openFileView); a relative image is the
+//            sibling file over the kernel's /file route (fileUrl — federation-aware, never hand-built),
+//            and a relative link opens the sibling in this same viewer.
+// No location at all (a caller with nothing to say) leaves the markup as marked emitted it.
+type MdDocLoc = { kind: "url"; href: string } | { kind: "file"; path: string; sid: string | null };
+
 // Markdown rendered as the prose it means (the user 2026-08-09: Rendered is the default, Raw one click
 // away). The file is arbitrary bytes off a disk and marked emits raw HTML verbatim, so — exactly like the
 // chat's md() in render.ts — the output goes through DOMPurify before it ever reaches .innerHTML: an
 // <img onerror> or a javascript: href in a README must never run in the dashboard.
-function mdBlock(text: string, path: string, sid: string | null | undefined): HTMLElement {
+function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   const box = el("div", "fileview-md");
   try {
     const dirty = marked.parse(text) as string;
     // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
     // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
-    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });
+    // ALLOW_DATA_ATTR: false — a document's raw HTML must not carry data-* into the page: the viewer's
+    // body delegate lets an act it does not own bubble to render.ts's document-level delegate, so a
+    // `<span data-act="stopRetrying">` in a published report would interrupt the active session on a
+    // click (review find on #958, 2026-09-07). The viewer's own fv-open / fv-anchor stamps are set
+    // AFTER this sanitize, so they are unaffected.
+    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], ALLOW_DATA_ATTR: false });
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
   }
-  // Figures: a relative src is re-pointed at the kernel, on the SANITIZED DOM (rewriteFigureSrcs, below) — after
-  // DOMPurify, so it touches only the attributes the sanitizer let stand and never re-parses marked's HTML.
-  rewriteFigureSrcs(box, path.slice(0, path.lastIndexOf("/") + 1), sid);
+  // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
+  // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
+  // document the browser knows nothing about). getAttribute, never the .src/.href property: the
+  // property is already resolved against the PAGE, which is the wrong base.
+  //
+  // Every heading gets an id first — marked 12 emits none, so a document's own `[top](#evidence)`
+  // had nothing to land on. GitHub's slug (headingSlug, made unique in order by uniqueSlugs), and
+  // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
+  // #tabs CSS and shadow getElementById("tabs") for the page's own controls.
+  const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
+  const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
+  heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+  if (doc) {
+    if (doc.kind === "url") {
+      box.querySelectorAll("img[src]").forEach((node) => {
+        const img = node as HTMLImageElement;
+        const src = img.getAttribute("src") || "";
+        const abs = resolveDocRelative(src, doc.href);
+        if (abs !== src) img.setAttribute("src", abs);
+      });
+    } else {
+      // Figures on the session's disk: re-pointed at the kernel's /file route by rewriteFigureSrcs (below), which
+      // keeps the authored src in `data-fv-src` for the comments panel's embed matching and joins the path the way
+      // every other reader of an embed's destination does (a relative src under the file's directory, an absolute
+      // one as itself, `..` left to the kernel), so the picture shown is the file the poll watches.
+      rewriteFigureSrcs(box, doc.path.slice(0, doc.path.lastIndexOf("/") + 1), doc.sid);
+    }
+    box.querySelectorAll("a[href]").forEach((node) => {
+      const a = node as HTMLAnchorElement;
+      const href = a.getAttribute("href") || "";
+      if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
+      if (doc.kind === "url") {
+        // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
+        // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
+        a.setAttribute("href", resolveDocRelative(href, doc.href));
+      } else if (!href.startsWith("//")) {
+        // The sibling path rides data-act/data-path for openFileView's delegated body listener;
+        // the href stays as written (hover still shows where it goes) and no _blank is forced —
+        // the page would only 404 on it.
+        const joined = joinDocPath(doc.path, href);
+        a.dataset.act = "fv-open";
+        a.dataset.path = joined;
+        const hash = href.indexOf("#") >= 0 ? href.slice(href.indexOf("#")) : "";
+        if (hash.length > 1) a.dataset.frag = hash;          // `report.md#results`: the heading to land on, once open
+        a.title = joined;
+      }
+    });
+  }
   // Links open a NEW tab: the viewer lives inside the chat pane's document, and letting a README link
-  // navigate it away would silently eat the chat until a reload.
-  box.querySelectorAll("a[href]").forEach((a) => {
-    (a as HTMLAnchorElement).target = "_blank";
-    (a as HTMLAnchorElement).rel = "noopener";
+  // navigate it away would silently eat the chat until a reload. Two kinds stay in the viewer: a local
+  // document's sibling links (stamped fv-open above), and IN-DOCUMENT `#fragment` links, which land on
+  // their heading through the body's delegated fv-anchor handler — a forced _blank on those opened a
+  // REAL tab at the chat page's own URL plus the fragment (found live, 2026-09-06).
+  box.querySelectorAll("a[href]").forEach((node) => {
+    const a = node as HTMLAnchorElement;
+    if (a.dataset.act === "fv-open") return;
+    if ((a.getAttribute("href") || "").startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
+    a.target = "_blank";
+    a.rel = "noopener";
   });
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
   // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.
@@ -1854,4 +2238,9 @@ export function initFileView(poster: (m: Record<string, unknown>) => void,
     h.failed("the connection dropped mid-save — it may or may not have landed; "
       + "Save again once the connection returns (a save that DID land will refuse as changed-on-disk)");
   });
+  // A drop while the GitHub ask is out loses its reply (the frame went; nothing re-sends it), and the
+  // placeholder would pulse for the rest of the open. The socket's RETURN is the event that re-asks —
+  // same reqId, so a first reply that was merely late and the second are one answer (the browse
+  // overlay's re-ask on romp:wsup is the precedent). A read-only query: asking twice costs nothing.
+  window.addEventListener("romp:wsup", () => { if (gitHooks) gitHooks.ask(); });
 }

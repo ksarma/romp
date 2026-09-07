@@ -15,16 +15,23 @@ test("fleet rides the FEED payload, reading its per-session `ledgers`", () => {
   assert.match(SRC, /sessions = m\.ledgers as FleetSession\[\]/);
 });
 
-test("fleet.ts applies no delta itself: the Outline page announces feedDelta (2026-09-05) and federation.js, loaded ahead of it, applies each delta and re-emits a whole `feed` frame", () => {
-  // feed-delta.test.ts pins what the pane then sees through the real manager; the kernel tests pin the page's
-  // caps and its script order (federation.js before fleet.js)
-  assert.doesNotMatch(SRC, /applyFeedDelta|from "\.\/feed-delta"/);
+test("fleet.ts applies no delta itself: federation.js applies each feedDelta and re-emits a whole `feed` frame, the shim reassembles every {type:\"delta\"} frame — and either one arriving raw is loud, never dropped", () => {
+  // Two delta protocols coexist (upstream/2026-09-05-two-delta-protocols.md): the Outline page announces
+  // feedDelta (2026-09-05) and federation.js, loaded ahead of it, applies each delta and re-emits a whole
+  // `feed` frame; the shim reassembles the kernel's slot deltas before the bundle sees them. feed-delta.test.ts
+  // pins what the pane then sees through the real manager; the kernel tests pin the page's caps and its script
+  // order (federation.js before fleet.js). This pane applies neither kind itself.
+  assert.doesNotMatch(SRC, /applyFeedDelta|applyDelta|from "\.\/feed-delta"/);
   // the frame handler is installed through frame-listener.ts: on window, and in federation's registry for direct delivery
   assert.match(SRC, /listenForFrames\(perfFrameHandler\("fleet"/);
-  // …but never silent about a delta it was handed anyway (federation.js absent → the shim dispatches the raw
-  // frame): the feed pane's guard — console.error, a clientDiag breadcrumb, a needFullFeed re-base — and no
-  // attempt to read the delta's slices. Run for real in fleet-live-clock.test.ts.
-  assert.match(SRC, /if \(m\.type === "feedDelta"\) \{[\s\S]*?"feedDelta-unapplied"[\s\S]*?\{ type: "needFullFeed" \}[\s\S]*?return;\n\s*\}\n\s*if \(m\.type !== "feed"\) return;/);
+  // …but never silent about a delta it was handed anyway. A feedDelta (federation.js absent → the shim
+  // dispatches the raw frame): the feed pane's guard — console.error, a clientDiag breadcrumb, a needFullFeed
+  // re-base — and no attempt to read the delta's slices. A slot delta (a host handed the pane a kernel frame
+  // unreassembled): the same shape, asking for the whole slot with the message the shim itself uses
+  // (needSlot). Both before the `m.type !== "feed"` return that would otherwise swallow them in silence.
+  // Both run for real in fleet-live-clock.test.ts.
+  assert.match(SRC, /if \(m\.type === "feedDelta"\) \{[\s\S]*?"feedDelta-unapplied"[\s\S]*?\{ type: "needFullFeed" \}[\s\S]*?return;\n\s*\}\n\s*if \(m\.type === "delta"\) \{/);
+  assert.match(SRC, /if \(m\.type === "delta"\) \{[\s\S]*?"delta-unapplied"[\s\S]*?\{ type: "needSlot", slot: m\.slot \}[\s\S]*?return;\n\s*\}\n\s*if \(m\.type !== "feed"\) return;/);
 });
 
 test("each session renders the real LEDGER TREE — .ledger-* nodes, marks, collapse, recency time", () => {

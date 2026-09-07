@@ -13,3 +13,5 @@ Upstream carries the cache-reading fallback via their #888 (the sessmove fold): 
 Status detail (migrated from the table): **offered** — their PR #946 (2026-09-06), label `tests-only`; re-verified at tip: upstream has no cache-file fallback (the row's premise), so the offer is the borrow plus a slug assertion fix
 
 MERGED 2026-09-06T19:49Z as their PR #946 (merge `a50831b1`), as offered. Two test tightenings from the review ride the tests-only follow-ups bundle (`batch12-review-tests-only-followups`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #946 is in the folded range).

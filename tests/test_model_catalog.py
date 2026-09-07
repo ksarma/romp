@@ -22,6 +22,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import Mock, patch
 import urllib.request
 from contextlib import redirect_stderr
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -210,10 +211,17 @@ class FetchAndFallback(unittest.TestCase):
         self._state = jd.STATE
         jd.STATE = Path(self.td.name)
         self._url, self._fn = km.MODELS_API_URL, getattr(jd, "_WORK_KEY_FN", None)
-        self._env = {k: os.environ.get(k) for k in _CRED_VARS}
+        self._login_fn = jd._LOGIN_AUTH_ENV_FN
+        jd._LOGIN_AUTH_ENV_FN = None
+        self._env = {k: os.environ.get(k) for k in _CRED_VARS + _SOURCE_VARS}
+        # the key source (kernel/keysource.py) reads a per-test service.env that does not exist, and
+        # no reference, bearer or legacy key the developer's shell exports is in the process env
+        os.environ["ROMP_SERVICE_ENV_FILE"] = str(Path(self.td.name) / "service.env")
+        for k in ("ROMP_API_KEY_REF", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
+            os.environ.pop(k, None)
         # the fake sees only this (never a key-shaped string: the pre-commit scanner). The LP key is the
-        # credential the fetch prefers (CredentialPolicy below); the claimer is unwired here, so no
-        # ANTHROPIC_API_KEY a developer's shell exports can be read either
+        # credential the fetch prefers (CredentialPolicy below); the tests of the work-key rung below
+        # pop it first
         os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-test-credential"
         jd._WORK_KEY_FN = None
         km.MODELS_API_URL = "http://127.0.0.1:%d/v1/models" % self.port
@@ -226,6 +234,7 @@ class FetchAndFallback(unittest.TestCase):
         _reset_catalog()
         km.MODELS_API_URL = self._url
         jd._WORK_KEY_FN = self._fn
+        jd._LOGIN_AUTH_ENV_FN = self._login_fn
         _restore_env(self._env)
         jd.STATE = self._state
         self.td.cleanup()
@@ -302,6 +311,46 @@ class FetchAndFallback(unittest.TestCase):
         self.assertIn("no API credential the kernel can use", log)
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
 
+    def test_provider_failure_never_falls_back_to_an_ambient_key_or_token(self):
+        os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"
+        os.environ["ANTHROPIC_AUTH_TOKEN"] = "synthetic-ambient-token"
+        jd._WORK_KEY_FN = Mock(side_effect=jd._keysrc.KeySourceError("1Password retrieval failed"))
+        started, log = self._refresh()
+        self.assertTrue(started)
+        jd._WORK_KEY_FN.assert_called_once_with()
+        self.assertEqual(_FakeModelsAPI.seen, [])
+        self.assertIn("1Password retrieval failed", km._catalog_status["lastError"])
+        self.assertNotIn("synthetic-ambient-token", log)
+        self.assertNotIn("synthetic-test-credential", log)
+        self.assertFalse(km._catalog_status["inflight"])
+
+    def test_runtime_reference_is_resolved_once_per_catalog_refresh_without_persistence(self):
+        os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
+        ref = "op://test-vault/test-item/api-key"
+        os.environ["ROMP_API_KEY_REF"] = ref
+        with patch.object(jd._keysrc.subprocess, "run",
+                          return_value=Mock(returncode=0, stdout=b"synthetic-runtime-key")) as run:
+            self._refresh()
+            self.assertEqual(run.call_count, 1)
+            self._refresh()
+            self.assertEqual(run.call_count, 2)
+        self.assertTrue(_FakeModelsAPI.seen)
+        for file in Path(self.td.name).rglob("*"):
+            if file.is_file():
+                self.assertNotIn(b"synthetic-runtime-key", file.read_bytes())
+
+    def test_invalid_reference_prevents_requests_and_does_not_use_legacy_key(self):
+        os.environ.pop("ANTHROPIC_LP_API_KEY")          # the LP rung is above the work key: reach the source
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"    # the legacy key the error must not use
+        Path(os.environ["ROMP_SERVICE_ENV_FILE"]).write_text("ROMP_API_KEY_REF=\n")
+        with patch.object(jd._keysrc.subprocess, "run") as run:
+            started, _ = self._refresh()
+        self.assertTrue(started)
+        run.assert_not_called()
+        self.assertEqual(_FakeModelsAPI.seen, [])
+        self.assertIn("ROMP_API_KEY_REF", km._catalog_status["lastError"])
+
     def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
         # the refresh used to call _push_soon() here, its comment claiming the pickers re-read /models
         # on the next frame — but nothing re-reads the choice lists after page load, so an open
@@ -354,6 +403,7 @@ class FetchAndFallback(unittest.TestCase):
 
 
 _CRED_VARS = ("ANTHROPIC_LP_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+_SOURCE_VARS = ("ROMP_SERVICE_ENV_FILE", "ROMP_API_KEY_REF")     # the key source's own inputs (kernel/keysource.py)
 
 
 def _restore_env(saved):

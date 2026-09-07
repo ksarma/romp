@@ -1,12 +1,14 @@
-// The feed's LIVE clock and its age refresh (2026-09-03). Every "Xm ago" and recency tint on the board is
-// computed from the kernel's clock (`now` on the last payload), never the browser's — the two can differ
-// by minutes. Since the delta path sends a quiet board NOTHING (the kernel used to repost the frame every
-// 60 s, so that clock was never more than a minute stale), the pane keeps the clock moving itself: it
-// records WHEN it received the payload and adds the local time elapsed since (liveNow), so skew between
-// the two clocks never enters — only the local clock's deltas do. Age-bearing elements are STAMPED with
-// their timestamp (data-age-t) and format, so one refresh pass (refreshAges) repaints every one of them —
-// ask cards, group cards, sub-goal rows, an open modal — from the same clock, rather than each render
-// path owning a copy of the formatting. Pure functions: node --test runs them without a DOM.
+// The kernel's LIVE clock for a pane that rides the feed payload, and the feed's age refresh. Every age a pane
+// shows — "Xm ago", the current goal's elapsed time, a recency cutoff or tint — is the difference between a
+// timestamp the KERNEL wrote and "now", and the browser's clock can sit minutes from the kernel's (a phone, a
+// laptop back from sleep): read against Date.now(), every age on the board is off by that skew. The payload
+// carries the kernel's `now`, but only as of the frame, and on the delta path a quiet board sends a pane
+// nothing between the 60 s reposts (a feedDelta client hears nothing at all). So the pane keeps the kernel's
+// clock moving itself: it records WHEN the frame arrived and adds the local time elapsed since (liveNow) —
+// skew between the two clocks never enters, only the local clock's deltas do. Age-bearing elements are
+// STAMPED with their timestamp (data-age-t) and format, so one refresh pass (refreshAges) repaints every one
+// of them — ask cards, group cards, sub-goal rows, an open modal — from the same clock, rather than each
+// render path owning a copy of the formatting. Pure functions: node --test runs them without a DOM.
 //
 // The refresh WRITES ONLY WHAT CHANGED (2026-09-06). It used to set every stamped label's textContent
 // every 15 s, changed or not, and that cost 69-119 ms of style and layout per tick on an 800-card board

@@ -60,6 +60,51 @@ class CutRow(unittest.TestCase):
         self.assertEqual(rows[1]["cutTurns"][0]["sid"], SID)
         km.RESTART_CUTS_FILE.unlink()
 
+    def test_reason_skips_rows_that_requested_no_restart(self):
+        # T240 nit: an in-place converge (main-converge-skip) writes an audit row but restarts nothing;
+        # reading only the LAST row labeled a real cut (the parked p2p deploy from 3 min earlier) as
+        # the skip. Rows that request no restart are walked past.
+        audit = jd.STATE / "restart-audit.jsonl"
+        audit.write_text("".join(json.dumps(r) + "\n" for r in [
+            {"t": 1000, "action": "p2p-update", "reason": "from X to abc1234", "when": "quiet"},
+            {"t": 1150, "action": "main-converge-skip", "tag": "def5678"},
+            {"t": 1160, "action": "bus-converge", "tag": "def5678"},
+            {"t": 1170, "action": "end-on-idle", "tag": "11111111-2222-3333-4444-555555555555"},
+        ]))
+        try:
+            self.assertIn("p2p-update", km._recent_restart_reason(window=90, now=1200))
+            audit.write_text(json.dumps({"t": 1150, "action": "main-converge-skip"}) + "\n")
+            self.assertEqual(km._recent_restart_reason(window=90, now=1200), "",
+                             "a skip alone names nothing — the cut was anonymous")
+        finally:
+            audit.unlink()
+
+    def test_a_consumed_audit_row_never_names_a_later_anonymous_cut(self):
+        # a quiet p2p row stays inside its 20-minute window long after its restart landed; the cut
+        # that consumed it records auditT, and an unaudited SIGTERM 15 min later reads anonymous
+        audit = jd.STATE / "restart-audit.jsonl"
+        audit.write_text(json.dumps({"t": 1000, "action": "p2p-update", "reason": "from X to abc1234",
+                                     "when": "quiet"}) + "\n")
+        try:
+            self.assertIn("p2p-update", km._recent_restart_reason(now=1240), "the restart it asked for")
+            km._append_restart_cut({"t": 1240, "reason": "p2p-update: from X to abc1234", "cutTurns": [],
+                                    "auditT": 1000})
+            self.assertEqual(km._recent_restart_reason(now=1500), "", "spent — the later cut is anonymous")
+            # …and that anonymous cut's own row (no auditT) must not reset consumption: the NEXT
+            # anonymous cut inside the window used to re-inherit the row (rows alternated
+            # consumed / anonymous / consumed — review find)
+            km._append_restart_cut({"t": 1500, "reason": "", "cutTurns": []})
+            self.assertEqual(km._recent_restart_reason(now=1900), "", "still spent after an anonymous cut")
+            km._append_restart_cut({"t": 1900, "reason": "", "cutTurns": []})
+            self.assertEqual(km._recent_restart_reason(now=2100), "")
+            # a torn line NEWER than the consuming cut never disables the guard
+            with open(km.RESTART_CUTS_FILE, "a") as f:
+                f.write('{"t": 2100, "reason": "", "cutTur\n')
+            self.assertEqual(km._recent_restart_reason(now=2150), "", "a malformed line is skipped, not fatal")
+        finally:
+            audit.unlink()
+            km.RESTART_CUTS_FILE.unlink()
+
     def test_reason_joins_the_recent_audit_tail_only(self):
         audit = jd.STATE / "restart-audit.jsonl"
         audit.write_text(json.dumps({"t": 1000, "action": "kernel-asks-manager-restart-all",
@@ -94,7 +139,8 @@ class CutRow(unittest.TestCase):
                       "…FINALLY block, so a raising drain still writes what it knew (T143: 2 of 18 "
                       "restarts died recordless)")
         self.assertIn('row["drainError"]', block, "an errored drain's row names the error")
-        self.assertIn("_drain_and_exit(_recent_restart_reason(), signum=signum", block,
+        self.assertIn("rec = _recent_restart_audit()", block, "the cut row joins — and CONSUMES — the audit row (auditT)")
+        self.assertIn("_drain_and_exit(_audit_reason_text(rec), signum=signum", block,
                       "the request on record is read AT SIGNAL TIME, before the drain: a row that lands "
                       "during the drain did not send this signal")
         self.assertIn("reason = _unrequested_signal_reason(signum, be)", block,

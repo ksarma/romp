@@ -18,7 +18,7 @@ test("a bare file:// URL becomes a clickable .file-uri-link that opens the file 
   // clicking is ROUTED by openPath, never a blocked window.open(file://) — a file:// URI is absolute,
   // so it takes the shared openPathLink's no-session-id branch
   assert.match(LINKS, /function fileUriLink\(uri: string\): HTMLElement \{ return openPathLink\(uri, fileUriToPath\(uri\)\); \}/);
-  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
+  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null, e\);/);   // with the click: a PDF's modified-click tab
   // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts)
   assert.match(LINKS, /\.replace\(\/\^file:/);
   assert.match(LINKS, /decodeURIComponent\(p\)/);

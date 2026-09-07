@@ -64,8 +64,9 @@ MOCK
 }
 
 teardown() {
-    tmux_private_kill
-    rm -rf "$TEST_DIR"
+    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
+    # its failure is teardown's status: bats swallows a failing command mid-teardown.
+    tmux_private_kill && rm -rf "$TEST_DIR"
 }
 
 # Helper — runs the hook with JSON on stdin

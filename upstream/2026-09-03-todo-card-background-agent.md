@@ -13,3 +13,5 @@ OFFERED 2026-09-06 (branch `todofix-offer`, `764089c8` off tip `2b9db2be`): the 
 Status detail (migrated from the table): **offered** — their PR #942 (2026-09-06), label `fix`
 
 MERGED 2026-09-06T20:48Z as their PR #942 (merge `061b3a64`; head `9b974149`). Re-folded before the merge on the corrected diagnosis: no background-agent `TaskCreate` form exists, so the skip is keyed on the paired tool_result's `is_error` / the absence of a `Task #N` result, the same guard added to `event_model.declared_plan`, with the fixture's `is_error` and `{tasks}` cases. The TaskUpdate half of the same skip is a follow-up entry (`kernel-small-fixes-taskupdate-tick-pn`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #942 is in the folded range).

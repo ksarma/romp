@@ -13,8 +13,10 @@ import stat
 import tempfile
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 from romp_load import load_source
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -29,9 +31,16 @@ os.environ.pop("ROMP_STATE_DIR", None)
 _MOCK_DIR = tempfile.mkdtemp()
 _MOCK = os.path.join(_MOCK_DIR, "claude")
 _MARKER = os.path.join(_MOCK_DIR, "code-sha.txt")
+_URL = "https://claude.com/cai/oauth/authorize?" + urlencode({
+    "code": "true", "client_id": "11111111-2222-4333-8444-555555555555",
+    "response_type": "code",
+    "redirect_uri": "https://platform.claude.com/oauth/code/callback",
+    "scope": "user:profile user:inference", "code_challenge": "SYNTHETIC-CHALLENGE",
+    "code_challenge_method": "S256", "state": "SYNTHETIC-STATE",
+})
 with open(_MOCK, "w") as f:
     f.write('''#!/usr/bin/env python3
-import sys, os, hashlib
+import sys, os, hashlib, time
 def say(s):
     sys.stdout.write(s); sys.stdout.flush()
 say("Do you trust this folder?\\n1. Yes, I trust this folder\\n")
@@ -42,9 +51,21 @@ if "/login" not in line:
     say("Not logged in\\n"); sys.exit(1)
 say("Select login method:\\n1. Claude account with subscription\\n2. Anthropic Console account\\n")
 line = sys.stdin.readline()          # option 1
-url = "https://claude.com/cai/oauth/authorize?code=true&client_id=x&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=SYNTH"
+url = @@URL@@
 say("Browser didn't open? Use the url below to sign in\\n")
-say("\\x1b]8;id=1;" + url + "\\x1b\\\\\\\\" + url + "\\x1b]8;;\\x1b\\\\\\\\\\n")
+mode = os.environ.get("ROMP_LOGIN_TEST_OUTPUT", "osc")
+if mode == "chunked":
+    say(url[:80])
+    time.sleep(0.3)
+    say(url[80:] + "\\n")
+elif mode == "wrapped":
+    # Terminal layouts may wrap the hyperlink target as well as its visible label.
+    wrapped = "\\r\\n  ".join(url[i:i+80] for i in range(0, len(url), 80))
+    say("\\x1b]8;;" + wrapped + "\\x1b\\\\" + wrapped + "\\x1b]8;;\\x1b\\\\\\n")
+elif mode == "ai":
+    say(url.replace("claude.com/cai/", "claude.ai/") + "\\n")
+else:
+    say("\\x1b]8;id=1;" + url + "\\x1b\\\\" + url + "\\x1b]8;;\\x1b\\\\\\n")
 say("Paste code here if prompted >\\n")
 code = sys.stdin.readline().strip()
 open(@@MARKER@@, "w").write(hashlib.sha256(code.encode()).hexdigest())
@@ -52,7 +73,7 @@ if code == "SYNTH-GOOD-CODE":
     say("Logged in as Test User (test@example.invalid)\\n")
 else:
     say("Invalid code. Login error.\\n")
-'''.replace("@@MARKER@@", repr(_MARKER)))
+'''.replace("@@MARKER@@", repr(_MARKER)).replace("@@URL@@", repr(_URL)))
 os.chmod(_MOCK, os.stat(_MOCK).st_mode | stat.S_IEXEC)
 os.environ["ROMP_CLAUDE_BIN"] = _MOCK
 
@@ -72,6 +93,42 @@ def _wait_state(want, seconds=15):
     return km._login_state()
 
 
+class LoginURL(unittest.TestCase):
+    def test_plain_link_waits_at_every_read_boundary(self):
+        for cut in range(len(_URL) + 1):
+            with self.subTest(cut=cut):
+                self.assertEqual(km._login_url(_URL[:cut]), "")
+        self.assertEqual(km._login_url(_URL + "\r\nPaste code here"), _URL)
+
+    def test_osc_link_waits_for_its_complete_terminator(self):
+        for end in ("\x07", "\x1b\\"):
+            stream = "\x1b]8;;" + _URL + end
+            for cut in range(len(stream)):
+                with self.subTest(terminator=repr(end), cut=cut):
+                    self.assertEqual(km._login_url(stream[:cut]), "")
+            self.assertEqual(km._login_url(stream), _URL)
+
+    def test_wrapped_label_does_not_replace_full_hyperlink(self):
+        stream = "\x1b]8;;" + _URL + "\x1b\\" + _URL[:80] + "\r\n"
+        self.assertEqual(km._login_url(stream), _URL)
+
+    def test_missing_parameters_never_produce_a_login_link(self):
+        u = urlsplit(_URL)
+        params = parse_qs(u.query)
+        for key in params:
+            incomplete = u._replace(query=urlencode({k: v for k, v in params.items()
+                                                     if k != key}, doseq=True)).geturl()
+            with self.subTest(missing=key):
+                self.assertEqual(km._login_url(incomplete + "\n"), "")
+
+    def test_partial_first_line_does_not_hide_a_complete_link_later(self):
+        self.assertEqual(km._login_url(_URL[:80] + "\n" + _URL + "\n"), _URL)
+
+    def test_unrelated_hosts_are_not_login_links(self):
+        self.assertEqual(km._login_url(_URL.replace("claude.com", "claude.com.example.invalid")
+                                      + "\n"), "")
+
+
 class LoginFlow(unittest.TestCase):
     def setUp(self):
         km._login_cancel()
@@ -87,6 +144,7 @@ class LoginFlow(unittest.TestCase):
         self.assertEqual(km._login_start(), "")
         st = _wait_state("url")
         self.assertEqual(st["state"], "url", "the driver walked the gates to the URL: %r" % st)
+        self.assertEqual(st["url"], _URL)
         self.assertTrue(st["url"].startswith("https://claude.com/cai/oauth/authorize?code=true"),
                         "the code=true URL, parsed clean out of the OSC-8 wrapping: %r" % st["url"])
         self.assertNotIn("\x1b", st["url"], "no terminal escapes survive into the link")
@@ -116,6 +174,22 @@ class LoginFlow(unittest.TestCase):
         self.assertIn("start", st["err"].lower(), "the copy names the retry, never the code: %r" % st["err"])
         self.assertNotIn("SYNTH-BAD-CODE", st["err"])
 
+    def test_url_waits_for_the_rest_of_a_pty_read(self):
+        with mock.patch.dict(os.environ, {"ROMP_LOGIN_TEST_OUTPUT": "chunked"}):
+            self.assertEqual(km._login_start(), "")
+        self.assertEqual(_wait_state("url")["url"], _URL)
+
+    def test_wrapped_hyperlink_preserves_every_oauth_parameter(self):
+        with mock.patch.dict(os.environ, {"ROMP_LOGIN_TEST_OUTPUT": "wrapped"}):
+            self.assertEqual(km._login_start(), "")
+        self.assertEqual(_wait_state("url")["url"], _URL)
+
+    def test_claude_ai_authorize_url_is_supported(self):
+        with mock.patch.dict(os.environ, {"ROMP_LOGIN_TEST_OUTPUT": "ai"}):
+            self.assertEqual(km._login_start(), "")
+        self.assertEqual(_wait_state("url", seconds=3)["url"],
+                         _URL.replace("claude.com/cai/", "claude.ai/"))
+
     def test_one_flow_at_a_time_and_cancel(self):
         self.assertEqual(km._login_start(), "")
         _wait_state("url")
@@ -124,6 +198,43 @@ class LoginFlow(unittest.TestCase):
         self.assertEqual(km._login_state()["state"], "", "cancel clears the flow")
         self.assertEqual(km._login_start(), "", "…and a fresh start is allowed after")
         km._login_cancel()
+
+    def test_cancel_then_immediate_restart_reaches_the_url_again(self):
+        # the fd race (review find on #931, 2026-09-07): cancel used to close the PTY master while the old
+        # reader was parked in select on that fd number; the next start reused the number and the old
+        # thread's os.read swallowed the new flow's first output, so the new flow never saw the trust
+        # prompt and hung to its timeout. The reader owns the fd now; a restart right after a cancel lands.
+        for _ in range(3):
+            self.assertEqual(km._login_start(), "")
+            st = _wait_state("url")
+            self.assertEqual(st["state"], "url", "a fresh flow reaches its URL after a cancel: %r" % st)
+            km._login_cancel()
+
+    def test_a_paste_prompt_with_no_readable_link_fails_loudly_at_once(self):
+        # the CLI is already asking for the code, so it HAS printed its link — and _login_url found none it
+        # will stand behind (allowlist rejected it / the shape moved). Waiting on would only report a
+        # timeout ten minutes later; the event is the prompt, so the flow errors there (review find on
+        # #931, 2026-09-07). Driven on a private PTY pair with a fake child, no CLI involved.
+        import pty as _pty, select as _select, threading
+        m, sl = _pty.openpty()
+        class _Proc:
+            pid = 999999991
+            def poll(self): return None
+        proc = _Proc()
+        with km._login_lock:
+            km._login_flow.update(state="starting", url="", err="", t=time.time(), pid=proc.pid, fd=m)
+        th = threading.Thread(target=km._login_reader, args=(m, proc), daemon=True)
+        th.start()
+        os.write(sl, b"Browser did not open? Use this link instead:\r\nhttps://evil.example/oauth/authorize?x=1 \r\nPaste code here if prompted > ")
+        deadline = time.time() + 5
+        while time.time() < deadline and km._login_state()["state"] == "starting":
+            time.sleep(0.05)
+        st = km._login_state()
+        os.close(sl)
+        th.join(3)
+        self.assertEqual(st["state"], "error", "no waiting for the timeout: %r" % st)
+        self.assertIn("could not be read", st["err"])
+        self.assertFalse(th.is_alive(), "the reader exited and closed its fd")
 
     def test_code_without_a_flow_refuses(self):
         self.assertNotEqual(km._login_code("SYNTH-ORPHAN"), "")
