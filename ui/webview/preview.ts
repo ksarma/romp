@@ -29,6 +29,31 @@ export function canPreview(): boolean {
   return location.protocol === "http:" || location.protocol === "https:";
 }
 
+// Which click means "in a browser tab of its own"? The browser-wide idiom, so there is nothing new to
+// learn and no setting to find: a Cmd/Ctrl-click (the `click` event carries the modifier) or a
+// middle-button press (which arrives as `auxclick`, button 1). A plain click acts inside the dashboard
+// (the user 2026-09-07, who wanted one opening rule for every file: a plain click opens the viewer, the
+// modifier is the one signal that the browser's own tab, beside the dashboard, is what is wanted). The
+// project's PDF and folder gestures read the same signal; the file viewer's links do too (file-view.ts).
+export function wantsOwnTab(ev?: { metaKey?: boolean; ctrlKey?: boolean; button?: number } | null): boolean {
+  return !!ev && (!!ev.metaKey || !!ev.ctrlKey || ev.button === 1);
+}
+
+// A file in the browser's OWN tab, on the gesture above: ONE window.open aimed at the kernel's /file URL, the
+// same-origin, cookie-authed route the viewer fetches from (a remote session's file relays exactly as the
+// viewer's fetch does), so the browser renders what the kernel serves: a PDF in its viewer, an image, a text
+// file as text. False when nothing opened, and the caller's in-app view takes over: the popup was blocked, or
+// this is the VS Code webview, whose sandbox has no tabs and no kernel origin (canPreview). The tab's opener is
+// severed on the handle: a link inside a PDF may navigate the tab to a foreign site, which must not hold the
+// dashboard. Not the `noopener` feature, which returns null even on success.
+export function openFileTab(path: string, sid?: string | null): boolean {
+  if (!canPreview()) return false;
+  const w = window.open(fileUrl(path, sid), "_blank");
+  if (!w) return false;                                   // blocked: the caller's in-app view takes over
+  try { w.opener = null; } catch { /* unreachable while the tab is our own initial page */ }
+  return true;
+}
+
 // LOADING CUE (the user 2026-07-31): a remote image's bytes arrive over the ssh tunnel, so for a
 // beat the message showed only the path text and the picture "popped in" with nothing saying it was
 // on the way. Per the loading-state rule the first thing up is the romp swirl: a mini spinning glyph

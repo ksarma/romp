@@ -19,11 +19,11 @@ test("the linkifier matches file:// URIs AND bare paths, and gates each token ki
   // one finder covers the file: scheme, the slashed-path alternative, and the bare-filename alternative
   assert.ok(LINKS.includes("const CLICKABLE_PATH_RE = /file:"), "regex still handles file:// URIs");
   assert.ok(LINKS.includes("[~.\\w\\-]"), "regex has the slashed-path alternative");
-  assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(inCode && looksLikeBareFileName\(tok\)\)\) continue;/);
+  assert.match(LINKS, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(span\.inCode && looksLikeBareFileName\(tok\)\)\) continue;/);   // inCode is the node's the token lies in (textUnits)
   // the kernel's pathLinks verdict then narrows further, and its value is the OPEN target — pinned
   // in chat-path-links.test.ts; here we pin that the link opens `open`, whatever chose it
   assert.match(LINKS, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
-  assert.match(LINKS, /frag\.appendChild\(link\);/);
+  assert.match(LINKS, /list\.push\(\{ start, end: last, el: link \}\);/);   // the link takes the token's place in its node (rewriteSpan)
 });
 
 test("a relative path click carries the active session id so whoever resolves it uses that cwd", () => {
@@ -38,8 +38,10 @@ test("a relative path click carries the active session id so whoever resolves it
 });
 
 test("the cheap pre-filter keys on a slash — or, inside inline code, a dot", () => {
-  assert.match(LINKS, /if \(!text\.includes\("\/"\) && !\(inCode && text\.includes\("\."\)\)\) continue;/);
-  assert.match(LINKS, /const inCode = !!tn\.parentElement\?\.closest\("code"\);/);
+  // per unit (textUnits): the chat's unit is one text node, so the filter reads as it did
+  assert.match(LINKS, /if \(!text\.includes\("\/"\) && !\(anyCode && text\.includes\("\."\)\)\) continue;/);
+  assert.match(LINKS, /const anyCode = u\.spans\.some\(\(s\) => s\.inCode && !s\.dead\);/);
+  assert.match(LINKS, /inCode: !!p\?\.closest\("code"\)/);
 });
 
 // executed: mirror looksLikeFilePath EXACTLY to guard its precision (accept real paths, reject prose)

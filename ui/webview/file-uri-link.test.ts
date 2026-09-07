@@ -19,8 +19,10 @@ test("a bare file:// URL becomes a clickable .file-uri-link that opens the file 
   // so it takes the shared openPathLink's no-session-id branch
   assert.match(LINKS, /function fileUriLink\(uri: string\): HTMLElement \{ return openPathLink\(uri, fileUriToPath\(uri\)\); \}/);
   assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
-  // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts)
-  assert.match(LINKS, /\.replace\(\/\^file:/);
+  // the URL is turned into a real filesystem path: scheme stripped, percent-decoded (fileUriToPath, path-links.ts); only a
+  // LOCAL URI (an empty authority, or localhost) is one; file://host/path names another machine and stays prose (2026-09-07)
+  assert.match(LINKS, /const FILE_URI_RE = \/\^file:\\\/\\\/\(\?:localhost\)\?\(\?=\\\/\)\/i;/);
+  assert.match(LINKS, /let p = uri\.replace\(FILE_URI_RE, ""\);/);
   assert.match(LINKS, /decodeURIComponent\(p\)/);
 });
 

@@ -43,6 +43,10 @@ class TextNode {
 class Frag { childNodes: (Elm | TextNode | string)[] = []; appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); } }
 class Elm {
   className = ""; title = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
+  // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
+  attrs: Record<string, string> = {};
+  setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
+  getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
   childNodes: (Elm | TextNode)[] = [];
   constructor(public tagName: string) {}
   set textContent(s: string) { const t = new TextNode(s); t.parentElement = this; this.childNodes = [t]; }

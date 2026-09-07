@@ -22,9 +22,16 @@ export const PATH_LINK_ACT = "openpath";
 
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 
-// A file:// URI → its local filesystem path: strip the scheme, percent-decode. file:///a/b → /a/b.
+// A file:// URI that names a path on THIS machine: an empty authority (`file:///a/b`) or `localhost`
+// (`file://localhost/a/b`), then the path. `file://host/a/b` names a file on another host and is not a local
+// path: stripping its scheme used to leave `host/a/b`, a relative path the opener joined onto a session's cwd
+// (the 2026-09-07 review). Such a token is prose to the walk, and fileUriToPath returns it as written.
+const FILE_URI_RE = /^file:\/\/(?:localhost)?(?=\/)/i;
+export function isFileUri(tok: string): boolean { return FILE_URI_RE.test(tok); }
+// A local file:// URI → its filesystem path: strip the scheme (and a `localhost`), percent-decode. file:///a/b → /a/b.
 export function fileUriToPath(uri: string): string {
-  let p = uri.replace(/^file:\/\//i, "");   // file:///Users/… → /Users/… (host is empty for file:///)
+  if (!isFileUri(uri)) return uri;           // not a local URI: nothing to strip (the callers gate on isFileUri)
+  let p = uri.replace(FILE_URI_RE, "");      // file:///Users/… → /Users/…
   try { p = decodeURIComponent(p); } catch { /* malformed %-escape — use verbatim */ }
   return p;
 }
@@ -33,11 +40,16 @@ export function fileUriToPath(uri: string): string {
 // textarea — only by leaving for the pointer (2026-09-06). Enter or Space on a focused link clicks it;
 // the click is still the host's (a delegate on a stable root in waiting.ts, render.ts's per-span binder),
 // this only gives the keyboard the route a pointer has. Both keys, as the dashboard's other keyboard-
-// activated rows take them (render.ts); Space is prevented so it does not also scroll the pane.
+// activated rows take them (render.ts); Space is prevented so it does not also scroll the pane. A Cmd/Ctrl
+// held with the key rides into the click as the same modifier, so a host that reads a modified click as
+// "in a tab of its own" (the file viewer, file-view.ts) hears it from the keyboard too; element.click()
+// carries no modifiers, so that case dispatches the click itself.
 function pathLinkKey(e: KeyboardEvent): void {
   if (e.key !== "Enter" && e.key !== " ") return;
   e.preventDefault();
-  (e.currentTarget as HTMLElement).click();
+  const a = e.currentTarget as HTMLElement;
+  if (e.metaKey || e.ctrlKey) a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: e.metaKey, ctrlKey: e.ctrlKey }));
+  else a.click();
 }
 // A tab stop is focusable by the pointer too, and that is the one thing the plain span it replaced was
 // not: a mouse click left focus on the body, a click on a tabindex span leaves it on the link. The chat's
@@ -82,10 +94,14 @@ export function openPathLink(raw: string, open: string, relative = false, sid?: 
 // The link's SHAPE on an element the caller already has: the class, the title, the tab stop, the keyboard and
 // pointer handlers, and the act's data. openPathLink mints a span and marks it; the file viewer marks a Markdown
 // link's own <a> (its label keeps its nested formatting) when the link's target is a file (file-view-links.ts).
-// The class is appended as a string so an element that already wears one keeps it.
+// The class is appended as a string so an element that already wears one keeps it. The class and the title are
+// written as ATTRIBUTES: on an SVG <a> (inline SVG in rendered Markdown keeps its anchors through the sanitizer)
+// `className` is a read-only animated string and `title` is no property at all, so the property writes were
+// silent no-ops there (the 2026-09-07 review); setAttribute reaches both element kinds.
 export function markPathLink(a: HTMLElement, open: string, relative = false, sid?: string | null): HTMLElement {
-  if (!(" " + a.className + " ").includes(" file-uri-link ")) a.className = (a.className ? a.className + " " : "") + "file-uri-link";
-  a.title = "Open " + open;
+  const cls = a.getAttribute("class") || "";
+  if (!(" " + cls + " ").includes(" file-uri-link ")) a.setAttribute("class", (cls ? cls + " " : "") + "file-uri-link");
+  a.setAttribute("title", "Open " + open);
   a.tabIndex = 0;                            // in the tab order, like the <a> it stands in for…
   a.role = "link";                           // …and announced as one (the ARIA IDL attribute)
   a.onkeydown = pathLinkKey;                 // Enter / Space → this span's click, whoever handles it
@@ -221,34 +237,83 @@ export interface PathLinkHit { el: HTMLElement; open: string; verified: boolean 
 // `opts` is how a surface whose text is not chat prose runs the same walk (the file viewer, file-view-links.ts):
 // `inPre` walks the text inside <pre> too (the viewer's code body IS one); `accept` narrows every non-URI
 // token that passed the shape gates (the map narrows a chat message the same way; a surface with no kernel
-// verdict brings its own gate); `resolve` names what a token opens when the surface knows its own place (the
-// viewer joins a relative token onto the shown file's directory); `lineSuffix` reads a `:12` (or GitHub's
-// `#L12`) right after a token into the link (data-line) instead of leaving it as prose. Absent, the walk is
+// verdict brings its own gate), and is handed the text the token was found in and the token's offset there, so
+// a gate can read what stands before the token; `resolve` names what a token opens when the surface knows its
+// own place (the viewer joins a relative token onto the shown file's directory); `lineSuffix` reads a `:12` (or
+// GitHub's `#L12`) right after a token into the link (data-line) instead of leaving it as prose, off a file://
+// URI too (the URI arm's own grammar admits a colon, so the suffix rode inside the token there); `unit` names
+// the element whose text nodes are scanned as ONE string (the viewer's row: a highlight's spans cut a line's
+// text into several nodes, and a token is what the LINE says, never what one node says). Absent, the walk is
 // exactly the chat's.
 export interface PathLinkOptions {
   inPre?: boolean;
-  accept?: (tok: string) => boolean;
+  accept?: (tok: string, ctx: { text: string; at: number }) => boolean;
   resolve?: (tok: string) => string;
   lineSuffix?: boolean;
+  unit?: string;
 }
 // A line reference written after a path: `path:12`, `path:12:4` (a column, dropped), `path#L12`, `path#L12-L20`
 // (a range; its first line). Not followed by a word character or a slash, so `x/a.md:12abc` keeps its prose.
 export const LINE_SUFFIX_RE = /^(?::(\d+)(?::\d+)?|#L(\d+)(?:-L?\d+)?)(?![\w/])/;
-export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>, opts?: PathLinkOptions): PathLinkHit[] {
-  const hits: PathLinkHit[] = [];
+// The same reference at the END of a token (a file:// URI took it into itself): where it starts.
+const URI_LINE_TAIL_RE = /(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/;
+
+/** One text node's place in its unit's joined text. `dead`: inside a link (or, in the chat, a fenced block): the
+ *  scan READS it, so a token glued to it is seen whole, but never marks in it. */
+export interface TextSpan { tn: Text; start: number; end: number; dead: boolean; inCode: boolean }
+export interface TextUnit { text: string; spans: TextSpan[] }
+/** The text under `root` cut into units: under `unit` (a selector), the consecutive text nodes sharing their
+ *  nearest such ancestor, joined; a node under none, or with no selector, is a unit of its own. `skip` names
+ *  the ancestors whose text is dead to marking. */
+export function textUnits(root: HTMLElement, unit: string | undefined, skip: string): TextUnit[] {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   let n: Node | null;
   while ((n = walker.nextNode())) nodes.push(n as Text);
-  const skip = opts && opts.inPre ? "a, .file-uri-link" : "a, .file-uri-link, pre";
+  const units: TextUnit[] = [];
+  let cur: Element | null = null;
   for (const tn of nodes) {
-    if (tn.parentElement?.closest(skip)) continue;   // already a link, or (the chat) a fenced code block
-    const inCode = !!tn.parentElement?.closest("code");                  // inline code — where bare filenames may link
-    const text = tn.data;
-    if (!text.includes("/") && !(inCode && text.includes("."))) continue;   // cheap pre-filter: no slash (and, in code, no dot) → nothing here
+    const p = tn.parentElement;
+    const u = unit && p ? p.closest(unit) : null;
+    let last = units[units.length - 1];
+    if (!last || u === null || u !== cur) { last = { text: "", spans: [] }; units.push(last); cur = u; }
+    const start = last.text.length;
+    last.text += tn.data;
+    last.spans.push({ tn, start, end: last.text.length, dead: !!p?.closest(skip), inCode: !!p?.closest("code") });
+  }
+  return units;
+}
+/** The span holding [start, end) whole and open to marking, else null: a match that crosses a node's edge (a
+ *  highlight span cut through it) or lies in a link is left as it is, never re-read as its pieces. */
+export function spanHolding(u: TextUnit, start: number, end: number): TextSpan | null {
+  for (const s of u.spans) if (start >= s.start && start < s.end) return !s.dead && end <= s.end ? s : null;
+  return null;
+}
+/** Replace `span`'s text node with its text, the `marks` (each an element standing for [start, end) of the
+ *  unit's text, in order) in place of the ranges they cover. */
+export function rewriteSpan(u: TextUnit, span: TextSpan, marks: Array<{ start: number; end: number; el: Node }>): void {
+  const frag = document.createDocumentFragment();
+  let last = span.start;
+  for (const m of marks) {
+    if (m.start > last) frag.appendChild(document.createTextNode(u.text.slice(last, m.start)));
+    frag.appendChild(m.el);
+    last = m.end;
+  }
+  if (last < span.end) frag.appendChild(document.createTextNode(u.text.slice(last, span.end)));
+  span.tn.replaceWith(frag);
+}
+
+export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLinks?: Record<string, string>, opts?: PathLinkOptions): PathLinkHit[] {
+  const hits: PathLinkHit[] = [];
+  const skip = opts && opts.inPre ? "a, .file-uri-link" : "a, .file-uri-link, pre";   // already a link, or (the chat) a fenced code block
+  for (const u of textUnits(root, opts && opts.unit, skip)) {
+    if (u.spans.every((s) => s.dead)) continue;
+    const text = u.text;
+    const anyCode = u.spans.some((s) => s.inCode && !s.dead);            // inline code: where bare filenames may link
+    if (!text.includes("/") && !(anyCode && text.includes("."))) continue;   // cheap pre-filter: no slash (and, in code, no dot) → nothing here
     const scan = new PathTokenScanner(text);
-    const frag = document.createDocumentFragment();
-    let last = 0, any = false, from = 0, m: [number, number] | null;
+    const marks = new Map<TextSpan, Array<{ start: number; end: number; el: Node }>>();
+    let from = 0, m: [number, number] | null;
     while ((m = scan.next(from))) {
       const [start, end] = m;
       from = end;                                   // a token that stays prose: the scan resumes after all of it
@@ -256,28 +321,32 @@ export function linkifyPathTokens(root: HTMLElement, sid?: string | null, pathLi
       const trail = trailingPunct(tok);             // don't grab a sentence's closing punctuation
       if (trail) tok = tok.slice(0, tok.length - trail[0].length);
       if (!tok) continue;
-      const isUri = /^file:\/\//i.test(tok);
-      if (!isUri && !looksLikeFilePath(tok) && !(inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc. — leave as prose
-      if (!isUri && opts && opts.accept && !opts.accept(tok)) continue;   // the surface's own gate (the viewer's: an extension on the file)
+      const isUri = isFileUri(tok);
+      // a line reference a URI token swallowed (`file:///a.md:12`) is the suffix, not the path, where the surface reads lines
+      if (isUri && opts && opts.lineSuffix) { const tail = URI_LINE_TAIL_RE.exec(tok); if (tail) tok = tok.slice(0, tail.index); }
+      const span = spanHolding(u, start, start + tok.length);
+      if (!span) continue;                          // across a node's edge, or inside a link: as it is
+      if (!isUri && !looksLikeFilePath(tok) && !(span.inCode && looksLikeBareFileName(tok))) continue;   // "and/or", `np.array` etc.: leave as prose
+      if (!isUri && opts && opts.accept && !opts.accept(tok, { text, at: start })) continue;   // the surface's own gate (the viewer's: an extension on the file)
       const fixed = !isUri && pathLinks ? pathLinks[tok] : undefined;   // the kernel's verdict, when it rendered one
       if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
-      if (start > last) frag.appendChild(document.createTextNode(text.slice(last, start)));
       // what the link opens: a URI's own path; else the kernel's fixed target or the token, placed by the surface's
       // resolve when it has one (a URI is absolute already and takes no resolve)
       const open = isUri ? fileUriToPath(tok) : (opts && opts.resolve ? opts.resolve(fixed ?? tok) : (fixed ?? tok));
       const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
-      // a line written after the token rides in the link when the surface reads lines (the viewer scrolls to it)
-      const suffix = opts && opts.lineSuffix ? LINE_SUFFIX_RE.exec(text.slice(start + tok.length)) : null;
-      if (suffix) { link.textContent = tok + suffix[0]; link.dataset.line = suffix[1] || suffix[2]; link.title += ":" + link.dataset.line; }
-      frag.appendChild(link);
+      // a line written after the token rides in the link when the surface reads lines (the viewer scrolls to it);
+      // one the highlight cut into another node stays prose
+      let suffix = opts && opts.lineSuffix ? LINE_SUFFIX_RE.exec(text.slice(start + tok.length)) : null;
+      if (suffix && start + tok.length + suffix[0].length > span.end) suffix = null;
+      if (suffix) { link.textContent = tok + suffix[0]; link.dataset.line = suffix[1] || suffix[2]; link.setAttribute("title", link.getAttribute("title") + ":" + link.dataset.line); }
+      const last = start + tok.length + (suffix ? suffix[0].length : 0);
+      let list = marks.get(span);
+      if (!list) { list = []; marks.set(span, list); }
+      list.push({ start, end: last, el: link });
       hits.push({ el: link, open, verified: !isUri && typeof fixed === "string" });   // the kernel stat'd a fixed one this build
-      last = start + tok.length + (suffix ? suffix[0].length : 0);
       from = last;                                  // a linked token: resume right after what was linked — its trimmed tail is prose
-      any = true;
     }
-    if (!any) continue;
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    tn.replaceWith(frag);
+    for (const [span, list] of marks) rewriteSpan(u, span, list);
   }
   return hits;
 }
