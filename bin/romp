@@ -1298,12 +1298,15 @@ for kind in ("full", "delta", "deduped"):
 print("sends     " + "   ".join(parts))
 seen = dl("goals", "scan_hits") + dl("goals", "scan_parses")
 checks = dl("goals", "disk_hits") + dl("goals", "disk_misses")
+absent = dl("goals", "absent_hits") + dl("goals", "absent_misses")
 print("goals     %.1f loads/s   %.1f saves/s   %.1f writes/s   scan %.1f parses/s (%s memo hits)   "
-      "save memo %s hits (%d hits, %d misses, %d seeds)"
+      "save memo %s hits (%d hits, %d misses, %d seeds)   absent memo %s hits (%d hits, %d misses)"
       % (dl("goals", "loads") / dt, dl("goals", "saves") / dt, dl("goals", "writes") / dt,
          dl("goals", "scan_parses") / dt, ("%.0f%%" % (100.0 * dl("goals", "scan_hits") / seen)) if seen else "no",
          ("%.0f%%" % (100.0 * dl("goals", "disk_hits") / checks)) if checks else "no",
-         dl("goals", "disk_hits"), dl("goals", "disk_misses"), dl("goals", "disk_seeds")))
+         dl("goals", "disk_hits"), dl("goals", "disk_misses"), dl("goals", "disk_seeds"),
+         ("%.0f%%" % (100.0 * dl("goals", "absent_hits") / absent)) if absent else "no",
+         dl("goals", "absent_hits"), dl("goals", "absent_misses")))
 jp = dl("judge", "passes")
 print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   chain memo %d hits / %d misses"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",

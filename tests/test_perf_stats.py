@@ -113,7 +113,8 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "saves", "writes", "scans", "scan_hits", "scan_parses",
-                                              "disk_hits", "disk_misses", "disk_seeds"},
+                                              "disk_hits", "disk_misses", "disk_seeds",
+                                              "absent_hits", "absent_misses"},
                          "read through jd.goal_io_stats")
         self.assertEqual(set(snap["memos"]), {"goals_snap", "lift_gate"},
                          "one block per memo the kernel keeps (plan D4)")
