@@ -8,16 +8,19 @@ kept a done flag nothing ever re-derived: is_complete read it, the settle branch
 (the settle row it appended never materialized), and every rollup appended one more settle row plus one
 more seam. One live node reached LOG_CAP (64 settle rows, logTrunc) with its store's seams at cap,
 republishing about 1 MB per pass. The first form of the fix unrolled the promoted child only, so the
-child's own rolled-up descendants stayed done under a now-open top.
+child's own rolled-up descendants stayed done under a now-open top; and a healed top whose diary holds the
+bug's settle rows folded to settledDone on an open node, which reads Working but is sealed for every judge.
 
 Pins: (1) the dissolving rollup drops the marker on the child AND its rolled-up descendants, and each
 node's own diary rules (no row: open; a rolled-away block: blocked), with no settle row, no seam and no
 churn on later rollups; (2) a promoted child with its OWN done verdict settles exactly once, and a
 descendant under it stays folded; (3) a child re-parented under a still-resolved solid ancestor is
 re-folded by the same rollup's roll-down; (4) a store already published with the stale marker, on the
-top or on a descendant, is repaired on its next rollup (one publish) and later rollups publish nothing.
-SYNTHETIC fixtures only; a private synthetic sid (goal-store tests
+top or on a descendant, is repaired on its next rollup (one publish) and later rollups publish nothing;
+(5) a top whose diary holds the bug's settle rows is reopened once, by a romp reopen row plus one
+judge-errors row, and is unsealed. SYNTHETIC fixtures only; a private synthetic sid (goal-store tests
 never share the placeholder sid)."""
+import json
 import os
 import tempfile
 import unittest
@@ -57,6 +60,10 @@ def _settles(nd):
     return [e for e in (nd.get("log") or []) if e.get("kind") == "settle"]
 
 
+def _reopens(nd):
+    return [e for e in (nd.get("log") or []) if e.get("kind") == "reopen"]
+
+
 def _menu_ids(st):
     return {nd["id"] for nd in jd.open_menu(st)}
 
@@ -92,6 +99,11 @@ class _Base(unittest.TestCase):
         if grand:
             nodes.append(_rolled(GRAND, "wire the pane's route", CHILD))
         return self._store(nodes)
+
+    def _error_rows(self):
+        if not jd.ERRORS.exists():
+            return []
+        return [json.loads(line) for line in jd.ERRORS.read_text().splitlines() if line.strip()]
 
 
 class DissolutionDropsTheMarker(_Base):
@@ -237,12 +249,84 @@ class StaleMarkerHeals(_Base):
         self.assertFalse(g.get("nodeComplete"))
         self.assertEqual(s1["status"][CHILD], "working")
         self.assertEqual(_menu_ids(s1) & {CHILD, GRAND}, {CHILD, GRAND})
+        self.assertEqual(self._error_rows(), [], "no settle rows: nothing to reopen, nothing to report")
         rev1 = jd._disk_rev(SID)
         self.assertGreater(rev1, rev0, "the repair is one publish")
         s2 = jd.load_goals(SID)
         jd.rollup_status(s2, True)
         jd.save_goals(SID, s2)
         self.assertEqual(jd._disk_rev(SID), rev1, "later passes republish nothing")
+
+    def test_a_stale_top_with_the_bugs_settle_rows_is_reopened_once_and_unsealed(self):
+        # the live store's shape: settle rows appended while the node was rolled up, no done row. With
+        # the marker gone the fold made those rows settledDone on an open node: Working on the board,
+        # sealed for every judge (open_menu, the candidate filters), with nothing saying so
+        spam = [_row("settle", T + 10, src="romp") for _ in range(3)]
+        st = self._store([_rolled(CHILD, "add the web pane", None, spam)])
+        jd.save_goals(SID, st)
+        s1 = jd.load_goals(SID)
+        jd.rollup_status(s1, True)
+        jd.save_goals(SID, s1)
+        c = s1["nodes"][CHILD]
+        self.assertEqual(len(_reopens(c)), 1, "one reopen row ends the settled episode")
+        self.assertEqual(_reopens(c)[0].get("src"), "romp")
+        self.assertEqual(len(_settles(c)), 3, "the settle rows stay: the diary is append-only")
+        self.assertNotIn("settledDone", c, "the reopen ended the settle in the fold")
+        self.assertEqual(c.get("deltaSince"), T + 10, "the ended settle is the delta boundary")
+        self.assertEqual(s1["status"][CHILD], "working")
+        self.assertIn(CHILD, _menu_ids(s1), "unsealed: the planner's menu lists it")
+        rows = self._error_rows()
+        self.assertEqual([r.get("err") for r in rows], ["unroll-heal"], "one visible row names the heal")
+        self.assertEqual(rows[0].get("goal"), CHILD)
+        self.assertEqual(rows[0].get("fsid"), SID)
+        rev1 = jd._disk_rev(SID)
+        s2 = jd.load_goals(SID)
+        jd.rollup_status(s2, True)
+        jd.save_goals(SID, s2)
+        self.assertEqual(len(_reopens(s2["nodes"][CHILD])), 1, "a second pass appends nothing")
+        self.assertEqual(len(self._error_rows()), 1, "and reports nothing")
+        self.assertEqual(jd._disk_rev(SID), rev1, "and republishes nothing")
+
+    def test_the_dissolving_rollup_reopens_a_promoted_top_whose_diary_holds_the_rows(self):
+        # the same rows reached through the dissolution site: a stale save-rebase republished the child's
+        # old parentId after it had been promoted and settled by the bug, so the sweep re-dissolves the
+        # container and promotes a child that already carries the rows
+        spam = [_row("settle", T + 10, src="romp") for _ in range(2)]
+        st = self._umbrella_world(child_log=spam)
+        jd.rollup_status(st, True)
+        c = st["nodes"][CHILD]
+        self.assertIsNone(c.get("parentId"))
+        self.assertEqual(len(_reopens(c)), 1)
+        self.assertNotIn("settledDone", c)
+        self.assertEqual(st["status"][CHILD], "working")
+        self.assertIn(CHILD, _menu_ids(st))
+        self.assertEqual([r.get("err") for r in self._error_rows()], ["unroll-heal"])
+        before = jd._store_content(st)
+        jd.rollup_status(st, True)
+        self.assertEqual(jd._store_content(st), before, "a second rollup changes nothing")
+
+    def test_a_rolled_away_block_under_the_rows_is_reopened_too(self):
+        # blocked plus the rows is one unblock away from the sealed-Working shape (the unblocker's
+        # candidate filter does not read settledDone, and a lift's unblock row leaves the settle in the
+        # fold), so the heal reopens it as well: the block row stays in the diary, the state is open
+        log = [_row("block", T - 5, why="which pane layout?"), _row("settle", T + 10, src="romp")]
+        st = self._store([_rolled(CHILD, "add the web pane", None, log)])
+        jd.rollup_status(st, True)
+        c = st["nodes"][CHILD]
+        self.assertFalse(c.get("blocked"))
+        self.assertNotIn("settledDone", c)
+        self.assertEqual(st["status"][CHILD], "working")
+        self.assertTrue(any(e.get("kind") == "block" for e in c["log"]), "the diary keeps the block row")
+        self.assertIn(CHILD, _menu_ids(st))
+        self.assertEqual([r.get("err") for r in self._error_rows()], ["unroll-heal"])
+
+    def test_a_promoted_child_without_the_rows_is_not_reopened(self):
+        # no settle rows: the plain unroll is the whole repair; no reopen row, no judge-errors row
+        st = self._umbrella_world(grand=True)
+        jd.rollup_status(st, True)
+        self.assertEqual(_reopens(st["nodes"][CHILD]), [])
+        self.assertEqual(_reopens(st["nodes"][GRAND]), [])
+        self.assertEqual(self._error_rows(), [])
 
 
 if __name__ == "__main__":

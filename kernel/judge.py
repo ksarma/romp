@@ -848,7 +848,9 @@ def _log_judge_error(judge, fsid, err, note=None, goal=None, seg=None):
              "scratch" (the judge scratch cwd can't be made private — call skipped, never rerouted
              to a world-writable directory; see _ensure_judge_scratch), "sweep-cut" (the closer ended a
              session's walk for the pass at a FAILED call — _close_session; the note names the turns left
-             behind and the shape of the menu that died)
+             behind and the shape of the menu that died), "unroll-heal" (a top left the rolled-up state
+             with settle rows and no done in its diary; a romp reopen row ended that settled episode so
+             the node can be judged again — _heal_settle_without_done)
       note   the evidence — reply tail, error message, exception name, or the give-up scope + re-arm
              event. Callers must pass it; an empty note means the caller has nothing at all to show.
       goal   the node id (or list of node ids) the judge was ruling on, when one exists — the feed's
@@ -5510,7 +5512,7 @@ def rollup_status(store, session_closed, now=None):
     never a competing truth. The tree layers (roll-down, moot-block clearing, settled/sticky,
     followupPending) run after, as cache maintenance over the fold's node states."""
     nodes = store["nodes"]
-    folds = _materialize_from_log(nodes)               # P3.3: history → flags; the log is the authority
+    folds = _materialize_from_log(nodes, store)        # P3.3: history → flags; the log is the authority
     #                                                    (migration is a BOOT sweep now — migrate_all_stores)
     # DONE-BY-ASSOCIATION GUARD (the user 2026-08-24): before the roll-down loops can fold them, the
     # OPEN children of every COMPLETED handoff tracking node move up beside it (_lift_handoff_children)
@@ -5588,8 +5590,9 @@ def rollup_status(store, session_closed, now=None):
                     # unrolled and folded, each node from its own diary; an unroll that stopped at the
                     # child left them done under a now-open top. A node whose new solid ancestor is
                     # itself resolved is re-folded by this rollup's roll-down. The folds are recorded so
-                    # the held-open rule sees the promoted nodes like any other.
-                    _unroll_subtree(nodes, _kids, _cid, folds)
+                    # the held-open rule sees the promoted nodes like any other, and a promoted TOP
+                    # whose diary holds the bug's settle rows is reopened once (_heal_settle_without_done).
+                    _unroll_subtree(store, nodes, _kids, _cid, folds)
             nodes.pop(_uid, None)
             store.get("status", {}).pop(_uid, None)
         _pl = store.get("placements") or {}
@@ -8196,9 +8199,10 @@ def _resolved_ancestor(nodes, nd):
     return False
 
 
-def _unroll_subtree(nodes, kids, root, folds):
+def _unroll_subtree(store, nodes, kids, root, folds):
     """Unroll `root` and every rolled-up node under it (`kids`: parentId -> child ids), fold each from its
-    own diary and record the fold in `folds`. The dissolution sweep calls this for each child it promotes: the
+    own diary and record the fold in `folds`; a TOP among them whose diary holds the bug's settle rows is
+    reopened (_heal_settle_without_done). The dissolution sweep calls this for each child it promotes: the
     child's marker and its descendants' markers all mirrored the container being removed, so all of them
     are dropped together; an unroll that stopped at the child left its descendants done under a now-open
     top (review 2026-09-06). A node without the marker is skipped, so a node reached twice through nested
@@ -8216,10 +8220,56 @@ def _unroll_subtree(nodes, kids, root, folds):
         f = _materialize_node(nd)
         if f is None:
             continue
+        if nd.get("parentId") is None:
+            f = _heal_settle_without_done(store, nd, f)
         folds[nid] = f
 
 
-def _materialize_from_log(nodes):
+def _heal_settle_without_done(store, nd, fold):
+    """Reopen a TOP that has just lost the rolledUp marker when its fold reads a settled episode on a node
+    that is not done, and return the fold after the reopen (the given fold otherwise).
+
+    The shape is the marker bug's product. rollup_status appends a settle row when a top reads complete
+    and settled, and a rolledUp node is never materialized, so a promoted child with a stale done flag got
+    one settle row per rollup and settledDone never latched (which is what stops the appends). A node
+    that is not done cannot settle otherwise: a non-umbrella top reads complete only through its own done
+    verdict, or through a settledDone it already carries. Once the marker is gone the fold turns those
+    rows into settledDone on an open (or blocked) node: the card reads Working, but every settledDone
+    reader (open_menu's seal, the closer's and planner's candidate filters) treats the node as sealed, so
+    no judge can move it and nothing shows why. A blocked top with the same rows is one unblock away from
+    that state (_blocked_sub_candidates does not read settledDone, and the lift's unblock row leaves the
+    settle in place), so it is healed the same way.
+
+    The heal is a romp-authored reopen row (record_verdict; may_apply admits a reopen from any source
+    unless the node is view-cleared, in which case the node stays sealed as the user left it). In the fold
+    a reopen moves the current settle to deltaSince and clears settledAt, so settledDone drops, the state
+    reads open and the node is judged like any other open top. ev_t is the store's latest evidence
+    moment, and at least the settle's own, so the row folds after the rows it ends. One judge-errors row
+    ("unroll-heal") names the node and the row count, so the heal is visible where the diary is inspected.
+    It runs once per node: the marker is gone after the unroll, so no later rollup reaches this point for
+    the same node.
+
+    One legitimate shape can reach here: a bottom-up-era top (its settle row landed with no done of its
+    own, under the settledDone grandfather in is_complete) that the retired grouper filed under a
+    container, and the container's roll-down then marked. The heal wakes it as Working; its children are
+    all done, so the closer's all-children-done trigger rules it again on its next pass."""
+    if nd.get("parentId") is not None or fold is None or fold["state"] == "done" or not fold["settledAt"]:
+        return fold
+    nodes = (store or {}).get("nodes") or {}
+    latest = max((max(n.get("mt", 0) or 0, n.get("t", 0) or 0) for n in nodes.values()), default=0)
+    ev = max(int(fold["settledAt"]), int(latest))
+    n_settle = sum(1 for e in (nd.get("log") or []) if e.get("kind") == "settle")
+    if not record_verdict(store, nd, "romp", "reopen", ev,
+                          why="reopened: the settle rows landed while this node was not done"):
+        return fold
+    _log_judge_error("romp", str(nd.get("id") or "?").split(":")[0], "unroll-heal", goal=nd.get("id"),
+                     note="top left the rolled-up state with %d settle row(s) and fold state %r; a romp "
+                          "reopen row ended the settled episode so the node can be judged again"
+                          % (n_settle, fold["state"]))
+    return _fold_node(nd)
+
+
+def _materialize_from_log(nodes, store=None):
     """P3.3 AUTHORITY (the user 2026-07-06): the verdict log IS the node's verdict state; the flags are
     a materialized cache the read side keeps consuming unchanged. Rewriting them from the fold every
     rollup gives the flip its teeth — any flag mutation that bypassed record_verdict is overwritten by
@@ -8233,7 +8283,8 @@ def _materialize_from_log(nodes):
     followupPending, settledAt/settledDone, deltaSince are rewritten from the fold here — their old
     write/pop sites (optimistic_followup, _reopen's un-stick dance, rollup's deadlock heals)
     are gone. Returns {nid: fold} so rollup_status reuses the folds (the held-open rule) without
-    re-folding."""
+    re-folding. `store` is what the repair below needs to record a verdict (rollup_status passes its
+    own)."""
     folds = {}
     rolled = []
     for nid, nd in nodes.items():
@@ -8253,13 +8304,15 @@ def _materialize_from_log(nodes):
         # its descendants', in the fix's first form). Left alone it was a node nothing re-derived (this
         # skip, and record_verdict's), so a stale done flag settled a top again on every rollup and kept a
         # descendant done under an open top. Drop the cache and fold the node from its own diary, like
-        # any other. The check reads
+        # any other; a TOP whose diary holds the bug's settle rows is reopened once. The check reads
         # only ancestors that are not themselves rolled up, so the order of this loop does not matter:
         # a rolled-up ancestor is either unrolled here too or re-marked by this rollup's roll-down.
         _unroll_node(nd, materialize=False)
         f = _materialize_node(nd)
         if f is None:
             continue
+        if nd.get("parentId") is None:
+            f = _heal_settle_without_done(store, nd, f)
         folds[nid] = f
     return folds
 
