@@ -864,7 +864,10 @@ that session's scope and keeps running. Either way the next kernel boot runs
 A kernel restart ends every session's CLI. On `romp refresh`, the manager's
 restart-all, `romp down` or a service stop, the kernel receives SIGTERM and drains: it
 closes each CLI, and a CLI still running when the drain's bound expires gets
-SIGTERM, then SIGKILL. A crash respawn has no drain: the kernel died without
+SIGTERM, then SIGKILL. The manager does the same to the kernel: one still
+running five seconds after the manager's SIGTERM, on a restart as on a stop, is
+sent SIGKILL and the manager logs it; on a restart the fresh kernel then starts
+as usual. A crash respawn has no drain: the kernel died without
 running one, its CLIs are orphaned, and the next kernel's boot reaper
 terminates them (see below). The CLI's harness background tasks do not all end
 with it. Its timers and monitors live inside the CLI process and end when it
