@@ -78,7 +78,7 @@ JSON
                      "unblock": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
                      "group": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
                      "consolidate": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
-                     "distill": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "distill": {"ran": 1, "skipped": 30, "stamped": 1, "bypassed": 0, "incomplete": 0, "due_clock": 0},
                      "stamps": 62}},
  "http": {"GET /tick": {"count": 55, "ms": 27.5}, "GET /sessions": {"count": 5, "ms": 10.0}, "GET /ws": {"count": 3, "ms": 0.0}}}
 JSON
@@ -155,7 +155,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)   no-op hash 5.0 ms/s"* ]]                  # the absent-store predicate memo's window deltas; 50 ms of no-op hashing over 10 s
     [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   cpu/pass 25 ms   chain memo 90 hits / 3 misses   wakes 6 (event 2, backstop 0, 4 sets absorbed)"* ]]   # the WINDOW mean: 2400 ms over 2 passes; 50 ms of judge CPU over them; the chain memo's window deltas; the producer's sets against the waits they ended
     [[ "$output" != *"1012"* ]]                          # not the lifetime ms_mean
-    [[ "$output" == *"tiers     plan 2 ran / 60 skipped (97% skipped)   close 3 ran / 59 skipped (95% skipped, 1 incomplete)   stamps 62"* ]]   # the gate's window deltas per tier; zero-count extras and idle tiers stay off the line
+    [[ "$output" == *"tiers     plan 2 ran / 60 skipped (97% skipped)   close 3 ran / 59 skipped (95% skipped, 1 incomplete)   distill 1 ran / 30 skipped (97% skipped)   stamps 62"* ]]   # the gate's window deltas per tier, store tiers included; zero-count extras and idle tiers stay off the line
     [[ "$output" == *"GET /tick 5 (0.5 ms avg)"* ]]
     [[ "$output" == *"GET /ws 3"* ]]                     # a WebSocket row: count only …
     [[ "$output" != *"GET /ws 3 ("* ]]                   # … never a fabricated 0.0 ms avg
