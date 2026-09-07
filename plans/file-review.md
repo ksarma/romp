@@ -210,7 +210,7 @@ Four properties of the contract shape the design:
   this shape for a message with no selection. Only `track-comment` cannot create it, since it
   requires `--anchor`; the host script builds the comment itself. Every file gets this comment in
   Slice 1 (the user 2026-09-06); for images and PDFs it is the only comment until regions land.
-- **One optional field, `target`, carries a region.** `target: {kind: "image"|"pdf", region: {x,
+- **One optional field, `target`, carries a region; a second, `anchorAt`, a position.** `target: {kind: "image"|"pdf", region: {x,
   y, w, h}, page?, hash, src?}` with the rectangle in fractions of the rendered page or image,
   `page` 1-based for PDFs, `hash` the sha256 of the figure's bytes so a regenerated figure marks
   its region comments stale the way a moved text anchor does, and `src` only on a figure embedded
@@ -233,7 +233,14 @@ Four properties of the contract shape the design:
   rule says to bump `v` only for a breaking change; an optional field older readers ignore is not
   one. The field is built romp-only for now (the user 2026-09-05); documenting it in the
   track-changents README, in the five-key shape above, is a later offer to its author, not a
-  dependency.
+  dependency. The second optional field, `anchorAt: <number>`, sits beside `anchor` on a passage
+  comment and holds the offset the anchor located at (the anchors follow-on, 2026-09-07). It is
+  romp-only and additive under the same version rule: older readers ignore it, the other hosts and
+  the CLIs write the whole object back so it survives them, and the host script refreshes it on
+  every sidecar write it makes, for each comment whose anchor still locates uniquely in the file's
+  text at the time of the write. A comment without an anchor never carries it. The panel passes it to the
+  engine as the tie-break when it paints, so a passage that recurs with identical surroundings
+  wider than the anchor's context stays on the copy that was chosen.
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A first look at a file the
@@ -395,8 +402,14 @@ exactly as `track-comment` does; a whole-file comment has no anchor, no `target`
 `${now}-0`. For a passage comment it re-reads the file and runs
 `engine.locateAnchor` on the fresh text with the anchor the browser built from the displayed
 text, hinted by the start offset; it saves only when the located text equals the quote,
-rebuilding the anchor at the located position, and refuses `anchor-not-found` when the passage is
-gone and `anchor-ambiguous` when two candidates tie. Reject writes the sidecar first, then the
+rebuilding the anchor at the located position with the smallest context, from 24 characters in
+steps of 24 up to a cap of 480 or the file's bounds, at which the anchor has one best hit in the
+whole text (past the cap it is saved at the cap), storing the located offset beside it as
+`anchorAt`, and refuses `anchor-not-found` when the passage is gone and `anchor-ambiguous` when
+two candidates tie and the request carries no offset to settle it (the anchors follow-on,
+2026-09-07; before it every tie was refused). Every sidecar write the host makes refreshes
+`anchorAt` for each comment whose anchor locates uniquely in the file's text at the time of the
+write, and a stored comment's anchor is located with its `anchorAt` as the hint. Reject writes the sidecar first, then the
 file, and restores the prior sidecar bytes (or removes the sidecar it created, when none existed)
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
 write is atomic (temp file and rename in the same directory, through the realpath, mode
@@ -701,8 +714,9 @@ on load, and the two existing editor hosts treat it the same as a comment writte
 CLI. The browser builds the anchor from the displayed text with the engine's `makeAnchor` (the
 quote plus 24 characters of prefix and suffix) and sends it with the note and the start offset;
 the host script re-reads the file and locates the anchor with the engine's `locateAnchor`, hinted
-by that offset, and refuses when the located text differs from the quote or two candidates tie.
-The typed note is never discarded by a refusal.
+by that offset, widens the stored anchor's context until it is unique in the file, stores the
+offset beside it as `anchorAt`, and refuses when the located text differs from the quote, or when
+two candidates tie and no offset was sent. The typed note is never discarded by a refusal.
 
 In Raw view the mapping is exact. Each logical line is one row whose text equals the source line
 (the viewer always soft-wraps, and the row number is CSS content that never enters a selection),
@@ -737,7 +751,9 @@ fences) and otherwise opens scrolled to the block's first line with the note int
 HTML blocks).
 
 Painting distinguishes three states after the engine locates a comment's anchor in the current
-text: located at the quote, painted normally; quote gone but its context found
+text, with the comment's stored `anchorAt` as the tie-break so a passage that recurs with
+identical surroundings past the anchor's context is painted on the copy that was chosen: located
+at the quote, painted normally; quote gone but its context found
 (`engine.js:793-800`), painted over the between-context region in a text-changed style with a
 card; neither found, shown as a card only, marked detached in the panel. Detached is a rendering
 state here, not a stored flag; the host script never calls the engine's comment pruning, and the
@@ -987,6 +1003,21 @@ space beside one that stayed, a substitution of whitespace) carries the Raw rows
 pre-wrap` as an inline style (`renderedPointStyles` in `anchor-map.ts`): under the block's normal
 white-space such a label collapsed to a 0px point with no struck mark and nothing to hover, while the
 painter reported the change shown (the review, 2026-09-07).
+
+The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
+recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
+refused `anchor-ambiguous`, whichever copy was selected, and a stored comment carried nothing but its
+three anchor fields to be placed by. Two changes, both in the host and both romp-only: the stored
+anchor's context widens until it is unique (`uniqueAnchor`: 24 characters, then 24 more at a time, to
+a cap of 480 or the file's bounds; a passage unique at 24 keeps the anchor `track-comment` writes, and
+one still tied at the cap is saved at the cap), and the comment gains `anchorAt`, the located offset,
+refreshed on every sidecar write the host makes for each comment whose anchor locates uniquely
+(`refreshAnchorAts`, in the one sidecar-writing function). The panel passes a card's `anchorAt` to the
+engine as the tie-break when it paints (the model carries the field; the composer path is unchanged),
+so the highlight stays on the copy that was chosen even where the anchor alone cannot tell. The
+refusal remains for a tie the request cannot settle: no offset sent. Tests: the host module
+`tools/file-comments-host-anchors.test.mjs`, one e2e case, `ui/webview/file-comments-anchors.test.ts`,
+and this plan's pins in `tools/file-review-plan.test.mjs`.
 
 ### Slice 3: region comments on images
 
@@ -1372,8 +1403,13 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   src-less contract shape told from its passage, and its re-place; the figure fence:
   `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
   Enter, nothing written and no landmark created, a malformed `figureHash` refused before any disk
-  read, `too-large` before `figure-changed`. `tools/file-review-plan.test.mjs` pins what this plan
-  states for the target's shape, the verbs, the fence, the codes, the caps, the read bound and the
+  read, `too-large` before `figure-changed`. The anchors follow-on
+  (`tools/file-comments-host-anchors.test.mjs`): the anchor's context widens only as far as
+  uniqueness needs and stops at the cap; a tie settled by the hint is placed and one without a hint
+  refuses; `anchorAt` is set at creation, kept by `track-reply` and `track-edit`, refreshed by the
+  next host write after an edit above, never added to a comment without an anchor, and round-trips
+  through `store-io`. `tools/file-review-plan.test.mjs` pins what this plan
+  states for the target's shape, the anchor rule, the verbs, the fence, the codes, the caps, the read bound and the
   poll against the host, kernel and panel sources, so a change to either side without the other
   fails a test.
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,

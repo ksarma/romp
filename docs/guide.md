@@ -263,7 +263,8 @@ folder that already holds one; a file with none gets the folder created beside i
 format the session's own tools read. A comment made here and a reply the session writes are
 the same object, and the two other editors that read the format see them too. Each comment
 is a card in the panel: click it to expand, reply into it, or resolve it. The passage it
-refers to is highlighted in the file. When the session has rewritten the passage, the card
+refers to is highlighted in the file, and a comment on text that occurs more than once stays
+on the occurrence you chose. When the session has rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.
 
