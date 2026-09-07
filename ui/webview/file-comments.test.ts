@@ -598,7 +598,7 @@ function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileView
   const body = new El("div") as unknown as HTMLElement;
   return {
     path: ABS, sid: SID, todoId: null,
-    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null,
+    body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
     post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
@@ -732,7 +732,8 @@ test("every mutating verb: consent first, a fence from the current status, one r
   assert.match(once, /if \(!retried && e\.code === "editing-off"\) \{\n\s*if \(await this\.ctx\.ensureEditingAllowed\(e\.error\)\) return this\.mutateOnce\(verb, args, slot, true\);/);
   assert.match(once, /\} else if \(!retried && MOVED\.has\(e\.code\)\) \{\n\s*await this\.refreshAfterMoved\(e\.code\);\n\s*return this\.mutateOnce\(verb, args, slot, true\);/,
     "a moved fence: fresh status (whose file mtime re-fetches the bytes when they moved — applyStatus), then one retry");
-  assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \}\);/, "a second refusal shows verbatim; moved fences offer Reload");
+  assert.match(once, /this\.errors\.set\(slot, \{ text: e\.error, reload: MOVED\.has\(e\.code\) \|\| e\.code === FIGURE_CHANGED \}\);/, "a second refusal shows verbatim; moved fences offer Reload, and so does a figure whose bytes changed (Slice 3: never retried)");
+  assert.match(once, /const fh = FIGURE_VERBS\.has\(verb\) && args\.target \? figureFenceHash\(s, args\.target as Target\) : null;\n\s*if \(fh\) fence\.figureHash = fh;/, "a write about a figure also fences on its bytes, when the status holds a hash for it (Slice 3)");
   assert.match(SRC, /const MOVED = new Set\(\["store-moved", "file-moved", "config-moved"\]\);/);
   for (const verb of ['"set-tracked", { on: true, scope: "file" }', '"set-tracked", { on: true, scope: "folder" }', '"set-tracked", { on: false, scope: "folder" }',
     '"set-tracked", { on: false, scope: "file" }', '"reply", { commentId: c.commentId, note }', '"comment", args', '"resolve", { commentId: x.dataset.id!, on: x.dataset.on === "1" }']) {
@@ -799,7 +800,11 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   assert.match(VIEW, /box\.appendChild\(bar\); box\.appendChild\(main\);/);
   assert.match(VIEW, /if \(node\) \{ node\.classList\.add\("fileview-aside"\); main\.appendChild\(node\); \}/);
   // hooks: every text paint, the selection before the composer gate, the save ack with `logged`, both exits
-  assert.equal((VIEW.match(/fireRendered\(\);/g) || []).length, 2, "the SVG Source view and the text views both fire onRendered");
+  // the SVG Source view and every text paint fire onRendered; the media body's own call (contract E4, so the region
+  // overlays paint after the picture loads) is a third, so the count is a floor and the two text sites are pinned by shape
+  assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
+  assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "every text paint fires it");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
   assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 2, "closeFileView AND the replace path");
   const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
@@ -876,7 +881,7 @@ test("docs: the guide covers the panel, the poll, the consent, either view and m
   const flat = (t: string) => t.replace(/\s+/g, " ");   // the guide wraps at 80 columns
   const files = flat(GUIDE.slice(GUIDE.indexOf("### Files"), GUIDE.indexOf("## Automatic nudges")));
   for (const phrase of ["**Comments**", "**Track changes**", "**Send to session**", "Rendered or Raw", "**Comment on this file**", "image or a PDF",
-    ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds"]) {
+    ".trackchanges/", "comments log", ".gitignore", "**File comments**", "**File editing**", "every few seconds", "**Re-place**"]) {
     assert.ok(files.includes(phrase), "Files section: " + phrase);
   }
   const chat = flat(GUIDE.slice(GUIDE.indexOf("### The chat"), GUIDE.indexOf("### The feed")));

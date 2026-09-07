@@ -312,19 +312,28 @@ const img = (body: El) => body.querySelector("img.fileview-img");
 test("reload on an image: the previous object URL is revoked once, the <img> gets the new bytes' URL, and close revokes only that one", async (t) => {
   const revoked = watchRevokes(t);
   const { fv, ctx, body } = await open(PLOT, t);
-  const first = img(body)!.src;
+  const firstImg = img(body)!;
+  const first = firstImg.src;
   assert.ok(first.startsWith("blob:"), "the open minted an object URL");
   assert.equal(ctx.mode(), "media"); assert.equal(ctx.mtimeNs(), MT);
+  assert.equal(ctx.mediaElement(), firstImg as unknown as HTMLElement, "the seam's media element is the picture in the body");
   disk[PLOT] = { bytes: PNG2, type: "image/png", mtimeNs: MT2 };   // a session regenerated the figure
   ctx.reload();
   await settle();
   assert.deepEqual(revoked, [first], "the old bytes' URL went, exactly once, before the new one was minted");
-  const second = img(body)!.src;
+  const secondImg = img(body)!;
+  const second = secondImg.src;
   assert.ok(second.startsWith("blob:") && second !== first, "one <img>, at a NEW object URL");
   assert.equal(body.querySelectorAll("img").length, 1, "the reload replaced the image, it did not stack one");
   assert.equal(ctx.mtimeNs(), MT2, "the mtime followed the kernel's header");
   assert.equal(ctx.mode(), "media"); assert.equal(ctx.media(), "image"); assert.equal(ctx.text(), null);
-  assert.equal(paints, 0, "a media repaint is not a text paint");
+  assert.equal(ctx.mediaElement(), secondImg as unknown as HTMLElement, "mediaElement() follows the reload — read from the body, never a kept handle");
+  // the media paint (Slice 3): onRendered waits for the picture to load, and only the picture that is showing counts
+  assert.equal(paints, 0, "neither picture has loaded: no onRendered yet");
+  firstImg.dispatchEvent(new Ev("load"));
+  assert.equal(paints, 0, "a load landing on the REPLACED picture fires nothing — an overlay sized against it would frame nothing anyone sees");
+  secondImg.dispatchEvent(new Ev("load"));
+  assert.equal(paints, 1, "the showing picture's load is the media paint");
   fv.closeFileView();
   assert.deepEqual(revoked, [first, second], "close revokes the CURRENT URL — the registration moved with the reload");
 });
@@ -361,7 +370,7 @@ test("reload with the Source view toggled OFF: the stale decode is dropped, so t
   ctx.reload();
   await settle();
   assert.equal(ctx.mode(), "media"); assert.equal(ctx.mtimeNs(), MT3);
-  assert.equal(paints, 1, "a media repaint: no text paint yet");
+  assert.equal(paints, 1, "the reloaded picture has not loaded: the Source paint is still the only one");
   src.click();
   await settle();
   assert.equal(ctx.mode(), "raw");

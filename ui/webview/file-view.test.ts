@@ -756,8 +756,10 @@ test("a 200 image renders ONE <img> at an object URL; the quote gesture stays of
   // RENDERED media too. The SVG SOURCE view is the deliberate exception — a text view, covered by
   // the media-gate test below.
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  const renderedArm = mediaBranch.slice(mediaBranch.indexOf("body.replaceChildren(isPdf"));
-  assert.ok(renderedArm.length > 0, "the img/PDF render arm exists");
+  const armAt = mediaBranch.indexOf("const shown = isPdf");
+  assert.ok(armAt >= 0, "the img/PDF render arm exists");
+  const renderedArm = mediaBranch.slice(armAt);
+  assert.match(renderedArm, /body\.replaceChildren\(shown\);/, "…and the built element is what reaches the body");
   assert.match(mediaBranch, /imgBlock\(objUrl, path, imgFailed\)/);
   assert.match(VIEW, /if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
   // the romp loader holds the body until the bytes land (the loading-state rule)

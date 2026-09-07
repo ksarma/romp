@@ -197,8 +197,8 @@ the bottom bar turns it on.
 **Comments and tracked changes.** The viewer's **Comments** action opens a panel beside
 the file (below it when the column is narrow). Select a passage in either view, Rendered or
 Raw, and press the **Comment** button that appears next to the selection; type the note
-and press Enter. **Comment on this file** leaves a comment on the file as a whole, which is
-the one kind an image or a PDF takes for now. When a passage cannot be mapped from the
+and press Enter. **Comment on this file** leaves a comment on the file as a whole, which
+every file takes; for a PDF it is the only kind for now. When a passage cannot be mapped from the
 Rendered view (a table, a code block), the panel says so, keeps your note, and offers the
 Raw view with the passage selected. Comments are stored beside the file, in the
 `.trackchanges/` folder at the root of its project (the nearest git repository, vault, or
@@ -209,6 +209,18 @@ is a card in the panel: click it to expand, reply into it, or resolve it. The pa
 refers to is highlighted in the file. When the session has rewritten the passage, the card
 says so, and **Reveal** finds the passage in the Raw view when the Rendered view cannot
 show it.
+
+**Figures.** On an image, whether it is a file of its own or a figure in a markdown page,
+drag a rectangle to comment on that part of it. The rectangle stays on the picture with the
+author's chip, and the card shows that part of the image. When the image's bytes change the
+comment is shown as stale until you resolve it, or press **Re-place** and drag the rectangle
+again where it belongs now; the comment keeps its words and its replies, and only the
+rectangle changes. A figure embedded in a markdown file, such as `![](plot.png)`, is loaded
+from the file's own folder, so a relative path shows in the Rendered view; a web address or a
+`data:` image is left as written. A comment on an embedded figure is stored on its embed line,
+with the rectangle: the session's tools and the other editors place it on that line, and this
+viewer paints the rectangle on the picture. Drawing a rectangle needs a mouse or a trackpad;
+on a phone, comment on the file as a whole instead.
 
 **Track changes** records a session's edits to the file as changes for you to accept or
 reject, instead of letting them land silently. Turn it on for the file or for its folder,

@@ -80,7 +80,15 @@ test("both sheets: the chip's rules sit AFTER the panel block, the dress on the 
     const { block, tail } = split(css, sheet);
     // the panel block is the panel's: the resolver over it speaks panel em, and the chip's chain is not a panel chain
     assert.ok(!block.includes(CHIP_ATTR), sheet + ": the panel block names no " + CHIP_ATTR);
-    assert.ok(!block.includes("::after"), sheet + ": the panel block dresses no ::after");
+    // …and dresses no ::after of the chip's kind: none there carries a size (the resolver over the block would read it in
+    // panel em, and abort on one it cannot parse), and none hangs on the marks' classes. A content-only ::after may sit in the
+    // block: Slice 3's region chip generates its label there (`.fc-region-chip::after { content: attr(data-label); }`),
+    // its size on the chip element, whose overlay is reset to --fs outside the block (styles-fc-region-layer.test.ts).
+    for (const r of rules(block)) {
+      if (!r.head.includes("::after")) continue;
+      assert.equal(decl(r.body, "font-size"), null, sheet + ": a ::after in the panel block carries no size: " + r.head);
+      assert.doesNotMatch(r.head, new RegExp("\\.(" + MARKS.ins + "|" + MARKS.del + ")\\b"), sheet + ": the chip's dress is not in the panel block: " + r.head);
+    }
     // the dress: everything but the content, with content: none, so an unchipped mark generates no box
     const dress = ruleBody(tail, DRESS, sheet);
     assert.equal(decl(dress, "content"), "none", sheet + ": the dress alone draws nothing");

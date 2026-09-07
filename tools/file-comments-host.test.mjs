@@ -24,6 +24,7 @@ import {
   deriveUnsent, decidedFor, writeFileAtomic, checkTooLarge, locateExact, statNs, logPathFor, Refusal,
   applyEdits, TEXT_MAX_BYTES, LOG_TAIL,
 } from './file-comments-host.mjs';
+import { tinyPng, sha256 } from '../tests/fixtures/file_comments/tiny-png.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, '..');
@@ -386,35 +387,50 @@ test('a passage that is gone refuses anchor-not-found, also when only its surrou
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
 });
 
-test('whole-file and target comments round-trip through store-io unchanged', () => {
+test('a region comment on a png and a whole-file comment round-trip through store-io and track-reply unchanged', () => {
   const w = world();
-  let st = status(w, w.report);
-  const target = { kind: 'image', region: { x: 0.12, y: 0.4, w: 0.35, h: 0.2 }, hash: 'a'.repeat(64) };
-  let r = comment(w, w.report, st, { note: 'Crop the chart.', target });
-  st = status(w, w.report);
-  r = comment(w, w.report, st, { note: 'Whole file: add a date.' });
+  const png = path.join(w.root, 'docs', 'chart.png');
+  const bytes = tinyPng(40, 90, 200);
+  fs.writeFileSync(png, bytes);
+  const region = { x: 0.12, y: 0.4, w: 0.35, h: 0.2 };
+  let st = status(w, png);
+  assert.equal(st.fileHash, sha256(bytes));
+  // The client's hash is not the host's to trust: the stored one is the sha256 of the bytes.
+  let r = comment(w, png, st, { note: 'Crop the chart.', target: { kind: 'image', region, hash: 'a'.repeat(64) } });
+  st = status(w, png);
+  r = comment(w, png, st, { note: 'Whole file: add a date.' });
   const sp = r.storePath;
   const written = readSidecar(sp);
   assert.equal(written.comments.length, 2);
+  const target = { kind: 'image', region, hash: sha256(bytes) };
   assert.deepEqual(written.comments[0].target, target);
   assert.equal('anchor' in written.comments[0], false);
   assert.match(written.comments[0].id, /^\d+-0$/);
   assert.equal('target' in written.comments[1], false);
 
-  // store-io loads (normalizing and rebasing) and writes the whole object back: both survive.
-  const loaded = loadStore(sp, w.text);
-  saveStore(w.root, sp, loaded, w.text);
+  // store-io loads (normalizing and rebasing against the CLIs' lossy UTF-8 reading of the png, the
+  // text the fingerprint is over) and writes the whole object back: both survive.
+  const pngText = fs.readFileSync(png, 'utf8');
+  const loaded = loadStore(sp, pngText);
+  saveStore(w.root, sp, loaded, pngText);
   const again = readSidecar(sp);
   assert.deepEqual(again.comments, written.comments);
   assert.equal(again.v, 3);
-  // ...and the host's own next write keeps them too, with a reply into the target comment.
-  st = status(w, w.report);
+  // track-reply answers the region comment, keeps its target, and leaves the png's bytes alone.
+  cliOk(w, 'reply', ['--file', png, '--thread', written.comments[0].id, '--note', 'Cropped and regenerated.']);
+  const replied = readSidecar(sp);
+  assert.deepEqual(replied.comments[0].target, target);
+  assert.equal(replied.comments[0].replies[0].author, 'web');
+  assert.deepEqual(fileBytes(png), bytes);
+  // ...and the host's own next write keeps them too, with a reply into the region comment.
+  st = status(w, png);
   assert.deepEqual(st.store.comments[0].target, target);
-  r = ok(w, { verb: 'reply', path: w.report, args: { commentId: written.comments[0].id, note: 'Cropped.' }, fence: fenceFor(st) });
+  r = ok(w, { verb: 'reply', path: png, args: { commentId: written.comments[0].id, note: 'Thanks.' }, fence: fenceFor(st) });
   const final = readSidecar(sp);
   assert.deepEqual(final.comments[0].target, target);
   assert.deepEqual({ ...final.comments[1] }, written.comments[1]);
-  assert.equal(r.store.comments[0].replies[0].body, 'Cropped.');
+  assert.equal(r.store.comments[0].replies[1].body, 'Thanks.');
+  assert.equal(r.fileHash, sha256(bytes));
 });
 
 // ── fences ──────────────────────────────────────────────────────────

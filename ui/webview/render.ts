@@ -52,6 +52,7 @@ import { openFileView } from "./file-view";
 import { openPathLink, linkifyPathTokens } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
+import { panelMark } from "./file-comments";
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the browser is pane-local here now (the user 2026-08-24)
 import { pastedFilePath } from "./paste-path";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
@@ -1254,6 +1255,11 @@ function preEl(text: string, scrollKey?: string): HTMLElement {
 document.addEventListener("click", (e) => {
   const a = (e.target as HTMLElement)?.closest?.("a[href]") as HTMLAnchorElement | null;
   if (!a) return;
+  // A control the file-comments panel painted INTO a linked figure in the viewer — a region's rectangle, the overlay a
+  // press was handed on from, the picture an embed-line comment framed — is the panel's activation, not the link's:
+  // its delegate opens the card and cancels the anchor (fcopen). Running first, at the capture phase, this handler
+  // opened the tab and let no card open (the 2026-09-06 review); the panel's registry, never the markup, says which.
+  if (panelMark(e.target as Element | null)) return;
   const href = a.getAttribute("href") || "";
   if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // fragment/relative — leave alone
   e.preventDefault();
