@@ -158,26 +158,29 @@ test("the chat's todo card and its Reply modal still link the note against the t
   const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = \"\")"),
                              RENDER.indexOf("input.className = \"ut-reply-input\""));
   assert.match(modal, /dd\.textContent = todoDetail; linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\);/);
-  // the one-line text is the fold's click target, never linkified (click safety, ui/CLAUDE.md)
+  // the one-line text links its paths too (the user 2026-09-07), through the same binder but without the
+  // figure pass: a one-line row is the compact form, so never linkifyFileUris there (user-todo-title-links.test.ts)
   const row = RENDER.slice(RENDER.indexOf('const txt = el("span", "ut-text");'), RENDER.indexOf('const reply = el("button", "ut-btn ut-reply");'));
-  assert.match(row, /txt\.textContent = t\.text;/);
+  assert.match(row, /txt\.textContent = t\.text;\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);/);
   assert.doesNotMatch(row, /linkifyFileUris\(/);
 });
 
-test("waiting.ts links the detail at BOTH sites — the row fold and the Reply modal — with the todo's sid, only when framed", () => {
+test("waiting.ts links the text and the detail at BOTH sites (the row and the Reply modal) with the todo's sid, only when framed", () => {
   assert.match(WAITING, /import \{ linkifyPathTokens \} from "\.\/path-links";/);
   // the gate: a pane the shell does not frame has no Files pane to send a click to → plain text
-  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkDetailPaths\(node: HTMLElement, sid: string\): void \{\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
-  // the row: text first, then the links, on the fold body (never on the one-line .ut-text, the fold's click target)
+  assert.match(WAITING, /const framed = window\.parent !== window;\nfunction linkTodoPaths\(node: HTMLElement, sid: string\): void \{\n\s*if \(!framed\) return;\n\s*linkifyPathTokens\(node, sid\);\n\}/);
+  // the row: text first, then the links, on the one-line text (the user 2026-09-07) and on the fold body
   const row = WAITING.slice(WAITING.indexOf("function rowEl("), WAITING.indexOf("function hostLine("));
-  assert.match(row, /d\.textContent = w\.todo\.detail \|\| "";\n\s*linkDetailPaths\(d, w\.sid\);/);
-  const txt = row.slice(row.indexOf('const txt = el("span", "ut-text");'), row.indexOf('const age = el("span", "wt-age");'));
-  assert.doesNotMatch(txt, /linkDetailPaths|linkifyPathTokens/);
-  // the modal: the same call on the quoted detail, and its own delegate (the overlay lives outside #waiting-list)
+  assert.match(row, /txt\.textContent = w\.todo\.text;\n\s*linkTodoPaths\(txt, w\.sid\);/);
+  assert.match(row, /d\.textContent = w\.todo\.detail \|\| "";\n\s*linkTodoPaths\(d, w\.sid\);/);
+  // the modal: the same call on the quoted line and the quoted detail, and ONE delegate on its box for
+  // both (the overlay lives outside #waiting-list)
   const modal = WAITING.slice(WAITING.indexOf("function showReply("), WAITING.indexOf("// ── render"));
-  assert.match(modal, /dd\.textContent = todoDetail;\n\s*linkDetailPaths\(dd, sid\);/);
-  assert.match(modal, /delegate\(dd, \{ openpath: \(x\) => \{ const p = x\.dataset\.path; if \(p\) openTodoPath\(p, sid, todoId\); \} \}\);/);
-  assert.equal((WAITING.match(/linkDetailPaths\(/g) || []).length, 3, "defined once, applied at the two sites");
+  assert.match(modal, /d\.textContent = todoText;\n\s*linkTodoPaths\(d, sid\);/);
+  assert.match(modal, /dd\.textContent = todoDetail;\n\s*linkTodoPaths\(dd, sid\);/);
+  assert.match(modal, /delegate\(box, \{ openpath: \(x\) => \{ const p = x\.dataset\.path; if \(p\) openTodoPath\(p, sid, todoId\); \} \}\);/);
+  assert.equal((modal.match(/delegate\(/g) || []).length, 1, "one delegate covers the quoted line and the detail");
+  assert.equal((WAITING.match(/linkTodoPaths\(/g) || []).length, 5, "defined once, applied at the four sites");
 });
 
 test("the list's delegate routes openpath from the ROW's sid and todo id, never the span's — click-safe across the per-frame rebuild", () => {

@@ -102,17 +102,23 @@ function dropTodo(sid: string, tid: string): void {
   render();
 }
 
-// ── the detail's file links (plans/file-review.md, Slice 0) ──────────────────────────────────────
-// A file path in a todo's detail is a link: the note names the file the session wants looked at, and the
-// reader reaches it in one click instead of copying the path into a chat. The SAME matcher a chat body
-// gets (path-links.ts), marked with the todo's own session so a relative path resolves against the cwd
-// the note was written from — the kernel's _resolve_open_path, on the /file the viewer fetches. Only
-// when the shell frames this pane: the click goes to the Files pane through the shell's viewFile relay,
-// and a pane opened on its own has nowhere to send it — the detail stays plain text rather than a link
-// that does nothing (ui/CLAUDE.md, every control acknowledges). The matcher binds nothing; the click is
-// the delegate's openpath in the list and one direct delegate in the Reply modal (showReply).
+// ── a todo's file links (plans/file-review.md, Slice 0) ──────────────────────────────────────────
+// A file path in a todo's text or its detail is a link: the todo names the file the session wants looked
+// at, and the reader reaches it in one click instead of copying the path into a chat. The one-line text
+// links too (the user 2026-09-07: sessions often put the path in the line itself, which left no way to
+// open it), through this same function, so a path reads and opens the same wherever in the todo it was
+// written. The matcher is the one a chat body gets (path-links.ts), marked with the todo's own session
+// so a relative path resolves against the cwd the todo was written from: the kernel's _resolve_open_path,
+// on the /file the viewer fetches. Only when the shell frames this pane: the click goes to the Files pane
+// through the shell's viewFile relay, and a pane opened on its own has nowhere to send it, so the text
+// stays plain rather than a link that does nothing (ui/CLAUDE.md, every control acknowledges). The
+// matcher binds nothing; the click is the delegate's openpath in the list and one delegate on the Reply
+// modal's box (showReply). A link inside the one-line text sits inside the fold's own click target
+// (.ut-text, data-act uttoggle): the delegate routes a click to the NEAREST data-act (actions.ts), so the
+// link opens the file and the fold stays put, and a click on the text beside it still folds
+// (user-todo-title-links.test.ts drives both through the real delegate).
 const framed = window.parent !== window;
-function linkDetailPaths(node: HTMLElement, sid: string): void {
+function linkTodoPaths(node: HTMLElement, sid: string): void {
   if (!framed) return;
   linkifyPathTokens(node, sid);
 }
@@ -184,14 +190,16 @@ function showReply(sid: string, todoId: string, todoText: string, todoDetail = "
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  linkTodoPaths(d, sid);   // the quoted line's paths open like the row's
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
   if (dd) {
     dd.textContent = todoDetail;
-    linkDetailPaths(dd, sid);
-    // the modal lives outside #waiting-list and is built once per open, never rebuilt — so it carries
-    // its own delegate for the same act (one listener on the quoted detail; the rows' is on the list)
-    delegate(dd, { openpath: (x) => { const p = x.dataset.path; if (p) openTodoPath(p, sid, todoId); } });
+    linkTodoPaths(dd, sid);
   }
+  // the modal lives outside #waiting-list and is built once per open, never rebuilt, so it carries its
+  // own delegate for the same act: one listener on the box, over the quoted line and the detail both
+  // (the rows' is on the list)
+  delegate(box, { openpath: (x) => { const p = x.dataset.path; if (p) openTodoPath(p, sid, todoId); } });
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -251,6 +259,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   // the one-line ask; detail one click away, and the row SAYS there is more (user-todo-hint.ts)
   const txt = el("span", "ut-text");
   txt.textContent = w.todo.text;
+  linkTodoPaths(txt, w.sid);   // a path in the line opens in the Files pane, as one in the detail does
   linkifyPrRefs(txt, repoBySid.get(w.sid) || null);
   const key = foldKey(w.sid, w.todo.id);
   const hint = utDetailHint(w.todo.detail, openDetail.has(key));
@@ -283,7 +292,7 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   if (hint) {
     const d = el("div", "ut-detail" + (openDetail.has(key) ? " open" : ""));
     d.textContent = w.todo.detail || "";
-    linkDetailPaths(d, w.sid);   // a path in the note opens in the Files pane (the delegate's openpath)
+    linkTodoPaths(d, w.sid);   // a path in the detail opens in the Files pane (the delegate's openpath)
     linkifyPrRefs(d, repoBySid.get(w.sid) || null);   // then `#123` → its PR page; each linker skips the other's anchors
     item.appendChild(d);
   }
@@ -444,7 +453,7 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
       if (!tid || !sid) return;
       showReply(sid, tid, ((x as any)._uttext as string) || "", ((x as any)._utdetail as string) || "");
     },
-    // a file path in a row's detail: the ROW says which session and which todo, the same way the Reply
+    // a file path in a row's text or detail: the ROW says which session and which todo, the same way the Reply
     // modal's delegate takes both from its closure. Not the span's own data-sid: path-links.ts stamps it
     // on a bare path (whose resolver needs a cwd) and not on a file:// URI (an absolute path names no
     // session), so a handler gated on the span's sid dropped every URI click right after the delegate's

@@ -183,10 +183,10 @@ across every session and every attached machine: a decision it needs, a
 credential, a pick between two designs. Each row names its session and shows
 how long the todo has waited. Reply sends your answer straight into that
 session, waking it if it has gone quiet; Dismiss clears the todo without a
-reply. A file path in a todo's detail is a link: click it and the file opens in
-the Files pane, which comes forward if it was closed. The pane is off by
-default, like the outline; turn it on from the bottom bar. Sessions flag todos
-only where the gear's **User todos** switch is on, and the switch is per
+reply. A file path in a todo's text or its detail is a link: click it and the
+file opens in the Files pane, which comes forward if it was closed. The pane is
+off by default, like the outline; turn it on from the bottom bar. Sessions flag
+todos only where the gear's **User todos** switch is on, and the switch is per
 machine: while it is off on this one, the pane says so and still lists the
 other machines' todos. A todo you expected can be missing for two reasons. A
 session that has ended keeps its todos out of the list until you revive it

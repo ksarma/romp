@@ -1734,6 +1734,16 @@ function bindPathLink(a: HTMLElement): HTMLElement {
   });
   return a;
 }
+// A user todo's ONE-LINE text links its paths through the same matcher and the same binder as its detail
+// (the user 2026-09-07: sessions often put the path in the line itself, and the line had no link). No
+// figure pass: linkifyFileUris renders a mentioned image or PDF in full at its mention, which suits a
+// message body and the detail fold but not a one-line row (the compact form, ui/CLAUDE.md); the detail,
+// one click away, keeps the figure. The line is the fold's click target (.ut-text, data-act uttoggle),
+// and a link inside it still opens the file rather than toggling the fold: bindPathLink stops the
+// click's propagation, and the body delegate reads the nearest data-act anyway (actions.ts).
+function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {
+  for (const { el: link } of linkifyPathTokens(node, sid)) bindPathLink(link);
+}
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
 // 2026-07-06). marked doesn't autolink these and DOMPurify strips the file: scheme, so without this they read
@@ -3335,6 +3345,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const line = el("div", "ut-line");
       const txt = el("span", "ut-text");
       txt.textContent = t.text;
+      linkTodoLinePaths(txt, renderingSid || null);   // a path in the line opens like one in the detail: the todo's own session resolves it
       linkifyPrRefs(txt, prRepoFor(renderingSid));   // a `#123` in the ask links to the session's PR (pr-links.ts)
       // progressive disclosure: the one-line version by default, detail one click away — and the row
       // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
@@ -8048,6 +8059,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  linkTodoLinePaths(d, sid);   // the quoted line's paths open like the row's
   linkifyPrRefs(d, prRepoFor(sid));
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
   // whole need stays in view while the answer is typed, without opening the fold first; a bare

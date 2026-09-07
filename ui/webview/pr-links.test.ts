@@ -662,9 +662,10 @@ test("the chat learns its kernel's own name from every tabOrder frame too, throu
 });
 
 test("the chat's plain-text surfaces link too: user-todo rows, their detail folds, and the reply prompt's quote", () => {
-  assert.match(RENDER, /txt\.textContent = t\.text;\s*\n\s*linkifyPrRefs\(txt, prRepoFor\(renderingSid\)\);/);
+  // the line links paths first (user-todo-title-links.test.ts pins that line), then PR refs: each skips the other's anchors
+  assert.match(RENDER, /txt\.textContent = t\.text;\s*\n\s*linkTodoLinePaths\(txt, renderingSid \|\| null\);[^\n]*\n\s*linkifyPrRefs\(txt, prRepoFor\(renderingSid\)\);/);
   assert.match(RENDER, /linkifyFileUris\(d, undefined, undefined, undefined, undefined, renderingSid \|\| null\);\s*\n\s*linkifyPrRefs\(d, prRepoFor\(renderingSid\)\);/);
-  assert.match(RENDER, /d\.textContent = todoText;\s*\n\s*linkifyPrRefs\(d, prRepoFor\(sid\)\);/);
+  assert.match(RENDER, /d\.textContent = todoText;\s*\n\s*linkTodoLinePaths\(d, sid\);[^\n]*\n\s*linkifyPrRefs\(d, prRepoFor\(sid\)\);/);
   assert.match(RENDER, /linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\); linkifyPrRefs\(dd, prRepoFor\(sid\)\);/);
 });
 
@@ -701,9 +702,9 @@ test("the Waiting-on-you pane links asks and their detail per session and opens 
   const WAITING = read("waiting.ts");
   assert.match(WAITING, /import \{ linkifyPrRefs, installPrLinkOpener \} from "\.\/pr-links";/);
   assert.match(WAITING, /repoBySid = new Map\(m\.sessions\.filter/);
-  assert.match(WAITING, /txt\.textContent = w\.todo\.text;\s*\n\s*linkifyPrRefs\(txt, repoBySid\.get\(w\.sid\) \|\| null\);/);
-  // the detail links paths first (user-todo-links.test.ts pins that line), then PR refs — each skips the other's anchors
-  assert.match(WAITING, /d\.textContent = w\.todo\.detail \|\| "";\s*\n\s*linkDetailPaths\(d, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(d, repoBySid\.get\(w\.sid\) \|\| null\);/);
+  // the text and the detail link paths first (user-todo-links.test.ts pins those lines), then PR refs: each skips the other's anchors
+  assert.match(WAITING, /txt\.textContent = w\.todo\.text;\s*\n\s*linkTodoPaths\(txt, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(txt, repoBySid\.get\(w\.sid\) \|\| null\);/);
+  assert.match(WAITING, /d\.textContent = w\.todo\.detail \|\| "";\s*\n\s*linkTodoPaths\(d, w\.sid\);[^\n]*\n\s*linkifyPrRefs\(d, repoBySid\.get\(w\.sid\) \|\| null\);/);
   assert.match(WAITING, /installPrLinkOpener\(document, vscodeApi \? \(m\) => vscodeApi\.postMessage\(m\) : undefined\);/);
 });
 
