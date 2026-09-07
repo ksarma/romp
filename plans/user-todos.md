@@ -379,12 +379,21 @@ the first plain-working top in store order — without that, the escalation was 
 exactly when a card existed to carry it. The badge grew the per-item decision classes,
 recorded in (d).
 *As built (2026-09-07):* the stand-down is AUTHOR-AWARE. `_user_todo_idle` keeps a per-sid arm
-record (`_UT_FLOOR_ARM`: the open todo ids + the settled turn's end it armed at); a turn a peer,
-romp or the harness opens holds the floor; the record is spent by the human opening a turn (plain
-or a card reply), a user interrupt, queued intent, the open set changing (build_feed disarms when
-it empties), or a peer-wait edge; awaiting / API error / live prompt / compaction still read
-not-idle for their duration without touching the record; the record is in-memory, so after a
-kernel restart a session mid non-human turn reads Working once until its next settle.
+record (`_UT_FLOOR_ARM`: the open todo ids + the settled turn's end it armed at); a turn a peer or
+romp opens holds the floor, and so does a harness notification (which never opens a turn of its
+own: the event model absorbs it into the running turn); the record is spent by the human speaking
+to the session (`_last_human_msg_t`: every author-`human` atom since the arm — a plain prompt, a
+card reply, or a message absorbed into a turn someone else opened; a trigger-only read missed the
+absorbed shape and a card reply that ended before a peer's turn opened), a user interrupt, queued
+intent, the open set changing (build_feed disarms when it empties), or a peer-wait edge; awaiting /
+API error / live prompt / compaction still read not-idle for their duration without touching the
+record, and the ANSWER to a permission or judge-auth prompt is not a stand-down event (it leaves no
+human atom in the transcript, so after an approval on a held turn the card wears the floor while
+the approved action runs, until the next settle — whether a prompt answer should spend the record
+is an open call); the record is in-memory, so after a kernel restart a session mid non-human turn
+reads Working once until its next settle. Dead sessions: `_prune_user_todos` drops the record of a
+sid whose death is corroborated, so a session that dies with open rows does not keep one until
+restart.
 
 **Slice 3 — memory across context loss.** The SessionStart hook (sources: resume and compact)
 that emits open todos as a passive context block, in the agent's-own-notes voice.

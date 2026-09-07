@@ -1055,6 +1055,33 @@ class DrainStampFailure(unittest.TestCase):
         km._user_todos_bad.clear()
         self.td.cleanup()
 
+    def test_a_failed_stamp_after_an_immediate_delivery_warns_and_keeps_the_dispatch_alive(self):
+        # the drive handler's own stamp (sent now -> stamp now) had no such guard: a store that went
+        # bad between the handler's pre-check and the stamp, or a disk error in the write, raised
+        # out of _drive into the WS dispatch's per-message except — the answer was delivered, the
+        # exception logged, the repaint skipped, and the client heard nothing about the row that
+        # stayed open. Same contract as the drain: said on stderr, said to the client, and on.
+        sent, injected, pushed = [], [], []
+        client = {"send": lambda s: sent.append(json.loads(s))}
+        err = io.StringIO()
+        with mock.patch.object(km, "_name_of", lambda sid: "web"), \
+                mock.patch.object(km, "_sdk", lambda: None), \
+                mock.patch.object(km, "_send_or_park",
+                                  lambda be, sid, text, echo=None, user_todo=None: injected.append(text) or True), \
+                mock.patch.object(km, "_push_soon", lambda: pushed.append(1)), \
+                mock.patch.object(km, "_write_user_todos", side_effect=RuntimeError("write refused")), \
+                contextlib.redirect_stderr(err):
+            handled = km._drive({"type": "userTodoAnswer", "id": SID, "todoId": self.tid, "text": "8443"}, client)
+        self.assertTrue(handled)
+        self.assertEqual(len(injected), 1, "the answer was delivered")
+        warns = [m["text"] for m in sent if m.get("type") == "warn"]
+        self.assertEqual(len(warns), 1, sent)
+        self.assertIn("reached the session", warns[0])
+        self.assertIn("stays listed", warns[0])
+        self.assertEqual(pushed, [1], "the dispatch went on to its repaint")
+        self.assertIn("answered stamp for %s failed after delivery" % self.tid, err.getvalue())
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the ask still stands, visibly")
+
     def test_a_failed_stamp_after_an_sdk_delivery_keeps_the_rest_of_the_queue(self):
         be = _FakeTodoQueueBackend()
         km.Sessions.backend_for = lambda sid: be

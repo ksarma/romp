@@ -6450,7 +6450,13 @@ def _prune_user_todos():
     from the tab-GC's known-set, which loses alive-but-idle tmux sessions during list-collapse
     cycles and 48h transcript ageouts, silently deleting a LIVE session's open asks. Writes only
     when something actually left (no churn on the per-cycle call); the death check runs only for
-    sids that hold resolved rows."""
+    sids that hold resolved rows.
+
+    The floor's ARM RECORD rides the same sweep (2026-09-07): build_feed disarms a sid only while
+    the alive list still carries it, so a session that died with open rows (never emptied, so the
+    feed's disarm never ran) and then left the list kept its record until restart. Spent here on
+    the same corroborated death evidence — never on a listing miss, which is exactly the flap the
+    record exists to prevent — for the handful of sids that ever floored."""
     with _user_todos_lock:
         cur = _user_todos()
         out = {}
@@ -6466,6 +6472,11 @@ def _prune_user_todos():
                 out[s] = rows
         if changed:
             _write_user_todos(out)
+    with _UT_FLOOR_ARM_LOCK:
+        armed = list(_UT_FLOOR_ARM)
+    for s in armed:
+        if _user_todo_session_ended(s):
+            _ut_floor_disarm(s)                      # the record leaves with its dead session
 
 
 def _user_todo_fp(sid):
@@ -6507,20 +6518,6 @@ def _ut_floor_disarm(sid):
         _UT_FLOOR_ARM.pop(str(sid), None)
 
 
-def _turn_opener(turn):
-    """(author, t) of the atom that OPENED a turn — the trigger atom, else the first atom, the
-    same resolution _last_plain_user_turn_t and _turn_romp_injected make. author is the event
-    model's own field: 'human', 'romp', 'sdk', 'system', 'teammate', or a peer's postal dict.
-    (None, 0) for a turn with no atoms."""
-    atoms = turn.get("atoms") or []
-    trig = turn.get("trigger") or {}
-    tuid = trig.get("uuid") if isinstance(trig, dict) else trig
-    a = next((x for x in atoms if x.get("uuid") == tuid), None) or (atoms[0] if atoms else None)
-    if not a:
-        return None, 0
-    return a.get("author"), (a.get("t") or turn.get("t") or 0)
-
-
 def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
                     tm=None, path=_PATH_UNRESOLVED, open_ids=None):
     """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
@@ -6555,16 +6552,28 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
     action, the exact flap the no-flap guard exists to prevent, one layer up. So the settle that
     arms the floor is RECORDED (_UT_FLOOR_ARM: the open todo ids + the settled turn's end), and on
     a later build the record holds the floor through an open turn or a mid-turn lull while
-    nothing that is news has happened. What spends it, each a real event: the HUMAN opening a turn
-    (a plain prompt via _last_plain_user_turn_t, or the open turn's own opener — a typed card
-    reply carries the goal marker that the plain read skips), a user interrupt, queued intent
-    (the user's answer parked or queued for the session), the open set changing (an answer, a
-    dismiss, a withdraw, a new ask — build_feed also disarms when the set empties), and a peer
-    owing the session a reply. Both stamps compared are TRANSCRIPT times (the opener's t against
-    the settled turn's end), never a wall-clock read. The live stories that outrank this one
-    (awaiting, an API error, a live prompt, compaction) still read not-idle for their duration
-    but leave the record alone: none of them is the user acting, and the floor returns with the
-    record at the next settle without a fresh push (_NOTIFY_UT_FIRED dedups on the set).
+    nothing that is news has happened. What spends it, each a real event: the HUMAN speaking to
+    the session (_last_human_msg_t: every author-'human' atom since the arm — a plain prompt, a
+    typed card reply, or a message absorbed into a turn someone else opened; a romp injection, a
+    peer delivery and a harness notification are other authors and do not count, and an
+    interrupt record is excluded), a user interrupt, queued intent (the user's answer parked or
+    queued for the session), the open set changing (an answer, a dismiss, a withdraw, a new ask —
+    build_feed also disarms when the set empties), and a peer owing the session a reply. A
+    trigger-only read missed two real shapes (2026-09-07): the event model absorbs a prompt that
+    lands mid-turn into the running turn without making it the trigger, and a card reply that
+    ended as its own turn before a peer's turn opened was neither the plain read's (the marker)
+    nor the last turn's opener. Both stamps compared are TRANSCRIPT times (the atom's t against
+    the settled turn's end), never a wall-clock read; every human atom present at the arm is <=
+    the settled turn's end by construction, so the arm itself never reads as spent. The live
+    stories that outrank this one (awaiting, an API error, a live prompt, compaction) still read
+    not-idle for their duration but leave the record alone: none of them is the user acting, and
+    the floor returns with the record at the next settle without a fresh push (_NOTIFY_UT_FIRED
+    dedups on the set). The ANSWER to a permission or judge-auth prompt is not a stand-down
+    event either: it is the user gesturing at the agent's question, not at the request, and it
+    leaves no human atom in the transcript for this read to see — so after an approval on a held
+    turn the card wears the floor while the approved action runs, until the next settle
+    re-derives it (documented, not fixed: whether a prompt answer should spend the record is a
+    product call).
 
     ps None / no turns reads UNKNOWN, never idle — the cache-warm idiom: the floor snaps in after
     _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache. The
@@ -6605,11 +6614,8 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
     open_ids = frozenset(open_ids)
     lt = turns[-1]
     if rec is not None:
-        author, opened_t = _turn_opener(lt)
-        if (rec[0] != open_ids                                       # the set changed: news
-                or _last_plain_user_turn_t(turns) > rec[1]           # the human spoke since the arm
-                or (author == "human" and opened_t > rec[1])):       # …or opened the turn now running
-            _ut_floor_disarm(key)
+        if rec[0] != open_ids or _last_human_msg_t(turns) > rec[1]:   # the set changed, or the human spoke since the arm
+            _ut_floor_disarm(key)                                     # (every author-'human' atom, absorbed or opener; interrupt records excluded)
             rec = None
     if sess_awaiting_why or aerr:
         return False                                 # a live story outranks; the record stands for the settle
@@ -7941,6 +7947,8 @@ _USER_TODOS_UNREADABLE_WARN = ("romp can't read its request store (see the kerne
                                "and nothing changed. Fix or remove the file and try again.")
 _USER_TODOS_UNREADABLE_CARD = ("Can't read romp's request store (%s), so open requests for this session "
                                "can't be shown until the file is fixed or removed (see the kernel log).")
+_USER_TODO_STAMP_FAILED_WARN = ("Your answer reached the session, but it couldn't be recorded (see the kernel "
+                                "log); the request stays listed.")
 
 
 _user_todos_switch_bad = {}   # str(path) -> (mtime_ns,size) of a switch-file VERSION already reported as not a
@@ -17280,7 +17288,16 @@ def _drive(msg, client):
             if got == "parked":
                 pass                                  # the op carries the id; the drain stamps
             elif got:
-                _stamp_user_todo_answered(sid, tid, body, nonce=got if isinstance(got, str) else None)
+                try:
+                    _stamp_user_todo_answered(sid, tid, body, nonce=got if isinstance(got, str) else None)
+                except Exception as e:
+                    # DELIVERED by now, so the bookkeeping failing — a store that went bad between the
+                    # pre-check above and this write, a disk error — is said (stderr, and the client)
+                    # and never raised: out of _drive it landed in _dispatch_ws's per-message except,
+                    # which logged it and skipped the repaint below, so the client heard nothing about
+                    # the row that stayed open (the drain's stamp carries the same guard, 2026-09-07)
+                    sys.stderr.write("user-todos: answered stamp for %s failed after delivery: %s\n" % (tid, e))
+                    client["send"](json.dumps({"type": "warn", "text": _USER_TODO_STAMP_FAILED_WARN}))
             else:
                 client["send"](json.dumps({"type": "warn", "text": _USER_TODO_UNDELIVERED_WARN}))
         _push_soon()
@@ -37130,8 +37147,9 @@ def build_feed(now, tmux=None):
         # the user's next turn. THE EVENTS BEHIND THE MOVE: it arms at the SETTLE (the parsed turn's
         # end with the state log's post-turn record not progressing — _user_todo_idle's no-flap
         # guard, so a mid-turn lull never moves the card) and stands down when the HUMAN acts — a
-        # turn they open (plain or a card reply), a message they queue for the session, an
-        # interrupt — on a peer owing the session a reply, and on the todo's own resolution (the
+        # message they send (a plain prompt, a card reply, or one absorbed into a turn someone else
+        # opened: every author-'human' atom since the arm), a message they queue for the session,
+        # an interrupt — on a peer owing the session a reply, and on the todo's own resolution (the
         # open set changing; an emptied set disarms right here) — each a real event, none a clock.
         # A turn anyone ELSE opens holds it (2026-09-07): peer mail, a romp reminder, a harness
         # notification, a monitor wake. _user_todo_idle's per-sid ARM RECORD (_UT_FLOOR_ARM: the

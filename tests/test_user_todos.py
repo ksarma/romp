@@ -473,6 +473,19 @@ class PruneSweep(_StoreSandbox):
         km._prune_user_todos()
         self.assertEqual(len(km._user_todos()[SID]), 1, "revived → not ended → history stays")
 
+    def test_the_sweep_drops_the_floors_arm_record_of_a_dead_session(self):
+        # _UT_FLOOR_ARM is otherwise cleared only for sids the feed loop still visits: a session that
+        # died with open rows (never emptied, so build_feed's disarm never ran) and then left the
+        # alive list kept its record until restart. The sweep's corroborated death check is the one
+        # place that already asks whether a sid is dead, so the record is spent there — and a LIVE
+        # sid's record stands (a list-collapse miss must not spend it: the flap the record prevents)
+        km._UT_FLOOR_ARM[SID] = (frozenset({"ut-11111111"}), NOW - 30)
+        km._UT_FLOOR_ARM[SID2] = (frozenset({"ut-22222222"}), NOW - 30)
+        self._mark_dead(SID)
+        km._prune_user_todos()
+        self.assertNotIn(SID, km._UT_FLOOR_ARM, "dead: the record leaves with the session")
+        self.assertIn(SID2, km._UT_FLOOR_ARM, "alive: the record stands")
+
     def test_a_noop_prune_never_writes(self):
         km._add_user_todo(SID, "still here")
         p = jd.STATE / "user-todos.json"
@@ -3131,23 +3144,36 @@ class EscalationFloorPredicate(_StoreSandbox):
         self.assertEqual(seen, [(row, "/nonexistent/web.jsonl")])
 
     def test_the_deciding_events_re_derive_it_cleanly(self):
-        # escalate at the settle; stand down when the HUMAN opens a turn — each a real event. A
-        # turn anyone else opens (peer mail, a romp reminder, a harness notification) holds the
-        # arm record: that turn is not the user acting, and the card dipping for it was the flap
-        # (2026-09-07). The opener is the trigger atom's author, the event model's own field.
+        # escalate at the settle; stand down when the HUMAN speaks — each a real event. A turn
+        # anyone else opens (peer mail, a romp reminder) holds the arm record: that turn is not
+        # the user acting, and the card dipping for it was the flap (2026-09-07). The read is
+        # every author-'human' atom since the arm (the event model's own field), wherever it
+        # sits: a harness notification never opens a turn of its own — _is_opener appends it to
+        # the running turn — so its real shape is an absorbed atom, and it holds too.
         def opened_by(author):
             settled = dict(self.PS["turns"][0])
             atom = {"uuid": "u2", "type": "user", "author": author, "t": NOW - 10,
                     "message": {"role": "user", "content": "a word from someone"}}
             return {"turns": [settled, {"id": "t2", "t": NOW - 10, "trigger": {"uuid": "u2"},
                                         "atoms": [atom]}]}
+
+        def absorbed(author):
+            held = dict(self.PS["turns"][0])
+            held.pop("end", None)
+            held["atoms"] = [{"uuid": "u2", "type": "user", "author": author, "t": NOW - 10,
+                              "message": {"role": "user", "content": "a word from someone"}}]
+            return {"turns": [held]}
         peer = {"peer": SID2, "mid": "m-11111111", "kind": "coordinate"}
         self.assertFalse(self._idle(who_working=True), "nothing armed: an open turn is not idle")
         self.assertTrue(self._idle(), "the settle arms the record")
         self.assertTrue(self._idle(ps=opened_by(peer), who_working=True),
                         "a peer-opened turn holds the floor — the set is unchanged and the user did nothing")
         self.assertTrue(self._idle(ps=opened_by("romp"), who_working=True))
-        self.assertTrue(self._idle(ps=opened_by("system"), who_working=True))
+        self.assertTrue(self._idle(ps=absorbed("system"), who_working=True),
+                        "a harness notification absorbed into the settled turn holds it")
+        self.assertFalse(self._idle(ps=absorbed("human"), who_working=True),
+                         "the human's message absorbed into a turn they did not open stands it down")
+        self.assertTrue(self._idle(), "the next settle re-arms it")
         self.assertFalse(self._idle(ps=opened_by("human"), who_working=True),
                          "the human opening a turn stands the floor down")
         self.assertFalse(self._idle(ps=opened_by(peer), who_working=True),
@@ -3248,9 +3274,10 @@ class EscalationFloorLive(_StoreSandbox):
     monitor wake — flapped the card Blocked → Working → Blocked with the todo set unchanged and
     no user action. _user_todo_idle now keeps a per-sid ARM RECORD (the open set + the settle it
     armed at) and holds the floor through such turns; it stands down on the events that are
-    news: the human opening a turn (plain or a card reply), a message queued for the session, a
-    user interrupt, the open set changing, a peer owing the session a reply. SYNTHETIC data only
-    (the notes-api demo world)."""
+    news: the human speaking to the session (every author-'human' atom since the arm — a plain
+    prompt, a card reply, or a message absorbed into a turn someone else opened), a message
+    queued for the session, a user interrupt, the open set changing, a peer owing the session a
+    reply. SYNTHETIC data only (the notes-api demo world)."""
 
     def setUp(self):
         super().setUp()
@@ -3280,10 +3307,12 @@ class EscalationFloorLive(_StoreSandbox):
 
     @staticmethod
     def _turn(tid, t, author, ended=True, text="wire the login routes"):
-        """One parsed turn whose trigger atom carries `author` — 'human', 'romp', 'system', or a
-        peer's postal author dict, the event model's own shapes. Ended turns end 30 s after they
-        open; an open one has no end and no idle tail, exactly what _session_working reads as
-        an open turn."""
+        """One parsed turn whose trigger atom carries `author` — 'human', 'romp', or a peer's
+        postal author dict, the openers the event model emits (a 'system' atom — a harness
+        notification — never opens a turn of its own: _is_opener reads it as a non-opener and
+        appends it to the running turn; see the absorbed-notification case). Ended turns end 30 s
+        after they open; an open one has no end and no idle tail, exactly what _session_working
+        reads as an open turn."""
         atom = {"uuid": tid + "-u", "type": "user", "author": author, "t": t,
                 "message": {"role": "user", "content": text}}
         turn = {"id": tid, "t": t, "trigger": {"uuid": tid + "-u"}, "atoms": [atom]}
@@ -3372,9 +3401,8 @@ class EscalationFloorLive(_StoreSandbox):
         self.assertEqual(self._column(), "needs_input", "the peer turn settled: still Blocked, no move")
         self.turns.append(self._turn("t3", NOW - 6, "romp", ended=False))
         self.assertEqual(self._column(), "needs_input", "a romp reminder holds it")
-        self.turns[-1] = self._turn("t3", NOW - 6, "romp")
-        self.turns.append(self._turn("t4", NOW - 3, "system", ended=False))
-        self.assertEqual(self._column(), "needs_input", "a harness notification holds it")
+        # (a harness notification never opens a turn of its own — its real shape, an atom absorbed
+        # into the settled turn, is the next test's case)
 
     def test_a_turn_the_human_opened_stands_it_down(self):
         self._settled()
@@ -3391,7 +3419,7 @@ class EscalationFloorLive(_StoreSandbox):
 
     def test_a_card_reply_is_the_human_acting_too(self):
         # a typed card reply carries the goal marker, so _last_plain_user_turn_t skips it — the
-        # OPENER check must still read it as the human's own turn
+        # stand-down reads every author-'human' atom, marker or not
         self._settled()
         self.assertEqual(self._column(), "needs_input")
         self.turns.append(self._turn("t2", NOW - 10, "human", ended=False,
@@ -3406,6 +3434,47 @@ class EscalationFloorLive(_StoreSandbox):
         self.turns.append(self._turn("t2", NOW - 20, "human"))
         self.turns.append(self._turn("t3", NOW - 5, self.PEER, ended=False))
         self.assertEqual(self._column(), "working")
+
+    def test_a_card_reply_in_the_history_spends_the_record_under_a_later_peer_turn(self):
+        # the marker-carrying reply ended as its own turn and a peer's turn opened after it, both
+        # between two builds: neither the plain read (the marker) nor the last turn's opener (the
+        # peer) saw the human act — the stand-down must read the human atom wherever it sits
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        self.turns.append(self._turn("t2", NOW - 20, "human",
+                                     text="the cookie, for now <!-- romp-goal-id: g1 -->"))
+        self.turns.append(self._turn("t3", NOW - 5, self.PEER, ended=False))
+        self.assertEqual(self._column(), "working")
+
+    def test_a_message_absorbed_into_a_turn_the_human_did_not_open_stands_it_down(self):
+        # the person typed into the pane while a peer's turn ran: the event model absorbs the prompt
+        # into that turn (no trigger of its own — event_model's mid-turn input), but the human spoke,
+        # so the floor must stand down. A trigger-only read never saw this atom.
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        t2 = self._turn("t2", NOW - 10, self.PEER, ended=False)
+        t2["atoms"].append({"uuid": "t2-h", "type": "user", "author": "human", "t": NOW - 5,
+                            "message": {"role": "user", "content": "use the cookie for now"}})
+        self.turns.append(t2)
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "working")
+        self.assertNotIn(SID, km._UT_FLOOR_ARM)
+
+    def test_a_harness_notification_absorbed_into_the_settled_turn_holds_the_floor(self):
+        # the REAL shape of a monitor wake or a task notification: event_model's _is_opener reads a
+        # 'system' atom as a non-opener, so it is appended to the settled turn (re-opening it, the
+        # trigger unchanged) — never a turn of its own. The floor holds: the atom is not the human.
+        self._settled()
+        self.assertEqual(self._column(), "needs_input")
+        held = dict(self.turns[0])
+        held.pop("end", None); held.pop("ended", None)
+        held["atoms"] = list(held["atoms"]) + [
+            {"uuid": "t1-sys", "type": "user", "author": "system", "t": NOW - 10,
+             "message": {"role": "user", "content": "<task-notification>the build finished</task-notification>"}}]
+        self.turns[0] = held
+        self._states(("working", NOW - 55), ("waiting", NOW - 25), ("working", NOW - 10))
+        self.assertEqual(self._column(), "needs_input", "a harness notification is not the user acting")
+        self.assertEqual(km._UT_FLOOR_ARM.get(SID), (frozenset({self.tid}), NOW - 30), "the record stands")
 
     def test_queued_intent_spends_the_record(self):
         # the user answered while the peer turn ran: the answer is parked → the user acted. The
