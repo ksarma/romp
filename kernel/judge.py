@@ -1003,11 +1003,14 @@ def pass_watermark(tier, fsid):
 #              the sender sid it files under is the ledger's from_id READ THROUGH the parse's postal index,
 #              author_of -> postal_index[m]); store trio (load_goals, placements, the seams _segs applies,
 #              _attach_courier_link's idempotence scan over origin/links msgIds); the episode log
-#              (episode_floor). Two sites mark the run incomplete so it is never stamped: a scan that
-#              appended a pending row (the pending loop runs after every scan, reads the sender's store,
-#              the ledger and the model, and every branch of it writes or defers), and _attach_courier_link
-#              reaching _handoff_backref (it reads every discovered store, which no per-session signature
-#              carries). Not in the signature: MESSAGES (the ledger stays out on the framework's reason
+#              (episode_floor). Four outcomes leave no stamp, so the session is scanned again next pass:
+#              a scan that returned a pending row (the write loop runs after every scan, reads the sender's
+#              store, the ledger and the model, and every branch of it writes or defers); the LINK-ONLY
+#              repair (_attach_courier_link) finding the sender's tracker complete, or the sender a local
+#              session outside the discover window (the two shapes in which a later pass could attach the
+#              link with none of this session's inputs moving; the lookup reads every discovered store, and
+#              every other shape stamps); a repair that raises (it did not run); a store that did not read
+#              (the session stands down; load_goals marked the run). Not in the signature: MESSAGES (the ledger stays out on the framework's reason
 #              below: deliver() appends the sent row BEFORE the wake, so the transcript atom always follows
 #              it and the pinned pair re-arms the scan; a sender-less peer segment, the residual, is placed
 #              by the planner as plain work in the same pass, before the courier reaches it, and the store
