@@ -2321,7 +2321,10 @@ class InheritedEnvironmentNamed(_CommandMode):
         self.assertNotIn(self.NAME, overlay, "the overlay does not touch it either way")
         # the docstring and the reference say the same
         self.assertNotIn("informational", sb.key_source_verdict.__doc__)
-        self.assertIn("reaches every session,\n    judge call and pane the kernel launches", sb.key_source_verdict.__doc__)
+        # whitespace-normalised: Python 3.13+ dedents docstrings at compile time, so the literal's
+        # indentation is not part of __doc__ there and a pin embedding it fails on those interpreters
+        self.assertIn("reaches every session, judge call and pane the kernel launches",
+                      " ".join(sb.key_source_verdict.__doc__.split()))
         root = os.path.dirname(os.path.dirname(os.path.realpath(sb.__file__)))
         with open(os.path.join(root, "docs", "reference.md"), encoding="utf-8") as fh:
             doc = fh.read()
@@ -2755,3 +2758,213 @@ class NothingLeaksInCommandMode(_CommandMode):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _RouteServer:
+    """The REAL kernel handler on loopback beside a REAL backend lab (KeycycleRoute's server, as a mixin):
+    the route is driven end to end with the lab's SdkBackend behind `_sdk`, so the answer is what an
+    operator's `romp keyswap` reads, not what a double returns."""
+
+    @classmethod
+    def setUpClass(cls):
+        import threading
+        from http.server import ThreadingHTTPServer
+        cls.km = sys.modules.get("romp_kernel_keyswap") or load_source("romp_kernel_keyswap",
+                                                                        os.path.join(BIN, "romp-kernel"))
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def _read(self, body):
+        """POST /keycycle with the lab's backend behind the route: (status, decoded body)."""
+        import urllib.error
+        import urllib.request
+        from unittest import mock
+        req = urllib.request.Request("http://127.0.0.1:%d/keycycle" % self.port, method="POST",
+                                     data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json", "X-Romp-Token": self.km.TOKEN})
+        with mock.patch.object(self.km, "_sdk", lambda: self.be), \
+             mock.patch.object(self.km, "_sid_of", lambda w: "s-" + w), \
+             mock.patch.object(self.km, "_name_of", lambda sid: str(sid)[2:]), \
+             mock.patch.object(self.km, "_push_soon", lambda: None):
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status, json.loads(r.read().decode())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read().decode() or "{}")
+
+
+class KeycycleRouteCommandMode(_RouteServer, _CommandMode):
+    """POST /keycycle over the REAL handler with a REAL command-mode backend (the _CommandMode lab):
+    what keyFp is in each command-mode state, and that `romp keyswap`'s kernel half agrees with the
+    shell's own run. KeycycleRoute's doubles cannot show this. The fold's first cut applied upstream's
+    file-mode rule to the command descriptor and answered the fingerprint of the set's absent
+    ANTHROPIC_API_KEY line ("") beside keyKind "helper", so the CLI printed MISMATCH and a --cycle
+    stopped before any reconnect (upmerge review, 2026-09-07)."""
+
+    def _cli_agrees(self, resp):
+        said = []
+        rc = cli._kernel_lines(resp, cli._local(), said.append)
+        return rc, "\n".join(said)
+
+    def test_a_helper_billed_set_answers_the_helpers_fingerprint_and_the_cli_agrees(self):
+        self.helper("echo " + fixture_value("helper"))
+        es._reset()
+        hfp = es.helper_fingerprint()[0]
+        self.assertTrue(hfp, "the lab's helper fingerprints")
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual((resp["keySource"], resp["keyKind"], resp["keyFp"]), ("command", "helper", hfp),
+                         "keyFp is the credential a launch bills now: the helper's output")
+        self.assertEqual(resp["sourceFp"], "", "the descriptor is the set's absent key line: nothing to fingerprint")
+        self.assertEqual(resp["keyErr"], "")
+        rc, text = self._cli_agrees(resp)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("kernel      reads sha256:%s (its own run); 0 live session(s) on it" % hfp, text)
+        self.assertNotIn("MISMATCH", text)
+
+    def test_a_set_that_carries_a_key_answers_the_keys_fingerprint(self):
+        k = fixture_value("setkey")
+        self.print_set({**self.values, "ANTHROPIC_API_KEY": k})
+        es._reset()
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertEqual((resp["keySource"], resp["keyKind"], resp["keyFp"]), ("command", "key", ks.fingerprint(k)))
+        self.assertEqual(resp["sourceFp"], ks.fingerprint(k), "the descriptor holds the set's key line")
+        self.assertNotIn(k, json.dumps(resp))
+        rc, text = self._cli_agrees(resp)
+        self.assertEqual(rc, 0, text)
+        self.assertNotIn("MISMATCH", text)
+
+    def test_no_key_and_no_helper_reads_as_the_login_and_the_cli_agrees(self):
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertEqual((resp["keySource"], resp["keyKind"], resp["keyFp"], resp["keyErr"]),
+                         ("command", "login", "", ""))
+        rc, text = self._cli_agrees(resp)
+        self.assertEqual(rc, 0, text)
+        self.assertIn("kernel      reads no key", text)
+
+    def test_a_status_read_runs_the_command_and_the_helper_once(self):
+        # the fold's first cut kept the fork's fingerprint read ahead of upstream's source read and then
+        # discarded it; both reads are served by envsource's cache, so the pin is the run counters
+        self.helper("echo " + fixture_value("helper"))
+        es._reset()
+        runs0, hruns0 = es._runs, es._helper["runs"]
+        code, resp = self._read({"sessions": []})
+        self.assertEqual(code, 200)
+        self.assertEqual(es._runs - runs0, 1, "one run of the command for the whole read")
+        self.assertEqual(es._helper["runs"] - hruns0, 1, "one run of the helper for the whole read")
+        self._read({"sessions": []})
+        self.assertEqual((es._runs - runs0, es._helper["runs"] - hruns0), (1, 1), "a second read is served from the cache")
+
+    def test_a_cycle_binds_to_the_source_fingerprint_the_read_answered(self):
+        # the CLI sends the read's sourceFp back as expectedSourceFp; both sides compute it from the same
+        # descriptor, so a command-mode cycle never 409s on a fingerprint the shell could not have known
+        self.helper("echo " + fixture_value("helper"))
+        es._reset()
+        code, resp = self._read({"sessions": []})
+        code2, resp2 = self._read({"sessions": [], "expectedSourceFp": resp["sourceFp"]})
+        self.assertEqual(code2, 200)
+        self.assertTrue(resp2["ok"], resp2)
+        code3, resp3 = self._read({"sessions": [], "expectedSourceFp": "stale-source"})
+        self.assertEqual(code3, 409, "a source that moved is refused, as upstream's route refuses it")
+
+
+class KeycycleRouteReferenceSource(_RouteServer, _Backend):
+    """A REAL file-mode backend whose env file selects a 1Password reference, behind the REAL route: a
+    bare status read runs `op read` nowhere on its path, key_source_status and refresh_key_source
+    included (the fork's route calls both beside upstream's source read). The fold's first cut resolved
+    the reference twice per status read, once for a fingerprint it then discarded and once inside
+    key_source_status; upstream's KeycycleRoute double has neither method, so its test could not see
+    it (upmerge review, 2026-09-07)."""
+
+    def setUp(self):
+        super().setUp()
+        self.source = ks.KeySource("op", "op://test-vault/test-item/api-key")
+        ks.write_source(self.source, self.path)
+        ks._CACHE = ((), "")
+        self.be = self.construct()
+
+    def test_a_status_read_never_resolves_the_reference(self):
+        from unittest import mock
+        with mock.patch.object(ks.KeySource, "resolve", side_effect=AssertionError("a status read retrieved a secret")) as resolve:
+            code, resp = self._read({"sessions": []})
+            st = self.be.key_source_status()
+            refreshed = self.be.refresh_key_source()
+        self.assertEqual(code, 200)
+        self.assertTrue(resp["ok"], resp)
+        self.assertEqual(resp["keySource"], "file")
+        self.assertEqual(resp["sourceFp"], self.source.fingerprint(), "the reference's identity, never its value")
+        self.assertEqual(resp["keyFp"], "")
+        self.assertEqual((st["fp"], st["fpKind"], st["err"]), ("", "", ""))
+        self.assertEqual(refreshed, {"from": "", "to": "", "err": ""})
+        resolve.assert_not_called()
+        self.assertNotIn(self.source.value, json.dumps(resp))
+        said = []
+        self.assertEqual(cli._compare(resp, self.path, said.append), 0, "\n".join(said))
+        self.assertIn("1Password reference matches", "\n".join(said))
+
+    def test_a_key_line_still_fingerprints_as_the_key_a_launch_stamps(self):
+        # the descriptor path answers the same fingerprint the resolving path did for a key line
+        self.write_env(NEW_KEY)
+        self.assertEqual(self.be.credential_fingerprint(), (ks.fingerprint(NEW_KEY), "key"))
+        self.assertEqual(self.be.work_key_fp(), ks.fingerprint(NEW_KEY))
+
+
+class CommandModeEnvDoor(_RouteServer, _CommandMode):
+    """The per-session env doors read the source the launch reads. In command mode a stale
+    ROMP_API_KEY_REF line in the env file (an earlier 1Password trial) governs nothing: a per-session
+    credential is not reserved for a retrieval that never runs, and checking a payload neither discards
+    the startup claim nor prints that the file's reference governs. The fold's first cut read the
+    module-level file/op selector at the backend's door, which did both (upmerge review, 2026-09-07).
+    Both copies of the validator, the backend's and the kernel's /new mirror, agree in both modes."""
+
+    NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+
+    def _stale_reference_file(self):
+        with open(self.path, "w") as fh:
+            fh.write("ROMP_PERF=1\nROMP_API_KEY_REF=op://test-vault/test-item/api-key\n")
+        ks._CACHE = ((), "")
+
+    def test_a_stale_reference_line_reserves_nothing_and_says_nothing_in_command_mode(self):
+        import contextlib
+        from unittest import mock
+        self._stale_reference_file()
+        sb._WORK_KEY = BOOT_KEY                    # the startup claim, still held in command mode
+        said_before = sb._STARTUP_KEY_DISCARD_SAID
+        sb._STARTUP_KEY_DISCARD_SAID = False
+        self.addCleanup(setattr, sb, "_STARTUP_KEY_DISCARD_SAID", said_before)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), mock.patch.object(self.km, "_sdk_backend", self.be):
+            self.assertIsNone(sb.reserved_names_source(), "command mode: no descriptor, nothing extra reserved")
+            for auth in ("", "key", "login"):
+                for name in self.NAMES:
+                    payload = {name: fixture_value("door")}
+                    self.assertEqual(sb.env_request_error(payload, auth), "", (name, auth))
+                    self.assertEqual(self.km._env_error(payload, auth), "", (name, auth))
+        self.assertEqual(err.getvalue(), "", "no 'startup key IGNORED' notice: the file's source was never selected")
+        self.assertEqual(sb._WORK_KEY, BOOT_KEY, "checking a payload discards no claim")
+
+    def test_file_mode_keeps_upstreams_rule_on_the_same_file_in_both_copies(self):
+        import contextlib
+        from unittest import mock
+        self._stale_reference_file()
+        os.environ.pop("ROMP_CREDENTIAL_COMMAND", None)   # the command unset: file mode, the reference governs
+        es._reset()
+        with contextlib.redirect_stderr(io.StringIO()), mock.patch.object(self.km, "_sdk_backend", self.be):
+            self.assertEqual(sb.reserved_names_source().kind, "op")
+            for auth in ("", "key", "login"):
+                for name in self.NAMES:
+                    payload = {name: fixture_value("door")}
+                    a, b = sb.env_request_error(payload, auth), self.km._env_error(payload, auth)
+                    self.assertEqual(a, b, (name, auth))
+                    if name == "ANTHROPIC_API_KEY" or auth != "login":
+                        self.assertIn("reserved while runtime API key retrieval", a, (name, auth))
+                    else:
+                        self.assertEqual(a, "", "a login session's own token override stays")

@@ -43,8 +43,15 @@ class KernelBoundary(unittest.TestCase):
     def test_the_door_passes_the_requests_auth_to_the_one_rule(self):
         src = _read("kernel/kernel.py")
         self.assertIn('eerr = _env_error(env_req, str((b or {}).get("auth") or ""))', src)
-        self.assertIn("jd._keysrc.runtime_reserved_names(auth or \"\", jd._keysrc.select_source())", src)
+        # the mirror reads the source the launch reads: the backend's mode-aware descriptor once it is built
+        # (None in command mode, where a stale reference line in the env file governs nothing), else
+        # keysource's selector for the door before the backend exists (2026-09-07)
+        self.assertIn("jd._keysrc.runtime_reserved_names(auth or \"\", _reserved_names_source())", src)
+        self.assertIn('fn = getattr(_sdk_backend, "reserved_names_source", None)', src)
+        self.assertIn("return jd._keysrc.select_source()", src, "the door before the backend exists")
         sb = _read("kernel/sdk_backend.py")
+        self.assertIn('_keysrc.runtime_reserved_names(auth or "", reserved_names_source())', sb,
+                      "the backend's door reads the same mode-aware source")
         self.assertIn('env_request_error(env, (reg or {}).get("auth") or "")', sb, "set_env knows the session's auth")
         self.assertIn('err = env_request_error(env, auth or "")', sb, "spawn knows the pick")
         self.assertIn("_keysrc.runtime_reserved_names(sess.auth, key_source)", sb, "the launch")

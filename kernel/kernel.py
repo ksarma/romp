@@ -12198,6 +12198,19 @@ _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier 
 _ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
 
 
+def _reserved_names_source():
+    """The descriptor _env_error's reserved-names rule decides on: the backend's mode-aware read once it
+    is built (sdk_backend.reserved_names_source: None in command mode, where nothing beyond the identity
+    names is reserved and the env file's source is never selected; the file/op descriptor otherwise),
+    else keysource.select_source() read directly, the door's answer before the eager boot builds the
+    backend. Without the seam a stale ROMP_API_KEY_REF line refused a per-session token in command mode
+    as reserved for a retrieval that never runs (review find, 2026-09-07)."""
+    fn = getattr(_sdk_backend, "reserved_names_source", None)
+    if fn is not None:
+        return fn()
+    return jd._keysrc.select_source()
+
+
 def _env_error(env, auth=""):
     """Why POST /new's "env" is not a valid per-session env payload — "" when it is. The kernel-side
     mirror of sdk_backend.env_request_error (that module loads lazily inside _sdk(), so the handler
@@ -12219,7 +12232,7 @@ def _env_error(env, auth=""):
             return ("env: %s is reserved — romp sets the session's identity env "
                     "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
         if (k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
-                and k in jd._keysrc.runtime_reserved_names(auth or "", jd._keysrc.select_source())):
+                and k in jd._keysrc.runtime_reserved_names(auth or "", _reserved_names_source())):
             return "env: %s is reserved while runtime API key retrieval is configured" % k
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
@@ -46786,7 +46799,6 @@ class Handler(BaseHTTPRequestHandler):
                             refreshed = fn()
                         except Exception as e:
                             refreshed = {"error": str(e)[:80]}
-                keyfp = _work_key_fp()
                 try:
                     kstat = getattr(be, "key_source_status", lambda: {})() or {}
                 except Exception as e:
@@ -46797,9 +46809,19 @@ class Handler(BaseHTTPRequestHandler):
                         source = source_reader()
                         source.validate()
                         sourcefp = source.fingerprint()
-                        # A status read must never fetch a provider. Its reference identity is
-                        # sufficient to confirm that keyswap and this kernel see the same source.
-                        keyfp = "" if source.kind == "op" else sourcefp
+                        if kstat.get("source") == "command":
+                            # COMMAND mode (fork): the descriptor is the set's ANTHROPIC_API_KEY line,
+                            # empty on the key-free install whose sessions bill through the apiKeyHelper,
+                            # so its fingerprint says nothing about what a launch bills. keyFp is the
+                            # credential a launch bills NOW (the set's key, or the helper's output) as
+                            # key_source_status fingerprinted it from its ONE read of the set; `romp
+                            # keyswap` compares that against its own run and stops a cycle on MISMATCH.
+                            # (The fold's first cut answered "" here beside keyKind "helper", 2026-09-07.)
+                            keyfp = kstat.get("fp") or ""
+                        else:
+                            # A status read must never fetch a provider. Its reference identity is
+                            # sufficient to confirm that keyswap and this kernel see the same source.
+                            keyfp = "" if source.kind == "op" else sourcefp
                     else:
                         keyfp = sourcefp = _work_key_fp()  # older backend/test doubles
                 except Exception as e:

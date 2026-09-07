@@ -3434,6 +3434,22 @@ ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
 AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
+def reserved_names_source():
+    """The descriptor keysource.runtime_reserved_names decides on at the env doors (env_request_error
+    here, the kernel's /new mirror), read the way a launch reads the source and WITHOUT selecting one.
+    COMMAND mode (fork): None. Nothing beyond the identity names is reserved there (envsource drops the
+    CLI's own auth names from the set itself, and a per-session token bills what the user chose: the
+    rule _work_key_source's environment descriptor already gives the launch), and work_api_key_source()
+    is not consulted, because selecting the env file's source discards the startup key and prints that
+    the file's reference governs, which is false while the command governs (review find, 2026-09-07: a
+    stale ROMP_API_KEY_REF line made the door refuse a token as reserved for a retrieval that never
+    runs, and the check itself discarded the startup claim). Otherwise the selected file/op descriptor,
+    upstream's rule."""
+    if _envsrc.configured():
+        return None
+    return work_api_key_source()
+
+
 def env_request_error(env, auth: str = "") -> str:
     """Why `env` is NOT a valid per-session env payload — "" when it is (an empty dict is a valid,
     vacuous one). A payload is a dict of NAME → string-value pairs, names in the shell-identifier
@@ -3451,7 +3467,7 @@ def env_request_error(env, auth: str = "") -> str:
         if k in ENV_RESERVED_NAMES:
             return ("env: %s is reserved — romp sets the session's identity env "
                     "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
-        if k in AUTH_ENV_NAMES and k in _keysrc.runtime_reserved_names(auth or "", work_api_key_source()):
+        if k in AUTH_ENV_NAMES and k in _keysrc.runtime_reserved_names(auth or "", reserved_names_source()):
             return "env: %s is reserved while runtime API key retrieval is configured" % k
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
@@ -8039,6 +8055,10 @@ class SdkBackend:
             return _keysrc.KeySource("environment", vals.get(_envsrc.KEY_VAR, ""))
         return work_api_key_source()
 
+    def reserved_names_source(self):
+        """reserved_names_source (module) for a caller holding the backend: the kernel's /new door."""
+        return reserved_names_source()
+
     @property
     def work_key_configured(self) -> bool:
         """Whether a key source is selected, without invoking a provider."""
@@ -8079,7 +8099,8 @@ class SdkBackend:
         run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
         helper is configured at all (the machine login bills, and there is nothing to fingerprint —
         not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
-        the file's or the startup key ("key"). The value cycle_key converges sessions on, and what
+        the file's or the startup key ("key"), or ("", "") for a 1Password reference, which is retrieved
+        per launch and never held. The value cycle_key converges sessions on, and what
         the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
         already took and `values` the set beside it (_cred_take's pair), so one operation reads the
         set once and the helper runs in that set's environment rather than reading it again — which
@@ -8093,7 +8114,16 @@ class SdkBackend:
                 return "", "login"                # no key in the set, no helper: the machine login bills
             fp, _reason = self._helper_fingerprint(snap, values)
             return fp, ("helper" if fp else "")
-        fp = _keysrc.fingerprint(self.work_key)
+        # FILE mode: the selected source's own identity, never a provider call. A key line, the startup
+        # claim or a test's pin fingerprint as the key they hold (the value a launch stamps); a 1Password
+        # reference is retrieved per launch and never held, so a status read has nothing to fingerprint
+        # and answers ("", "") rather than running `op read` for a value it would only hash. Upstream's
+        # rule for /keycycle, kept here because the route reads this too: the fold's first cut resolved
+        # the reference twice per bare status read (review find, 2026-09-07).
+        source = self._work_key_source()
+        if source.kind == "op":
+            return "", ""
+        fp = source.fingerprint()
         return fp, ("key" if fp else "")
 
     def _cred_take(self) -> tuple:
@@ -8289,7 +8319,8 @@ class SdkBackend:
 
     def key_source_status(self) -> dict:
         """The value-free key-source facts the /keycycle route reports beside its rows: source
-        ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire), fpKind
+        ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire in command
+        mode; "" for a 1Password reference, never resolved for a status), fpKind
         ("key"|"helper"|"login"|""; keyKind on the wire — "login" is a set with no key and no helper
         configured: the machine login bills, nothing to fingerprint, no error), err (why there is
         no fingerprint or the last run failed; "" when fine), setFp and selector (command mode),
