@@ -41,6 +41,7 @@ import builtins
 import io
 import json
 import os
+import pathlib
 import re
 import shutil
 import tempfile
@@ -117,6 +118,8 @@ class _Gate(unittest.TestCase):
         jd.end_pass_frame(True)                      # belt: never inherit a frame a crashed test left open
         for c in (jd._PARSE_CACHE, jd._CHAIN_MEMO, jd._BG_SCAN_CACHE, jd._RECON_MEMO, jd._gone_memo):
             c.clear()
+        jd._postal_from_memo[0] = (None, ({}, []))   # the ledger memo keys on (mtime, size), not the path: never
+        #                                              serve another root's rows under this one
         self.cdir = self.td / "launchdir"; self.cdir.mkdir()
         self.proj = self.td / "projects"
         self.pdir = self.proj / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(str(self.cdir)))
@@ -2090,6 +2093,13 @@ class CourierGate(_Gate):
         reader both open it); returns the count."""
         n, target = [0], os.path.abspath(str(jd.MESSAGES))
         reals = {(builtins, "open"): builtins.open, (io, "open"): io.open}
+        # Python 3.10: Path.open calls pathlib._NormalAccessor.open, a class attribute bound to io.open when
+        # pathlib was imported, so a patched io.open never sees Path.read_text (3.11 removed the accessor and
+        # Path.open calls io.open directly). Patch that slot too, as a staticmethod so the path stays the
+        # first argument, the way the unbound builtin behaved.
+        acc = getattr(pathlib, "_NormalAccessor", None)
+        if acc is not None:
+            reals[(acc, "open")] = acc.open
 
         def wrap(real):
             def w(p, *a, **k):
@@ -2098,7 +2108,7 @@ class CourierGate(_Gate):
                 return real(p, *a, **k)
             return w
         for (mod, name), real in reals.items():
-            setattr(mod, name, wrap(real))
+            setattr(mod, name, staticmethod(wrap(real)) if isinstance(mod, type) else wrap(real))
         try:
             fn()
         finally:
