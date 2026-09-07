@@ -14,12 +14,16 @@ scripted: `_send_or_park` records the message instead of injecting it, the names
 that knows one session, `web`, whose recorded cwd is the project root (so the reject trace finds an
 owner), and that session's backend `send` is a recorder.
 
+The todo-file follow-on (2026-09-07) is walked here too: a todo filed through the real POST /usertodo
+with `file`, listed by a status on that file, answered by a send carrying its id, gone at the next status.
+
 Skipped when node is missing (the host script and the CLIs run under it). Synthetic only: the
 notes-api demo world, a placeholder sid, a `.git/` directory as the project landmark (store-io reads
 nothing from it).
 """
 import binascii
 import hashlib
+import io
 import json
 import os
 import re
@@ -1058,3 +1062,64 @@ def test_a_region_comment_on_a_pdf_page_stores_the_page_and_the_hash_a_regenerat
     assert "Comment %s (on the region at 0.50, 0.50, 0.25, 0.25 of page 3):\nCrop the header.\n" % c["id"] in text
     assert "never run track-edit on it" in text
     assert pdf.read_bytes() == minimal_pdf(3), "no verb touched the PDF"
+
+
+def _serve_post(path, body):
+    """Drive the REAL do_POST dispatcher over a fake socket (tests/test_user_todos.py's harness), with the
+    serve token: the door the postal tool's add_user_todo comes through."""
+    raw = json.dumps(body).encode()
+    h = km.Handler.__new__(km.Handler)
+    h.client_address = ("127.0.0.1", 0)
+    h.headers = {"Content-Length": str(len(raw)), "X-Romp-Token": km.TOKEN}
+    h.path = path
+    h.command = "POST"
+    h.request_version = "HTTP/1.1"
+    h.wfile = io.BytesIO()
+    h.rfile = io.BytesIO(raw)
+    h.close_connection = True
+    captured = {}
+    h.send_response = lambda code, *a: captured.__setitem__("status", code)
+    h.send_header = lambda k, v: None
+    h.end_headers = lambda: None
+    h.log_message = lambda *a: None
+    h.do_POST()
+    return captured.get("status"), json.loads(h.wfile.getvalue().decode() or "{}")
+
+
+def test_a_todo_filed_with_its_file_is_listed_by_status_answered_by_a_send_with_its_id_and_gone_after(world):
+    """The todo-file follow-on (2026-09-07), end to end: the session files a todo naming the report through
+    the real route (a relative path, resolved against its cwd); a status on the file lists that todo and not
+    the one whose path lives only in its detail; a send carrying its id answers it; the next status no longer
+    lists it. An unresolvable path is filed all the same, kept as given, with the warning on the reply."""
+    code, res = _serve_post("/usertodo", {"id": SID, "text": "Need a look at the morning report", "file": "docs/report.md"})
+    assert code == 200 and res["ok"] and "warning" not in res, res
+    tid = res["todoId"]
+    rec = km._user_todos()[SID][1]
+    assert (rec["id"], rec["file"]) == (tid, str(world.fp)), "resolved against the session's cwd, stored absolute"
+    listed = [{"id": tid, "text": "Need a look at the morning report"}]
+    s = world.ok("status", world.fp)
+    assert s["todos"] == listed, s["todos"]
+    assert world.ok("status", world.other)["todos"] == [], "another file lists nothing"
+    r1 = world.comment(world.fp, "Which cache?")
+    assert r1["todos"] == listed, "every successful reply carries the list, not the status verb alone"
+    cs = r1["store"]["comments"]
+    comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+    rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                    "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": tid})
+    assert rep == {"type": "fileCommentsSent", "reqId": rep["reqId"], "queued": False}, rep
+    assert world.injected[0]["user_todo"] == tid
+    assert km._user_todos()[SID][1]["resolved"]["kind"] == "answered"
+    assert "resolved" not in world.todo(), "the detail-path todo is untouched: one send answers one todo"
+    s2 = world.ok("status", world.fp)
+    assert s2["todos"] == [], "answered, so gone at the next status"
+    assert s2["unsent"]["comments"] == []
+    # an unresolvable path: filed, kept as given, the warning on the reply, and it matches no file
+    saved = km._cwd_of
+    km._cwd_of = lambda s: ""
+    try:
+        code, res = _serve_post("/usertodo", {"id": SID, "text": "Need a look at the other note", "file": "docs/other.md"})
+    finally:
+        km._cwd_of = saved
+    assert code == 200 and res["ok"] and "did not resolve" in res["warning"], res
+    assert km._user_todos()[SID][2]["file"] == "docs/other.md"
+    assert world.ok("status", world.other)["todos"] == []
