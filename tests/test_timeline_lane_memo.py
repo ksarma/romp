@@ -143,7 +143,7 @@ class LaneMemoBase(unittest.TestCase):
         jd.SDKDIR.mkdir(parents=True, exist_ok=True)
         self._saved = {nm: getattr(km, nm) for nm in (
             "_sdk", "_run_judging", "TL_HORIZON", "JUDGE_CAP_LIMIT", "_LANES_MEMO_MAX", "_lane_segments",
-            "_segs_seam", "_derive_judging_marks", "_captions", "_parse", "_merge_live_atoms")}
+            "_segs_seam", "_derive_judging_marks", "_judging_assemble", "_captions", "_parse", "_merge_live_atoms")}
         self._saved_backend = km.Sessions.backend_for
         self._saved_file_key = jd._file_key
         km._sdk = lambda: None
@@ -539,6 +539,52 @@ class NotHeld(LaneMemoBase):
         self.assertEqual(len(tl["turns"][SID]), 1)
         self.assertEqual(tl["judging"], [], "this lane lost its marks; the frame shipped")
         self.assertIn("judging-marks failed", err.getvalue())
+
+    def test_a_caption_row_with_a_string_time_costs_the_marks_not_the_frame(self):
+        # The horizon comparisons run at assembly, outside the lane's guard; a time they cannot compare
+        # must fail the marks stage at derivation (not memoized, the lane says so) instead of raising out
+        # of build_timeline on every build (review 2026-09-07: _push's cycle-level except would then drop
+        # the feed and bars slots every cycle until the data changed).
+        seg = self.seg_id()
+        jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+        (jd.CAPDIR / (SID + ".jsonl")).write_text(
+            json.dumps({"id": seg, "grain": "segment", "t": "not a number", "caption": "typed time"}) + "\n")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            tl1 = self.build()
+            tl2 = self.build()
+        for tl in (tl1, tl2):
+            self.assertEqual(len(tl["turns"][SID]), 1, "the lane is drawn")
+            self.assertEqual(tl["turns"][SID][0]["summary"], "typed time", "the caption itself still serves the bar")
+            self.assertEqual(tl["judging"], [], "the lane is mark-less")
+        self.assertEqual(self.outcomes()["complain_skip"], 2, "not memoized: the miss and the following build both derive")
+        self.assertEqual(self.stats()["entries"], 0)
+        self.assertIn("judging-marks failed", err.getvalue())
+
+    def test_an_archive_with_a_string_time_costs_the_marks_not_the_frame(self):
+        jd.ARCHDIR.mkdir(parents=True, exist_ok=True)
+        (jd.ARCHDIR / (SID + ".json")).write_text(json.dumps({"t": "soon", "headline": "h"}))
+        err = io.StringIO()
+        with redirect_stderr(err):
+            tl1 = self.build()
+            tl2 = self.build()
+        for tl in (tl1, tl2):
+            self.assertEqual(len(tl["turns"][SID]), 1)
+            self.assertEqual(tl["judging"], [])
+        self.assertEqual(self.outcomes()["complain_skip"], 2)
+        self.assertIn("judging-marks failed", err.getvalue())
+
+    def test_the_assembly_is_guarded_per_lane_at_its_call_site(self):
+        km._judging_assemble = lambda *a, **k: (_ for _ in ()).throw(TypeError("unorderable"))
+        try:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                tl = self.build()
+            self.assertEqual(len(tl["turns"][SID]), 1, "the frame ships with the lane's bars")
+            self.assertEqual(tl["judging"], [])
+            self.assertIn("judging-marks failed", err.getvalue())
+        finally:
+            km._judging_assemble = self._saved["_judging_assemble"]
 
     def test_a_failed_parse_is_not_held(self):
         km._parse = lambda path, sid, now: (_ for _ in ()).throw(OSError("unreadable"))

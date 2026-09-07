@@ -35726,8 +35726,8 @@ def _lane_segments(sid, session, goals, caps, live, bft):
     last_t is the lane's last awake activity (its `since` when tmux has none); compactions are the
     compact_boundary markers; cap_marks and other_marks are this lane's judging marks, unfiltered
     (_derive_judging_marks); nsegs counts the segments visited (the cost a memo hit saves); complained
-    is True when the seams or the marks stage failed and _bars_complain said so, and such a lane is not
-    memoized. No clock is read here."""
+    is True when the seams or the marks stage failed, or a mark carries a time the assembly could not
+    compare, and _bars_complain said so; such a lane is not memoized. No clock is read here."""
     st_turns = session["turns"]
     bars, last_t, seg_ends, nsegs, complained = [], None, {}, 0, False   # seg_ends: seg-start t → work-END t (for completion marks)
     for ti, turn in enumerate(st_turns):
@@ -35785,6 +35785,14 @@ def _lane_segments(sid, session, goals, caps, live, bft):
                     "workUuid": work_uuid, "replyUuid": reply_uuid})
     try:
         cap_marks, other_marks = _derive_judging_marks(sid, caps, goals, seg_ends)
+        # The horizon comparisons run in _judging_assemble, per build, outside this lane's guard; the
+        # one-pass form compared every time here and a malformed one (a string t on a captions row, a
+        # non-numeric groupOp.t, ev_t, distilledMt, briefedMt or archive t) cost this lane its marks.
+        # The same here, before the lane can be memoized: a time the assembly could not compare is a
+        # failed marks stage, not a frame lost on every build until the data changes (review 2026-09-07).
+        if (any(not isinstance(m["t"], (int, float)) for m in cap_marks)
+                or any(not isinstance(ft, (int, float)) for ft, _m in other_marks)):
+            raise TypeError("a judging mark carries a non-numeric time")
     except Exception as e:
         _bars_complain(sid, "judging-marks", e)   # this lane loses its marks, the frame ships
         complained = True
@@ -36113,7 +36121,10 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             bars, seg_ends, last_t, compactions, cap_marks, other_marks = _lane_memo(
                 sid, parsed, session, goals, caps, live, _bft, parse_ok)
             turns[sid] = bars
-            _judging_assemble(cap_marks, other_marks, now - TL_HORIZON, semantic)   # the horizon is the build's
+            try:
+                _judging_assemble(cap_marks, other_marks, now - TL_HORIZON, semantic)   # the horizon is the build's
+            except Exception as e:
+                _bars_complain(sid, "judging-marks", e)   # guarded per lane like every bars stage (2026-08-18)
         # Idle fade: the SAME rule the chat tab uses (ready + idle > 1h — see the `faded` beside the chat
         # chip), keyed on the DERIVED chip `state` computed above, not the raw tmux state. The old form read
         # tmux's vocabulary and counted "waiting" as active — but "waiting" IS the post-turn idle state, so
