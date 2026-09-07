@@ -716,11 +716,13 @@ stands alone only where there is no ledger). You can also reconfigure the
 judges from the gear: the high-volume indexing tier defaults to Haiku, and the
 judgment tier defaults to Sonnet.
 
-The bottom bar shows how the API is treating your sessions, to the right of
-the spend figures: a dot and a word. A gray **ok** means no session is waiting
-on the API. Amber names the problem and how many sessions are waiting on it:
-**rate limited**, **overloaded**, **offline** (this machine cannot reach the
-API), or **errors**. Red **paused** means auto-retry and the judges are
-stopped, and says why: a usage limit, the monthly spend cap, or that you
-stopped them. Click the cell for the waiting sessions (click one to jump to
-its card) and the button that stops or resumes auto-retry for every session.
+The bottom bar's **API** cell, a dot and a word, shows how the API is treating
+your sessions. Gray **ok** means no session is waiting on the API. Amber shows
+how many sessions are waiting and names the problem: **rate limited**,
+**overloaded**, **offline** (this machine cannot reach the API), or **errors**.
+Red **paused** means auto-retry and the judges are stopped, and says why: a
+usage limit, the monthly spend cap, or that you stopped them. Hover for the same
+reading with the waiting sessions listed. Click the cell, or press Enter on it,
+for the detail: each waiting session (click one to open that session), a button
+that stops auto-retry for every session while sessions are waiting and resumes
+it while paused, and links to the usage figures and the Log.
