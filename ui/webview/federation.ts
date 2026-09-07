@@ -74,8 +74,11 @@ const OBJ_ID = ["tabs"]; //                       an array of objects keyed by `
 // no mixed state for this setting, ever; one click writes every machine, so the mark can only be
 // transient). Deliberately NOT here: setDefaultDir (a path on one machine, meaningless on another),
 // setColormap/setPalette (the viewer's display prefs, which the local kernel persists for this browser)
-// and the Thinking summaries toggle (per-install: whoever reads the summaries turns it on where they read
-// them).
+// and the PER-INSTALL gear rows — the Thinking summaries toggle (whoever reads the summaries turns it on
+// where they read them) and the User todos switch (off by default; each kernel's answer is its own — its
+// sub-copy says "this kernel keeps its own copy"): their ops post to the local kernel only, are never
+// queued for or broadcast to another, and are not named anywhere in this file (gear.test.ts's
+// PER_INSTALL pin holds that absence).
 const KERNEL_SETTING = new Set(["setAutoNudge", "setJudgeModel", "setIndexModel",
                                 "setJudgeEffort", "setIndexEffort", "setUpdateMode",
                                 "setJudgeConcurrency",   // T277: the judges' pool width, one value across machines

@@ -383,6 +383,28 @@ from the same SessionStart) and eat the exact block the revival came for. `Conte
 that with the reasoning; ended sessions still hide from every USER surface exactly as designed
 above.
 
+**The per-install switch (2026-09-03), off by default.** Everything above is switchable per
+machine. `STATE/user-todos-enabled.json` (`{"enabled", "gt"}`, the thinking-summaries idiom:
+gesture-clock stand-down, settingStale reply, atomic write, loud write failure) holds the answer,
+the gear's **User todos** checkbox flips it, and `/version` reports it top-level as `userTodos`.
+It is deliberately not a federation `KERNEL_SETTING`: each kernel keeps its own copy, and the
+choice never propagates. While off, every surface refuses and says so: `POST /usertodo` and
+`/usertodo/withdraw` answer 409 with one plain line; `userTodoAnswer` and `userTodoDismiss` answer
+with a warning toast; `/usertodo/context` answers `enabled: false` with an empty block, so the
+SessionStart hook injects nothing; the postal bus leaves the two tools out of `tools/list` and
+refuses a call anyway before any post; and `_open_user_todos`, the one gated read, returns `[]`,
+so the card, the tab glyph, the feed marker, the badge, the escalation floor, the nudge
+stand-down and the push latch all show nothing, with no client logic. The store is untouched by
+the switch: rows registered while it was on stay on disk and reappear when it is turned back on,
+and a boot notice counts the open rows stored behind an off switch. The switch is its own commit,
+so dropping that commit ships the feature on by default.
+
+The store also guards its own shape, because the switch file is easy to mistake for it. A
+`user-todos.json` that is not sid → list (a settings blob, a JSON list, unparsable text) reads as
+empty, says so once per file version, and every writer refuses to overwrite that version until the
+file is fixed or removed; without the guard, the next register would replace the whole store with
+a one-row one.
+
 ## Judges: no vote now, a suggestion later
 
 Explicitly deferred, not in v1: **judge-suggested mootness**. A judge that notices a todo

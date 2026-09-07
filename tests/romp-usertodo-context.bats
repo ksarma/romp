@@ -128,6 +128,29 @@ run_hook() {   # run_hook <source> — feed a SessionStart payload with that sou
     [ -z "$output" ]
 }
 
+@test "the kernel saying the feature is off means no output at all, whatever block rides along" {
+    # the per-install switch (the user 2026-09-03, OFF by default): the kernel is the authority and
+    # its /usertodo/context answer carries `enabled`; false = inject nothing, even if a block came too
+    export ROMP_SID="$SID"
+    export CURL_RESPONSE='{"ok": true, "enabled": false, "block": "Notes you still have open with the person you work for"}'
+    run_hook resume
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    grep -q '/usertodo/context' "$CURL_LOG"   # it asked; the kernel's answer decided
+}
+
+@test "enabled true emits the block; an older kernel with no enabled field is read as on" {
+    export ROMP_SID="$SID"
+    export CURL_RESPONSE='{"ok": true, "enabled": true, "block": "Notes you still have open with the person you work for"}'
+    run_hook resume
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"additionalContext"'* ]]
+    export CURL_RESPONSE='{"ok": true, "block": "Notes you still have open with the person you work for"}'
+    run_hook resume
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"additionalContext"'* ]]
+}
+
 @test "a kernel answer that is not JSON emits nothing and never fails the turn" {
     export ROMP_SID="$SID"
     export CURL_RESPONSE='<html>502 Bad Gateway</html>'

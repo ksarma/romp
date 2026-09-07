@@ -102,11 +102,16 @@ class _StoreSandbox(unittest.TestCase):
         self.saved = jd.STATE
         jd.STATE = Path(self.td.name)
         km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+        km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03);
+        #                                              these suites pin the ON behavior — the OFF side
+        #                                              lives in test_user_todos_switch.py
 
     def tearDown(self):
         jd.STATE = self.saved
         self.td.cleanup()
         km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
 
 
 class StoreRoundTrip(_StoreSandbox):
@@ -158,13 +163,21 @@ class StoreRoundTrip(_StoreSandbox):
                          "detail rides iff the ask has one")
         self.assertEqual(km._open_user_todos(SID), km._open_user_todos(SID), "byte-stable across builds")
 
-    def test_a_garbled_or_non_dict_file_reads_as_empty(self):
+    def test_a_garbled_or_non_dict_file_reads_as_empty_and_refuses_writes(self):
+        # a file that is not a todo store reads as EMPTY, loudly, and no writer may replace it
+        # while that version stands (the shape guard; the OFF side of the story and the full
+        # guard contract live in test_user_todos_switch.py, StoreShapeGuard)
         p = jd.STATE / "user-todos.json"
-        p.write_text("not json")
-        self.assertEqual(km._user_todos(), {})
-        km._user_todos_cache.clear()
-        p.write_text(json.dumps(["enabled"]))
-        self.assertEqual(km._user_todos(), {})
+        for junk in ("not json", json.dumps(["enabled"])):
+            km._user_todos_cache.clear(); km._user_todos_bad.clear()
+            p.write_text(junk)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(km._user_todos(), {}, junk)
+                self.assertIn("is not a todo store", err.getvalue(), junk)
+                with self.assertRaises(RuntimeError):
+                    km._add_user_todo(SID, "Need the staging port")
+            self.assertEqual(p.read_text(), junk, "the unreadable store is never replaced")
 
 
 class ResolutionStamps(_StoreSandbox):
@@ -675,6 +688,7 @@ class BuildSessionSeam(unittest.TestCase):
         jd.GOALDIR.mkdir(parents=True)
         km._parse_cache.clear()
         km._user_todos_cache.clear()
+        km._set_user_todos(True)                     # switch ON (default OFF since 2026-09-03) — see _StoreSandbox
         rows = [
             {"type": "user", "uuid": "u1", "timestamp": "2026-06-01T00:00:00Z",
              "sessionId": SID, "message": {"role": "user", "content": "wire the login routes"}},
@@ -3687,9 +3701,13 @@ class ContextBlock(_StoreSandbox):
         # rendering neither writes the store nor moves a row — the hook may fire any number of
         # times (every resume, every compaction) and the notes stand exactly as they were. Two
         # rows, so the newest-first reversal is proven to work on a copy: reversing the store's
-        # own cached list in place would flip the order on every other render
-        km._add_user_todo(SID, "Need the auth-scheme decision")
-        km._add_user_todo(SID, "Need the staging port")
+        # own cached list in place would flip the order on every other render. Distinct clocks
+        # for the two mints: createdT is whole seconds, and a same-second pair ties and sorts by
+        # its random id
+        with mock.patch.object(km.time, "time", return_value=NOW):
+            km._add_user_todo(SID, "Need the auth-scheme decision")
+        with mock.patch.object(km.time, "time", return_value=NOW + 60):
+            km._add_user_todo(SID, "Need the staging port")
         p = jd.STATE / "user-todos.json"
         before = p.read_text()
         first = km._user_todo_context_block(SID)
