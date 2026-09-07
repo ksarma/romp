@@ -341,7 +341,7 @@ erase.
 
 ### What you see
 
-**The card by the message box.** The card at the bottom of a session's
+**The card by the composer.** The card at the bottom of a session's
 transcript lists the agent's own checklist (**To-do · 0/3** in the picture).
 When the session has open requests, the card gains a second section, **Waiting
 on you · N**, with one row per request, oldest first. Each row is the session's
@@ -350,22 +350,29 @@ behind it; click the line to open it, and a file path in the details opens the
 file. Each row has two buttons:
 
 - **Reply** opens a small dialog that quotes the request. Type your answer and
-  press Enter. The answer reaches the session as a message from you, prefixed
-  with `Re:` and the request's own line, so a short answer such as "session
-  cookies" lands without ambiguity. The row leaves the card.
+  press Enter. On a phone, Enter starts a new line and **Send** sends. The
+  answer reaches the session as a message from you, prefixed with `Re:` and the
+  request's own line, so a short answer such as "session cookies" lands without
+  ambiguity. The row leaves the card.
 - **Dismiss** clears the request without sending anything. Press it twice; the
   first press asks you to confirm. Use it for a request that is moot or stale.
 
 Each section appears only when it has rows, so a session with no open requests
-shows the card it always did.
+shows the card it always did. If the kernel cannot read its request store, the
+card says so in place of the requests and names the file; Reply and Dismiss
+change nothing and say so, and the kernel log has the cause. Fix or remove the
+file and the card reads again.
 
-![The card by the message box: the agent's checklist above, the requests waiting on you below](assets/guide/user-todos-card.png){ width="100%" }
+![The card by the composer: the agent's checklist above, the requests waiting on you below](assets/guide/user-todos-card.png){ width="100%" }
 
 ![The first request opened: its details, with file paths as links](assets/guide/user-todos-detail-open.png){ width="100%" }
 
 ![The Reply dialog quotes the request and its details above the box for your answer](assets/guide/user-todos-reply-modal.png){ width="100%" }
 
-![Reply quotes the request; the answer lands in the chat as a message from you, and the row leaves the card](assets/guide/user-todos-reply.gif){ width="100%" }
+Reply quotes the request; the answer lands in the chat as a message from you,
+and the row leaves the card:
+
+<video src="../assets/guide/user-todos-reply.mp4" controls loop muted playsinline preload="none" data-romp-autoplay width="100%"></video>
 
 **The tab.** A session with open requests carries a ⚑ after its name in the tab
 strip. The flag says that something in that session waits on you; the card says
@@ -374,20 +381,34 @@ what. Tabs carry no counts.
 ![A ⚑ on the tab of a session that has asked you for something](assets/guide/user-todos-tab.png){ width="232" }
 
 **The feed.** Every card of that session wears a small "⚑ waiting on you"
-marker; click it and the session's chat opens. While the session is still
-working, its cards stay where they are: it told you what it needs, and it is
-not waiting on you for the rest. When the session goes idle with a request
-still open and nothing else in progress (no turn running, no background work
-awaited, no reply owed to it by another session on the same machine), the
-request is all that is left of its work, and the card for its current work
-moves to <span class="romp-chip romp-chip-blocked">Blocked</span> with a red
-"⚑ waiting on you" badge. Hover the badge and it says that the session has run
-out of work it can do alone and is waiting on what it asked you for. A session
-with no card at that point gets a placeholder card in Blocked, titled with its
-oldest request. The card returns to Working when you answer or dismiss the
-request, or when the session starts new work.
+marker, with the number of open requests when there is more than one; click it
+and the session's chat opens. While the session is still working, its cards
+stay where they are: it told you what it needs, and it is not waiting on you
+for the rest.
+
+![The feed while the session still works: its card wears the marker with the count of open requests and stays in Working](assets/guide/user-todos-feed-working.png){ width="100%" }
+
+When the session goes idle with a request still open and nothing else in
+progress (no turn running, no background work awaited, no reply owed to it by
+another session on the same machine), the request is all that is left of its
+work, and the card for its current work moves to
+<span class="romp-chip romp-chip-blocked">Blocked</span> with a red
+"⚑ waiting on you" badge in place of the marker; the session's other cards keep
+theirs. Hover the badge and it says that the session has run out of work it can
+do alone and is waiting on what it asked you for. A session with no card at
+that point gets a placeholder card in Blocked, titled with its oldest request.
+The card returns to Working when you answer or dismiss the request, or when you
+next speak to the session; if other requests are still open when the session
+settles again, it returns to Blocked for them. Work set off by another
+session's message, a reminder, or a notification does not move it: the card
+stays in Blocked until you act or the session withdraws the request.
 
 ![The api session idle on two requests: its task cards keep the marker, and the card for its current work sits in Blocked](assets/guide/user-todos-feed.png){ width="100%" }
+
+The session goes idle, its card leaves Working for Blocked and takes the badge,
+and the three task cards the judges file next wear the marker:
+
+<video src="../assets/guide/user-todos-escalates.mp4" controls loop muted playsinline preload="none" data-romp-autoplay width="100%"></video>
 
 **The badge and the bell.** If you run the dashboard as an installed app on your
 phone, the count on its icon is the number of things only you can move: open
@@ -413,9 +434,11 @@ The feature is off by default. The gear's **User todos** checkbox (under
 attached machine keeps its own setting. While it is off, sessions on that
 machine are not offered the tools that file or withdraw a request, nothing is
 listed, nothing is handed back to a session on resume, and the count on the app
-icon is what it was before the feature existed. Requests filed earlier stay
-stored and reappear when you turn it back on; at startup, the kernel's log says
-how many are waiting.
+icon is what it was before the feature existed. Flipping the switch reaches
+sessions that are already running: within a few seconds the tools appear or
+disappear for them, no restart needed. Requests filed earlier stay stored and
+reappear when you turn it back on; at startup, the kernel's log says how many
+are waiting.
 
 ![The gear's User todos checkbox](assets/guide/user-todos-gear.png){ width="518" }
 
@@ -433,23 +456,39 @@ a line inviting it to withdraw any that are met or moot. The list costs no turn;
 the session reads it when it next works. A session with no open requests
 receives nothing.
 
+A session you clear with `/clear` is not handed its open requests back: it
+starts a fresh conversation, and what it asked for stays in view on its card,
+its tab, and the badge until you answer or dismiss it.
+
+After a kernel restart, Reply on the card wakes the sleeping session with its
+history intact; it answers, withdraws the request the answer made moot, and the
+section empties:
+
+<video src="../assets/guide/user-todos-resume.mp4" controls loop muted playsinline preload="none" data-romp-autoplay width="100%"></video>
+
 ### How a session files one
 
 A session gets two tools alongside its mail tools (see
 [Inter-agent communication](#inter-agent-communication-the-romp-postal-service)):
 
 - `add_user_todo` takes one short line, what it needs and why, and an optional
-  `detail` for context the line cannot carry. It returns an id. The tool's
-  description tells the session what qualifies: something it is waiting on you
-  for, never a status update or an FYI. It also tells the session to withdraw
-  the request the moment the need is met.
+  `detail` for context the line cannot carry. It returns an id. The line holds
+  up to 500 characters and the detail up to 4000; a longer one is refused rather
+  than cut short, and the session is told to keep the note to one line and put
+  the rest in its reply. The tool's description tells the session what
+  qualifies: something it is waiting on you for, never a status update or an
+  FYI. It also tells the session to withdraw the request the moment the need is
+  met.
 - `withdraw_user_todo` takes the id and takes the request back. Withdrawing a
   request you already answered or dismissed, or one the session already
   withdrew, gets a plain answer saying so, with the time, and no error: the
   need is met, which is what the session wanted. An id that is unknown or
   another session's is refused. Neither is a silent success.
 
-![The session files a request in the middle of its turn; the section appears under the transcript and the tab gains its flag](assets/guide/user-todos-filed.gif){ width="100%" }
+The session files a request in the middle of its turn; the section appears
+under the transcript and the tab gains its flag:
+
+<video src="../assets/guide/user-todos-filed.mp4" controls loop muted playsinline preload="none" data-romp-autoplay width="100%"></video>
 
 A request filed by a subagent belongs to the session the subagent works inside,
 because you talk to the session, not to the subagent.
