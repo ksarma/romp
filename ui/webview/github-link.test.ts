@@ -174,11 +174,13 @@ test("the sheets dress the unit: the caption at button size, the disabled button
     // same size as the buttons it annotates (labels match labels), truncated with the tooltip whole
     assert.match(css, /\.fileview-gh-why \{ font-size: 0\.82em; color: var\(--dim\); max-width: 18em; overflow: hidden;\n\s+text-overflow: ellipsis; white-space: nowrap; \}/);
     assert.match(css, /\.fileview-btn \{ font: inherit; font-size: 0\.82em;/);
-    assert.match(css, /\.fileview-gh \.fileview-btn:disabled \{ opacity: 0\.55; cursor: default; \}/);
-    assert.match(css, /\.fileview-gh \.fileview-btn:disabled:hover \{ border-color: var\(--card-border\); color: var\(--fg\); background: transparent; \}/);
-    assert.match(css, /\.fileview-gh \.fileview-btn:disabled:active \{ transform: none; \}/);
+    // the disabled dress is every bar button's since the text-size control's ends took it too (review 2026-09-07); the
+    // unit's no-link button is a real disabled button under it
+    assert.match(css, /\.fileview-btn:disabled, \.fileview-btn\[aria-disabled="true"\] \{ opacity: 0\.55; cursor: default; \}/);
+    assert.match(css, /\.fileview-btn:disabled:hover, \.fileview-btn\[aria-disabled="true"\]:hover \{ border-color: var\(--card-border\); color: var\(--fg\); background: transparent; \}/);
+    assert.match(css, /\.fileview-btn:disabled:active, \.fileview-btn\[aria-disabled="true"\]:active \{ transform: none; \}/);
     assert.match(css, /a\.fileview-gh-note \{ border-style: dashed; \}/);
-    assert.doesNotMatch(css, /aria-disabled="true"\]/, "the disabled state is the button's own, not an aria bit on an anchor");
+    assert.doesNotMatch(css, /\.fileview-gh[^{\n]*aria-disabled|a\.fileview-btn[^{\n]*aria-disabled/, "the unit's disabled state is the button's own, not an aria bit on an anchor (the text-size control's ends carry aria-disabled to keep the keyboard focus, and the shared rule dresses both)");
   }
 });
 

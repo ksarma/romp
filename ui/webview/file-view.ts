@@ -290,9 +290,10 @@ export interface FileViewActionCtx {
    *  repaint hands the read-mode state back.
    *  Also after a text view REFLOWS with its text unchanged: a text-size step (the A− / A+ buttons, the wheel) and a
    *  change of the body's width (the pane resized, the aside opening or closing; a ResizeObserver on the body, so the
-   *  event is the layout's own, never a timer). Every position measured from the text has moved by then, so the panel's
-   *  paint pass runs again; a media body's own observers (the figure layer's, the PDF chunk's) already cover theirs, and
-   *  the editor lays out its own text, so neither reflow fires for those */
+   *  event is the layout's own, never a timer, folded to one call per animation frame and none when the width is back
+   *  where the last call left it). Every position measured from the text has moved by then, so the panel's paint pass
+   *  runs again; a media body's own observers (the figure layer's, the PDF chunk's) already cover theirs, and the
+   *  editor lays out its own text, so neither reflow fires for those */
   onRendered(cb: () => void): void;
   /** runs on mouseup/touchend with a non-collapsed selection inside the body — BEFORE the quote-chip gate, so it works with no chat pane */
   onSelection(cb: (sel: Selection) => void): void;
@@ -745,12 +746,21 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     }
   }
   // ── text size (the user 2026-09-07) ── A− and A+ step the text views through TEXT_SIZES; between them the
-  // current size, shown only once it is not the default, is the reset (progressive disclosure: at 100% there is
-  // nothing to reset and nothing to say). Built once per open like the format toggles above, so direct listeners
-  // are click-safe; each click acknowledges in the same tick (the readout, the disabled end, the reflow itself).
-  // The three hide with the format toggles in edit mode (the editor keeps its own size) and over a media body
-  // (nothing there reads the property); the SVG Source view is a text view and keeps them. The step is applied
-  // as `data-fv-text` on the viewer root, which the sheets read (the "text size and measure" block).
+  // current size, said only once it is not the default, is the reset (progressive disclosure: at 100% there is
+  // nothing to reset and nothing to say). The readout's SLOT is there from the start, empty at the default
+  // (the sheet's .fileview-size-default, visibility not display): a slot that appeared after the first press
+  // moved A− under the pointer, and the second press landed on the reset and undid the first (review
+  // 2026-09-07). Built once per open like the format toggles above, so direct listeners are click-safe; each
+  // click acknowledges in the same tick (the readout, the dimmed end, the reflow itself). An end of the table
+  // is said with aria-disabled, not `disabled`: a button that disables under keyboard focus drops it (the ring
+  // vanished on the third Enter, and a fourth did nothing with no visible reason), while an aria-disabled one
+  // keeps the focus, wears the sheet's disabled dress, and its click is the no-op setTextSize already makes of
+  // a step to the size in force. The three hide until a TEXT body is known (renderBody, off the fetch that
+  // brought the kernel's Content-Type: a picture or a PDF opened over a slow link showed them beside the
+  // loader and then took them away), with the format toggles in edit mode (the editor keeps its own size) and
+  // over a media body (nothing there reads the property); the SVG Source view is a text view and keeps them.
+  // The step is applied as `data-fv-text` on the viewer root, which the sheets read (the "text size and
+  // measure" block).
   let sizePct = loadTextSize();
   const sizeDown = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
   sizeDown.type = "button"; sizeDown.textContent = "A−"; sizeDown.title = "Smaller text (Ctrl/Cmd + wheel)";
@@ -760,14 +770,17 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   const sizeUp = el("button", "fileview-btn fileview-size") as HTMLButtonElement;
   sizeUp.type = "button"; sizeUp.textContent = "A+"; sizeUp.title = "Larger text (Ctrl/Cmd + wheel)";
   sizeUp.setAttribute("aria-label", "Larger text");
+  sizeDown.hidden = true; sizeReset.hidden = true; sizeUp.hidden = true;   // until renderBody knows a text body
+  // an end of the table: dimmed and inert, focus kept (the sheet dresses [aria-disabled="true"] as :disabled)
+  const atEnd = (b: HTMLButtonElement, end: boolean) => { if (end) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled"); };
   // the property on the root, and the control's own state, from sizePct
   const applyTextSize = () => {
     box.dataset.fvText = String(sizePct);
     sizeReset.textContent = sizePct + "%";
     sizeReset.setAttribute("aria-label", "Text size " + sizePct + "%, reset to " + TEXT_SIZE_DEFAULT + "%");
-    sizeDown.disabled = sizePct === TEXT_SIZES[0];
-    sizeUp.disabled = sizePct === TEXT_SIZES[TEXT_SIZES.length - 1];
-    sizeReset.hidden = sizeDown.hidden || sizePct === TEXT_SIZE_DEFAULT;   // sizeDown carries renderBody's mode gate
+    atEnd(sizeDown, sizePct === TEXT_SIZES[0]);
+    atEnd(sizeUp, sizePct === TEXT_SIZES[TEXT_SIZES.length - 1]);
+    sizeReset.classList.toggle("fileview-size-default", sizePct === TEXT_SIZE_DEFAULT);   // the empty slot
   };
   applyTextSize();
   acts.appendChild(sizeDown); acts.appendChild(sizeReset); acts.appendChild(sizeUp);
@@ -941,24 +954,37 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     if (r.dir) setTextSize(stepTextSize(sizePct, r.dir));
   }, { passive: false });
   // The body's WIDTH: the Files pane dragged narrower or wider, the aside opening or closing, the window resized.
-  // The text reflows (the prose measure follows the pane up to its cap, tables and code blocks take the room or
-  // scroll in their own box) and every position measured from it has moved, so the panel's paint pass runs again,
-  // off the layout's own report of the change (a ResizeObserver, batched per frame by the browser, never a timer).
-  // The observer's first report describes the size at observe(), not a change; a report with the same width (the
-  // body grew taller as a figure loaded) moved no text sideways and is skipped. Media bodies have their own
-  // observers (the figure layer's, the PDF chunk's), and the editor its own layout, so textShowing gates this too.
-  // Absent ResizeObserver (a stand-in, an old engine) there is no width event to key on, so nothing fires.
+  // The text reflows (the prose measure follows the pane up to its cap, a table takes the room or scrolls in its
+  // own box) and every position measured from it has moved, so the panel's paint pass runs again, off the
+  // layout's own report of the change (a ResizeObserver, never a timer). The observer's first report describes
+  // the size at observe(), not a change. The repaint is ONE per animation frame: the reports are folded into the
+  // next frame (requestAnimationFrame, the frame's own event) and the frame repaints only if the width it finds
+  // differs from the one last painted over, so a burst of reports (several observers' entries, a width that
+  // moved and came back, the body growing taller as a figure loaded) costs one paint pass or none. The panel's
+  // pass re-wraps every highlight and rebuilds its cards (file-comments.ts paintAll, about 10ms with twenty
+  // comments), so a drag at one report per frame still pays it per frame; a narrower reaction is the panel's to
+  // choose. Media bodies have their own observers (the figure layer's, the PDF chunk's), and the editor its own
+  // layout, so textShowing gates this too. Absent ResizeObserver (a stand-in, an old engine) there is no width
+  // event to key on, so nothing fires; absent requestAnimationFrame the report itself is the frame.
   if (typeof ResizeObserver !== "undefined") {
-    let lastWidth = -1;
+    let paintedWidth = -1;   // the width the last repaint (or the first report) saw
+    let seenWidth = -1;      // the latest report's width
+    let frame = 0;           // the pending frame's handle, 0 for none
+    const repaint = () => {
+      frame = 0;
+      if (seenWidth === paintedWidth) return;   // moved and came back within the frame: no text moved sideways
+      paintedWidth = seenWidth;
+      if (textShowing()) fireRendered();
+    };
     const widthObserver = new ResizeObserver((entries) => {
       const w = entries.length ? entries[entries.length - 1].contentRect.width : body.clientWidth;
-      if (lastWidth < 0) { lastWidth = w; return; }
-      if (w === lastWidth) return;
-      lastWidth = w;
-      if (textShowing()) fireRendered();
+      if (paintedWidth < 0) { paintedWidth = w; seenWidth = w; return; }
+      seenWidth = w;
+      if (w === paintedWidth || frame) return;
+      if (typeof requestAnimationFrame === "function") frame = requestAnimationFrame(repaint); else repaint();
     });
     widthObserver.observe(body);
-    ctx.onClose(() => widthObserver.disconnect());
+    ctx.onClose(() => { widthObserver.disconnect(); if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame); frame = 0; });
   }
 
   // Registered actions render after the built-ins — the registry walk is the ONE place row
@@ -1048,11 +1074,13 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
       b.hidden = editing;                       // format choices leave with edit mode; Save/Cancel own the bar
     }
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
-    // the text-size control shows over a text view only (renderBody is every paint, so this follows every flip:
-    // Source on an SVG, the editor taking the body, the exit handing it back); the reset only off the default
-    const sizeHidden = editing || ((isImage || isPdf) && !(svgSource && svgText !== null));
+    // the text-size control shows over a text view only, and only once one is KNOWN (textShowing: the bytes and
+    // the kernel's Content-Type landed, no editor, no picture or PDF frame; renderBody is every paint, so this
+    // follows every flip: the fetch landing, Source on an SVG, the editor taking the body, the exit handing it
+    // back). The readout's slot goes with the two buttons; the slot's own emptiness at the default is applyTextSize's
+    const sizeHidden = !textShowing();
     sizeDown.hidden = sizeHidden; sizeUp.hidden = sizeHidden;
-    sizeReset.hidden = sizeHidden || sizePct === TEXT_SIZE_DEFAULT;
+    sizeReset.hidden = sizeHidden;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
@@ -1094,8 +1122,14 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // chip lands in the session the file was opened FOR even if the active tab changed while the
   // modal was up (the 2026-08-19 routing rule: the gesture's session, never activeId-at-gesture).
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
-  const onSelect = () => {
+  const onSelect = (ev: Event) => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
+    // A press on the title bar (A−, A+, the readout, Raw, Copy path...) settles no selection: the mouseup lands on
+    // the button while a passage may still stand selected in the body, and running the hooks again re-seeded the
+    // quote chip and re-fetched the file for its label on every step of the text size (review 2026-09-07; the
+    // listener sits on the viewer root so a drag that ends over the aside or the margins still settles).
+    const at = ev.target as Node | null;
+    if (at && bar.contains(at)) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
     // surface; the SVG SOURCE view is a real text view and quotes like any other (renderBody's
     // media gate, same rule).

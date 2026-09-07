@@ -149,17 +149,20 @@ test("file-browse.ts: a viewer's dirty-edit veto stands the browse down whole, i
   assert.doesNotMatch(un, /tellShellClosed|browseClosed|tellShellOpened|browseOpened/, "nothing opened, so no notice either way: a browseClosed here would put back a feed whose kept viewer lives in it, and an ack would arm a return trip for a listing that never opened");
 });
 
-test("files-pane.css: a narrow column wraps the viewer's title bar, so the path and its directory link keep their width, and the action row wraps inside the pane", () => {
-  // the row of action buttons alone outgrows a 480px pane; the modal sheets keep their one-line bar (the parity
-  // pair), the pane variant wraps the actions onto a second line (measured in the browser legs below). The row
-  // itself shrinks and wraps too (review round 2, 2026-09-07: styles.css keeps it one rigid line, flex:0 0 auto,
-  // so a markdown file's six buttons ran 368px and a phone-wide pane clipped the close button off the pane)
-  const PANE_CSS = read("files-pane.css");
-  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar\{flex-wrap:wrap;row-gap:6px\}/);
-  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-name\{flex:1 1 0;min-width:12em\}/);
-  assert.match(PANE_CSS, /body\.fileview-pane \.fileview-bar \.fileview-acts\{flex:0 1 auto;min-width:0;margin-left:auto;flex-wrap:wrap;justify-content:flex-end\}/);
-  assert.doesNotMatch(CHAT_CSS, /\.fileview-bar \{[^}]*flex-wrap/, "the modal bar stays one line");
-  assert.doesNotMatch(CHAT_CSS, /\.fileview-acts \{[^}]*flex-wrap/, "and so does its action row");
+test("the viewer's title bar wraps in every sheet: the path and its directory link keep their width, and the action row wraps inside the pane or the card", () => {
+  // the row of action buttons alone outgrows a 480px pane. The pane variant wrapped first (review 2026-09-07, two rounds:
+  // the directory link at 0px, then a phone-wide pane clipping the close button off an overflow:hidden viewer, with no
+  // backdrop to tap and no Escape on a phone); the text-size control's three buttons then clipped the MODAL's row below
+  // about 600px the same way, so the wrap moved into the base rules of styles.css / feed.css (the parity pair) and
+  // files-pane.css adds nothing to the bar. Measured in the browser legs below at 320 and 360px, and in
+  // file-view-text-size.test.ts at 380-600px in both modals.
+  const pane = read("files-pane.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.doesNotMatch(pane, /\.fileview-bar|\.fileview-acts|\.fileview-name/, "the pane sheet leaves the bar to the base rules");
+  for (const css of [CHAT_CSS, read("feed.css")]) {
+    assert.match(css, /\.fileview-bar \{ flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0;/);
+    assert.match(css, /\.fileview-name \{ flex: 1 1 0; min-width: 12em;/);
+    assert.match(css, /\.fileview-acts \{ flex: 0 1 auto; min-width: 0; margin-left: auto; display: flex; flex-wrap: wrap; align-items: center;\n\s*justify-content: flex-end; gap: 6px; \}/);
+  }
 });
 
 test("files.ts: the Files pane hosts the listing as a column: identity cached, the browser is a pane surface, one close edge", () => {
