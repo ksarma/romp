@@ -591,7 +591,7 @@ class ThreadRegMemo(_State):
         a["name"] = "mutated by a caller"
         self.assertEqual(km._thread_reg(SID)["name"], "web")
         st = km._thread_reg_report()
-        self.assertEqual((st["miss"], st["hit"], st["entries"]), (1, 1, 1))
+        self.assertEqual((st["miss"], st["hit"], st["entries"]), (1, 2, 1), "one parse, two served reads")
 
     def test_a_replace_publish_re_reads_even_at_equal_size(self):
         self.publish_reg(self.REG)
