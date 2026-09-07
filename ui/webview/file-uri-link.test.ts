@@ -13,7 +13,7 @@ const LINKS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview",
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("a bare file:// URL becomes a clickable .file-uri-link that opens the file in the host app", () => {
-  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null\): void/);
+  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null, delegated = false\): void/);
   assert.match(LINKS, /el\("span", "file-uri-link"\)/);   // the span is minted in path-links.ts (Slice 0 of plans/file-review.md)
   // clicking is ROUTED by openPath, never a blocked window.open(file://) — a file:// URI is absolute,
   // so it takes the shared openPathLink's no-session-id branch
@@ -28,12 +28,14 @@ test("linkify runs on chat message bodies (assistant reply + user bubble + nudge
   assert.match(RENDER, /linkifyFileUris\(body, undefined, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\)/);   // the assistant reply
   assert.match(RENDER, /linkifyFileUris\(bubble, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\)/); // your own bubble (in-bubble images don't re-thumb)
   assert.match(RENDER, /linkifyFileUris\(full, imgPaths, ev\.spacePaths, ev\.pathLinks, ev\.pathPins\)/);   // a compact nudge's expanded full text (2026-07-17)
-  // …plus a user todo's note, in the card's fold and quoted in the reply dialog (user-todo-links.test.ts)
-  assert.match(RENDER, /linkifyFileUris\(d, undefined, undefined, undefined, undefined, renderingSid \|\| null\)/);
-  assert.match(RENDER, /linkifyFileUris\(dd, undefined, undefined, undefined, undefined, sid\)/);
-  // exactly the definition + those five applications — so tool-use reports/summaries stay untouched
+  // …plus a user todo's note, in the card's fold and quoted in the reply dialog, through linkTodoDetailPaths:
+  // the same pass, DELEGATED, since the card rebuilds every push and its spans are not bound (user-todo-links.test.ts)
+  assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);/);
+  assert.match(RENDER, /linkTodoDetailPaths\(d, renderingSid \|\| null\)/);
+  assert.match(RENDER, /linkTodoDetailPaths\(dd, sid\)/);
+  // exactly the definition + those four applications, so tool-use reports/summaries stay untouched
   const uses = RENDER.match(/linkifyFileUris\(/g) || [];
-  assert.equal(uses.length, 6, "linkifyFileUris is defined once and applied to the three chat bodies + the two todo-note sites");
+  assert.equal(uses.length, 5, "linkifyFileUris is defined once and applied to the three chat bodies + the todo-note wrapper");
 });
 
 test("linkify works inside INLINE backticks (agents backtick paths), skips only fenced code + existing links, trims trailing punctuation", () => {
