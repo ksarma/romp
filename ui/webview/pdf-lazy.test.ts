@@ -265,7 +265,8 @@ test("pages draw lazily through an IntersectionObserver, eagerly without one, an
   assert.match(CHUNK, /\} else \{\n\s*for \(const p of pages\) p\.visible = true;\n\s*\}/, "no observer: every page is visible, so every page draws");
   assert.match(CHUNK, /if \(io\) for \(const p of pages\) io\.observe\(p\.wrap\);\n\s*else for \(const p of pages\) want\(p\);/);
   assert.match(CHUNK, /if \(p\.visible\) want\(p\); else drop\(p\);/, "leaving the observer's window releases the bitmap; the wrapper keeps the extent");
-  assert.match(CHUNK, /rootMargin: "100% 0px"/, "a viewport of margin: the next page is drawn before it shows");
+  assert.match(CHUNK, /\{ root: scrollRootFor\(container\), rootMargin: "100% 0px" \}/,
+    "one SCROLLER height of margin — the root is the pages' scrolling ancestor (scrollRootFor), since a margin on the implicit root never reaches a page the viewer's body clips — so the next page is drawn before it shows (pdf-chunk.test.ts executes it)");
   // one draw at a time, and a cancelled draw is not an error
   assert.match(CHUNK, /const p = queue\.shift\(\)!;/);
   assert.match(CHUNK, /e instanceof pdfjsLib\.RenderingCancelledException/);

@@ -1690,7 +1690,11 @@ a.fileview-gh-note { border-style: dashed; }
    the frame above shows): the host pads like the image box, the pages stack with a gap, each page a white sheet
    with the modal's shadow — a page to put a region rectangle on; the chunk's inline position: relative on each
    page wrapper is what the overlay anchors to. The fallback column holds the notice over the frame, the frame
-   taking what is left, so the notice never pushes the frame past the body. */
+   taking what is left, so the notice never pushes the frame past the body. The column's height: 100% is the
+   frame's height: .fileview-body is the plain overflow block above (the .fileview-editor note), so the frame's own
+   100% resolves against the column, and a column without one is auto-height — the frame sat at the UA's 150px
+   default (styles-pdffall-height.test.ts resolves the chain and measures it in chromium). Mirrored from styles.css
+   (fileview-parity.test.ts pins these heads byte-equal). */
 .fileview-pdfhost { padding: 14px; box-sizing: border-box; }
 .fileview-pdf { display: flex; flex-direction: column; gap: 14px; }
 .fileview-pdf-page { background: #fff; box-shadow: var(--shadow-modal); }
@@ -1699,7 +1703,7 @@ a.fileview-gh-note { border-style: dashed; }
 .fileview-pdffall .fileview-frame { flex: 1 1 auto; min-height: 0; }
 /* a page pdf.js could not draw carries its failure IN the sheet (pdf-chunk.ts fail(): the .fileview-err dress, plus
    .fileview-pdf-page-err as a hook). The dress's --warn amber is tuned for the pane's ground and sat at 2.3:1 on the
-   white sheet in the dark theme — the one loud error of the PDF view was its faintest text. On the sheet the dress
+   white sheet in the dark theme, below the 4.5:1 the sheets hold reading text to. On the sheet the dress
    wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio
    for styles.css; feed-pdf-page-err.test.ts does the same for this sheet and pins the two rules byte-equal). */
 .fileview-pdf-page .fileview-err { color: var(--warn-on-white); }

@@ -19,7 +19,10 @@
 // synchronously, two elements and one observed target per page, so an unchecked count would hold the pane's
 // thread for a minute or exhaust its memory before the first paint. A real document rarely approaches the
 // cap (even a text-only PDF at the byte cap runs to thousands of pages, not millions), and 5,000 shells build
-// in well under a second; over it, the person gets the browser's frame and the refusal's message.
+// in well under a second; over it, the person gets the browser's frame and the refusal's message. The cap bounds
+// this module's shells only: the comments panel's per-page overlays are bounded on its own side (file-comments.ts
+// paintRegions makes a layer only for a page with a bitmap or a rectangle to place, the rest as their shells near
+// the reader), since one forced layout per page across 5,000 pages would hold the pane for tens of seconds.
 //
 // THE WORKER: pdf.js parses in a module Worker, and THIS CHUNK starts it (ownWorker below), one per render(),
 // from the URL derived at load from the chunk's OWN <script src> — same directory, same ?v= token — so a
@@ -58,10 +61,10 @@
 //   render(bytes: ArrayBuffer, container: HTMLElement, opts?: {
 //     maxBytes?: number;                                   // default DEFAULT_MAX_BYTES (25 MB)
 //     maxPages?: number;                                   // default DEFAULT_MAX_PAGES (5,000)
+//     signal?: AbortSignal;                                // cancels an UNSETTLED render(); spent at the resolve (below)
 //     onPage?: (page: { index: number; canvas: HTMLCanvasElement; width: number; height: number }) => void;
 //     onPageError?: (page: { index: number; message: string }) => void;
 //   }) => Promise<{ pages: number; dispose(): void }>
-//     signal?: AbortSignal;                                // cancels an UNSETTLED render(); spent at the resolve (below)
 //
 //   Appends ONE root element (div.fileview-pdf) to `container`, holding one wrapper per page
 //   (div.fileview-pdf-page, `position: relative`, data-page 1-based, sized to the page's aspect so the
@@ -229,15 +232,15 @@ export function workerFailedMessage(detail?: string | null): string {
   return detail ? `${base}: ${detail}` : base;
 }
 
-/** The URL a Worker is started from, by pdf.js's own rule for its workerSrc: a same-origin script directly; a
- *  cross-origin one (the VS Code webview, a vscode-webview:// page whose bundles are vscode-resource:// URLs) through
- *  a same-origin blob module that imports it, since a Worker's script must be same-origin with its page. `pageHref`
 /** What an aborted render() rejects with: the signal's reason — the caller's own, or the AbortError the engine sets
  *  when abort() is called with none; an Error of this module's only where a stand-in signal carries neither (pure). */
 export function abortReason(signal: AbortSignal): unknown {
   return signal.reason === undefined ? new Error("the PDF render was aborted") : signal.reason;
 }
 
+/** The URL a Worker is started from, by pdf.js's own rule for its workerSrc: a same-origin script directly; a
+ *  cross-origin one (the VS Code webview, a vscode-webview:// page whose bundles are vscode-resource:// URLs) through
+ *  a same-origin blob module that imports it, since a Worker's script must be same-origin with its page. `pageHref`
  *  is the hosting page's location; null (Node) means the URL is used as is. `blob` says whether `url` is an object
  *  URL of this module's making, to revoke when the Worker goes (pure but for the object URL). */
 export function workerScriptUrl(workerSrc: string, pageHref: string | null): { url: string; blob: boolean } {
@@ -384,12 +387,12 @@ interface Page {
  *  once, against `pdfjsLib`. */
 export function makeRender(pdfjsLib: PdfLib) {
   return async function render(bytes: ArrayBuffer, container: HTMLElement, opts: RenderOpts = {}): Promise<RenderHandle> {
-    const cap = opts.maxBytes ?? DEFAULT_MAX_BYTES;
-    if (bytes.byteLength > cap) throw new Error(capMessage(bytes.byteLength, cap));
-    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
     // an attempt the caller retired before render() ran (the header, `signal`): nothing is started for it, not even a refusal
     const signal = opts.signal;
     if (signal?.aborted) throw abortReason(signal);
+    const cap = opts.maxBytes ?? DEFAULT_MAX_BYTES;
+    if (bytes.byteLength > cap) throw new Error(capMessage(bytes.byteLength, cap));
+    if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
       throw new Error("the PDF renderer could not locate its worker: no pdf-chunk.js script tag to derive pdf-worker.js from");
     }
     // the Worker is this module's own, handed to pdf.js as the port for this one getDocument call (the header, THE
@@ -404,9 +407,6 @@ export function makeRender(pdfjsLib: PdfLib) {
     finally { if (owned) pdfjsLib.GlobalWorkerOptions.workerPort = null; }   // per render: the next starts its own
     // the task as the rest of render() holds it: destroying it releases the Worker too (adopt), in every path below
     const task: Loading = owned ? adopt(loading, owned) : loading;
-    let doc: PDFDocumentProxy;
-    // a refused open (corrupt bytes, a password) releases the Worker started for it: pdf.js's failure path only
-    // rejects, and the caller has no handle to release it with, so without this every attempt on such a file (each
     // The attempt's cancel (the header, `signal`): while render() is unsettled, an abort ends it where it stands. The
     // listener terminates the Worker AT ONCE — terminate() is synchronous, and a Worker hung in a pathological content
     // stream answers nothing, so pdf.js's own destroy, which waits on the Worker's reply, would never release it — and
@@ -423,6 +423,9 @@ export function makeRender(pdfjsLib: PdfLib) {
     aborted.catch(() => {});   // raced below; once the attempt has settled nobody races it, and it must not surface as unhandled
     if (signal) signal.addEventListener("abort", onAbort, { once: true });
     const race = <T>(p: Promise<T>): Promise<T> => (signal ? Promise.race([p, aborted]) : p);
+    let doc: PDFDocumentProxy;
+    // a refused open (corrupt bytes, a password) releases the Worker started for it: pdf.js's failure path only
+    // rejects, and the caller has no handle to release it with, so without this every attempt on such a file (each
     // opening of the Comments panel renders again) left one more Worker running. A Worker that never loaded is a
     // refusal of its own, by name and at once: pdf.js's promise would otherwise hang until the caller's backstop.
     try { doc = await race(owned ? Promise.race([task.promise, owned.failed]) : task.promise); }
@@ -645,10 +648,10 @@ export function makeRender(pdfjsLib: PdfLib) {
     if (io) for (const p of pages) io.observe(p.wrap);
     else for (const p of pages) want(p);
 
+    if (signal) signal.removeEventListener("abort", onAbort);   // settled: the signal is spent, and dispose() is the release
     return {
       pages: n,
       dispose() {
-    if (signal) signal.removeEventListener("abort", onAbort);   // settled: the signal is spent, and dispose() is the release
         if (disposed) return;
         disposed = true;
         io?.disconnect(); ro?.disconnect();

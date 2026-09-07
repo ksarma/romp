@@ -1,8 +1,8 @@
 // A PDF page pdf.js cannot draw carries its failure IN the page (pdf-chunk.ts fail(): a .fileview-err note inside
 // the .fileview-pdf-page wrapper). The wrapper is a WHITE sheet in every theme (.fileview-pdf-page's background is
 // a literal #fff, the paper a bitmap sits on), but the dress's --warn amber is tuned for the pane's ground: on the
-// dark theme it read at 2.3:1 on the sheet, below the 4.5:1 the sheets hold reading text to (theme-parity.test.ts),
-// so the one loud, in-place error the PDF view has was its faintest text. The fix is a descendant rule — the dress
+// dark theme it read at 2.3:1 on the sheet, below the 4.5:1 the sheets hold reading text to (theme-parity.test.ts).
+// The fix is a descendant rule — the dress
 // on a sheet wears --warn-on-white, the light theme's own amber, declared in both theme blocks because white is
 // white in both. theme-parity checks token-on-token pairs only, so a raw #fff ground escapes it; this test resolves
 // the sheet's actual cascade along the chunk's real DOM chain and computes the ratio against the literal sheet.

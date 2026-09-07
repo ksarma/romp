@@ -1034,7 +1034,7 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
     // worker stuck in a pathological content stream, or a chunk fetch that stalls without erroring, leaves the promise
     // pending for good, and with no frame kept (the panel opened before the bytes landed; the pages were up and the file
     // reloaded) the loader would be the whole body, nothing saying why, nothing on screen pointing at a way out. So the
-    // deadline gives up in the fallback's own shape: the frame, told why; the attempt retired (dropPdf), so a resolution
+    // deadline gives up in the fallback's own shape: the frame with the notice; the attempt retired (dropPdf), so a resolution
     // landing later is disposed and mounts nothing, as after a closed panel; its signal aborted (fallback, dropPdf), so
     // the chunk destroys the loading task and terminates the Worker a hung open or draw held — the one thing here that
     // reaches it, since a render that never settles never yields a handle; and the chunk's latch cleared, so the next
@@ -1067,10 +1067,10 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
         disarmBackstop();                      // settled in time
         pdfAttempt = null;                     // …so the handle owns the release from here; the signal is spent
         // pdf.js opens a page-less document (an empty page tree) and resolves with nothing drawn: an empty root would be
-        // the blank pane this function exists to prevent, so the frame, told why, and the document released
+        // the blank pane this function exists to prevent, so the frame with the notice, and the document released
         if (h.pages === 0) { h.dispose(); fallback("this PDF has no pages"); return; }
         pdfHandle = h;
-        wait.remove();                         // page 1 is drawn: the loader gives way to pixels…
+        wait.remove();                         // page 1 is drawn: the loader is removed…
         col?.remove();                         // …and the frame kept through the load goes with its column: the pages are the body
         scrollToPdfPage();                     // …at the reader's page, when the pages had shown one before
         fireRendered();

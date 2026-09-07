@@ -3710,7 +3710,7 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-pdffall .fileview-frame { flex: 1 1 auto; min-height: 0; }
 /* a page pdf.js could not draw carries its failure IN the sheet (pdf-chunk.ts fail(): the .fileview-err dress, plus
    .fileview-pdf-page-err as a hook). The dress's --warn amber is tuned for the pane's ground and sat at 2.3:1 on the
-   white sheet in the dark theme — the one loud error of the PDF view was its faintest text. On the sheet the dress
+   white sheet in the dark theme, below the 4.5:1 the sheets hold reading text to. On the sheet the dress
    wears the on-white amber, 4.7:1 in every theme (styles-pdf-page-err.test.ts resolves the cascade and the ratio). */
 .fileview-pdf-page .fileview-err { color: var(--warn-on-white); }
 /* the per-page loader over a sheet whose draw is pending (pdf-chunk.ts cue(): the viewer's own loader markup,

@@ -201,7 +201,7 @@ test("a count below zero — an integer pdf.js accepts — resolves as a page-le
   const { lib, calls } = fakeLib(-1);
   const { container } = viewerTree();
   const h = await makeRender(lib)(bytes(), asEl(container));
-  assert.equal(h.pages, 0, "file-view's `h.pages === 0` path disposes this and shows the frame, told why; -1 slipped past it into a blank root");
+  assert.equal(h.pages, 0, "file-view's `h.pages === 0` path disposes this and shows the frame with the notice; -1 slipped past it into a blank root");
   assert.equal(container.children.length, 1, "the root, as for any page-less document");
   assert.equal(container.children[0].children.length, 0, "…holding no shells");
   assert.deepEqual(calls.getPage, []);
@@ -269,7 +269,7 @@ test("pdf.js (legacy build) opens a 529-byte PDF declaring 2,000,000 pages and r
     const hostile = hostilePdf(2000000);
     assert.ok(hostile.byteLength < 1024, `the document is ${hostile.byteLength} bytes — nowhere near the byte cap`);
     assert.equal(await pdfjsCount(legacy, hostile), 2000000,
-      "pdf.js takes the top-level /Count on faith once the last page resolves (a nested Pages node is skipped by its own /Count). " +
+      "pdf.js does not verify the top-level /Count beyond resolving the last page (a nested Pages node is skipped by its own /Count). " +
       "If this fails, pdf.js now validates the count: the cap still stands, re-anchor this pin");
     await assert.rejects(makeRender(legacy)(hostile, untouchable()),
       (e: unknown) => e instanceof Error && e.message === pageCapMessage(2000000, DEFAULT_MAX_PAGES));
