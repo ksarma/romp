@@ -12,6 +12,20 @@ font-size:13px;display:flex;flex-direction:column;overflow:hidden}
    opened from a file-browser row still paints above the browser's fixed overlay (the "‹ Files" back path). */
 body.fileview-pane #romp-fileview{position:relative;inset:auto;flex:1 1 auto;min-height:0;background:none}
 body.fileview-pane .fileview{width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
+/* A narrow column: the title bar WRAPS, the action row dropping to a second line (right-aligned, so the close
+   button keeps its edge), and the path keeps at least 12em. Without this the row of buttons alone outgrows a
+   480px pane, the path's box shrinks to nothing, and the directory half of the title, the click back into
+   the listing (.fileview-dir-link), measured 0px wide (review 2026-09-07). Modal viewers keep the one-line
+   bar (styles.css / feed.css, the parity pair); the basis 0 lets a wide pane stay on one line as before.
+   The action row itself SHRINKS and WRAPS too (styles.css gives it flex:0 0 auto, one rigid line): a markdown
+   file's six buttons run 368px, so a phone-wide pane (320-375px) clipped Copy path and the close button off
+   the pane (.fileview is overflow:hidden), and pane mode has no backdrop to tap and a phone no Escape, so the
+   file could not be closed (review round 2, 2026-09-07). The buttons keep the right edge on every line they
+   wrap onto, so the close button stays where the eye expects it. Measured at 320px and 360px in
+   browse-route.test.ts's browser legs. */
+body.fileview-pane .fileview-bar{flex-wrap:wrap;row-gap:6px}
+body.fileview-pane .fileview-bar .fileview-name{flex:1 1 0;min-width:12em}
+body.fileview-pane .fileview-bar .fileview-acts{flex:0 1 auto;min-width:0;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 /* the empty state: what the pane is for, and the files most recently open here as re-open links. The rows
    wear the viewer's own title-bar classes (.fileview-name / -dir / -base / -sess), so a path and its session
    chip read exactly as they do in the bar above an open file. */
