@@ -648,6 +648,24 @@ export function rawTarget(src: string, r: MapRefusal & { selText: string }): Sou
 
 let reqSeq = 0;
 
+// ── the landing cue (the inline-display follow-on's review, 2026-09-07) ─────────────────────────────
+// Reveal switches to Raw and centres the change's row. With Show changes inline off — or a batch the Raw painter refused
+// (D4) — that row wears no mark of ours, so the person landed among a screen of identical rows with nothing saying which
+// one held the change: the line number and the "marks are off" clause were in the button's title, which a finger never
+// sees (ui/CLAUDE.md: never dead-end a compact view). So a Reveal that lands where the view shows no mark for its subject
+// cues the LANDING ROW (landOn): the `.fv-cl` the scroll centred wears `fc-landing`, the accent wash and a 2px accent bar
+// at its left edge — the focus-cue colour (ui/CLAUDE.md), never a status colour, and never a change mark's dress (the
+// tint, the struck wash): the marks are off by the person's choice, and a row cue is not a change mark, so the toggle's
+// contract (no change mark in either view) holds. The dress rides inline, as a framed picture's outline does (styleFrame):
+// the row is the viewer's element, and the sheets dress no landing. The cue is transient by EVENT, never by clock: it
+// leaves on the next paint pass (a status landed, the body re-rendered, the marks flipped — each new information the row
+// may no longer fit), on the next Reveal (one landing at a time), and with the panel; a card opening or any other
+// re-render of the aside alone leaves it standing, and so does scrolling away — the row is where the change is until the
+// text moves. When the view DOES mark the subject there (the marks on: Raw paints every change; a comment's highlight),
+// the mark is the cue and the row wears none.
+const LANDING_BG = "var(--accent-wash)";
+const LANDING_BAR = "inset 2px 0 0 var(--accent)";
+
 // ── the panel's marks, for listeners that never see a panel ─────────────────────────────────────────
 // Every element a panel paints into the file's body — a highlight, a change mark, a picture frame, a rectangle, and
 // the overlay the rectangles sit on — is registered here beside the panel's own `marks` (owns), so a document-level
@@ -680,6 +698,7 @@ class Panel {
   moreChangesOpen = false;                  // the "… N more changes" fold past GROUP_LIMIT groups — the same rule
   rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
   paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
+  landing: HTMLElement | null = null;       // the Raw row the last Reveal cued, when the view showed no mark of ours there (landOn)
   // Show changes inline (the inline-display follow-on, 2026-09-07): whether the read view marks the session's changes
   // in the text — insertions tinted, deletions struck — in both views. Off, the file reads as it is and every change
   // is its card alone (no "not shown" tag: nothing is shown by choice). The shared settings store keeps it across
@@ -1138,9 +1157,11 @@ class Panel {
     // are the person's, and its pending rectangle is a mark like any other.
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
+    this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
     this.stopPoll();
   }
   dispose(): void {
+    this.clearLanding();
     this.stopPoll();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
@@ -1820,6 +1841,7 @@ class Panel {
    *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
     if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
+    this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
     this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
     // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
     // refusal has since replaced in the same slot is left alone)
@@ -2350,14 +2372,16 @@ class Panel {
     this.reveal(key);
   }
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
-   *  a comment or change the Rendered view could not paint (a deletion never is), so the compact card never
-   *  dead-ends. */
+   *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
+   *  inline off), so the compact card never dead-ends. Where Raw shows no mark of ours for the subject either, the row
+   *  the scroll centred is cued (landOn), so the landing is not a guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
       this.ctx.setMode("raw");
       this.ctx.scrollToOffset(c.curFrom);
+      this.landOn(c.curFrom, "fcchange", c.id);
       return;
     }
     const card = this.cards().find((c) => c.id === key);
@@ -2371,6 +2395,34 @@ class Panel {
     if (!loc || !loc.range) return;
     this.ctx.setMode("raw");
     this.ctx.scrollToOffset(loc.range.start);
+    this.landOn(loc.range.start, "fcopen", key);
+  }
+  /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
+   *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
+   *  last row, so the cue and the scroll never disagree — wears the cue when the Raw body shows no mark of ours for the
+   *  subject (`act` + `id`: the change's marks, or the comment's highlight). setMode re-renders the body synchronously
+   *  and its onRendered pass has painted by now (paintAll), so what the body shows is what the person sees. One landing
+   *  at a time: the last cue is cleared first, whether or not a new one is painted. */
+  private landOn(offset: number, act: string, id: string): void {
+    this.clearLanding();
+    if (this.ownMarks(act, id).length) return;         // the view marks the subject itself: that mark is the cue
+    const src = this.ctx.text();
+    const code = this.ctx.body().querySelector("code.hljs");
+    if (src === null || !code) return;                 // no Raw rows to cue (a media body; the editor's)
+    const rows = code.querySelectorAll(".fv-cl");
+    if (!rows.length) return;
+    const row = rows[Math.min(rawOffsetToLine(src, offset), rows.length - 1)] as HTMLElement;
+    row.classList.add("fc-landing");
+    row.style.background = LANDING_BG; row.style.boxShadow = LANDING_BAR;
+    this.landing = row;
+  }
+  /** The cue comes off its row — on a paint pass, the next Reveal, the panel closing: each an event, never a timer. */
+  private clearLanding(): void {
+    const row = this.landing;
+    this.landing = null;
+    if (!row) return;
+    row.classList.remove("fc-landing");
+    row.style.background = ""; row.style.boxShadow = "";
   }
   scrollCard(id: string): void {
     this.root?.querySelector('.fc-card[data-id="' + id + '"]')?.scrollIntoView({ block: "nearest" });
@@ -3003,7 +3055,8 @@ class Panel {
           const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
           const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "";
           // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
-          // a mark — the guide's "opens the Raw view at the change"; on, Raw shows every change, a deletion as its point
+          // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
+          // is what reaches a finger; on, Raw shows every change, a deletion as its point
           rv.title = this.inline ? "Show the change in the Raw view" + line
             : "Open the Raw view at the change" + line + "; the marks are off, so the change is not marked there";
           if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes

@@ -960,7 +960,19 @@ for both views, `makePoint`), placed in the rendered text at its `curFrom` throu
 right after the last character before it when the offset follows that character directly, so a
 deletion at a word's end sits against the word. A refused block, a hole, or a blank line between
 blocks leaves the change unpainted, with its card's "not shown" tag and Reveal. A substitution's point
-sits immediately before its tint, wherever the tint was found. The point adds no text node, so
+sits immediately before its tint, wherever the tint was found: inside a code fence or a table cell
+too, where the tint came through the text-match fallback, so a substitution there is shown while a
+deletion at the same offset is card-only. A point at the edge of a painter's own mark (a change's
+`fc-ins`, a comment's `fc-hl`, the composer's `fc-presel`) sits outside the mark, in both views and
+whichever change was painted first: a deletion right after an insertion follows the insertion's mark
+as its sibling, one right before it precedes the mark, and a substitution whose tint begins a comment
+highlight has its point before the highlight, while one whose tint is inside the highlight keeps its
+point inside, immediately before the tint. Points at one offset keep their paint order
+(`insertBeforeNode` and `insertAfterText` in `anchor-map.ts`). The renderer's own inline elements are
+not boundaries: a point after the last word of a `<strong>` stays in it. Before the rule, placement
+followed the paint order: with the insertion painted first, Rendered made the point the mark's last
+child, and the struck old text wore the insertion's tint and author underline (the review,
+2026-09-07). The point adds no text node, so
 `mapRenderedSelection` and `unpaintChanges` are unaffected. The **Show changes inline** toggle sits
 beside Track changes in the panel header, a two-state `fc-toggle` button offered while the file has
 changes and the read view is up. It is ON by default and kept as `changesInline` in the shared webview
@@ -1379,6 +1391,15 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `anchor-map-rendered-points.test.ts` pins a table nested in a list item as a hole with the
   table's own extent, the block that begins at an offset holding the point where one block ends
   as the next begins, and the `white-space: pre-wrap` a label of spaces or tabs alone carries;
+  `anchor-map-boundary-points.test.ts` pins the boundary rule over marked's output in Raw and
+  Rendered under both paint orders: a deletion right after or right before an insertion sits
+  outside the insertion's mark, at a row's end too, while a deletion inside the insertion still
+  splits the mark; a deletion at a comment highlight's edge sits outside the highlight, a
+  substitution whose tint begins the highlight has its point before it and one whose tint is inside
+  keeps its point inside, before the tint; a deletion at the edge of a change mark and a highlight
+  over the same word sits outside both; two points at one offset keep their paint order; and a
+  substitution inside a code fence or a table cell gets its point before its fallback-placed tint
+  and is reported painted while a deletion at the same offset is card-only;
   `anchor-map-whitespace-point-browser.test.ts` and `file-comments-rendered-point-browser.test.ts`
   measure the points under the real sheets in headless Chromium and Firefox (skipped where
   playwright or an engine is missing): a removed space or tab has width and takes the pointer, a
@@ -1397,8 +1418,11 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   marks off, in both views, with and without a line number.
   `tests/test_file_review_plan_rendered_deletions.py` holds this plan's Rendered-deletion
   passages (the surface paragraph, the Slice 2 line, the Risks bullet, the not-in-v1 list) to the
-  painter's source, and `tests/test_file_review_plan_inline_display.py` holds the follow-on
-  note's white-space clause to `renderedPointStyles` and this bullet's file names to the tree.
+  painter's source; `tests/test_file_review_plan_inline_display.py` holds the follow-on note's
+  white-space clause to `renderedPointStyles` and this bullet's file names to the tree; and
+  `tests/test_file_review_plan_boundary_points.py` holds the note's boundary clause to
+  `insertBeforeNode` and `insertAfterText` and this bullet's account of the boundary suite to the
+  suite's tests.
 - `ui/webview/user-todo-links.test.ts` rewritten to pin `path-links.ts` and both callers
   (Slice 0); `editor-lazy.test.ts` extended for the typed `track` option (Slice 5).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its

@@ -648,6 +648,10 @@ function normalizeSource(source: string): { N: string; nStart: Int32Array | null
 
 type Block = {
   startN: number; endN: number;
+  /** N index past the block's last non-newline character: the raw's trailing line feeds are its own line
+   *  ending and, after that, blank lines a token swallows (a heading's, an hr's, a blockquote's single moved
+   *  newline) — between blocks, not in one (renderedSpot's own-rows rule). */
+  textEndN: number;
   chars: string; pos: number[]; holes: Hole[];
   refused: string | null;
   dom: DNode[];
@@ -707,7 +711,9 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       try { walkBlocks([t], View.identity(N, 0), em, pos); }
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
-    blocks.push({ startN: pos, endN: pos + t.raw.length, chars: em.chars, pos: em.pos, holes: em.holes,
+    let textEndN = pos + t.raw.length;
+    while (textEndN > pos && t.raw[textEndN - pos - 1] === "\n") textEndN--;
+    blocks.push({ startN: pos, endN: pos + t.raw.length, textEndN, chars: em.chars, pos: em.pos, holes: em.holes,
                   refused, dom: [], isHtml: t.type === "html", tag: tagOf(t) });
     if (broken === null) pos += t.raw.length;
   }
@@ -726,7 +732,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
   const nodeText = new Map<DNode, string>();
   for (const n of content) nodeText.set(n, stripWs(isText(n) ? n.data : textOf(n)));
   if (lexError !== null) {
-    blocks.push({ startN: 0, endN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
+    blocks.push({ startN: 0, endN: N.length, textEndN: N.length, chars: "", pos: [], holes: [], refused: `markdown the lexer could not parse (${lexError})`,
                   dom: content.slice(), isHtml: false, tag: null });
   }
   // ── pair blocks with nodes, in order. Every token but `html` renders as exactly one element, so the
@@ -1108,8 +1114,11 @@ function occurrences(hay: string, needle: string): { start: number; end: number 
 // A session's pending changes arrive as hunks in CURRENT-text coordinates: an `ins` occupies
 // [curFrom, curTo) and its old text is empty; a `del` is a point (curFrom === curTo) whose old text is
 // gone from the file; a `sub` is both, the new text at [curFrom, curTo) and the old text beside it.
-// Raw view paints all three; Rendered paints the new text of an ins or sub and leaves a deletion to its
-// card (the plan: a deletion cannot be placed in rendered prose; Reveal switches to Raw).
+// Raw view paints all three. Rendered paints all three too: the new text of an ins or sub wrapped, and a
+// deletion — or a sub's old text — as the same zero-width point Raw draws, placed in the prose through the
+// index map (paintRenderedPoint; the inline-display follow-on, 2026-09-07). Only a change the map cannot
+// place there (a refused block, a hole, a blank line between blocks) is left to its card, whose Reveal
+// switches to Raw.
 //
 // The deleted text is NOT in the file, so it must never become a text node under a `.fv-cl` row: every
 // Raw walk above (rawIndex's row verification, boundaryIndex's counting, the selection self-check) reads
@@ -1307,21 +1316,38 @@ export function paintRawPoint(codeRoot: Element, source: string, offset: number,
   return m as unknown as Element;
 }
 
+/** The source offsets a block's own rows hold, as [lo, hi): the block's text lines through the line ending
+ *  of the last of them (a deletion on that ending sits after the block's last character, as Raw puts it at
+ *  the row's end), and the end of the file when it comes right after that ending (Raw: the end of the file
+ *  sits at the end of the last row). The line feeds a token's raw carries after that are blank lines between
+ *  blocks — marked's heading, setext heading and hr regexes swallow every trailing newline, and its lexer
+ *  moves a lone newline onto the token before it — and hold nothing, as a `space` token's do (the plan: a
+ *  blank line between blocks leaves the change unpainted). Before this, the raw's extent decided: a deletion
+ *  on the blank line under a heading was struck inside the heading, after its last word, while the same
+ *  blank line under a paragraph, a `space` token, was left unpainted (the review, 2026-09-07). */
+function ownRows(idx: RenderedIndex, b: Block): { lo: number; hi: number } {
+  const lo = nOf(idx, b.startN);
+  if (b.textEndN >= idx.N.length) return { lo, hi: idx.source.length + 1 };   // the block's text ends the file
+  const hi = nOf(idx, b.textEndN + 1);                                        // past the last row's line ending
+  return { lo, hi: b.textEndN + 1 === idx.N.length ? hi + 1 : hi };          // …and the end of the file right after it
+}
+
 /** Where source `offset` falls in the rendered text: the text node and the offset in it BEFORE which a
- *  point at that source position sits. The block is the mapped (not refused) one whose source span holds
- *  the offset, else the one that ends exactly there (a deletion after a block's last character, or at
- *  the end of the file). Inside the block the point goes before the first emitted character at or past
+ *  point at that source position sits. The block is the mapped (not refused) one whose own rows hold the
+ *  offset (ownRows: its text lines, the last one's line ending, the end of the file right after it) — no
+ *  two blocks' rows overlap, so where one block's raw ends exactly as the next begins the one that begins
+ *  there has the offset. Inside the block the point goes before the first emitted character at or past
  *  the offset — or right after the last one before it, when the offset follows that character directly
  *  (a deletion at a word's end sits against the word, not past the space after it) or nothing follows.
- *  Null when no block holds the offset, the block is refused or has no element, or the offset sits inside
- *  a hole (a nested code block or table the renderer shows but the mapping does not place): a point there
- *  would land beside the wrong words, so the change keeps its card and Reveal instead. */
+ *  Null when no block's rows hold the offset (a blank line between blocks, whichever token's raw carries
+ *  it), the block is refused or has no element, or the offset sits inside a hole (a nested code block or
+ *  table the renderer shows but the mapping does not place): a point there would land beside the wrong
+ *  words, so the change keeps its card and Reveal instead. */
 function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: number } | null {
   let blk: Block | null = null;
   for (const b of idx.blocks) {
-    const bs = nOf(idx, b.startN), be = nOf(idx, b.endN);
-    if (bs <= offset && offset < be) { blk = b; break; }
-    if (offset === be && b.refused === null && b.dom.length) blk = b;   // the block that ends here, unless one begins here
+    const { lo, hi } = ownRows(idx, b);
+    if (lo <= offset && offset < hi) { blk = b; break; }
   }
   if (!blk || blk.refused !== null || !blk.dom.length) return null;
   // j: the last mapped character before the offset; k: the first at or past it. The entries between them,
@@ -1355,7 +1381,8 @@ function renderedSpot(idx: RenderedIndex, offset: number): { t: DText; off: numb
  * falls inside one and never adding a text node, so mapRenderedSelection and paintRendered read the body
  * as before. At the edge of another change's mark the point sits outside the mark, as in Raw (the
  * boundary rule above insertAfterText). Returns null when the offset cannot be placed (a refused block, a
- * hole, an offset between blocks): the change stays unpainted and keeps its card.
+ * hole, a blank line between blocks — a `space` token's or one a heading's raw swallowed; ownRows): the
+ * change stays unpainted and keeps its card.
  */
 export function paintRenderedPoint(renderedRoot: Element, source: string, offset: number, className: string,
                                    data: Record<string, string>, label: string, styles?: Record<string, string>): Element | null {
