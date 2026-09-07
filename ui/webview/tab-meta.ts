@@ -20,17 +20,37 @@
 // carry an ack of their own.
 
 export interface TabColor { bg: string; fg: string }
-export interface TabSessionMeta { name: string; color: TabColor | null }
-export interface PendingTabMeta { name?: string; colorBg?: string; age: number }
+// `emoji` (2026-09-06) is the tab's one-glyph label before the name: the kernel stores it beside the
+// name and color (the names registry's fifth field) and ships it in the same per-tab meta, "" when
+// none; a kernel too old to know the field sends no key, and the strip leaves what it has alone.
+export interface TabSessionMeta { name: string; color: TabColor | null; emoji?: string }
+export interface PendingTabMeta { name?: string; colorBg?: string; emoji?: string; age: number }
 
 export const PENDING_META_MAX_AGE = 3;
 
+/** The kernel's {emojiSet id emoji} confirm against the open Emoji… dialog (render.ts showEmojiPrompt):
+ *  does the confirm close it? The kernel sends emojiSet to the client that asked, and to it only, so:
+ *  - PENDING (a Set/Clear awaiting its answer) for that session: yes, whatever the validator trimmed the
+ *    value to — this is the answer.
+ *  - not pending, but the value is exactly what the dialog last asked for: yes — the same answer arriving
+ *    LATE, after the 30 s backstop painted "still waiting" (or an unrelated warn was taken for the
+ *    refusal). The tab now wears the value; a red hint under it would be a lie (review round 3,
+ *    2026-09-06; the dialog used to stay open until Cancel).
+ *  - a dialog for another session, or one that has asked nothing yet (asked undefined — "" is a Clear,
+ *    a real ask): no, the confirm is not this dialog's. */
+export function emojiConfirmClosesDialog(d: { sid: string; pending: boolean; asked?: string } | null | undefined,
+                                         sid: string, emoji: string): boolean {
+  if (!d || d.sid !== sid) return false;
+  return d.pending || (d.asked !== undefined && d.asked === emoji);
+}
+
 /** Record a local optimistic edit so pushes built before it cannot revert the strip. */
 export function notePendingMeta(pending: Map<string, PendingTabMeta>, id: string,
-                                edit: { name?: string; colorBg?: string }): void {
+                                edit: { name?: string; colorBg?: string; emoji?: string }): void {
   const p = pending.get(id) || { age: 0 };
   if (edit.name !== undefined) p.name = edit.name;
   if (edit.colorBg !== undefined) p.colorBg = edit.colorBg;
+  if (edit.emoji !== undefined) p.emoji = edit.emoji;
   p.age = 0;
   pending.set(id, p);
 }
@@ -41,17 +61,21 @@ const validColor = (c: unknown): TabColor | null =>
 
 /** Apply one pushed tab-meta entry to its session — a pending local edit holds its field until the
  *  push echoes it. Returns true when something visible changed (the caller repaints). */
-export function applyMetaToSession(s: TabSessionMeta, t: { name?: unknown; color?: unknown },
+export function applyMetaToSession(s: TabSessionMeta, t: { name?: unknown; color?: unknown; emoji?: unknown },
                                    p?: PendingTabMeta): boolean {
   let changed = false;
   const name = typeof t.name === "string" && t.name ? t.name : null;
   const color = validColor(t.color);
+  const emoji = typeof t.emoji === "string" ? t.emoji : null;   // "" is a real value (cleared); a missing key is an older kernel
   if (name !== null && (!p || p.name === undefined || p.name === name) && s.name !== name) {
     s.name = name; changed = true;
   }
   if (color && (!p || p.colorBg === undefined || p.colorBg.toLowerCase() === color.bg.toLowerCase())
       && (!s.color || s.color.bg !== color.bg || s.color.fg !== color.fg)) {
     s.color = color; changed = true;
+  }
+  if (emoji !== null && (!p || p.emoji === undefined || p.emoji === emoji) && (s.emoji || "") !== emoji) {
+    s.emoji = emoji; changed = true;
   }
   return changed;
 }
@@ -61,7 +85,7 @@ export function applyMetaToSession(s: TabSessionMeta, t: { name?: unknown; color
  *  PENDING_META_MAX_AGE pushes so the kernel's view wins eventually (it is the store of record).
  *  Returns true when any session visibly changed. */
 export function syncSessionsFromTabMeta(
-  tabs: ReadonlyArray<{ id?: unknown; name?: unknown; color?: unknown }>,
+  tabs: ReadonlyArray<{ id?: unknown; name?: unknown; color?: unknown; emoji?: unknown }>,
   get: (id: string) => TabSessionMeta | undefined,
   pending: Map<string, PendingTabMeta>,
 ): boolean {
@@ -77,7 +101,8 @@ export function syncSessionsFromTabMeta(
       const c = validColor(t.color);
       const nameEchoed = p.name === undefined || (typeof t.name === "string" && t.name === p.name);
       const colorEchoed = p.colorBg === undefined || (!!c && c.bg.toLowerCase() === p.colorBg.toLowerCase());
-      if (nameEchoed && colorEchoed) pending.delete(t.id);
+      const emojiEchoed = p.emoji === undefined || (typeof t.emoji === "string" && t.emoji === p.emoji);
+      if (nameEchoed && colorEchoed && emojiEchoed) pending.delete(t.id);
       else if (++p.age >= PENDING_META_MAX_AGE) pending.delete(t.id);
     }
   }
