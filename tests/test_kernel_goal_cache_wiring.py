@@ -37,13 +37,15 @@ T0 = NOW - 3600
 # freeze would raise if one did).
 WIRED = {"_open_top_goal": 1, "_deferral_sweep_tick": 1, "_session_stamp_read": 1, "_owned_yield_why": 1,
          "_msg_sum_scan_session": 1, "build_feed": 1, "build_session": 2, "build_timeline": 2,
-         "_bg_placed_tops": 1}
+         "_bg_placed_tops": 1,
+         "_feed_goals_view": 1}   # the feed's main store read, its live branch (round-4 plan P1); the pass
+#                                  snapshot (B5) stays as it is and serves the mid-pass builds
 # TWO-PHASE (performance plan 4, P16): one shared PROBE, one writer load taken only when the probe found
 # a lift due; the decision body (_lift_decisions) loads nothing and writes nothing.
 TWO_PHASE = {"_lift_spent_awaiting": (1, 1)}
-# NOT wired, on purpose: _feed_goals' live path is the feed's main store read and stays on the writer's
-# loader until the B5 snapshot memo is replaced (its own change).
-UNWIRED = ("_feed_goals",)
+# Every read-only pusher site is wired now. The tuple stays so a site that must keep the writer's loader
+# has a place to be named; the test over it passes vacuously while it is empty.
+UNWIRED = ()
 
 
 class WiringPins(unittest.TestCase):

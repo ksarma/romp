@@ -403,8 +403,10 @@ class _PerfStats:
                                    decoded, summed over passes), fail (versions that did not
                                    decode), evict (entries dropped for files gone from the
                                    directory), punch (snapshot entries copied for a user gesture),
-                                   and the gauges entries / bytes (memoized paths and their summed
-                                   file size); lift_gate (the awaiting-lift job's per-session
+                                   live / snap (_feed_goals_view serves: the live read through the
+                                   shared cache, or the pass snapshot), and the gauges entries /
+                                   bytes (memoized paths and their summed file size); lift_gate
+                                   (the awaiting-lift job's per-session
                                    inputs gate, see _lift_seen) -> skip / load (session-cycles
                                    that took no store read vs the ones that read it, the probe on
                                    the shared view), shared (probes the shared cache answered),
@@ -25337,7 +25339,8 @@ _goals_snap_lock = threading.Lock()
 # (plan C1) when it lands.
 _goals_memo = [{}]                               # path → ((st_ino, st_mtime_ns, st_size), parsed store | _GOALS_MEMO_BAD)
 _GOALS_MEMO_BAD = object()                       # a file version that did not decode: no snapshot entry, no retry until it changes
-_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0}   # observability + tests (/perf memos)
+_goals_memo_stats = {"hit": 0, "miss": 0, "fail": 0, "evict": 0, "punch": 0,   # observability + tests (/perf memos)
+                     "live": 0, "snap": 0}           # _feed_goals_view serves: the live branch / the snapshot branch
 
 
 def _goals_memo_decode(data):
@@ -25449,10 +25452,44 @@ def _feed_goals(sid):
     ladder the judge already encodes (user > judges) applied to the view, and it is how a CLEAR has always
     behaved (cleared.jsonl is read live, outside the snapshot). Replay is idempotent, but rollup_status is
     not free, so a sid re-punches only when its mark MOVES — a second gesture in the same pass must land
-    too, which a plain already-done flag would have swallowed."""
+    too, which a plain already-done flag would have swallowed.
+
+    The store only; _feed_goals_view returns it with the key a memo can hold for it."""
+    return _feed_goals_view(sid)[0]
+
+
+def _feed_goals_view(sid):
+    """`(store, key)`: the store _feed_goals serves for `sid` and a KEY that stands for its content.
+
+    Two served stores with the same key (compared by identity, `is`) have equal content, so a consumer
+    that derives values from the store may keep them under the key (build_feed's per-session memo).
+    The key is the served object itself where that object's identity already implies its content, and a
+    fresh `object()` (equal to nothing, so every consumer misses) where it does not:
+    - LIVE branch (no pass in flight, or a sid the pass did not snapshot): the store is read through
+      jd.load_goals_shared, the shared read-only cache (round-4 plan P1; the plain jd.load_goals here
+      was the pusher's single largest raw_decode caller, re-parsing stores the timeline and the chat
+      already held in the cache). A FrozenStore from the cache is the key: the cache hands one object
+      per (store identity, journal identity, archive identity) AND compares the store's bytes on a hit,
+      so equal objects mean equal bytes, and a publish, a journal append or an archive move yields a new
+      object. Anything else the loader answers (the cache switched off after a write attempt, no store
+      file, an unreadable journal, an archive that moved under the fill) is a private object per call
+      with no identity guarantee: the key is a sentinel.
+    - SNAPSHOT branch: the pass's memoized decode is the key while nothing has been punched onto it, or
+      once a user gesture has been replayed onto the pass's private copy (the copy is then the key). A
+      punch that FAILED (the mark is newer than the snapshot and not recorded done) retries on the next
+      read and may change the copy in place under the same identity, so until it succeeds the key is a
+      sentinel.
+    - A REWIND HOLD armed on the sid: _apply_rewind_hold serves a filtered view built per call, whose
+      content also depends on the transcript (the kept-chain lookup); the key is a sentinel for as long
+      as the hold stands.
+    build_feed is read-only on the store (tests/test_feed_goals_shared.py pins it): a write on the
+    shared object raises FrozenStoreError and switches the cache off, loudly (memos.goals_shared `off`).
+    Serve counters ride memos.goals_snap: `live` and `snap` count the branch taken, `punch` the copies."""
+    hold = _rewind_hold_get(sid)
     with _goals_snap_lock:
         snap = _goals_snap[0]
         if snap is not None and sid in snap:
+            _goals_memo_stats["snap"] += 1
             store, mark = snap[sid], _user_goal_write.get(str(sid), 0.0)
             if mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark:
                 if sid not in _goals_snap_owned:
@@ -25471,9 +25508,14 @@ def _feed_goals(sid):
                     #                                    card for the whole pass (the user 2026-07-23)
                 except Exception:
                     sys.stderr.write("feed-goals: user-override replay: %s\n" % traceback.format_exc())
-            return _apply_rewind_hold(sid, store)      # a pending rewind's cards are hidden NOW (latched
-            #                                            at the gesture; archive lands at the branch-take)
-    return _apply_rewind_hold(sid, jd.load_goals(sid))   # no pass in flight → live read, outside the lock
+            settled = not (mark >= _goals_snap_at[0] and _goals_snap_done.get(sid) != mark)
+            key = store if (settled and not hold) else object()
+            return _apply_rewind_hold(sid, store), key   # a pending rewind's cards are hidden NOW (latched
+            #                                              at the gesture; archive lands at the branch-take)
+        _goals_memo_stats["live"] += 1
+    store = jd.load_goals_shared(sid)                    # no pass in flight → the shared read-only view, outside the lock
+    key = store if (isinstance(store, jd.FrozenStore) and not hold) else object()
+    return _apply_rewind_hold(sid, store), key
 
 # Delta-send (the user 2026-06-25, who wanted to stop re-sending what didn't change): the chat pusher used to send the
 # FULL events array (~8MB for a 34MB transcript) on every change, even when one event was appended. Keep the
@@ -31613,6 +31655,9 @@ def build_feed(now, tmux=None):
     if tmux is None:
         tmux = _tmux_sessions()
     cleared = _cleared_ids()
+    cmap = _colormap()        # the recency colormap, read ONCE per build (round-4 plan P1 item 3): the per-row
+    #                           and per-card age tints below used to stat STATE/colormap each; the view signature
+    #                           (_fleet_view_sig) already keys the file, so one map per build is the exact form
     # Debug mode (the user 2026-07-09): join judge-failure rows onto each card so a rejection is
     # inspectable from the card modal (judge, kind, evidence, and in-debug capture: input + reply).
     # Zero cost when off: no rows read, no key emitted.
@@ -31885,7 +31930,7 @@ def build_feed(now, tmux=None):
                         # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
                         # the modal tree just as its card does — not pinned to the mint `t` (the user
                         # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
-                        "t": nd["t"], "last": _fsubmax(nid), "trgb": list(cm.age_rgb(now - _fsubmax(nid), _colormap())),
+                        "t": nd["t"], "last": _fsubmax(nid), "trgb": list(cm.age_rgb(now - _fsubmax(nid), cmap)),
                         # mt = last-modified (the segment the planner applied done / block) → a blocked or
                         # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
                         # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
@@ -32470,7 +32515,7 @@ def build_feed(now, tmux=None):
             card = {
                 "itemId": nid, "sid": fsid, "name": name, "color": color, "text": card_text,
                 "t": disp_t, "live": live,
-                "trgb": list(cm.age_rgb(now - disp_t, _colormap())),
+                "trgb": list(cm.age_rgb(now - disp_t, cmap)),
                 "turnId": nid, "origin": origin,
                 **({"handoffTo": handoff_to} if handoff_to else {}),
                 **({"delegTracked": _tracked_peers} if _tracked_peers else {}),
@@ -32696,7 +32741,7 @@ def build_feed(now, tmux=None):
             "itemId": item_id, "sid": ph["toId"], "name": ph["toName"], "color": _name_color(ph["toId"]),
             "text": "Hand-off parked for %s (offline)" % ph["toName"],
             "t": ph["t"], "live": False,
-            "trgb": list(cm.age_rgb(now - ph["t"], _colormap())),
+            "trgb": list(cm.age_rgb(now - ph["t"], cmap)),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,

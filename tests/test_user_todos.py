@@ -116,8 +116,13 @@ class _StoreSandbox(unittest.TestCase):
         km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03);
         #                                              these suites pin the ON behavior — the OFF side
         #                                              lives in test_user_todos_switch.py
+        self.poisoned0 = jd.shared_store_stats()["poisoned"]
 
     def tearDown(self):
+        # the shared-cache landing gate (round-4 plan P1): the feed builds in these suites read their
+        # stores through the shared read-only cache and must never have written into one
+        self.assertEqual(jd.shared_store_stats()["poisoned"] - self.poisoned0, 0,
+                         "a feed build wrote into a shared goal store (see judge-errors frozen-store-write)")
         jd.STATE = self.saved
         self.td.cleanup()
         km._user_todos_cache.clear()

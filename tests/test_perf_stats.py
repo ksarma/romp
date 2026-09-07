@@ -137,8 +137,8 @@ class Collector(unittest.TestCase):
                           "captions", "states_overlay", "thread_reg", "bg_tops"},
                          "one block per memo the kernel keeps (plan D4)")
         self.assertEqual(set(snap["memos"]["goals_snap"]),
-                         {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
-                         "the judge pass's goal-store memo: counters plus its occupancy")
+                         {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
+                         "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
         for k, v in snap["memos"]["goals_snap"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
