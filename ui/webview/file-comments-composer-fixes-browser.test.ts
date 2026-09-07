@@ -5,9 +5,13 @@
 // in which the browser clamped a scrolled aside toward its top, so every keystroke at the twelve-row cap jumped the panel
 // by nine rows — the leg scrolls a real 300px aside to its bottom and types. Two, the REAL panel (fileCommentsAction.mount,
 // a stubbed viewer context) takes a real mouse drag on the box's resize handle BEFORE a word is typed: the browser writes
-// the inline height and fires no input, and the first keystroke used to snap the box back to three rows. Skips LOUDLY
-// without a playwright browser (CI installs none), as the composer's other browser leg does. Synthetic values only: the
-// notes-api world, placeholder ids and lines.
+// the inline height and fires no input, and the first keystroke used to snap the box back to three rows. Three, the same
+// real panel at the twelve-row cap: the cap is autosizeComposer's (COMPOSER_MAX_ROWS of the box's computed line-height plus
+// its padding), not a max-height in the sheet — the drag and the autosize write the same inline height, so a sheet clamp
+// capped the drag too, and a drag at the cap could not make the box taller yet turned autosize off, the box frozen at the
+// cap for the rest of the comment (the review consolidation). The leg types past the cap, drags the handle 100px, and
+// types again. Skips LOUDLY without a playwright browser (CI installs none), as the composer's other browser leg does.
+// Synthetic values only: the notes-api world, placeholder ids and lines.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -127,13 +131,25 @@ window.__answer = () => {
 window.__box = () => {
   const ta = document.querySelector(".fc-panel textarea.fc-input");
   const r = ta.getBoundingClientRect();
-  return { inline: ta.style.height, height: r.height, right: r.right, bottom: r.bottom, value: ta.value, focused: document.activeElement === ta, hidden: ta.closest(".fc-composer").hidden };
+  const cs = getComputedStyle(ta);
+  const num = (v) => parseFloat(v) || 0;
+  return { inline: ta.style.height, height: r.height, right: r.right, bottom: r.bottom, value: ta.value, focused: document.activeElement === ta, hidden: ta.closest(".fc-composer").hidden,
+    scrollHeight: ta.scrollHeight, clientHeight: ta.clientHeight, lineHeight: num(cs.lineHeight),
+    padBorder: num(cs.paddingTop) + num(cs.paddingBottom) + num(cs.borderTopWidth) + num(cs.borderBottomWidth) };
 };`;
 
 type Read = { height: number; inline: string; scrollTop: number; scrollMax: number; lines: number };
-type BoxRead = { inline: string; height: number; right: number; bottom: number; value: string; focused: boolean; hidden: boolean };
+type BoxRead = { inline: string; height: number; right: number; bottom: number; value: string; focused: boolean; hidden: boolean; scrollHeight: number; clientHeight: number; lineHeight: number; padBorder: number };
 const near = (a: number, b: number, msg: string) => assert.ok(Math.abs(a - b) < 1.5, msg + ": " + a + " vs " + b);
 const px = (v: string): number => { assert.match(v, /^\d+(\.\d+)?px$/, "an inline pixel height, got " + JSON.stringify(v)); return parseFloat(v); };
+/** A real mouse drag on the box's resize handle (its bottom-right corner), dy pixels down: the browser writes the inline
+ *  height and fires no input event. */
+async function drag(page: any, from: BoxRead, dy: number): Promise<void> {
+  await page.mouse.move(from.right - 6, from.bottom - 6);
+  await page.mouse.down();
+  await page.mouse.move(from.right - 6, from.bottom - 6 + dy, { steps: 8 });
+  await page.mouse.up();
+}
 
 let pw: any = null;
 try { pw = requireCjs("playwright"); } catch { pw = null; }
@@ -171,8 +187,8 @@ for (const name of ["chromium", "firefox"] as const) {
       await page.keyboard.type(Array.from({ length: 14 }, (_, i) => "line " + (i + 1)).join("\n"));
       const cap = await read();
       assert.equal(cap.lines, 14);
-      const capPx = px(cap.inline);
-      assert.ok(capPx > cap.height + 20, "autosizeComposer wrote the content's height (" + cap.inline + ") and the sheet's max-height caps the box under it (" + cap.height + "px): the box is at the cap");
+      near(px(cap.inline), cap.height, "autosizeComposer wrote the cap itself (" + cap.inline + "), the box renders at it (" + cap.height + "px) — no sheet clamp under a taller inline height");
+      assert.ok(cap.height < 14 * 16 && cap.height > 12 * 13, "twelve rows, not fourteen: the box is at the cap (" + cap.height + "px)");
       assert.ok(cap.scrollMax > 60, "the aside scrolls: its content overflows the 300px row by " + cap.scrollMax + "px");
       // the person scrolls to the bottom (the Save row, the cards) — the case the phone's short aside makes common
       const bottom: number = await page.evaluate(() => (window as any).__toBottom());
@@ -214,13 +230,7 @@ for (const name of ["chromium", "firefox"] as const) {
       assert.equal(b0.inline, "", "no inline height yet: the sheet's three rows");
       assert.ok(b0.focused, "the box has the keyboard");
       // the person drags the handle 120px down before typing a word: the browser writes the inline height, no input fires
-      const drag = async (from: BoxRead, dy: number) => {
-        await page.mouse.move(from.right - 6, from.bottom - 6);
-        await page.mouse.down();
-        await page.mouse.move(from.right - 6, from.bottom - 6 + dy, { steps: 8 });
-        await page.mouse.up();
-      };
-      await drag(b0, 120);
+      await drag(page, b0, 120);
       const dragged = await box();
       const draggedPx = px(dragged.inline);
       assert.ok(draggedPx > b0.height + 60, "the drag took: " + b0.height + " -> " + dragged.inline);
@@ -242,11 +252,59 @@ for (const name of ["chromium", "firefox"] as const) {
       const grown = await box();
       assert.ok(px(grown.inline) > b0.height + 20, "no drag: the box followed its content (" + grown.inline + ")");
       // a drag after typing stands as it always did
-      await drag(grown, 80);
+      await drag(page, grown, 80);
       const late = await box();
       assert.ok(px(late.inline) > px(grown.inline) + 40, "the second drag took");
       await page.keyboard.type("\nsix");
       assert.equal((await box()).inline, late.inline, "a drag after typing stands");
+    });
+  });
+
+  test("in " + name + ": the real panel — at the cap the box is twelve rows, inline and rendered, and scrolls; a drag past the cap takes and stands through typing; with no drag the box follows its content back to the floor", async (t) => {
+    await inBrowser(t, name, PAGE_PANEL, PANEL_JS, async (page) => {
+      const box = (): Promise<BoxRead> => page.evaluate(() => (window as any).__box());
+      const answer = (): Promise<string | null> => page.evaluate(() => (window as any).__answer());
+      const { COMPOSER_ROWS, COMPOSER_MAX_ROWS } = await page.evaluate(() => ({ COMPOSER_ROWS: (window as any).__romp.COMPOSER_ROWS, COMPOSER_MAX_ROWS: (window as any).__romp.COMPOSER_MAX_ROWS }));
+      await page.evaluate(() => (window as any).__mount());
+      assert.ok(await answer(), "the probe's status ask, answered");
+      await page.click(".fileview-fc button");
+      assert.ok(await answer(), "the open's status ask, answered");
+      await page.click('.fc-panel [data-act="fcfile"]');
+      const b0 = await box();
+      assert.ok(b0.lineHeight > 0, "the sheet's line-height resolved");
+      const rows = (n: number) => n * b0.lineHeight + b0.padBorder;
+      near(b0.height, rows(COMPOSER_ROWS), "three rows to start");
+      const twenty = Array.from({ length: 20 }, (_, i) => "line " + (i + 1)).join("\n");
+      await page.keyboard.type(twenty);
+      const cap = await box();
+      near(cap.height, rows(COMPOSER_MAX_ROWS), "twenty lines render at twelve rows");
+      near(px(cap.inline), rows(COMPOSER_MAX_ROWS), "…and the inline height IS twelve rows: autosizeComposer's cap, not a sheet clamp under a taller write");
+      assert.ok(cap.scrollHeight > cap.clientHeight + b0.lineHeight, "the rest scrolls inside the box");
+      // the person drags the handle 100px down at the cap: the box gets taller — past the cap, as a drag may
+      await drag(page, cap, 100);
+      const dragged = await box();
+      assert.ok(dragged.height > cap.height + 80, "the drag past the cap took: " + cap.height + " -> " + dragged.height);
+      assert.ok(px(dragged.inline) > px(cap.inline) + 80, "…and the inline height went with it (" + dragged.inline + ")");
+      // then types: the dragged height is a real drag now, so it stands (it used to be read as one too, but the box
+      // could not get taller, so the drag froze the box at the cap for the rest of the comment)
+      await page.keyboard.press("Control+a");
+      await page.keyboard.type("one\ntwo");
+      const typed = await box();
+      assert.equal(typed.value, "one\ntwo");
+      assert.equal(typed.inline, dragged.inline, "the dragged height stands through the typing that follows");
+      near(typed.height, dragged.height, "…rendered as dragged");
+      // the control: the same typing with no drag follows the content back down to the floor
+      await page.click('.fc-panel [data-act="fccancel"]');
+      await page.click('.fc-panel [data-act="fcfile"]');
+      assert.equal((await box()).inline, "", "reset by Cancel");
+      await page.keyboard.type(twenty);
+      near((await box()).height, rows(COMPOSER_MAX_ROWS), "at the cap again");
+      await page.keyboard.press("Control+a");
+      await page.keyboard.type("one\ntwo");
+      const ctl = await box();
+      assert.equal(ctl.value, "one\ntwo");
+      near(ctl.height, rows(COMPOSER_ROWS), "no drag: two lines take the box back to the floor (the sheet's min-height)");
+      assert.ok(px(ctl.inline) <= rows(COMPOSER_ROWS) + 0.5, "autosize kept following the content: the inline height is at or under the floor (" + ctl.inline + ")");
     });
   });
 }

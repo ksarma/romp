@@ -384,7 +384,7 @@ test("source: every Escape stops at the box before the key policy runs; autosize
     "a composing Escape is null to composerKeyAction, so the stop comes before it, for every Escape");
   assert.match(SRC, /const held = scrolledAncestors\(ta\);\n\s*ta\.style\.height = "auto";/, "read before the collapse");
   assert.match(SRC, /if \(!\(sh > 0\)\) \{ ta\.style\.height = prev; restoreScroll\(held\); return null; \}/, "written back on the unmeasurable path");
-  assert.match(SRC, /ta\.style\.height = h;\n\s*restoreScroll\(held\);\n\s*return h;/, "…and after the new height on the measured one");
+  assert.match(SRC, /ta\.style\.height = Math\.min\(sh, rowCap\(ta\)\) \+ border \+ "px";\n\s*restoreScroll\(held\);\n\s*return ta\.style\.height;/, "…and after the new height on the measured one");
   assert.match(SRC, /for \(let p = el\.parentElement; p; p = p\.parentElement\) if \(p\.scrollTop > 0\) out\.push\(\[p, p\.scrollTop\]\);/, "every scrolled ancestor, not one guessed scroller");
   assert.match(SRC, /for \(const \[p, top\] of held\) if \(p\.scrollTop !== top\) p\.scrollTop = top;/, "written back only where the layout moved it");
 });

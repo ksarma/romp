@@ -359,6 +359,30 @@ test("autosizeComposer: height auto, then the scroll height plus the border; a b
   assert.equal(none.style.height, "77px", "the inline height it had is put back, never left at auto");
 });
 
+test("autosizeComposer caps the content at COMPOSER_MAX_ROWS rows of the box's computed line-height plus its padding, and returns the inline height as the box holds it, not the string it wrote", async () => {
+  const { autosizeComposer, COMPOSER_MAX_ROWS } = await import("./file-comments");
+  // the stand-in's window has no getComputedStyle; this test lends it one that answers from the box's own `cs`, as a
+  // renderer would from the sheet (line-height 1.4 at the 0.86em of a 13px body: 15.652px; 5px of padding each side)
+  const cs = { lineHeight: "15.652px", paddingTop: "5px", paddingBottom: "5px" };
+  win.getComputedStyle = (el: any) => el.cs;
+  try {
+    // Chromium's serialization: a written 199.82399999999998px reads back as 199.824px — the fake's style rounds the same
+    // way, so the return must come from the read, or Panel.autosize's comparison of the two would call every keystroke a drag
+    const style = { _h: "", get height() { return this._h; }, set height(v: string) { this._h = /px$/.test(v) ? Math.round(parseFloat(v) * 1000) / 1000 + "px" : v; } };
+    const tall = { style, cs, scrollHeight: 325, offsetHeight: 327, clientHeight: 325 } as unknown as HTMLTextAreaElement;
+    const cap = COMPOSER_MAX_ROWS * 15.652 + 10;
+    assert.equal(cap + 2 + "px", "199.82399999999998px", "the arithmetic the write produces");
+    assert.equal(autosizeComposer(tall), "199.824px", "twenty lines: the cap, plus the border, as the box serialized it");
+    assert.equal(tall.style.height, "199.824px");
+    // under the cap the content height stands, as before
+    const short = { style: { height: "" }, cs, scrollHeight: 100, offsetHeight: 102, clientHeight: 100 } as unknown as HTMLTextAreaElement;
+    assert.equal(autosizeComposer(short), "102px", "under the cap: the content's height");
+    // a box no sheet reaches has no row height to count: no cap (and no floor either)
+    const bare = { style: { height: "" }, cs: { lineHeight: "normal", paddingTop: "0px", paddingBottom: "0px" }, scrollHeight: 325, offsetHeight: 327, clientHeight: 325 } as unknown as HTMLTextAreaElement;
+    assert.equal(autosizeComposer(bare), "327px", "no computed row height: the content's height, uncapped");
+  } finally { delete win.getComputedStyle; }
+});
+
 // ── the box ────────────────────────────────────────────────────────────────────────────────────────
 
 test("every composer is one textarea of three rows with the reference row above it, Save and Cancel beside it and the platform's chord in a hint", async () => {
@@ -619,6 +643,9 @@ test("source: the box is a textarea of COMPOSER_ROWS rows; keydown goes through 
     "the chord saves, Escape cancels and stops there, a plain Enter is left to the textarea");
   assert.match(SRC, /this\.input\.addEventListener\("input", \(\) => this\.autosize\(\)\);/);
   assert.match(SRC, /if \(this\.sizedTo !== null && ta\.style\.height !== this\.sizedTo\) return;/, "a dragged height stands");
+  assert.match(SRC, /ta\.style\.height = Math\.min\(sh, rowCap\(ta\)\) \+ border \+ "px";\n\s*restoreScroll\(held\);\n\s*return ta\.style\.height;/,
+    "the cap is the autosize's own (rowCap), and the return is the inline height read back — the string the box holds, which sizedTo is compared to");
+  assert.match(SRC, /return COMPOSER_MAX_ROWS \* lh \+ \(parseFloat\(cs\.paddingTop\) \|\| 0\) \+ \(parseFloat\(cs\.paddingBottom\) \|\| 0\);/, "COMPOSER_MAX_ROWS rows of the computed line-height plus the padding");
   assert.match(SRC, /this\.input\.style\.height = ""; this\.sizedTo = null;/, "closeComposer resets the height with the words");
   assert.match(SRC, /fcsave: \(\) => \{ void this\.saveComposer\(\); \},/, "Save is a delegated action on the panel's one root (click-safe, flash())");
   assert.match(SRC, /const hint = el\("span", "fc-note fc-hint", composerHint\(IS_MAC\)\);\n\s*acts\.replaceChildren\(\.\.\.\(noSave \? \[\] : \[hint, save\]\), btn\("Cancel", "fccancel"\)\);/);
@@ -630,8 +657,8 @@ test("source: the box is a textarea of COMPOSER_ROWS rows; keydown goes through 
   assert.doesNotMatch(SRC, /Enter saves, Esc cancels/, "the old placeholder is gone");
 });
 
-test("the sheets: the box rule says textarea — resize, a floor of COMPOSER_ROWS and a cap of COMPOSER_MAX_ROWS rows — and the hint rule exists, byte-equal in both", async () => {
-  const { COMPOSER_ROWS, COMPOSER_MAX_ROWS } = await import("./file-comments");
+test("the sheets: the box rule says textarea — resize, a floor of COMPOSER_ROWS rows and NO max-height (the cap is autosizeComposer's, so a drag may pass it) — and the hint rule exists, byte-equal in both", async () => {
+  const { COMPOSER_ROWS } = await import("./file-comments");
   const rule = (css: string, head: string): string => { const a = css.indexOf("\n" + head); assert.ok(a >= 0, head); return css.slice(a + 1, css.indexOf("}", a) + 1); };
   const input = rule(CHAT_CSS, ".fc-input {");
   assert.equal(input, rule(FEED_CSS, ".fc-input {"), ".fc-input mirrors byte for byte");
@@ -639,7 +666,7 @@ test("the sheets: the box rule says textarea — resize, a floor of COMPOSER_ROW
   assert.ok(input.includes("overflow-y: auto;"), "scrolls past the cap");
   assert.ok(input.includes("line-height: 1.4;"), "one row is 1.4em, which the floor and the cap count in");
   assert.ok(input.includes("min-height: calc(" + COMPOSER_ROWS + " * 1.4em + 12px);"), "the floor is COMPOSER_ROWS rows plus padding and border");
-  assert.ok(input.includes("max-height: calc(" + COMPOSER_MAX_ROWS + " * 1.4em + 12px);"), "the cap is COMPOSER_MAX_ROWS rows plus padding and border");
+  assert.ok(!input.includes("max-height"), "no max-height: the resize drag and autosizeComposer write the same inline height, so a sheet clamp capped the drag too and a drag at the cap froze the box there (the review consolidation)");
   assert.ok(input.includes("padding: 5px 8px;") && input.includes("border: 1px solid var(--box-border);") && input.includes("box-sizing: border-box;"), "5+5 padding and 1+1 border are the 12px");
   assert.ok(input.includes("width: 100%;"), "full panel width");
   assert.equal(rule(CHAT_CSS, ".fc-hint {"), rule(FEED_CSS, ".fc-hint {"));

@@ -488,8 +488,9 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
 // ── the composer's box (the follow-on of 2026-09-07: a comment is often several lines) ──────────────
-/** The box starts at this many rows and grows with its content to the cap (autosizeComposer; the sheets' min-height and
- *  max-height say the same in em), then scrolls; the person may also drag its handle (resize: vertical). */
+/** The box starts at this many rows (the sheets' min-height says the same in em) and grows with its content to the cap,
+ *  COMPOSER_MAX_ROWS rows, then scrolls. The cap is autosizeComposer's alone, not a max-height in the sheets: the person
+ *  may also drag the box's handle (resize: vertical), past the cap too, and a sheet clamp would take the drag with it. */
 export const COMPOSER_ROWS = 3;
 export const COMPOSER_MAX_ROWS = 12;
 /** Which modifier the save chord uses: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
@@ -520,10 +521,15 @@ export const COMPOSER_HINT_TOUCH = "Enter adds a line; tap Save when done";
 export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): string {
   return touch ? COMPOSER_HINT_TOUCH : saveChord(mac) + " saves; Enter adds a line";
 }
-/** Size the box to its content: height auto, then the scroll height plus the border (box-sizing: border-box). The
- *  sheet's max-height caps the result at COMPOSER_MAX_ROWS rows — past that the box scrolls — and its min-height floors it
- *  at COMPOSER_ROWS. Returns the height set, or null when the box has no layout to measure (hidden, or a document with no
- *  renderer), in which case the inline height it had is put back.
+/** Size the box to its content: height auto, then the scroll height — capped at COMPOSER_MAX_ROWS rows of the box's
+ *  computed line-height plus its padding (rowCap), past which the box scrolls — plus the border (box-sizing: border-box).
+ *  The sheet's min-height floors it at COMPOSER_ROWS. The cap is here and not a max-height in the sheet because the
+ *  person's resize drag and this function write the same inline height: a sheet clamp capped the drag too, so a drag at
+ *  the cap could not make the box taller yet read as a drag (Panel.autosize), and the box froze at the cap for the rest
+ *  of the comment (the 2026-09-07 review). Returns the inline height as the box holds it after the write — read back,
+ *  not the string written: Chromium serializes a written 199.82399999999998px as 199.824px, and Panel.autosize tells a
+ *  drag from this function's own last write by comparing the inline height to this return — or null when the box has no
+ *  layout to measure (hidden, or a document with no renderer), in which case the inline height it had is put back.
  *
  *  The measurement leaves the page's scroll where it found it. `height: auto` collapses a grown box to its rows for the
  *  read, and the layout that read forces is up to nine rows shorter: a scrolled ancestor near its bottom — the panel's
@@ -538,10 +544,20 @@ export function autosizeComposer(ta: HTMLTextAreaElement): string | null {
   const sh = ta.scrollHeight;
   if (!(sh > 0)) { ta.style.height = prev; restoreScroll(held); return null; }
   const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
-  const h = sh + border + "px";
-  ta.style.height = h;
+  ta.style.height = Math.min(sh, rowCap(ta)) + border + "px";
   restoreScroll(held);
-  return h;
+  return ta.style.height;
+}
+/** The scroll height of a box at the cap: COMPOSER_MAX_ROWS rows of its computed line-height plus its vertical padding
+ *  (scrollHeight counts the padding, not the border). Infinity — no cap — where the row height cannot be read: a document
+ *  with no computed style (the panel tests' stand-in), or a box no sheet reaches, which has no floor either. */
+function rowCap(ta: HTMLTextAreaElement): number {
+  const win = typeof window !== "undefined" ? window : null;
+  if (!win || typeof win.getComputedStyle !== "function") return Infinity;
+  const cs = win.getComputedStyle(ta);
+  const lh = parseFloat(cs.lineHeight);
+  if (!(lh > 0)) return Infinity;
+  return COMPOSER_MAX_ROWS * lh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
 }
 /** The ancestors scrolled down from their top, with how far: the only ones a shorter layout can clamp. */
 function scrolledAncestors(el: Element): Array<[Element, number]> {
@@ -2720,7 +2736,8 @@ class Panel {
   /** The box follows its content (autosizeComposer) on every input — unless the person dragged the handle, when their
    *  height stands until the composer closes; a box with no layout to measure keeps the height it had. An inline
    *  height that is not the one autosize last set was dragged there (the sheet's resize: vertical writes it, and
-   *  fires no input). Before the first keystroke autosize has set none — the box opens with no inline height, and
+   *  fires no input); sizedTo holds that write as the box serialized it, so the comparison is string to string of one
+   *  origin. Before the first keystroke autosize has set none — the box opens with no inline height, and
    *  closeComposer clears the height with sizedTo — so an inline height while sizedTo is null is a drag too: the
    *  first guard is that case, which the second cannot see (the 2026-09-07 review: a box dragged taller before a
    *  word was typed snapped back to its content on the first keystroke). */

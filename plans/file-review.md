@@ -950,7 +950,8 @@ The composer follow-on (2026-09-07): after walking the loop, the user found the 
 small for the comments the loop needs. Every composer the panel offers (a passage, the whole file, a
 region, a reply on a card, a comment bound to a change) is now one textarea: three rows to start,
 grown to its content up to twelve rows and scrolling past that, draggable taller or shorter
-(`resize: vertical`; a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter
+(`resize: vertical`; a drag may pass the twelve rows, the cap being the panel's and not a sheet
+max-height, and a dragged height stands until the composer closes). Enter adds a line; Cmd+Enter
 on macOS or Ctrl+Enter elsewhere (either modifier works on every platform, the chat composer's rule)
 or the Save button saves; Escape cancels as before, the re-place Escape included. A hint under the
 box says what saves, and its wording follows the device. With a keyboard it names the platform's
