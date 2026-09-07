@@ -96,13 +96,17 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
     "the middle PRESS is cancelled: autoscroll (Firefox, Edge) starts on mousedown and would swallow the auxclick");
   assert.match(pf, /box\.onauxclick = \(ev\) => \{ if \(ev\.button !== 1\) return; ev\.stopPropagation\(\); openPdf\(path, sid, ev\); \};/,
     "a middle-click reaches the card as auxclick, never as click");
-  // the opener itself: synchronous, two-argument window.open — the gesture and the handle both matter
+  // the opener itself: the kind check is its own; the tab is openFileTab's, the ONE window.open behind every own-tab gesture
+  // (the viewer's links hand it any file; file-view-links.test.ts executes it) — synchronous, two-argument, the gesture and
+  // the handle both matter
   const opener = PREVIEW.slice(PREVIEW.indexOf("export function openPdfTab"), PREVIEW.indexOf("export function openPdf("));
-  assert.match(opener, /if \(previewKind\(path\) !== "pdf" \|\| !canPreview\(\)\) return false;/, "the kind check is the opener's own");
-  assert.match(opener, /const w = window\.open\(fileUrl\(path, sid\), "_blank"\);/);
-  assert.doesNotMatch(opener, /"noopener/, "the noopener FEATURE makes window.open return null on success — the block signal would be lost");
-  assert.match(opener, /if \(!w\) return false;[^\n]*\n\s+try \{ w\.opener = null; \}/, "…so the link is severed on the handle instead, before anything else");
-  assert.doesNotMatch(opener, /await|\.then\(/, "the open happens inside the click gesture, never after a fetch");
+  assert.match(opener, /if \(previewKind\(path\) !== "pdf"\) return false;\n\s*return openFileTab\(path, sid\);/, "the kind check is the opener's own; the tab is the shared opener's");
+  const tab = PREVIEW.slice(PREVIEW.indexOf("export function openFileTab"), PREVIEW.indexOf("// LOADING CUE"));
+  assert.match(tab, /if \(!canPreview\(\)\) return false;/, "the VS Code webview has no tabs and no kernel origin");
+  assert.match(tab, /const w = window\.open\(fileUrl\(path, sid\), "_blank"\);/);
+  assert.doesNotMatch(tab, /"noopener/, "the noopener FEATURE makes window.open return null on success — the block signal would be lost");
+  assert.match(tab, /if \(!w\) return false;[^\n]*\n\s+try \{ w\.opener = null; \}/, "…so the link is severed on the handle instead, before anything else");
+  assert.doesNotMatch(opener + tab, /await|\.then\(/, "the open happens inside the click gesture, never after a fetch");
   // the viewer: the ONE place a clicked file's gesture is read — openFileClick — and the plain open below it
   // never opens a tab (a relayed viewFile, a Reload: no gesture, the viewer)
   // `open` (the 2026-09-07 fold): a hosting document's own plain-click opener (the file browser's BrowseHost.openFile, the
@@ -113,7 +117,8 @@ test("wiring: every click on a PDF carries its gesture; modified → the tab, pl
   assert.equal((BROWSE.match(/openFileView\(/g) || []).length, 0, "file-browse.ts opens files through openFileClick only");
   const view = VIEW.slice(VIEW.indexOf("export function openFileView("));
   const body = view.slice(0, view.indexOf("\n}\n"));
-  assert.doesNotMatch(body, /openPdfTab|wantsOwnTab/, "openFileView itself opens in-app, whatever the path");
+  assert.doesNotMatch(body, /openPdfTab|openFileClick/, "openFileView itself opens in-app, whatever the path");
+  assert.equal((body.match(/wantsOwnTab\(ev\)/g) || []).length, 2, "the two gesture reads inside openFileView are its LINKS' (the body listener and openLink, file-view-links.test.ts), never its own open's");
   // the file browser's rows and the chat's path pills hand their gesture over, middle button included
   assert.match(BROWSE, /list\.addEventListener\("click", \(ev\) => \{[\s\S]*?onAct\(row, ev\);/);
   assert.match(BROWSE, /const fileRowOf = \(ev: MouseEvent\) => \{[\s\S]*?row\.dataset\.act === "file" \? row : null;/,

@@ -54,7 +54,7 @@ import { parseAgentNotif, type AgentNotif } from "./agent-notif";
 import { subTabId, isSubId, subParts, subLabel, gistLines, stepLines, stepsNote, agentFoldLabel, subHeadParts, openIconSvg, pinIconSvg, type SubMeta, type AgentGist, type AgentGistRow, type GistLine } from "./subagent-view";
 import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileClick } from "./file-view";                  // a clicked file WITH its gesture (pdf-new-tab.test.ts)
-import { openPathLink, linkifyPathTokens } from "./path-links";
+import { openPathLink, linkifyPathTokens, selectionOpenIn } from "./path-links";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView, setFileViewIdentity, hostStub } from "./file-view";
 import { panelMark } from "./file-comments";
@@ -1303,6 +1303,14 @@ document.addEventListener("click", (e) => {
   // its delegate opens the card and cancels the anchor (fcopen). Running first, at the capture phase, this handler
   // opened the tab and let no card open (the 2026-09-06 review); the panel's registry, never the markup, says which.
   if (panelMark(e.target as Element | null)) return;
+  // The click that ends a press-drag-release inside an anchor that is not draggable (the viewer's URL anchors, which
+  // select like the text around them; file-view-links.ts): the drag selected text, and the selection is what the person
+  // gets, not the link. The viewer's delegate rules the same for its links; running first, this opener opened the tab as
+  // well (the 2026-09-07 review, round 3). Read for a non-draggable anchor ONLY: a press on a draggable anchor (the chat's
+  // own, and a rendered document's web links) starts no selection and collapses none, so a selection left open around one
+  // by a triple-click on its paragraph is not a drag on it, and reading it made every click on that link dead until a click
+  // elsewhere (the 2026-09-07 review, round 4).
+  if (!a.draggable && selectionOpenIn(a)) { e.preventDefault(); return; }
   const href = a.getAttribute("href") || "";
   if (!/^[a-z][a-z0-9+.-]*:/i.test(href)) return; // fragment/relative — leave alone
   e.preventDefault();
@@ -16899,8 +16907,13 @@ setupSettings();
     // linkTodoDetailPaths): what the click does is the transcript's (openLinkedPath, with the click's
     // gesture, so a Cmd/Ctrl-clicked PDF here takes its own tab too); only the dispatch differs. The
     // transcript's own links keep their per-span binder, which stops the click before it gets here,
-    // so no link is ever opened twice.
-    openpath: (elx, ev) => openLinkedPath(elx, ev as MouseEvent),
+    // so no link is ever opened twice. The handler serves THOSE two hosts and no other, checked at the click:
+    // the file viewer (file-view.ts, a modal in this body) marks its links with the same data-act and opens
+    // them from its own body listener, and it lets the click go on to the document (menu closers, the feed's
+    // focus return) rather than stop it; a viewer link that reaches here, as one does when the viewer's
+    // unsaved-comment ask declined the open and the span stayed in the document, must not open the file a
+    // second time (the 2026-09-07 review, round 2).
+    openpath: (elx, ev) => { if (elx.closest(".todo-card, #ut-reply-prompt")) openLinkedPath(elx, ev as MouseEvent); },
     uttoggle: (elx) => {
       const tid = elx.dataset.tid; if (!tid) return;
       const open = !utDetailOpen.has(tid);

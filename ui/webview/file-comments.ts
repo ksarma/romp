@@ -71,7 +71,7 @@
 //
 // This module imports only TYPES from file-view.ts and is registered there (registerFileViewAction
 // in file-view.ts), so the two never form a runtime import cycle.
-import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit } from "./file-view";
+import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";
 import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
@@ -985,6 +985,7 @@ class Panel {
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
     ctx.onClose(() => this.dispose());
+    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved note is asked about before the viewer moves on
     ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
@@ -1026,11 +1027,13 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
-        // an inline change mark opens its card — and, like fcopen below, cancels the click: a mark inside the author's
-        // link (a deletion point placed at the start of a link's label, a substitution's point and tint over it, an
-        // insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the
-        // card also opened a tab to the author's URL — the session's URL, on a file under review (the 2026-09-07
-        // review). The chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
+        // an inline change mark opens its card, and only that: like fcopen below, it cancels the click. A mark inside the
+        // author's link (a deletion point placed at the start of a link's label, a substitution's point and tint over it,
+        // an insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the card
+        // also opened a tab to the author's URL, the session's URL, on a file under review; painted over a URL the viewer
+        // linked (file-view-links.ts) it stands inside that anchor too, and the anchor's own open followed the card's on
+        // every click and Enter (the 2026-09-07 review, both finds). Cancelling the click ends the anchor's activation;
+        // the chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
         fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
@@ -1297,6 +1300,18 @@ class Panel {
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
     this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
     this.stopPoll();
+  }
+  /** The viewer's close ask (ctx.guardClose): a composer holding typed words is a note the person has not saved, and a
+   *  close or a replace-open (a link followed inside the file, a Files-pane row, the shell's relay) used to drop it with
+   *  the panel, silently (the 2026-09-07 review). The panel names what is at stake; the VIEWER puts the ask, the way it
+   *  puts the editor's own (file-view.ts askDiscard: a confirm on the web, the notice bar in the VS Code webview, where
+   *  window.confirm shows nothing and answers false; the round-2 review). A re-place takes a drag, not words, and an
+   *  empty input has nothing to lose: null lets the close go. */
+  draftAsk(): CloseAsk | null {
+    const c = this.composer;
+    if (!c || c.kind === "replace" || !this.input.value.trim()) return null;
+    const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
+    return { question: "Discard the unsaved comment on " + name + "?", kept: "This file stays open: the comment typed on " + name + " is not saved. Save it, or clear the box, then try again." };
   }
   dispose(): void {
     this.clearLanding();

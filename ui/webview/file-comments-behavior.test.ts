@@ -242,6 +242,7 @@ type World = {
   disk: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>; heads: string[];
   editing: boolean; tracked: TrackedEdit | null;    // the viewer's edit mode, and the panel's half of editing over pending changes (Slice 5)
+  closeAsk: (() => { question: string; kept: string } | null) | null;   // the panel's draft ask, as it registered it through guardClose
   setText(src: string): void; close(): void;
 };
 let cur: World | null = null;
@@ -280,7 +281,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     posted: [] as any[], main, body, code, actions,
     hooks: { rendered: [] as Array<() => void>, selection: [] as Array<(s: Selection) => void>, saved: [] as Array<(i: { mtimeNs: string; logged: boolean }) => void>, close: [] as Array<() => void> },
     disk: text, reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>, heads: [] as string[],
-    editing: false, tracked: null,
+    editing: false, tracked: null, closeAsk: null,
   } as World;
   rows(code, text);
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };   // the viewer's renderBody + fireRendered
@@ -290,7 +291,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: (ask) => { w.closeAsk = ask; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     reload: () => { w.reloads++; w.setText(w.disk); },   // fetchFile: the bytes now on disk, repainted, the seam's onRendered fired
@@ -465,6 +466,26 @@ test("rawTarget: the refused block's own occurrence wins over an earlier copy; t
   assert.match(raw, /const range = rawTarget\(src, r\);/);
   assert.match(raw, /c\.range = range; c\.quote = src\.slice\(range\.start, range\.end\); c\.text = src; c\.refusal = null;/);
   assert.doesNotMatch(raw, /src\.indexOf\(r\.selText\)/, "no first-occurrence lookup of the DOM string");
+});
+
+// ── the close ask: what the panel tells the viewer is at stake ──────────────────────────────────────
+
+test("the panel's draft ask (guardClose) names the unsaved comment for the viewer to ask about, and nothing when the composer is empty, closed or a re-place; the viewer, not the panel, puts the question (a confirm on the web, the notice bar in the VS Code webview)", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  assert.ok(w.closeAsk, "registered at mount, through the seam");
+  assert.equal(w.closeAsk!(), null, "no composer: nothing to lose");
+  aside.querySelector('[data-act="fcfile"]')!.click();
+  assert.equal(w.closeAsk!(), null, "an empty composer: nothing to lose");
+  input(aside).value = "   ";
+  assert.equal(w.closeAsk!(), null, "whitespace is nothing typed");
+  input(aside).value = "Add a summary at the top.";
+  assert.deepEqual(w.closeAsk!(), {
+    question: "Discard the unsaved comment on report.md?",
+    kept: "This file stays open: the comment typed on report.md is not saved. Save it, or clear the box, then try again.",
+  }, "the question in the editor's words, and the notice for a host with no dialog");
+  const FC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
+  assert.doesNotMatch(FC, /window\.confirm\(/, "the panel asks nothing itself");
 });
 
 // ── one write per chord ────────────────────────────────────────────────────────────────────────────
