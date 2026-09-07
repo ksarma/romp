@@ -230,10 +230,21 @@ class _PerfStats:
                                    a pass is a join over the tier threads, so this is mostly model
                                    latency), cpu_ms_sum (CPU: the two tier threads' own time, from
                                    _run_tier, plus every per-session worker the tiers run in
-                                   judge.py's thread pools; the split rides as cpu_ms_workers),
+                                   judge.py's thread pools; the split rides as cpu_ms_workers; the
+                                   producer thread's own per-pass work, the episode tick, the goals
+                                   snapshot and the compaction, is not in it and lands under "other"),
+                                   wakes (every _producer_wake.set() call: the backends' pokes, POST
+                                   /tick, the two kernel-internal sites; one SDK turn fires several,
+                                   so wakes/s is an upper bound on the poke-episode rate, not the
+                                   rate itself) with wakes_event / wakes_backstop (how the loop's
+                                   3 s wait ended; wakes - wakes_event is the sets a pass absorbed),
                                    chain_memo {hit, miss, populate, bypass}: the write-moment chain
                                    memo's counters (judge.chain_memo_stats), so its hit rate is
-                                   read from the live kernel rather than assumed
+                                   read from the live kernel rather than assumed; tiers: the
+                                   evidence gate's per-tier counters (judge.tier_stats: ran,
+                                   skipped, stamped, bypassed, incomplete, due_clock per gated tier,
+                                   plus stamps held), from which skipped / (ran + skipped) is the
+                                   share of per-session runs the gate declined
       memos                        one entry per memo the kernel keeps, each a flat dict of counters:
                                    goals_snap (the judge pass's stat-keyed goal-store snapshot, see
                                    _begin_goals_pass) -> hit / miss (stores served from the memo vs
@@ -289,7 +300,8 @@ class _PerfStats:
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
             self.sends = {k: {} for k in self.SEND_KINDS}
-            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0}
+            self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
+                          "wakes": 0, "wakes_event": 0, "wakes_backstop": 0}
             self.http = {}
 
     # ── writers (hot paths) ──
@@ -354,6 +366,16 @@ class _PerfStats:
         with self.lock:
             self.judge["cpu_ms_sum"] += cpu_dt * 1000.0
 
+    def judge_wake(self):
+        """One _producer_wake.set() call (the producer's _CountedEvent)."""
+        with self.lock:
+            self.judge["wakes"] += 1
+
+    def judge_wake_kind(self, by_event):
+        """How the producer's wait ended: the flag was set, or the 3 s backstop timed out."""
+        with self.lock:
+            self.judge["wakes_event" if by_event else "wakes_backstop"] += 1
+
     def http_request(self, path, dt):
         """dt None: count the request, add no time (the WebSocket upgrade case)."""
         with self.lock:
@@ -401,6 +423,10 @@ class _PerfStats:
         except Exception:
             judge["chain_memo"] = {}
         try:
+            judge["tiers"] = jd.tier_stats()               # the evidence gate's per-tier counters
+        except Exception:
+            judge["tiers"] = {}
+        try:
             goals = jd.goal_io_stats()
         except Exception:
             goals = {}
@@ -423,14 +449,24 @@ _PERF_STATS = _PerfStats()
 
 
 class _CountedEvent(threading.Event):
-    """A threading.Event whose set() also counts in _PERF_STATS: the pusher's wake. Counting at the
-    event keeps every existing call site as it is, including the bound-method callbacks
-    (`push=_pusher_wake.set`) the backends hold and the tests that pin `_pusher_wake.set()` in the
-    source."""
+    """A threading.Event whose set() also counts in _PERF_STATS: the pusher's wake (the default
+    counter) and the producer's (`on_set`, a zero-argument callable). Counting at the event keeps every
+    existing call site as it is, including the bound-method callbacks (`push=_pusher_wake.set`) the
+    backends hold and the tests that pin `_pusher_wake.set()` in the source. The counter runs AFTER the
+    real set, so no wake ever depends on a dict increment succeeding, and `on_set` is a callable that
+    looks _PERF_STATS up at call time rather than a bound method captured at import, so a rebound
+    collector (a test's instance patch) still sees every set."""
+
+    def __init__(self, on_set=None):
+        super().__init__()
+        self._on_set = on_set
 
     def set(self):
-        _PERF_STATS.wake()
         super().set()
+        if self._on_set is None:
+            _PERF_STATS.wake()
+        else:
+            self._on_set()
 
 
 def _perf_http_key(method, path):
@@ -36783,7 +36819,9 @@ def _push_session_now(sid):
 _last_producer_sig = [None]
 # Event-driven wake: POST /tick (poked by the Stop / UserPromptSubmit hooks the instant a turn ends or a
 # prompt lands) sets this so the producer runs a judge pass NOW instead of waiting out the 20s backstop.
-_producer_wake = threading.Event()
+# Counted for /perf (judge.wakes; the wait's outcome rides judge_wake_kind in the loop): the one cadence
+# number the counters could not derive, the sets a pass absorbs, so the pass rate can be read against it.
+_producer_wake = _CountedEvent(lambda: _PERF_STATS.judge_wake())
 # Same idea for the CHAT PUSHER: the SDK live-tail (and any caller) sets this to push the chat NOW
 # instead of waiting out the 4s poll — the SDK stream leads the transcript on disk, so an immediate push
 # of the in-memory live atoms makes messages appear instantly. 4s stays as the backstop.
@@ -37711,7 +37749,8 @@ def _producer():
         # timeline/feed snappy. (the user 2026-06-19: 20s → 3s.)
         # Parked-op delivery is NOT here (2026-09-03): it rides the pusher cycle, woken by the settle itself,
         # so a long pass — a judge stage stuck on one session — can never hold a user's queued input.
-        _producer_wake.wait(3)
+        _woke = _producer_wake.wait(3)    # True: the flag was set (an event); False: the backstop timed out
+        _PERF_STATS.judge_wake_kind(_woke)
 
 
 def _pusher_cycle():

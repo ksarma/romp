@@ -1361,9 +1361,31 @@ print("goals     %.1f loads/s   %.1f shared loads/s   %.1f saves/s   %.1f writes
          ("%.0f%%" % (100.0 * dl("goals", "absent_hits") / absent)) if absent else "no",
          dl("goals", "absent_hits"), dl("goals", "absent_misses")))
 jp = dl("judge", "passes")
-print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   chain memo %d hits / %d misses"
+jw, jev, jbs = dl("judge", "wakes"), dl("judge", "wakes_event"), dl("judge", "wakes_backstop")
+# cpu/pass is tier-thread plus pool-worker CPU over the window's passes (the producer thread's own
+# per-pass work is under "other"); it is the number a cheaper pass shows, where the judge share alone
+# cannot tell a cheaper pass from a faster cadence. "sets absorbed" is wakes - wakes_event: one SDK turn
+# fires several sets and a pass consumes them all at once, so wakes/s overstates the poke rate; a set
+# late in the window whose wake lands in the next reads as one short here, clamped at zero.
+print("judge     %d passes (%.2f/s)   last %.0f ms   mean %s ms   cpu/pass %s ms   chain memo %d hits / %d misses   "
+      "wakes %d (event %d, backstop %d, %d sets absorbed)"
       % (jp, jp / dt, g(b, "judge", "ms_last"), ("%.0f" % (dl("judge", "ms_sum") / jp)) if jp else "-",
-         dl("judge", "chain_memo", "hit"), dl("judge", "chain_memo", "miss")))
+         ("%.0f" % (dl("judge", "cpu_ms_sum") / jp)) if jp else "-",
+         dl("judge", "chain_memo", "hit"), dl("judge", "chain_memo", "miss"), jw, jev, jbs, max(0, jw - jev)))
+# the evidence gate, per gated tier: per-session runs the tier made against the ones it declined
+# (skipped / (ran + skipped) is the acceptance number for the gate), then the runs that ended without a
+# stamp when there were any (incomplete: a deferral or a failed call; due_clock: a background deadline
+# made the run due; bypassed: no signature could be computed, or the parse ran under another cut)
+parts = []
+for t in ("plan", "close", "unblock", "group", "consolidate", "distill"):
+    ran, sk = dl("judge", "tiers", t, "ran"), dl("judge", "tiers", t, "skipped")
+    if not (ran or sk):
+        continue
+    extra = "".join(", %d %s" % (dl("judge", "tiers", t, k), k) for k in ("incomplete", "due_clock", "bypassed")
+                    if dl("judge", "tiers", t, k))
+    parts.append("%s %d ran / %d skipped (%.0f%% skipped%s)" % (t, ran, sk, 100.0 * sk / (ran + sk), extra))
+print("tiers     " + (("   ".join(parts) + "   stamps %d" % g(b, "judge", "tiers", "stamps")) if parts
+                      else "no gated runs in the window"))
 paths = set(b.get("http") or {}) | set(a.get("http") or {})
 rows = sorted(((dl("http", pth, "count"), dl("http", pth, "ms"), pth) for pth in paths), reverse=True)
 rows = [r for r in rows if r[0]][:6]

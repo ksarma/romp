@@ -31,7 +31,9 @@ setup() {
     # A and B: the same kernel process ten seconds apart. Over the window: 20 cycles, 60 wakes, 6 s of
     # cycle time (4 s of it in push, 3 s of that in the chat block), 300 ms of pusher CPU and 50 ms of
     # judge CPU inside 500 ms of process CPU, 2 chat rebuilds against 18 cache hits, 1 MB sent as chat
-    # full frames, 100 goal loads and 50 shared loads, 2 judge passes totalling 2400 ms, 5 /tick requests and 3 WebSocket
+    # full frames, 100 goal loads and 50 shared loads, 2 judge passes totalling 2400 ms (so 25 ms of judge
+    # CPU per pass) woken by 6 producer sets of which 2 ended a wait (4 absorbed), the planner gate 2 ran /
+    # 60 skipped and the closer's 3 ran / 59 skipped with one incomplete run, 5 /tick requests and 3 WebSocket
     # connects. B's lifetime figures (cycle_ms_max 900, ms_mean 1012.5) differ from the window's
     # (ring max 700, mean 1200) so a line printing the wrong one is caught.
     cat > "$SNAP_A" <<'JSON'
@@ -46,7 +48,15 @@ setup() {
  "goals": {"loads": 1000, "loads_shared": 500, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
            "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10, "absent_hits": 100, "absent_misses": 10},
  "judge": {"passes": 30, "ms_sum": 30000.0, "ms_last": 1000.0, "ms_mean": 1000.0, "cpu_ms_sum": 2000.0, "cpu_ms_workers": 1500.0,
-           "chain_memo": {"hit": 400, "miss": 40, "populate": 40, "bypass": 0}},
+           "wakes": 100, "wakes_event": 28, "wakes_backstop": 2,
+           "chain_memo": {"hit": 400, "miss": 40, "populate": 40, "bypass": 0},
+           "tiers": {"plan": {"ran": 10, "skipped": 100, "stamped": 10, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "close": {"ran": 12, "skipped": 98, "stamped": 11, "bypassed": 0, "incomplete": 1, "due_clock": 0},
+                     "unblock": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "group": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "consolidate": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "distill": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "stamps": 60}},
  "http": {"GET /tick": {"count": 50, "ms": 25.0}, "GET /sessions": {"count": 5, "ms": 10.0}}}
 JSON
     cat > "$SNAP_B" <<'JSON'
@@ -61,7 +71,15 @@ JSON
  "goals": {"loads": 1100, "loads_shared": 550, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
            "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15, "absent_hits": 190, "absent_misses": 15},
  "judge": {"passes": 32, "ms_sum": 32400.0, "ms_last": 1200.0, "ms_mean": 1012.5, "cpu_ms_sum": 2050.0, "cpu_ms_workers": 1540.0,
-           "chain_memo": {"hit": 490, "miss": 43, "populate": 43, "bypass": 0}},
+           "wakes": 106, "wakes_event": 30, "wakes_backstop": 2,
+           "chain_memo": {"hit": 490, "miss": 43, "populate": 43, "bypass": 0},
+           "tiers": {"plan": {"ran": 12, "skipped": 160, "stamped": 12, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "close": {"ran": 15, "skipped": 157, "stamped": 13, "bypassed": 0, "incomplete": 2, "due_clock": 0},
+                     "unblock": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "group": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "consolidate": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "distill": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "stamps": 62}},
  "http": {"GET /tick": {"count": 55, "ms": 27.5}, "GET /sessions": {"count": 5, "ms": 10.0}, "GET /ws": {"count": 3, "ms": 0.0}}}
 JSON
     # C: a kernel that restarted five seconds into the window — new pid, new `since`, counters reset
@@ -135,8 +153,9 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"10.0 loads/s   5.0 shared loads/s   2.0 saves/s   0.5 writes/s   scan 1.0 parses/s (90% memo hits)"* ]]   # 90 hits, 10 parses
     [[ "$output" == *"save memo 95% hits (19 hits, 1 misses, 5 seeds)"* ]]                                 # 19 hits, 1 miss, 5 seeds
     [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)"* ]]                                        # the absent-store predicate memo's window deltas
-    [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   chain memo 90 hits / 3 misses"* ]]   # the WINDOW mean: 2400 ms over 2 passes; the chain memo's window deltas
+    [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   cpu/pass 25 ms   chain memo 90 hits / 3 misses   wakes 6 (event 2, backstop 0, 4 sets absorbed)"* ]]   # the WINDOW mean: 2400 ms over 2 passes; 50 ms of judge CPU over them; the chain memo's window deltas; the producer's sets against the waits they ended
     [[ "$output" != *"1012"* ]]                          # not the lifetime ms_mean
+    [[ "$output" == *"tiers     plan 2 ran / 60 skipped (97% skipped)   close 3 ran / 59 skipped (95% skipped, 1 incomplete)   stamps 62"* ]]   # the gate's window deltas per tier; zero-count extras and idle tiers stay off the line
     [[ "$output" == *"GET /tick 5 (0.5 ms avg)"* ]]
     [[ "$output" == *"GET /ws 3"* ]]                     # a WebSocket row: count only …
     [[ "$output" != *"GET /ws 3 ("* ]]                   # … never a fabricated 0.0 ms avg
