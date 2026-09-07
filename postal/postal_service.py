@@ -4850,7 +4850,12 @@ def _mcp_call(name, args):
         tid = res.get("todoId") if isinstance(res, dict) else None
         if not tid:
             # LOUD, never a silent drop: an unsaved need the agent believes is filed is exactly
-            # the vanishing this tool exists to stop.
+            # the vanishing this tool exists to stop. _kernel_post answers None for every non-2xx,
+            # so the one refusal this tool can tell apart is the kernel's 409: the switch flipped
+            # between the check above and the post — a re-read of the same file names it, and
+            # spares the agent a retry that would refuse forever (2026-09-07).
+            if not _user_todos_on():
+                return USER_TODOS_OFF_ADD, True
             return ("Couldn't save that — the person you work for will NOT see it. Say what you "
                     "need directly in your next reply instead, or try again shortly."), True
         return ("Noted (id %s) — the person you work for will see it. Withdraw it "

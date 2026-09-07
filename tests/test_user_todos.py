@@ -611,9 +611,12 @@ class Routes(_StoreSandbox):
         km._host_for_sid = lambda sid: {"host": "TESTHOST"}
         km._remote_forward_status = lambda r, path, body: (0, None)       # a dead tunnel
         try:
-            code, res = self._post("/usertodo", {"id": SID, "text": "Need the port"})
-            self.assertEqual(code, 200)
+            with contextlib.redirect_stderr(io.StringIO()):
+                code, res = self._post("/usertodo", {"id": SID, "text": "Need the port"})
+            self.assertEqual(code, 502, "no answer from the owning kernel is no register: the status says "
+                                        "so (the bus reads a 200 {ok: false} as 'try again shortly')")
             self.assertFalse(res["ok"], "no id came back, so the agent must not hear 'noted'")
+            self.assertIn("not answering", res["error"])
             with contextlib.redirect_stderr(io.StringIO()):
                 code, out = self._post("/usertodo/withdraw", {"id": SID, "todoId": "ut-9f2c1a34"})
             self.assertEqual(code, 502, "no answer from the owning kernel is no withdraw: never a "

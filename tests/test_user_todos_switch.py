@@ -661,6 +661,109 @@ class OffOnTheBadge(_Sandbox):
         self.assertEqual(km._needs_you_count(feed), 2, "on: the floor is a presentation of the two todos")
 
 
+class RegisterForward(_Sandbox):
+    """POST /usertodo for a sid another kernel owns: the forward keeps the remote's STATUS (the
+    withdraw route's path, _remote_forward_status), so a remote whose switch is off answers 409
+    naming the host, and a dead tunnel, an older kernel, or an answer this kernel cannot read
+    answers 502 with the cause — never a 200 {"ok": false} that the bus folds into "try again
+    shortly". API-only: a session's own tool posts to its own host's kernel, where _host_for_sid
+    is None; the route is API for any token holder all the same."""
+
+    def setUp(self):
+        super().setUp()
+        km._set_user_todos(True)
+        self._saved = (km._host_for_sid, km._remote_forward_status, km._push_all, km._push_soon)
+        km._host_for_sid = lambda sid: {"host": "TESTHOST", "local_port": 1, "token": ""}
+        km._push_all = km._push_soon = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("nothing changed locally, nothing to push"))
+        self.calls = []
+
+    def tearDown(self):
+        km._host_for_sid, km._remote_forward_status, km._push_all, km._push_soon = self._saved
+        super().tearDown()
+
+    def _forward(self, st, res):
+        km._remote_forward_status = lambda r, path, body: (self.calls.append((path, body)) or (st, res))
+        with contextlib.redirect_stderr(io.StringIO()):
+            return _post("/usertodo", {"id": SID, "text": "Need the staging port", "detail": "8443?"})
+
+    def test_a_minted_id_is_relayed_as_before(self):
+        code, res = self._forward(200, {"ok": True, "todoId": "ut-9f2c1a34"})
+        self.assertEqual((code, res), (200, {"ok": True, "todoId": "ut-9f2c1a34"}))
+        self.assertEqual(self.calls, [("/usertodo", {"id": SID, "text": "Need the staging port", "detail": "8443?"})])
+
+    def test_a_remote_switch_that_is_off_is_a_409_naming_the_host(self):
+        code, res = self._forward(409, None)
+        self.assertEqual(code, 409)
+        self.assertFalse(res["ok"])
+        self.assertIn("turned off", res["error"])
+        self.assertIn("TESTHOST", res["error"])
+        self.assertEqual(res["host"], "TESTHOST")
+
+    def test_a_dead_tunnel_an_old_kernel_and_an_unreadable_answer_are_502_with_the_cause(self):
+        for st, res_in, why in ((0, None, "not answering"), (404, None, "predates"), (500, None, "HTTP 500"),
+                                (200, None, "without a todo id"), (200, {"ok": False}, "without a todo id")):
+            with self.subTest(status=st, body=res_in):
+                code, res = self._forward(st, res_in)
+                self.assertEqual(code, 502)
+                self.assertFalse(res["ok"])
+                self.assertIn(why, res["error"])
+                self.assertEqual(res["host"], "TESTHOST")
+        self.assertEqual(km._user_todos(), {}, "the local store is never written for a remote sid")
+
+
+class RemoteForwardStatusPin(unittest.TestCase):
+    """_remote_forward_status — and _remote_forward, which reads its answer off it — on a 200 whose
+    body is not JSON: (200, None) and NO redial, because the far side answered and the tunnel is
+    fine. The base parsed inside the try and demanded a redial for that; the change is deliberate
+    (a malformed body is version skew or a proxy page, not a dead tunnel) and pinned here for the
+    ten pre-existing callers that inherit it."""
+
+    _R = {"host": "TESTHOST", "local_port": 1, "token": ""}
+
+    @staticmethod
+    def _conn(status=200, body=b"", raise_on_request=None):
+        class _Resp:
+            def read(self):
+                return body
+        _Resp.status = status
+
+        class _Conn:
+            def __init__(self, *a, **k):
+                pass
+
+            def request(self, *a, **k):
+                if raise_on_request is not None:
+                    raise raise_on_request
+
+            def getresponse(self):
+                return _Resp()
+
+            def close(self):
+                pass
+        return _Conn
+
+    def test_a_non_json_200_is_200_none_with_no_redial(self):
+        redials = []
+        with mock.patch.object(km.http.client, "HTTPConnection", self._conn(200, b"<html>not json</html>")), \
+                mock.patch.object(km, "_demand_redial", lambda host, why: redials.append((host, why))):
+            self.assertEqual(km._remote_forward_status(self._R, "/usertodo", {"id": SID}), (200, None))
+            self.assertIsNone(km._remote_forward(self._R, "/usertodo", {"id": SID}))
+        self.assertEqual(redials, [], "a malformed body still proves the far side spoke")
+
+    def test_a_non_200_keeps_its_status_and_a_refused_connection_is_0_with_the_redial(self):
+        redials = []
+        with mock.patch.object(km.http.client, "HTTPConnection", self._conn(404, b"")), \
+                mock.patch.object(km, "_demand_redial", lambda host, why: redials.append((host, why))):
+            self.assertEqual(km._remote_forward_status(self._R, "/usertodo", {}), (404, None))
+        self.assertEqual(redials, [])
+        with mock.patch.object(km.http.client, "HTTPConnection",
+                               self._conn(raise_on_request=ConnectionRefusedError())), \
+                mock.patch.object(km, "_demand_redial", lambda host, why: redials.append((host, why))):
+            self.assertEqual(km._remote_forward_status(self._R, "/usertodo", {}), (0, None))
+        self.assertEqual(redials, [("TESTHOST", "refused")], "a dead tunnel is still user demand for a redial")
+
+
 class BootNotice(_Sandbox):
     def _notice(self):
         err = io.StringIO()
@@ -1010,6 +1113,24 @@ class BusWording(unittest.TestCase):
         self.assertEqual(read(), (False, ""))
         pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": True, "gt": 6}))
         self.assertEqual(read(), (True, ""))
+
+    def test_a_refusal_the_kernel_made_after_the_switch_flipped_is_worded_as_the_switch(self):
+        # the bus checks the switch, then posts; the kernel's 409 (its own read of the same file)
+        # reaches the bus as None, so the bus re-reads the switch to word it — the one refusal it
+        # can tell apart without the status, and the one the agent would otherwise retry forever
+        pm = self.pm
+
+        def post(path, body, timeout=4.0):
+            self.posts.append((path, body))
+            pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 2}))   # flipped under the post
+            return None
+        pm._kernel_post = post
+        text, is_err = pm._mcp_call("add_user_todo", {"text": "Need the port"})
+        self.assertTrue(is_err)
+        self.assertEqual(len(self.posts), 1)
+        self.assertIn("turned off on this machine", text)
+        self.assertNotIn("try again", text)
+        self._no_machinery(text)
 
     def test_withdraw_against_an_unreadable_store_says_so_not_no_note_of_yours(self):
         self.canned = {"ok": False, "state": "unknown", "at": None, "owner": None,

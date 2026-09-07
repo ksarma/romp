@@ -55245,10 +55245,33 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
-                    res = _remote_forward(r, "/usertodo", {"id": sid, "text": text,
-                                                           "detail": str(body.get("detail") or "")})
-                    tid = str((res or {}).get("todoId") or "") if isinstance(res, dict) else ""
-                    return self._send(200, json.dumps({"ok": bool(tid), "todoId": tid}), "application/json")
+                    st, res = _remote_forward_status(r, "/usertodo", {"id": sid, "text": text,
+                                                                      "detail": str(body.get("detail") or "")})
+                    tid = str(res.get("todoId") or "") if isinstance(res, dict) else ""
+                    if tid:
+                        return self._send(200, json.dumps({"ok": True, "todoId": tid}), "application/json")
+                    # No id came back, so nothing was filed — and the STATUS says why, the withdraw
+                    # route's path (2026-09-07): a 200 {"ok": false} here read at the bus as "try
+                    # again shortly" whatever the cause. A remote 409 is that kernel's own switch,
+                    # relayed as the refusal it is; everything else is a 502 with the cause named
+                    # (0: dead tunnel, redial already demanded; 404: a remote kernel that predates
+                    # the route; another status; a 200 without a todo id, JSON or not). Out of the
+                    # postal tool's reach (its host's kernel owns its session), API all the same.
+                    host = r.get("host") or "that host"
+                    if st == 409:
+                        return self._send(409, json.dumps({"ok": False, "host": host,
+                                                           "error": "user todos are turned off on %s" % host}),
+                                          "application/json")            # _USER_TODOS_OFF_ERR, for that machine
+                    if st == 0:
+                        why = "the tunnel to %s is not answering (re-dialing)" % host
+                    elif st == 404:
+                        why = "the kernel on %s predates /usertodo: update romp there and restart it" % host
+                    elif st != 200:
+                        why = "the kernel on %s answered HTTP %d" % (host, st)
+                    else:
+                        why = "the kernel on %s answered without a todo id" % host
+                    sys.stderr.write("user-todos: register for %s not forwarded: %s\n" % (sid[:8], why))
+                    return self._send(502, json.dumps({"ok": False, "error": why, "host": host}), "application/json")
                 if _user_todos_unreadable():
                     # the store on disk is the version its shape guard flagged: _add_user_todo's write
                     # would be refused (RuntimeError), and the generic handler turned that into a 500
