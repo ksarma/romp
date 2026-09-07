@@ -75,11 +75,16 @@ suite_text() {   # $1 suite: the suite plus every helper it loads, comment and t
     return 0
 }
 
+# The suite's text is collected whole and matched after, never piped into `grep -q`: that grep stops at
+# its first hit, and a writer still behind it then meets EPIPE. Silent while SIGPIPE kills the writer,
+# but the GitHub Actions runner starts every child with SIGPIPE ignored, and there each such grep printed
+# `grep: write error: Broken pipe`, which `run` folds into $output beside the paths (CI-only, 2026-09-07).
 manager_suites() {
-    local f
+    local f text
     for f in "$TESTS"/*.bats; do
         [ "$f" = "$BATS_TEST_FILENAME" ] && continue     # this file quotes the pattern in its self-check
-        if suite_text "$f" | grep -Eq "$MANAGER_START_RE"; then
+        text="$(suite_text "$f")"
+        if grep -Eq "$MANAGER_START_RE" <<<"$text"; then
             printf '%s\n' "$f"
         fi
     done
@@ -277,5 +282,31 @@ isolation_problems() {   # $1 suite
     [ "$output" = "$d/direct.bats" ]
     run isolation_problems "$d/direct.bats"
     [ "${#lines[@]}" -eq 2 ]
+    rm -rf "$d"
+}
+
+@test "the detector prints only paths when SIGPIPE is ignored, as the GitHub Actions runner leaves it for every child" {
+    # `suite_text "$f" | grep -Eq ...` let grep stop at the first hit while the greps behind it were
+    # still writing. With SIGPIPE at its default they die silently; ignored (the runner's host process
+    # starts each step so, and the disposition survives exec), each one meets EPIPE and prints
+    # `grep: write error: Broken pipe`, which `run` collects into $output beside the paths. Green here,
+    # red on CI (2026-09-07). The shape that met it every time: a suite that matches on its own and
+    # then loads a helper, so a writer is still to come after the match.
+    local d; d="$(mktemp -d)"
+    printf '%s\n' 'state_floor() { unset ROMP_STATE_DIR; export XDG_STATE_HOME="$TEST_DIR/state"; }' > "$d/floor.bash"
+    printf '%s\n' '#!/usr/bin/env bats' 'load floor' 'setup() {' '    TEST_DIR="$(mktemp -d)"' '    state_floor' \
+        '    MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"' '}' \
+        '@'"test \"starts one\" { node \"\$MGR\" up; }" > "$d/isolated.bats"
+    local plain ignored
+    run manager_suites
+    plain="$output"
+    trap '' PIPE                                               # inherited by run's subshell and every grep
+    TESTS="$d" run manager_suites
+    [ "$output" = "$d/isolated.bats" ]
+    run manager_suites
+    ignored="$output"
+    trap - PIPE
+    [ -n "$plain" ]
+    [ "$ignored" = "$plain" ]                                  # the same list either way, nothing beside it
     rm -rf "$d"
 }
