@@ -1,0 +1,11 @@
+---
+title: A minimum interval of 1.0 s between pusher cycle starts (PUSH_MIN_INTERVAL_S, overridable with ROMP_PUSH_MIN_INTERVAL), with a watched chat tab's live-tail wakes exempt: the wake carries its cause (_pusher_wake_live, the SDK backend's push_live callback, the tmux echo) and the loop reads it after its clear
+status: candidate
+where: fork PR #386 (`perf5-cadence`): kernel/kernel.py `PUSH_MIN_INTERVAL_S` / `PUSH_BACKSTOP_S` / `_pusher` / `_pusher_wake_live` / `_note_live_wake` / `_take_live_wake_sids` / `_watched_sids` / `_live_wake_watched` / `_optimistic_echo` / `_PerfStats` with the pusher counters wakes_live, held, held_ms, exempt; kernel/sdk_backend.py `push_live` / `_wake_push_live` and the six live-tail wake sites; bin/romp the perf pusher line; tests/test_pusher_cadence.py plus the re-aimed tests/test_perf_stats.py, tests/test_sdk_kernel.py, tests/test_kernel_cmd_gesture.py, tests/test_sdk_error_visibility.py, tests/test_live_tail_rev.py, tests/test_restart_redelivery.py, tests/test_kernel_ws_heartbeat.py and tests/romp-perf.bats; docs/reference.md
+added: 2026-09-08
+pr: 386
+tier: fix
+offered:
+closed:
+---
+Perf round 5, PLAN-4 section 7 decision 3. Round 4 made the builders three to five times cheaper and the process line did not move: the pusher was wall-saturated, so cheaper cycles became twice as many cycles (0.32 to 0.65 cycles/s at 89% of wall busy). The bound is a rate limit on cycle starts; every wake that lands during a hold is served by the one cycle that follows, and the exemption keys on the wake's recorded cause and the client's own active tab, never a guess. A fake-clock run of the real loop over the live wake rate (1.0 set()/s, half live-tail) and cycle-duration distribution (p50 1.15 s) predicts cycles/s 0.71 to 0.68 and wall busy 92% to 88% at 1.0 s, because the bound binds only on cycles shorter than the interval and most live cycles are longer; the same run predicts 0.71 to 0.49 cycles/s and 92% to 64% busy at 2.0 s, and once the auto-nudge walk leaves the cycle (p50 about 0.8 s) the 1.0 s bound predicts 10% fewer cycles and 8 points less busy. The offline bench's push rows are unchanged (the interval is outside _push). The live acceptance is read from pusher.cycles, held, exempt and cycle_ms_p50 over 120 s before and after a restart.

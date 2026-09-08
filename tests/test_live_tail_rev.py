@@ -197,6 +197,7 @@ class SdkLiveTailRevision(unittest.TestCase):
             def _log(self, msg, problem=False): pass
             def _persist_echoes(self, sid): pass
             def _wake_push(self): pass
+            def _wake_push_live(self, sid): pass     # the mutator's wake carries its sid (perf round 5)
         be = BE()
         be._live.setdefault(SID, {})["echo:x"] = {"_echo_text": "typed", "author": "human", "t": 3}
         be._mark_dropped_echoes = sb.SdkBackend._mark_dropped_echoes.__get__(be)

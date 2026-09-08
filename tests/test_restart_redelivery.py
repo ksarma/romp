@@ -58,6 +58,9 @@ class Redelivery(unittest.TestCase):
             def _wake_push(self):
                 pass
 
+            def _wake_push_live(self, sid):
+                pass                      # the mutator's wake carries its sid (perf round 5): a stub needs no cause
+
             def _touch_live(self, sid):
                 pass                      # the live-tail revision hook (2026-09-03): a stub needs no counter
             _text_landed = sb.SdkBackend._text_landed if hasattr(sb, "SdkBackend") else None

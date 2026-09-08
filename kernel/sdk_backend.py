@@ -7822,7 +7822,7 @@ class SdkBackend:
     pushing to clients and a few launch parameters that mirror the tmux launch."""
 
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
-                 push_session=None,
+                 push_session=None, push_live=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
                  log=None, reconcile: bool = False, todo_lost=None):
         self.state_dir = Path(state_dir)
@@ -7834,6 +7834,9 @@ class SdkBackend:
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._owns_memo: dict = {}         # sid -> ((reg mtime_ns, size), owns?) — see owns()
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
+        self._push_live_cb = push_live     # push_live(sid): the same wake carrying WHICH session's live tail
+        #   changed (kernel _pusher_wake_live): the pusher's minimum cycle interval exempts a watched tab's
+        #   live-tail wakes; None (an older kernel, a test) falls back to `push`
         self._push_session_cb = push_session   # targeted ONE-session push (kernel _push_session_now) for
         #   per-session chip events (the connect handshake): a wake alone leaves the flip riding the next
         #   full push cycle, which runs seconds on a busy fleet (the user 2026-08-10)
@@ -10414,7 +10417,7 @@ class SdkBackend:
                 if not live and self._live.get(sid) is live:
                     self._live.pop(sid, None)
             self._persist_echoes(sid)                      # the canceled echo leaves the restart mirror too
-            self._wake_push()                              # repaint without the echo so it stops reading as sent
+            self._wake_push_live(sid)                      # repaint without the echo so it stops reading as sent
         return text
 
     def queue_recallable(self, sid: str) -> bool:
@@ -10484,7 +10487,7 @@ class SdkBackend:
             echo["_echo_off"], echo["_echo_fsid"] = sent_off, sent_fsid   # the landing scan's start
         self._stash_live(sid, key, echo)
         self._persist_echoes(sid)                            # unlanded echoes survive a kernel restart (reg mirror)
-        self._wake_push()
+        self._wake_push_live(sid)
         return True
 
     def _transcript_mark(self, sid: str):
@@ -10713,7 +10716,7 @@ class SdkBackend:
             with self._live_lock:
                 self._touch_live(sid)
         self._persist_echoes(sid)
-        self._wake_push()
+        self._wake_push_live(sid)
 
     def _text_landed(self, sid: str, text: str, t: int | None = None, off=None, fsid=None):
         """Did `text` land in the sid's transcript? The re-delivery guard: the echo prune is lazy (a landed
@@ -10797,7 +10800,7 @@ class SdkBackend:
         if hit is None:
             return None
         self._persist_echoes(sid)                          # the reg write and the wake, outside the lock
-        self._wake_push()
+        self._wake_push_live(sid)
         return hit.get("_echo_text")
 
     def rewind(self, sid: str, target_uuid: str, text: str) -> "tuple[bool, str]":
@@ -11680,7 +11683,7 @@ class SdkBackend:
             "t": t, "author": "human", "command": command, "_echo_text": disp,
             "message": {"role": "user", "content": [{"type": "text", "text": disp}]}})
         append_cmd_gesture(self.state_dir, sid, disp, t=t)
-        self._wake_push()
+        self._wake_push_live(sid)
 
     def set_fast(self, sid: str, value: str) -> bool:
         """Toggle fast mode ('on'|'off'). The CLI's /fast descriptor is marked supportsNonInteractive,
@@ -12229,7 +12232,7 @@ class SdkBackend:
         if not atom.get("_echo_text") and not atom.get("command") and not atom.get("isApiError") \
                 and not sess._cli_working:
             sess._mark("working")   # (an isApiError settle is the turn DYING, not producing — never 'working')
-        self._wake_push()
+        self._wake_push_live(sess.sid)
 
     def _wake_push(self):
         if self._push_cb:
@@ -12237,6 +12240,22 @@ class SdkBackend:
                 self._push_cb()
             except Exception as e:
                 self._log("chat push wake failed: %s" % e)
+
+    def _wake_push_live(self, sid: str):
+        """The wake for a change to `sid`'s live tail (a streamed atom; an echo added, retired or flagged; a
+        command chip; the session process ending): the kernel's cause-carrying callback when it wired one,
+        else the plain wake. Every _wake_push site that follows a _touch_live / _stash_live of one sid uses
+        this, and _on_session_gone names its sid the same way; the sites that wake for something else (a
+        fast-mode or env change) keep _wake_push. tests/test_pusher_cadence.py pins the split."""
+        cb = getattr(self, "_push_live_cb", None)
+        if not cb:
+            self._wake_push()
+            return
+        try:
+            cb(sid)
+        except Exception as e:
+            self._log("chat push wake (%s) failed: %s" % (sid, e))
+            self._wake_push()                  # the cause is lost, the wake is not
 
     def _push_session(self, sid: str) -> None:
         """Targeted one-session push (kernel _push_session_now), for per-session events the chat chip
@@ -12430,6 +12449,11 @@ class SdkBackend:
                 self._live.pop(sid, None)
             if popped:
                 self._touch_live(sid)
+        if popped:
+            # the tail changed (the work atoms are gone; the chip can read ready) and the three callers wake only
+            # through the plain _poke; the ResultMessage forwarded after a settle yields no atom, so without this
+            # a watched tab's turn-end repaint waited out the pusher's minimum interval (review 2026-09-08)
+            self._wake_push_live(sid)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
@@ -12643,6 +12667,10 @@ class SdkBackend:
         # awaiting overlay so the session doesn't read working/awaiting forever (reorder_bug 2026-06-24).
         self._heal_stale_awaiting(sess.sid)
         self.retire_live_work(sess.sid)   # no stream left → unlanded work atoms must not hold the turn open
+        self._wake_push_live(sess.sid)    # the death is this sid's event and the tab it belongs to shows it (the
+        #                                   chip, the tail's end); the plain _poke below carries no sid, so a
+        #                                   watched tab's repaint would wait out the pusher's minimum interval
+        #                                   (review 2026-09-08); the retire's own wake fires only when it popped
         if sess._model_pending:           # a switch that never resolved before the thread died → don't trap the dots
             sess._model_pending = ""
             try:

@@ -488,7 +488,8 @@ class Responsiveness(unittest.TestCase):
     def test_tick_wakes_the_pusher_and_short_backstop(self):
         with open(os.path.join(BIN, "romp-kernel")) as f:
             src = f.read()
-        self.assertIn("_pusher_wake.wait(0.5)", src)                  # short backstop poll
+        self.assertIn("PUSH_BACKSTOP_S = 0.5", src)                   # short backstop poll
+        self.assertIn("_woke = wake.wait(PUSH_BACKSTOP_S)", src)       # …which the pusher loop waits on
         tick = src.split('u.path == "/tick"', 1)[1].split("return self._send", 1)[0]
         self.assertIn("_pusher_wake.set()", tick)                     # /tick wakes the pusher (tmux turn-end shows now)
 

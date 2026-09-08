@@ -335,9 +335,14 @@ class Collector(unittest.TestCase):
         self.st.wake(); self.st.wake(); self.st.wake()
         self.st.wake_kind(True); self.st.wake_kind(False); self.st.wake_kind(False)
         self.st.cycle(0.010, 0.004); self.st.cycle(0.030, 0.006); self.st.cycle(0.020)
+        self.st.wake_live(); self.st.wake_live()
+        self.st.hold(0.625); self.st.hold(0.375); self.st.exempt()
         p = self.st.snapshot()["pusher"]
         self.assertEqual(p["wakes"], 3)
         self.assertEqual((p["wakes_event"], p["wakes_backstop"]), (1, 2))
+        self.assertEqual(p["wakes_live"], 2)
+        self.assertEqual((p["held"], p["exempt"]), (2, 1))
+        self.assertAlmostEqual(p["held_ms"], 1000.0)
         self.assertEqual(p["cycles"], 3)
         self.assertAlmostEqual(p["cycle_ms_sum"], 60.0)
         self.assertAlmostEqual(p["cycle_cpu_ms_sum"], 10.0, msg="the thread's own CPU rides beside the wall")
@@ -911,8 +916,10 @@ class PushStages(unittest.TestCase):
         self.assertEqual(idx, sorted(idx))
         self.assertIn("_PERF_STATS.judge_pass(", inspect.getsource(km._producer))
         loop = inspect.getsource(km._pusher)
-        self.assertIn("_woke = _pusher_wake.wait(0.5)", loop)
+        self.assertIn("_woke = wake.wait(PUSH_BACKSTOP_S)", loop)
         self.assertIn("_PERF_STATS.wake_kind(_woke)", loop)
+        self.assertIn("_PERF_STATS.hold(clock() - due)", loop)     # the interval's counters ride the same loop
+        self.assertIn("_PERF_STATS.exempt()", loop)
 
 
 class PerfRoutes(unittest.TestCase):

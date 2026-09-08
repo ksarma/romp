@@ -77,7 +77,7 @@ class CmdGestureSourcePins(unittest.TestCase):
         i = BACKEND_SRC.index("def _ack_cmd_chip(")
         self.assertIn('uid = "cmd:%d:%s" % (t, command.lstrip("/"))', BACKEND_SRC[i:i + 3000])
         j = BACKEND_SRC.index("append_cmd_gesture(self.state_dir, sid, disp, t=t)", i)
-        k = BACKEND_SRC.index("self._wake_push()", i)
+        k = BACKEND_SRC.index("self._wake_push_live(sid)", i)   # the chip is a live-tail change: the wake carries the sid
         self.assertLess(j, k, "the marker is on disk before the push that rebuilds the chat")
         self.assertEqual(BACKEND_SRC.count("append_cmd_gesture(self.state_dir, sid, disp, t=t)"), 1, "one builder, no stray copies")
 
