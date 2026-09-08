@@ -257,7 +257,7 @@ test('the host paragraph and the commenting section state the widening and the r
   assert.deepEqual(locateExact(text, at24, b), { from: b, to: b + 8 }, 'the offset settles it');
   const u = uniqueAnchor(text, b, b + 8);
   assert.deepEqual([u.unique, u.anchor.prefix.length], [true, 48], 'one step wider is unique');
-  assert.ok(host.includes("and the selection's position was not sent to tell the copies apart"), 'the refusal text states the rule as it is now');
+  assert.ok(host.includes('and ${unsent} was not sent to tell the copies apart') && host.includes(`"the selection's position"`) && host.includes(`"the region's position"`), 'the refusal text states the rule as it is now, in the words of the gesture (a passage selected, a region drawn)');
   // the follow-on note stands beside the Slice 2 build notes; the Tests section names the module, which exists
   assert.ok(section('### Slice 2: the session', '### Slice 3: region comments on images').includes('The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that recurs'));
   assert.ok(tests.includes('`tools/file-comments-host-anchors.test.mjs`'));

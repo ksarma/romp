@@ -552,7 +552,8 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   // hint is the pair's start, which retargetComposer alone moves
   const hostSrc = fs.readFileSync(HOST, "utf8");
   assert.ok(hostSrc.includes("const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });"), "buildComment places with exact, the hint mapped past a BOM");
-  assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', `[^`]*the text moved after it was selected[^`]*reload and select it again`\);/.test(hostSrc), "the refusal names the moved text");
+  assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', `\$\{what\} occurs more than once in \$\{ctx\.shown\}[^`]*\$\{moved\} no longer says which copy was meant — \$\{again\}`\);/.test(hostSrc), "the refusal names the moved text, in the words of the gesture");
+  assert.ok(hostSrc.includes(`"the text moved after it was selected, so the selection's position"`) && hostSrc.includes(`'reload and select it again'`), "a passage: selected, so select it again");
   const panel = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
   assert.ok(panel.includes("if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }"), "saveComposer sends the pair's start");
   assert.ok(/const f = followPassage\(c\.text, c\.range, src\);\s*\n\s*if \(f\.state === "moved"\) \{ c\.range = f\.range; c\.text = src; c\.tied = false; \}/.test(panel), "retargetComposer moves the pair with its copy");

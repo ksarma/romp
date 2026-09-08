@@ -194,6 +194,32 @@ test('a unique passage on a BOM-prefixed file is unaffected (the exact check nev
   assert.equal(bomText.slice(c.anchorAt, c.anchorAt + uniq.anchor.quote.length), 'cut p95 latency by 40%');
 });
 
+// ── a refusal's words name the gesture: a region on an embedded figure is drawn, a passage is selected ─
+
+test('a comment refused on its anchor names the embed line and says to draw the region again when it carries a target, and the selected passage and select-again when it does not', () => {
+  const w = world();
+  // a figure embedded in a paragraph that recurs: the embed lines tie at every width the browser sends
+  const EMBED = '![chart](fig.png)';
+  const para = `${'The quick brown fox jumps over the lazy dog. '.repeat(12)}${EMBED}${' Pack my box with five dozen liquor jugs. '.repeat(12)}`.trim();
+  const text = `# Figures\n\n${para}\n\n${para}\n`;
+  const md = path.join(w.docs, 'figs.md');
+  fs.writeFileSync(md, text);
+  const e = fromBrowser(text, EMBED, 1);
+  assert.deepEqual(e.anchor, fromBrowser(text, EMBED, 0).anchor, 'the fixture: the embed lines tie');
+  const target = { kind: 'image', region: { x: 0.12, y: 0.4, w: 0.35, h: 0.2 }, src: 'fig.png' };
+  const send = (args, code) => refused(w, { verb: 'comment', path: md, args: { note: 'Label the axes.', anchor: e.anchor, ...args }, fence: fenceFor(status(w, md)) }, code);
+  // no offset: a tie the request cannot settle
+  assert.match(send({ target }, 'anchor-ambiguous').error, /^the line embedding the figure drawn on occurs more than once in .* with the same surroundings, and the region's position was not sent to tell the copies apart — reload and draw the region again$/);
+  assert.match(send({}, 'anchor-ambiguous').error, /^the selected passage occurs more than once in .* with the same surroundings, and the selection's position was not sent to tell the copies apart — reload and select it again$/, 'a passage keeps the words it had');
+  // an offset on no tied copy: the text moved after the gesture
+  assert.match(send({ hintOffset: e.idx + 3, target }, 'anchor-ambiguous').error, /and the text moved after the region was drawn, so the region's position no longer says which copy was meant — reload and draw the region again$/);
+  assert.match(send({ hintOffset: e.idx + 3 }, 'anchor-ambiguous').error, /and the text moved after it was selected, so the selection's position no longer says which copy was meant — reload and select it again$/);
+  // the embed line gone: the figure was re-embedded under another name between the drag and Enter
+  fs.writeFileSync(md, text.split(EMBED).join('![chart](fig2.png)'));
+  assert.match(send({ hintOffset: e.idx, target }, 'anchor-not-found').error, /^the line embedding the figure drawn on is no longer in .* — reload and draw the region again$/);
+  assert.match(send({ hintOffset: e.idx }, 'anchor-not-found').error, /^the selected passage is no longer in .* — reload and select it again$/);
+});
+
 // ── (3) a reject reverting two changes follows a tied passage back ───
 
 test('a reject that reverts two changes in one write follows a tied passage back through the cumulative shift', () => {

@@ -2275,14 +2275,22 @@ function doComment(ctx) {
   return withSidecar(ctx, true, (store, text, root) => {
     const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
     const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
+    // The words a refusal uses. A region on an embedded figure was drawn on the figure, not selected as text: its
+    // anchor is the embed line, and the remedy is to draw again, so the refusal names the line and that gesture
+    // (the review, 2026-09-08: every refusal said to select the passage again). A passage keeps the words it had.
+    const region = target !== null;
+    const what = region ? 'the line embedding the figure drawn on' : 'the selected passage';
+    const unsent = region ? "the region's position" : "the selection's position";
+    const moved = region ? "the text moved after the region was drawn, so the region's position" : "the text moved after it was selected, so the selection's position";
+    const again = region ? 'reload and draw the region again' : 'reload and select it again';
     if (built.error === 'anchor-not-found') {
-      throw new Refusal('anchor-not-found', `the selected passage is no longer in ${ctx.shown} — reload and select it again`);
+      throw new Refusal('anchor-not-found', `${what} is no longer in ${ctx.shown} — ${again}`);
     }
     if (built.error === 'anchor-ambiguous') {
-      throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, and the selection's position was not sent to tell the copies apart — reload and select it again`);
+      throw new Refusal('anchor-ambiguous', `${what} occurs more than once in ${ctx.shown} with the same surroundings, and ${unsent} was not sent to tell the copies apart — ${again}`);
     }
     if (built.error === 'anchor-moved') {
-      throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, and the text moved after it was selected, so the selection's position no longer says which copy was meant — reload and select it again`);
+      throw new Refusal('anchor-ambiguous', `${what} occurs more than once in ${ctx.shown} with the same surroundings, and ${moved} no longer says which copy was meant — ${again}`);
     }
     if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
     if (target) {
