@@ -28454,18 +28454,26 @@ def _cancel_parked(sid, park, md, send_id=None):
     backend is a cancel, and the redundant compaction must not run. The body re-locate skips that head
     slot too, so a STALE index for the second chip (a send ahead delivered between the push and the
     click) lands on the chip and not on the head it cannot take; with only the in-flight op listed it
-    finds nothing, the same miss as today."""
+    finds nothing, the same miss as today.
+
+    A cancel that NAMES ITS SEND (`send_id`, the client's id riding a parked send as its 5th slot,
+    _send_or_park, 2026-09-08) is exact: it removes the op carrying that id, whatever index or body the
+    click carried, and when no parked op carries it the answer is the miss: the send left the queue
+    (drained, or with the backend already), and the index/body arms below must NOT relocate it onto
+    another op wearing the same words (review round 1: two parked sends "go ahead", the first drained,
+    a ✕ on its bubble popped the second and answered ok). Only an id-LESS cancel (an older client's,
+    or a chip for an entry that never had an id: a follow-up, a nudge) keeps the index/body fallback,
+    where the body is the only name the op has."""
     sid = str(sid)
     with _pending_ops_lock:
         ops = _pending_ops.get(sid) or []
         inflight_head = bool(ops) and ops[0] is _inflight_ops.get(sid)   # the head is with the backend this instant
         if send_id:
-            # the client's send id rides a parked send as its 5th slot (_send_or_park): an exact name for
-            # the op, ahead of the index and the body (two parked sends can wear the same words) — 2026-09-08
-            hit = next((j for j, op in enumerate(ops)
-                        if op[0] == "send" and len(op) > 4 and op[4] == send_id and not (j == 0 and inflight_head)), -1)
-            if hit >= 0:
-                park, md = hit, _parked_md(ops[hit])
+            park = next((j for j, op in enumerate(ops)
+                         if op[0] == "send" and len(op) > 4 and op[4] == send_id and not (j == 0 and inflight_head)), -1)
+            if park < 0:
+                return _cancel_miss_text(md)      # the id names no parked op: gone, never a same-words neighbour
+            md = _parked_md(ops[park])
         if not (0 <= park < len(ops)) or (md and _parked_md(ops[park]) != md):
             park = next((j for j, op in enumerate(ops)
                          if _parked_md(op) == md and not (j == 0 and inflight_head)), -1) if md else -1
@@ -28492,18 +28500,22 @@ def _cancel_backend_queued(be, sid, idx, md, send_id=None):
     2026-07-20). The exact text is re-verified INSIDE the backend's lock (unqueue's `expect`), so the
     input generator racing this click can only turn it into a loud miss, never a wrong-message cancel.
     `send_id` (the client's id for the send, riding the queue entry — 2026-09-08) names the entry
-    exactly: when the queue holds it, it wins over the index and the body, so of two queued entries
-    wearing the same words the ✕ removes the one it was pressed on; the backend re-locates by it under
-    its own lock too (unqueue's `send_id`)."""
+    exactly: it wins over the index and the body, so of two queued entries wearing the same words the ✕
+    removes the one it was pressed on, and the backend re-locates by it under its own lock too (unqueue's
+    `send_id`). An id the queue does NOT hold is the miss, full stop: the send was fed into the CLI
+    between the push that drew the bubble and the click, and falling back to the index or the body here
+    popped its same-words neighbour and answered ok (review round 1), the wrong-message cancel the id
+    exists to end. Only an id-less cancel (an older client, or an entry that never had an id) keeps the
+    index/body fallback."""
     try:
         pending = be.pending_queued(sid)
     except Exception:
         pending = []
     if send_id:
-        hit = next((i for i, q in enumerate(pending) if getattr(q, "send_id", "") == send_id), -1)
-        if hit >= 0:
-            idx = hit
-    if md and not (send_id and 0 <= idx < len(pending) and getattr(pending[idx], "send_id", "") == send_id):
+        idx = next((i for i, q in enumerate(pending) if getattr(q, "send_id", "") == send_id), -1)
+        if idx < 0:
+            return _cancel_miss_text(md)          # named, and gone: never a relocation onto another entry
+    elif md:
         if not (0 <= idx < len(pending)) or _split_followup(pending[idx])[1] != md:
             idx = next((i for i, q in enumerate(pending) if _split_followup(q)[1] == md), -1)
     if not (0 <= idx < len(pending)):
@@ -28618,8 +28630,11 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None, send_id=None):
     (c) the backend can't forward its own sends AND a turn is open (tmux: hold
     while working, and _apply_pending_ops MERGES the held run into one message at turn end). Otherwise hand
     it over NOW — a forwards_sends backend (SDK) takes a send even mid-turn and forwards it at the next tool
-    boundary, folds several queued sends into one turn, and holds them across an interrupt (the user
-    2026-07-17: "get user messages in as soon as possible; we don't have to interrupt but get them in"); the
+    boundary, hands queued sends to the CLI one message each, in order (its inputs() holds the next text
+    until the CLI has taken the last: 2026-09-08, after two texts sent during one turn reached the agent
+    as one fused message; that incident superseded the 2026-07-17 fold of several queued sends into one
+    turn for SDK sessions), and holds them across an interrupt (the user 2026-07-17, who wanted typed
+    messages in as soon as possible, without an interrupt); the
     still-waiting message renders as a queued bubble (its echo is suppressed) until it forwards. `echo` is
     the _optimistic_echo author stamped when the send actually fires (None = the backend echoes for itself).
 
@@ -28874,10 +28889,14 @@ def _vouched_model(value):
 
 
 def _deliver_send_batch(be, sid, run):
-    """Deliver a run of consecutive parked ('send', text, echo) ops AT ONCE (the user 2026-07-17: a pile of
-    queued messages should all go in together, not one turn each). A backend that forwards its own sends
-    (SDK) enqueues each — its inputs() folds them into ONE turn; a backend that can't (tmux) has no fold, so
-    MERGE them into a single message (the user okayed merging for tmux). Each fired send stamps its optimistic
+    """Deliver a run of consecutive parked ('send', text, echo) ops AT ONCE: the whole run drains in this
+    one pass, in park order (the user 2026-07-17, who wanted a pile of queued messages sent together rather
+    than one turn each). A backend that forwards its own sends (SDK) enqueues each, and its inputs() hands
+    them to the CLI ONE MESSAGE EACH, in order, holding the next until the CLI has taken the last
+    (2026-09-08: two texts sent during one turn reached the agent as one fused message, and the fix
+    superseded the 2026-07-17 preference, under which the SDK folded a drained run into one turn); a
+    backend that can't forward (tmux) takes nothing mid-turn, so MERGE the run into a single message (the
+    user okayed merging for tmux). Each fired send stamps its optimistic
     echo (a no-op on the SDK, which echoes inside send(); the kernel-side tmux echo otherwise).
 
     A parked USER-TODO ANSWER carries its todo id as the op's 4th slot (_send_or_park), and THIS is
@@ -29010,8 +29029,10 @@ def _apply_pending_ops(now=None):
     2026-07-02, compact-mid-turn): settings ops (model/effort) apply instantly and delivery continues,
     but a SEND or /COMPACT ends the pass — its turn/compaction must finish before the next op fires, so
     "compact, then two messages, then a model pick" lands as pressed. A leading RUN of consecutive sends
-    is delivered together, not one turn each (_deliver_send_batch — the user 2026-07-17, who wanted them sent all at
-    once; the SDK folds the run into one turn, tmux merges it). Event-gated throughout (_compacting
+    is delivered together in one pass (_deliver_send_batch; the user 2026-07-17, who wanted them sent all at
+    once; tmux merges the run into one message, while the SDK's inputs() hands it to the CLI one message
+    each, in order, since 2026-09-08, when two texts sent during one turn reached the agent fused and that
+    incident superseded the one-turn preference for SDK sessions). Event-gated throughout (_compacting
     + the event-model open-turn signal, both off cached parses refreshed by turn-end pokes, plus
     _limit_hold's account gate — a queue held by a usage limit drains on the cycle after the API's own
     reset stamp passes, so the whole sequence goes in at the reset in the order it was typed); a dead
@@ -29985,8 +30006,14 @@ def _merge_tx_sets(session, sid):
 # Landed records that carry a client SEND ID (2026-09-08): sid → {record uuid: [send ids]}, filled by
 # _note_send_landings as a chat build retires an id-carrying input echo, read by build_session to stamp
 # the record's user event (`sendIds`). In memory only and bounded: the ids matter for as long as a client
-# still holds the send's "sending…" bubble, which no page reload survives.
+# still holds the send's "sending…" bubble, which no page reload survives. Written only by
+# _note_send_landings, under _landed_send_ids_lock: a pusher cycle and an HTTP request's build (or a WS
+# loadOlder, a thread projection) run _merge_live_atoms for the same session at once, and an unlocked
+# walk of one build over the map the other was filling raised "dictionary changed size during
+# iteration" out of the whole build (review round 1). build_session's read of a record's ids is two
+# atomic lookups and a list copy, so it takes no lock.
 _landed_send_ids = {}
+_landed_send_ids_lock = threading.Lock()
 _LANDED_SEND_IDS_CAP = 64
 
 
@@ -29999,42 +30026,46 @@ def _note_send_landings(sid, live, turns, tx_text_t):
     and each claims the OLDEST unclaimed matching record at or after its send time, so two identical
     sends map to their two records in order; a record's claim is per (record, text), so one record that
     carries two texts is claimed once per text. An echo whose record is not among the atoms (a landing
-    the boot scan recorded, `_landed`) maps nothing and leaves the client to its text match."""
-    ids = _landed_send_ids.setdefault(str(sid), {})
-    claimed = {(u, k) for u, v in ids.items() for k in v.get("keys", ())}
-    for a in live:
-        et, send_id = a.get("_echo_text"), a.get("_send_id")
-        if not (et and send_id) or a.get("command"):
-            continue
-        key = sb.echo_text_key(et)
-        t0 = float(a.get("t") or 0)
-        if not key or float(tx_text_t.get(key) or 0) < t0:
-            continue                                   # not landed by this transcript: the prune keeps the echo
-        for turn in turns:
-            atoms = turn["atoms"]
-            if atoms and float(atoms[-1].get("t") or 0) < t0:
-                continue                               # a whole turn before the send
-            hit = None
-            for atom in atoms:
-                u = atom.get("uuid")
-                if not u or float(atom.get("t") or 0) < t0 or (u, key) in claimed:
-                    continue
-                if key in _atom_user_texts(atom):
-                    hit = u
-                    break
-            if hit is None:
+    the boot scan recorded, `_landed`) maps nothing and leaves the client to its text match.
+
+    The whole walk runs under _landed_send_ids_lock (see the map's comment): concurrent builds of one
+    session read and fill the same per-sid map, and the claimed-set walk, the inserts and the cap trim
+    are one step each, so no build ever iterates a map another is resizing. The lock guards a memory-only
+    walk over already-parsed atoms (no I/O, no backend call), so a build waiting on it waits for one
+    other build's walk, never for anything slow."""
+    with _landed_send_ids_lock:
+        ids = _landed_send_ids.setdefault(str(sid), {})
+        claimed = {(u, k) for u, v in ids.items() for k in v.get("keys", ())}
+        for a in live:
+            et, send_id = a.get("_echo_text"), a.get("_send_id")
+            if not (et and send_id) or a.get("command"):
                 continue
-            claimed.add((hit, key))
-            ent = ids.setdefault(hit, {"ids": [], "keys": []})
-            if send_id not in ent["ids"]:
-                ent["ids"].append(send_id)
-            ent["keys"].append(key)
-            break
-    while len(ids) > _LANDED_SEND_IDS_CAP:
-        try:
+            key = sb.echo_text_key(et)
+            t0 = float(a.get("t") or 0)
+            if not key or float(tx_text_t.get(key) or 0) < t0:
+                continue                               # not landed by this transcript: the prune keeps the echo
+            for turn in turns:
+                atoms = turn["atoms"]
+                if atoms and float(atoms[-1].get("t") or 0) < t0:
+                    continue                           # a whole turn before the send
+                hit = None
+                for atom in atoms:
+                    u = atom.get("uuid")
+                    if not u or float(atom.get("t") or 0) < t0 or (u, key) in claimed:
+                        continue
+                    if key in _atom_user_texts(atom):
+                        hit = u
+                        break
+                if hit is None:
+                    continue
+                claimed.add((hit, key))
+                ent = ids.setdefault(hit, {"ids": [], "keys": []})
+                if send_id not in ent["ids"]:
+                    ent["ids"].append(send_id)
+                ent["keys"].append(key)
+                break
+        while len(ids) > _LANDED_SEND_IDS_CAP:
             del ids[next(iter(ids))]                   # insertion order: the oldest landing goes first
-        except (KeyError, StopIteration, RuntimeError):
-            break                                      # another build (an HTTP request's) trimmed it meanwhile
 
 
 def _merge_live_atoms(session, sid, shown_texts=()):

@@ -6989,14 +6989,18 @@ function dropProvisional(): { queued: string[]; draft: string } {
 
 // The real session arrived: move everything the provisional tab was holding onto it and focus it. The
 // queued messages send FOR REAL here — they were never sent before, because there was no session to send
-// them to; the dashed bubbles you saw were this client saying "received", not the kernel.
+// them to; the dashed bubbles you saw were this client saying "received", not the kernel. Each one is
+// registered FIRST and posted WITH its bubble's id, like the plain and quote sends (routeUserMessage): the
+// kernel's queue entry, echo and landed record then name the bubble the user sees, so two identical texts
+// typed into the provisional tab stay two sends, and a ✕ on either removes exactly that one at the kernel.
+// This path used to post the text alone and mint the bubble's id afterwards (2026-09-08 review).
 function adoptProvisional(realId: string): void {
   const { queued, draft } = dropProvisional();
   if (draft) drafts.set(realId, draft);    // set BEFORE the switch — setActive fills the box from drafts
   setActive(realId);
   for (const text of queued) {
-    vscodeApi?.postMessage({ type: "sendMessage", id: realId, text });
-    registerOptimistic(realId, text);      // …and the bubble carries over to the tab that now owns it
+    const p = registerOptimistic(realId, text);
+    vscodeApi?.postMessage({ type: "sendMessage", id: realId, text, sendId: p.sendId });
   }
   if (draft) { persistDrafts(); const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; if (ta) growComposer(ta); }
 }

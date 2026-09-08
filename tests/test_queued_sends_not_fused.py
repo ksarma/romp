@@ -17,6 +17,16 @@ landing and stayed up until a ✕. Two fixes, both covered here:
   * every send carries the CLIENT's id for it (send_id → _QueueText.send_id, the echo's _send_id, the
     landed record's stamped ids — kernel._note_send_landings), so the bubble is matched to its own copy
     by id and a ✕ removes exactly the entry it was pressed on (unqueue / _cancel_backend_queued by id).
+The review round (2026-09-08) tightened four edges, each pinned below:
+  * a turn romp did not feed is COUNTED: a turn frame at inflight 0 raises inflight (the CLI's drain of a
+    mid-turn text, or a turn a notification started), so a text fed into that turn is mid-turn, not
+    "fresh", and its hold waits for its own take instead of clearing on the running turn's next frame;
+  * only the init, assistant, user and result frames witness a take; task, hook, status and progress
+    frames stream independently of the queue and release nothing;
+  * a landing scan that raises is a logged fault the hold escapes from at the next turn frame (at once
+    when that frame is the result), never a silent per-frame miss that parks the queue for good;
+  * a reconnect defers while a hold is live (the CLI still owes the drain), and a hold that reaches the
+    loop top anyway hands its text to the stranded reconcile (re-head or a flagged echo, never a drop).
 The REAL _amain runs here (its inputs() closure) against a stand-in SDK module whose client records what
 it was fed and in which phase of the scripted stream — installed in sys.modules for the test (the
 backend imports the SDK lazily, at the top of _amain) and removed after. Every id is synthetic (the
@@ -28,6 +38,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -190,6 +201,26 @@ class OneFedTextAtATime(unittest.TestCase):
                                    usage={"input_tokens": 1, "output_tokens": 1}, result="ok",
                                    parent_tool_use_id=None))
 
+    def _sys(self, client, subtype):
+        """A system frame that is NOT the init: the CLI's background-task, hook and status machinery
+        streams these on its own clock, turn or no turn, and none says anything about its prompt queue."""
+        self._push(client, _SystemMessage(subtype, {"task_id": "t-1", "status": "running"}, uuid=self._uid()))
+
+    def _user_record(self, text):
+        """The CLI's own transcript record of a user turn."""
+        return {"type": "user", "uuid": self._uid(), "timestamp": _iso(time.time()),
+                "message": {"role": "user", "content": text}}
+
+    def _fault_the_transcript(self):
+        """Make the landing scan RAISE: a directory where the transcript file was (open() fails on it).
+        The scan reports the fault to its caller as None."""
+        p = self._transcript()
+        os.remove(p)
+        os.makedirs(p)
+
+    def _fault_lines(self):
+        return [l for l in self.lines if l.startswith("feed hold (")]
+
     def _first_turn(self):
         """Connect, feed a first turn from idle, and let its init + first reply stream: the CLI has
         demonstrably started it, so the hold on THAT text is released and the turn is open."""
@@ -205,6 +236,10 @@ class OneFedTextAtATime(unittest.TestCase):
         self._assistant(c)
         self._wait(lambda: s._untaken is None and s.resume_sid == FSID, "the first turn's start releases its hold")
         self.assertEqual(s.inflight, 1)
+        # the CLI writes the turn's user record as it starts the turn, so by the time anything can be fed
+        # mid-turn the transcript exists: the landing scans below read a real file (a file the scan
+        # cannot read is a FAULT it reports, pinned separately)
+        self._append(self._user_record("first turn"))
         return c
 
     def _transcript(self):
@@ -269,8 +304,10 @@ class OneFedTextAtATime(unittest.TestCase):
         self._init(c)
         self._wait(lambda: len(c.writes) == 3, "the answer fed once the composer message was taken")
         self.assertEqual(c.writes[2][0], answer, "the answer's text, unchanged, as its own message")
-        self.assertEqual([getattr(t, "todo", "") for t in s.fed_texts()], ["ut-11111111"],
-                         "the fed entry still carries the ask's id")
+        self.assertEqual([(str(t), getattr(t, "todo", "")) for t in s.fed_texts()],
+                         [("can you also check the tests", ""), (answer, "ut-11111111")],
+                         "the drained message rejoined the fed-turn twin (its turn is running) and the fed "
+                         "answer behind it still carries the ask's id")
 
     def test_a_mid_turn_splice_releases_the_next_text_into_the_same_turn(self):
         """The accelerator: when the CLI takes the fed text at a tool boundary (the queued_command
@@ -322,23 +359,93 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertIs(self.be._text_landed(SID, "the fed text", 0, os.path.getsize(p), FSID), False)
         self.assertIs(self.be._text_landed(SID, "the fed text", 0, 0, FSID), True)
 
-    def test_a_reconnect_clears_the_hold_so_the_new_client_is_fed(self):
-        """A hold never outlives its client: the reconnect's loop top clears it (the fed text is the
-        stranded reconcile's business), so a text held behind it reaches the NEW client."""
+    def test_a_deferred_reconnect_waits_until_the_cli_has_taken_the_text_it_still_holds(self):
+        """An /effort change while busy defers to the turn's end. When a text was fed mid-turn, that
+        turn's result is NOT the moment: the CLI still holds the text and drains it into a turn right
+        after, and a teardown at the result killed the CLI with the message in its queue (nothing
+        re-fed it, nothing flagged it; 2026-09-08 review). The arm stays set; the drained turn's first
+        frame counts that turn and its result fires the reconnect, on the frame that proves the text
+        left the queue. Nothing is re-fed and nothing is flagged: the message was delivered."""
+        s, c1 = self.s, self._first_turn()
+        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self._wait(lambda: len(c1.writes) == 2, "the note forwarded")
+        s.request_reconnect()                          # an /effort change while busy: deferred to the turn's end
+        self._wait(lambda: s._reconnect_when_idle, "the deferred reconnect armed")
+        c1.phase = "after-result-1"
+        self._result_frame(c1)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"),
+                   "the turn settled with the note still in the CLI's queue")
+        self._settle()
+        self.assertEqual(len(self._Client.instances), 1, "no teardown at this result: the CLI still holds the note")
+        self.assertFalse(c1.torn_down)
+        self.assertTrue(s._reconnect_when_idle, "the arm waits for the take")
+        c1.phase = "turn-2"
+        self._init(c1)                                 # the drained turn: the note left the CLI's queue
+        self._wait(lambda: s._untaken is None and s.inflight == 1, "the drain counted as a turn")
+        self.assertEqual(s.fed_texts(), ["mid-turn note"], "the drained text rides the fed-turn twin")
+        self._settle()
+        self.assertEqual(len(self._Client.instances), 1, "the drained turn runs to its end first")
+        self._result_frame(c1)
+        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1] is s.client,
+                   "the reconnect at the drained turn's result")
+        c2 = self._Client.instances[1]
+        self.assertTrue(c1.torn_down)
+        self.assertEqual([w[0] for w in c1.writes], ["first turn", "mid-turn note"])
+        self.assertEqual(c2.writes, [], "nothing re-fed: the note was delivered")
+        echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
+        self.assertFalse(echo.get("dropped"), "…and nothing flagged")
+        self.assertEqual(s.inflight, 0)
+        s.enqueue("after the reconnect")
+        self._wait(lambda: c2.writes, "the new client fed")
+        self.assertEqual([w[0] for w in c2.writes], ["after the reconnect"])
+
+    def test_a_reconnect_asked_for_while_the_cli_still_holds_a_text_is_deferred_not_immediate(self):
+        """The immediate arm: after a mid-turn feed's result the counters read idle (inflight 0, queue
+        empty) while the text sits in the CLI's queue. A reconnect asked for in that gap defers; the
+        key cycle's no-defer form is refused with its log line, as when a turn is running."""
         s, c1 = self.s, self._first_turn()
         s.enqueue("mid-turn note")
         self._wait(lambda: len(c1.writes) == 2, "the note forwarded")
-        s.enqueue("held behind it")
-        self._settle()
-        self.assertEqual(s.pending(), ["held behind it"])
-        s.request_reconnect()                          # an /effort change while busy: deferred to the turn's end
-        self._wait(lambda: s._reconnect_when_idle, "the deferred reconnect armed")
         self._result_frame(c1)
-        self._wait(lambda: len(self._Client.instances) == 2 and self._Client.instances[1].writes,
-                   "the reconnected client to be fed")
-        c2 = self._Client.instances[1]
-        self.assertEqual([w[0] for w in c2.writes], ["held behind it"], "the held text went to the new client")
-        self.assertEqual(c1.writes[-1][0], "mid-turn note", "nothing more was fed to the torn-down client")
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        self.assertEqual(s.pending(), [])
+        s.request_reconnect()
+        self._wait(lambda: s._reconnect_when_idle, "deferred, not fired")
+        self._settle()
+        self.assertEqual(len(self._Client.instances), 1, "the CLI keeps running: it still holds the note")
+        s.request_reconnect(defer=False)
+        self._wait(lambda: any("not cycled" in l for l in self.lines), "the no-defer form refused, loudly")
+        self.assertEqual(len(self._Client.instances), 1)
+        c1.phase = "turn-2"
+        self._init(c1)
+        self._wait(lambda: s.inflight == 1 and s._untaken is None, "the drain counted")
+        self._result_frame(c1)
+        self._wait(lambda: len(self._Client.instances) == 2, "the deferred reconnect fired at the drained turn's result")
+        self.assertEqual([w[0] for w in c1.writes], ["first turn", "mid-turn note"])
+
+    def test_a_teardown_that_finds_a_settled_hold_hands_its_text_to_the_stranded_reconcile(self):
+        """The backstop: a teardown that armed some other way while a hold is settled (the reconnect
+        arms defer, so nothing in the kernel does this today). The hold's text is in neither counter at
+        that point; the loop top puts it back into the fed-turn twin so the reconcile treats it as the
+        stranded turn it is: on a resumable conversation its echo is flagged 'never delivered' (the
+        same flag-only branch every stranded turn takes there), never re-fed, never silently gone."""
+        s, c1 = self.s, self._first_turn()
+        self.assertTrue(self.be.send(SID, "mid-turn note", send_id="s-note"))
+        self._wait(lambda: len(c1.writes) == 2, "the note forwarded")
+        self._result_frame(c1)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled, untaken")
+        s.loop.call_soon_threadsafe(lambda: (setattr(s, "_reconnect", True), s._wake_set()))
+        self._wait(lambda: len(self._Client.instances) == 2 and s.client is self._Client.instances[1],
+                   "the forced reconnect")
+        self._settle()
+        self.assertIsNone(s._untaken)
+        self.assertEqual(s.inflight, 0, "the reconcile settled the counter it was handed")
+        self.assertEqual(s.fed_texts(), [])
+        self.assertEqual(s.pending(), [], "resumable: never re-fed (the record may have landed)")
+        self.assertEqual(self._Client.instances[1].writes, [])
+        echo = next(a for a in self.be.live_atoms(SID) if a.get("_echo_text") == "mid-turn note")
+        self.assertTrue(echo.get("dropped"), "the loss is visible in the chat")
+        self.assertTrue(any("never reached its CLI" in l for l in self.lines), "…and in the log")
 
     def test_a_cancel_removes_exactly_its_own_entry_of_two_wearing_the_same_words(self):
         """Two queued entries with identical text and different send ids: the ✕ pressed on the second
@@ -356,7 +463,8 @@ class OneFedTextAtATime(unittest.TestCase):
         # the kernel's cancel path resolves the same way, through the backend's pending list
         self.assertIsNone(km._cancel_backend_queued(self.be, SID, 0, "go ahead", send_id="s-aaa"))
         self.assertEqual(s.pending(), [], "…and removed exactly that entry")
-        # an id the queue does not hold falls back to the body, and misses loudly when nothing matches
+        # an id the queue does not hold misses: nothing is removed and no body fallback runs (the rule is
+        # pinned in tests/test_queued_sends_kernel.py, CancelBackendQueuedById and CancelParkedById)
         self.assertTrue(km._cancel_backend_queued(self.be, SID, 0, "go ahead", send_id="s-zzz"))
         # through send(): the backend-level unqueue drops the canceled entry's OWN echo, not the first
         # echo wearing the words
@@ -388,6 +496,240 @@ class OneFedTextAtATime(unittest.TestCase):
         mirror = {e["text"]: e for e in (sb.read_reg(self.state, SID) or {}).get("echoes", [])}
         self.assertEqual(mirror["carry me"].get("sendId"), "s-123", "the restart mirror keeps it")
         self.assertNotIn("sendId", mirror["plain"])
+
+
+    def test_a_text_fed_into_the_drained_turn_is_mid_turn_and_waits_for_its_own_take(self):
+        """The review's high finding: after the drained turn's first frame released the settled hold,
+        inflight read 0 (the settle zeroed it and nothing counted the drain), so a text fed into the
+        running drained turn was 'fresh' and its hold cleared on that turn's very next frame with the
+        text still in the CLI's queue; the text behind it was fed to fuse with it. Now the drain's
+        first frame COUNTS the turn: the text fed into it is mid-turn, the running turn's frames prove
+        nothing, and the text behind it waits for the drained turn's result plus the next turn's frame."""
+        s, c = self.s, self._first_turn()
+        s.enqueue("B mid-turn")
+        self._wait(lambda: len(c.writes) == 2, "B forwarded")
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "B's turn settled")
+        self.assertEqual(s.fed_texts(), [], "the settle cleared the twin")
+        c.phase = "turn-2"
+        self._init(c)                                   # the drain: B's own turn begins
+        self._wait(lambda: s._untaken is None and s.inflight == 1, "the drain released B's hold AND counted its turn")
+        self.assertEqual(s.fed_texts(), ["B mid-turn"], "the drained text is back in the fed-turn twin")
+        self.assertTrue(self.be.busy(SID), "busy() reads the CLI's turn")
+        s.enqueue("C into the drained turn")
+        self._wait(lambda: len(c.writes) == 3, "C forwarded into B's turn")
+        self.assertEqual(c.writes[2], ("C into the drained turn", "turn-2"))
+        self.assertIs(s._untaken["fresh"], False, "C went into a running turn, not from idle")
+        self.assertEqual(s.inflight, 2)
+        s.enqueue("D behind C")
+        self._settle()
+        self.assertEqual(len(c.writes), 3, "D waits: C is untaken")
+        self._assistant(c, "turn 2 keeps going")       # a frame of the running turn: not C's take
+        self._settle()
+        self.assertEqual(len(c.writes), 3, "the drained turn's next frame does NOT release C's hold")
+        self.assertEqual(s.pending(), ["D behind C"])
+        c.phase = "after-result-2"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "turn 2 settled")
+        self._settle()
+        self.assertEqual(len(c.writes), 3, "the result alone is not the take either")
+        c.phase = "turn-3"
+        self._init(c)
+        self._wait(lambda: len(c.writes) == 4, "D fed once C's drain showed")
+        self.assertEqual(c.writes[3], ("D behind C", "turn-3"))
+        self.assertEqual([w[0] for w in c.writes], ["first turn", "B mid-turn", "C into the drained turn", "D behind C"])
+
+    def test_a_turn_the_cli_started_itself_is_counted_and_a_send_into_it_waits_for_its_take(self):
+        """The finding's other variant: a subagent's or task's notification wakes an idle CLI and it
+        runs a turn romp never fed. Its turn frames count the turn (busy reads it); a send during it is
+        mid-turn and its hold does not clear on the turn's next frame; the send behind it waits for the
+        result plus the next turn's frame. Frames that are not turn frames count nothing at idle."""
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        self.assertFalse(self.be.busy(SID))
+        self._sys(c, "task_notification")               # a background task finished: not a turn
+        self._sys(c, "hook_started")
+        self._push(c, _RateLimitEvent())
+        self._settle()
+        self.assertEqual(s.inflight, 0, "no turn frame, no turn")
+        c.phase = "auto-turn"
+        self._init(c)                                   # the CLI starts a turn on its own
+        self._wait(lambda: s.inflight == 1, "the CLI's own turn counted")
+        self.assertEqual(s.fed_texts(), [], "…with no fed text of romp's in it")
+        self.assertTrue(self.be.busy(SID))
+        self._assistant(c)
+        s.enqueue("first composer send")
+        self._wait(lambda: len(c.writes) == 2, "the send forwarded into the running turn")
+        self.assertEqual(c.writes[1], ("first composer send", "auto-turn"))
+        self.assertIs(s._untaken["fresh"], False)
+        self.assertEqual(s.inflight, 2)
+        s.enqueue("second composer send")
+        self._assistant(c, "the auto turn continues")
+        self._settle()
+        self.assertEqual(len(c.writes), 2, "the second send waits: the first is untaken and the turn's frames prove nothing")
+        c.phase = "after-auto"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "the auto turn settled")
+        self._settle()
+        self.assertEqual(len(c.writes), 2, "not at the result either")
+        c.phase = "turn-3"
+        self._assistant(c, "the drained turn's first frame")   # an assistant frame at inflight 0 counts too
+        self._wait(lambda: len(c.writes) == 3, "the second send fed once the first was drained")
+        self.assertEqual(c.writes[2], ("second composer send", "turn-3"))
+        self.assertEqual(s.inflight, 2, "the drained turn counted, plus the feed into it")
+
+    def test_only_turn_frames_witness_a_take_never_a_task_hook_or_progress_frame(self):
+        """The CLI streams system frames from its background-task and hook machinery regardless of its
+        prompt queue (task_started/progress/notification, background_tasks_changed, hook_started,
+        status), and the SDK types each as a SystemMessage. None is a take: one arriving between a feed
+        from idle and the turn's init, or between a result and the drain, must not release the hold:
+        the next text would go into exactly the window the hold protects. Only the init, an assistant
+        message, the CLI's own user record and the result count."""
+        S = sb.SdkSession._turn_frame
+        class _UserMessage:                              # the SDK's shape, by name (duck-typed in the kernel)
+            pass
+        _UserMessage.__name__ = "UserMessage"
+        for st in ("task_started", "task_progress", "task_updated", "task_notification",
+                   "background_tasks_changed", "hook_started", "hook_response", "status", "compact_boundary"):
+            self.assertFalse(S(_SystemMessage(st), _AssistantMessage, _ResultMessage, _SystemMessage), st)
+        self.assertFalse(S(_RateLimitEvent(), _AssistantMessage, _ResultMessage, _SystemMessage))
+        self.assertTrue(S(_SystemMessage("init"), _AssistantMessage, _ResultMessage, _SystemMessage))
+        self.assertTrue(S(_AssistantMessage([]), _AssistantMessage, _ResultMessage, _SystemMessage))
+        self.assertTrue(S(_result(), _AssistantMessage, _ResultMessage, _SystemMessage))
+        self.assertTrue(S(_UserMessage(), _AssistantMessage, _ResultMessage, _SystemMessage))
+        # through the stream: the fresh gap
+        s, c = self.s, self._first_turn()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0, "idle")
+        c.phase = "pre-turn-2"
+        s.enqueue("A from idle")
+        self._wait(lambda: len(c.writes) == 2, "A fed")
+        self.assertTrue(s._untaken["fresh"])
+        s.enqueue("B behind it")
+        for st in ("task_started", "task_progress", "task_notification", "background_tasks_changed",
+                   "hook_started", "status", "compact_boundary"):
+            self._sys(c, st)
+        self._push(c, _RateLimitEvent())
+        self._settle()
+        self.assertEqual(len(c.writes), 2, "no system subtype but the init releases a fresh hold")
+        self.assertEqual(s.inflight, 1, "…and none counts a turn")
+        c.phase = "turn-2"
+        self._init(c)
+        self._wait(lambda: len(c.writes) == 3, "the init is the take")
+        self.assertEqual(c.writes[2], ("B behind it", "turn-2"))
+        # the settled gap: B is untaken in turn 2, C waits
+        s.enqueue("C held")
+        c.phase = "after-result-2"
+        self._result_frame(c)
+        self._wait(lambda: s.inflight == 0 and s._untaken and s._untaken.get("settled"), "settled")
+        self._sys(c, "task_progress")
+        self._sys(c, "task_notification")
+        self._settle()
+        self.assertEqual(len(c.writes), 3, "a task frame in the drain gap is not the drain")
+        self.assertEqual(s.inflight, 0)
+        c.phase = "turn-3"
+        self._init(c)
+        self._wait(lambda: len(c.writes) == 4, "the drain's init is")
+        self.assertEqual(c.writes[3], ("C held", "turn-3"))
+
+    def test_a_take_scan_that_raises_is_logged_once_and_the_hold_escapes_on_the_next_turn_frame(self):
+        """The landing scan answers None when it cannot read the transcript. Read as a miss, that held
+        the queue for good once the fed text had been consumed mid-turn (no frame ever comes to release
+        a settled hold whose text is not in the CLI's queue), silently, per frame. It is a fault: one
+        problem line per hold, and the hold escapes on the next turn frame."""
+        s, c = self.s, self._first_turn()
+        s.enqueue("first note")
+        self._wait(lambda: len(c.writes) == 2, "the first note forwarded")
+        s.enqueue("second note")
+        self._settle()
+        self.assertEqual(len(c.writes), 2)
+        self._fault_the_transcript()
+        self._assistant(c)                              # the scan raises here
+        self._settle()
+        self.assertEqual(len(c.writes), 2, "the frame that met the fault is not yet the escape")
+        self.assertTrue(s._untaken and s._untaken.get("fault"), "the hold knows")
+        self.assertEqual(len(self._fault_lines()), 1, "one problem line")
+        self.assertIn("IsADirectoryError", self._fault_lines()[0], "…naming the fault")
+        self._assistant(c)                              # the next turn frame
+        self._wait(lambda: len(c.writes) == 3, "the second note fed: the hold escaped")
+        self.assertEqual(c.writes[2], ("second note", "turn-1"))
+        self._assistant(c)
+        self._settle()
+        self.assertEqual(len(self._fault_lines()), 1, "one line for that hold, however many frames followed")
+
+    def test_a_faulted_hold_escapes_at_the_result_when_nothing_later_streams(self):
+        """The never-arrives path: the fault is met at the result itself. After a result nothing later is
+        guaranteed to stream (a text consumed mid-turn leaves the CLI's queue empty), so a faulted hold
+        escapes AT the result rather than waiting for a frame that may never come."""
+        s, c = self.s, self._first_turn()
+        s.enqueue("first note")
+        self._wait(lambda: len(c.writes) == 2, "the first note forwarded")
+        s.enqueue("second note")
+        self._settle()
+        self._fault_the_transcript()
+        c.phase = "after-result-1"
+        self._result_frame(c)
+        self._wait(lambda: len(c.writes) == 3, "the second note fed at the result")
+        self.assertEqual(c.writes[2], ("second note", "after-result-1"))
+        self.assertEqual(len(self._fault_lines()), 1)
+        self.assertTrue(s._untaken["fresh"], "fed from idle: the next turn's frame releases it as ever")
+
+    def test_a_redelivered_send_keeps_its_id_on_the_live_arm_as_on_the_reg_arm(self):
+        """A fresh CLI spawn re-delivers the typed sends the dead one held (_mark_dropped_echoes). The
+        live-session arm enqueued the text without its send id while the reg arm kept it: the re-queued
+        chip had no id, and its ✕ fell back to index and text. Both arms carry it now."""
+        be, s = self.be, self.s                         # registered in setUp, never started: the live arm
+        p = sb.transcript_path(self.cwd, SID)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, "a").close()                            # readable and empty: the scan answers False (nothing landed)
+        now = int(time.time())
+        be._stash_live(SID, "echo:1", {"type": "user", "uuid": "echo:1", "session_id": SID, "t": now,
+                                       "author": "human", "_echo_text": "carry me", "_send_id": "s-77"})
+        be._mark_dropped_echoes(SID, s.pending())
+        self.assertEqual([(str(t), getattr(t, "send_id", "")) for t in s.pending()], [("carry me", "s-77")],
+                         "the live arm's entry carries the id")
+        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"), [{"text": "carry me", "sendId": "s-77"}],
+                         "…and its mirror")
+        be.sessions.pop(SID)                            # no session object: the boot reseed's reg arm
+        be._stash_live(SID, "echo:2", {"type": "user", "uuid": "echo:2", "session_id": SID, "t": now + 1,
+                                       "author": "human", "_echo_text": "carry me too", "_send_id": "s-78"})
+        be._mark_dropped_echoes(SID, ["carry me"])
+        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"),
+                         [{"text": "carry me", "sendId": "s-77"}, {"text": "carry me too", "sendId": "s-78"}])
+
+    def test_the_queue_mirror_never_loses_an_entry_to_an_interleaved_persist(self):
+        """_persist_queue snapshots under one lock and writes under another, from two threads: the
+        feeder's post-pop persist (empty snapshot) racing an enqueue's persist (the new entry) could
+        write in the order snapshot-A, snapshot-B, write-B, write-A and leave the mirror without the
+        entry _pending held (a load-dependent failure of the mirror test below). One persist at a time."""
+        s, be = self.s, self.be
+        real = be._update_reg
+        entered, go = threading.Event(), threading.Event()
+
+        def slow_update(sid, **fields):
+            if fields.get("queue") == [] and not entered.is_set():   # the post-pop persist, delayed inside its write
+                entered.set()
+                go.wait(5)
+            return real(sid, **fields)
+        be._update_reg = slow_update
+        try:
+            a = threading.Thread(target=s._persist_queue)       # _pending is empty: the snapshot after a pop
+            a.start()
+            self.assertTrue(entered.wait(5))
+            b = threading.Thread(target=lambda: s.enqueue("plain"))
+            b.start()
+            b.join(1.0)                                         # unserialized, b's write lands here, ahead of a's
+            go.set()
+            a.join(5)
+            b.join(5)
+        finally:
+            be._update_reg = real
+        self.assertEqual((sb.read_reg(self.state, SID) or {}).get("queue"), ["plain"],
+                         "the mirror ends as the latest snapshot, never the stale empty one")
 
 
 class QueueEntryWire(unittest.TestCase):
