@@ -245,7 +245,9 @@ Four properties of the contract shape the design:
   scan budget per write past which the remaining such comments keep the position they have (the
   anchors follow-on review, 2026-09-07). A comment without an anchor never carries it. The panel passes it to the
   engine as the tie-break when it paints, so a passage that recurs with identical surroundings
-  wider than the anchor's context stays on the copy that was chosen.
+  wider than the anchor's context stays on the copy that was chosen while the position names one of
+  the copies; a copy the position does not name is painted as a guess, never as the chosen one (the
+  painting paragraph under Commenting from either view).
 - **A file created through `track-edit` is one insertion** spanning the whole file, and while any
   same-author insertion is pending, that author's further edits inside or beside it coalesce
   into it (`engine.js:204-218`) and do not appear as separate changes. A first look at a file the
@@ -776,13 +778,23 @@ offers a switch to Raw that preselects the same passage when its text occurs in 
 fences) and otherwise opens scrolled to the block's first line with the note intact (tables and
 HTML blocks).
 
-Painting distinguishes three states after the engine locates a comment's anchor in the current
+Painting distinguishes four states after the engine locates a comment's anchor in the current
 text, with the comment's stored `anchorAt` as the tie-break so a passage that recurs with
 identical surroundings past the anchor's context is painted on the copy that was chosen: located
-at the quote, painted normally; quote gone but its context found
-(`engine.js:793-800`), painted over the between-context region in a text-changed style with a
-card; neither found, shown as a card only, marked detached in the panel. Detached is a rendering
-state here, not a stored flag; the host script never calls the engine's comment pruning, and the
+at the quote on a copy the comment vouches for, the anchor's one best hit or a tied copy the
+stored position names, painted normally; located at the quote on a guessed copy, painted in the
+dashed ring the text-changed state wears, with a "passage recurs" tag on the card and, on the open
+card, a line saying the copy is the nearest to the stored position, or the first, and not a
+confirmed one; quote gone but its context found (`engine.js:793-800`), painted over the
+between-context region in a text-changed style with a card; neither found, shown as a card only,
+marked detached in the panel. A copy is guessed when the anchor ties and the stored position
+names none of the tied copies, or the comment has no position (`copyUnsure`): the refresh keeps a
+position the recorded changes carried to no copy or to several, and every position after an edit
+nobody recorded, and an edit inside the chosen copy's context leaves the other copies whole to
+outscore it, so the engine's nearest-wins pick from such a position, or its earliest tie with
+none, is a guess and is shown as one, never as the copy that was chosen (the anchors follow-on's
+review, 2026-09-07; before it the guess was painted as located). Detached is a rendering state
+here, not a stored flag; the host script never calls the engine's comment pruning, and the
 comment stays in the sidecar. In Raw view a located comment is painted by offset over the line
 rows, with no text matching. In Rendered view the located source range is converted through the
 same index map to a highlight over the rendered text; a comment inside a refused block falls back
@@ -806,8 +818,17 @@ Acceptance criteria:
   element boundary) stores a quote equal to the source slice, and the highlight after reload
   wraps exactly the text nodes of that slice. A CR-only line and a selection ending past the last
   row are included.
-- Raw: a quote that occurs twice anchors to the selected occurrence, including when two lines
-  are inserted above the passage between the selection and Enter.
+- Raw: a quote that occurs twice, with the same 24 characters around each copy so only the offset
+  can tell them apart, anchors to the selected occurrence, including when two lines are inserted
+  above the passage between the selection and Enter, provided the panel painted the edited text
+  before Enter (the poll's reload, Reload, a refresh: `followPassage` moves the pending pair with
+  its copy, exactly, and Save sends the moved offset, which the host finds on the selected copy).
+  When Enter comes before the panel has shown the edit, the offset sent indexes the old text and
+  sits on no copy, and the host refuses `anchor-ambiguous` with a message that says the text moved,
+  writes nothing, and the note stays in the composer to be placed by selecting the passage again,
+  never on the nearest copy, which a stale offset picks by the insertion's length and not by the
+  selection (the anchors follow-on's review, 2026-09-07; the second review, 2026-09-08, amended
+  this criterion, which had stated the first outcome alone).
 - Rendered: for a fixture covering both heading styles, tight and loose lists, nested and task
   lists, blockquotes, emphasis, strong, strikethrough, inline code, every link form, images,
   escapes, hard breaks, and a reference definition, every selection inside aligned blocks yields
@@ -1051,20 +1072,34 @@ unrecorded edit touched the file; one that sits nowhere in whole is placed by th
 `REFRESH_SCAN_BUDGET`, past which the rest keep their position and stderr says how many, so no count of
 comments holds a write past the kernel's deadline. The panel passes a card's `anchorAt` to the
 engine as the tie-break when it paints (the model carries the field), so the highlight stays on the
-copy that was chosen even where the anchor alone cannot tell; a pending composer's passage moves
-exactly through an edit that does not reach it, and one the edit reaches is re-found through its
-anchor, with no offset sent when the copies now tie, so the host refuses instead of guessing
-(`followPassage`). The refusal remains for a tie the request cannot settle: no offset sent, or an
+copy that was chosen even where the anchor alone cannot tell, while the position names a tied copy;
+where it names none, or the comment has no position, the copy the engine returns is a guess, and
+the panel paints it as one: the dashed ring the text-changed state wears, a "passage recurs" tag
+and the card's words (`copyUnsure`, the review; the painting paragraph under Commenting from either
+view states the four states); a pending composer's passage moves exactly through an edit that does
+not reach it, and one the edit reaches is re-found through its anchor, with no offset sent when the
+copies now tie, so the host refuses instead of guessing (`followPassage`). The refusal remains for a
+tie the request cannot settle: no offset sent, or an
 offset that sits on none of the tied copies in the text the host read because the text moved after
 the selection (`locateExact` with `exact`, refused `anchor-ambiguous` with a message that says so,
-never placed on the nearest copy). The sent message names a recurring passage by its widened
-surroundings (`passageDesc`, up to 120 characters a side; past that it says only that the passage
-recurs with the same text around each copy), so the session reading it can reach the chosen copy,
-or learns that `--old` with the nearby text will be refused. Tests: the host
+never placed on the nearest copy). The Raw acceptance criterion on a quote that occurs twice states
+both outcomes of lines inserted between the selection and Enter: the note lands on the selected copy
+when the panel painted the edit before Enter, since the follow moves the offset only from a repaint
+(`retargetComposer`, on `onRendered`), and is refused with the note kept when Enter came first (the
+second review, 2026-09-08; the criterion had stated the first outcome alone). The sent message
+names a recurring passage by its widened surroundings (`passageDesc`, up to 120 characters a side;
+past that it says only that the passage recurs with the same text around each copy), so the
+session reading it can reach the chosen copy, or learns that `--old` with the nearby text will be
+refused. Tests: the host
 modules `tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`, two e2e cases (a 24-character
 tie told apart at 48, and a tie past the cap whose positions follow a tracked insertion above),
 `ui/webview/file-comments-anchors.test.ts`, `-follow` and `-model-recurring`, and this plan's pins in
-`tools/file-review-plan.test.mjs`, `-acceptance` and `-anchors`.
+`tools/file-review-plan.test.mjs`, `-acceptance` and `-anchors`; the painted states in
+`ui/webview/file-comments-anchors-unsure.test.ts` (a guessed copy wears the dashed ring, the tag and the
+words; a copy the position names and a unique passage paint plainly) and `-region-tied` (the region
+composer's tied and elsewhere pairs); and `tools/file-review-plan-anchors-states.test.mjs`, which pins
+the painting paragraph's four states, this note's guessed-copy clause and the Raw criterion's two
+outcomes against the panel and the host.
 
 ### Slice 3: region comments on images
 
@@ -1473,7 +1508,11 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   review: the refresh by where the whole anchor sits, its two sites and its budget, the refusal of
   an offset that sits on no tied copy once the text moved, and the `desc` sentence's widened form and
   its 120-character bound, against the host and model sources, the fixture, and the test modules and
-  e2e cases the note names.
+  e2e cases the note names. `tools/file-review-plan-anchors-states.test.mjs` pins the painting
+  paragraph's four states and the follow-on note's guessed-copy clause against the panel (`copyUnsure`,
+  the dashed ring on a located mark, the tag and the card's words), the Raw criterion's two outcomes
+  against the host's `locateExact` on the Raw fixture and the panel's follow and Save, and the webview
+  modules that drive the painted states against the tree.
 - `tests/install-sh.bats` gains the tooling links, the guard registration with its matcher,
   idempotency, the basename presence check against an expanded-path entry, and the
   replace-an-existing-install case (Slice 1).

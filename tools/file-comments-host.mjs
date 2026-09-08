@@ -104,11 +104,16 @@
 //     copies in the text this script read: an offset into text that has since moved refuses
 //     `anchor-ambiguous` rather than placing the note on the nearest copy, as does a tie with no
 //     offset (the anchors follow-on, 2026-09-07, and its review). The refresh is exact and bounded: a
-//     stored position moves only to the one copy the recorded changes (the pending ops, the ops this
-//     write settles, the edits this write applies) can have carried it to, never to the nearest one,
-//     and the refresh's whole-text scans — both the classification scan every anchored comment costs
-//     and the engine's scoring a nowhere anchor costs — are budgeted per write (REFRESH_SCAN_BUDGET),
-//     so no count of comments can hold a write past the kernel's deadline;
+//     stored position moves to the one place the whole anchor sits when nothing else can be the
+//     passage (the comment had no position, or the quote occurs nowhere else), and otherwise only to
+//     the one place the recorded changes (the pending ops, the ops this write settles — accept's and
+//     save's alike — the edits this write applies) can have carried it to, never to the nearest one and
+//     never to the other copy of a passage whose own surroundings were edited; a comment whose whole
+//     anchor still sits at its position costs no scan at all, and every scan the rest need — the
+//     classification scan (fullMatches, charged as the native pass and the hits it is), the quote's
+//     occurrences (quoteHits) and the engine's scoring a nowhere anchor costs — is charged to one
+//     budget per write (REFRESH_SCAN_BUDGET), so no count of comments can hold a write past the
+//     kernel's deadline, and a write that moved no passage costs nothing however many there are;
 //   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
 //     comments log and config.json are named from the file's path and never shown to the person,
 //     and a checked-out repository can commit anything under those names (the plan leaves committing
@@ -248,19 +253,31 @@ export const LOG_SUFFIX = '.comments-log.jsonl';
 export const ANCHOR_CTX = 24;
 export const ANCHOR_CTX_STEP = 24;
 export const ANCHOR_CTX_CAP = 480;
-// The refresh's bound on its whole-text scans in one write, in characters compared. Two scans a comment
-// can cost are charged to it: the classification scan (fullMatches, one indexOf over the whole text per
-// distinct anchor, affordableScan), and — only for a comment whose whole anchor sits nowhere in the text
-// (its context edited) — the engine's scoring (locateExact, every occurrence of the quote times the
-// anchor's prefix and suffix, affordable). Either, unbounded and once per comment, held a write past the
-// kernel's 10 s deadline: a near-cap file of repeated text with cap-width anchors for the engine scan,
-// and thousands of CLI-written passage comments with distinct anchors for the classification scan, after
-// which no verb could write the file's comments (the review, 2026-09-07 and 2026-09-08). Past the budget
-// a comment keeps the position it has, and stderr says how many and why. About half a second of scanning
-// on the machine the figure was taken on.
+// The refresh's bound on the scanning one write may do, in units of the engine's per-character rate
+// (one unit: one character the engine's scoring compares). Everything the refresh scans is charged to
+// it, at what each scan costs: a native pass of indexOf over the whole text (fullMatches' classification
+// scan, quoteHits' count of a quote's occurrences, each pass the engine's locate makes) costs the text's
+// length over REFRESH_PASS_DIVISOR, since indexOf runs that many times faster per character than the
+// engine's scoring (measured about 40 to 1; 32 leaves headroom); every whole-anchor hit fullMatches
+// enumerates costs the needle's length, the characters indexOf compares to confirm it (a whole anchor
+// that sits at nearly every offset of a text of one repeated character made one scan 65,536 hits of a
+// 961-character needle, sixty million comparisons charged as one pass, and 400 such comments held a
+// write to 13 s, the review, 2026-09-08); and the engine's scoring for an anchor that sits in whole
+// nowhere costs its two locates, each every occurrence of the quote times the anchor's prefix and
+// suffix plus its passes (affordable). The budget is one per write: the process is one verb, and the
+// measure's refresh (checkReplyFits) and the stage's (stageSidecar) draw on the same figure, so the
+// second pass adds no positions the first did not (the memos make what the first scanned free) and
+// the reply is measured with exactly the positions the sidecar gets. Past the budget a comment keeps
+// the position it has, and stderr says how many and why, once per write. A comment whose whole anchor
+// still sits at its stored position is never scanned (sitsAt, a compare of the anchor's own length),
+// so a sidecar of any size costs nothing on a write that moved none of its passages, and the budget
+// bounds the comments whose passages moved, which the next write takes up where this one stopped.
+// About half a second of scanning on the machine the figure was taken on, at the engine's rate.
 export const REFRESH_SCAN_BUDGET = 48_000_000;
-// The most copies of a whole anchor the refresh enumerates for one comment; past it the tie is left as
-// it is (a one-character quote with no context can sit at every other offset of a large file).
+export const REFRESH_PASS_DIVISOR = 32;
+// The most copies of a whole anchor (and the most occurrences of a quote) the refresh enumerates for
+// one comment; past it the tie is left as it is (a one-character quote with no context can sit at
+// every other offset of a large file).
 const REFRESH_COPIES_MAX = 65_536;
 // What a write knows about how the text moved, for the refresh of a tied anchor's position (shiftBounds,
 // movedCopy), set on the store object by the verbs whose write drops change records (accept) or changes
@@ -1598,6 +1615,21 @@ function hintOf(c) {
   return c && typeof c.anchorAt === 'number' && Number.isFinite(c.anchorAt) ? c.anchorAt : undefined;
 }
 
+// What one native pass of indexOf over `text` costs the refresh's budget (REFRESH_SCAN_BUDGET's note).
+function passCost(text) {
+  return Math.ceil(text.length / REFRESH_PASS_DIVISOR);
+}
+
+// Whether the WHOLE anchor sits at `at`: prefix immediately before, quote at, suffix immediately after.
+// A compare of the anchor's own length, no scan. Where it does, the refresh has nothing to do: at one
+// whole match the position already names it, and among several it names a copy, which stands.
+function sitsAt(text, anchor, at) {
+  if (typeof at !== 'number' || !Number.isInteger(at) || at < 0 || at > text.length) return false;
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
+  return at >= prefix.length && text.startsWith(anchor.quote, at) && text.startsWith(suffix, at + anchor.quote.length) && text.startsWith(prefix, at - prefix.length);
+}
+
 // Every offset at which the WHOLE anchor sits in `text` — prefix immediately before, quote at, suffix
 // immediately after — in order, at most `max` of them (past that the list is cut and `more` is set).
 // Where there is at least one, these are exactly the engine's best-scoring hits: locateAnchor scores
@@ -1608,8 +1640,12 @@ function hintOf(c) {
 // stored position can be moved to (movedCopy). An anchor that sits in whole nowhere — its context
 // edited — is the engine's to place. Memoized per anchor, text and `max` like boundaryHits, and for the
 // same reason; comments on the copies of one repeated passage share one anchor, and so one scan.
+// With a `budget` (the refresh's) the scan is charged as it runs — one pass over the text, then the
+// needle's length per hit, what indexOf compares to confirm each — and stops with `more` and `cut` set
+// when the budget is spent, so a whole anchor that sits at nearly every offset costs what it costs and
+// no more (REFRESH_SCAN_BUDGET's note). Without one (uniqueAnchor, the tests) nothing is charged.
 const matchMemo = new Map();
-export function fullMatches(text, anchor, max) {
+export function fullMatches(text, anchor, max, budget) {
   const key = `${max} ${anchorKey(anchor)}`;
   const m = matchMemo.get(key);
   if (m && m.text === text) return m.result;
@@ -1618,12 +1654,47 @@ export function fullMatches(text, anchor, max) {
   const needle = prefix + anchor.quote + suffix;
   const hits = [];
   let more = false;
+  let cut = false;
+  let spent = budget ? passCost(text) : 0;
   for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) {
     if (hits.length >= max) { more = true; break; }
+    if (budget) {
+      spent += needle.length;
+      if (spent > budget.left) { more = true; cut = true; break; }
+    }
     hits.push(i + prefix.length);
   }
-  const result = { hits, more };
+  if (budget) budget.left = Math.max(0, budget.left - spent);
+  const result = cut ? { hits, more, cut } : { hits, more };
   matchMemo.set(key, { text, result });
+  return result;
+}
+
+// Every occurrence of a quote in `text` — `positions`, in order, at most REFRESH_COPIES_MAX of them —
+// and how many there are in all (`count`, for the engine's cost in affordable). Memoized per quote and
+// text for this process: comments on the copies of one repeated passage share a quote, so one scan
+// serves them all, and a sidecar of thousands of such comments does not re-scan the whole file once per
+// comment (the review, 2026-09-08). Charged to the budget as fullMatches is (one pass, then the quote's
+// length per occurrence), and cut with `more` when the budget is spent, so the count is then a floor.
+const quoteMemo = new Map();
+function quoteHits(text, quote, budget) {
+  const m = quoteMemo.get(quote);
+  if (m && m.text === text) return m.result;
+  const positions = [];
+  let count = 0;
+  let more = false;
+  let spent = budget ? passCost(text) : 0;
+  for (let i = text.indexOf(quote); i !== -1; i = text.indexOf(quote, i + 1)) {
+    if (budget) {
+      spent += quote.length;
+      if (spent > budget.left) { more = true; break; }
+    }
+    count++;
+    if (positions.length < REFRESH_COPIES_MAX) positions.push(i); else more = true;
+  }
+  if (budget) budget.left = Math.max(0, budget.left - spent);
+  const result = { positions, count, more };
+  quoteMemo.set(quote, { text, result });
   return result;
 }
 
@@ -1635,9 +1706,10 @@ export function fullMatches(text, anchor, max) {
 // insertion leaves a substitution — so the record bounds the shift without fixing it: anywhere from
 // minus its old text's length (the whole deletion is new) to plus its new text's (the whole insertion
 // is). The ops this write settles (accept drops the records of insertions whose text stands, so their
-// shift is read here before it is forgotten) are bounded the same way; the edits this write itself
-// applies (reject's reversals, save's text) happened entirely since, and shift by exactly their delta.
-// Every bound is in the coordinates of the text being saved; nothing depends on the ops' order or time.
+// shift is read here before it is forgotten; save does the same for the changes the editor accepted,
+// settledBySave) are bounded the same way; the edits this write itself applies (reject's reversals,
+// save's text) happened entirely since, and shift by exactly their delta. Every bound is in the
+// coordinates of the text being saved; nothing depends on the ops' order or time.
 function shiftBounds(store) {
   const extra = (store && store[WRITE_SHIFTS]) || {};
   const out = [];
@@ -1650,71 +1722,86 @@ function shiftBounds(store) {
   return out;
 }
 
-// The one copy among `hits` (fullMatches, a tie) that the recorded changes (shiftBounds) can have
-// carried the stored position `at` to: the copy's distance from `at` lies within the summed bounds of
-// the changes ending at or before it. Exactly one such copy is the passage, and the position moves
-// there. None, or several (the changes above span at least the gap between two copies), leaves the
-// position as it is: nearest-to-a-stale-offset picks by coincidence (an insertion above longer than
-// half the gap between two copies puts it on the other copy), and a position the changes cannot vouch
-// for is not written. The caller asks only when every change to the text is on record (TEXT_AS_WRITTEN):
-// a bound is a bound on what the recorded changes did, and an unrecorded edit beside a wide one could
-// carry the position past its copy onto another.
-function movedCopy(hits, at, bounds) {
-  let found = null;
-  for (const p of hits) {
+// The places among `cands` that the recorded changes (shiftBounds) can have carried the stored
+// position `at` to: each one's distance from `at` lies within the summed bounds of the changes ending
+// at or before it.
+function reachable(cands, at, bounds) {
+  const out = [];
+  for (const p of cands) {
     let lo = 0;
     let hi = 0;
     for (const b of bounds) if (b.end <= p) { lo += b.lo; hi += b.hi; }
     const d = p - at;
     if (d < lo || d > hi) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+// The one place the recorded changes (shiftBounds) can have carried the stored position `at` to, among
+// the copies `hits` (fullMatches: the whole anchor's matches) — or, when they can have carried it to
+// none of those, among the quote's other occurrences `occurrences` (quoteHits), one of which is the
+// chosen passage when a recorded change edited its context and not its text: the copies still whole
+// are then the OTHER copies, and the quote sits where the change left it, and only there within the
+// bounds. Exactly one such place is the passage, and the position moves there. None, or several (the
+// changes above span at least the gap between two copies), leaves the position as it is: nearest-to-a-
+// stale-offset picks by coincidence (an insertion above longer than half the gap between two copies
+// puts it on the other copy), and a position the changes cannot vouch for is not written. Several
+// whole copies within the bounds are not told apart by the quote's other occurrences either, so those
+// are asked only when no whole copy is reachable. The caller asks only when every change to the text
+// is on record (TEXT_AS_WRITTEN): a bound is a bound on what the recorded changes did, and an
+// unrecorded edit beside a wide one could carry the position past its copy onto another.
+function movedCopy(hits, at, bounds, occurrences) {
+  let found = null;
+  for (const p of reachable(hits, at, bounds)) {
+    if (found !== null) return null;
+    found = p;
+  }
+  if (found !== null || !occurrences) return found;
+  const whole = new Set(hits);
+  for (const p of reachable(occurrences.filter((q) => !whole.has(q)), at, bounds)) {
     if (found !== null) return null;
     found = p;
   }
   return found;
 }
 
-// Occurrences of `needle` in `text`, memoized per needle and text for this process: comments on the
-// copies of one repeated passage share a quote, so one count serves them all, and a sidecar of
-// thousands of such comments does not re-scan the whole file once per comment (the review, 2026-09-08).
-const countMemo = new Map();
-function quoteCount(text, needle) {
-  const m = countMemo.get(needle);
-  if (m && m.text === text) return m.count;
-  let count = 0;
-  for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) count++;
-  countMemo.set(needle, { text, count });
-  return count;
-}
+// The refresh's budget for this write (REFRESH_SCAN_BUDGET's note): one process is one verb, and the two
+// refresh passes a write makes (checkReplyFits, then stageSidecar) draw on this one figure. `kept`
+// remembers what stderr was last told, so the note goes out once per write and only when it changes.
+const refreshBudget = { left: REFRESH_SCAN_BUDGET, kept: { skipped: 0, unscanned: 0 } };
 
-// Whether one classification scan (fullMatches, a single indexOf pass over the whole text) fits what
-// is left of the refresh's budget. A result already memoized for this text and anchor is free (a shared
-// anchor pays once); otherwise it costs a pass. This bounds the number of DISTINCT anchors the refresh
-// scans in one write: for every anchored comment refreshAnchorAts asked fullMatches over the whole
-// text, so a sidecar of thousands of passage comments with distinct anchors held the write past the
-// kernel's 10 s deadline, after which no verb could write the file's comments (the review, 2026-09-08).
+// Whether one classification scan (fullMatches, a pass of indexOf over the whole text) fits what is
+// left of the refresh's budget. A result already memoized for this text and anchor is free (a shared
+// anchor pays once); otherwise the pass must fit, and fullMatches charges it and its hits as it runs.
+// This bounds the number of DISTINCT anchors whose passages moved that the refresh scans in one write:
+// for every anchored comment refreshAnchorAts asked fullMatches over the whole text, so a sidecar of
+// thousands of passage comments with distinct anchors held the write past the kernel's 10 s deadline,
+// after which no verb could write the file's comments (the review, 2026-09-08). Charged at the pass's
+// own cost, not the engine's: charged as an engine pass it admitted 25 anchors on a 2 MB file, and the
+// rest of a sidecar's positions stayed stale on every write (the review, 2026-09-08).
 function affordableScan(budget, text, anchor) {
   const key = `${REFRESH_COPIES_MAX} ${anchorKey(anchor)}`;
   const m = matchMemo.get(key);
   if (m && m.text === text) return true;
-  if (budget.left <= 0) return false;
-  budget.left -= text.length;
-  return true;
+  return budget.left >= passCost(text);
 }
 
 // Whether the engine's scan for `anchor` fits what is left of the refresh's budget: the two whole-text
-// locates locateExact makes, each comparing the anchor's context at every occurrence of the quote. A
-// scan already memoized for this text (boundaryHits) is free, and the occurrence count is memoized per
-// quote (quoteCount). Once the budget is spent nothing more is counted; past it the comment is counted
-// and skipped.
+// locates locateExact makes, each a pass for the quote (and, when the quote is gone, one for each side
+// of the context) and the anchor's context compared at every occurrence of the quote. A scan already
+// memoized for this text (boundaryHits) is free, and the occurrence count comes from quoteHits (memoized
+// per quote, charged once). Past the budget the comment is counted and skipped; a count the budget cut
+// short is a floor, and the scan it stands for is not affordable either.
 function affordable(budget, text, anchor) {
   const m = boundaryMemo.get(anchorKey(anchor));
   if (m && m.text === text) return true;
   if (budget.left <= 0) { budget.skipped++; return false; }
-  const n = quoteCount(text, anchor.quote);
+  const q = quoteHits(text, anchor.quote, budget);
   const prefix = typeof anchor.prefix === 'string' ? anchor.prefix.length : 0;
   const suffix = typeof anchor.suffix === 'string' ? anchor.suffix.length : 0;
-  const cost = 2 * n * (prefix + suffix + 1);
-  if (cost > budget.left) { budget.skipped++; return false; }
+  const cost = 2 * (3 * passCost(text) + q.count * (prefix + suffix + 1));
+  if (q.more || cost > budget.left) { budget.skipped++; return false; }
   budget.left -= cost;
   return true;
 }
@@ -1724,34 +1811,57 @@ function affordable(budget, text, anchor) {
 // EVERY sidecar write this script performs — first thing in stageSidecar, the one function every sidecar
 // write goes through, and once more before the reply is measured (checkReplyFits), so the bytes the
 // refresh adds are counted — against the text the sidecar is saved for: an edit above the passage moves
-// it, and the next write catches up. Three cases, told apart by where the whole anchor sits in that text
-// (fullMatches). At one place: the anchor locates uniquely, and that place is the position. At several:
-// the copies tie, and the stored position stands where it still names a copy, else it moves to the one
-// copy the recorded changes can have carried it to (movedCopy), and only while the text is as the
-// sidecar's last writer left it (TEXT_AS_WRITTEN: a file that changed under the sidecar moved by an
-// edit nobody recorded, and the changes vouch for nothing); a tied anchor with no position, or one the
-// changes can have carried to no copy or to several, keeps what it has. Nowhere: the engine places it
-// by its scoring (locateExact, a whole-text scan per occurrence of the quote, under
-// REFRESH_SCAN_BUDGET), and a gone passage keeps its last known position. The anchor's own fields are
-// never touched here, and a comment without an anchor (a whole-file, change or standalone region
-// comment) never gains the field. The other hosts and the CLIs write the whole object back, so the
-// field survives them.
+// it, and the next write catches up. A comment whose whole anchor still sits at its position needs
+// nothing (sitsAt) and costs no scan. The rest are told apart by where the whole anchor sits in the text
+// (fullMatches). At one place, and the comment has no position, or its quote occurs nowhere else: that
+// place is the position, since nothing else can be the passage. At one place while the quote recurs:
+// the one whole copy may be the passage moved, or the OTHER copy of a passage whose own context was
+// edited (two copies tied past the cap; an edit inside the chosen copy's surroundings leaves the other
+// whole), and the two look the same to every scorer, so the position moves only where the recorded
+// changes vouch (movedCopy): to the whole copy when they can have carried it there, else to the one
+// occurrence of the quote they can have, and otherwise stands — never to the whole copy for being the
+// only one (the review, 2026-09-08: the highlight jumped to the copy the person never chose, with no
+// cue, and the next write made it permanent). At several: the copies tie, and the position moves to the
+// one copy the recorded changes can have carried it to (movedCopy, the same rule), and only while the
+// text is as the sidecar's last writer left it (TEXT_AS_WRITTEN: a file that changed under the sidecar
+// moved by an edit nobody recorded, and the changes vouch for nothing); a tied anchor with no position,
+// or one the changes can have carried to no place or to several, keeps what it has. Nowhere: the engine
+// places it by its scoring (locateExact, a whole-text scan per occurrence of the quote), and a gone
+// passage keeps its last known position. Every scan is charged to the write's budget
+// (REFRESH_SCAN_BUDGET), past which a comment keeps its position and stderr says how many, once per
+// write. The anchor's own fields are never touched here, and a comment without an anchor (a whole-file,
+// change or standalone region comment) never gains the field. The other hosts and the CLIs write the
+// whole object back, so the field survives them.
 function refreshAnchorAts(store, text) {
   if (typeof text !== 'string') return;
   let bounds = null;
-  const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };
+  const budget = refreshBudget;
+  budget.skipped = 0;
+  budget.unscanned = 0;
+  const recorded = !!store && store[TEXT_AS_WRITTEN] === true;
   for (const c of (store && store.comments) || []) {
     if (!c || !c.anchor || typeof c.anchor !== 'object' || typeof c.anchor.quote !== 'string' || !c.anchor.quote) continue;
-    // The classification scan itself is budgeted: without it, N distinct anchors were N whole-text
-    // passes, and thousands of CLI-written passage comments held the write past the kernel's deadline.
+    const at = hintOf(c);
+    if (at !== undefined && sitsAt(text, c.anchor, at)) continue;
     if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }
-    const { hits, more } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX);
-    if (hits.length === 1) { c.anchorAt = hits[0]; continue; }
-    if (hits.length > 1) {
-      const at = hintOf(c);
-      if (at === undefined || more || hits.includes(at) || store[TEXT_AS_WRITTEN] !== true) continue;
-      if (!bounds) bounds = shiftBounds(store);
-      const moved = movedCopy(hits, at, bounds);
+    const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);
+    if (cut) { budget.unscanned++; continue; }
+    if (more) continue;
+    if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; continue; }
+    if (hits.length >= 1) {
+      if (at === undefined) continue;
+      if (recorded) {
+        if (!bounds) bounds = shiftBounds(store);
+        const whole = movedCopy(hits, at, bounds);
+        if (whole !== null) { c.anchorAt = whole; continue; }
+      } else if (hits.length > 1) {
+        continue;   // a tie after an edit nobody recorded: the changes vouch for nothing, and the quote's other occurrences add nothing
+      }
+      const q = quoteHits(text, c.anchor.quote, budget);
+      if (q.more) { budget.unscanned++; continue; }
+      if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; continue; }
+      if (!recorded) continue;
+      const moved = movedCopy(hits, at, bounds, q.positions);
       if (moved !== null) c.anchorAt = moved;
       continue;
     }
@@ -1759,11 +1869,14 @@ function refreshAnchorAts(store, text) {
     const loc = locateExact(text, c.anchor, undefined);
     if (!loc.error) c.anchorAt = loc.from;
   }
-  if (budget.skipped) {
-    process.stderr.write(`file-comments-host: ${budget.skipped} comment(s) whose anchor sits in whole nowhere in the text kept their stored position: placing them would scan past the refresh's budget for one write\n`);
-  }
-  if (budget.unscanned) {
-    process.stderr.write(`file-comments-host: ${budget.unscanned} comment(s) kept their stored position: locating them would scan past the refresh's budget for one write\n`);
+  if (budget.skipped !== budget.kept.skipped || budget.unscanned !== budget.kept.unscanned) {
+    budget.kept = { skipped: budget.skipped, unscanned: budget.unscanned };
+    if (budget.skipped) {
+      process.stderr.write(`file-comments-host: ${budget.skipped} comment(s) whose anchor sits in whole nowhere in the text kept their stored position: placing them would scan past the refresh's budget for one write\n`);
+    }
+    if (budget.unscanned) {
+      process.stderr.write(`file-comments-host: ${budget.unscanned} comment(s) kept their stored position: locating them would scan past the refresh's budget for one write\n`);
+    }
   }
 }
 
@@ -1784,7 +1897,9 @@ function appliedShifts(edits) {
 
 // The one shift a save's new text leaves, from the two texts' common prefix and suffix: the span
 // between them is what changed, and everything after it moved by the difference in length. A copy
-// after the span is exactly this far from where it was; one inside it is reached by no shift.
+// after the span is exactly this far from where it was; one inside it is reached by no shift. `start`
+// is where the span begins (the same offset in both texts), `end` where it ends in the new text: what
+// settledBySave needs to carry an offset of the old text into the new one.
 function editShift(oldText, newText) {
   if (oldText === newText) return [];
   const min = Math.min(oldText.length, newText.length);
@@ -1792,7 +1907,43 @@ function editShift(oldText, newText) {
   while (p < min && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
   let sfx = 0;
   while (sfx < min - p && oldText.charCodeAt(oldText.length - 1 - sfx) === newText.charCodeAt(newText.length - 1 - sfx)) sfx++;
-  return [{ end: newText.length - sfx, delta: newText.length - oldText.length }];
+  return [{ start: p, end: newText.length - sfx, delta: newText.length - oldText.length }];
+}
+
+// An offset of the text a save replaces, carried into the text it saves, through the save's one edit
+// (editShift): before the edited span it is unmoved, after the span it moves by the delta, and inside
+// the span — the person typed over or around it — it becomes the span's end in the new text, the
+// nearest offset the new text still vouches for.
+function throughEdit(pos, applied) {
+  let out = pos;
+  for (const e of applied) {
+    if (out <= e.start) continue;
+    if (out >= e.end - e.delta) { out += e.delta; continue; }
+    out = e.end;
+  }
+  return out;
+}
+
+// The ops a save settles, as the rows shiftBounds reads for `settled`: for each change the editor
+// accepted, its end in the text being saved (`curTo`) and the texts the decision names. A change the
+// editor accepted has left the records the save carries (the editor drops a decided record from its
+// field), so its position is read from the sidecar's own records as loaded — the change it is, or for a
+// fragment (`<id>~n`, the engine's split scheme) the change it descends from, whose end bounds the
+// fragment's — and carried through the save's own edit (throughEdit) into the coordinates the bounds
+// are summed in. The bounds are the decision's own old and new text, the fragment's where the person
+// decided one half. A decision rooted in the log alone (an undo re-deciding a landed accept) has no
+// record to read a position from and contributes nothing. Without this the accepted insertion's shift
+// was forgotten on the save (only `applied` was stamped) and, once the fingerprint was restamped, on
+// every later write, so a tied position it had carried past its copy never followed (the review,
+// 2026-09-08); the same insertion accepted through the accept verb was followed (doAccept's `settled`).
+function settledBySave(loaded, accepted, applied) {
+  const rows = [];
+  for (const d of accepted) {
+    const root = sidecarRootOf({ suggestions: loaded }, String(d.id));
+    if (!root || typeof root.from !== 'number') continue;
+    rows.push({ curTo: throughEdit(engine.span(root).b, applied), oldText: d.oldText, newText: d.newText });
+  }
+  return rows;
 }
 
 function validateAnchor(anchor) {
@@ -2865,13 +3016,18 @@ function doSave(ctx) {
   let prior = null;
   if (store) {
     try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    const loaded = store.suggestions;   // the sidecar's records as loaded: where an accepted change sat, before the editor's records replace them
     store.suggestions = fit.records;
     if (taken.size) {
       for (const c of store.comments) {
         if (c && c.suggestionId != null && taken.has(String(c.suggestionId))) c.resolved = true;
       }
     }
-    store[WRITE_SHIFTS] = { applied: editShift(file.text, a.content) };   // the person's edit moved what follows it; the refresh follows a tied passage through it
+    // the person's edit moved what follows it, and the changes the editor accepted stand in the text
+    // while their records leave the sidecar in this write: the refresh follows a tied passage through
+    // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)
+    const applied = editShift(file.text, a.content);
+    store[WRITE_SHIFTS] = { settled: settledBySave(loaded, accepted, applied), applied };
   }
   checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
     'the change records and the decisions taken in the editor');

@@ -10,8 +10,13 @@
 // sentences, so neither side caught the drift. The plan now states each of those, and this module
 // keeps it in step with the host and the model: every sentence the plan gained is checked against
 // the source it describes, the refusal against the exported locateExact on the repo's fixture, and
-// the test modules and e2e cases the note names against the files that exist. Synthetic: the repo's
-// own text, no session data.
+// the test modules and e2e cases the note names against the files that exist. The second review
+// (2026-09-08) then bounded the refresh's classification scan under the same budget (a comment past
+// it keeps its position, counted as `unscanned`) and mapped the comment verb's offset into the text
+// the host read (`browserHint`, one character on a BOM file); the pins here read the host as it stands
+// after that review, not as it stood between the two (a pin written against the earlier host went red
+// the moment the second review landed, so each source pin below sits beside the behavior it names).
+// Synthetic: the repo's own text, no session data.
 // Run: node --test tools/file-review-plan-anchors.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,6 +79,8 @@ test('the contract states the refresh by where the whole anchor sits, and refres
   assert.ok(contract.includes('A comment without an anchor never carries it'));
   const refresh = fn(host, 'refreshAnchorAts');
   inOrder(refresh, [
+    'const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };',
+    'if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }',
     'if (hits.length === 1) { c.anchorAt = hits[0]; continue; }',
     'if (hits.length > 1) {',
     'hits.includes(at)',
@@ -84,8 +91,16 @@ test('the contract states the refresh by where the whole anchor sits, and refres
     'const loc = locateExact(text, c.anchor, undefined);',
     'if (!loc.error) c.anchorAt = loc.from;',
   ], 'the refresh');
-  assert.ok(refresh.includes('const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0 };'), 'the budget is per write');
-  assert.ok(refresh.includes('if (budget.skipped) {') && refresh.includes('process.stderr.write('), 'and stderr says how many were skipped');
+  assert.ok(/const budget = \{[^}]*\};/.test(refresh) && !/budget = /.test(refresh.replace(/const budget = \{[^}]*\};/, '')), 'the budget is per write: one object, made once per call');
+  // both ways a comment keeps its position past the budget are counted, and stderr says how many of each
+  // (the second review, 2026-09-08: the classification scan, one whole-text pass per distinct anchor, is
+  // budgeted too, not only the engine's scoring for a passage that sits nowhere in whole)
+  assert.ok(refresh.includes('if (budget.skipped) {') && refresh.includes('if (budget.unscanned) {'), 'the skipped and the unscanned are reported apart');
+  assert.equal((refresh.match(/process\.stderr\.write\(/g) || []).length, 2, 'one stderr line each');
+  const scan = fn(host, 'affordableScan');
+  assert.ok(scan.includes('if (budget.left <= 0) return false;') && scan.includes('budget.left -= text.length;'), 'a classification scan costs one pass over the text against the same budget');
+  const place = fn(host, 'affordable');
+  assert.ok(place.includes('if (budget.left <= 0) { budget.skipped++; return false; }') && place.includes('if (cost > budget.left) { budget.skipped++; return false; }'), "the engine's scoring is what counts as skipped");
   assert.ok(Number.isInteger(REFRESH_SCAN_BUDGET) && REFRESH_SCAN_BUDGET > 0, 'the budget is exported');
   // never to the nearest copy: movedCopy answers the one copy the bounds vouch for, and null for none or several
   const moved = fn(host, 'movedCopy');
@@ -99,8 +114,15 @@ test('the host paragraph and the commenting section state the refusal of an offs
   assert.ok(op.includes('that offset is refused, with a message that says the text moved, rather than placed on the nearest copy'));
   assert.ok(ux.includes('two candidates tie and the offset cannot settle it: none was sent, or the one sent sits on no tied copy because the text moved after the selection, and the note is then refused rather than placed on the nearest copy'));
   assert.ok(ux.includes('The typed note is never discarded by a refusal'));
-  // the host: the creation path asks for an exact hit, and maps anchor-moved to the anchor-ambiguous refusal
-  assert.ok(/locateExact\(text, anchor, args\.hintOffset, \{ exact: true \}\)/.test(host), 'buildComment locates exactly');
+  // the host: the creation path asks for an exact hit, with the request's offset mapped into the text the
+  // host read (the second review, 2026-09-08: the browser measures against the fetch's BOM-stripped text,
+  // the host keeps the BOM, so on a BOM file the correct selection was refused as moved), and maps
+  // anchor-moved to the anchor-ambiguous refusal
+  assert.ok(/locateExact\(text, anchor, browserHint\(text, args\.hintOffset\), \{ exact: true \}\)/.test(host), 'buildComment locates exactly, on the mapped offset');
+  const hint = fn(host, 'browserHint');
+  assert.ok(hint.includes("if (typeof hintOffset !== 'number' || !Number.isFinite(hintOffset)) return hintOffset;"), 'no offset passes through untouched');
+  assert.ok(hint.includes('return text.charCodeAt(0) === 0xFEFF ? hintOffset + 1 : hintOffset;'), 'a BOM file adds the one character the fetch stripped');
+  assert.equal((host.match(/browserHint\(/g) || []).length, 2, "the definition and the comment verb's call: a stored anchorAt never goes through it");
   assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', /.test(host), 'anchor-moved surfaces as anchor-ambiguous');
   assert.ok(host.includes('the text moved after it was selected'), 'and the message says the text moved');
   // behavior, on the fixture whose "Ship it." recurs with the same 24 characters either side
@@ -113,6 +135,11 @@ test('the host paragraph and the commenting section state the refusal of an offs
   assert.deepEqual(locateExact(text, at24, b, { exact: true }), { from: b, to: b + 8 }, 'an offset on a copy settles it');
   assert.deepEqual(locateExact(text, at24, b + 3, { exact: true }), { error: 'anchor-moved' }, 'an offset on no copy is refused, not placed on the nearest');
   assert.deepEqual(locateExact(text, at24, b + 3), { from: b, to: b + 8 }, 'a stored position keeps nearest-wins');
+  // the same selection on a BOM-prefixed file: the browser's offset (b, in the stripped text) sits on no
+  // copy of this text, whose copies sit one later; mapped by the BOM it settles the tie
+  const bom = '\uFEFF' + text;
+  assert.deepEqual(locateExact(bom, at24, b, { exact: true }), { error: 'anchor-moved' }, 'unmapped, the correct selection is refused as moved: the bug browserHint fixes');
+  assert.deepEqual(locateExact(bom, at24, b + 1, { exact: true }), { from: b + 1, to: b + 9 }, 'mapped, it settles the tie');
 });
 
 // ── the two refresh sites ───────────────────────────────────────────

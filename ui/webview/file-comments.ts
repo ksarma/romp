@@ -517,6 +517,16 @@ function copyUnsureWords(c: Card): string {
       : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
     + " — not a confirmed one.";
 }
+/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
+ *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
+ *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none). */
+function unsureMarkTitle(c: Card): string {
+  return "Open the comment; this passage recurs, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so this is the first copy"
+      : "this copy is the nearest to the comment's stored position")
+    + ", not a confirmed one";
+}
 /** Where a passage composer's pair — `range` into `oldText` — stands once the view shows `newText` (retargetComposer).
  *  The two texts' common prefix and suffix bound the span the edit changed: a passage wholly before that span keeps its
  *  offsets and one wholly after it moves by the span's growth, both exact — the same characters, however many copies of
@@ -1965,7 +1975,7 @@ class Panel {
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
         // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
         // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
-        const title = unsure ? "Open the comment; this passage recurs, and this copy is the nearest to the comment's stored position, not a confirmed one" : "Open the comment on this passage";
+        const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";
         for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);

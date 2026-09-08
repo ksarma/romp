@@ -28,8 +28,11 @@ const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", 
 // The host script that places every passage comment (tools/file-comments-host.mjs), loaded as the real ESM module at
 // run time for the tie tests below — bundling it would copy its vendored engine; its main runs only when invoked directly.
 const HOST = path.resolve(process.cwd(), "..", "tools", "file-comments-host.mjs");
+type HostAnchor = { quote: string; prefix: string; suffix: string };
 type HostModule = {
-  locateExact(text: string, anchor: { quote: string; prefix: string; suffix: string }, hint: number | undefined, opts?: { exact?: boolean }): { from: number; to: number } | { error: string };
+  locateExact(text: string, anchor: HostAnchor, hint: number | undefined, opts?: { exact?: boolean }): { from: number; to: number } | { error: string };
+  buildComment(text: string, args: { note: string; anchor?: HostAnchor; hintOffset?: number }, now: number, suggestions: unknown[]):
+    { comment: { anchorAt?: number }; range?: { from: number; to: number } } | { error: string };
 };
 
 // ── the viewer's marked configuration (file-view.ts) ──────────────────────────────────────────────
@@ -527,10 +530,28 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   assert.deepEqual(locateComment(shifted, anchor, r.range.start), { state: "located", range: { start: first + above.length, end: first + above.length + needle.length } }, "nearest-wins picks the other copy");
   assert.deepEqual(host.locateExact(shifted, anchor, r.range.start, { exact: true }), { error: "anchor-moved" });
   assert.deepEqual(followPassage(source, r.range, shifted), { state: "moved", range: { start: second + above.length, end: second + above.length + needle.length } }, "the panel's follow is exact whatever the length");
-  // the verb and the panel, pinned to their sources: the comment verb is the exact caller and its anchor-moved is the
-  // anchor-ambiguous refusal that names the moved text; Save's hint is the pair's start, which retargetComposer alone moves
+  // The comment verb itself (buildComment), driven with the browser's offset: the offset indexes the text the fetch
+  // handed the viewer, which strips a leading UTF-8 BOM, while the host's text keeps it, so on a BOM-prefixed file the
+  // host maps the offset past the BOM (browserHint) before the exact check — without that, a tie on a BOM file was
+  // refused `anchor-moved` for the correct selection, and no reload cleared it (the review, 2026-09-08). Placed on the
+  // selected copy either way; the stored position is the host's offset.
+  const now = 1_700_000_000_000;
+  const placed = host.buildComment(source, { note: "n", anchor, hintOffset: r.range.start }, now, []);
+  if ("error" in placed) assert.fail(`the plain file places: ${placed.error}`);
+  assert.equal(placed.comment.anchorAt, second, "no BOM: the browser's offset is the host's offset");
+  assert.deepEqual(placed.range, span(second));
+  const bom = "\uFEFF" + source;
+  assert.deepEqual(host.locateExact(bom, anchor, r.range.start, { exact: true }), { error: "anchor-moved" }, "unmapped, the browser's offset sits one short of every copy");
+  const placedBom = host.buildComment(bom, { note: "n", anchor, hintOffset: r.range.start }, now, []);
+  if ("error" in placedBom) assert.fail(`the BOM file places: ${placedBom.error}`);
+  assert.equal(placedBom.comment.anchorAt, second + 1, "BOM: placed on the selected copy, the offset mapped past the BOM");
+  assert.deepEqual(placedBom.range, span(second + 1));
+  assert.deepEqual(host.buildComment(bom, { note: "n", anchor }, now, []), { error: "anchor-ambiguous" }, "no offset passes through unmapped: still a tie the request cannot settle");
+  // the verb and the panel, pinned to their sources: the comment verb is the exact caller, its hint the browser's offset
+  // mapped into the host's text, and its anchor-moved is the anchor-ambiguous refusal that names the moved text; Save's
+  // hint is the pair's start, which retargetComposer alone moves
   const hostSrc = fs.readFileSync(HOST, "utf8");
-  assert.ok(hostSrc.includes("const loc = locateExact(text, anchor, args.hintOffset, { exact: true });"), "buildComment places with exact");
+  assert.ok(hostSrc.includes("const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });"), "buildComment places with exact, the hint mapped past a BOM");
   assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', `[^`]*the text moved after it was selected[^`]*reload and select it again`\);/.test(hostSrc), "the refusal names the moved text");
   const panel = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
   assert.ok(panel.includes("if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }"), "saveComposer sends the pair's start");
