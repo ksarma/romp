@@ -237,13 +237,15 @@ test("the fill's bounds stand ahead of the one katex.render call, in order: the 
   const fill = math.slice(math.indexOf("export function renderMathPlaceholders("));
   const cap = fill.indexOf("if (tex.length > MATH_TEX_MAX_CHARS) {");
   const budget = fill.indexOf("if (rendered + tex.length > MATH_TEX_BUDGET_CHARS) {");
-  const repeat = fill.indexOf("if (macroBounds(tex).argRepeat) {");
-  const expanded = fill.indexOf("if (macroBounds(tex).expandedBody) {");
+  const scan = fill.indexOf("const bounds = macroBounds(tex);");
+  const repeat = fill.indexOf("if (bounds.argRepeat) {");
+  const expanded = fill.indexOf("if (bounds.expandedBody) {");
   const spend = fill.indexOf("rendered += tex.length;");
-  const count = fill.indexOf("const maxExpand = maxExpandFor(tex);");
+  const count = fill.indexOf("const maxExpand = maxExpandFor(tex, bounds);");
   const render = fill.indexOf("katex.render(");
   const stop = fill.indexOf("if (/Too many expansions/.test(e.message)) {");
-  assert.ok(cap > 0 && cap < budget && budget < repeat && repeat < expanded && expanded < spend && spend < count && count < render && render < stop, "length cap, then the running total, then the argument-repeat rule, then the expanded-body rule, then the total is charged, then the count is computed, then the one katex.render call, whose catch reads the expansion stop: " + JSON.stringify({ cap, budget, repeat, expanded, spend, count, render, stop }));
+  assert.ok(cap > 0 && cap < budget && budget < scan && scan < repeat && repeat < expanded && expanded < spend && spend < count && count < render && render < stop, "length cap, then the running total, then one read of the macro bounds, then the argument-repeat rule, then the expanded-body rule, then the total is charged, then the count is computed from the bounds read, then the one katex.render call, whose catch reads the expansion stop: " + JSON.stringify({ cap, budget, scan, repeat, expanded, spend, count, render, stop }));
+  assert.equal((fill.match(/macroBounds\(/g) || []).length, 1, "the fill reads a formula's macro bounds once; the two refusals and the count share the scan (review round 6: three scans of the TeX per formula before)");
   assert.match(fill, /let rendered = 0;/, "the meter is the call's own local: one sanitizeMd call, one message or note");
   assert.match(fill.slice(budget, repeat), /showSource\(el, tex, "Not rendered: the formulas above already total " \+ rendered \+ " characters of TeX; the limit for one message or note is " \+ MATH_TEX_BUDGET_CHARS \+ "\."\);/, "over the total: the source, the title saying what was rendered and the limit");
   assert.match(fill.slice(repeat, expanded), /showSource\(el, tex, "Not rendered: a macro in this formula repeats one of its arguments/, "an argument repeated: the source, the title saying why");
@@ -276,6 +278,7 @@ test("executed: macroBounds reads a formula's macro bodies the way KaTeX will ex
   assert.equal(maxExpandFor("\\frac{a}{b}"), 1000, "KaTeX's default when no macro is defined (its built-ins have bodies of a few tokens)");
   assert.deepEqual(macroBounds("\\def\\a{" + long + "}" + "\\a".repeat(200)), { ...none, maxBody: 1000 }, "\\def: the body's length, stored as written");
   assert.equal(maxExpandFor("\\def\\a{" + long + "}" + "\\a".repeat(200)), 20, "20,000 / 1,000: twenty expansions of that body at most");
+  assert.equal(maxExpandFor("\\def\\a{" + long + "}", macroBounds("\\def\\a{" + long + "}")), 20, "the bounds a caller already holds give the same count (the fill passes the ones it read for its refusals)");
   assert.deepEqual(macroBounds("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), { ...none, maxBody: 11 }, "\\newcommand: the first group is the name, the second (after [n]) the body; one use of #1 is no repeat");
   assert.equal(maxExpandFor("\\newcommand{\\vect}[1]{\\mathbf{#1}} \\vect{x}"), 1000, "a short body leaves KaTeX's default in place");
   assert.deepEqual(macroBounds("\\newcommand\\R{\\mathbb{R}}"), { ...none, maxBody: 10 }, "\\newcommand with an unbraced name");

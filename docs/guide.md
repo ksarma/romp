@@ -308,10 +308,12 @@ shrink to fit, so resizing the pane never leaves the page wider than the pane.
 rules GitHub applies to a README, so nothing in a file can move, hide or cover the viewer's
 own controls. A `<style>` block is dropped whole. A form, its controls and a `<dialog>` are
 dropped but their text stays as prose. A task-list checkbox stays but cannot be ticked. An
-inline `style` keeps only its `color` and `background-color`, so a coloured span keeps its
-colour. A `background=` attribute is dropped, since it would load a remote image the moment
-the file opens. An inline `svg`, a `canvas` or a `video` shrinks to the column, as a picture
-does. An element's `id` or `name` is prefixed `user-content-`, as on GitHub; the viewer's own
+inline `style` keeps only its `color` and `background-color`, and only when the value is a
+color name, a hex code, or `rgb()`, `rgba()`, `hsl()` or `hsla()`. A span colored that way
+keeps its color; one colored with any other function, such as `oklch()` or `var()`, loses it.
+A `background=` attribute is dropped, since it would load a remote image the moment the file
+opens. An inline `svg`, a `canvas` or a `video` shrinks to the column, as a picture does. An
+element's `id` or `name` is prefixed `user-content-`, as on GitHub; the viewer's own
 heading ids are not, so a link to a heading in the file still lands on it, and a link to an
 element's own `id` or `<a name>` lands on it under the prefix. A link in the file is handled
 by its target, not by the element that carries it, a link drawn inside an inline SVG

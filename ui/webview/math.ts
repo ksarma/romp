@@ -68,7 +68,13 @@ export const MATH_TEX_MAX_CHARS = 20000;
  *  rendered in one call total this many characters, a formula that would pass the total is shown as its source instead,
  *  with a title saying why, and a smaller one that still fits renders. Five formulas at the cap, or several hundred
  *  display equations of ordinary size: a long paper's mathematics is 15,000 to 30,000 characters of TeX, so no real
- *  document meets it, and the worst case is bounded at a few seconds where it was unbounded. */
+ *  document meets it, and the worst case is bounded at a few seconds where it was unbounded. The cost per character
+ *  depends on the shape as well as the volume (review round 6, measured): a one-row matrix of one-character cells
+ *  (`a&a&...`) lays out about seven elements per character where a flat sum lays out three, and five of them at the
+ *  cap took 4.7 to 5.5 s of render and layout where five flat sums of the same volume took 1.8 to 1.9 s (headless
+ *  Chromium, KaTeX 0.18.1); it is the densest shape the review found, so that is the budget's worst case, while 673
+ *  ordinary display equations totalling 99,000 characters took 1.2 s. The budget bounds volume, not time: a worker with
+ *  a time budget (plans/markdown-viewer.md, the Slice 4 design note) is what bounds the time whatever the shape. */
 export const MATH_TEX_BUDGET_CHARS = 100000;
 
 /** The largest size a formula may ask for, in ems (KaTeX's maxSize, review round 3). KaTeX's default is Infinity, and
@@ -262,9 +268,11 @@ export function macroBounds(tex: string): MacroBounds {
  *  bodies are read as written, which is what KaTeX stores for `\def` and `\newcommand`; a formula with an `\edef` or
  *  `\xdef` body never reaches KaTeX (renderMathPlaceholders shows it as source), so the count is not asked to bound it;
  *  a formula with a body the scan cannot place (macroBounds's unplacedBody) is priced at its own length, which no body
- *  written in it exceeds, so it has the budget over its length in expansions and pushes at most the budget's worth. */
-export function maxExpandFor(tex: string): number {
-  const { maxBody, unplacedBody } = macroBounds(tex);
+ *  written in it exceeds, so it has the budget over its length in expansions and pushes at most the budget's worth.
+ *  The bounds are read from the TeX unless the caller passes the ones it holds: the fill reads a formula's once, for
+ *  its two refusals and this count (review round 6: three scans of the TeX per formula before). */
+export function maxExpandFor(tex: string, bounds: MacroBounds = macroBounds(tex)): number {
+  const { maxBody, unplacedBody } = bounds;
   const body = unplacedBody ? tex.length : maxBody;
   return body > 0 ? Math.max(1, Math.min(KATEX_DEFAULT_MAX_EXPAND, Math.floor(MATH_EXPANSION_BUDGET_CHARS / body))) : KATEX_DEFAULT_MAX_EXPAND;
 }
@@ -401,16 +409,17 @@ export function renderMathPlaceholders(root: ParentNode): void {
       showSource(el, tex, "Not rendered: the formulas above already total " + rendered + " characters of TeX; the limit for one message or note is " + MATH_TEX_BUDGET_CHARS + ".");
       return;
     }
-    if (macroBounds(tex).argRepeat) {
+    const bounds = macroBounds(tex);          // one scan of the TeX serves the two refusals below and the count
+    if (bounds.argRepeat) {
       showSource(el, tex, "Not rendered: a macro in this formula repeats one of its arguments, which can multiply the formula without bound.");
       return;
     }
-    if (macroBounds(tex).expandedBody) {
+    if (bounds.expandedBody) {
       showSource(el, tex, "Not rendered: a macro in this formula is defined with \\edef or \\xdef, whose stored body is its expansion; its uses can multiply the formula without bound.");
       return;
     }
     rendered += tex.length;
-    const maxExpand = maxExpandFor(tex);
+    const maxExpand = maxExpandFor(tex, bounds);
     try {
       try {
         katex.render(tex, el, { ...KATEX_OPTIONS, displayMode: display, throwOnError: true, maxExpand });

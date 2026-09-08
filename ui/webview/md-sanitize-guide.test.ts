@@ -8,6 +8,11 @@
 // 2026-09-08), while in a file document only a web address opens a tab; a relative target, an SVG anchor's
 // included, is dressed as a path link by linkMarkdownAnchors and opens the sibling in the viewer, and a section
 // link scrolls (the Links paragraph above it says as much, and md-sanitize-viewer-links-browser.test.ts proves it).
+// The third is the colour clause: the paragraph once said an inline style keeps color and background-color "so a
+// coloured span keeps its colour" (review round 6, 2026-09-08), while decision 6's grammar (md-sanitize.ts,
+// isLiteralColour) keeps only a bare keyword, a hex literal, or rgb()/rgba()/hsl()/hsla(); a span coloured with
+// oklch(), lab(), color-mix(), var() or any other function loses its style attribute and renders in the page's
+// colour. The paragraph names the forms that survive and says what happens to the rest.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -47,4 +52,20 @@ test("the guide does not say a link in a file opens a new tab whatever element c
   assert.match(svg[0], /web address opens a tab/, "the tab is a web address's");
   assert.match(svg[0], /file target opens the file in the viewer/, "a file target opens the file in place, as the Links paragraph says");
   assert.match(svg[0], /section link scrolls/, "a section link scrolls, no tab");
+});
+
+test("the guide does not promise that every coloured span keeps its colour; it names the colour forms the grammar keeps", () => {
+  const clauses = htmlParagraphClauses();
+  const style = clauses.filter((c) => c.includes("inline `style`"));
+  assert.equal(style.length, 1, "one clause covers the inline style attribute");
+  for (const form of [/color name/, /hex code/, /`rgb\(\)`/, /`rgba\(\)`/, /`hsl\(\)`/, /`hsla\(\)`/]) {
+    assert.match(style[0], form, "the clause names a colour form isLiteralColour keeps");
+  }
+  for (const c of clauses) {
+    assert.doesNotMatch(c, /a colou?red span keeps its colou?r/, "the unqualified promise: oklch(), lab(), color-mix() and var() are dropped");
+  }
+  const rest = clauses.filter((c) => /`var\(\)`/.test(c));
+  assert.equal(rest.length, 1, "one clause says what happens to a colour the grammar does not keep, var() named");
+  assert.match(rest[0], /any other function/, "every function outside rgb()/rgba()/hsl()/hsla() is dropped, not var() alone");
+  assert.match(rest[0], /loses it/, "such a span loses its colour");
 });

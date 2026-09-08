@@ -104,8 +104,9 @@ preventDefault. Acceptance: sanitized fixtures hold no `<style>`, `<form>` or `i
 div, `elementFromPoint` at the close button's centre returns the button; clicking the form fixture
 leaves `location.href` unchanged; a task checkbox still renders. Tests: source pins; one browser leg.
 
-**The Slice 1 build** (2026-09-07). Branch `mdviewer-s1`, stacked on this plan's branch. Where the code as built
-departs from the text above, why, and which test holds each rule:
+**The Slice 1 build** (2026-09-07). Branch `mdviewer-s1`, stacked on this plan's branch (fork PR #369) until that
+merged on 2026-09-07; fork main, which carries the plan and fork PR #347, was merged in on 2026-09-08 as
+`mdviewer-s1-mainmerge`. Where the code as built departs from the text above, why, and which test holds each rule:
 
 1. *One shared module.* The chat's `md()` and `userMd()` (render.ts) and the viewer's `mdBlock` (file-view.ts) spelled
    the same DOMPurify profile twice. Both now call `sanitizeMd` in `ui/webview/md-sanitize.ts`, the dashboard's only
@@ -241,7 +242,13 @@ departs from the text above, why, and which test holds each rule:
    the layout of 1,200,000 elements); past the running total a formula is shown as source with the total in its title,
    and a shorter one that still fits renders. Five caps is several hundred ordinary display equations, more than a
    long paper's mathematics (the postpass leg: twenty near-cap formulas render five and show fifteen, a short one
-   after them still renders; its time bound is a ceiling, and the counts are the check).
+   after them still renders; its time bound is a ceiling, and the counts are the check). The cost per character
+   depends on the shape as well as the volume (measured 2026-09-08): a one-row matrix of one-character cells lays out
+   about seven elements per character where a flat sum lays out three, and five of them at the cap took 4.7 to 5.5 s
+   of render and layout where five flat sums of the same volume took 1.8 to 1.9 s, the densest shape found, so that
+   is the budget's worst case, while 673 ordinary display equations totalling 99,000 characters took 1.2 s. The
+   budget bounds volume, not time; the worker with a time budget in the Slice 4 design note is what bounds the time
+   whatever the shape.
    `maxExpand`, computed per formula by `maxExpandFor`. KaTeX expands `\def` and `\newcommand` bodies before layout
    and its count is of expansions, not their size, so `\def\a{<1,000 characters>}` and 200 uses of `\a`, 1,409
    characters as written, was 200,000 of formula and 20 s of freeze (a nested chain of 1,077 characters 22 s), and no
@@ -305,7 +312,9 @@ departs from the text above, why, and which test holds each rule:
    from its source, so the anchor map refuses it with the Raw view offered, never mis-anchored, as it refuses a
    paragraph carrying `$x^2$` there already (the Medium defect Slice 5's math holes take up); the Files page, with no
    grammar, maps it as main did (found in the merge review, 2026-09-08). The svg profile now serves a note's own
-   inline SVG, not KaTeX.
+   inline SVG, not KaTeX. SECURITY.md's output-sanitization bullet records the boundary: KaTeX is the one renderer
+   that writes into the sanitized DOM after DOMPurify has run, under `trust: false` and these bounds;
+   md-sanitize.test.ts holds the bullet to this section and to the code.
 8. *Every link element.* DOMPurify's html profile kept `<map>` and `<area>`, and its svg profile keeps an SVG `<a>`
    with `href` or SVG 1.1's `xlink:href`; `mdBlock`'s two link passes and the chat's click delegate ran over
    `a[href]`, which reaches only an HTML anchor (an area is not an anchor, and `[href]` matches the null-namespace
@@ -336,7 +345,13 @@ departs from the text above, why, and which test holds each rule:
    the browser's, read by the platform's key, because Super-click on Linux and Windows is a plain click to the
    browser, and standing aside for Meta there left the default lookup to find nothing; it is resolved like a plain
    click now, and render.ts's nav-chord handler reads the same `IS_MAC`. A link outside a message body (the viewer's
-   own section links, which the viewer lands itself) is not this branch's.
+   own section links, which the viewer lands itself) is not this branch's. Before the scroll the target is revealed as
+   the browser's fragment navigation reveals it (the HTML spec's ancestor revealing steps): every closed `<details>`
+   whose content holds it is opened, and a `hidden="until-found"` on it or an ancestor is removed, since
+   `scrollIntoView` does neither, and a reply's link over a note folded into a `<details>`, which the default action
+   opened on main, left the fold closed with the click already cancelled (found 2026-09-08). A target in a details'
+   own `<summary>` is in view already and opens nothing, as in the browser. md-sanitize-chat-links-browser.test.ts
+   clicks both shapes, a nested fold included.
    The scheme test that follows no longer hands a scheme-less href to the browser's default action (pre-existing on
    main). DOMPurify keeps several hrefs that fail that test and still resolve to another origin: protocol-relative
    `//host` and `/\host`, an `https:` behind a C0 control character (its trim removes JavaScript whitespace only, and
@@ -369,17 +384,25 @@ departs from the text above, why, and which test holds each rule:
    clicks both message shapes; chat-link-open.test.ts and md-url-view.test.ts pin the scope.
 10. *Tests*, by file. Every browser leg runs in headless Chromium over the real bundles, resolves playwright and
    esbuild through the extension's package.json (a bundle written outside vscode-extension used to skip with a false
-   diagnosis; md-sanitize-browser.test.ts pins the idiom for the family), awaits the browser's own events and never a
-   sleep, and skips loudly without a browser.
+   diagnosis; md-sanitize-browser.test.ts pins the idiom for the family), and skips loudly without a browser. What a
+   click did is read from the browser's own events, not from a timer, with two timed waits left standing:
+   md-sanitize-browser.test.ts waits 150 ms after the click on the form's text before reading `location.href` (the
+   acceptance item above; its step 6 reads the same over the whole leg from the main frame's navigations and the
+   off-host requests the page reports) and 100 ms after a real form's submit before reading the result, and
+   file-view-links-browser.test.ts's `settle` (a frame and 80 ms), inherited from main, follows the section link this
+   slice clicks, plain and with Ctrl, and the scroll back between the two clicks, as it follows the rest of that leg.
    `md-sanitize.test.ts` (node): the colour grammar, the hook, the module guard, the profile, the one-call and CSS
-   pins, the registry and its loop, the guide's paragraph. `md-sanitize-guide.test.ts`: the guide's `<style>` clause
-   (its text goes with it; a form's and a `<dialog>`'s stays) and its link clause (the target decides, not the
-   element).
+   pins, the registry and its loop, the guide's paragraph, and SECURITY.md's output-sanitization bullet, held to this
+   section's bounds and to the code (KaTeX renders after DOMPurify under `trust: false`). `md-sanitize-guide.test.ts`:
+   the guide's `<style>` clause (its text goes with it; a form's and a `<dialog>`'s stays), its link clause (the
+   target decides, not the element) and its colour clause (the forms the grammar keeps are named; no promise that
+   every coloured span keeps its colour).
    `md-sanitize-browser.test.ts`: the fixture over the real files bundle, an author's `data-*` fixture, a whole-leg
    log of main-frame navigations and off-host requests. On the base commit it times out waiting for `.fileview-md`:
    the fixture's `<style>` block hides the viewer, the audit's defect reproduced.
    `render-math.test.ts` (node): the placeholder contract; the katex.render options and the two calls; the render.ts
-   wiring; the order of the fill's bounds; the constants, the class, the sheets' rule and the highlighter's exemption.
+   wiring; the order of the fill's bounds (the macro bounds read once, for the two refusals and the count); the
+   constants, the class, the sheets' rule and the highlighter's exemption.
    It executes `macroBounds` and `maxExpandFor` over the definer forms (`\def`, `\gdef`, `\edef`, `\xdef`,
    `\newcommand` braced and unbraced, `\renewcommand`, `\providecommand`, `\DeclareMathOperator`, `\global` and
    `\long` in front, a digit and a control symbol as the name, `\let` and `\futurelet` aliasing a definer, a definer
@@ -415,7 +438,9 @@ departs from the text above, why, and which test holds each rule:
    `md-sanitize-chat-links-browser.test.ts`: the same shapes clicked in the chat; a footnote's back link, a link over
    the reply's own `<a name>`, a same-named target in an older message and a fragment with no target, each read from
    the click's own `defaultPrevented` flag; a comment popover's agent reply mounted, its `#` link (the list scrolls,
-   the hash stays) and its root-relative link (opened, the document kept) clicked.
+   the hash stays) and its root-relative link (opened, the document kept) clicked; a target inside two nested closed
+   `<details>` and one under `hidden="until-found"`, each revealed and scrolled to the transcript's top, the hash
+   kept.
    `md-sanitize-chat-schemeless-browser.test.ts`: each scheme-less shape clicked over the real chat bundle, the
    resolved address opened and the document kept; the page's three download controls pressed (the real lightbox,
    viewer and file browser openers in the render bundle; the browser's download event awaited, no `window.open`, the

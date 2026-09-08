@@ -2,7 +2,8 @@
 // DOMPurify itself needs a window, so the sanitize call and the DOM post-passes are proven over the real files
 // bundle in headless Chromium by md-sanitize-browser.test.ts. Here: the colour grammar behind decision 6 (the user
 // 2026-09-07: colour and background-colour survive, nothing else does), the profile's forbidden tags, the hook body,
-// the hook guard, and the source pins that make md-sanitize.ts the ONE sanitizer the dashboard has.
+// the hook guard, the source pins that make md-sanitize.ts the ONE sanitizer the dashboard has, and the pin that
+// holds SECURITY.md's output-sanitization bullet to the math renderer's trust boundary (KaTeX after DOMPurify).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -146,4 +147,60 @@ test("the guide says what a note's own HTML may do, and SECURITY.md still names 
   assert.match(files, /`color` and `background-color`/);
   const security = fs.readFileSync(path.resolve(UI, "..", "..", "SECURITY.md"), "utf8");
   assert.match(security, /markdown through marked and\s+DOMPurify/);
+});
+
+// ── SECURITY.md's trust boundary for math ───────────────────────────────────────────────────────────
+
+const ROOT = path.resolve(UI, "..", "..");
+const repo = (...p: string[]) => fs.readFileSync(path.join(ROOT, ...p), "utf8");
+/** A phrase as a document wraps it: any run of whitespace between words. */
+const prose = (words: string) => new RegExp(words.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"));
+
+test("SECURITY.md's output-sanitization bullet names KaTeX as the renderer that writes after DOMPurify, under trust: false and the plan's bounds", () => {
+  // On main KaTeX's markup was part of marked's output and went through DOMPurify with the rest. This slice renders
+  // the fill AFTER the sanitizer (renderMathPlaceholders writes katex.render's DOM into the sanitized body), so what
+  // keeps a formula from minting a link or a style is KaTeX's `trust: false` and the bounds math.ts sets, not
+  // DOMPurify. SECURITY.md is the document the repo points security readers at, and its bullet went on saying every
+  // rendered fragment of model output passes through DOMPurify (review round 6, 2026-09-08). The precedent is
+  // security-pdf.test.ts, which holds the same bullet to the PDF renderer's posture: the bullet, the plan section it
+  // points at, the code, and the pins it names move together.
+  const security = repo("SECURITY.md");
+  const hardened = security.slice(security.indexOf("\n## What is already hardened\n"));
+  const at = hardened.indexOf("- **Output sanitization:**");
+  assert.ok(at >= 0, "SECURITY.md's hardened list has an Output sanitization bullet");
+  const rest = hardened.slice(at);
+  const end = rest.indexOf("\n- ", 1);
+  const bullet = end === -1 ? rest : rest.slice(0, end);
+  assert.match(bullet, /KaTeX/, "the bullet names the renderer that writes to the sanitized DOM after DOMPurify");
+  assert.match(bullet, prose("after DOMPurify has run"), "and says when it writes");
+  assert.match(bullet, /`trust: false`/, "and the option its safety rests on");
+  for (const bound of ["the sizes a formula asks for", "macro expansion", "one formula", "one message or note", "shown as its source"]) {
+    assert.match(bullet, prose(bound), `the bullet names the bound: ${bound}`);
+  }
+  assert.match(bullet, prose('stated under "Slice 1" in `plans/markdown-viewer.md`'), "where the bounds are stated, by file and heading");
+  assert.match(bullet, prose("checked against the code by `ui/webview/render-math.test.ts` and `ui/webview/md-sanitize-postpass-browser.test.ts`"), "and where they are checked, by path");
+  assert.doesNotMatch(bullet, /\u2014/, "the bullet's prose carries no em dash");
+
+  // the plan section the bullet points at exists and states each bound the bullet summarizes
+  const plan = repo("plans", "markdown-viewer.md");
+  const start = plan.indexOf("\n### Slice 1: sanitize as GitHub does\n");
+  assert.ok(start >= 0, "the plan has the Slice 1 heading the bullet points at");
+  const body = plan.slice(start + 1);
+  const next = body.slice(1).search(/\n##/);
+  const slice1 = next === -1 ? body : body.slice(0, next + 1);
+  for (const term of ["trust: false", "`maxSize`", "`maxExpand`", "`MATH_TEX_MAX_CHARS`", "`MATH_TEX_BUDGET_CHARS`"]) {
+    assert.ok(slice1.includes(term), `the plan's Slice 1 states the bound the bullet summarizes: ${term}`);
+  }
+
+  // the code has the boundary the bullet describes: DOMPurify first, the registered fill on its output, under the option
+  const san = read("md-sanitize.ts");
+  assert.ok(san.indexOf("DOMPurify.sanitize(dirty") < san.indexOf("for (const pass of postPasses) pass(clean);"), "the fill runs on the DOM DOMPurify has already returned");
+  const math = read("math.ts");
+  assert.match(math, /trust: false/, "math.ts renders under trust: false");
+  for (const c of ["MATH_TEX_MAX_CHARS", "MATH_TEX_BUDGET_CHARS", "MATH_MAX_SIZE_EM"]) assert.match(math, new RegExp("export const " + c + " = "), c + " is math.ts's constant");
+  assert.match(math, /maxExpand/, "and computes KaTeX's expansion count per formula (render-math.test.ts pins the function and the call)");
+
+  // the pins the bullet names are on disk and hold what it says
+  assert.match(read("render-math.test.ts"), /trust: false/, "render-math.test.ts pins the option against math.ts");
+  assert.ok(read("md-sanitize-postpass-browser.test.ts").includes("\\\\href{javascript:alert(1)}{x}"), "the browser leg renders a hand-written \\href through the real pipeline and finds no link");
 });

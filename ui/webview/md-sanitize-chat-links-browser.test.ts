@@ -347,3 +347,80 @@ test("a comment thread's agent reply (div.cmt-msg.agent, no .md): its own # link
     assert.deepEqual(errors, [], "no page errors");
   });
 });
+
+// ── a target folded away ─────────────────────────────────────────────────────────────────────────────
+// The browser's fragment navigation REVEALS a target before it scrolls: every closed `<details>` whose content holds it
+// is opened, and a `hidden="until-found"` on it or an ancestor is removed (the HTML spec's ancestor revealing steps; both
+// shapes pass the sanitizer, which keeps details, summary and hidden). scrollIntoView does neither. So a reply's
+// `[the note](#note)` over a `<details>` it folds its notes into, which the default action opened and landed on the base,
+// left the details closed once the delegate resolved the click itself: the click cancelled, the transcript still, nothing
+// to see (the round-6 review of Slice 1). The delegate now runs the same revealing steps ahead of the scroll. The nested
+// fold pins that EVERY closed ancestor opens, not the nearest alone.
+const FOLDED = [
+  'See <a href="#note" class="fx-fold-link">the note</a> and <a href="#aside" class="fx-until-link">the aside</a>.',
+  FILLER,
+  '<details class="fx-outer"><summary>More</summary><details class="fx-inner"><summary>Notes</summary><p id="note" class="fx-fold-tgt">the note text</p></details></details>',
+  '<div hidden="until-found" class="fx-until"><p id="aside" class="fx-until-tgt">the aside text</p></div>',
+  FILLER,   // text below both, so the transcript can bring each to its top
+].join("\n\n");
+
+test("a reply's # link to a target inside a closed <details> or under hidden=until-found reveals it as the browser's fragment navigation did, then scrolls; the hash stays", { timeout: 90000 }, async (t) => {
+  await inBrowser(t, async (page, errors, navs) => {
+    const shape = await page.evaluate((src: string) => {
+      document.querySelectorAll(".fx-turn").forEach((n) => n.remove());
+      const content = document.getElementById("content") as HTMLElement;
+      const turn = document.createElement("div"); turn.className = "turn turn-assistant fx-turn";
+      const body = document.createElement("div"); body.className = "assistant md fx-body";
+      body.innerHTML = (window as any).__mdProbe(src);
+      turn.appendChild(body); content.appendChild(turn);
+      content.scrollTop = 0;
+      const outer = body.querySelector(".fx-outer"), inner = body.querySelector(".fx-inner"), until = body.querySelector(".fx-until");
+      return { ids: Array.from(body.querySelectorAll("[id]")).map((e) => e.id), hrefs: Array.from(body.querySelectorAll("a[href]")).map((a) => a.getAttribute("href")),
+        outerOpen: outer ? outer.hasAttribute("open") : null, outerSummary: outer ? outer.querySelector(":scope > summary")?.textContent ?? null : null,
+        innerOpen: inner ? inner.hasAttribute("open") : null, untilHidden: until ? until.getAttribute("hidden") : null,
+        scrollable: content.scrollHeight > content.clientHeight };
+    }, FOLDED);
+    assert.deepEqual(shape.ids, ["user-content-note", "user-content-aside"], "precondition: both author ids reached the DOM prefixed (SANITIZE_NAMED_PROPS)");
+    assert.deepEqual(shape.hrefs, ["#note", "#aside"], "precondition: the hrefs are as written");
+    assert.deepEqual([shape.outerOpen, shape.outerSummary, shape.innerOpen], [false, "More", false], "precondition: the sanitizer kept both details, closed, and the outer summary");
+    assert.equal(shape.untilHidden, "until-found", "precondition: the sanitizer kept hidden=until-found as written");
+    assert.ok(shape.scrollable, "precondition: the transcript scrolls");
+
+    const state = () => page.evaluate(() => {
+      const content = document.getElementById("content") as HTMLElement;
+      const q = (sel: string) => document.querySelector(sel) as HTMLElement;
+      const top = (e: HTMLElement) => Math.round(e.getBoundingClientRect().top - content.getBoundingClientRect().top);
+      return { scrollTop: content.scrollTop, hash: location.hash,
+        outerOpen: q(".fx-outer").hasAttribute("open"), innerOpen: q(".fx-inner").hasAttribute("open"), noteVisible: q(".fx-fold-tgt").checkVisibility(), noteTop: top(q(".fx-fold-tgt")),
+        untilHidden: q(".fx-until").getAttribute("hidden"), asideVisible: q(".fx-until-tgt").checkVisibility(), asideTop: top(q(".fx-until-tgt")) };
+    });
+    const before = await state();
+    assert.ok(before.scrollTop === 0 && !before.noteVisible && !before.asideVisible, "precondition: both targets are folded away, out of sight: " + JSON.stringify(before));
+
+    // 1. the link over the note inside two closed details: both open, the note is visible at the top of the transcript
+    let r = await clickCentre(page, ".fx-fold-link");
+    assert.equal(r.hit, "A", "the click lands on the link");
+    assert.equal(r.prevented, true, "the delegate found the target and cancelled the click's default action" + why(r));
+    let after = await state();
+    assert.ok(after.outerOpen && after.innerOpen, "every closed details above the target was opened, as the browser's fragment navigation opens them: " + JSON.stringify(after));
+    assert.ok(after.noteVisible, "the note is visible (checkVisibility): " + JSON.stringify(after));
+    assert.ok(after.scrollTop > 0 && after.noteTop >= -1 && after.noteTop < 40, "the transcript scrolled the note to its top: " + JSON.stringify(after));
+    assert.equal(after.hash, "", "the default was cancelled: no #note on the page's location");
+    assert.deepEqual(r.opens, [], "nothing opened");
+
+    // 2. from the top again, the link over the aside under hidden=until-found: the attribute goes, the aside is visible at the top
+    await page.evaluate(() => { (document.getElementById("content") as HTMLElement).scrollTop = 0; });
+    r = await clickCentre(page, ".fx-until-link");
+    assert.equal(r.hit, "A", "the click lands on the link");
+    assert.equal(r.prevented, true, "the delegate found the target and cancelled the click's default action" + why(r));
+    after = await state();
+    assert.equal(after.untilHidden, null, "the hidden=until-found attribute was removed, as the browser's fragment navigation removes it: " + JSON.stringify(after));
+    assert.ok(after.asideVisible, "the aside is visible (checkVisibility): " + JSON.stringify(after));
+    assert.ok(after.scrollTop > 0 && after.asideTop >= -1 && after.asideTop < 40, "the transcript scrolled the aside to its top: " + JSON.stringify(after));
+    assert.equal(after.hash, "", "hash untouched");
+
+    // the belt: the main frame saw the load and nothing after it
+    assert.deepEqual(navs, ["http://romp.test/chat"], "the main frame never navigated after the load");
+    assert.deepEqual(errors, [], "no page errors");
+  });
+});

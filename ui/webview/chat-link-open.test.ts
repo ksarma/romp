@@ -117,7 +117,15 @@ test("a `#` href in a message is resolved under the user-content- prefix, in the
   assert.doesNotMatch(branch, /closest\(/, "the fragment branch reads the scope computed above, not one of its own");
   assert.match(branch, /let frag = href\.slice\(1\);\n\s*try \{ frag = decodeURIComponent\(frag\); \} catch \{[^}]*\}/, "the fragment is decoded, a malformed escape kept as written (the viewer's scrollToFragment rule)");
   assert.match(branch, /const target = frag \? userContentTarget\(msg, frag\) \|\| userContentTarget\(document, frag\) : undefined;/, "the message's own body first, then the whole document");
-  assert.match(branch, /if \(!target\) return;\n\s*e\.preventDefault\(\);\n\s*target\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "found: scrolled to and the default cancelled; not found: left to the browser");
+  // Found, the target is REVEALED before the scroll, as the browser's fragment navigation reveals it (the HTML spec's ancestor
+  // revealing steps): every closed <details> whose content holds it is opened, and a hidden="until-found" on it or an ancestor
+  // is removed. scrollIntoView does neither, so a reply's link over a note folded into a <details>, which the default action
+  // opened and landed on main, left the details closed and the click cancelled (the round-6 review of Slice 1).
+  // md-sanitize-chat-links-browser.test.ts clicks both shapes over the real bundle.
+  assert.match(branch, /if \(!target\) return;\n\s*e\.preventDefault\(\);\n(?:\s*\/\/[^\n]*\n)*\s*for \(let n: Element \| null = target; n; n = n\.parentElement\) \{\n(?:[^\n]*\n){2,4}?\s*\}\n\s*target\.scrollIntoView\(\{ block: "start" \}\);\n\s*return;/, "found: revealed (the walk from the target up), scrolled to and the default cancelled; not found: left to the browser");
+  const reveal = /for \(let n: Element \| null = target; n; n = n\.parentElement\) \{\n([\s\S]*?)\n\s*\}\n/.exec(branch)![1];
+  assert.match(reveal, /\(n\.getAttribute\("hidden"\) \|\| ""\)\.toLowerCase\(\) === "until-found"\) n\.removeAttribute\("hidden"\);/, "a hidden=until-found on the target or an ancestor is removed (the attribute's value is case-insensitive)");
+  assert.match(reveal, /p\.localName === "details" && n\.localName !== "summary" && !p\.hasAttribute\("open"\)\) p\.setAttribute\("open", ""\);/, "a closed details whose CONTENT holds the target is opened; a target in the summary opens nothing, as in the browser");
   assert.doesNotMatch(branch, /location\.hash|stopPropagation/, "the hash is not touched (the target is not a page location) and the event still reaches the body's delegates");
   // the scheme test that follows no longer hands a scheme-less href to the browser's default action: DOMPurify keeps `//host`,
   // `/\host`, a C0 control before `https:` and a tab or newline inside the scheme, each of which navigated the chat document

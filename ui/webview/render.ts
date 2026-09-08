@@ -1375,6 +1375,18 @@ document.addEventListener("click", (e) => {
     const target = frag ? userContentTarget(msg, frag) || userContentTarget(document, frag) : undefined;
     if (!target) return;
     e.preventDefault();
+    // The browser's fragment navigation REVEALS the target before it scrolls (the HTML spec's ancestor revealing steps):
+    // every closed <details> whose content holds the target is opened, and a `hidden="until-found"` on the target or an
+    // ancestor is removed. scrollIntoView does neither, so a reply's `[the note](#note)` over a <details> it folds its
+    // notes into, which the default action opened and landed on main, left the details closed under this branch, the
+    // click already cancelled: nothing moved (the round-6 review). Both shapes pass the sanitizer (details, summary and
+    // hidden are kept), so the same steps run here, ahead of the scroll. A target inside a details' own <summary> is in
+    // view already and opens nothing, as in the browser. md-sanitize-chat-links-browser.test.ts clicks both shapes.
+    for (let n: Element | null = target; n; n = n.parentElement) {
+      if ((n.getAttribute("hidden") || "").toLowerCase() === "until-found") n.removeAttribute("hidden");
+      const p = n.parentElement;
+      if (p && p.localName === "details" && n.localName !== "summary" && !p.hasAttribute("open")) p.setAttribute("open", "");
+    }
     target.scrollIntoView({ block: "start" });
     return;
   }
