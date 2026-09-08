@@ -119,7 +119,7 @@ test("the flag never appears twice for one section: one construction, inside the
 test("expanding via the flag: its own data-act opens the group explicitly (never a toggle), on the stable #tabs delegate, one render path", () => {
   // on a FOLDED header; on an open one (`door`: the header stands in for members hidden inside the section) the same
   // button is the non-folding door to the pane, show-group (tab-hide.test, round 1 of the tabhide review 2026-09-08)
-  assert.match(FOLDED, /b\.dataset\.act = door \? "show-group" : "open-group";/);
+  assert.match(FOLDED, /b\.dataset\.act = door \? doorAct : "open-group";/);
   assert.equal(sectionTodoTitle({ count: 1, names: ["tests"] }, false), "waiting on you — tests flagged something it needs from you; click to open this group", "the folded header's title, as before");
   assert.equal(sectionTodoTitle({ count: 1, names: ["tests"] }, true), "waiting on you — tests flagged something it needs from you; " + SHOW_GROUP_CLICK, "the open header's: what its click does there");
   assert.match(FOLDED, /b\.dataset\.group = name;/);
@@ -149,7 +149,7 @@ test("click-safe and keyboard: a real button (focusable; Enter and Space click I
   assert.match(FOLDED, /b\.draggable = true;\s*\n\s*b\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/,
     "the flag is the innermost draggable under the pointer, so ITS dragstart fires first: canceled, and never reaching the header's (draggedGroup stays null)");
   assert.doesNotMatch(FOLDED, /b\.addEventListener\("click"/, "no per-node click handler — the node is rebuilt on every push");
-  assert.match(FOLDED, /b\.title = sectionTodoTitle\(flag, door\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);/, "the tooltip names the sessions and says what the click does on this header, and a screen reader hears the same");
+  assert.match(FOLDED, /b\.title = sectionTodoTitle\(flag, door, shown\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);/, "the tooltip names the sessions and says what the click does on this header, and a screen reader hears the same");
   assert.ok(RENDER.indexOf("head.addEventListener(\"dragstart\"") > RENDER.indexOf("head.appendChild(b);"), "the header's own drag wiring stays, after the flag");
 });
 
@@ -208,7 +208,7 @@ test("executed + pinned: BOTH member-derived marks ride a folded header — the 
   assert.ok(FOLDED.indexOf("standInPip(") < FOLDED.indexOf("sectionTodoFlag("), "the pip, then the flag");
   assert.ok(HEAD.indexOf('el("span", "tab-group-count")') < HEAD.indexOf("standInPip("), "both after the count — subordinate to the label");
   assert.equal(HEAD.split("standInPip(").length - 1, 1, "one pip derivation, inside the stand-in block: an open header with nothing hidden carries neither mark");
-  assert.match(HEAD, /const said = sectionPipTitle\(stand\.kind, stand\.names\);\s*\n\s*pip\.title = door \? `\$\{said\}; \$\{SHOW_GROUP_CLICK\}` : said;/, "the pip's tooltip names the sessions, like the flag's, and on an open header says what its click does");
+  assert.match(HEAD, /const said = sectionPipTitle\(stand\.kind, stand\.names\);\s*\n\s*pip\.title = door \? `\$\{said\}; \$\{doorClick\(shown\)\}` : said;/, "the pip's tooltip names the sessions, like the flag's, and on an open header says what its click does");
   assert.match(CSS, /\.tab-group-pip \{ flex: 0 0 auto; width: 6px; height: 6px;/, "small");
 });
 

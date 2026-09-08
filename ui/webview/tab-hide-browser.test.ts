@@ -12,7 +12,7 @@
 //     its words lead with its visible text, and the header's spoken label never ends in the flag's click clause;
 //   - while the pane already shows the section, the door is the way back (round 3): its act is show-transcript, its
 //     words say the sessions are shown below, and a click puts the transcript back with nothing written, whether or
-//     not the header holds the tab being read;
+//     not the header holds the tab being read; the pip and the flag on that header do the same, their phrases kept;
 //   - a repeat click (the platform's count) acts on nothing and shows no acknowledgement pulse (round 2);
 //   - the open header over a hidden member wears "1 hidden" as a button, and a click on it, on the pip or on the
 //     flag shows the pane and leaves the fold and the strip as they were; Show from that pane puts the tab back on
@@ -32,7 +32,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { sectionDoorTitle, sectionTodoPhrase, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
+import { sectionDoorTitle, sectionTodoPhrase, sectionTodoTitle, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -72,7 +72,7 @@ function probeSource(): string {
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, setHidden, prunePinned, headWords, homeSectionOf, neighborOfFolded, reachableFrom, sectionRef, TABGROUPS_KEY, TABGROUPS_EVENT } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
-import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, SHOW_GROUP_CLICK } from "./tab-state";
 import { viewTagUnion } from "./session-views";
 import { hostNameNodes } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
@@ -349,25 +349,49 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
     await page.click(act("api"));   // hide it again, from the open pane; the fold untouched
     s = await state(); h = await head("infra");
-    assert.deepEqual([s.tabs, h.folded, h.flagAct], [["web", "tests"], "0", "show-group"]);
-    assert.ok(h.flagTitle!.endsWith(SHOW_GROUP_CLICK), h.flagTitle!);
+    // the pane shows infra (S7b's door click), so the flag is the way back, like the count (round 3): the who phrase, then the
+    // header's own way-back clause
+    assert.deepEqual([s.tabs, h.folded, h.flagAct, h.countAct], [["web", "tests"], "0", "show-transcript", "show-transcript"]);
+    assert.equal(h.flagTitle, sectionTodoTitle({ count: 1, names: ["api"] }, true, true));
+    assert.ok(h.flagTitle!.startsWith(sectionTodoPhrase({ count: 1, names: ["api"] }) + "; ") && h.flagTitle!.endsWith(BACK_TO_TRANSCRIPT_CLICK), h.flagTitle!);
     // the header's own spoken label (round 2): the flag's phrase rides it, the click clause does not (the header's click
     // folds the group or puts the transcript back, so the door's instruction there contradicted it)
     assert.ok(h.label!.endsWith("; " + sectionTodoPhrase({ count: 1, names: ["api"] })), h.label!);
     assert.ok(!h.label!.endsWith(SHOW_GROUP_CLICK) && !h.label!.includes("click to"), h.label!);
     await page.keyboard.press("Escape");
+    h = await head("infra");
+    assert.deepEqual([h.flagAct, h.flagTitle], ["show-group", sectionTodoTitle({ count: 1, names: ["api"] }, true)], "the pane gone: the flag is the door, as before");
+    assert.ok(h.flagTitle!.endsWith(SHOW_GROUP_CLICK), h.flagTitle!);
     await page.click(inHead("infra", ".tab-group-flag"));
     s = await state(); h = await head("infra");
     assert.deepEqual([s.paneShown, s.snapView, h.folded, s.tabs], [true, "infra", "0", ["web", "tests"]], "the flag shows the pane and leaves the fold alone");
+    // S8b: THE WAY BACK ON THE FLAG (round 3): the pane showing infra, the flag's act is show-transcript and its words end in the
+    // header's way-back clause; the click puts the transcript back, the fold and the store's bytes stand, and the flag is the
+    // door again
+    const rawFlag = await page.evaluate(() => localStorage.getItem("romp:tabgroups"));
+    assert.deepEqual([h.flagAct, h.flagTitle, h.countAct], ["show-transcript", sectionTodoTitle({ count: 1, names: ["api"] }, true, true), "show-transcript"]);
+    await page.click(inHead("infra", ".tab-group-flag"));
+    s = await state(); h = await head("infra");
+    assert.deepEqual([s.paneShown, s.transcriptShown, s.snapView, h.folded, h.flagAct, h.countAct, s.tabs], [false, true, null, "0", "show-group", "show-group", ["web", "tests"]]);
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), rawFlag, "the flag's way back writes nothing");
     // ...and the pip, over a hidden member waiting on you
     await page.keyboard.press("Escape");
     await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "needsInput" }, userTodos: [] }));
     h = await head("infra");
     assert.deepEqual([h.pip, h.pipAct], ["tab-group-pip blocked", "show-group"]);
     assert.ok(h.pipTitle!.endsWith(SHOW_GROUP_CLICK), h.pipTitle!);
+    const pipSaid = h.pipTitle!.slice(0, -("; " + SHOW_GROUP_CLICK).length);
     await page.click(inHead("infra", ".tab-group-pip"));
     s = await state(); h = await head("infra");
     assert.deepEqual([s.paneShown, s.snapView, h.folded, s.tabs], [true, "infra", "0", ["web", "tests"]]);
+    // S8c: THE WAY BACK ON THE PIP (round 3): the same phrase, then the way-back clause; the header's spoken label still carries
+    // the phrase alone; the click puts the transcript back and writes nothing
+    assert.deepEqual([h.pipAct, h.pipTitle], ["show-transcript", pipSaid + "; " + BACK_TO_TRANSCRIPT_CLICK]);
+    assert.ok(h.label!.includes("; " + pipSaid) && !h.label!.includes("click to"), h.label!);
+    await page.click(inHead("infra", ".tab-group-pip"));
+    s = await state(); h = await head("infra");
+    assert.deepEqual([s.paneShown, s.transcriptShown, s.snapView, h.folded, h.pipAct, h.pipTitle, s.tabs], [false, true, null, "0", "show-group", pipSaid + "; " + SHOW_GROUP_CLICK, ["web", "tests"]]);
+    assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), rawFlag, "the pip's way back writes nothing");
 
     // S9: the flag on a FOLDED header still opens the group (open-group)
     await page.keyboard.press("Escape");
@@ -411,7 +435,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     assert.equal(h.pip, null, "idle, no verdict: no pip");
     await page.evaluate(() => (window as any).__probe.setLedger("api", { needsInput: true, summary: "Designing the notes schema" }));
     s = await state(); h = await head("infra");
-    assert.deepEqual([h.pip, h.pipAct, s.foldNeeds], ["tab-group-pip blocked", "show-group", "1 needs you"]);
+    assert.deepEqual([h.pip, h.pipAct, s.foldNeeds], ["tab-group-pip blocked", "show-transcript", "1 needs you"], "the pane shows infra here, so the pip is the way back (round 3); the verdict paints it and the fold's head");
     assert.ok(h.pipTitle!.startsWith("a session in this group is blocked or waiting on you: api"), h.pipTitle!);
     assert.ok(h.label!.includes("a session in this group is blocked or waiting on you: api"), "spoken by the header's label too");
     await page.evaluate(() => (window as any).__probe.setLedger("api", { needsInput: false }));

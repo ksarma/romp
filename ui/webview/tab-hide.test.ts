@@ -15,7 +15,7 @@ import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, tog
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
          homeSectionOf, neighborOfFolded, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
-import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
+import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
 import { repeatedClick } from "./tab-snapshot-view";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
@@ -356,7 +356,7 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
   assert.match(flat, /While the group is open, its count opens this view without folding the group, so hiding a session never needs a fold; the dot and the flag, which appear once something is hidden, do the same\. On a folded header the flag opens the group, as before\./, "the non-folding door, on every open header (round 2: the sentence had claimed the count for a door before the first hide, when it was a plain span)");
-  assert.match(flat, /On a folded header the flag opens the group, as before\. While this view shows a group, that group's count takes you back to the transcript\. Clicking a hidden session's row/, "round 3: the count of the group the pane shows is the way back (the sentence on the header's second click, pinned by tab-snapshot.test, stands as it was)");
+  assert.match(flat, /On a folded header the flag opens the group, as before\. While this view shows a group, its count, dot and flag take you back to the transcript\. Clicking a hidden session's row/, "round 3: the count, the dot and the flag of the group the pane shows are the way back (the sentence on the header's second click, pinned by tab-snapshot.test, stands as it was)");
   assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was\./);
   assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
   assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
@@ -420,9 +420,10 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   assert.equal(sectionTodoPhrase({ count: 1, names: ["api"] }), "waiting on you — api flagged something it needs from you");
   assert.equal(sectionTodoPhrase({ count: 2, names: ["api", "tests"] }), "waiting on you — 2 sessions flagged something they need from you: api, tests");
   for (const door of [true, false]) assert.ok(sectionTodoTitle({ count: 1, names: ["api"] }, door).startsWith(sectionTodoPhrase({ count: 1, names: ["api"] }) + "; "), "the title is the phrase, then the click");
-  assert.match(HEAD, /b\.title = sectionTodoTitle\(flag, door\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*spoken \+= "; " \+ sectionTodoPhrase\(flag\);/, "the button keeps its click clause; the header's label takes the phrase alone");
+  assert.match(HEAD, /b\.title = sectionTodoTitle\(flag, door, shown\);\s*\n\s*b\.setAttribute\("aria-label", b\.title\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*spoken \+= "; " \+ sectionTodoPhrase\(flag\);/, "the button keeps its click clause; the header's label takes the phrase alone");
   assert.doesNotMatch(HEAD, /spoken \+= "; " \+ b\.title;/);
-  assert.equal(HEAD.split("SHOW_GROUP_CLICK").length - 1, 1, "the click phrase reaches the header through the pip's title alone; the label never carries it");
+  assert.equal(HEAD.split("SHOW_GROUP_CLICK").length - 1, 0, "no click phrase of its own in the header: the three doors take theirs from doorClick");
+  assert.equal(HEAD.split("doorClick(shown)").length - 1, 1, "the click phrase reaches the header through the pip's title alone (the count's and the flag's come through their helpers); the label never carries it");
   // ROUND 3: THE WAY BACK on the door. While the pane already shows the section (snapView === name) the door's click changed
   // nothing (show-group over the same snapView) and its words still promised the pane; now it mirrors the header's second
   // click (headWords `back`): its act is show-transcript and its words say the sessions are shown below and the click goes
@@ -439,16 +440,28 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   }
   assert.ok(headWords("infra", 3, 0, false, true, true).title.includes("; " + BACK_TO_TRANSCRIPT_CLICK + "; "), "the header's second click says it in the same words");
   assert.equal(sectionDoorTitle(0, 3, false), sectionDoorTitle(0, 3), "every other state is as it was");
+  // ...and the pip and the flag with it (the coordinator's ruling after round 3): one clause for the three doors, from doorClick
+  assert.equal(doorClick(false), SHOW_GROUP_CLICK);
+  assert.equal(doorClick(true), BACK_TO_TRANSCRIPT_CLICK);
+  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, true, true), sectionTodoPhrase({ count: 1, names: ["api"] }) + "; " + BACK_TO_TRANSCRIPT_CLICK, "the flag, shown: the who phrase, then the way back");
+  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, true, false), sectionTodoTitle({ count: 1, names: ["api"] }, true), "not shown: as it was");
+  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, false, true), sectionTodoPhrase({ count: 1, names: ["api"] }) + "; click to open this group", "folded: opens the group whatever the pane shows (shown is derived with door, so this never renders; the helper still says the true thing)");
+  assert.match(ui("webview", "tab-state.ts"), /export function doorClick\(shown: boolean\): string \{\s*\n\s*return shown \? BACK_TO_TRANSCRIPT_CLICK : SHOW_GROUP_CLICK;\s*\n\}/);
+  assert.match(ui("webview", "tab-state.ts"), /return `\$\{lead\}; \$\{doorClick\(true\)\}`;/);
+  assert.match(ui("webview", "tab-state.ts"), /\$\{door \? doorClick\(shown\) : "click to open this group"\}/);
+  assert.match(HEAD, /pip\.title = door \? `\$\{said\}; \$\{doorClick\(shown\)\}` : said;\s*\n\s*if \(door\) \{ pip\.dataset\.act = doorAct; pip\.dataset\.group = name; \}/, "the pip: the doors' clause and act");
+  assert.match(HEAD, /b\.dataset\.act = door \? doorAct : "open-group";\s*\n\s*b\.dataset\.group = name;\s*\n\s*b\.title = sectionTodoTitle\(flag, door, shown\);/, "the flag: the doors' act open, open-group folded; its title from the helper with the same bit");
   // the header: the door is EVERY open header's count (round 2: it existed only over hidden members, so the first hide of a
   // group still went through the header's click, which folds the group over its reader); folded, a plain span. Shown, the
   // way back (round 3), derived from the rendered state as the header's own way back is; the fold untouched either way
-  assert.match(HEAD, /const door = !collapsed;\s*\n\s*const shown = door && snapView === name;\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button on an open header, a span on a folded one; shown, the way back");
-  assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = shown \? "show-transcript" : "show-group";\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length, total, shown\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act (the way back while the pane shows the section), words (the visible count first) and spoken label");
+  assert.match(HEAD, /const door = !collapsed;\s*\n\s*const shown = door && snapView === name;\s*\n\s*const doorAct = shown \? "show-transcript" : "show-group";\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button on an open header, a span on a folded one; shown, the way back; one act for the three doors");
+  assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = doorAct;\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length, total, shown\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act (the way back while the pane shows the section), words (the visible count first) and spoken label");
+  assert.equal(HEAD.replace(/\/\/[^\n]*/g, "").split("doorAct").length - 1, 4, "declared once, used by the count, the pip and the flag (the comments aside)");
   assert.match(HEAD, /const back = snapView === name && !collapsed && holdsActive;/, "the header's own way back, the state the door's mirrors (without holdsActive: another section's header still folds on its own click, its door did nothing)");
   assert.equal(HEAD.split("snapView === name").length - 1, 3, "the mark, the header's way back and the door's: one rendered state");
   assert.match(HEAD, /n\.draggable = true;\s*\n\s*n\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/, "a press on it never starts the header's drag (the flag's rule)");
-  assert.match(HEAD, /if \(door\) \{ pip\.dataset\.act = "show-group"; pip\.dataset\.group = name; \}/, "the pip too, pointer only");
-  assert.match(HEAD, /b\.dataset\.act = door \? "show-group" : "open-group";/, "the flag: the door open, open-group folded");
+  assert.match(HEAD, /if \(door\) \{ pip\.dataset\.act = doorAct; pip\.dataset\.group = name; \}/, "the pip too, pointer only");
+  assert.match(HEAD, /b\.dataset\.act = door \? doorAct : "open-group";/, "the flag: the doors' act open, open-group folded");
   assert.match(HEAD, /closest\("\.tab-group-flag, \.tab-group-door"\)\) return;/, "the header's key handler stands down for the door as for the flag: Enter and Space are the button's own click");
   // the delegate: snapView, a strip render for the header's mark, the pane; NO write (a fold is the header's own click)
   const DOOR = RENDER.slice(RENDER.indexOf('"show-group": (el) => {'), RENDER.indexOf('"open-group": (el) => {'));

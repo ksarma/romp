@@ -41,7 +41,7 @@ import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionR
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
-import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionTodoPhrase, sectionDoorTitle, doorClick } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -5350,19 +5350,21 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   // still went through that fold (round 2). The header's own click keeps its meaning (fold, and show the
   // section). Folded, the count is a plain span: the header's click opens the group and shows the section, and
   // the flag opens the group (open-group), as before.
-  // THE WAY BACK, on the door too (round 3): while the pane already shows this section (snapView, the state the
+  // THE WAY BACK, on the doors too (round 3): while the pane already shows this section (snapView, the state the
   // header's snap-shown mark and its own way back are derived from), show-group changed nothing and the words still
-  // promised the pane, so the door mirrors the header's second click: its act is show-transcript (leaveSnapshot) and
-  // its words say the sessions are shown below and the click goes back to the transcript (sectionDoorTitle `shown`).
-  // Whether or not the header holds the tab being read: another section's open header still folds on its own click,
-  // a real act, while its door's did nothing. The fold is untouched either way.
+  // promised the pane, so the three doors (the count, and the pip and the flag below) mirror the header's second click:
+  // their act is show-transcript (doorAct; leaveSnapshot) and their click clause is the way back (tab-state.ts doorClick;
+  // the count's words say the sessions are shown below, sectionDoorTitle `shown`). Whether or not the header holds the
+  // tab being read: another section's open header still folds on its own click, a real act, while its doors did
+  // nothing. The fold is untouched either way; the spoken label carries the phrases alone, as before.
   const door = !collapsed;
   const shown = door && snapView === name;
+  const doorAct = shown ? "show-transcript" : "show-group";
   const n = door ? document.createElement("button") : el("span", "tab-group-count");
   if (n instanceof HTMLButtonElement) {
     n.type = "button";
     n.className = "tab-group-count tab-group-door";
-    n.dataset.act = shown ? "show-transcript" : "show-group";
+    n.dataset.act = doorAct;
     n.dataset.group = name;
     n.title = sectionDoorTitle(hidden.length, total, shown);
     n.setAttribute("aria-label", n.title);
@@ -5384,14 +5386,15 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // a red pip there was a false interrupt). After the count and small, so the header still reads as a label;
     // the tooltip names the sessions. Over the HIDDEN members only: a pinned member's own tab shows its state.
     // Not the header's own pip (it wears no state class) and never a tab pip class (the kernel's mobile scrape
-    // keys on those). On an open header the pip is a door too (show-group), pointer only: the count beside it
-    // is the keyboard's, and the spoken label carries the pip's phrase without the click.
+    // keys on those). On an open header the pip is a door too (doorAct: show-group, or the way back while the pane
+    // shows the section, as the count), pointer only: the count beside it is the keyboard's, and the spoken label
+    // carries the pip's phrase without the click.
     const stand = standInPip(hidden.map((id) => ({ session: sessions.get(id), ledger: ledgers.get(id) })));
     if (stand) {
       const pip = el("span", "tab-group-pip" + (stand.kind === "working" ? "" : " " + stand.kind));
       const said = sectionPipTitle(stand.kind, stand.names);
-      pip.title = door ? `${said}; ${SHOW_GROUP_CLICK}` : said;
-      if (door) { pip.dataset.act = "show-group"; pip.dataset.group = name; }
+      pip.title = door ? `${said}; ${doorClick(shown)}` : said;
+      if (door) { pip.dataset.act = doorAct; pip.dataset.group = name; }
       pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the header's label
       spoken += "; " + said;
       head.appendChild(pip);
@@ -5405,8 +5408,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
     // real <button>, focusable, with its OWN data-act for the stable #tabs delegate (the nearest data-act
     // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
     // so Enter and Space are the button's own click too): open-group on a folded header (Enter opens
-    // the group), show-group on an open one (the section in the pane, the fold untouched; round 1 of
-    // the tabhide review: the old act opened a group that was already open, and nothing moved). Its own
+    // the group), the doors' act on an open one (doorAct: the section in the pane, the fold untouched, or the
+    // way back while the pane shows the section; round 1 of the tabhide review: the old act opened a group
+    // that was already open, and nothing moved). Its own
     // dragstart guard, so a press that wanders never starts the header's group drag (tab-state.ts owns
     // the count and the title).
     const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
@@ -5414,9 +5418,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
       const b = document.createElement("button");
       b.type = "button";
       b.className = "tab-group-flag";
-      b.dataset.act = door ? "show-group" : "open-group";
+      b.dataset.act = door ? doorAct : "open-group";
       b.dataset.group = name;
-      b.title = sectionTodoTitle(flag, door);
+      b.title = sectionTodoTitle(flag, door, shown);
       b.setAttribute("aria-label", b.title);
       // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and
       // names: the PHRASE alone, as the pip's rides above. The click clause is the button's own (round 2 of the tabhide
