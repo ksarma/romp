@@ -56,21 +56,21 @@ function viewsAdopts(held, incoming, announced) {
   return h === null || i === null || i >= h || (typeof announced === 'number' && i === announced);
 }
 // whether the kernel's `caps` frame, the reconnect event, adopts the blob the gate last REJECTED since
-// its last adoption — the hand-mirror of views-writes.ts capsAdopts (rounds 6 and 7 of the 2026-09-05
+// its last adoption — the hand-mirror of views-writes.ts capsAdopts (the 2026-09-05
 // review). The connect push precedes the caps frame and `served` is the frame's viewsSeq, the seq of the
 // views blob that push put on this socket (null when it carried none; undefined on a frame from a kernel
 // before the field). A push a restarted kernel served under an OLDER seq (a store restored while it was
 // down; its seq floor lives for its process) was turned away a frame ago and is the kept blob: its seq
 // matches, it is adopted. A pusher-thread frame built before a concurrent write and kept because it
 // arrived between the push and the caps frame carries an older seq: no match, discarded, the gate stands.
-// A frame without the field adopts the kept blob outright (the round-6 rule).
+// A frame without the field adopts the kept blob outright (the pre-field rule).
 function viewsCapsAdopts(rejected, served) {
   if (!rejected) return false;
   if (served === undefined) return true;
   return typeof served === 'number' && isFinite(served) && viewsSeq(rejected) === served;
 }
 // the seq a caps frame ANNOUNCES as the kernel's current store, remembered when the frame adopted no kept
-// blob — the hand-mirror of views-writes.ts announcedSeq (round 8 of the 2026-09-05 review): its viewsSeq
+// blob — the hand-mirror of views-writes.ts announcedSeq (the 2026-09-05 review): its viewsSeq
 // when a number (the served blob's seq, or the store's current seq when the push carried no views frame),
 // null when null (no store at all) or absent (a kernel from before the field). Kept in one slot per store
 // (_announcedViewsSeq), overwritten by each caps frame and cleared by the next adoption that changes the
@@ -78,12 +78,12 @@ function viewsCapsAdopts(rejected, served) {
 // from an older copy, met by a reconnect whose push carried no blob, left nothing kept for the caps frame
 // to match: the pusher's next frame was turned away and no second caps frame comes.
 function viewsAnnouncedSeq(served) { return (typeof served === 'number' && isFinite(served)) ? served : null; }
-// the slot AFTER an adoption — the hand-mirror of views-writes.ts announcedAfter (round 9 of the review):
+// the slot AFTER an adoption — the hand-mirror of views-writes.ts announcedAfter (the review):
 // cleared only by an adoption that CHANGES the held blob (a seq other than the held one — a newer write, or
 // the announced seq itself below it — a seq-less side, or the announced seq arriving at the held seq), and
 // left standing through a re-arrival of the blob already held, which is no new information. The federation
 // router replays its stored blob into the merged lanes payload on every re-emit (a remote host's lanes, a
-// view-order storage event, a host drop); round 8's clear on ANY adoption let such a re-emit, landing between
+// view-order storage event, a host drop); the earlier clear on any adoption let such a re-emit, landing between
 // the caps frame and the pusher's next frame, spend the slot, and the restored store the router then adopted
 // and re-emitted at the announced seq was turned away here: router and pane silently diverged until the next
 // write.
@@ -92,7 +92,7 @@ function viewsAnnouncedAfter(held, incoming, announced) {
   const h = viewsSeq(held), i = viewsSeq(incoming);
   return (i !== null && i === h && i !== announced) ? announced : null;
 }
-// The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (round 3 of the 2026-09-05
+// The hand-mirror of views-writes.ts applyTagEdit / rederiveViews (the 2026-09-05
 // review): one targeted op applied to a blob's LOCAL tags the way the gesture applied it (a copy;
 // an unknown tid is a no-op — the kernel refuses it), and the optimistic copy rebuilt from the base
 // plus the writes still in flight, oldest first — a whole-blob write IS the state it posted, a
@@ -133,7 +133,7 @@ function rederiveViews(base, writes) {
 }
 // The placeholder id an optimistic create's row wears until the kernel's ack names the real one
 // (views-writes.ts isPlaceholderId): such a row takes no gesture — an op addressed by it is
-// refused as a tag that does not exist (round 4 of the 2026-09-05 review).
+// refused as a tag that does not exist (the 2026-09-05 review).
 function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(id); }
 // A lens or order write's own content — {active?, actives?, tagOrder?} — applied to a blob (a copy),
 // and the blob such a write POSTS: the STORE's blob (the last one adopted, never the pending copy)
@@ -141,7 +141,7 @@ function isPendingTagId(id) { return typeof id === 'string' && /^pending-/.test(
 // stored array reads in the dragged order too: over the socket the kernel's door orders the stored
 // array by the write's tagOrder itself; on the Electron path, where the posted blob IS the file,
 // this re-sort does it. The
-// hand-mirrors of views-writes.ts applyLensFields / lensBlob (round 4 of the 2026-09-05 review: a
+// hand-mirrors of views-writes.ts applyLensFields / lensBlob (the 2026-09-05 review: a
 // whole-blob write built from the pending copy carried every targeted edit still in flight as this
 // page's claim on those tags, and a rename the kernel had refused landed through a lens toggle).
 function applyLensFields(v, fields) {
@@ -3070,7 +3070,7 @@ class TimelinePanel {
     this._metaMenu = menu;
   }
 
-  // closing a surface that held the join menu drops its new-tag draft (round 4 of the 2026-09-05
+  // closing a surface that held the join menu drops its new-tag draft (the 2026-09-05
   // review: the draft outlived the menu and reappeared in the next one opened for the same rows)
   _closeLaneMenu() {
     if (!this._laneMenu) return;
@@ -3224,7 +3224,7 @@ class TimelinePanel {
   _editTagUnion(g, edit) {
     // a create still in flight has no id to address (its row wears the placeholder the ack
     // replaces): the builders offer no gesture on it, and one that arrives anyway does nothing
-    // rather than posting a tid the kernel refuses as a tag that does not exist (round 4)
+    // rather than posting a tid the kernel refuses as a tag that does not exist
     if (g.pending) return;
     const meta = { name: g.name, tid: g.localId };
     if (edit.add && edit.add.length) {
@@ -3287,7 +3287,7 @@ class TimelinePanel {
       ch.createSpan({ text: g.name });
       if (g.pending) {
         // a create still in flight: the chip shows, with no ✕ and no click, until the ack names the
-        // tag (round 4 of the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
+        // tag (the 2026-09-05 review) — the "creating…" the inputs read, in the tooltip
         ch.style.cursor = 'default';
         ch.setAttribute('title', 'creating "' + g.name + '"…');
         ch.setAttribute('aria-disabled', 'true');
@@ -3309,7 +3309,7 @@ class TimelinePanel {
   // rows name their own.
   _tagJoinMenu(box, rowIds, rebuild, menuKey) {
     for (const g of viewTagUnion(this._curViews())) {
-      if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address (round 4)
+      if (g.pending) continue;   // a create still in flight cannot be joined yet: no id to address
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
       const tc = g.color || MENU_FG;
       const opt = box.createSpan({ text: g.name });
@@ -3322,10 +3322,10 @@ class TimelinePanel {
         this._editTagUnion(g, { add: rowIds.filter((id) => g.members.indexOf(id) < 0) }); rebuild();
       });
     }
-    // The new-tag input's text and caret SURVIVE a repaint (round 3 of the 2026-09-05 review — the
+    // The new-tag input's text and caret SURVIVE a repaint (the 2026-09-05 review — the
     // rename draft did not cover it): an ack or refusal for some other write rebuilds the whole
     // surface while the user is typing here. The draft is kept on the instance per MENU (the [+]
-    // that is open, not the rows it lists — round 4: keyed by the row set, the bulk menu's draft
+    // that is open, not the rows it lists — before this change keyed by the row set, the bulk menu's draft
     // hid whenever the search filter or a session's liveness changed the rows, and came back when
     // they changed back); the live input is read before the rebuild tears it down, and the rebuilt
     // input restores text and caret. Submitting, or closing the menu or the dialog, drops it.
@@ -3379,12 +3379,12 @@ class TimelinePanel {
   // blob logs once per page, so a kernel serving stale frames is a visible fact. The last ignored blob
   // is KEPT (and let go by the next adoption): a kernel restarted over a store restored from an older
   // copy serves it under the old seq, so its connect push is turned away here — and the caps frame
-  // that follows it adopts it (setCaps; round 6 of the 2026-09-05 review). When that push carried no
+  // that follows it adopts it (setCaps; the 2026-09-05 review). When that push carried no
   // blob to keep, the caps frame's viewsSeq is remembered instead (_announcedViewsSeq) and the later
-  // blob carrying exactly that seq is adopted below the held one (round 8; viewsAnnouncedSeq). The slot
+  // blob carrying exactly that seq is adopted below the held one (viewsAnnouncedSeq). The slot
   // clears when an adoption CHANGES the held blob, never on a re-arrival of the blob already held — the
   // federation router replays its stored blob into the merged lanes payload on every re-emit, and a slot
-  // spent on one of those missed the restored store the router adopted next (round 9; viewsAnnouncedAfter).
+  // spent on one of those missed the restored store the router adopted next (viewsAnnouncedAfter).
   _takeViews(v) {
     if (!v) return false;
     if (viewsAdopts(this._views, v, this._announcedViewsSeq)) { this._announcedViewsSeq = viewsAnnouncedAfter(this._views, v, this._announcedViewsSeq); this._views = v; this._rejectedViews = null; return true; }
@@ -3426,7 +3426,7 @@ class TimelinePanel {
   // does not name and is discarded. When nothing kept matches, viewsSeq (a number: the served blob's
   // seq, or the store's current seq when the push carried no views frame) is remembered as the
   // kernel's announced store and _takeViews adopts the later blob that carries it even below the held
-  // seq (round 8; viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared by the next
+  // seq (viewsAnnouncedSeq): one slot, overwritten by each caps frame, cleared by the next
   // adoption that changes the held blob; null (no store at all) and a missing field announce nothing. A write in flight is
   // dropped whatever the base became: its ack cannot reach this socket, and one that somehow did is
   // an ack for a write this page no longer tracks — its blob meets the gate like any other arrival,
@@ -3487,7 +3487,7 @@ class TimelinePanel {
     if (!this._tagEditsTargeted()) {
       if (!nv) return;
       // LEGACY: the whole blob IS the store write here, so a create's placeholder id would be
-      // persisted as-is (round 3 of the 2026-09-05 review) — the row takes a client-minted `g…` id,
+      // persisted as-is (the 2026-09-05 review) — the row takes a client-minted `g…` id,
       // the scheme the dialog's own pre-2026-09-05 create used, and the write names it as edited,
       // which a kernel that reads `edited` needs to tell a create from a stale copy re-creating a
       // deleted tag
@@ -3505,7 +3505,7 @@ class TimelinePanel {
   }
 
   // a create is in flight: the gate on a second [+ New tag] or new-tag Enter before the first is
-  // answered (round 3 of the 2026-09-05 review: two clicks before the ack made two tags)
+  // answered (the 2026-09-05 review: two clicks before the ack made two tags)
   _createInFlight() {
     return this._viewsWrites.some((w) => w.edit && w.edit.op === 'create');
   }
@@ -3524,7 +3524,7 @@ class TimelinePanel {
   // some other row, whose editor is left alone. Refused → THIS write's change reverts AT ONCE: with
   // nothing else in flight the store's blob is what stands; with other writes still pending the copy
   // is rebuilt from that blob plus them (rederiveViews), so a later gesture never flaps off and back
-  // on (round 3 of the 2026-09-05 review: a refusal cleared the whole list). The reason shows in the
+  // on (the 2026-09-05 review: a refusal cleared the whole list). The reason shows in the
   // dialog, rebuilt in place if open (the tagEditFailed door's rendering).
   viewsAck(m) {
     if (!m) return;
@@ -3553,8 +3553,7 @@ class TimelinePanel {
   // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
   // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
   // A LENS or ORDER write — {active?, actives?, tagOrder?}: the whole blob is built from the STORE's
-  // blob (this._views, the last one adopted) plus these fields, never from the pending copy (round
-  // 4 of the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
+  // blob (this._views, the last one adopted) plus these fields, never from the pending copy (the 2026-09-05 review: a copy carrying targeted edits still in flight posted them as this
   // dialog's claim on those tags, and a rename the kernel had refused as a duplicate landed through
   // the next lens toggle). The pending copy SHOWN is the current one with the same fields applied,
   // so in-flight edits stay visible; the in-flight record keeps the fields for rederiveViews.
@@ -3928,7 +3927,7 @@ class TimelinePanel {
         for (const tg of viewTagUnion(v)) {
           // a create still in flight (`pending`) is not editable and not draggable: its row wears
           // the placeholder id the ack replaces, and an op addressed by it would be refused as a tag
-          // that does not exist (round 4 of the 2026-09-05 review) — it reads "creating…" instead
+          // that does not exist (the 2026-09-05 review) — it reads "creating…" instead
           const editable = !tg.pending && (tg.localId || canEdit);
           const tc = tg.color || MODEL_FG;
           // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
@@ -4074,7 +4073,7 @@ class TimelinePanel {
           }
         }
         // [+ New tag] — the table's final row, at the dialog's own scale. While a create is in flight
-        // the row reads "creating…" and takes no click (round 3 of the 2026-09-05 review: a second
+        // the row reads "creating…" and takes no click (the 2026-09-05 review: a second
         // click before the ack made a second tag); the ack's repaint brings the button back.
         const ntRow = tgrid.createDiv();
         ntRow.setAttribute('style', 'grid-column:1 / -1;');

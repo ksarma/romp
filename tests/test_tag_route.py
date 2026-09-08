@@ -141,7 +141,7 @@ class TagRoute(unittest.TestCase):
         self.assertEqual(v["tags"], [], "a refused edit writes nothing — no member no session matches")
 
     def test_two_same_named_tags_refuse_any_edit(self):
-        # a store ALREADY holding twins, written to the file: since round 4 of the 2026-09-05 review
+        # a store ALREADY holding twins, written to the file: since the 2026-09-05 review
         # the write door refuses a second tag under a taken name, so twins come only from an older
         # kernel's store (or a hand edit)
         km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [

@@ -63,7 +63,7 @@ let searchQuery = "";     // #fleet-search filter (the user 2026-06-29): show on
 let fleetViews: SessionViews | null = null;   // the rendered views blob off the feed payload — the outline lens reads it (2026-08-25)
 let outlineViewsWriteSeq = 0;                   // per-page counter behind this pane's lens-write ids (mintWriteId)
 // This pane's lens write: the frame copy it holds with only the outline lens changed, posted with a
-// writeId and `edited: []` (round 5 of the 2026-09-05 review) — the empty list is the kernel's word
+// writeId and `edited: []` (the 2026-09-05 review) — the empty list is the kernel's word
 // that the write changes NO tag, so the tags the copy carries are never applied over a newer store;
 // only the lens lands. The pane ignores the viewsAck and settles from the next feed frame, as it
 // always has (docs/read-side.md, the views contract).

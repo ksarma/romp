@@ -66,7 +66,7 @@ class TagOrderRoundTrip(unittest.TestCase):
         self.assertNotIn("tagOrder", n, "a wrong-typed order drops whole, never raises")
 
     def test_lens_and_order_entries_read_on_the_stored_name_basis(self):
-        """Round 6 of the 2026-09-05 review: tag rows were clamped AND stripped (round 5) while lens
+        """The 2026-09-05 review: tag rows were clamped AND stripped while lens
         and order entries were only clamped, so a store that already held a padded twin ("web "
         beside "web") read both rows as "web" on its first post-upgrade read while its lens and
         order still said "web " — the surface filtered to it showed no session, the tag fell to the
@@ -196,7 +196,7 @@ class TimelineViews(unittest.TestCase):
         raw = {"active": "all", "hidden": ["s7", "s8"], "tags": [{"id": "g1", "name": "pool", "members": ["s2"]}]}
         (jd.STATE / "timeline-views.json").write_text(json.dumps(raw))
         km._flags_cache.clear()
-        # ONE write (round 3 of the 2026-09-05 review): the migration used to persist through the
+        # ONE write (the 2026-09-05 review): the migration used to persist through the
         # setter, whose own read of the previous blob found the same un-migrated file and re-entered
         # the migration — 321 nested writes for one read, ending only at the recursion limit
         writes = []
@@ -227,7 +227,7 @@ class TimelineViews(unittest.TestCase):
         self.assertEqual(km._timeline_views()["tags"], [], "minted only when hidden entries exist")
 
     def test_a_padded_archived_tag_is_found_on_the_stored_basis_so_the_hidden_entries_migrate_into_it(self):
-        # round 8 of the 2026-09-05 review: the lookup compared the file's RAW spelling, so a legacy
+        # the 2026-09-05 review: the lookup compared the file's RAW spelling, so a legacy
         # store holding "archived " (a padded twin from before the name basis) missed it, a second
         # archived tag was minted, the door's collision pass refused that one, and the hidden entries
         # migrated into nothing — the hide intent lost under a "name collision" notice
@@ -358,7 +358,7 @@ class TimelineViews(unittest.TestCase):
             km._remotes.clear(); km._remotes.update(saved)
 
     def test_a_padded_remote_name_renders_on_the_stored_basis_so_a_lens_can_pick_it(self):
-        """Round 7 of the 2026-09-05 review: round 6 put every lens and order entry on the stored name
+        """The 2026-09-05 review: the review put every lens and order entry on the stored name
         basis (cap, then strip) while a REMOTE tag's name still rendered clamped only — so a remote
         kernel on an older build (or a padded remote store) serving "web " rendered "web ", the lens
         that picked it stored "web", and _lens_visible (exact equality, mirrored by tag-lens.ts)
@@ -610,14 +610,6 @@ class TagInheritance(unittest.TestCase):
         t = next(t for t in km._timeline_views()["tags"] if t["name"] == name)
         return [m["sid"] for m in t["members"] if m["host"] == ""]
 
-    def _twins(self):
-        """A store ALREADY holding two tags named "twin" — written to the file, not through the door:
-        since round 4 of the 2026-09-05 review the whole-blob path refuses a second tag under a name
-        another tag holds, so twins can only come from an older kernel's store (or a hand edit)."""
-        km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [
-            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]}))
-        km._flags_cache.clear()
-
     def test_the_child_joins_every_local_tag_holding_the_parent_and_the_parent_keeps_them(self):
         km._set_timeline_views({"active": "all", "tags": [
             {"id": "g1", "name": "pool", "members": [self.P, "other"]},
@@ -666,6 +658,14 @@ class TagInheritance(unittest.TestCase):
         self.assertEqual(sorted(names), ["infra", "pool"], "the echo is the child's names AFTER both steps")
         self.assertEqual(self._members("infra"), [self.C], "a named tag is created on first use, like POST /tag")
         self.assertIn(self.C, self._members("pool"))
+
+    def _twins(self):
+        """A store ALREADY holding two tags named "twin" — written to the file, not through the door:
+        the whole-blob path refuses a second tag under a name another tag holds, so twins can only
+        come from an older kernel's store (or a hand edit)."""
+        km._atomic_write(km._views_path(), json.dumps({"active": "all", "tags": [
+            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]}))
+        km._flags_cache.clear()
 
     def test_tag_new_session_reports_a_refused_edit_beside_what_did_land(self):
         self._twins()

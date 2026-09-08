@@ -57,7 +57,7 @@ export function seqOf(v: SessionViews | null | undefined): number | null {
  *  seq is the one the kernel ANNOUNCED as its current store at connect (`announced`: the slot the
  *  caller fills from the caps frame through announcedSeq, one per store, cleared by the next
  *  adoption that CHANGES the held blob — announcedAfter) — a blob carrying that seq IS the announced
- *  store, not a stale frame, however far below the held seq it sits (round 8 of the 2026-09-05 review). The order the socket delivered them in
+ *  store, not a stale frame, however far below the held seq it sits (the 2026-09-05 review). The order the socket delivered them in
  *  decides nothing — the pusher builds frames from a warmed cache that can predate a write whose ack
  *  already arrived, and federation re-emits stored blobs; the seq is the store's own order, so an
  *  older blob is ignored wherever it turns up. */
@@ -68,7 +68,7 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
 }
 
 /** Whether the kernel's `caps` frame — the reconnect event — adopts the blob the gate last REJECTED
- *  since its last adoption (rounds 6 and 7 of the 2026-09-05 review). The kernel's seq floor lives
+ *  since its last adoption (the 2026-09-05 review). The kernel's seq floor lives
  *  for its process, so a store restored while the kernel was down is served under its old seq after
  *  the restart, and a page that stayed open across it holds the higher seq: its gate turns the
  *  kernel's connect push away. The kernel sends that push BEFORE the caps frame, and the frame names
@@ -80,7 +80,7 @@ export function adoptViews(held: SessionViews | null | undefined, incoming: Sess
  *  pusher frame built before a concurrent write and enqueued between the push and the caps frame is
  *  kept too, but its seq is older than the push's, so it never matches and is discarded — the gate
  *  stands, and the next pusher cycle carries the newer blob. A frame without the field adopts the
- *  kept blob outright, the round-6 rule. Nothing kept: nothing to adopt, whatever the frame says —
+ *  kept blob outright, the pre-field rule. Nothing kept: nothing to adopt, whatever the frame says —
  *  but the frame's viewsSeq is then the kernel's announcement of its current store, which the caller
  *  remembers (announcedSeq) for the blob that carries it later. */
 export function capsAdopts(rejected: SessionViews | null | undefined, served: unknown): boolean {
@@ -90,7 +90,7 @@ export function capsAdopts(rejected: SessionViews | null | undefined, served: un
 }
 
 /** The seq the caps frame ANNOUNCES as the kernel's current views store, for the client to remember
- *  when the frame adopted no kept blob (round 8 of the 2026-09-05 review): its `viewsSeq` when that
+ *  when the frame adopted no kept blob (the 2026-09-05 review): its `viewsSeq` when that
  *  is a number — the seq of the views blob the connect push served, or the store's current seq when
  *  the push carried no views frame (a chat page's sentinel cycle sends no tabOrder) — and null when
  *  it is null (the kernel has no store at all) or the frame has no such field (a kernel from before
@@ -107,15 +107,15 @@ export function announcedSeq(served: unknown): number | null {
   return typeof served === "number" && Number.isFinite(served) ? served : null;
 }
 
-/** The announced slot AFTER the gate adopts `incoming` over `held` (round 9 of the 2026-09-05 review).
+/** The announced slot AFTER the gate adopts `incoming` over `held` (the 2026-09-05 review).
  *  The slot is cleared only by an adoption that CHANGES the held blob: a seq other than the held one
  *  (a newer write by the ordinary rule, or the announced seq itself below the held one), a seq-less
  *  side, or the announced seq arriving at the held seq (the announced store has arrived; the
  *  announcement is spent). A re-arrival of the blob already held — the same seq on both sides — is no
  *  new information and leaves the slot standing. That case is not rare: in the browser a pane sees the
  *  local blob only through the federation router, which replays its stored blob on every merged
- *  re-emit (a remote host's push, a `closed` frame, a view-order storage event, a host drop). Round 8
- *  cleared the slot on ANY adoption, so a re-emit landing between the caps frame and the pusher's next
+ *  re-emit (a remote host's push, a `closed` frame, a view-order storage event, a host drop). An earlier
+ *  rule cleared the slot on ANY adoption, so a re-emit landing between the caps frame and the pusher's next
  *  frame spent the pane's slot, and when the router adopted the pusher's frame at the announced seq
  *  and re-emitted it, the pane turned it away: the router carried the restored store and the pane the
  *  pre-restore one, silently, until the next write. The honesty argument stands as it was: a write
@@ -132,7 +132,7 @@ export function announcedAfter(held: SessionViews | null | undefined, incoming: 
 export type LensFields = Partial<Pick<SessionViews, "active" | "actives" | "tagOrder">>;
 
 /** whether a tag id is the placeholder an optimistic create's row wears until the kernel's ack
- *  names the real one — such a row takes no gesture (round 4 of the 2026-09-05 review: a rename
+ *  names the real one — such a row takes no gesture (the 2026-09-05 review: a rename
  *  or delete on it posted the placeholder as the tid and was refused as "no longer exists") */
 export function isPlaceholderId(id: string | null | undefined): boolean {
   return typeof id === "string" && /^pending-/.test(id);
@@ -141,7 +141,7 @@ export function isPlaceholderId(id: string | null | undefined): boolean {
 /** one write in flight: its id, and what it did — the targeted op (with the placeholder id its
  *  optimistic row wears, for a create), the lens/order fields it set, or the whole blob it posted
  *  (the no-capability path's tag edits) — so the pending copy can be re-derived without it when
- *  another write is refused (round 3 of the 2026-09-05 review) */
+ *  another write is refused (the 2026-09-05 review) */
 export interface InflightWrite {
   id: string;
   edit?: TagEditOp;
@@ -154,8 +154,8 @@ export interface InflightWrite {
 /** The blob a lens or order write POSTS: the store's blob (`base`, the last one adopted — never
  *  the pending copy) with the fields set. A whole-blob write built from the pending copy carried
  *  every targeted edit still in flight as if it were the client's own claim on those tags, and a
- *  rename the kernel had refused as a duplicate landed through the next lens toggle (round 4 of
- *  the 2026-09-05 review). The kernel keeps the store's copy of any tag a write with an empty
+ *  rename the kernel had refused as a duplicate landed through the next lens toggle (the
+ *  2026-09-05 review). The kernel keeps the store's copy of any tag a write with an empty
  *  `edited` differs on, so what rides here must be exactly what the store served. The tags
  *  array re-sorts to `tagOrder` when one is given — the pill-drag contract that the stored array
  *  reads in the dragged order too: over the socket the kernel's door orders the stored array by
@@ -204,7 +204,7 @@ export function mintWriteId(seq: number): string {
  *  flight (a later gesture may still be pending). Refused → THIS write is dropped and its change
  *  reverts: with nothing else in flight the store's blob (the ack carries it) is what stands; with
  *  other writes still pending the copy is re-derived from that blob plus those writes, so a later
- *  in-flight gesture never flaps off and back on (round 3 of the 2026-09-05 review: a refusal
+ *  in-flight gesture never flaps off and back on (the 2026-09-05 review: a refusal
  *  cleared the whole list). The reason surfaces either way. An ack for a write this page never made
  *  (a previous load's) still counts as information: with nothing of ours in flight, the returned
  *  blob is the base and no copy stays pinned. */
@@ -224,7 +224,7 @@ export function ackOutcome(inflight: readonly InflightWrite[], m: ViewsAck): Ack
 }
 
 /** whether a create is in flight — the gate on a second [+ New tag] / New tag… before the first is
- *  answered (round 3 of the 2026-09-05 review: two clicks before the ack made two tags) */
+ *  answered (the 2026-09-05 review: two clicks before the ack made two tags) */
 export function createInFlight(inflight: readonly InflightWrite[]): boolean {
   return inflight.some((w) => !!w.edit && w.edit.op === "create");
 }

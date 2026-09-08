@@ -225,8 +225,8 @@ export function isPinned(st: TabGroupsState, sec: SectionRef, sid: string): bool
  *  the tab holds for OTHER sections stand either way — the menu row is offered in the home section
  *  alone, its copy speaks of that section ("while <name> is folded"), and a pin the user set under a
  *  section that a drag or a rename later makes the home again is theirs until they clear it there
- *  (round 4 of the 2026-09-06 review: an on that replaced every entry silently dropped a pin set
- *  under another section, and the row's copy had promised a per-section preference). */
+ *  (an on that replaced every entry silently dropped a pin set under another section, and the row's
+ *  copy had promised a per-section preference). */
 export function setPinned(st: TabGroupsState, sec: SectionRef, sid: string, on: boolean): TabGroupsState {
   const pinned = st.pinned.filter((p) => !(p.sid === sid && pinNames(sec, p)));
   if (on && sec.name !== null) pinned.push(pinEntry(sec, sid));
@@ -249,9 +249,9 @@ export function togglePinned(st: TabGroupsState, sec: SectionRef, sid: string): 
  *  page loaded during an outage never had them) or have not reached it yet, and its tags left the blob
  *  or stand cached, none of which is a session's end. The entries wait for the host's tabs, and the
  *  next pin write after that judges them for real
- *  (round 5 of the 2026-09-06 review: a pin click while a host was detached dropped every pin on its
- *  sessions, and they folded away on the reattach with no gesture on them; round 6: the same click in
- *  the seconds between a host's attach or a page load and its tab list's arrival did the same).
+ *  (a pin click while a host was detached dropped every pin on its sessions, and they folded away on
+ *  the reattach with no gesture on them; the same click in the seconds between a host's attach or a
+ *  page load and its tab list's arrival did the same).
  *  On the WRITE path only (the pin row's click): a prune there moves nothing on screen, where a prune
  *  per render could act on a transient frame (a views blob mid-write, a reattached host's tags one
  *  supervisor pass behind its tabs) and put a tab away with no gesture. Returns `st` itself when
@@ -287,8 +287,8 @@ export interface RouterHosts { hosts?: () => string[]; down?: () => string[]; pe
  *  their tab list in hand (not `pending` — the router's set of attached hosts whose tabOrder has not
  *  reached the pane: the seconds after a page load or an attach, or a stretch where the relay socket
  *  never opens while the kernel's tunnel probe answers). A host in that set is up and lists sessions,
- *  and none of them is a known tab here yet — judged, every pin on its sessions would drop (round 6 of
- *  the 2026-09-06 review). A detached host's sessions left the strip with it, and a down host's never
+ *  and none of them is a known tab here yet — judged, every pin on its sessions would drop. A
+ *  detached host's sessions left the strip with it, and a down host's never
  *  arrived on a page loaded during the outage; none of this is a session's end, so their pins stand
  *  until the host's tabs are here. No router → no remote host: every sid is local there, and local sids
  *  are always judged. */
@@ -375,8 +375,8 @@ function storeSeqs(unions: readonly TagUnion[], views: SessionViews | null | und
  *  renames against ITS OWN held blob, so a pane adopting a frame late (a background tab whose socket
  *  redialed, a stale base coalescing several frames) computes the rename the first pane followed and,
  *  following it again, would undo what the user did in between — a pin turned off after the split —
- *  or split a pin made after the rename; the rename was the event, and it was acted on (round 5 of the
- *  2026-09-06 review). The memory is the RENAME's, not a frame's: a remote host's rename rides the
+ *  or split a pin made after the rename; the rename was the event, and it was acted on. The memory
+ *  is the RENAME's, not a frame's: a remote host's rename rides the
  *  local blob (remoteTags, the kernel's cached read of the host) with no change to the blob's write
  *  seq, so no seq could name it; and a tag renamed back and then forth again is followed each time,
  *  each being to a name the memory does not hold for it. Every rename the frame carries is remembered,
@@ -387,7 +387,7 @@ function storeSeqs(unions: readonly TagUnion[], views: SessionViews | null | und
  *  detach pops the host's cached read (a DOWN host's stays), and a reattach's tabs can run ahead of it
  *  (prunePinned's limits) — since the blob cannot say whether the tag is gone or the host is, and a
  *  rename followed in that window would otherwise erase the memory of the host's renames, for a stale
- *  pane to re-apply one after the reattach (round 6 of the 2026-09-06 review). A deleted tag's entry
+ *  pane to re-apply one after the reattach. A deleted tag's entry
  *  goes: a local id the store lacks, or a remote id its host lists without. And a tag the blob names by
  *  ANOTHER name was renamed on while no client watched (the page closed; the host detached; a pane's
  *  socket dead across two renames), and its entry is a rename this browser OWES: the memory says where
@@ -397,18 +397,18 @@ function storeSeqs(unions: readonly TagUnion[], views: SessionViews | null | und
  *  memory is re-stamped. Kept as it was, the memory read the tag's next rename to the remembered name
  *  as already followed: a remote tag renamed web → api (followed), back to web while its host was
  *  detached, and to api again after the user pinned the tab under web kept the pin under web, and the
- *  tab folded away with no gesture on it (round 7). Dropped without the carry, it left the pin where
+ *  tab folded away with no gesture on it. Dropped without the carry, it left the pin where
  *  the late pane could not find it: a pane whose held blob predated two renames (web → api, watched by
  *  another pane, which carried the pin to api; then api → ops) computed the coalesced web → ops,
  *  matched nothing under web, and stamped ops — and the watching pane's api → ops then read as already
- *  followed, the pin still under api and the tab folded away (round 8). The frame's own renames
+ *  followed, the pin still under api and the tab folded away. The frame's own renames
  *  re-stamp the memory after the check (a rename the frame itself carries from the remembered name is
  *  followed once), so a watched rename away from the remembered name is remembered under its new one.
  *  Returns `st` itself when every rename is already followed, or stood down, and the memory stands —
  *  the late pane writes nothing and notifies no one; a stale entry's drop alone is a write, pins
  *  untouched.
  *
- *  THE EVIDENCE ORDER (round 9): each memory entry is stamped with the write seq of its tag's STORE as
+ *  THE EVIDENCE ORDER: each memory entry is stamped with the write seq of its tag's STORE as
  *  the adopted blob carried it (`followedSeq`) — the blob's own `seq` for a local tag; for a remote
  *  host's tag the host's own, which the kernel carries on each remoteTag row (a remote rename rides the
  *  local blob with no change to the local seq, so the host's is the seq that orders it) — and a blob
@@ -531,7 +531,7 @@ function newerThanMemory(st: TabGroupsState, unions: readonly TagUnion[], views:
  *  memory check, under the stores' seqs (followTagRenames). `unions` are `next`'s, passed when the
  *  caller has them.
  *
- *  THE SHORTCUT (round 9 of the 2026-09-06 review): the memory was checked against those very names when
+ *  THE SHORTCUT: the memory was checked against those very names when
  *  the held blob was adopted, and what has changed since is the memory, by another pane's hand, from a
  *  blob this pane has not seen. Such a blob is the held one re-emitted — the federation router re-emits
  *  its stored blob on a view-order storage event from any pane, a remote host's push, a `closed` frame or
@@ -542,7 +542,7 @@ function newerThanMemory(st: TabGroupsState, unions: readonly TagUnion[], views:
  *  adoption carried it forward again: the pin moved twice per trigger on no new information, for as long
  *  as the stale pane stayed stale.
  *
- *  ITS EXCEPTION (round 10): a blob naming every tag as the held one does can still be NEWER than the
+ *  ITS EXCEPTION: a blob naming every tag as the held one does can still be NEWER than the
  *  memory. Two panes hold api for a remote tag; one's socket dies; the host renames api → ops and the
  *  other pane carries the pin (memory ops, stamped at the host's seq), then closes; the host renames
  *  ops → api; the first pane redials and adopts that blob. The names are the held ones and the blob is
@@ -553,7 +553,7 @@ function newerThanMemory(st: TabGroupsState, unions: readonly TagUnion[], views:
  *  disagrees with the blob's name for its tag AND the blob's seq for that store is strictly past the
  *  stamp; the check then runs, and the seqs order it. An unstamped entry keeps the shortcut — no blob is
  *  known newer than it, and a stale pane's re-emitted blob from a host that stamps no seq would otherwise
- *  carry the pin back, the round-9 flap — and so does a blob at or below the stamp, which the check would
+ *  carry the pin back, the re-adoption flap — and so does a blob at or below the stamp, which the check would
  *  stand down on that tag regardless (rule (b), followTagRenames). */
 export function followAdoption(st: TabGroupsState, prev: SessionViews | null | undefined, next: SessionViews,
                                unions: readonly TagUnion[] = viewTagUnion(next)): TabGroupsState {

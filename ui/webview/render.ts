@@ -38,7 +38,7 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, prunePinned, reachableFrom, headWords,
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, setPinned, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem } from "./tab-groups";
 import { snapshotModel, snapshotHeading, rowWords, type SnapModel, type SnapRow } from "./tab-snapshot";
 import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
@@ -68,6 +68,7 @@ import { insertAtCaret } from "./composer-insert";
 import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
 import { MENTION_MAX_ROWS, mentionQuery, rankMentions, mentionMoreNote, mentionToken, insertMention, mentionKeyAction, mentionSegments } from "./composer-mention";
 import type { MentionCandidate, MentionQuery } from "./composer-mention";
+import { activeTabToReannounce } from "./relay-active";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
@@ -639,15 +640,15 @@ function effViews(): SessionViews | null { return pendingSessionViews ?? session
 // visible fact rather than a flicker nobody can explain. The last ignored blob is KEPT (and let go
 // by the next adoption): a kernel restarted over a store restored from an older copy serves it under
 // the old seq, so its connect push is turned away here — and the caps frame that follows it, naming
-// that push's seq, is the event that adopts it (rounds 6 and 7 of the 2026-09-05 review; capsAdopts).
+// that push's seq, is the event that adopts it (the 2026-09-05 review; capsAdopts).
 // When that push carried no blob to keep (a sentinel cycle sends no tabOrder), the caps frame's
 // viewsSeq is instead REMEMBERED as the kernel's announced store (announcedViewsSeq), and the later
-// blob carrying exactly that seq — the pusher's next frame — is adopted below the held one (round 8 of
-// the review; announcedSeq). The slot clears when an adoption CHANGES the held blob, never on a
+// blob carrying exactly that seq — the pusher's next frame — is adopted below the held one
+// (announcedSeq). The slot clears when an adoption CHANGES the held blob, never on a
 // re-arrival of the blob already held: in the browser this pane sees the local blob only through the
 // federation router, which replays its stored blob on every merged re-emit (a remote host's push, a
 // `closed` frame, a view-order storage event, a host drop), and a slot spent on one of those missed
-// the restored store the router adopted and re-emitted next (round 9; announcedAfter).
+// the restored store the router adopted and re-emitted next (announcedAfter).
 function takeViews(v: SessionViews | null | undefined): boolean {
   if (!v) return false;
   if (adoptViews(sessionViews, v, announcedViewsSeq)) { announcedViewsSeq = announcedAfter(sessionViews, v, announcedViewsSeq); adoptBase(v); rejectedViews = null; return true; }
@@ -670,14 +671,13 @@ function takeViews(v: SessionViews | null | undefined): boolean {
 // has nothing to undo here. The follow runs on EVERY adoption, renames or none: its memory of the name
 // each renamed tag's pins were last carried to is checked against the blob each time, so a tag the blob
 // names otherwise — renamed while no pane of this browser watched — has the pins under the remembered
-// name carried to the blob's, the rename this browser owes, and the memory re-stamped (rounds 7 and 8
-// of the 2026-09-06 review: kept, that memory read the tag's next rename to the name as followed;
-// dropped without the carry, a pane two renames stale stamped the last name over a pin the watching
-// pane had left under the middle one). Through followAdoption (round 9): a blob that names every tag as
-// the held one does is no news about names and moves nothing — a pane whose local socket is dead
-// re-adopts its stale blob on every router re-emit, and the check run on it carried a fresher pane's
-// follow back — and the memory is stamped with each tag's store's write seq, a blob older than the
-// stamp standing down on that tag.
+// name carried to the blob's, the rename this browser owes, and the memory re-stamped (kept, that
+// memory read the tag's next rename to the name as followed; dropped without the carry, a pane two
+// renames stale stamped the last name over a pin the watching pane had left under the middle one).
+// Through followAdoption: a blob that names every tag as the held one does is no news about names and
+// moves nothing — a pane whose local socket is dead re-adopts its stale blob on every router re-emit,
+// and the check run on it carried a fresher pane's follow back — and the memory is stamped with each
+// tag's store's write seq, a blob older than the stamp standing down on that tag.
 function adoptBase(v: SessionViews): void {
   const prev = sessionViews;
   sessionViews = v;
@@ -688,6 +688,10 @@ function adoptBase(v: SessionViews): void {
 }
 function captureViews(v: SessionViews | null) {
   takeViews(v);
+  // a copy held with NO write in flight is a remote entry's mirror alone (the Tags flyout's editUnion:
+  // the remote's edit rides the editTag wire, which is not acked here) — it shows until the next
+  // frame, whose blob carries the remote's own truth, the lifetime it had before the acks
+  if (pendingSessionViews && v && !viewsWrites.length) pendingSessionViews = null;
   // LEGACY kernels only (a blob without a write sequence comes from a kernel that acks nothing): the
   // PRE-2026-09-05 reconciliation stays for that path alone — the write's exact echo clears the copy,
   // and three silent frames yield it (with no ack ever coming, an unechoed copy would otherwise pin
@@ -731,7 +735,7 @@ function postViews(v: SessionViews, edited: string[] = []) {
 // a LENS or ORDER write — the whole blob, built from the STORE's blob (sessionViews, the last one
 // adopted) plus the fields set, never from the pending copy: a copy carrying targeted edits still
 // in flight posted them as this page's claim on those tags, and a rename the kernel had refused as
-// a duplicate landed through the next lens toggle (round 4 of the 2026-09-05 review). The pending
+// a duplicate landed through the next lens toggle (the 2026-09-05 review). The pending
 // copy the page SHOWS is the current one with the same fields applied, so in-flight edits stay
 // visible; the in-flight record keeps the fields, so a re-derivation re-applies exactly them.
 function postLens(fields: LensFields) {
@@ -754,7 +758,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
   // blob, reconciled by the legacy exact-echo clear and three-frame yield in captureViews, since no
   // ack will come. The copy already carries the gesture, so nothing else changes — except a create's
   // row: the whole blob IS the store write on this path, so the placeholder id would be persisted
-  // as-is (round 3 of the 2026-09-05 review); the row takes a client-minted `g…` id, the scheme the
+  // as-is (the 2026-09-05 review); the row takes a client-minted `g…` id, the scheme the
   // dialog's own pre-2026-09-05 create used, and the write names it as edited, which a kernel that
   // reads `edited` needs in order to tell a create from a stale copy re-creating a deleted tag.
   if (!kernelCaps.has("tagEdit")) {
@@ -773,7 +777,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 // between the write and its answer), so writes still in flight when this frame arrives are unknowable:
 // they are dropped, the copy reverts to what the kernel's frames show, and the user is told — never a
 // pinned copy faking success, never a silent revert. It is also the event that adopts the blob the
-// gate last turned away, when the frame names it (rounds 6 and 7 of the 2026-09-05 review;
+// gate last turned away, when the frame names it (the 2026-09-05 review;
 // capsAdopts): the kernel sends its connect push before this frame and `viewsSeq` is the seq of the
 // views blob that push served, so a push a restarted kernel served under an OLDER seq (a store
 // restored while it was down) was rejected a frame ago and is adopted here, the gate re-arming at its
@@ -782,7 +786,7 @@ function postTagEdit(nv: SessionViews, edit: TagEditOp, newId?: string) {
 // seq the frame does not name and is discarded. When nothing kept matches, `viewsSeq` (a number: the
 // served blob's seq, or the store's current seq when the push carried no views frame — a sentinel
 // cycle) is remembered as the kernel's announced store, and takeViews adopts the later blob that
-// carries it even below the held seq (round 8 of the review; announcedSeq) — the slot is one per
+// carries it even below the held seq (the review; announcedSeq) — the slot is one per
 // store, overwritten by each caps frame, cleared by the next adoption that changes the held blob
 // (announcedAfter); null (no store at all) and a
 // missing field announce nothing. A write in flight is dropped whatever the base became: its ack
@@ -829,7 +833,7 @@ function onViewsAck(m: ViewsAck) {
   renderTabs();
 }
 // The Tags flyout's New tag… input, while the flyout is open: DISABLED while a create is in flight
-// (round 3 of the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
+// (the 2026-09-05 review: a second Enter before the ack made a second tag), re-armed in
 // place by the ack — never by rebuilding the flyout, which would throw away text typed meanwhile.
 let tagsFlyNewInput: HTMLInputElement | null = null;
 function syncNewTagInput() {
@@ -5288,7 +5292,7 @@ function releaseTabStrip(): void {
 // loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
 // the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
 // member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
-// To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
+// To assistive tech (checked against a real accessibility tree): the chevron,
 // the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
 // name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
 // flag's when it wears them), so nothing runs into it unplanned; the flag's phrase rides it on purpose —
@@ -6319,6 +6323,9 @@ function showTabMenu(e: MouseEvent, id: string) {
       // land in pendingSessionViews so the flyout reads true instantly. Echoed remoteTags are
       // DERIVED — the kernel drops them from the echo — so mutating the copy is presentation-only;
       // the remote's own next push is the durable truth (a refused edit re-appears there).
+      // The local store's half is a TARGETED op by the tag's stored id (postTagEdit), never the
+      // whole blob: posted whole from the un-echoed copy, a second gesture in a burst was judged
+      // stale against the page's own first write and refused (2026-09-05).
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
       postUnionEdits(nv, applyUnionEdit(nv, g, edit));
     };
@@ -6329,8 +6336,8 @@ function showTabMenu(e: MouseEvent, id: string) {
       let mirrored = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
       // a union whose local tag is a create still in flight (`pending`) takes no op: its id is the
-      // placeholder the ack replaces, and the kernel would refuse it as a tag that does not exist
-      // (round 4 of the 2026-09-05 review). The rows below offer no gesture on it either.
+      // placeholder the ack replaces, and the kernel would refuse it as a tag that does not exist.
+      // The rows below offer no gesture on it either.
       if (edit.add?.length) {
         if (g.localId && !g.pending) {
           const t = viewTags(nv).find((x) => x.id === g.localId);
@@ -6363,8 +6370,8 @@ function showTabMenu(e: MouseEvent, id: string) {
     };
     // the writes for one gesture: N targeted ops, the ONE optimistic copy shown for all of them (the
     // kernel applies them in order on this socket, so the strip never shows a half-moved state). A
-    // remote-only edit has no local op: its mirror shows until the next frame — remoteTags are not
-    // in the echo key, so that frame clears it — exactly the lifetime it had before.
+    // remote-only edit has no local op: its mirror shows until the next frame (captureViews lets a
+    // copy with no write in flight go on any frame) — exactly the lifetime it had before.
     const postUnionEdits = (nv: SessionViews, ...edits: UnionEdit[]) => {
       const ops = edits.flatMap((e) => e.ops);
       if (ops.length) { for (const op of ops) postTagEdit(nv, op); }
@@ -6373,8 +6380,8 @@ function showTabMenu(e: MouseEvent, id: string) {
     // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
     // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state.
     // With both tags local it is ONE `move` op the kernel applies under its lock, both halves or
-    // neither (the 2026-09-05 review: as two ops, a refused second half left the session in no
-    // group). A half with no local home rides its own wire (editTag) as before.
+    // neither (as two ops, a refused second half left the session in no group). A half with no
+    // local home rides its own wire (editTag) as before.
     const moveUnion = (from: TagUnion, to: TagUnion) => {
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
       const a = applyUnionEdit(nv, to, { add: [id] });
@@ -6412,8 +6419,8 @@ function showTabMenu(e: MouseEvent, id: string) {
           row.appendChild(bodyE);
           if (g.pending) {
             // a create still in flight: the row shows, and takes no gesture until the ack names the
-            // tag (round 4 of the 2026-09-05 review: a ✕ here posted the placeholder id and was
-            // refused as a tag that does not exist) — the same "creating…" the input reads
+            // tag (a ✕ here posted the placeholder id and was refused as a tag that does not exist)
+            // — the same "creating…" the input reads
             const busy = el("span", "ctx-item-sub"); busy.textContent = "creating…"; row.appendChild(busy);
             sub.appendChild(row);
             continue;
@@ -6482,7 +6489,8 @@ function showTabMenu(e: MouseEvent, id: string) {
           sb2.textContent = on ? `stays on the strip while ${home.name} is folded` : `keep this tab on the strip while ${home.name} is folded`;
           bodyE.appendChild(sb2);
           row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(togglePinned(tabGroups(), sec, id), unionFor(), knownTabIds(), reachableHosts())); build(); });
+          // the click SETS the state this row showed (!on): a toggle would flip whatever a re-render stored between the render and the click
+          row.addEventListener("click", (e2) => { e2.stopPropagation(); writeTabGroups(prunePinned(setPinned(tabGroups(), sec, id, !on), unionFor(), knownTabIds(), reachableHosts())); build(); });
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
@@ -7257,15 +7265,15 @@ function pickerBackendChoice(): string {
 }
 
 // the backends whose create takes `tags`: the kernel applies parent/tags on an SDK or a Codex create
-// (the tag store keys on the registry sid; the Codex arm has taken them since the upstream fold's
-// round 2), and a tmux create takes none — a terminal session's id is unknown until it starts, so the
-// kernel refuses tags on one. One predicate for the Tags row's state and for the create handler's
-// payload, so the two cannot disagree about which backend a chip is for.
+// (the tag store keys on the registry sid, not the backend), and a tmux create takes none — a
+// terminal session's id is unknown until it starts, so the kernel refuses tags on one. One predicate
+// for the Tags row's state and for the create handler's payload, so the two cannot disagree about
+// which backend a chip is for.
 function backendTakesTags(be: string): boolean { return be === "sdk" || be === "codex"; }
 
 // the Tags row is for SDK and Codex sessions (tab groups, 2026-09-04): on the tmux pick the row stays
-// in place but disabled behind a short note, and the create handler sends no `tags`. Before this a
-// chip prefilled from a tagged active tab turned every terminal create into a refusal.
+// in place but disabled behind a short note, and the create handler sends no `tags`. Without this a
+// chip prefilled from a tagged active tab turns every terminal create into a refusal.
 function syncPickerTags(): void {
   const wrap = document.querySelector("#picker .picker-tags") as HTMLElement | null;
   if (!wrap) return;
@@ -7570,7 +7578,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     beWrap.append(beLabel, mkBe("sdk", "SDK", "Runs via the Claude Agent SDK."),   // not "headless" — same full chat UI (the user 2026-07-12)
                   mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."),   // SDK first — the de-facto default (the user 2026-07-02)
                   mkBe("codex", "Codex", "Runs an OpenAI Codex agent (the host needs romp-codex-setup + codex login)."));
-    // the billing and Tags rows exist only for SDK sessions — re-decide on every backend toggle
+    // the billing row exists only for SDK sessions, the Tags row only for backends whose create takes
+    // tags (backendTakesTags) — re-decide both on every backend toggle
     beWrap.addEventListener("click", () => { syncPickerAuth(); syncPickerTags(); });
     // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
     // offers both; with ONE real choice the same spot writes it out as plain text (the user
@@ -7597,7 +7606,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // (openPicker below), hidden with no tags to offer and in pick-mode. SDK and Codex sessions
     // (backendTakesTags): on the tmux pick the chips disable behind a note and no `tags` ride the
     // create (syncPickerTags) — the kernel refuses tags on a terminal create, and a prefilled chip
-    // used to turn one into a refusal.
+    // would turn one into a refusal.
     const tgWrap = el("div", "picker-backend picker-tags");
     const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
     tgWrap.appendChild(tgLabel);
@@ -13642,12 +13651,28 @@ function reshipPendingUploads(hosts?: readonly string[]): void {
     }
   }
 }
-window.addEventListener("romp:wsup", () => reshipPendingUploads());
+window.addEventListener("romp:wsup", () => {
+  reshipPendingUploads();
+  // …and the LOCAL kernel's active tab (the twin of the relay re-arm below; review fold, T246): the shim's
+  // redial carries ?active= from the PERSISTED activeId, which a dismissal's fallback and a sole-tab adoption
+  // change without setActive — so a restarted local kernel could key a tab the user had left and serve the
+  // one they are looking at as a background tab. The live activeId is re-announced on the socket's open.
+  if (activeTabToReannounce(activeId, "")) notifyActive();
+});
 // federation dispatches this on a host relay socket (re)connect — the exact event that makes that
 // host's owed acks reachable again; the detail names the host, so only its entries re-ship
 window.addEventListener("romp:hostRelayUp", (e) => {
   const h = String((((e as CustomEvent).detail || {}) as any).host || "");
   if (h) reshipPendingUploads([h]);
+  // …and the tab this pane is LOOKING AT, when that host owns it (T246, the user 2026-09-07): the relay's
+  // open is the moment the remote kernel holds a FRESH client for this pane — after that kernel restarted,
+  // one with no active tab at all. Its pusher keys only a client's active tab on the live change key (the
+  // backend's stream, its queue, the snapshot row); every other session is served from the file-stat
+  // cache, so the session the user was watching streamed nothing until their next send moved a file
+  // input. The pane shim's local socket re-arms the LOCAL kernel with its ?active= connect hint on every
+  // dial; the relay has no hint, so the same fact is re-sent here as the activeTab message every tab
+  // switch sends (notifyActive; routeOutbound strips the host prefix). Decision in relay-active.ts.
+  if (activeTabToReannounce(activeId, h)) notifyActive();
 });
 
 // Sids whose SEND is HELD until every pending ship acks (the user 2026-08-16: sending mid-upload
@@ -15150,15 +15175,15 @@ listenForFrames(perfFrameHandler("chat", (m) => vscodeApi?.postMessage(m), (e: M
     revealSelfPane();   // every focus is someone jumping HERE — on mobile, come forward (incl. from a remote kernel)
     closingTabs.delete(m.id);   // an explicit reveal outranks a pending close-suppression: closing a tab and
     //                             reopening it from the picker inside the ack window must show it at once
-    // a create naming a RUNNING session is answered by this focus, never by a new session (see
-    // resolveProvisionalToExisting): the pending tab is done — retire it before the switch below, so the
-    // real tab is what stays active, and a warn that follows finds no create pending and toasts
-    if (focusResolvesProvisional(m.id, sessions.get(m.id)?.name, pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
     // …and outranks the persisted-tab restore (the user 2026-09-06, on the phone): a push tap's focus is
     // delivered on this pane's ready, BEFORE any remote host has relayed its sessions — so when the tab
     // this page last showed was a remote one, its later arrival matched wantActive and setActive'd
     // itself straight over the reveal. A reveal is newer information than where the page last was.
     wantActive = null;
+    // a create naming a RUNNING session is answered by this focus, never by a new session (see
+    // resolveProvisionalToExisting): the pending tab is done — retire it before the switch below, so the
+    // real tab is what stays active, and a warn that follows finds no create pending and toasts
+    if (focusResolvesProvisional(m.id, sessions.get(m.id)?.name, pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
     if (revivePending && m.id === revivePending) clearReviveLoader();   // the revive landed — the loader's success event
     assertPeekFor(m.id);   // an out-of-view focus peeks even on the already-active fast path below (setActive is skipped there)
     // `live` (the user 2026-07-08): land on the LIVE TAIL. A blocked card's picker/permission prompt IS the

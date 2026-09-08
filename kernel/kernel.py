@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
+import contextlib, json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -3282,28 +3282,39 @@ def _fire_debt_reminder(sid, now, alive_ids):
     """Send the reminder for every not-yet-reminded ask this session owes; True when one went out. The
     per-ask dedup key (asker>debtor:ts) makes this once-per-ask-EVER — escalation past an ignored
     reminder belongs to the sender's card (the nudge-failed ladder), not to repeat reminders.
-    Records AFTER the send, so a failed send retries (_mark_auto_nudged's direction) — and the record
-    write RE-READS the blob fresh under _NUDGE_LOCK and mutates only debtNudged, the key this writer
-    owns. The old shape held a pre-send snapshot across the live send and wrote the whole blob back:
-    last-writer-wins over every key, so it erased whatever a concurrent writer landed in the gap —
-    including _compact_suggest_tick's claim-before-send latch, which re-opened the double send the
-    claim exists to close (2026-09-01)."""
+    Records BEFORE the send and sends only when the record landed (review find, 2026-09-08, the nudge
+    fire site's rule: it recorded after, so a failed send would retry, but a record the writer refused
+    on a full disk let an unrecorded reminder out again every tick), and the record write RE-READS the
+    blob fresh under _NUDGE_LOCK and mutates only debtNudged, the key this writer owns. The old shape
+    held a pre-send snapshot across the live send and wrote the whole blob back: last-writer-wins over
+    every key, so it erased whatever a concurrent writer landed in the gap, including
+    _compact_suggest_tick's claim-before-send latch, which re-opened the double send the claim exists
+    to close (2026-09-01)."""
     asks = _debt_asks(sid, alive_ids)
     if not asks:
         return False
-    dn0 = _auto_nudge_data().get("debtNudged") or {}
+    snap = _auto_nudge_data()
+    if snap.get(UNPROVED):
+        return False                                   # the record write would be refused → an unrecorded
+        #                                                reminder re-fires every tick; the tick is paused anyway
+    dn0 = snap.get("debtNudged") or {}
     due = [(asker, name, ts, kind, head) for asker, name, ts, kind, head in asks
            if ("%s>%s:%d" % (asker, sid, ts)) not in dn0]
     if not due:
         return False
+    try:
+        with _NUDGE_LOCK:
+            d = dict(_auto_nudge_data())
+            dn = dict(d.get("debtNudged") or {})
+            for asker, _n, ts, _k, _h in due:
+                dn["%s>%s:%d" % (asker, sid, ts)] = int(now)
+            d["debtNudged"] = dn
+            landed = _write_auto_nudge(d)
+    except OSError:
+        landed = False                                 # said once per fault episode by the writer
+    if not landed:
+        return False                                   # nothing sent whose record could not land
     Sessions.backend_for(sid).send(sid, _debt_reminder_body([(n, t, k, h) for _a, n, t, k, h in due]))
-    with _NUDGE_LOCK:
-        d = dict(_auto_nudge_data())
-        dn = dict(d.get("debtNudged") or {})
-        for asker, _n, ts, _k, _h in due:
-            dn["%s>%s:%d" % (asker, sid, ts)] = int(now)
-        d["debtNudged"] = dn
-        _write_auto_nudge(d)
     return True
 
 
@@ -4117,7 +4128,7 @@ _views_lock = threading.Lock()   # read-modify-write on the views blob from hand
 # reader's re-stamp of a file it found changed under it (_timeline_views), serialized together, so
 # a re-stamp is judged against the file as it is at that moment and can never land over an edit
 # written in between, and no writer's blob, judged against the store before a re-stamp, lands over
-# the re-stamp (round 6 of the 2026-09-05 review: the door judged outside this lock and took it for
+# the re-stamp (the 2026-09-05 review: the door judged outside this lock and took it for
 # the write alone). Re-entrant: the judge's own read of the store may re-stamp the file, taking it
 # again on the same thread. Readers never take _views_lock (a plain Lock a locked writer already
 # holds when it reads), so the order is always _views_lock → _views_file_lock and nothing waits
@@ -4155,8 +4166,8 @@ _LENS_SURFACES = ("chat", "timeline", "outline")   # per-surface selections (the
 
 
 def _tag_name_basis(n):
-    """The STORED spelling of a tag name — clamped to _VIEWS_MAX_NAME, then stripped (round 5 of the
-    2026-09-05 review gave the tag rows this basis; round 6 gives it to every name-keyed field). A
+    """The STORED spelling of a tag name — clamped to _VIEWS_MAX_NAME, then stripped (the
+    2026-09-05 review gave the tag rows this basis; then every name-keyed field). A
     lens entry or an order entry read on any other basis names nothing: a store that already held a
     padded twin ("web " beside "web") read both rows as "web" on the first post-upgrade read while
     its lens and order still carried "web ", so the surface filtered to it showed no session and the
@@ -4206,9 +4217,9 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     junk quietly, clamps sizes, and falls back active→"all" when the named tag does not exist.
     `tag_cap` bounds the tag list (the store's cap by default); the write door reads a posted blob
     under a wider bound so ITS cap pass can refuse the excess with a reason instead of this slice
-    dropping a posted create in silence (round 6 of the 2026-09-05 review), and whatever a blob
+    dropping a posted create in silence (the 2026-09-05 review), and whatever a blob
     carries past the bound is listed by _views_unread, so the door and the reader's re-stamp can
-    say what this slice left unread (round 7).
+    say what this slice left unread.
     "all" and "untagged" are the two built-in sentinels; "untagged" must pass the whitelist below,
     or a picked untagged view silently reverts on the next read (the client's optimistic hold makes
     that failure read as flicker three pushes later, not as an error).
@@ -4231,7 +4242,7 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
     # echoed hidden array is tolerated and dropped; _timeline_views migrated existing entries into
     # the "archived" tag once. Nothing hides from All anymore: that is All's meaning now.)
     tags = []
-    seen = set()   # ids are addresses: a blob carrying one id twice reads as the first entry (round 4 of the 2026-09-05 review)
+    seen = set()   # ids are addresses: a blob carrying one id twice reads as the first entry (the 2026-09-05 review)
     raw = d.get("tags") if isinstance(d.get("tags"), list) else d.get("groups")
     for g in _lst(raw)[:tag_cap]:
         if not isinstance(g, dict) or not g.get("id") or not isinstance(g.get("id"), str):
@@ -4241,7 +4252,7 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
         seen.add(g["id"][:64])
         members = [m for m in (_member_pair(x) for x in _lst(g.get("members"))) if m]
         dedup = {(m["host"], m["sid"]): m for m in members}
-        # the NAME BASIS (round 5 of the 2026-09-05 review): clamped to _VIEWS_MAX_NAME and stripped,
+        # the NAME BASIS (the 2026-09-05 review): clamped to _VIEWS_MAX_NAME and stripped,
         # the spelling the targeted door already gives a rename (_edit_tag) — a whole-blob write
         # carrying "web " beside "web" passed the door's collision pass as two names and the store
         # held a padded twin every name-keyed surface showed as one. Empty after the strip → "tag".
@@ -4308,7 +4319,7 @@ def _norm_timeline_views(d, tag_cap=_VIEWS_MAX_TAGS):
 def _views_unread(d, kept):
     """The tag entries of a blob that a normalization under a bound left UNREAD — every entry carrying
     a valid id that none of the `kept` (normalized) tags has — as (id, name, member count) triples in
-    array order, one per id (round 7 of the 2026-09-05 review). The write door lists them in the ack
+    array order, one per id (the 2026-09-05 review). The write door lists them in the ack
     as refusal rows and the reader's re-stamp names them in a notice; neither stores them. Until now
     the normalizer's slice was the one place a posted tag could vanish with nothing said: the door
     reads a blob under twice the cap, and a client whose `edited` named only ids past that bound was
@@ -4333,14 +4344,14 @@ def _views_unread(d, kept):
 
 
 _VIEWS_RESTAMP_ERR = [None]   # the last OSError the reader's re-stamp write hit, as text — one stderr line per distinct error
-# The highest seq this kernel has served or written (round 5 of the 2026-09-05 review), kept apart
+# The highest seq this kernel has served or written (the 2026-09-05 review), kept apart
 # from the read cache: a store read as MISSING forgets its cache entry (rightly — a file that then
 # appears must not be judged against a store that no longer exists), and with it forgot the seq
 # floor, so a file restored from an older copy was served under its old seq and every dashboard
 # holding a higher one ignored it until the next kernel write. The floor outlives the entry: a
 # recreated file whose seq fell behind it is re-stamped past it (ordered, not judged), and every
 # write orders past it. Set wherever a blob is cached (_views_cache_put); never lowered. KEYED BY
-# STORE PATH like the read cache (round 6 of the 2026-09-05 review): one process can serve more
+# STORE PATH like the read cache (the 2026-09-05 review): one process can serve more
 # than one state dir (a test suite; a kernel rebound to another root), and a floor shared across
 # them made a cold read of a small-seq file in a fresh state dir a re-stamp write, ordered past
 # another store's seq. The live kernel has one store, so one entry.
@@ -4405,7 +4416,7 @@ def _timeline_views():
         # is the file's OWN content for the migration and the first stamp: those order the file
         # (its seq moves past the last one this kernel served or wrote, the floor) without judging
         # it — the stale-writer guard rules on dashboard writes at the door. A write outside the
-        # kernel whose seq fell behind is the exception (round 4 of the 2026-09-05 review): the
+        # kernel whose seq fell behind is the exception (the 2026-09-05 review): the
         # writer held an older copy by its own seq, so the guard judges the file against the LAST
         # SERVED blob (the cache entry it missed against) — a tag it deleted since is not brought
         # back, a member added since is not lost, and each refusal is reported (the setter's
@@ -4425,7 +4436,7 @@ def _timeline_views():
             hit2 = _flags_cache.get(str(p))
             if hit2 is not None and hit2[0] == key:
                 # The same file state, served and cached by a reader that held the lock while this one
-                # waited (round 9 of the 2026-09-05 review): the failed-write path below caches the
+                # waited (the 2026-09-05 review): the failed-write path below caches the
                 # served blob under the file's UNCHANGED key — a write that never reached its replace
                 # leaves the stat alone — so the re-check above could not tell that read had happened,
                 # and two cold readers racing on a full disk each judged the file, each failed the
@@ -4440,7 +4451,7 @@ def _timeline_views():
             base = hit[1] if (judge and hit is not None) else _norm_timeline_views(d)
             lost = []
             if not judge:
-                # The file's OWN content, under the DISK cap (round 7 of the 2026-09-05 review): the
+                # The file's OWN content, under the DISK cap (the 2026-09-05 review): the
                 # migration and the first stamp are reads, not writes, and the door's wider read
                 # bound is for a dashboard's posted creates — read through it, a file holding more
                 # than the cap had its excess (the migration's appended "archived" tag first) judged
@@ -4461,7 +4472,7 @@ def _timeline_views():
                 # No dashboard wrote this — the file itself was over the cap (an edit outside the
                 # kernel, or a kernel from before the cap that held 32 tags plus hidden entries,
                 # which the migration's archived tag then puts over). Said once, as a fact about the
-                # file, whether or not the stamp below lands (round 8 of the 2026-09-05 review: it
+                # file, whether or not the stamp below lands (the 2026-09-05 review: it
                 # was said only after a successful write, so an unwritable store served the capped
                 # blob in silence and the next RMW write, built from that cache, made the drop
                 # permanent with nothing ever said). Cause and count first, the dropped tags after,
@@ -4494,7 +4505,7 @@ def _timeline_views():
                 # hit, not another failing write — and the failure is logged once per distinct
                 # error (a full disk would otherwise log on every read). The next write that
                 # succeeds clears the note, so a recurrence is logged again. WHICH blob: the JUDGED
-                # one when the file was judged (round 5 of the 2026-09-05 review — serving the file
+                # one when the file was judged (the 2026-09-05 review — serving the file
                 # as read served the foreign copy the judgment had just refused, cached it, and
                 # the next RMW write, built from that cache, persisted it: the deleted tag back,
                 # the newer member gone); the file as read, unstamped, for the migration and the
@@ -4534,7 +4545,7 @@ def _timeline_views():
 
 def _views_stamp_legacy_tags(tags, d):
     """Every tag of a file going through the first-read stamp or the migration is given an mtime if
-    it lacks one — the file's `at` (the last write the store recorded), else now (round 5 of the
+    it lacks one — the file's `at` (the last write the store recorded), else now (the
     2026-09-05 review). The mtime is the one mark that tells a tag a store once held from a client's
     own create in a write the kernel cannot otherwise judge (the `foreign` rule in
     _judge_timeline_views: an unknown tag carrying one existed in a store and is not re-created). The
@@ -4563,15 +4574,14 @@ def _views_restamp(d, hit):
       needs-you machinery carries anything that matters. Minted only when hidden entries exist;
       idempotent (the write drops the hidden key, so the next read has nothing to migrate). The
       archived tag is appended LAST, so a store already at the cap loses it to the disk cap when
-      the reader stamps the file — named in the reader's notice as a fact about the file (round 7
-      of the 2026-09-05 review), never dropped in silence.
+      the reader stamps the file — named in the reader's notice as a fact about the file (the 2026-09-05 review), never dropped in silence.
     - A STORE WITHOUT A WRITE SEQUENCE (every install upgrading to the 2026-09-05 stamp): served
       seq-less, it would leave every client on the null rule — adopt anything — until the first
       write, so the seq gate could not protect that first write against a frame the pusher built
       before it. Stamped once, on the first read; a store that does not exist stays unstamped (the
       null rule is right for a deleted or recreated store, which starts past what any client holds
       on its first write).
-    - A WRITE OUTSIDE THE KERNEL whose seq fell BEHIND the last one served (round 3 of the
+    - A WRITE OUTSIDE THE KERNEL whose seq fell BEHIND the last one served (the
       2026-09-05 review): the timeline's Electron branch writes the file itself with the seq it
       holds, and a panel holding an older frame publishes a seq lower than what every dashboard
       holds — they would all ignore the file until the next kernel write. `hit` is the cache entry
@@ -4582,21 +4592,21 @@ def _views_restamp(d, hit):
       the stale-writer guard against that last served blob, since by its own seq the writer held
       an older copy than the store.
     - A FILE THAT APPEARED with a seq behind the last one served and NO cache entry to judge it
-      against (round 5 of the 2026-09-05 review): a store read as missing forgets its entry, so a
+      against (the 2026-09-05 review): a store read as missing forgets its entry, so a
       file restored from an older copy would be served under its old seq and ignored by every
       dashboard holding a higher one. The seq floor outlives the entry (_VIEWS_SEQ_FLOOR), and the
       file is re-stamped past it, as written — ordered, not judged.
     Returns (why, dict-to-write, judge). The dict is a COPY: `d` is also the diff base the migration
-    is stamped against, and mutating its tag dicts in place (the aliasing bug of round 3) left the
+    is stamped against, and mutating its tag dicts in place (an earlier aliasing bug) left the
     base already migrated — an existing "archived" tag gained its members with no fresh mtime, and
     a whole-blob post from a dashboard holding the pre-migration copy stripped them again with no
-    refusal (round 4 of the 2026-09-05 review)."""
+    refusal (the 2026-09-05 review)."""
     hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x]
     if hid:
         d2 = json.loads(json.dumps(d))                     # a parsed file: the round trip is a deep copy
         raw = d2.get("tags") if isinstance(d2.get("tags"), list) else (d2.get("groups") if isinstance(d2.get("groups"), list) else [])
         tags = [t for t in raw if isinstance(t, dict)]
-        # on the STORED basis (round 8 of the 2026-09-05 review): the file's raw spelling can be padded
+        # on the STORED basis (the 2026-09-05 review): the file's raw spelling can be padded
         # ("archived "), which the normalizer reads as "archived" — compared raw, the lookup missed it,
         # a second archived tag was minted, the door's collision pass refused that one, and the hidden
         # entries migrated into nothing
@@ -4622,7 +4632,7 @@ def _views_restamp(d, hit):
     floor = _views_seq_floor()                     # this store's own floor (the reader reads _views_path())
     if hit is None and floor and seq < floor:
         # no served blob to judge against (the store was read as missing, or the cache is cold),
-        # but a floor to order past (round 5 of the 2026-09-05 review): a file restored from an
+        # but a floor to order past (the 2026-09-05 review): a file restored from an
         # older copy is re-stamped past the last seq this kernel served, as written — every
         # dashboard holding that seq adopts it, where under its own seq they all ignored it
         return ("a file with seq %d appeared behind the last served %d" % (seq, floor)), d, False
@@ -4640,9 +4650,9 @@ def _set_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=None)
     """The views store's ONE write door: judge the blob against the store (_judge_timeline_views —
     the stale-writer guard, the `edited` bound, the name-collision pass, the stamps), then write
     what stands (_write_timeline_views). Returns the refused rows. The judgment is a separate step
-    (round 5 of the 2026-09-05 review) so the reader's re-stamp can serve the JUDGED blob when the
+    (the 2026-09-05 review) so the reader's re-stamp can serve the JUDGED blob when the
     write itself fails: serving the file as read served, cached, and let the next write persist, the
-    foreign copy the judgment had refused. Both steps run under _views_file_lock (round 6 of the
+    foreign copy the judgment had refused. Both steps run under _views_file_lock (the
     2026-09-05 review): the reader's re-stamp holds that lock across its own judge and write, but this
     door took it for the write alone, so a re-stamp landing between the judge here and the write here
     was written over by a blob judged against the pre-re-stamp store — the foreign write's lens
@@ -4674,7 +4684,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
     # a writer whose evidence predates newer information stands down (the cards-move corollary).
     # The stamp rides /views to every peer for free. Set when a tag changes — and once for every tag
-    # a legacy store holds, when its first read stamps it (_views_stamp_legacy_tags, round 5 of the
+    # a legacy store holds, when its first read stamps it (_views_stamp_legacy_tags, the
     # 2026-09-05 review), so every stored tag carries one; a client echoing a blob without mtimes
     # merely resets the field, which reads as "no newer information" — the safe direction.
     # `base` — the previous blob to diff against, when the caller already holds it: the reader's
@@ -4682,24 +4692,23 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # find the same un-stamped file and re-enter the reader; `seq_floor` is the last seq that path
     # served, so the re-stamped file orders after it. Every other caller leaves both alone.
     # `edited` — the WS door's whole-blob path passes the tag ids the posting client CHANGED; None
-    # from every other caller and from an older client. It bounds what the write may change (round 5
-    # of the 2026-09-05 review): an EMPTY list is a lens or order write and changes NO tag — the
+    # from every other caller and from an older client. It bounds what the write may change (the 2026-09-05 review): an EMPTY list is a lens or order write and changes NO tag — the
     # store's tags stand whole, whatever tags the blob carries, and only its other fields land; a
     # list of ids may change those tags only, and a differing copy of any other tag is the store's
-    # to keep, quietly (the ack lists it, nothing is said to the user — round 3: the benign case
+    # to keep, quietly (the ack lists it, nothing is said to the user — before this change the benign case
     # still filed a red "reload that dashboard" notice); a kept tag the poster DID edit is a LOST
-    # EDIT (the notice below fires, the ack is not ok). Until round 5 the empty list was judged like
+    # EDIT (the notice below fires, the ack is not ok). Before this change the empty list was judged like
     # any whole blob, by the second-resolution `at` stamp, so a lens write built from a copy taken in
     # the same second as a targeted edit reverted it (the rename undone, the create deleted, the
     # member lost) with nothing said.
     # `foreign` — set by the reader's re-stamp of a file written OUTSIDE the kernel whose seq fell
-    # behind the last served blob (round 4 of the 2026-09-05 review), as the words the notice uses
+    # behind the last served blob (the 2026-09-05 review), as the words the notice uses
     # for the writer. Such a write carries no `edited`, so its unknown tags are judged by the one
     # mark only the kernel puts on a tag: an mtime. A tag the store lacks that carries one existed
     # in a store once — the writer's copy of a tag deleted since — and is not re-created; one
     # without is the writer's own create (a client-minted row) and lands.
     # `writer` — the words the loud notice below uses for the writer when it is not a dashboard and
-    # not a foreign file: the reader's re-stamp of the file's own content (round 7 of the 2026-09-05
+    # not a foreign file: the reader's re-stamp of the file's own content (the 2026-09-05
     # review — its refusals, when the cap pass fired on a file over the cap, were filed as "a stale
     # dashboard write ... reload that dashboard", on a read, blaming a dashboard that wrote nothing).
     # Separate from `foreign` on purpose: `foreign` is also the judging mode for unknown tags above,
@@ -4747,14 +4756,14 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # reached stderr and the sync notices but never the client that needed to revert).
     lens_only = ed is not None and not ed
     if lens_only:
-        # A LENS OR ORDER WRITE (round 5 of the 2026-09-05 review): `edited` is an empty list, the
+        # A LENS OR ORDER WRITE (the 2026-09-05 review): `edited` is an empty list, the
         # client's word that it changed no tag — so no tag changes. The store's tags stand whole,
         # mtimes with them, whatever tags the blob carries; the write's other fields (the lenses,
         # the order, the active) land below. Nothing to judge, nothing to log: this is the normal
         # lens path. The judged path below is for a write that names the tags it changed, or for a
         # writer that cannot say (an older client, a file written outside the kernel).
         kept = [json.loads(json.dumps(pt)) for pt in prev.values()]
-        # …in the write's ORDER (round 6 of the 2026-09-05 review): the array order is an order
+        # …in the write's ORDER (the 2026-09-05 review): the array order is an order
         # field, this write's to set like `tagOrder` itself — the pill drag's contract is that the
         # stored array reads in the dragged order too, since a reader without this kernel's tagOrder
         # (a peer's dashboard, whose own order lacks these names) falls back to the array. Until now
@@ -4768,7 +4777,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         if pt is None and ((ed is not None and t["id"] not in ed) or (ed is None and foreign and t.get("mtime"))):
             # A tag the store does not have, from a client that says it did not create it: the
             # client's copy predates a DELETION made elsewhere, and posting the whole blob would
-            # re-create the deleted tag (round 3 of the 2026-09-05 review — the guard refused a
+            # re-create the deleted tag (the 2026-09-05 review — the guard refused a
             # stale deletion but not a stale resurrection; only with `edited` can the two creates
             # be told apart: a legacy-path create names its new id there). Kept OUT, with a reason
             # the ack carries; a write without `edited` keeps the old reading (every unknown tag
@@ -4782,10 +4791,10 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         same = pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) == \
             (t.get("name"), t.get("color"), t.get("members"))
         if not same and ed is not None and t["id"] not in ed:
-            # A differing copy of a tag this write did not claim to edit (round 5): the change is
+            # A differing copy of a tag this write did not claim to edit: the change is
             # not the client's, whatever the stamps say — the same-second race the empty list
             # closes above would otherwise land it here too. The store's copy stands, quietly, under
-            # a label that carries its cause like every other (round 9 of the 2026-09-05 review: this
+            # a label that carries its cause like every other (the 2026-09-05 review: this
             # was the one bare label, beside "(deletion)" and "(unread)" on the quiet stderr line).
             refused.append(('"%s" (differing copy)' % pt.get("name"), t["id"]))
             rows.append({"tid": t["id"], "name": pt.get("name"),
@@ -4793,7 +4802,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
                                    "so the store's copy was kept"})
             kept.append(json.loads(json.dumps(pt)))
         elif not same and pt.get("mtime") and int(pt["mtime"]) > ev:
-            # the label carries its cause like every other (round 8 of the 2026-09-05 review): the
+            # the label carries its cause like every other (the 2026-09-05 review): the
             # loud notice no longer spells the causes out — it puts the count and the remedy first and
             # the labels after, as many as fit the served text, so each label must say why on its own
             refused.append(('"%s" (stale copy)' % pt.get("name"), t["id"]))
@@ -4807,13 +4816,13 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             kept.append(t)
     more, more_ed = 0, 0
     for k, (tid, nm, _n) in enumerate([] if lens_only else unread):
-        # PAST THE DOOR'S BOUND (round 7 of the 2026-09-05 review): an entry the normalizer's slice
+        # PAST THE DOOR'S BOUND (the 2026-09-05 review): an entry the normalizer's slice
         # left unread is neither a create nor a deletion — it was not read. A store tag whose copy
         # fell past the bound is KEPT (its absence from `incoming` would have read as a deletion
         # below); anything else is not created. Each gets a row, so a client whose `edited` names
         # only ids past the bound is acked not-ok with the reason, where it was acked ok with a
         # blob missing its own creates. Rows only, never stored — the bound stands.
-        # ROWS ARE BOUNDED to `bound` of them (round 8 of the 2026-09-05 review): the rows, the loud
+        # ROWS ARE BOUNDED to `bound` of them (the 2026-09-05 review): the rows, the loud
         # notice and the ack's `error` were O(N) in the posted array, so a 100k-entry post (a client
         # bug, or any page holding the socket) drew a ~22 MB ack that overran WS_QUEUE_BYTES and
         # dropped the poster's own socket before the ack was queued. Every unread store tag is still
@@ -4841,7 +4850,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
                          "reason": "a write is read to %d tags and it was past that bound, "
                                    "so it was not created" % bound})
     if more:
-        # the reason is self-contained (round 10 of the 2026-09-05 review): since round 9 this row can
+        # the reason is self-contained (the 2026-09-05 review): since the 2026-09-05 review this row can
         # LEAD the ack's error line, where a continuation clause ("and N more ... past that bound")
         # continued nothing and named a bound the reader had not been told
         rows.append({"reason": "%d more entries past the %d-tag read bound were not read%s"
@@ -4851,7 +4860,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         if tid in incoming:
             continue
         if ed is not None and tid not in ed:
-            # absent from a write that did not claim to edit it (round 5): not a deletion the
+            # absent from a write that did not claim to edit it: not a deletion the
             # client made, so not one — the store's copy stands, quietly
             refused.append(('"%s" (deletion)' % pt.get("name"), tid))
             rows.append({"tid": tid, "name": pt.get("name"),
@@ -4862,7 +4871,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
             rows.append({"tid": tid, "name": pt.get("name"),
                          "reason": "it was edited after your copy was taken, so it was not deleted"})
             kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
-    # NAME COLLISIONS (round 4 of the 2026-09-05 review): a whole-blob write can carry a tag
+    # NAME COLLISIONS (the 2026-09-05 review): a whole-blob write can carry a tag
     # renamed to, or created under, a name another tag in the resulting set already has — the
     # verifier's reproduction was a lens write built from a dialog's pending copy, still carrying
     # a rename the targeted op had refused as a duplicate; the door let it through and the store
@@ -4872,12 +4881,12 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     # whose name is already claimed is refused with a reason naming the collision — a renamed tag
     # stands as the store has it, a new one is kept out. Two unchanged tags sharing a name (a
     # store already holding twins) are left as they are: nothing in this write changed them.
-    # Run to a FIXPOINT (round 5 of the 2026-09-05 review): `settled` holds the names this write
+    # Run to a FIXPOINT (the 2026-09-05 review): `settled` holds the names this write
     # does not change — a tag's stored name it keeps, and, after a refusal, the stored name a
     # renamed tag returns to; `takers` are the tags whose resulting name is new to them (renamed
     # or created), in array order. A taker whose name is settled, or granted to an earlier taker,
     # is refused; a refused RENAME settles its stored name and the pass runs again from the top,
-    # so a taker that had been granted that very name is refused too. Until round 5 the pass ran
+    # so a taker that had been granted that very name is refused too. Before this change the pass ran
     # once and a refused rename never claimed the name it kept: B (api → web, refused against A =
     # web) stood as "api" while a new C named "api" in the same write landed beside it — twins.
     # Each pass either refuses one taker or ends, so the loop is bounded by the taker count.
@@ -4911,7 +4920,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         else:
             del by_id[struck]                               # a new tag under a taken name is kept out
     stands = [by_id[t["id"]] for t in kept if t["id"] in by_id]
-    # THE CAP (round 6 of the 2026-09-05 review): the set that stands can exceed _VIEWS_MAX_TAGS when
+    # THE CAP (the 2026-09-05 review): the set that stands can exceed _VIEWS_MAX_TAGS when
     # the store's kept copies join the blob's tags — the store-only keeps sit at the END of `kept`
     # (blob order first), so a slice here dropped exactly the tag the ack had just said was kept,
     # and the client's own create took its place, acked ok. A kept store tag always survives: the
@@ -4930,7 +4939,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
         rows.append({"tid": t["id"], "name": t.get("name"),
                      "reason": "the views blob caps at %d tags, so it was not created" % _VIEWS_MAX_TAGS})
     v["tags"] = stands
-    # `active` is validated against the tags that STAND, not the blob's (round 6 of the 2026-09-05
+    # `active` is validated against the tags that STAND, not the blob's (the 2026-09-05
     # review): the normalizer checked it against the posted set, so a stale copy whose active named
     # a tag deleted since — kept out above, or standing aside for the store's set under an empty
     # `edited` — stored a dangling id; every read re-normalized it to "all", so nothing showed, but
@@ -4954,8 +4963,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
     if loud_n:
         # The sentence names the writer — a foreign file's panel, the reader's own re-stamp (`writer`,
         # nothing to reload: no dashboard wrote it), else a dashboard — and puts the count and the
-        # remedy FIRST, the refused tags after, as many as fit the served notice (_notice_list). Round
-        # 8 of the 2026-09-05 review: the remedy sat last, after one label per tag and a clause
+        # remedy FIRST, the refused tags after, as many as fit the served notice (_notice_list). The 2026-09-05 review: the remedy sat last, after one label per tag and a clause
         # spelling out every cause, and the dashboard's bell cut it away; each label now carries its
         # own cause instead, and the ack's rows carry the reasons in full.
         remedy = ("reload the panel that wrote it to resync" if foreign
@@ -5002,7 +5010,7 @@ def _judge_timeline_views(blob, base=None, seq_floor=0, edited=None, foreign=Non
 def _views_cache_refresh(text):
     """After a write of the views store: the read cache holds the blob just written, keyed on the
     file's new (mtime, size), so the very next read — the ack's blob, the pusher's frame — is this
-    write and never a stale hit (2026-09-05 round 3: the (mtime, size) key was never invalidated on
+    write and never a stale hit (2026-09-05 review: the (mtime, size) key was never invalidated on
     write, and the kernel's mtime clock is coarse, so two same-size writes a few ms apart shared a
     key and the second's ack could serve the first's blob). Replacing the entry rather than popping
     it keeps the LAST blob this kernel wrote or served in the cache, which is what the reader
@@ -5111,7 +5119,7 @@ def _queue_pending_tag_edit(host, body):
     for its (host, name) and refuses later ones (the delete already rules); removes merge; a
     rename replaces a prior rename. Only ATTACHED hosts queue — a detached host has no reattach
     event coming, and detach was its own intent."""
-    # the NAME BASIS (round 7 of the 2026-09-05 review): the row's name is matched against the
+    # the NAME BASIS (the 2026-09-05 review): the row's name is matched against the
     # host's tag names at capture and at late-apply, and joined to the rendered row for the
     # pending badge — every one of those is on the stored basis, so the row is too
     name = _tag_name_basis(body.get("name"))
@@ -5183,9 +5191,9 @@ def _apply_pending_tag_edits(r):
                     pending=len(rows))
         return 0
     # the reading lands as the supervisor's does: a CHANGED one marks the views dirty and wakes the pusher
-    # whatever the rows below decide. Stored bare, a change seen only here went unmarked (round 8 of the
-    # 2026-09-06 tab-groups review): with rows pending and every forward failing nothing retires, and
-    # this re-read stamps the poll gate, so the pass's own poll serves the cache and never sees it.
+    # whatever the rows below decide. Stored bare, a change seen only here went unmarked: with rows
+    # pending and every forward failing nothing retires, and this re-read stamps the poll gate, so the
+    # pass's own poll serves the cache and never sees it.
     _cache_remote_views(r, rv)
     by_name = {}                                 # keyed on the name basis: the host's raw name may be padded
     for t in (rv.get("tags") or []):
@@ -5267,15 +5275,14 @@ def _views_client():
         # the host's OWN store's write seq, on every row of its tags: a remote rename rides this kernel's
         # blob with no change to the local `seq`, so a client ordering what a blob says about a remote
         # tag (tab-groups.ts followTagRenames — a pane stands down on evidence older than its memory's)
-        # needs the host's; an older host that stamps none puts none on the row (round 9 of the
-        # 2026-09-06 tab-groups review)
+        # needs the host's; an older host that stamps none puts none on the row
         hseq = rv.get("seq")
         hseq = int(hseq) if isinstance(hseq, int) and not isinstance(hseq, bool) and hseq > 0 else None
         for t in (rv.get("tags") or [])[:_VIEWS_MAX_TAGS]:
             if not isinstance(t, dict) or not t.get("id"):
                 continue
             members = [m for m in (_member_pair(x) for x in (t.get("members") or [])) if m]
-            # the NAME BASIS (round 7 of the 2026-09-05 review): an older remote build, or a padded
+            # the NAME BASIS (the 2026-09-05 review): an older remote build, or a padded
             # remote store, serves "web " raw; rendered raw, no lens entry (all on the basis) could
             # pick it and the union kept it apart from a local "web" — see _tag_name_basis
             row = {"id": host + ":" + str(t["id"])[:64], "host": host,
@@ -5451,7 +5458,7 @@ def _edit_tag(name=None, add=(), remove=(), color=None, delete=False, rename=Non
     default (_default_tag_name). Returns (tag-or-None, error-or-None); the returned row is the
     post-normalize one, so a create's caller learns the minted id and name from it."""
     # Clamp the name into the STORED basis before the lookup: the normalizer clamps names to
-    # _VIEWS_MAX_NAME and strips them on write (round 5 of the 2026-09-05 review), so matching on
+    # _VIEWS_MAX_NAME and strips them on write (the 2026-09-05 review), so matching on
     # the raw name would miss the stored tag and mint an unaddressable same-named duplicate on every
     # subsequent edit. A name that is empty after the strip is no name: a create takes the default.
     name = (str(name)[:_VIEWS_MAX_NAME].strip() or None) if name is not None else None
@@ -5633,9 +5640,9 @@ def _ack_views_write(client, kind, write_id, ok, error=None, refused=None, info=
         # then its name-free reason. An ok ack with refusals listed (stale copies of tags the client
         # did not edit) carries no `error` — there is nothing to tell the user.
         if not ok:
-            # bounded (round 8 of the 2026-09-05 review — it was one entry per row, O(N) in the posted
+            # bounded (the 2026-09-05 review — it was one entry per row, O(N) in the posted
             # array); a row without a name (the past-the-bound summary) is its reason alone.
-            # THE POSTER'S OWN ROWS FIRST (round 9 of the same review): the judge appends the quiet rows
+            # THE POSTER'S OWN ROWS FIRST (the same review): the judge appends the quiet rows
             # (copies of tags the poster did not edit, acked ok on their own) before the cap pass, so
             # in judge order the bound cut the one row that made `ok` false — a refused create behind
             # eight quiet rows — and the toast named only refusals the user never made. With `edited`,
@@ -7669,8 +7676,10 @@ def _setting_stale(name, gt, applied_gt):
     alone left the refusing kernel's verdict invisible to the dashboard that made the gesture
     (the open gear kept showing the refused pick, and with the mesh AGREEING on the kept value
     the mixed marks showed nothing). Every check clears the previous verdict first, so a popped
-    notice is always the CURRENT call's."""
+    notice is always the CURRENT call's — the refused-write verdict (_note_refused_gesture) included,
+    so a setter called outside a WS arm (nothing pops there) never leaves one for an unrelated gesture."""
     _stale_seen.last = None
+    _stale_seen.refused = None
     if gt is None or gt > applied_gt:
         return False
     _stale_seen.last = {"setting": name, "storedGt": applied_gt, "gt": gt}
@@ -7701,6 +7710,32 @@ def _pop_stale_notice():
     return d
 
 
+def _note_refused_gesture(name, gt, enabled, snap, why=None):
+    """A gt-gated toggle's write was REFUSED because its ledger read was unproved (the snapshot carries
+    UNPROVED — the file could not be read, so the writer would not persist a copy of it). Recorded on this
+    thread the way _setting_stale records a stand-down, so the WS branch that delivered the gesture can tell
+    its own socket (_tell_stale_gesture). Silent, the refusal was the defect's other face: the gear flips
+    its checkbox locally and re-fills only on reopen, so the box read OFF while the kernel held ON — and once
+    the file healed, ON is what ran. A different notice from the stale one on purpose: nothing about
+    ordering is claimed, and the frame names the fault. `known` says whether a kept value can be NAMED at
+    all: the tagged copy is the last snapshot this process proved (its last read or its own last write)
+    only when one is cached; otherwise it is the default, and the frame must not present that as kept.
+    `why` given: the WRITE itself failed (the snapshot was proved; the publish raised) — the same frame, the
+    fault named, and `write` set so the reply files no second error-center row: the writer already filed the
+    episode's one (the maintainer's fold on PR #1019: a refused write is told, once per episode)."""
+    _stale_seen.refused = {"setting": name, "gt": gt, "refused": "on" if enabled else "off",
+                           "why": str(why or snap.get(UNPROVED) or "the ledger could not be read"),
+                           "write": why is not None,
+                           "known": str(jd.STATE / "auto-nudge.json") in _autonudge_cache}   # kept: None → the
+    #                                                                                gear drops "Keeping …"
+
+
+def _pop_refused_notice():
+    d = getattr(_stale_seen, "refused", None)
+    _stale_seen.refused = None
+    return d
+
+
 # ONE lock for every gt-gated setting's read-check-write span (2026-08-29): the stores read the
 # stamp, check _setting_stale, then write, on a ThreadingHTTPServer — with no lock, two
 # near-simultaneous flushes of one setting (two dashboards flushing on a host's recovery) could
@@ -7726,27 +7761,234 @@ _SETTINGS_LOCK = threading.RLock()
 _NUDGE_LOCK = threading.RLock()
 
 
-def _auto_nudge_data():
-    p = jd.STATE / "auto-nudge.json"
+# ── the two automatic ledgers: a snapshot is PROVED, or it says it is not (2026-09-07) ───────────
+# auto-nudge.json and retry-suppressed.json are each read by ONE reader and written by ONE writer, with
+# many read-modify-write sites between them (`d = dict(reader()); d[k] = v; writer(d)`). Both readers
+# used to answer ANY fault with the fresh-install default — a stat or read error, bytes that did not
+# parse — and cache that answer under the file's real stat key, so the next writer persisted it: one
+# EIO on a tick and every stalled goal across every session was nudged again (the dedupe map read as
+# empty), a user's auto-nudge OFF was flipped back ON, and every sibling session's "stop retrying" was
+# erased by the next interrupt. Missing is the ONLY fault that means the default: a file that is not
+# there IS the fresh-install state. Every other fault yields a snapshot the reader cannot vouch for, and
+# that snapshot carries the fault under UNPROVED, so the writer — the one choke point every RMW site
+# already funnels through — refuses to persist it, loud once per fault episode. Readers still get their
+# best view (the last snapshot this process proved, else the default) for display and gates; nothing
+# unproved is ever cached, so the file's next successful read is the episode's end — an event, not a
+# clock. Bytes that do not parse are a fault of the bytes, not of the moment: they are moved aside as
+# <file>.corrupt-<utc stamp> (evidence kept, never deleted) and the ledger then reads, truthfully, as
+# absent. The tag travels IN the snapshot because every RMW site copies it with dict(): a flag beside
+# the cache would not survive the copy, and a per-path "last read failed" bit races a sibling thread's
+# proved read.
+UNPROVED = "_unproved"                 # snapshot tag → the fault text; never a key a ledger stores
+_LEDGER_REPLACED = "replaced meanwhile; the new bytes get their own read"   # _ledger_quarantine's decline when
+#                                        the file is no longer the one whose bytes failed: the reader re-reads
+_ledger_fault_warned = {}              # what -> fault the reader already shouted; cleared by a proved read
+_ledger_refusal_warned = {}            # what -> fault the writer already shouted; cleared by a proved write
+_ledger_write_failed = {}              # what -> the WRITE fault the writer already shouted; cleared only by a
+#                                        landed write (a proved read ends a read episode, not a write one)
+
+
+def _ledger_read(p, cache, default, what, normalize=None, lock=None, _tries=3):
+    """FOUR-STATE read of a small JSON ledger. Absent → default() (uncached: the fresh-install arm, byte for
+    byte the old behavior); readable and a JSON object → the dict (normalize applied), cached under its
+    stat key; bytes that do not parse → moved aside (_ledger_quarantine), then default(); any other stat
+    or read fault → a COPY of the last cached snapshot (else default()) tagged UNPROVED, nothing cached.
+    `lock` is the ledger's WRITER lock, held across the quarantine only, never across the read (readers run
+    unlocked on several threads by design); see _ledger_quarantine for the window it closes.
+    The stat comes BEFORE the read so the quarantine can tell whether the file it is about to move is still
+    the one whose bytes failed; when a peer's atomic publish replaced it meanwhile, the quarantine declines
+    and THEIR bytes get their own read here, bounded by `_tries` — the shape the goal store's reader wears
+    (the maintainer's fold on PR #1019). Only a file that keeps changing under every read ends unproved."""
     try:
-        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
-    except OSError:
-        return {"enabled": True, "nudged": {}}
-    hit = _autonudge_cache.get(str(p))
+        st = p.stat()
+    except FileNotFoundError:
+        return _ledger_proved(what, default())
+    except OSError as e:
+        return _ledger_unproved(p, cache, default, what, "stat failed: %s" % _oserror_text(e))
+    key = (st.st_mtime_ns, st.st_size)
+    hit = cache.get(str(p))
     if hit is not None and hit[0] == key:
-        return hit[1]
+        return _ledger_proved(what, hit[1])
+    reason = None                          # set when the bytes were read whole and are not a ledger
     try:
-        d = json.loads(p.read_text())
-        if not isinstance(d, dict):
-            d = {}
+        raw = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _ledger_proved(what, default())   # removed between the stat and the read: absent
+    except OSError as e:
+        return _ledger_unproved(p, cache, default, what, "read failed: %s" % _oserror_text(e))
+    except UnicodeError as e:
+        reason = "not UTF-8: %s" % e
+    if reason is None:
+        try:
+            d = json.loads(raw)
+        except Exception as e:             # json.JSONDecodeError is a ValueError
+            reason = "invalid JSON: %s" % e
+        else:
+            if not isinstance(d, dict):
+                reason = "top-level JSON value is %s, not an object" % type(d).__name__
+    if reason is not None:                 # the bytes' fault, not the moment's: move them aside
+        with (lock if lock is not None else contextlib.nullcontext()):
+            why = _ledger_quarantine(p, st, what, reason)
+        if why is None:
+            return _ledger_proved(what, default())
+        if why == _LEDGER_REPLACED and _tries > 1:   # a peer published since our stat: read what is there now
+            return _ledger_read(p, cache, default, what, normalize, lock=lock, _tries=_tries - 1)
+        return _ledger_unproved(p, cache, default, what, "%s (%s)" % (reason, why))
+    if normalize is not None:
+        normalize(d)
+    cache[str(p)] = (key, d)
+    return _ledger_proved(what, d)
+
+
+def _ledger_proved(what, d):
+    """A PROVED state — a readable object, or absence (the fresh-install state) — ends the fault episode
+    for both once-per-episode registries, the reader's and the writer's, so the next fault shouts again
+    even when the episode ended with reads alone (a write-only reset left the writer's registry armed
+    across a read-healed episode: a repeat fault with the same text then refused silently)."""
+    _ledger_fault_warned.pop(what, None)
+    _ledger_refusal_warned.pop(what, None)
+    return d
+
+
+def _ledger_unproved(p, cache, default, what, fault):
+    """The snapshot a fault leaves: a copy of the last one this process proved (else the default), tagged
+    with the fault so the writer refuses it. One stderr line per fault episode — keyed on the fault text,
+    never on the tick — so a disk that stays broken says so once and a different fault says so again."""
+    hit = cache.get(str(p))
+    if _ledger_fault_warned.get(what) != fault:
+        _ledger_fault_warned[what] = fault
+        sys.stderr.write("%s: %s is unreadable (%s) — serving %s; nothing is written to it until it "
+                         "reads again\n" % (what, p.name, fault,
+                                            "the last snapshot this kernel proved" if hit is not None
+                                            else "the default (no proved snapshot yet)"))
+    d = dict(hit[1]) if hit is not None else default()
+    d[UNPROVED] = fault
+    return d
+
+
+def _oserror_text(e):
+    """errno + strerror ONLY — never str(e): that names the path(s), and a quarantine destination or a
+    write's temp file carries a per-second stamp or a per-call sequence, so a text built from it changed
+    on every fault and every once-per-fault-text dedupe fired every time. The reader's stat/read faults
+    wear it too (review find, 2026-09-08): their text rides the settingStale frame's `why` and the error
+    center, and an absolute state path has no business there."""
+    return ("[Errno %d] %s" % (e.errno, e.strerror)) if getattr(e, "errno", None) is not None else type(e).__name__
+
+
+def _ledger_quarantine(p, st, what, reason):
+    """Move an unparseable ledger ASIDE (never delete it) so the evidence survives the fresh start that
+    follows: the sidecar keeps the original name plus `.corrupt-<utc stamp>` (a `-n` suffix for a second in
+    the same second): the state dir's one sidecar convention for bytes moved aside (docs/reference.md,
+    "Where things live"; a goal-store quarantine proposed alongside in #1019 wears the same shape).
+    Only while the file is still the one whose bytes failed (same inode, mtime and size as `st`, the stat the
+    reader took BEFORE its read) — an atomic publish since then already replaced them, and the new file gets
+    its own read (_LEDGER_REPLACED: _ledger_read re-reads, bounded). That check and the rename are one
+    step ONLY under the ledger's writer lock, which _ledger_read holds around this call (review find,
+    2026-09-08): readers run unlocked on several threads, and two that read the same corrupt bytes both
+    arrive here with the same stat; between the first one's rename and a writer's fresh publish, the
+    second's check has already passed, so its rename moved the FRESH ledger aside and served the default.
+    Every writer publishes under that lock (the 2026-09-01 write discipline), so a reader holding it sees
+    either the file it read (and moves it) or a replacement (and yields). Returns None once the bytes are
+    out of the way (moved, or already gone: a sibling reader moved them), said once on stderr AND in the
+    error center; else the reason they are NOT, for the caller's fault text, which _ledger_unproved
+    dedupes per episode, so a corrupt file that cannot be moved (a read-only state dir) is said once, never
+    once per read."""
+    try:
+        cur = p.stat()
+        if (cur.st_ino, cur.st_mtime_ns, cur.st_size) != (st.st_ino, st.st_mtime_ns, st.st_size):
+            return _LEDGER_REPLACED
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        aside, n = p.with_name("%s.corrupt-%s" % (p.name, stamp)), 0
+        while aside.exists():                            # a second corrupt file in the same second
+            n += 1
+            aside = p.with_name("%s.corrupt-%s-%d" % (p.name, stamp, n))
+        os.replace(p, aside)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        return "could not be moved aside: %s" % _errno_text(e)   # stamp-free: _errno_text (#1020's helper, the same shape)
+    # Both channels, one line (review find, 2026-09-08): stderr alone left the user with a ledger that read
+    # as a fresh install (an explicit auto-nudge OFF back ON, every session's stop-retrying gone) and
+    # nothing in the dashboard saying so. Once per corrupt file by construction: the next read finds it
+    # absent, and the unmovable arm above never reaches here (its text rides the deduped fault instead).
+    line = ("%s: %s could not be parsed (%s); moved aside to %s and reads as a fresh install (its settings "
+            "and records are gone) until you restore it from that file" % (what, p.name, reason, aside.name))
+    sys.stderr.write(line + "\n")
+    _sdk_problem(line)
+    return None
+
+
+def _ledger_write_proved(p, what, d, cache, normalize=None):
+    """The ONE choke point every RMW site of a ledger funnels through: persist `d` — unless it descends from
+    an unproved snapshot (it carries UNPROVED), then refuse, one stderr line per fault episode, and return
+    False; the file keeps whatever it holds. Persisting that snapshot IS the erase-everything bug: the copy
+    a fault leaves is the default or a stale last-known-good, never the file's current contents. An OSError
+    from the write itself propagates as before (callers that own a gesture catch it and say so).
+    A write that lands is a PROVED state: it ends the fault episode and refreshes the cache with what the
+    file now holds (read back under its stat key), so "the last snapshot this process proved" — what a
+    later fault serves, what a refused gesture names as kept — includes this kernel's own last write, not
+    just its last read. Best-effort: a read-back that fails leaves the cache as it was.
+    The WRITE step is a fault boundary too (the maintainer's fold on PR #1019, for the goal store's saves):
+    an OSError from the publish itself (ENOSPC, EROFS, EACCES) is said here ONCE per fault episode — one
+    stderr line and one error-center row, keyed on the stamp-free errno text in the writer's OWN registry
+    (_ledger_write_failed: a proved read clears the read registries, but only a landed write proves the disk
+    takes writes again) — and then re-raised, so the caller that owns a gesture answers its socket (the
+    setting toggles through _note_refused_gesture, the interrupt through its warn toast), and a tick's leg
+    that RECORDS what it sends writes the record FIRST and sends only when it landed (_auto_nudge_session,
+    _wake_goal, _fire_debt_reminder; the walk-gate journal, re-derived every tick, just waits for the next
+    one). A wrap around the tick is no boundary (review find, 2026-09-08): it hides the traceback after the
+    unrecorded message has gone out, and the next cycle sends it again. Left silent at the caller, a refused
+    write looked like one that landed."""
+    fault = d.get(UNPROVED) if isinstance(d, dict) else None
+    if fault:
+        if _ledger_refusal_warned.get(what) != fault:
+            _ledger_refusal_warned[what] = fault
+            sys.stderr.write("%s: refusing to write %s from an unproved snapshot (%s) — the file keeps what "
+                             "it holds\n" % (what, p.name, fault))
+        return False
+    try:
+        _atomic_write(p, json.dumps(d))
+    except OSError as e:
+        fault = "write failed: %s" % _errno_text(e)
+        if _ledger_write_failed.get(what) != fault:
+            _ledger_write_failed[what] = fault
+            line = ("%s: write failed for %s (%s) — the change did not land; the file keeps what it holds"
+                    % (what, p.name, _errno_text(e)))
+            sys.stderr.write(line + "\n")
+            _sdk_problem(line)                # the error center: on record once, however many gestures repeat it
+        raise
+    _ledger_write_failed.pop(what, None)     # a landed write ends the write-fault episode
+    _ledger_proved(what, None)               # a proved write ends the episode too
+    try:
+        st = p.stat()
+        back = json.loads(p.read_text(encoding="utf-8"))
+        st2 = p.stat()
+        if isinstance(back, dict) and (st.st_mtime_ns, st.st_size) == (st2.st_mtime_ns, st2.st_size):
+            if normalize is not None:
+                normalize(back)
+            cache[str(p)] = ((st.st_mtime_ns, st.st_size), back)
     except Exception:
-        d = {}
+        pass                                 # the write landed; the next read proves the file on its own
+    return True
+
+
+def _auto_nudge_default():
+    return {"enabled": True, "nudged": {}}
+
+
+def _auto_nudge_normalize(d):
     d.setdefault("enabled", True)
     d.setdefault("nudged", {})         # {gid: {count, lastTurnId}} — re-arm per stall episode (replaces the one-shot "done" list)
     d.pop("done", None)                # drop the vestigial one-shot list (old code wrote it; nothing reads it now) →
     #                                    cleaned from the file on the next write (the user via business 2026-06-22)
-    _autonudge_cache[str(p)] = (key, d)
-    return d
+
+
+def _auto_nudge_data():
+    """The auto-nudge ledger's snapshot — see the ledger block above: absent reads as the default, a fault
+    reads as the last proved snapshot tagged UNPROVED (which _write_auto_nudge refuses), bytes that do not
+    parse are moved aside. Writers copy it first (`dict(_auto_nudge_data())`); the tag rides the copy."""
+    return _ledger_read(jd.STATE / "auto-nudge.json", _autonudge_cache, _auto_nudge_default, "auto-nudge",
+                        _auto_nudge_normalize, lock=_NUDGE_LOCK)
 
 
 def _auto_nudge_on():
@@ -7840,16 +8082,23 @@ def _conserve_tick(now):
 
 
 def _write_auto_nudge(d):
-    _atomic_write(jd.STATE / "auto-nudge.json", json.dumps(d))
+    """Persist the auto-nudge ledger — the ONE writer behind every RMW site. False (loud, once per fault
+    episode) when `d` descends from an unproved snapshot: see _ledger_write_proved."""
+    return _ledger_write_proved(jd.STATE / "auto-nudge.json", "auto-nudge", d, _autonudge_cache,
+                                _auto_nudge_normalize)
 
 
 def _set_auto_nudge(enabled, gt=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
     see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
-    loud on stderr, nothing applied). The catch lives HERE, like _set_update_mode's and
-    _set_judge_state's: a raised OSError reaches the WS reader loop, which classifies it as a
-    socket failure and re-raises into a silent pass — a full-disk gear toggle tearing the whole
-    dashboard WebSocket down with zero log output."""
+    said once per fault episode by the writer, nothing applied, and the delivering socket hears
+    the refusal through _note_refused_gesture, exactly as for an unproved read), or the ledger read
+    was unproved (the writer refuses the snapshot, loud once per fault episode; nothing applied). The
+    catch lives HERE, like _set_update_mode's and _set_judge_state's: a raised OSError reaches the WS
+    reader loop, which classifies it as a socket failure and re-raises into a silent pass — a
+    full-disk gear toggle tearing the whole dashboard WebSocket down with zero log output. Catching it
+    and saying nothing was the defect's quieter face (the maintainer's fold on PR #1019: a refused
+    write must be told): the gear kept the flipped box while the kernel held the old value."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
         if _gesture_echo(gt, _gt_int(d.get("gt")), bool(d.get("enabled")) == bool(enabled)):
@@ -7859,10 +8108,12 @@ def _set_auto_nudge(enabled, gt=None):
         d["enabled"] = bool(enabled)
         d["gt"] = gt if gt is not None else int(time.time() * 1000)
         try:
-            _write_auto_nudge(d)
-        except OSError as e:
-            sys.stderr.write("setting auto-nudge: write failed (%s) — nothing applied\n" % e)
-            return None
+            if _write_auto_nudge(d) is False:           # unproved snapshot: refused at the writer, nothing
+                _note_refused_gesture("auto-nudge", gt, enabled, d)   # applied — and the socket hears it
+                return None
+        except OSError as e:                          # said once per episode by the writer; THIS gesture's
+            _note_refused_gesture("auto-nudge", gt, enabled, d, why="write failed: %s" % _errno_text(e))
+            return None                                 # refusal is answered on its socket (_tell_stale_gesture)
         return d["gt"]
 
 
@@ -7876,7 +8127,8 @@ def _compact_suggest_on():
 
 def _set_compact_suggest(enabled, gt=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down or the
-    store write failed (OSError: loud on stderr, nothing applied, nothing ticked) —
+    store write failed (OSError: said once per fault episode by the writer, nothing applied, nothing
+    ticked, and the delivering socket hears the refusal) —
     _set_auto_nudge's contract exactly (same blob, same _NUDGE_LOCK), but the
     stamp is PER SETTING (`compactSuggestGt`): the two checkboxes share a file, not a clock, so a
     queued compact-suggest flush can never stand down against a newer auto-nudge gesture or steal
@@ -7890,10 +8142,12 @@ def _set_compact_suggest(enabled, gt=None):
         d["compactSuggestEnabled"] = bool(enabled)
         d["compactSuggestGt"] = gt if gt is not None else int(time.time() * 1000)
         try:
-            _write_auto_nudge(d)
-        except OSError as e:
-            sys.stderr.write("setting compact-suggest: write failed (%s) — nothing applied\n" % e)
-            return None
+            if _write_auto_nudge(d) is False:           # unproved snapshot: refused at the writer, nothing
+                _note_refused_gesture("compact-suggest", gt, enabled, d)   # applied — and the socket hears it
+                return None
+        except OSError as e:                          # as _set_auto_nudge: the writer said it once; the
+            _note_refused_gesture("compact-suggest", gt, enabled, d, why="write failed: %s" % _errno_text(e))
+            return None                                 # socket hears this gesture's refusal
         return d["compactSuggestGt"]
 
 
@@ -9484,26 +9738,28 @@ def _lift_retry_pause(now, why, lifted_at=None):
 # STATE/retry-suppressed.json {sid: stop_ts}. A sid present = suppressed; stop_ts is the re-arm floor (only a
 # successful turn AFTER it lifts the suppression). _auto_resume_session_retry clears re-armed sids each tick.
 _retry_suppress_cache = {}   # str(path) -> ((mtime_ns,size), dict)
+_RETRY_SUPPRESS_LOCK = threading.RLock()  # the arm/clear read-modify-write span: the interrupt handler (a WS
+#                                           thread) and the pusher's re-arm sweep rewrite the same whole blob;
+#                                           unlocked, the loser's snapshot erased the winner's key. Held across
+#                                           the file read + write only, never across a backend call. Re-entrant
+#                                           because the reader takes it too, around a quarantine (_ledger_read's
+#                                           `lock`), and the arm and the clear call the reader while holding it
+#                                           (review find, 2026-09-08).
+_retry_floor_warned = set()               # (sid, type name) of a non-numeric floor already shouted
 
 
 def _retry_suppress_data():
-    p = jd.STATE / "retry-suppressed.json"
-    try:
-        stt = p.stat()
-        key = (stt.st_mtime_ns, stt.st_size)
-    except OSError:
-        return {}
-    hit = _retry_suppress_cache.get(str(p))
-    if hit and hit[0] == key:
-        return hit[1]
-    try:
-        d = json.loads(p.read_text())
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
-        d = {}
-    _retry_suppress_cache[str(p)] = (key, d)
-    return d
+    """The per-session retry-suppression ledger's snapshot — the ledger block above _auto_nudge_data: absent
+    reads as {} (nobody suppressed), a fault reads as the last proved snapshot tagged UNPROVED (which the
+    writer refuses), bytes that do not parse are moved aside."""
+    return _ledger_read(jd.STATE / "retry-suppressed.json", _retry_suppress_cache, dict, "retry-suppress",
+                        lock=_RETRY_SUPPRESS_LOCK)
+
+
+def _write_retry_suppress(d):
+    """The ONE writer behind the arm and the clear: False (loud, once per fault episode) when `d` descends
+    from an unproved snapshot — see _ledger_write_proved."""
+    return _ledger_write_proved(jd.STATE / "retry-suppressed.json", "retry-suppress", d, _retry_suppress_cache)
 
 
 def _session_retry_suppressed(sid):
@@ -9513,20 +9769,75 @@ def _session_retry_suppressed(sid):
     return str(sid) in _retry_suppress_data()
 
 
+_retry_gate_held = [None]   # the fault auto-retry is standing down on (see _retry_suppress_unknown); None = the ledger answers
+
+
+def _retry_suppress_unknown():
+    """True while the retry-suppression ledger reads UNPROVED and this process holds NO proved snapshot to
+    serve in its place: the tagged copy is then the fresh-install {} and EVERY stopped session reads as not
+    stopped, the one answer the auto-retry gate must not act on (review find, 2026-09-08: one EIO on a cold
+    kernel and auto-retry walked straight back into the session the user had interrupted to end its storm).
+    With a proved copy behind the fault the membership read is the best answer this process has (its own
+    arms refresh that copy), so the gate takes it. Unknown holds the AUTO path only (a manual Retry-now is
+    the user's explicit call and never reads this) and is said once per fault episode on stderr and in
+    the error center, the way the nudge pass's stand-down is; the first read that proves (or the first
+    proved copy) ends it: an event, not a clock."""
+    d = _retry_suppress_data()
+    fault = d.get(UNPROVED)
+    if fault and str(jd.STATE / "retry-suppressed.json") not in _retry_suppress_cache:
+        if _retry_gate_held[0] != fault:
+            _retry_gate_held[0] = fault
+            line = ("retry-suppress: retry-suppressed.json is unreadable (%s) and no proved copy is held; "
+                    "auto-retry stands down for every session, rather than resume into one you stopped, until "
+                    "it reads again" % fault)
+            sys.stderr.write(line + "\n")
+            _sdk_problem(line)
+        return True
+    if _retry_gate_held[0] is not None:
+        _retry_gate_held[0] = None
+        sys.stderr.write("retry-suppress: retry-suppressed.json answers again; auto-retry resumed\n")
+    return False
+
+
 def _suppress_session_retry(sid):
     """Arm per-session retry-suppression at NOW (the re-arm floor). Every interrupt refreshes the floor, so
-    "suppressed since your most recent interrupt" is the invariant."""
-    d = dict(_retry_suppress_data())
-    d[str(sid)] = time.time()
-    _atomic_write(jd.STATE / "retry-suppressed.json", json.dumps(d))
+    "suppressed since your most recent interrupt" is the invariant. Returns None once the suppression is on
+    disk, else ONE sentence saying why it is not — the caller is the user's stop click (the interrupt
+    handler), which toasts it: a stop that did not land must never look like one. Two ways it does not land:
+    the ledger read was unproved (the writer refuses the snapshot — persisting it erased every sibling
+    session's stop), or the write itself failed (ENOSPC — before this the OSError escaped into the WS reader
+    loop, which reads any OSError as a socket failure and tore the dashboard's connection down, with the
+    suppression neither on disk nor anywhere; the writer says a failed write once per fault episode, this
+    arm only answers the click)."""
+    with _RETRY_SUPPRESS_LOCK:
+        d = dict(_retry_suppress_data())
+        d[str(sid)] = time.time()
+        try:
+            written = _write_retry_suppress(d)
+        except OSError as e:                          # said once per episode by the writer (_ledger_write_proved)
+            why = getattr(e, "strerror", None) or str(e)
+        else:
+            if written:
+                return None
+            why = d.get(UNPROVED)
+    return ("Interrupted, but the stop could not be recorded (retry-suppressed.json: %s) — romp may retry "
+            "into this session again" % why)
 
 
 def _clear_session_retry_suppress(sid):
-    d = dict(_retry_suppress_data())
-    if d.pop(str(sid), None) is not None:
-        _atomic_write(jd.STATE / "retry-suppressed.json", json.dumps(d))
-        return True
-    return False
+    """Drop `sid`'s suppression; True when the ledger on disk changed. A refused write (an unproved snapshot)
+    or a FAILED one (an OSError from the publish, said once per fault episode by the writer) leaves the
+    suppression standing and returns False — suppressed is the safe direction while the ledger cannot be
+    read or written; the sweep retries on its next tick, and the file's next proved read or landed write is
+    the event. Left to raise, the OSError reached the pusher's wrap as a traceback every tick."""
+    with _RETRY_SUPPRESS_LOCK:
+        d = dict(_retry_suppress_data())
+        if d.pop(str(sid), None) is None:
+            return False
+        try:
+            return _write_retry_suppress(d)
+        except OSError:
+            return False
 
 
 def _auto_resume_session_retry(now, tmux):
@@ -9543,6 +9854,14 @@ def _auto_resume_session_retry(now, tmux):
     for s in _alive_sessions(now, tmux):
         sid = str(s.get("sid"))
         floor = d.get(sid)
+        if floor is not None and (isinstance(floor, bool) or not isinstance(floor, (int, float))):
+            # a hand-edited or foreign file: never a compare operand (the `<= floor` below raised TypeError
+            # into the pusher tick and the whole sweep died) — read as no floor, said once per session
+            if (sid, type(floor).__name__) not in _retry_floor_warned:
+                _retry_floor_warned.add((sid, type(floor).__name__))
+                sys.stderr.write("retry-suppress: session %s has a non-numeric floor (%r) — read as no floor; "
+                                 "nothing re-arms it until the entry is a number\n" % (sid, floor))
+            continue
         if not floor:
             continue
         path = s.get("path")
@@ -9570,7 +9889,10 @@ def _mark_auto_nudged(gid, turn_id, count, arm_atoms=None, at=None):
     failed-stamp's response-arrival gate compares against it (the 2026-07-19 network g1 race). `at` is the
     fire time — the failed-stamp's parse-lag guard measures its 6h backstop from it (the user 2026-07-24:
     a stamp raced the parse of a second, still-landing nudge turn and blocked two goals whose response
-    resolved them; the guard waits for the response segment to become VISIBLE, bounded by the backstop)."""
+    resolved them; the guard waits for the response segment to become VISIBLE, bounded by the backstop).
+    Returns the writer's verdict (True landed, False refused over an unproved snapshot) and lets a write
+    fault's OSError propagate: the fire site records BEFORE it sends and sends only on True (review find,
+    2026-09-08; see _auto_nudge_session)."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
         nudged = dict(d.get("nudged", {}))
@@ -9584,7 +9906,10 @@ def _mark_auto_nudged(gid, turn_id, count, arm_atoms=None, at=None):
         if len(nudged) > 3000:                                  # bounded; drop the oldest
             nudged = dict(list(nudged.items())[-3000:])
         d["nudged"] = nudged
-        _write_auto_nudge(d)
+        return _write_auto_nudge(d)
+
+
+_auto_nudge_drops_pending = set()   # gids whose spent-record drop was refused under a fault; replayed by the first proved pass
 
 
 def _drop_auto_nudge_rec(gid):
@@ -9599,18 +9924,34 @@ def _drop_auto_nudge_rec(gid):
     counter on every stamp↔lift flap, so the same arm turn drew fresh first-nudges minutes apart and
     _mark_nudge_failed never engaged (the 2026-08-19 audit: three count-1 nudges in 21 minutes, each
     answered "the suite is still running"). A live record keeps itself honest without our help: a
-    genuine new turn re-arms it through the arm-key dedup, and answering marks it answered."""
+    genuine new turn re-arms it through the arm-key dedup, and answering marks it answered.
+
+    A drop that CANNOT land (the ledger read was unproved, or the writer refused the snapshot) is PARKED
+    (_auto_nudge_drops_pending) and replayed by the first pass whose read proves (review find, 2026-09-08):
+    every caller runs OUTSIDE the paused nudge pass (the awaiting lift, the follow-up reopen), off an event
+    that fires once, and its goal-store write had already landed, so a refused drop left the record
+    latched with nothing to retry it, and an idle session's card sat in Working with no reviver, the very
+    hole the drop exists to close. Under a fault the tagged copy cannot say what the file holds, so the gid
+    is parked whether or not the copy shows a record; the replay reads the proved file and drops only a
+    spent record, as ever. Returns True once nothing is owed (dropped, or no spent record to drop), False
+    when parked."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
+        if d.get(UNPROVED):
+            _auto_nudge_drops_pending.add(gid)
+            return False
         nudged = dict(d.get("nudged", {}))
         rec = nudged.get(gid)
         if not isinstance(rec, dict):
-            return
+            return True
         if not (rec.get("failed") or rec.get("moot") or rec.get("answeredAt")):
-            return                                        # live mid-episode → the ladder's memory, keep it
+            return True                                   # live mid-episode → the ladder's memory, keep it
         if nudged.pop(gid, None) is not None:
             d["nudged"] = nudged
-            _write_auto_nudge(d)
+            if _write_auto_nudge(d) is False:
+                _auto_nudge_drops_pending.add(gid)
+                return False
+        return True
 
 
 def _goal_awaiting_stamp(nodes, top, children=None, answered_at=0):
@@ -9798,13 +10139,15 @@ def _mark_nudge_failed(gid, ev_t=None, wake=False):
 
 def _interrupt_focus_top(store):
     """The top-level goal the interrupt actually stopped: the session's active-focus top, if it is
-    currently working. None when there's no working focus to block (nothing owed)."""
+    currently working, or blocked SOLELY by our own interrupt row (judge._intr_paused_only: the newest
+    block-family diary state is src 'interrupt' with no later unblock), which is the same stop still
+    standing; a card a judge has blocked since is theirs. None when there's no such focus (nothing owed)."""
     nodes = store.get("nodes", {})
     x = store.get("lastNode")
     seen = set()
     while x in nodes and nodes[x].get("parentId") is not None and x not in seen:
         seen.add(x); x = nodes[x]["parentId"]
-    if x in nodes and store.get("status", {}).get(x, "working") == "working":
+    if x in nodes and (store.get("status", {}).get(x, "working") == "working" or jd._intr_paused_only(nodes[x])):
         return x
     return None
 
@@ -9835,6 +10178,14 @@ def _record_interrupt_block(sid, ev):
     if not gid:
         return None
     nd = store["nodes"][gid]
+    if nd.get("blocked"):
+        # reachable only through _intr_paused_only: OUR block already holds the card, and only its marker
+        # is owed, so the tick re-mints it (review find, 2026-09-08). The marker write can be refused after
+        # the block landed (the ledger faulted between the tick's tag check and that write), and with the
+        # marker absent and the top no longer "working" every healed tick returned None here: no marker was
+        # ever minted, the re-engagement lift (gated on the marker) could never run, and the card sat in
+        # Needs-you until a judge happened to unblock it. Nothing is appended: the diary already says it.
+        return gid
     why = jd.INTERRUPT_BLOCK_WHY      # shared constant, PROCEDURAL (see judge.procedural_block_why)
     ev = int(ev or 0)
     ceil = max((e.get("ev_t") or 0 for e in (nd.get("log") or [])
@@ -9909,7 +10260,7 @@ def _set_intr_blocked(sid, gid):
         else:
             m.pop(str(sid), None)
         d["intrBlocked"] = m
-        _write_auto_nudge(d)
+        return _write_auto_nudge(d)      # False when refused (an unproved snapshot): the caller gates on it
 
 
 def _intr_block_stands(sid, gid):
@@ -9979,6 +10330,16 @@ def _interrupt_block_tick(now, tmux):
         #                                                  stamped with (memo family: the judge parse)
         block_it = bool(turns) and not _session_working(turns) and stop_t > human_t
         if block_it:                                     # a GENUINE user stop → block the focus goal on them,
+            snap = _auto_nudge_data()
+            if snap.get(UNPROVED):
+                # the ledger cannot be read: file NO block now — its once-per-episode marker could not be
+                # minted (the writer refuses an unproved snapshot), and the lift on re-engagement is gated
+                # on that marker, so an unmarked block would stand until a judge happened to unblock it.
+                # The stop is re-evaluated from the transcript every push, so the block lands on the first
+                # tick after the file reads again. Loud once per fault episode, on the pass's latch.
+                _auto_nudge_pause(snap[UNPROVED])
+                continue
+            _auto_nudge_resume()
             ib = _intr_blocked(sid)                      # once per interrupt episode (the intrBlocked marker) —
             if ib and not _intr_block_stands(sid, ib):   # but VERIFY the marked block still holds its card (see
                 _set_intr_blocked(sid, None)             # _intr_block_stands): a stale marker is the 'already
@@ -9994,15 +10355,30 @@ def _interrupt_block_tick(now, tmux):
                                      for a in (turn.get("atoms") or [])])
                 g = _record_interrupt_block(sid, ev)
                 if g:
+                    # the block IS filed — a proved goal-store write, a needs-you flip the feed must hear —
+                    # and its writer marked the views dirty (_record_interrupt_block), so the flip reaches
+                    # the feed whatever the marker write's fate: a fault landing between the tag check above
+                    # and here refuses the marker, the next tick stands down at the check, and the first
+                    # healed tick re-mints the marker (_record_interrupt_block hands back the gid of a card
+                    # our own block already holds, appending nothing)
                     _set_intr_blocked(sid, g)
         else:                                            # working / re-engaged / machine cut → lift OUR block if any
             ib = _intr_blocked(sid)
             if ib:
                 # the re-engagement IS the newest turn's trigger — the same stamp the judges will put on
-                # every verdict about that turn, so their ruling outranks this lift on arrival order
+                # every verdict about that turn, so their ruling outranks this lift on arrival order.
+                # The lift runs whatever the ledger's state — it is the user's own re-engagement — and its
+                # writer marks the views dirty (_lift_interrupt_block); the MARKER write is what a ledger
+                # fault refuses: the marker stays in the last proved snapshot, the lift re-runs as a no-op
+                # next tick (nothing of ours left to lift, so no dirty mark), and nothing pushes every cycle.
+                # A lift that could not READ the goals store (False: its row is filed) keeps the marker
+                # too, so the next tick retries the lift rather than erasing it (the #1019 boundary)
                 if _lift_interrupt_block(sid, ib, turns[-1].get("t") if turns else 0):
-                    _set_intr_blocked(sid, None)         # spent; on a store fault the marker stays, so
-                #                                          the next tick retries the lift
+                    _set_intr_blocked(sid, None)         # spent: the marker goes (a write refused under a
+                #                                          ledger fault leaves it in the last proved snapshot;
+                #                                          the lift re-runs as a no-op next tick). On a store
+                #                                          fault (False) the marker stays, so the next tick
+                #                                          retries the lift
     _alive_sids = {s["sid"] for s in alive}
     _intr_marks_forget(_alive_sids)                     # a sid that left the alive set releases its memo entries
     _states_overlay_forget(_alive_sids)                 # and its states-overlay fold entry (perf round 4, item C3)
@@ -10482,7 +10858,8 @@ def _compact_suggest_tick(sid, tm, now):
         #                                                BOTH thresholds latch when found past both —
         #                                                one message, never two in a tick
         d["compactSuggested"] = cs
-        _write_auto_nudge(d)
+        if _write_auto_nudge(d) is False:
+            return False                               # the claim did not latch (unproved ledger): no send
     try:
         # the marker tail its sibling injectors carry (T207, the user 2026-08-31, who saw the
         # bare send render as their own blue bubble and ruled it must read system-injected):
@@ -10513,8 +10890,9 @@ def _compact_suggest_tick(sid, tm, now):
 
 # The tick is SINGLE-FLIGHT (PR #943 review): it has two concurrent entry points — the pusher's
 # periodic pass (0.5 s backstop) and the setAutoNudge / setCompactSuggest arms' act-now pass on the
-# WS handler thread — and the nudge send has no claim-before-send (_mark_auto_nudged records AFTER
-# the send so a failed send retries; _compact_suggest_tick's latch covers only its own seam), so two
+# WS handler thread, and the nudge's record is no CLAIM (_mark_auto_nudged writes it before the send
+# since 2026-09-08, but not as a compare-and-set on the arm; _compact_suggest_tick's latch covers only
+# its own seam), so two
 # passes that overlapped each derived the same due goal from the same store and injected the same
 # nudge twice into one session — reproduced from two threads at the 0.5 s cadence. A non-blocking
 # try-acquire, never a wait: the loser stands down whole, and loses nothing. The flag write precedes
@@ -10572,12 +10950,55 @@ def _ws_act_now_tick():
         sys.stderr.write("auto-nudge (ws act-now): %s\n" % traceback.format_exc())
 
 
+_auto_nudge_paused = [None]   # the fault the tick is standing down on; None = the ledger reads, nudging runs
+
+
+def _auto_nudge_pause(fault):
+    """A tick found the ledger unreadable: the nudge pass stands down WHOLE — the nudge, the wake, the
+    compaction suggestion, the debt ladder, the sweeps — and the interrupt→blocked tick files no block;
+    loudly, once per fault episode (stderr + the dashboard's bell), and never defaulted on. Every leg
+    records what it fired in this ledger, and a record the writer refuses re-fires the same message every
+    tick (the every-tick re-nudge of every stalled goal, reproduced with one EIO); the fabricated default
+    also read an explicit OFF as ON. One latch for both ticks, so a fault says so once. Resumes on the
+    first tick whose read proves (_auto_nudge_resume) — the file's next successful read is the event; there
+    is no timer."""
+    if _auto_nudge_paused[0] == fault:
+        return
+    _auto_nudge_paused[0] = fault
+    line = ("auto-nudge: auto-nudge.json is unreadable (%s) — nudging and the interrupt→blocked flip are "
+            "paused, not defaulted on, until it reads again" % fault)
+    sys.stderr.write(line + "\n")
+    _sdk_problem(line)                                    # the error center: a kernel-side fault the user can act on
+
+
+def _auto_nudge_resume():
+    if _auto_nudge_paused[0] is not None:
+        _auto_nudge_paused[0] = None
+        sys.stderr.write("auto-nudge: auto-nudge.json reads again — nudging resumed\n")
+
+
 def _auto_nudge_pass(now, tmux, run_dead_wait):
     """The body of one pass — the walk, the sweeps, the push. Only _auto_nudge_tick calls it, under
     the single-flight guard (split out the way _pusher_cycle_jobs is from _pusher_cycle). `on` is the auto-nudge toggle:
-    off, the walk runs WAKE-ONLY — the awaiting dead-man still fires (see _auto_nudge_tick)."""
+    off, the walk runs WAKE-ONLY — the awaiting dead-man still fires (see _auto_nudge_tick). An UNPROVED
+    ledger snapshot (a read fault) stands the whole pass down — see _auto_nudge_pause."""
+    snap = _auto_nudge_data()
+    if snap.get(UNPROVED):
+        _auto_nudge_pause(snap[UNPROVED])
+        return
+    _auto_nudge_resume()
+    if _auto_nudge_drops_pending:
+        # the first proved read is the event the parked drops wait on (_drop_auto_nudge_rec): a replay that
+        # lands, or finds nothing spent, leaves the set; one refused again stays for the next proved pass
+        for gid in list(_auto_nudge_drops_pending):
+            if _drop_auto_nudge_rec(gid):
+                _auto_nudge_drops_pending.discard(gid)
+        snap = _auto_nudge_data()                         # the walk below reads the ledger the replay left
+        if snap.get(UNPROVED):
+            _auto_nudge_pause(snap[UNPROVED])
+            return
     on = _auto_nudge_on()
-    nudged = dict(_auto_nudge_data().get("nudged", {}))   # {gid: {count, lastTurnId}}
+    nudged = dict(snap.get("nudged", {}))                 # {gid: {count, lastTurnId}}
     alive = list(_alive_sessions(now, tmux))
     alive_ids = {s["sid"] for s in alive}
     waitfor = _wait_for_graph(now, alive_ids)             # {sid:{peerSid,name,inCycle}} — the peer-wait gate
@@ -10675,13 +11096,15 @@ AWAITING_BACKSTOP_TEXT = (
 
 def _put_nudged(gid, rec):
     """Persist ONE nudge/wake record into auto-nudge.json's `nudged` ledger — the read-modify-write the
-    failed stamp already does inline, shared so the wake's answered/fired records take the same shape."""
+    failed stamp already does inline, shared so the wake's answered/fired records take the same shape.
+    Returns the writer's verdict and lets a write fault propagate (_mark_auto_nudged's contract): the wake's
+    fire site gates its send on it."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
         nudged = dict(d.get("nudged", {}))
         nudged[gid] = rec
         d["nudged"] = nudged
-        _write_auto_nudge(d)
+        return _write_auto_nudge(d)
 
 
 # The walk→sweep handoff journal (the user 2026-08-24, retiring the 6h ownership window): the walk
@@ -10701,7 +11124,10 @@ WALK_GATES_WEDGE = ("api-error", "parse-failed", "empty-parse", "all-delegated",
 def _put_walk_gate(key, gate, now):
     """Journal the gate the nudge walk returned on for `key` (a sid, or a gid for per-goal skips).
     Write-on-change only, and the FIRST gate's `at` is kept when only the name flaps (the deferral
-    map's precedent), so a flapping compacting bit can't churn the file at the 0.5-3s tick."""
+    map's precedent), so a flapping compacting bit can't churn the file at the 0.5-3s tick.
+    A write fault is the writer's line, once per episode, and nothing more here (review find, 2026-09-08):
+    the entry is re-derived by every walk, so a journal write that did not land is simply written next
+    tick; it used to rise into the pass's per-session wrap as a traceback per tick."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
         gates = dict(d.get("walkGates", {}))
@@ -10710,17 +11136,24 @@ def _put_walk_gate(key, gate, now):
             return
         gates[key] = {"gate": gate, "at": int((cur or {}).get("at") or now)}
         d["walkGates"] = gates
-        _write_auto_nudge(d)
+        try:
+            _write_auto_nudge(d)
+        except OSError:
+            pass                                             # said once per episode by the writer; retried next tick
 
 
 def _pop_walk_gate(key):
-    """The walk got PAST the gate for `key` — the entry's own retirement event."""
+    """The walk got PAST the gate for `key`: the entry's own retirement event. A refused write waits
+    for the next walk past the gate, as _put_walk_gate's does."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
         gates = dict(d.get("walkGates", {}))
         if gates.pop(key, None) is not None:
             d["walkGates"] = gates
-            _write_auto_nudge(d)
+            try:
+                _write_auto_nudge(d)
+            except OSError:
+                pass                                         # said once per episode by the writer; retried next tick
 
 
 def _last_awaiting_is_lift(nd):
@@ -11644,12 +12077,23 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux, wake_only=F
         _mark_views_dirty()
         _drop_auto_nudge_rec(gid)                    # the spent episode's residue goes with the wait
         return True
+    # RECORD BEFORE SEND (review find, 2026-09-08), the nudge fire site's rule (_auto_nudge_session): a
+    # wake whose record the writer refused (a full or read-only disk raising out of _put_nudged) had
+    # already gone out, so the same wake went out again every tick the session read idle, with no record
+    # to judge its response against. Nothing is sent whose record did not land; the writer said the fault
+    # once per episode, and the next tick re-derives the same due wake against the healed disk.
+    wake = {"wake": True, "anchor": at, "count": (rec.get("count") or 0) + 1,
+            "lastTurnId": lt.get("id"), "armAtoms": len(lt.get("atoms") or []), "at": int(now)}
+    try:
+        landed = _put_nudged(gid, wake)
+    except OSError:
+        landed = False                               # said once per fault episode by the writer
+    if not landed:
+        return False
+    nudged[gid] = wake                               # mirror in-memory for the rest of this tick
     Sessions.backend_for(sid).send(sid, _followup_body(gid, None, AWAITING_BACKSTOP_TEXT,
                                                        injected=True, auto=True, wake=True))
     _nudge_deferred_ok(gid, "", now, sid)            # the hold is over — drop any deferral record
-    nudged[gid] = {"wake": True, "anchor": at, "count": (rec.get("count") or 0) + 1,
-                   "lastTurnId": lt.get("id"), "armAtoms": len(lt.get("atoms") or []), "at": int(now)}
-    _put_nudged(gid, nudged[gid])
     _log_nudge_event(sid, gid, now, 0)               # timeline romp-logo dot (count 0 marks a wake, not an escalation)
     return True
 
@@ -12668,6 +13112,26 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
             _bnodes = _fr.get("nodes") or nodes      # the bundle body renders the same fresh world
         except Exception:
             pass
+    if to_fire:
+        # RECORD BEFORE SEND (review find, 2026-09-08). The record used to follow the send so a failed send
+        # would retry, but a record the WRITER refused (a full or read-only disk: _ledger_write_proved
+        # raises) left a nudge already out with no ledger row behind it. The goal then read as never
+        # nudged, so the same stall was nudged again after every response cycle for as long as the disk
+        # refused writes, the redundancy judge's skip (its own _put_nudged refused) fell through to a fire,
+        # and with no record to climb from the escalation ladder never reached needs-you: the every-cycle
+        # re-nudge the read-fault pause exists to prevent, on the write side, hidden under the per-session
+        # wrap's traceback. Now every due record lands FIRST ({count, lastTurnId, armAtoms, at}: re-arm
+        # only on the next GENUINE ended-working turn; a fresh record resets `failed`), and nothing goes
+        # out whose record did not. The writer said the fault once per episode, so this leg says nothing
+        # and the next tick re-derives the same due goal against the healed disk. A send that raises after
+        # its record landed reaches the per-session wrap as before; the record stands, so it is not repeated.
+        try:
+            landed = all([_mark_auto_nudged(gid, arm_id, count, len(arm.get("atoms") or []), at=now)
+                          for gid, count, _stalled in to_fire])
+        except OSError:
+            landed = False                           # said once per fault episode by the writer
+        if not landed:
+            return fired                             # nothing sent whose record could not land
     if len(to_fire) == 1:
         gid, count, stalled = to_fire[0]
         text = _nudge_text(count, stalled)             # variant by escalation count — a repeat re-asks in fresh words
@@ -12680,7 +13144,6 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None, wake_only
     for gid, count, stalled in to_fire:
         _nudge_deferred_ok(gid, "", now, sid)        # the hold is over — drop any deferral record so a stale
         #                                              why can never outlive the wait it described
-        _mark_auto_nudged(gid, arm_id, count, len(arm.get("atoms") or []), at=now)   # {count, lastTurnId, armAtoms, at} → re-arm only on the next GENUINE ended-working turn; a fresh record resets `failed`
         _log_nudge_event(sid, gid, now, count,       # timeline romp-logo dot + escalation count; the row
                          verdict=_verdicts.get(gid, ("fired",))[0],   # says HOW it fired and what evidence
                          ev_t=recent_ts)             # it survived (the 2026-08-25 instrumentation)
@@ -13737,9 +14200,9 @@ def _create_codex_session_inner(nm, cwd, client=None, parent="", tags=()):
     `parent` (a sid) + `tags` (names) land exactly as in _create_sdk_session: the tag store keys on
     the registry sid and knows nothing of backends, so a Codex child inherits its parent's tags and
     joins the named ones BEFORE the direct push, and the same `tags`/`tagsRequested`/`tagsApplied`
-    echo (plus `tagError`) rides back. Before this the Codex arm of POST /new applied nothing and
-    echoed nothing, so a plain `romp new <name>` from inside a session on a Codex-default box landed
-    outside its parent's group while the CLI blamed an older kernel. Returns (sid, echo)."""
+    echo (plus `tagError`) rides back — without this a plain `romp new <name>` from inside a session
+    on a Codex-default machine would land outside its parent's group while the CLI blamed an older
+    kernel. Returns (sid, echo)."""
     bg, fg = _pick_identity_color()
     sid = _codex().spawn(nm, cwd, bg, fg)
     extra = {}
@@ -15833,11 +16296,15 @@ def _fire_api_retry(sid, be, manual=False):
     asking itself is the same decision on the same state.
 
     The GATE block is for the AUTO path only: a global pause or a thread the user interrupted must not
-    relapse into the storm. A MANUAL Retry-now is an explicit one-shot override — it ALWAYS fires so the
-    button is never a dead no-op on a suppressed/paused thread (the user 2026-07-06). It fires ONE retry
-    without clearing the suppression, so it doesn't re-arm the auto-loop the user turned off."""
+    relapse into the storm, nor may a thread whose stop the kernel cannot currently READ (the suppression
+    ledger unreadable with no proved copy behind it reads every stop as absent; _retry_suppress_unknown
+    holds the auto path until it reads again). A MANUAL Retry-now is an explicit one-shot override: it
+    ALWAYS fires so the button is never a dead no-op on a suppressed/paused thread (the user 2026-07-06).
+    It fires ONE retry without clearing the suppression, so it doesn't re-arm the auto-loop the user turned off."""
     if not manual and (_retry_paused_on() or _session_retry_suppressed(sid)):
         return
+    if not manual and _retry_suppress_unknown():
+        return                                            # unknown is not "not stopped": fail safe, said once
     # IDEMPOTENCY (the user 2026-07-08): don't stack a fresh auto-"retry" when the one romp already sent is
     # still QUEUED and unconsumed — the session is blocked, so the previous retry hasn't run yet and another
     # only piles up. Without this the auto-loop enqueued N bare "retry"s into the SDK queue during one
@@ -16292,9 +16759,11 @@ def _drive(msg, client):
     elif t == "interrupt":
         be.interrupt(sid)                                 # Esc/stop AND settle idle (in the backend)
         _mark_interrupt_clicked(sid)                      # chip → "interrupting" NOW (event-cleared on settle)
-        _suppress_session_retry(sid)                      # interrupting a thread STOPS romp's auto-retry into it until a
+        err = _suppress_session_retry(sid)                # interrupting a thread STOPS romp's auto-retry into it until a
                                                           # successful turn re-arms (the user 2026-07-06) — the interrupt
                                                           # already aborted any in-flight CLI retry; this stops the relapse
+        if err:                                           # …and a stop that did NOT land is said, the rewind ops' warn-toast
+            client["send"](json.dumps({"type": "warn", "text": err}))   # idiom (fail loudly; the interrupt itself happened)
         _mark_views_dirty()                               # the stamp lives in memory — no sig sees it
     elif t in ("compact", "compactSession"):
         # Mid-turn (or behind an existing queue) the click PARKS as a queued /compact chip and fires when
@@ -19188,8 +19657,8 @@ _NOT_SAVED = ("proc",       # the live Popen
               "usage",      # a remote's rate-limit snapshot: re-polled a minute after any boot, and
               "_usage_at",  # persisting it would rewrite this 0600 credential file every minute forever
               "_views_at",  # the /views poll's stamp, restamped once a minute per up host (REMOTE_VIEWS_EVERY):
-              #               saved, it was the same minute-forever rewrite, ~1440 a day per host (round 8 of the
-              #               2026-09-06 tab-groups review). `views` ITSELF stays: _remotes_load keeps it and
+              #               saved, it was the same minute-forever rewrite, ~1440 a day per host. `views`
+              #               ITSELF stays: _remotes_load keeps it and
               #               _views_client serves every cached reading, status aside, so a down host's tags
               #               survive a kernel restart; the boot's first poll re-reads, the gate unstamped
               "misses",     # the poll run counters: they describe THIS connection, and a fresh boot
@@ -19257,7 +19726,7 @@ def _remotes_load():
             for k in _NOT_SAVED:    # a file an older build wrote carries keys this one does not save; they
                 r.pop(k, None)      #   describe a process that is gone — a /views poll stamp restored here
             #                         gated the boot's first read for up to REMOTE_VIEWS_EVERY and served
-            #                         the cached reading (round 9 of the 2026-09-06 tab-groups review)
+            #                         the cached reading
             r["proc"], r["status"] = None, "down"
             r["booting"] = False       # transient in-flight Start flag — persisted mid-boot it would
             #                            freeze the row's status against the supervisor forever
@@ -19773,7 +20242,7 @@ def _cache_remote_views(r, rviews):
     host's tags followed its tabs by whatever the pusher's cycle had left (20-40 s on a loaded box), and
     on a quiet box the feed's and timeline's cached builds served the blob without them until some
     signature moved — and a tab-strip pin written in that window judged the host's sessions as tabs no
-    tag holds and dropped their pins (round 7 of the 2026-09-06 tab-groups review). The dirty mark
+    tag holds and dropped their pins. The dirty mark
     busts those caches and wakes the pusher, so the frame goes on its next cycle. Compared by CONTENT:
     the poll's rate gate hands back the cached object itself, and a re-read of an unchanged store
     parses equal — neither is news, and a mark per pass would rebuild the feed every 15 s per host for
@@ -20504,7 +20973,7 @@ def _sync_notice_rows(limit=20, cap=300):
 
 # A notice built to this length reaches the user whole: the dashboard's bell shows a sync notice cut
 # at 240 characters (ui/webview/badge-mirror.ts), under the 300 _sync_notice_rows serves. A notice
-# that names a list puts its point first and bounds the list to fit (_notice_list) — round 8 of the
+# that names a list puts its point first and bounds the list to fit (_notice_list) — the
 # 2026-09-05 review found the views re-stamp's cause clause LAST, after one entry per dropped tag,
 # so with two or more dropped the served text never reached it.
 SYNC_NOTICE_FIT = 240
@@ -39506,14 +39975,14 @@ READY_GATE_CAP = "readyGate"
 #             delete / move, by tag id), the `tagEditAck` / `viewsAck` answers on the poster's socket,
 #             and the write sequence (`seq`) on every views blob.
 KERNEL_WS_CAPS = ("tagEdit",)
-# The caps frame: {type: "caps", caps: [...], viewsSeq: int|null}. `viewsSeq` (round 7 of the 2026-09-05
+# The caps frame: {type: "caps", caps: [...], viewsSeq: int|null}. `viewsSeq` (the 2026-09-05
 # review) is the write seq of the views blob the READY HANDLER'S OWN connect push served this client — the
 # tabOrder frame's for a chat page, the timeline skeleton's (`data.views`), the feed frame's — read from
 # the frames that push enqueued (_VIEWS_SERVED, captured in _send_client on the handler's thread), never
 # from a fresh cache read, so a write landing between the push and this frame cannot skew it; the highest
 # when the push carried more than one. When the push carried NONE (a chat page on a sentinel cycle gets no
-# tabOrder frame) it is the store's current seq at caps time — the seq the next push serves (round 8 of
-# the same review); null only when there is no store at all, which has no seq. A client that kept a blob
+# tabOrder frame) it is the store's current seq at caps time — the seq the next push serves (the
+# same review); null only when there is no store at all, which has no seq. A client that kept a blob
 # its seq gate turned away adopts it on this frame only when the kept blob's seq equals viewsSeq — the
 # restore case (the store's seq fell behind what the page holds, and the connect push IS the kept blob) —
 # and adopts a LATER frame whose seq equals viewsSeq even when that is below the seq it holds (the same
@@ -40189,21 +40658,39 @@ def _tell_stale_gesture(client, msg):
     was one kernel stderr line: the dashboard that made the gesture kept displaying the refused
     pick as applied (the gear fills only on open), and with the mesh AGREEING on the kept value
     the mixed marks showed nothing. The gear toasts the frame and re-fills if open — event-keyed,
-    the frame IS the deciding event; no polling. A refusal for any other cause (invalid value,
-    OSError) records no notice and sends nothing.
+    the frame IS the deciding event; no polling. A refusal for an invalid value records no notice
+    and sends nothing; a refused WRITE (OSError) records one like the unproved-read refusal below.
     The frame echoes `gesture`: the refused message itself, WITHOUT its stamp, so the toast can
     offer to re-issue it as a new gesture (a fresh click is legitimate new information) stamped
     above the stored one. The stamp is dropped on purpose — a re-issue can never reuse the stale
     one — and the gear only re-issues a type that matches the setting the frame names.
     It also carries `gt`, the refused gesture's OWN stamp: a dashboard's broadcast reaches every
     linked kernel, so one stale flush draws one refusal per kernel — all sharing this stamp — and
-    the gear folds them into one toast naming the refusing hosts (setting + gt is the fold key)."""
+    the gear folds them into one toast naming the refusing hosts (setting + gt is the fold key).
+    A write REFUSED over an unproved ledger read (_note_refused_gesture) answers the same socket with
+    the same frame plus `why` (the fault): the gear's copy — not applied, keeping the stored value —
+    is exactly true of it, and the frame's re-fill snaps the checkbox back to the last snapshot this
+    kernel proved (`kept`, named only when there is one); the fault itself, which the copy does not
+    carry, goes to the error center so it is on record. A write that FAILED (the snapshot proved, the
+    publish raised) rides the same frame with its fault as `why`; its error-center row is the writer's,
+    filed once per fault episode, so this reply files none (the maintainer's fold on PR #1019)."""
     st = _pop_stale_notice()
-    if not st:
+    if st:
+        _reply(client, {"type": "settingStale", "setting": st["setting"],
+                        "storedGt": st["storedGt"], "gt": st["gt"], "kept": _setting_kept_value(st["setting"]),
+                        "gesture": {k: v for k, v in msg.items() if k != "gt"}})
         return
-    _reply(client, {"type": "settingStale", "setting": st["setting"],
-                    "storedGt": st["storedGt"], "gt": st["gt"], "kept": _setting_kept_value(st["setting"]),
-                    "gesture": {k: v for k, v in msg.items() if k != "gt"}})
+    rf = _pop_refused_notice()
+    if not rf:
+        return
+    kept = _setting_kept_value(rf["setting"]) if rf.get("known") else None
+    if not rf.get("write"):                            # a write fault's row is the writer's, once per episode
+        _sdk_problem("setting %s: %s was not applied — %s; the stored value%s stands until the ledger reads again"
+                     % (rf["setting"], rf["refused"], rf["why"],
+                        "" if kept is None else " (%s)" % ("on" if kept else "off")))
+    _reply(client, {"type": "settingStale", "setting": rf["setting"],
+                    "storedGt": _setting_stored_gt(rf["setting"]), "gt": rf["gt"], "kept": kept,
+                    "why": rf["why"], "gesture": {k: v for k, v in msg.items() if k != "gt"}})
 
 
 # ---- pasted-image hydration + dropped-file handling (ported from the old TS kernel chat-view/src/
@@ -45408,6 +45895,9 @@ else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.views
 else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
 else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="settingRefused"&&panel.settingRefused)panel.settingRefused(m);
+else if((m.type==="tagEditAck"||m.type==="viewsAck")&&panel.viewsAck)panel.viewsAck(m);
+else if(m.type==="caps"&&panel.setCaps)panel.setCaps(m);
+else if(m.type==="unknownOp"&&panel.unknownOp)panel.unknownOp(m);
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);};
 var frameListener=(window.__rompPerf&&window.__rompPerf.wrapFrameHandler)?window.__rompPerf.wrapFrameHandler(onFrame):onFrame;
@@ -50341,7 +50831,9 @@ class Handler(BaseHTTPRequestHandler):
                         source.validate()
                         sourcefp = source.fingerprint()
                         if kstat.get("source") == "command":
-                            # COMMAND mode (fork): the descriptor is the set's ANTHROPIC_API_KEY line,
+                            # COMMAND mode (fork: the credential-set command of kernel/envsource.py, not
+                            # keysource's `command` provider kind, whose stdout is the key alone and which the
+                            # else arm below covers): the descriptor is the set's ANTHROPIC_API_KEY line,
                             # empty on the key-free install whose sessions bill through the apiKeyHelper,
                             # so its fingerprint says nothing about what a launch bills. keyFp is the
                             # credential a launch bills NOW (the set's key, or the helper's output) as
@@ -50352,7 +50844,7 @@ class Handler(BaseHTTPRequestHandler):
                         else:
                             # A status read must never fetch a provider. Its reference identity is
                             # sufficient to confirm that keyswap and this kernel see the same source.
-                            keyfp = "" if source.kind == "op" else sourcefp
+                            keyfp = "" if jd._keysrc.is_provider_kind(source.kind) else sourcefp
                     else:
                         keyfp = sourcefp = _work_key_fp()  # older backend/test doubles
                 except Exception as e:
@@ -51803,11 +52295,11 @@ class Handler(BaseHTTPRequestHandler):
             # in flight across the drop learns, by this frame, that their answers may never come. It
             # carries the seq of the views blob those pushes served (viewsSeq), read above — or, when
             # they served none (a chat page on a sentinel cycle gets no tabOrder frame), the STORE's
-            # current seq, the seq the next push serves (round 8 of the 2026-09-05 review: with null
-            # here nothing re-armed a page's gate after a restart over a restored older store, and it
-            # rejected every later push under the old seq until the next write). Null only when there
-            # is no store at all — a fresh install, or a legacy store whose first stamp could not be
-            # written — which has no seq.
+            # current seq, the seq the next push serves (the 2026-09-05 review: with null here nothing
+            # re-armed a page's gate after a restart over a restored older store, and it rejected every
+            # later push under the old seq until the next write). Null only when there is no store at
+            # all — a fresh install, or a legacy store whose first stamp could not be written — which
+            # has no seq.
             if seqs:
                 views_seq = max(seqs)
             else:
@@ -51852,11 +52344,12 @@ class Handler(BaseHTTPRequestHandler):
                 _mark_views_dirty()
         elif msg and msg.get("type") == "setTimelineViews" and isinstance(msg.get("views"), dict):
             # timeline corner panel → replace the whole views blob (tiny; last-write-wins across
-            # dashboards, like colormap). Validation/normalization happens in the setter. Under
-            # _views_lock like every other writer: the RMW writers (_edit_tag, the inherit at a
-            # creation event) read-then-write inside the lock, and this full-blob write landing
-            # INSIDE that window either clobbered their edit or had its own clobbered — with the lock
-            # it lands before or after, and the stale-writer guard in the setter judges it whole.
+            # dashboards, like colormap). Validation/normalization happens in the setter.
+            # UNDER _views_lock, like every other writer of the blob: _edit_tag (the /tag route and the
+            # tagEdit arm below), _heal_timeline_views and the inherit at a creation event
+            # (_inherit_tag_membership) read-then-write inside the lock, and this full-blob write
+            # landing INSIDE that window either clobbered their edit or had its own clobbered — with
+            # the lock it lands before or after, and the stale-writer guard in the setter judges it whole.
             # ANSWERED on the poster's socket (viewsAck) with the guard's refusals, if any: until
             # 2026-09-05 a refusal reached stderr and the sync notices but never the client, which
             # kept building its next post from the refused copy. Tag edits themselves no longer come
@@ -51874,8 +52367,7 @@ class Handler(BaseHTTPRequestHandler):
                     refused = _set_timeline_views(msg["views"], edited=edited)   # the setter files the notice by the same rule
                 if edited is not None:
                     # …or the past-the-bound summary row counts an edited id among the entries it
-                    # stands for (`moreEdited`, round 8 of the 2026-09-05 review); the ack orders its
-                    # one-line `error` by the same predicate
+                    # stands for (`moreEdited`); the ack orders its one-line `error` by the same predicate
                     ok = not any(_refusal_is_the_posters(r, edited) for r in refused)
                 else:
                     ok = not refused

@@ -470,6 +470,10 @@ jobs:
   Every writer of the views blob, the WS `setTimelineViews` full-blob write
   included, runs under `_views_lock`.
 
+The exact project directory still defines the **comms group** sketched above.
+The directory-to-tag auto-tagging rule and the URL-hash view selection once
+planned here did not ship; the per-surface lens took the hash's place.
+
 Every dashboard write of the views blob is acknowledged on the socket that posted
 it. A tag edit from the timeline's tag table, its lane gear menu, or a tab's Tags
 flyout is one `tagEdit` WS op, `{writeId, edit: {op, tid, …}}`, where `op` is
@@ -543,7 +547,7 @@ the rest, joined with "; " (a nameless row is its reason alone) up to 1000
 characters, then "and N more"; without `edited` the rows appear in the judge's
 order. The rows carry every reason in full and are never reordered; a client
 composes the same shape from them, in their order, when the line is absent.
-Until round 9 of the 2026-09-05 review the line followed the judge's order,
+Until the 2026-09-05 review the line followed the judge's order,
 which files rows in the posted array's order, quiet (kept copies of tags the
 poster did not edit) and loud interleaved, with the cap pass last, so with
 enough quiet rows ahead of it the bound cut the one row that made `ok` false
@@ -607,7 +611,7 @@ about the file, whether or not the stamp's write lands. The count holds when
 readers race: a reader that waited for the file lock re-checks the read cache
 under it and serves the blob the first reader judged and cached, so when two
 readers that start with the cache empty race on a full disk, the notice is
-filed once. Until round 9 of the 2026-09-05 review each judged the file, failed
+filed once. Until the 2026-09-05 review each judged the file, failed
 the write and filed it. The notice is a
 template that puts the cause and the count first and the dropped tags after.
 It opens "the views file held N tags, over the store's 32-tag cap; no dashboard
@@ -635,12 +639,12 @@ reads "its changes to 1 tag were not applied". Each label carries its cause:
 "(stale copy)", "(deletion)", "(re-creation)", "(unread)", "(name collision)"
 or "(over the cap)". The quiet stderr line for kept tags the client did not
 edit carries the same kind of label on every tag, "(differing copy)" among
-them; until round 9 of the 2026-09-05 review a kept differing copy was the one
+them; until the 2026-09-05 review a kept differing copy was the one
 entry on it without a cause. Both notices bound their lists to fit the 240 characters
 the dashboard's bell shows, under the 300 the kernel serves (`SYNC_NOTICE_FIT`,
 `_notice_list`): as many entries as fit, then "and M more" for the rest, and
 when not even the first fits, the head alone, which carries the count. Until
-round 8 of the 2026-09-05 review both notices put the cause clause and the
+the 2026-09-05 review both notices put the cause clause and the
 remedy last, after one entry per tag, and with two or more tags the bell cut
 them away. A file written
 outside the kernel (the timeline's Electron branch writes `timeline-views.json`
@@ -726,7 +730,7 @@ drop; every merged re-emit between that frame and the pusher's next one hands
 the pane the router's stored blob at the pane's own held seq, and that
 re-arrival leaves the pane's slot standing, so when the router adopts the
 pusher's frame at the announced seq and re-emits it, the pane adopts it by the
-same rule. Until round 9 of the
+same rule. Until the
 2026-09-05 review any adoption cleared the slot, so a re-emit in that window
 cleared the pane's; the pane turned the restored store away while the router
 held it, and the two diverged until the next write.
@@ -741,10 +745,6 @@ un-echoed copy, so the guard refused a rename typed right after a create against
 the dialog's own first write, the refusal reached only stderr and the sync
 notices, and the dialog dropped its copy after three frames; renames and
 assignments made in a burst were lost.
-
-The exact project directory still defines the **comms group** sketched above.
-The directory-to-tag auto-tagging rule and the URL-hash view selection once
-planned here did not ship; the per-surface lens took the hash's place.
 
 ## The UI progress surface
 

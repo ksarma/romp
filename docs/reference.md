@@ -25,7 +25,7 @@ update` starts a session called "update".
 | `romp up` | Start the kernel: through the login service when one is installed, in the foreground otherwise. Clears a `romp down` marker |
 | `romp down` | Stop the kernel and keep it stopped until `romp up`. Turns in flight get 5 seconds to finish first; sessions resume with their history at the next start. See [Stopping the kernel on purpose](#stopping-the-kernel-on-purpose) |
 | `romp version` | Version report across the moving parts |
-| `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle` or `--cycle-all` reconnects the quiet running sessions so their new processes pick up the new credential, with no manager restart. Where the key source lives in a file (a key line, or a `ROMP_API_KEY_REF` 1Password reference), `<name>` (upstream's rewrite of `service.env` from a sibling profile) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
+| `romp keyswap [<name>] [--refresh] [--cycle <session,…>\|--cycle-all]` | Which API key the sessions bill, by fingerprint, and whether the kernel reads what your shell reads. With `ROMP_CREDENTIAL_COMMAND` set, `<name>` selects a declared credential and `--refresh` makes the kernel re-run the command; after a rotation, `--cycle` or `--cycle-all` reconnects the quiet running sessions so their new processes pick up the new credential, with no manager restart. Where the key source lives in a file (a key line, a `ROMP_API_KEY_CMD` key command, or a `ROMP_API_KEY_REF` 1Password reference), `<name>` (upstream's rewrite of `service.env` from a sibling profile) is refused: this fork does not write API keys to files. See [Switching which API key the sessions bill](#switching-which-api-key-the-sessions-bill-romp-keyswap) |
 | `romp spend-rebuild [--apply] [--by-session] [--allow-lower]` | Recount the spend ledger's token columns (`spend.json`) from the transcripts' per-call usage; dollars and turn counts untouched. A dry run by default; `--apply` writes and keeps a backup; a bucket whose recount is lower than recorded is kept unless `--allow-lower` (a transcript may be gone) |
 | `romp help` | The same list, from the terminal |
 
@@ -138,8 +138,9 @@ a running session declares its full per-session env: any var you don't name
 again is dropped, and `romp new --no-env <name>` declares the empty set — it
 clears them all. Keep real secrets out of it: each value is copied into
 per-session files and the session registry under `~/.local/state/romp/`. Keys
-and credentials stay in the manager's environment, behind a credential command
-or a `ROMP_API_KEY_REF` reference, or in the `apiKeyHelper`, never in a file
+and credentials stay in the manager's environment, behind a key provider (a
+`ROMP_API_KEY_CMD` key command or a `ROMP_API_KEY_REF` reference) or a
+credential command, or in the `apiKeyHelper`, never in a file
 (see [API keys on disk: the file mode](#api-keys-on-disk-the-file-mode) and
 [Installing without keys on disk](#installing-without-keys-on-disk)).
 
@@ -415,11 +416,11 @@ the control never silently disappears.
 An SDK session can bill either the machine's Claude login (subscription usage)
 or the API key the kernel holds — per session: the `ANTHROPIC_API_KEY=` line
 of `service.env` (a manager started from your shell may carry the key in its
-environment instead), a `ROMP_API_KEY_REF` 1Password reference in
-`service.env` resolved at runtime, or in command mode the one its credential
-command prints (see [API keys on disk: the file
-mode](#api-keys-on-disk-the-file-mode) and [Installing without keys on
-disk](#installing-without-keys-on-disk)).
+environment instead), a key provider named in `service.env` and run at use
+time (a `ROMP_API_KEY_CMD` key command, or a `ROMP_API_KEY_REF` 1Password
+reference), or in command mode the one its credential command prints (see
+[API keys on disk: the file mode](#api-keys-on-disk-the-file-mode) and
+[Installing without keys on disk](#installing-without-keys-on-disk)).
 
 The new-session picker's **Billing** row states the case whenever the backend
 toggle says SDK: segmented buttons when the selected host offers both choices,
@@ -438,11 +439,11 @@ defaults to the last pick made anywhere, and before any pick to the key when
 one is configured — exactly what an ambient key did before the selector
 existed. tmux sessions are not covered by the picker: their CLI lives in the
 tmux server's environment, which the kernel does not control. What Romp does
-do there, when a 1Password reference is configured, is keep the manager's
+do there, when a key provider is configured, is keep the manager's
 startup `ANTHROPIC_API_KEY` out of the server's globals, so a terminal
 session falls to Claude Code's own auth (login or `apiKeyHelper`) rather than
-billing a key nobody chose; see [API keys from 1Password at
-runtime](#api-keys-from-1password-at-runtime).
+billing a key nobody chose; see [API keys from a secret manager at
+runtime](#api-keys-from-a-secret-manager-at-runtime).
 
 Each chat tab's hover tooltip carries the same fact as a `Billing` row —
 `API key`, or `Login (name@example.com)` — whenever the session's backend
@@ -663,7 +664,8 @@ is a no-op.
 With no `ROMP_CREDENTIAL_COMMAND` line (see [Installing without keys on
 disk](#installing-without-keys-on-disk)) the kernel is in **file mode**,
 upstream's behaviour: the key source is `service.env`, an `ANTHROPIC_API_KEY=`
-line or a `ROMP_API_KEY_REF` reference, read at every launch. A manager started
+line, a `ROMP_API_KEY_CMD` key command or a `ROMP_API_KEY_REF` reference, read
+at every launch. A manager started
 from your shell (`romp up --foreground`, or `romp up` on a machine with no
 login service) may instead inherit `ANTHROPIC_API_KEY` from that shell while
 the file names no source, so a shell startup file that loads keys from a
@@ -671,8 +673,8 @@ secrets manager into the environment covers anything such a kernel or its
 judges call directly, and nothing is written to disk. A supervised manager does
 not: it reads its key source from `service.env` only, and a key that reaches it
 any other way is ignored and said once in the kernel log (the rule is spelled
-out under [API keys from 1Password at
-runtime](#api-keys-from-1password-at-runtime)). The sessions' own key reaches
+out under [API keys from a secret manager at
+runtime](#api-keys-from-a-secret-manager-at-runtime)). The sessions' own key reaches
 Claude Code through its `apiKeyHelper` setting, never through the service file.
 
 The login service does not run that startup file, so the manager it starts
@@ -703,131 +705,189 @@ that can read the file has the key. This fork's tooling never writes that line
 (see [Switching which API key the sessions
 bill](#switching-which-api-key-the-sessions-bill-romp-keyswap)).
 
-The file may instead name where the key lives: a `ROMP_API_KEY_REF` 1Password
-reference, upstream's second source, described next. The kernel reads such a
-line in file mode the same way it reads a key line, at every launch. The
-reference is not a key, but the route needs 1Password's own service-account
-token in `service.env` for a headless service, which is a credential in a
-file; where that is the rule you are avoiding, use command mode instead (see
+The file may instead name where the key lives: a **key provider**, upstream's
+second source, described next, which is a `ROMP_API_KEY_CMD` key command or a
+`ROMP_API_KEY_REF` 1Password reference. The kernel reads such a line in file
+mode the same way it reads a key line, at every launch. Neither is a key. A key
+command fetches its own credential, so nothing secret lands in `service.env`;
+the reference route needs 1Password's own service-account token in
+`service.env` for a headless service, which is a credential in a file. Where a
+credential in any file is the rule you are avoiding, use a key command, or
+command mode when the sessions need a whole set of credentials (see
 [Installing without keys on disk](#installing-without-keys-on-disk)), or hold
 no key in Romp at all (see [A key from a secret manager, with none held by
 Romp](#a-key-from-a-secret-manager-with-none-held-by-romp)).
 
-#### API keys from 1Password at runtime
+#### API keys from a secret manager at runtime
 
-To keep API key values out of Romp's configuration files, set a
-[1Password secret reference](https://www.1password.dev/cli/secret-references):
+To keep API key values out of Romp's configuration files, configure a **key
+provider**: something Romp runs at the moment a key is needed, which prints
+the key. Romp knows nothing about any particular secret manager; the
+recommended route is a key command, and a 1Password reference is a built-in
+shorthand for one.
+
+**Recommended: a key command (`ROMP_API_KEY_CMD`).** Any command line that
+prints the key on stdout and exits 0 — the same contract as Claude Code's
+`apiKeyHelper`, so a helper script you already have works as-is:
+
+    ROMP_API_KEY_CMD=~/.config/romp/fetch-api-key
+
+Romp runs it with `/bin/sh -c`, stdin from `/dev/null`, a 15-second timeout,
+and reads stdout: one line (a trailing newline is tolerated and stripped),
+non-empty, no NUL, at most 16 KiB. A non-zero exit, a timeout, an empty or
+multi-line output, or a command the shell cannot find (exit 127) fails the
+operation with a static "key command failed / timed out / not found"
+message. The command's stderr is discarded and never logged, since a secret
+manager's diagnostics can quote its own token.
+
+The command runs in a **minimal environment**, not a copy of the kernel's:
+`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_*`, `TERM`, the
+`XDG_*` names, and any `OP_*` credential names Romp claimed (below). Nothing
+of Romp's — the serve token, a startup `ANTHROPIC_API_KEY`, the
+`ROMP_API_KEY_CMD` line itself — reaches it. The script is therefore expected
+to fetch **its own credential** rather than have Romp carry one for it. The
+recommended shape, here for 1Password with a
+[service account](https://developer.1password.com/docs/service-accounts/)
+whose token sits in a `chmod 600` file of its own:
+
+    #!/bin/sh
+    # ~/.config/romp/fetch-api-key (chmod 700): print the API key, nothing else
+    OP_SERVICE_ACCOUNT_TOKEN="$(cat ~/.config/op/service-account-token)" \
+        exec op read --no-newline "op://vault/item/field"
+
+Any secret manager's CLI works the same way (`aws secretsmanager get-secret-value
+--query SecretString --output text`, `vault kv get -field=…`, `bw get
+password …`, `gcloud secrets versions access latest --secret=…`, `pass show
+…`): the command owns how it authenticates, Romp owns when it runs and what
+happens to the value. The command's identity on every Romp surface (the
+`romp keyswap` listing, the kernel log, `/keycycle`) is a fingerprint of the
+command line, never the line itself, which may name a vault or a path.
+
+**The 1Password shorthand (`ROMP_API_KEY_REF`).** A
+[1Password secret reference](https://www.1password.dev/cli/secret-references)
+is the built-in equivalent of a key command that runs
+[`op read --no-newline`](https://www.1password.dev/cli/reference/commands/read)
+on the reference:
 
     ROMP_API_KEY_REF=op://vault/item/field
 
-`ROMP_API_KEY_REF` takes priority over a legacy `ANTHROPIC_API_KEY` in the
-same file. An empty or invalid reference is an error, not a request to use the
-legacy key. Remove competing plaintext assignments when migrating; on this
-fork you edit the line yourself, since `romp keyswap <name>` does not rewrite
-the file.
-
-With no key source selected — the env file has no `ROMP_API_KEY_REF=` line
-and no `ANTHROPIC_API_KEY=` line with a value, and no reference was selected
-earlier (a removed reference stays an error until another source is
-configured; see below) — Romp injects nothing, and Claude Code's own
-credential resolution applies: its `apiKeyHelper`, which can fetch a key from
-any secrets manager, or its login. A session's API-key Billing pick then only
-takes effect once a source exists; until one does, the kernel says so once in
-its log. A reference or key line in `service.env` is for boxes where Romp
-should manage the key — swap it, fingerprint it, cycle sessions onto it.
-
-Romp runs [`op read --no-newline`](https://www.1password.dev/cli/reference/commands/read)
-for each Claude SDK session launch or reconnect, each API-key-billed judge
-call, and each direct model-catalog refresh. A paginated catalog refresh uses
-that credential for all its pages. An explicit `romp keyswap --cycle` resolves
-the key once per request to check which quiet sessions need a reconnect. When
-a retrieval fails, the judges do not retry it on every call: the failure holds
-for the rest of that judging pass and is retried when the next pass begins or
-the source changes, so an unreachable `op` costs one timeout per pass. Romp
-captures the value in memory and passes it to that operation. It does not write the resolved key
-to disk or cache it for later operations. A running Claude process retains
-the key it received at launch until it reconnects; this is not retrieval
-before every message in an existing session.
-
-The `op` executable must be on the **service's PATH**, and 1Password access
-must work for the OS user running the service. The service installer records
-PATH at install time; run `romp-service install` again after changing it.
-An interactive terminal sign-in does not by itself establish that a headless
-login service can read the same secret: a service has no desktop app to
-unlock. The supported unattended route is a
-[1Password service account](https://developer.1password.com/docs/service-accounts/):
-put its token in `service.env` beside the reference,
+Same runner, same timeout, same environment and validation as a key command
+(except that with `--no-newline` a trailing newline in the output is a
+malformed key). The reference is passed as one argument, never evaluated by
+a shell. The difference from the command route is where `op`'s own credential
+lives: with a reference, Romp expects the service-account token in
+`service.env` beside it,
 
     OP_SERVICE_ACCOUNT_TOKEN=ops_...
     ROMP_API_KEY_REF=op://vault/item/field
 
-and give the account read access to that one vault, and nothing else. When a
-reference is configured, Romp takes `op`'s own credential names
-(`OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`, `OP_CONNECT_*`, `OP_ACCOUNT`) out
-of its environment as its first act at startup, says which names it claimed in
-the kernel log, and hands them to the `op read` subprocess alone: no Claude
-session, judge call, or tmux launch inherits them, so an agent running `env`
-sees neither the API key nor the credential. The `op read` subprocess itself
-gets a minimal environment, not a copy of the kernel's: `PATH`, `HOME`, `USER`,
-`LOGNAME`, `TMPDIR`, `LANG`, `LC_*`, `TERM`, the `XDG_*` names (op finds
-`~/.config/op` and the desktop app's socket through `HOME` and `XDG_*`), and
-the claimed `OP_*` names. Nothing of Romp's (the serve token, a startup
-`ANTHROPIC_API_KEY`, the reference variable) reaches it.
+and takes `op`'s credential names (`OP_SERVICE_ACCOUNT_TOKEN`,
+`OP_SESSION_*`, `OP_CONNECT_*`, `OP_ACCOUNT`) out of its environment as its
+first act at startup, says which names it claimed in the kernel log, and hands
+them to the provider subprocess alone: no Claude session, judge call, or tmux
+launch inherits them, so an agent running `env` sees neither the API key nor
+the credential. Give the account read access to that one vault, and nothing
+else. Like the rest of `service.env`, the token line loads when the manager
+starts; changing it needs a manager restart, where the reference itself is
+read live. Do not put the token in a per-session environment (`romp new
+--env`), which is copied into per-session files. With a key command, none of
+that applies: the script reads its token itself and Romp never holds it.
 
-The tmux server needs the same care, because every pane inherits the
-**server's** globals, not the launching client's. Whenever Romp becomes the
-op consumer (at kernel start, or later when a reference line appears in
-`service.env` on a box that started without one, with no manager restart) it
-unsets the `OP_*` names **and** the manager's startup `ANTHROPIC_API_KEY`
-from the tmux server's global environment; the manager starts the server
-without them, and `romp new -t` scrubs them again before the pane exists
-(reading the reference from its own environment or from `service.env`'s
-line). A terminal session on a reference-governed box therefore never bills
-the key the manager started with: with no `ANTHROPIC_API_KEY` in its
-environment it falls to Claude Code's own auth (login or `apiKeyHelper`).
-Panes that already existed when the reference was selected keep the
-environment they launched with; end or relaunch them. A box with no reference
+Configure **one** provider: a `service.env` with both a `ROMP_API_KEY_CMD=` and
+a `ROMP_API_KEY_REF=` line is an error ("configure one of ROMP_API_KEY_CMD or
+ROMP_API_KEY_REF, not both"), not a precedence rule. A provider line takes
+priority over a legacy `ANTHROPIC_API_KEY` line in the same file, and an
+empty or invalid provider is an error, not a request to use the legacy key.
+Remove competing plaintext assignments when migrating; on this fork you edit
+the line yourself, since `romp keyswap <name>` does not rewrite the file.
+
+With no key source selected — the env file has no provider line and no
+`ANTHROPIC_API_KEY=` line with a value, and no provider was selected earlier
+(a removed provider stays an error until another source is configured; see
+below) — Romp injects nothing, and Claude Code's own credential resolution
+applies: its `apiKeyHelper`, which can fetch a key from any secrets manager,
+or its login. A session's API-key Billing pick then only takes effect once a
+source exists; until one does, the kernel says so once in its log. A provider
+or key line in `service.env` is for boxes where Romp should manage the key —
+swap it, fingerprint it, cycle sessions onto it. The two routes can coexist
+on one box only in the sense that Romp's source, when present, is what Romp's
+sessions launch on; a box that wants Claude Code's `apiKeyHelper` to decide
+keeps `service.env` free of any source.
+
+Romp runs the provider for each Claude SDK session launch or reconnect, each
+API-key-billed judge call, and each direct model-catalog refresh. A paginated
+catalog refresh uses that credential for all its pages. An explicit
+`romp keyswap --cycle` resolves the key once per request to check which quiet
+sessions need a reconnect. When a retrieval fails, the judges do not retry it
+on every call: the failure holds for the rest of that judging pass and is
+retried when the next pass begins or the source changes, so an unreachable
+provider costs one timeout per pass. Romp captures the value in memory and
+passes it to that operation. It does not write the resolved key to disk or
+cache it for later operations. A running Claude process retains the key it
+received at launch until it reconnects; this is not retrieval before every
+message in an existing session.
+
+The command (or `op`) must be on the **service's PATH**, and its secret
+manager access must work for the OS user running the service. The service
+installer records PATH at install time; run `romp-service install` again after
+changing it. An interactive terminal sign-in does not by itself establish that
+a headless login service can read the same secret: a service has no desktop
+app to unlock. For 1Password the supported unattended route is a service
+account, as above.
+
+The tmux server needs the same care as the kernel's children, because every
+pane inherits the **server's** globals, not the launching client's. Whenever
+Romp becomes the provider consumer (at kernel start, or later when a provider
+line appears in `service.env` on a box that started without one, with no
+manager restart) it unsets the `OP_*` names **and** the manager's startup
+`ANTHROPIC_API_KEY` from the tmux server's global environment; the manager
+starts the server without them, and `romp new -t` scrubs them again before
+the pane exists (reading the provider from its own environment or from
+`service.env`'s line). A terminal session on a provider-governed box therefore
+never bills the key the manager started with: with no `ANTHROPIC_API_KEY` in
+its environment it falls to Claude Code's own auth (login or `apiKeyHelper`).
+Panes that already existed when the provider was selected keep the
+environment they launched with; end or relaunch them. A box with no provider
 configured is untouched: static-key panes rely on inheriting the key, and an
 `apiKeyHelper` box's sessions need `op`'s environment.
 
 This keeps the token out of every agent's shell by default; it is
-inheritance hygiene, not isolation. The file stays readable to the same OS
-user (keep it `chmod 600`), and a same-user process can read the manager's
-original environment, which is why the account must see only the one vault.
-Like the rest of `service.env`, the token line loads when the manager starts;
-changing it needs a manager restart, where the reference itself is read live.
-Do not put the token in a per-session environment (`romp new --env`), which
-is copied into per-session files.
+inheritance hygiene, not isolation. The files stay readable to the same OS
+user (keep them `chmod 600`), and a same-user process can read the manager's
+original environment, which is why a service account must see only the one
+vault.
 
 A supervised manager (the systemd or launchd service) reads its key source
 from `service.env` **only**. A key that reaches the manager some other way, a
 systemd drop-in `Environment=` or a launchd plist entry, is ignored and said
 so once in the kernel log with its fingerprint; sessions without an explicit
 Billing pick then launch on the login. Move such a key into `service.env`, or
-replace it with a reference.
+replace it with a provider.
 
-For a foreground manager, the same reference can be supplied in its
+For a foreground manager, the same provider can be supplied in its
 environment:
 
+    ROMP_API_KEY_CMD=~/.config/romp/fetch-api-key romp up
     ROMP_API_KEY_REF=op://vault/item/field romp up
 
 The Billing picker, status displays, and `romp keyswap`'s listing inspect the
-configured source without running `op`. A configured reference therefore
-means "API key available to try", not "1Password access verified". If a
-selected source cannot resolve the key, the operation fails with a credential
-error. It does not use an ambient key, a previous resolved key, or a Claude
-login as a fallback. Choosing **Login** explicitly still uses Claude Code's
-supported login flow and does not resolve the API key source.
+configured source without running the provider. A configured provider
+therefore means "API key available to try", not "secret manager access
+verified". If a selected provider cannot resolve the key, the operation fails
+with a credential error. It does not use an ambient key, a previous resolved
+key, or a Claude login as a fallback. Choosing **Login** explicitly still uses
+Claude Code's supported login flow and does not run the provider.
 
 To migrate an existing service:
 
-1. Put the API key in 1Password and obtain its field's secret reference.
+1. Put the API key in your secret manager and write the command that prints
+   it (or, for 1Password, obtain the field's secret reference).
 2. Replace `ANTHROPIC_API_KEY=...` in `service.env` with
-   `ROMP_API_KEY_REF=op://vault/item/field`, and remove obsolete plaintext
-   copies.
+   `ROMP_API_KEY_CMD=<command>` (or `ROMP_API_KEY_REF=op://vault/item/field`),
+   and remove obsolete plaintext copies.
 3. Refresh the kernel once to load this version of Romp. Future source edits
    take effect without restarting the manager: the next session launch or
-   judge call reads the reference, and that first read also scrubs the tmux
+   judge call reads the provider, and that first read also scrubs the tmux
    server of `op`'s names and the retired `ANTHROPIC_API_KEY`.
 4. Reconnect existing key-billed SDK sessions with `romp keyswap --cycle-all`
    when they are quiet. Newly launched sessions and subsequent judge/model
@@ -835,16 +895,16 @@ To migrate an existing service:
    launched before the migration still carry the plaintext key they started
    with; end and relaunch them.
 
-Once a reference has been read from `service.env`, Romp remembers it on
-disk in the sibling file `service.env.source` (the word `op`, mode 600, never
-a reference or a key), so the memory survives kernel restarts: deleting the
-reference line and restarting does not make sessions fall to the login.
-Writing an `ANTHROPIC_API_KEY=` line removes the marker, so an intentional
-switch back to a static key is not an error. `romp keyswap` does not list the
-marker as a profile.
+Once a provider has been read from `service.env`, Romp remembers it on disk in
+the sibling file `service.env.source` (the word `command` or `op`, mode 600,
+never a command line, a reference or a key), so the memory survives kernel
+restarts: deleting the provider line and restarting does not make sessions
+fall to the login. Writing an `ANTHROPIC_API_KEY=` line removes the marker, so
+an intentional switch back to a static key is not an error. `romp keyswap`
+does not list the marker as a profile.
 
 Removing or emptying an explicit service-file key source cannot revive the
-key inherited when the kernel started. After removing a selected reference,
+key inherited when the kernel started. After removing a selected provider,
 API-key operations fail until a valid source is selected; choose **Login**
 explicitly to use that mode. Removing a static `ANTHROPIC_API_KEY=` line
 while the kernel runs is different: the file stays authoritative and
@@ -877,7 +937,7 @@ as billing the login.
     call), a child of the service, so the secret manager's CLI needs a
     credential that works without a desktop app: for 1Password,
     `OP_SERVICE_ACCOUNT_TOKEN=` in `service.env`, scoped to the one vault. With
-    no reference configured Romp leaves that token in the sessions'
+    no key provider configured Romp leaves that token in the sessions'
     environment, where the helper needs it and where an agent's shell can read
     it. Any secret manager whose CLI can print the key works the same way.
 
@@ -885,14 +945,15 @@ as billing the login.
 
         { "apiKeyHelper": "/path/to/anthropic-key.sh" }
 
-3. Leave `service.env` with no `ANTHROPIC_API_KEY`, no `ROMP_API_KEY_REF` and
-   no `ROMP_CREDENTIAL_COMMAND` line, and set `ROMP_EXPECTED_AUTH=key` so the
-   per-init auth check knows the key arrives through the helper and stays quiet
-   (see [Per-session billing](#per-session-billing-login-vs-api-key)). If a
-   1Password reference was ever selected on this box, also remove the
+3. Leave `service.env` with no `ANTHROPIC_API_KEY`, no `ROMP_API_KEY_CMD`, no
+   `ROMP_API_KEY_REF` and no `ROMP_CREDENTIAL_COMMAND` line, and set
+   `ROMP_EXPECTED_AUTH=key` so the per-init auth check knows the key arrives
+   through the helper and stays quiet (see [Per-session
+   billing](#per-session-billing-login-vs-api-key)). If a key provider (a key
+   command or a 1Password reference) was ever read on this box, also remove the
    `service.env.source` marker beside the file: with it in place the removed
-   reference stays an error rather than an absent source (see [API keys from
-   1Password at runtime](#api-keys-from-1password-at-runtime)).
+   provider stays an error rather than an absent source (see [API keys from a
+   secret manager at runtime](#api-keys-from-a-secret-manager-at-runtime)).
 4. Restart the service once.
 
 Rotating the key is then a change in the secret manager alone: Claude Code
@@ -911,9 +972,13 @@ tracks each family's newest. Nothing else Romp does on such a box needs a key.
 
 ### Installing without keys on disk
 
-For installations that forbid a credential in any file, the kernel has a
-second key source, **command mode**: a command it runs, whose output it hands
-to each process it starts. One line in `service.env` selects it (a systemd
+For installations that forbid a credential in any file and whose sessions
+need more than one key, the kernel has a further key source, **command mode**:
+a command it runs, whose output, a set of credentials, it hands to each process
+it starts. A `ROMP_API_KEY_CMD` key command (above) covers the common case, one
+key fetched at use time; command mode is for a set: the sessions' key, the
+kernel's own direct-call key and other variables the sessions need, selected
+by name. One line in `service.env` selects it (a systemd
 drop-in works too; a line added to the unit or the plist by hand does not
 survive `romp-service install`, which rewrites both); with the line absent
 nothing about file mode changes.
@@ -1601,16 +1666,18 @@ failed cycles nothing.
 
 **In file mode** (no `ROMP_CREDENTIAL_COMMAND`) upstream's `romp keyswap
 <name>` rewrites the key source line of `service.env` from a sibling profile
-(`service.env.<name>`, holding an `ANTHROPIC_API_KEY=` line or a
-`ROMP_API_KEY_REF=op://…` reference). This fork refuses the rewrite for either
-kind of profile: it does not write API keys to files, so the named swap exits 2
+(`service.env.<name>`, holding an `ANTHROPIC_API_KEY=` line, a
+`ROMP_API_KEY_CMD=` key command or a `ROMP_API_KEY_REF=op://…` reference). This
+fork refuses the rewrite for every kind of profile: it does not write API keys
+to files, and the key source line is yours to edit, so the named swap exits 2
 with that message, reads and writes nothing, and has no flag that lets it
 through. The bare command reports the key source the kernel holds (a key as a
-fingerprint, a reference as `1Password reference <fingerprint>`, never
-resolved), the file it reads, and `MISMATCH` when the kernel is not reading
-this file's key source, with the usual causes: the file is unreadable to the
-kernel, it has no key line and the kernel holds its startup key, the file
-names a reference the kernel has not read, or the kernel reads another
+fingerprint, a reference as `1Password reference <fingerprint>`, a key command
+as `key command <fingerprint>`, never run or resolved), the file it reads, and
+`MISMATCH` when the kernel is not reading this file's key source, with the
+usual causes: the file is unreadable to the kernel, it has no key line and the
+kernel holds its startup key, the file names a provider the kernel has not
+read, or the kernel reads another
 `service.env` (the same other-file cause as above, with the places to look,
 the remedy per place and the restart and reload commands); an invalid source
 line is reported as such and nothing is asked of the kernel. A cycle reads and
@@ -1619,10 +1686,11 @@ verify (`NOT DONE`), and carries the source fingerprint it read, so a source
 that changes during the request is a `FAILED` cycle rather than a reconnect
 onto the wrong key. A kernel older than the runtime sources answers with no
 source fingerprint, and the report says to `romp refresh` before cycling a
-reference. A reference's fingerprint is of the reference, not of the secret
-behind it, so the report cannot show a rotation behind an unchanged reference;
-a cycle can: it resolves the current key once for the request and reconnects
-each quiet session whose launch key differs, reference unchanged or not, and
+provider. A provider's fingerprint is of the command line or the reference,
+not of the secret behind it, so the report cannot show a rotation behind an
+unchanged provider; a cycle can: it resolves the current key once for the
+request and reconnects each quiet session whose launch key differs, provider
+unchanged or not, and
 the reconnect resolves the source again at the launch rather than reusing the
 cycle's value. Rotate the key
 at its source, then run `--cycle-all` for the key-billed sessions. In file
@@ -2476,6 +2544,20 @@ suffix when two land in the same second), the store starts over empty, and an
 entry under the same kind says so. A file that cannot be read at all keeps
 showing its last-read values until it can. Nothing here needs a restart; the
 sidecars are yours to inspect or delete.
+
+Two small ledgers there, `auto-nudge.json` (the auto-nudge switch and its
+per-goal records) and `retry-suppressed.json` (the sessions whose auto-retry
+you stopped), are moved aside rather than overwritten when their bytes do not
+parse: the file is renamed `<name>.corrupt-<UTC stamp>` beside the original
+(`-1`, `-2`, ... when a second one lands in the same second), the dashboard's
+error center says so, and the ledger reads as a fresh install until you
+restore it from that file. Nothing is deleted. Any other read fault leaves the
+file untouched: the kernel serves the last copy it read, writes nothing to it,
+and says so once, until the file reads again. A write that fails (a full or
+read-only disk) is told to the gesture that asked, the gear's toast or the
+stop button's warning, and said once per fault episode in the error center;
+the automatic pass sends nothing whose record could not land, and the file
+keeps what it holds.
 
 Two ledgers there record restarts. `restart-audit.jsonl` gets a row from
 whatever asks for one: `romp refresh`, `romp down`, the dashboard's restart
