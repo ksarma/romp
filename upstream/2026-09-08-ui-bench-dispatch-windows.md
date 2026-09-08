@@ -1,9 +1,9 @@
 ---
 title: `tools/ui-bench.mjs`: time the shim's handoff of each frame to the bundle (`window.__rompFed.inbound`) beside the socket handler, match handoffs to frames by handler order, and size the profile windows to the union of a frame's handler and dispatch spans, so the bench measures the bundle's work on both the inline shim and the deferred (MessageChannel flush) shim of upstream c017b510
 status: candidate
-where: fork branch `perf-bench-dispatch` (not yet a PR): `tools/ui-bench.mjs`, `tests/ui-bench.test.mjs`, `docs/reference.md`, `CONTRIBUTING.md`
+where: fork PR #394 (`perf-bench-dispatch`): `tools/ui-bench.mjs`, `tests/ui-bench.test.mjs`, `docs/reference.md`, `CONTRIBUTING.md`
 added: 2026-09-08
-pr:
+pr: 394
 tier: tests-only
 offered:
 closed:
