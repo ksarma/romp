@@ -68,7 +68,7 @@ class ToolSurface(unittest.TestCase):
 
     def test_add_offers_an_optional_file_and_the_description_names_it(self):
         # the todo-file follow-on (2026-09-07): the file the need is about, structured — the
-        # request shows it and the person's comments on that file can answer the todo
+        # todo shows it and the person's comments on that file can answer the todo
         t = self._tool("add_user_todo")
         self.assertIn("file", t["inputSchema"]["properties"])
         self.assertNotIn("file", t["inputSchema"]["required"], "optional: most needs are not about a file")
@@ -184,13 +184,21 @@ class File(unittest.TestCase):
     """The optional `file` (the todo-file follow-on, 2026-09-07): the absolute path of the file the
     need is about. The tool passes it to POST /usertodo as `file` and otherwise posts the shape it
     always did; the KERNEL resolves it (a relative path against the session's cwd) and stores the
-    absolute path, never refusing a todo for its file, and answers `warning` when the path did not
-    resolve. The tool relays that warning in its reply — the todo stands, so no error flag, but
-    the agent hears that the link may not open. PRIVATE synthetic sid (the fixture rule)."""
+    absolute path, never refusing a todo for its file, and answers `warning` when the value could
+    not be made absolute (never an existence check: kernel _user_todo_file). The tool relays that
+    warning in its reply — the todo stands, so no error flag, but the agent hears that the path was
+    kept as given and is asked for the absolute one. A kernel that takes `file` echoes it on the
+    reply, and the tool reads a reply with neither `file` nor `warning` as an older kernel's
+    (test_postal_service_todo_file_skew.py), so the canned replies here carry the echo. PRIVATE
+    synthetic sid (the fixture rule)."""
 
     SID = "5e5e5e5e-1111-4222-8333-944444444444"
-    MINTED = {"ok": True, "todoId": "ut-0a1b2c3d"}
-    WARNING = "the path /TESTDIR/notes-api/docs/report.md does not resolve on this machine, so the link may not open"
+    FILE = "/TESTDIR/notes-api/docs/report.md"
+    MINTED = {"ok": True, "todoId": "ut-0a1b2c3d", "file": FILE}
+    # the kernel's own shape for a relative path from a session whose cwd it does not know
+    WARNING = ("the file path docs/report.md did not resolve to an absolute path (it is relative and no working "
+               "directory is recorded for this session), so it was kept as given; pass the file's absolute path "
+               "so the person can open it from the todo and their comments on it can answer the todo")
 
     def setUp(self):
         self._saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
@@ -230,23 +238,25 @@ class File(unittest.TestCase):
         self.assertNotIn("file", self.posts[-1][1])
 
     def test_the_kernels_warning_reaches_the_agent_and_the_todo_still_stands(self):
-        self.canned = dict(self.MINTED, warning=self.WARNING)
+        self.canned = dict(self.MINTED, file="docs/report.md", warning=self.WARNING)   # kept as given, with the reason
         out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
-                                                  "file": "/TESTDIR/notes-api/docs/report.md"})
+                                                  "file": "docs/report.md"})
         self.assertFalse(err, "the todo was filed: a warning is not a failure")
         self.assertIn("Noted (id ut-0a1b2c3d)", out, "the filing is confirmed first")
         self.assertIn("withdraw_user_todo", out, "the withdraw contract still rides along")
         self.assertIn("About the file: " + self.WARNING, out, "the kernel's words, relayed whole")
         self.assertTrue(out.index("Noted") < out.index("About the file"), "the confirmation leads")
 
-    def test_no_warning_means_no_file_sentence(self):
-        out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
-                                                  "file": "/TESTDIR/notes-api/docs/report.md"})
+    def test_a_recorded_file_with_no_warning_means_no_file_sentence(self):
+        # the kernel echoed the file it stored and warned of nothing: the reply says nothing about the file
+        # (a reply with NEITHER field is an older kernel's, and earns the not-recorded sentence instead —
+        # test_postal_service_todo_file_skew.py)
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the report", "file": self.FILE})
         self.assertFalse(err)
+        self.assertEqual(self.canned["file"], self.FILE)
         self.assertNotIn("About the file", out)
         self.canned = dict(self.MINTED, warning="")
-        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look at the report",
-                                                "file": "/TESTDIR/notes-api/docs/report.md"})
+        out, _ = pm._mcp_call("add_user_todo", {"text": "Need a look at the report", "file": self.FILE})
         self.assertNotIn("About the file", out, "an empty warning is no warning")
 
     def test_the_warning_reply_keeps_the_veil(self):
