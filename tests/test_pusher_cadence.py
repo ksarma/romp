@@ -193,6 +193,18 @@ class MinimumInterval(unittest.TestCase):
         self.assertEqual(starts, [0.0, 0.75])
         self.counters(p, cycles=2, wakes=2, wakes_live=1, wakes_event=1, held=1, held_ms=375.0, exempt=1)
 
+    def test_a_settle_for_the_watched_tab_repaints_at_cycle_end(self):
+        # the turn-end shape (review 2026-09-08): streamed text for the watched tab at 0.375 runs its cycle at
+        # once (0.375 to 0.625); the ResultMessage settle lands during that cycle and retires the work atoms,
+        # a live-tail change carrying the sid (retire_live_work), so its cycle runs the moment the exempt one
+        # ends and the chip reads ready at 0.625
+        starts, p, _ = run_loop(km, [(0.375, "live", WATCHED), (0.5, "live", WATCHED)], until=1.0)
+        self.assertEqual(starts, [0.0, 0.375, 0.625])
+        self.counters(p, exempt=2, held=0)
+        # were the settle a plain wake, the repaint would wait out the interval from the exempt cycle's start
+        starts, p, _ = run_loop(km, [(0.375, "live", WATCHED), (0.5, "plain", None)], until=1.5)
+        self.assertEqual(starts, [0.0, 0.375, 1.375])
+
     def test_the_backstop_alone_runs_at_most_one_cycle_per_interval(self):
         # no wakes at all: the 0.5 s backstop ends each wait at cycle end + 0.5 (0.75), and the interval
         # holds the next start to 1.0; cycles at 0, 1, 2, 3 instead of 0, 0.75, 1.5, 2.25
@@ -390,7 +402,7 @@ class SdkBackendSites(unittest.TestCase):
         # the sites that follow a change to ONE sid's live tail (_stash_live / _touch_live): a streamed
         # atom, the send echo, an unqueued echo, a dismissed echo, the dropped-echo flags, a command chip
         live_sites = {"_forward": "sess.sid", "send": "sid", "unqueue": "sid", "dismiss_echo": "sid",
-                      "_mark_dropped_echoes": "sid", "_ack_cmd_chip": "sid"}
+                      "_mark_dropped_echoes": "sid", "_ack_cmd_chip": "sid", "retire_live_work": "sid"}
         for name, arg in live_sites.items():
             src = inspect.getsource(getattr(sb.SdkBackend, name))
             self.assertIn("self._wake_push_live(%s)" % arg, src, name)

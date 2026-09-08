@@ -12449,6 +12449,11 @@ class SdkBackend:
                 self._live.pop(sid, None)
             if popped:
                 self._touch_live(sid)
+        if popped:
+            # the tail changed (the work atoms are gone; the chip can read ready) and the three callers wake only
+            # through the plain _poke; the ResultMessage forwarded after a settle yields no atom, so without this
+            # a watched tab's turn-end repaint waited out the pusher's minimum interval (review 2026-09-08)
+            self._wake_push_live(sid)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
