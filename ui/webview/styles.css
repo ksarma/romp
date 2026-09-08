@@ -2323,7 +2323,8 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
 .pn-line::before { content: "\25AA"; flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }
 .pn-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The fold's offer follows the ROW's classes (pinned-notes.ts): pn-over, MEASURED after the paint (the one-line
-   text overflows its box; re-measured on a width change), pn-break (a line break the row shows as a space) and
+   text overflows the box it has with the hint hidden, in fractions of a pixel; re-measured when the strip's box,
+   the fonts or the settings change), pn-break (a line break the row shows as a space) and
    pn-with-detail (the session added a detail). A row wearing none has nothing behind it: its hint and its fold
    stay hidden (display:none keeps the hint out of the tab order) and its text is no click target. Before this
    the hint followed a 72-character count, and a 60-character note was cut on a phone with no way to read the

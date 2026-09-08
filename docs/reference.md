@@ -68,10 +68,11 @@ link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a p
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
 a strip between the tab bar and the transcript, oldest first, and the strip takes no space while a
-session has none. Each row is one line. A text the row cannot show whole ends in an ellipsis; its
-full text is the row's title and sits behind the row's *details* hint, as does any detail the
-session added, and a row that shows its whole text has no hint. Whether a row is cut is measured on
-the page, so the same note can fit a desktop and offer the hint on a phone or in a narrow pane.
+session has none. Each row is one line, and every row's full text is its title, so a hover reads
+any note whole on a desktop. A text the row cannot show whole ends in an ellipsis; its full text
+sits behind the row's *details* hint, as does any detail the session added, and a row that shows
+its whole text has no hint. Whether a row is cut is measured on the page, so the same note can fit
+a desktop and offer the hint on a phone or in a narrow pane.
 Click the row or the hint to read it (the hint is a button, so the keyboard reaches it too). When more than three notes are
 pinned, the older ones fold behind a *+N more* row. The strip is at most a few rows tall and
 scrolls past that, so the transcript and the composer stay on screen. A file path or a pull request

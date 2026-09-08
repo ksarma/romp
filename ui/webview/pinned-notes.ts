@@ -25,6 +25,7 @@
 // next push paints the same open folds. The one listener set this module knows is armUnpin's, hung on a
 // GESTURE (the arming click) and taken down by the disarm, never by a render.
 import { utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
+import { onExternalSettingsChange } from "./settings";
 
 export interface PinnedNote { id: string; text: string; detail?: string; createdT?: number }
 export interface PinnedFoldState { openDetails: Set<string>; moreOpen: Set<string> }
@@ -45,12 +46,14 @@ export const PINNED_UNPIN_ARMED = "Unpin?";
 // no character count predicts: a 72-character bound left a 60-character note cut on a phone with no hint,
 // no fold and no title, so the rest of it could not be read (review round 2, 2026-09-08). So every row
 // carries its full text as its title, every row is BUILT with a fold holding the full text (and the detail),
-// and the fold is OFFERED by measurement: pinnedMeasureCut reads each row's overflow after the paint
-// (scrollWidth > clientWidth) and marks the cut rows with PINNED_CUT_CLASS; the sheet shows the hint, the
-// click target and the fold's full text on a row wearing that class (or PINNED_BREAK_CLASS, a line break
-// the one-line row shows as a space, which the builder does know; or PINNED_DETAIL_CLASS, a detail), and
-// nothing on a row wearing none. render.ts runs the measure on the frame that carries the notes and on a
-// width change of the strip (pinnedWatchWidth: a ResizeObserver, the tab bar's idiom; no timer).
+// and the fold is OFFERED by measurement: pinnedMeasureCut reads each row's text against its box after the
+// paint (pinnedRowGeom: fractional widths, the hint's own room given back) and marks the cut rows with
+// PINNED_CUT_CLASS; the sheet shows the hint, the click target and the fold's full text on a row wearing
+// that class (or PINNED_BREAK_CLASS, a line break the one-line row shows as a space, which the builder does
+// know; or PINNED_DETAIL_CLASS, a detail), and nothing on a row wearing none. render.ts runs the measure on
+// the frame that carries the notes; pinnedWatchWidth re-runs it on the events that re-width a row with no
+// repaint: the strip's box changing (a ResizeObserver, the tab bar's idiom), a font finishing loading, a
+// settings change (the theme's font). Events, no timer.
 export const PINNED_CUT_CLASS = "pn-over";
 export const PINNED_BREAK_CLASS = "pn-break";
 export const PINNED_DETAIL_CLASS = "pn-with-detail";
@@ -82,9 +85,37 @@ export function pinnedHasFold(item: { classList: { contains(c: string): boolean 
   return PINNED_FOLD_CLASSES.some((c) => item.classList.contains(c));
 }
 
-/** The row's one-line text overflows its box: the cut, read after paint (a layout fact, never a count). */
-export function pinnedRowOverflows(txt: { scrollWidth: number; clientWidth: number }): boolean {
-  return txt.scrollWidth > txt.clientWidth;
+/** A painted row's widths, fractional CSS px: the text's natural width, the text's box, and what the hint
+ *  takes from that box while it shows (0 while hidden). pinnedRowGeom reads them; a test hands in numbers. */
+export interface PinnedRowGeom { text: number; box: number; hint: number }
+
+/** The row's one-line text does not fit the box it would have with no hint beside it: the cut, read after
+ *  paint (a layout fact, never a count). Fractional on both sides: Chrome paints the ellipsis for an overflow
+ *  of any size, and the integer scrollWidth and clientWidth read equal for one under a pixel, which left a
+ *  row cut with no hint (review round 3, 2026-09-08). The hint's take is added back, so the verdict at a
+ *  width is the same whether the hint is showing now or not: measured against the box as laid out WITH the
+ *  hint, a row that had room again after a widen stayed cut until the next repaint, since the hint it had
+ *  been offered took the room it needed (review round 3). */
+export function pinnedRowOverflows(g: PinnedRowGeom): boolean {
+  return g.text > g.box + g.hint;
+}
+
+/** What pinnedRowGeom reads of a row's text and hint: a laid-out element, or a stand-in with these members. */
+export interface PinnedGeomNode {
+  getBoundingClientRect(): { width: number; right: number };
+  ownerDocument: { createRange(): { selectNodeContents(node: unknown): void; getBoundingClientRect(): { width: number } } };
+}
+
+/** Read a painted row's widths. The text's natural width comes from a Range over the text's contents (its
+ *  layout width, unclipped by the box and unrounded, where scrollWidth is an integer). The hint sits right
+ *  after the text in the row, so its right edge past the text's is its width plus the gap before it: the
+ *  room the text has back once the hint hides. A hidden hint (display:none) has no box and takes nothing. */
+export function pinnedRowGeom(txt: PinnedGeomNode, hint: PinnedGeomNode | null): PinnedRowGeom {
+  const range = txt.ownerDocument.createRange();
+  range.selectNodeContents(txt);
+  const box = txt.getBoundingClientRect();
+  const h = hint ? hint.getBoundingClientRect() : null;
+  return { text: range.getBoundingClientRect().width, box: box.width, hint: h && h.width > 0 ? h.right - box.right : 0 };
 }
 
 /** The row's text is the fold's click target exactly when the row has a fold: a bare row's text is not a
@@ -101,13 +132,13 @@ export interface PinnedStripRoot { querySelectorAll(sel: string): ArrayLike<HTML
  *  target and the fold's full text show exactly where the one-line row does not show it all. Idempotent
  *  (a row keeps its class while its measurement holds; a hidden row, in a closed "+N more" fold, measures
  *  0 and 0 and wears nothing until the repaint that shows it). Returns how many rows changed. The events
- *  that call it: the paint that carries the rows, and a width change of the strip (pinnedWatchWidth). */
+ *  that call it: the paint that carries the rows, and the re-width events pinnedWatchWidth subscribes to. */
 export function pinnedMeasureCut(root: PinnedStripRoot): number {
   let changed = 0;
   for (const item of Array.from(root.querySelectorAll(".pn-item"))) {
     const txt = item.querySelector<HTMLElement>(".pn-text");
     if (!txt) continue;
-    const over = pinnedRowOverflows(txt);
+    const over = pinnedRowOverflows(pinnedRowGeom(txt, item.querySelector<HTMLElement>("." + UT_HINT_CLASS)));
     if (over !== item.classList.contains(PINNED_CUT_CLASS)) {
       if (over) item.classList.add(PINNED_CUT_CLASS); else item.classList.remove(PINNED_CUT_CLASS);
       changed++;
@@ -115,19 +146,6 @@ export function pinnedMeasureCut(root: PinnedStripRoot): number {
     setFoldTarget(item, txt);
   }
   return changed;
-}
-
-const pnWatched = new WeakSet<object>();
-/** Re-measure the rows when the strip's width changes: one ResizeObserver per host, installed once (the
- *  tab bar's idiom, render.ts ensureTabRowObserver), and once more when the document's fonts finish
- *  loading, since a font swap re-widths every row without moving the host's box. Events, not timers. A
- *  host without ResizeObserver (a stand-in) keeps the paint-time measure alone. */
-export function pinnedWatchWidth(host: HTMLElement): void {
-  if (pnWatched.has(host)) return;
-  pnWatched.add(host);
-  if (typeof ResizeObserver === "function") new ResizeObserver(() => { pinnedMeasureCut(host); }).observe(host);
-  const fonts = (host.ownerDocument as any)?.fonts;
-  if (fonts && fonts.ready && typeof fonts.ready.then === "function") fonts.ready.then(() => { pinnedMeasureCut(host); }, () => {});
 }
 
 function make(doc: PinnedDoc, tag: string, cls: string): HTMLElement {
@@ -145,7 +163,7 @@ function noteItem(doc: PinnedDoc, sid: string, n: PinnedNote, state: PinnedFoldS
   const line = make(doc, "div", "pn-line");
   const txt = make(doc, "span", "pn-text");
   txt.textContent = n.text;
-  txt.title = n.text;   // the whole text on hover, whatever the one-line row shows of it
+  txt.title = n.text;   // the whole text on hover, on every row, whatever the one-line row shows of it (docs/reference.md says so)
   txt.dataset.nid = n.id;
   link.line(txt);   // paths and PR numbers link inside the one-line text
   const open = state.openDetails.has(n.id);
@@ -240,6 +258,29 @@ export function armUnpin(btn: HTMLElement, doc: ArmDoc, coarse: boolean): () => 
     btn.removeEventListener("pointerleave", onLeave);
   };
   return disarm;
+}
+
+// ── the re-measure watch ────────────────────────────────────────────────────────────────────────
+// Below the builder on purpose: its subscriptions hang on the document's fonts and on the window (through
+// settings.ts), once per host, never on a node the builder makes, so the builder's no-listener pin (click
+// safety, ui/CLAUDE.md) keeps covering exactly what the builder MAKES.
+const pnWatched = new WeakSet<object>();
+/** Re-measure the rows on the events that re-width them with no repaint, subscribed once per host (the tab
+ *  bar's idiom, render.ts ensureTabRowObserver): the strip's box changing (a ResizeObserver: the pane, a
+ *  scrollbar, the font size), the document's fonts finishing a load (the FontFaceSet's loadingdone: a web
+ *  font arriving re-widths every row and moves no box), and a settings change (onExternalSettingsChange,
+ *  the subscription every pane's theme rides; the theme's consumers registered at boot run before this one,
+ *  so the measure reads the new font's layout). Before the last two, a theme switch left a row cut with no
+ *  hint until the next pin, unpin or tab switch (review round 3, 2026-09-08). Events, not timers. A host
+ *  without these (a stand-in) keeps the paint-time measure alone. */
+export function pinnedWatchWidth(host: HTMLElement): void {
+  if (pnWatched.has(host)) return;
+  pnWatched.add(host);
+  const measure = (): void => { pinnedMeasureCut(host); };
+  if (typeof ResizeObserver === "function") new ResizeObserver(measure).observe(host);
+  const fonts = (host.ownerDocument as any)?.fonts;
+  if (fonts && typeof fonts.addEventListener === "function") fonts.addEventListener("loadingdone", measure);
+  onExternalSettingsChange(measure);
 }
 
 // ── the unpin latch ─────────────────────────────────────────────────────────────────────────────

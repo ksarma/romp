@@ -6084,11 +6084,22 @@ PINNED_DETAIL_MAX = 4000
 PINNED_TOMBSTONES_MAX = 16
 # The cleaner the kernel and the postal tool share (the tool carries an identical copy, since the bus imports
 # nothing from the kernel; tests/test_pinned_notes.py pins the two sources equal): a pasted terminal line
-# arrives with ANSI escape sequences, and dropping only the control bytes left their parameters as the note
-# ('\x1b[0m' pinned as '[0m'; review round 2, 2026-09-08). So a whole CSI sequence (ESC [ parameters,
-# intermediates, one final byte) goes first, then the remaining control characters.
-_PINNED_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")           # one ANSI CSI sequence, whole
-_PINNED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")   # control characters, except newline and tab
+# arrives with escape sequences, and dropping only the control bytes left their parameters as the note
+# ('\x1b[0m' pinned as '[0m'; review round 2, 2026-09-08). So every escape sequence goes WHOLE first, then the
+# remaining control characters. The families (ECMA-48), each with its 8-bit C1 introducer: CSI (ESC [ or
+# U+009B; parameters, intermediates, one final byte: colours, cursor moves, erases); OSC (ESC ] or U+009D, to
+# BEL or ST: a hyperlink, a window title); DCS, SOS, PM and APC (ESC P, X, ^, _ or U+0090, 98, 9E, 9F, to ST:
+# sixel data, terminal replies); any other ESC with its intermediates and one final byte (ESC ( B, ESC =, ESC 7).
+# ST is ESC \ or U+009C. A string never crosses a line break: one with no terminator on its line is cut back to
+# its introducer, its body stays as text, and the next line is never swallowed. Review round 3, 2026-09-08: the
+# cleaner knew CSI only, so OSC, DCS and two-byte sequences left their bodies in the note (a hyperlink's URL
+# fused onto its path) and the 8-bit forms went untouched.
+_PINNED_ANSI_RE = re.compile(
+    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"                                  # CSI, whole
+    r"|(?:\x1b\]|\x9d)[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)"             # OSC, to BEL or ST
+    r"|(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[^\x1b\x9c\n]*(?:\x1b\\|\x9c)"    # DCS, SOS, PM, APC, to ST
+    r"|\x1b[ -/]*[0-~]")                                                 # any other ESC sequence: intermediates, one final byte
+_PINNED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")   # control characters (C0, DEL, the 8-bit C1 set), except newline and tab
 
 
 def _pinned_note_clean(s):

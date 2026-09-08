@@ -12,7 +12,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, pinnedMeasureCut, pinnedRowOverflows, pinnedHasFold,
+import { buildPinnedNotes, pinnedNotesKey, pinnedMoreLabel, pinnedSplit, pinnedMeasureCut, pinnedRowOverflows, pinnedRowGeom, pinnedWatchWidth, pinnedHasFold,
   armUnpin, latchUnpinAt, latchedNotes,
   PINNED_VISIBLE, PINNED_ACT, PINNED_UNPIN_LABEL, PINNED_UNPIN_ARMED, PINNED_CUT_CLASS, PINNED_BREAK_CLASS, PINNED_DETAIL_CLASS, PINNED_FOLD_CLASSES,
   type PinnedNote, type PinnedFoldState, type PinnedLinkers, type UnpinLatch, type PinnedStripRoot } from "./pinned-notes";
@@ -41,7 +41,9 @@ class E {
   parentNode: E | null = null;
   childNodes: Array<E | T> = [];
   href = ""; target = ""; rel = ""; title = ""; className = "";
-  scrollWidth = 0; clientWidth = 0;   // the measured widths (a test sets them to stand for a layout)
+  natural = 0; width = 0; right = 0;   // the measured widths, fractional (a test sets them to stand for a layout): a text's natural width, the box, its right edge
+  getBoundingClientRect() { return { width: this.width, right: this.right, left: this.right - this.width }; }
+  get ownerDocument() { return standInDoc; }
   style: Record<string, string> = {};
   dataset: Record<string, string | undefined> = {};
   attrs: Record<string, string> = {};
@@ -90,10 +92,14 @@ class E {
   querySelectorAll(sel: string): E[] { return this.all(sel); }
   querySelector(sel: string): E | null { return this.all(sel)[0] || null; }
 }
-(globalThis as any).document = {
+// the stand-in document: the two factories the builder and the PR linker call, and the Range pinnedRowGeom
+// measures a text's natural width with (here the node's `natural`)
+const standInDoc = {
   createElement: (tag: string) => new E(tag.toUpperCase()),
   createTextNode: (s: string) => new T(s),
+  createRange: () => { let node: E | null = null; return { selectNodeContents: (n: unknown) => { node = n as E; }, getBoundingClientRect: () => ({ width: node ? node.natural : 0 }) }; },
 };
+(globalThis as any).document = standInDoc;
 const doc = { createElement: (tag: string) => new E(tag.toUpperCase()) as unknown as HTMLElement };
 
 const SID = "11111111-2222-3333-4444-555555555555";
@@ -112,6 +118,13 @@ const build = (ns: PinnedNote[], st = state(), link = spies().link) =>
 const rowsOf = (strip: E) => strip.all(".pn-item");
 const measure = (strip: E) => pinnedMeasureCut(strip as unknown as PinnedStripRoot);   // the stand-in's widths stand for a layout
 const textOf = (row: E) => row.all(".pn-text")[0];
+/** Lay a row out (stand-in widths, fractional): the text's natural width, the box it has beside the hint, and
+ *  the hint showing at hintW after the row's 8px gap (0: hidden, no box). */
+const lay = (row: E, natural: number, box: number, hintW = 0): void => {
+  const t = textOf(row), h = row.all(".ut-more")[0];
+  t.natural = natural; t.width = box; t.right = 40 + box;
+  h.width = hintW; h.right = hintW ? t.right + 8 + hintW : 0;
+};
 
 test("nothing pinned renders nothing, and the strip takes no space", () => {
   assert.equal(build([]), null);
@@ -220,12 +233,14 @@ test("a row is one line: a text the layout cuts is carried in full inside the fo
   assert.ok(broken.classList.contains(PINNED_BREAK_CLASS), "a line break the one-line row shows as a space: a cut the builder knows");
   assert.equal(textOf(broken).dataset.act, PINNED_ACT.toggle);
   assert.equal(broken.all(".pn-full")[0].textContent, "two\nlines");
-  // measured: the layout says the first row overflows (stand-in widths), the others fit
-  assert.equal(pinnedRowOverflows({ scrollWidth: 318, clientWidth: 302 }), true);
-  assert.equal(pinnedRowOverflows({ scrollWidth: 302, clientWidth: 302 }), false);
-  textOf(cut).scrollWidth = 318; textOf(cut).clientWidth = 302;
-  textOf(broken).scrollWidth = 60; textOf(broken).clientWidth = 302;
-  textOf(fits).scrollWidth = 40; textOf(fits).clientWidth = 302;
+  // measured: the layout says the first row overflows (stand-in widths), the others fit. Fractional (review
+  // round 3, 2026-09-08): Chrome paints the ellipsis for an overflow of any size while the integer scrollWidth
+  // and clientWidth read equal for one under a pixel, so a sixteenth of a pixel is a cut
+  assert.equal(pinnedRowOverflows({ text: 318, box: 302, hint: 0 }), true);
+  assert.equal(pinnedRowOverflows({ text: 302, box: 302, hint: 0 }), false, "an exact fit is not a cut");
+  assert.equal(pinnedRowOverflows({ text: 407.4375, box: 407.375, hint: 0 }), true, "an overflow under a pixel is");
+  lay(cut, 318, 302); lay(broken, 60, 302); lay(fits, 40, 302);
+  assert.deepEqual(pinnedRowGeom(textOf(cut), cut.all(".ut-more")[0]), { text: 318, box: 302, hint: 0 }, "read off the row: the Range's width, the box, a hidden hint taking nothing");
   assert.equal(measure(strip), 1, "one row changed");
   assert.ok(cut.classList.contains(PINNED_CUT_CLASS));
   assert.ok(pinnedHasFold(cut));
@@ -234,19 +249,73 @@ test("a row is one line: a text the layout cuts is carried in full inside the fo
   assert.ok(!fits.classList.contains(PINNED_CUT_CLASS));
   assert.equal(textOf(fits).dataset.act, undefined);
   assert.equal(measure(strip), 0, "idempotent: the same layout changes nothing");
-  // the pane widens: the row fits, the offer is withdrawn (the hint and the fold hide, the text is no target)
-  textOf(cut).scrollWidth = 302;
+  // the sheet now shows the hint beside the cut text, and it takes its 38.75px and the 8px gap from the text's
+  // box: the same text in the same row is the same one cut, read the same
+  lay(cut, 318, 302 - 46.75, 38.75);
+  assert.deepEqual(pinnedRowGeom(textOf(cut), cut.all(".ut-more")[0]), { text: 318, box: 255.25, hint: 46.75 }, "the hint's room is given back to the text");
+  assert.equal(measure(strip), 0, "the hint appearing is not new information about the text");
+  // the pane widens by 18px with the hint still showing: the text (318) fits the row's 320 without the hint, so
+  // the offer is withdrawn (the hint and the fold hide, the text is no target). Measured against the box as laid
+  // out WITH the hint (273.25), the row stayed cut until the next repaint (review round 3, 2026-09-08)
+  lay(cut, 318, 320 - 46.75, 38.75);
   assert.equal(measure(strip), 1);
   assert.ok(!cut.classList.contains(PINNED_CUT_CLASS));
   assert.equal(textOf(cut).dataset.act, undefined);
   assert.ok(broken.classList.contains(PINNED_BREAK_CLASS), "the measure never takes the builder's break away");
+  lay(cut, 318, 320);   // the hint hid and the text has the whole row: the same verdict, nothing changes
+  assert.equal(measure(strip), 0);
   // no character count anywhere in the module: the cut is a layout fact (review round 2, 2026-09-08)
   const code = MODULE.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")).join("\n");
   assert.doesNotMatch(code, /PINNED_LINE_CHARS|text\.length|textContent\.length/, "no count of the text decides the fold");
   // render.ts measures at every paint that shows rows, and watches the strip's width (once), no timer
   assert.match(RENDER_FN, /host\.style\.display = strip \? "" : "none";\s*\n\s*if \(strip\) \{[\s\S]*?pinnedMeasureCut\(host\);\s*\n\s*pinnedWatchWidth\(host\);\s*\n\s*\}/);
-  assert.match(MODULE, /new ResizeObserver\(\(\) => \{ pinnedMeasureCut\(host\); \}\)\.observe\(host\)/);
+  assert.match(MODULE, /new ResizeObserver\(measure\)\.observe\(host\)/);
   assert.doesNotMatch(code, /setTimeout|setInterval|requestAnimationFrame/, "events, not timers");
+});
+
+test("pinnedWatchWidth re-measures on the events that re-width a row with no repaint: the strip's box (ResizeObserver), a font load (the fonts' loadingdone), a settings change (romp:settings, or another pane's storage write); subscribed once per host, no timer", () => {
+  // a host in a document that has a FontFaceSet, in a window (settings.ts onExternalSettingsChange subscribes on the window global)
+  const fontEvents: Record<string, Array<() => void>> = {};
+  const winEvents: Record<string, Array<(e: any) => void>> = {};
+  const fonts = { addEventListener: (type: string, f: () => void) => { (fontEvents[type] ||= []).push(f); } };
+  (globalThis as any).window = { addEventListener: (type: string, f: (e: any) => void) => { (winEvents[type] ||= []).push(f); } };
+  try {
+    const strip = build([note(0, { text: "a note that fits its row until the font changes" })])!;
+    const host = new E("DIV"); host.appendChild(strip);
+    Object.defineProperty(host, "ownerDocument", { value: { ...standInDoc, fonts } });
+    const row = rowsOf(strip)[0];
+    lay(row, 300, 320);   // the paint: the text fits with 20px to spare
+    assert.equal(measure(strip), 0);
+    pinnedWatchWidth(host as unknown as HTMLElement);
+    pinnedWatchWidth(host as unknown as HTMLElement);   // a second paint of the same host subscribes nothing more
+    assert.deepEqual(Object.keys(fontEvents), ["loadingdone"]);
+    assert.equal(fontEvents.loadingdone.length, 1, "one loadingdone listener");
+    assert.deepEqual(Object.keys(winEvents).sort(), ["romp:settings", "storage"], "the settings subscription every pane rides (settings.ts onExternalSettingsChange)");
+    assert.equal(winEvents["romp:settings"].length, 1);
+    // a web font arrives: every row re-widths and no box moves (the ResizeObserver stays silent); loadingdone re-measures
+    lay(row, 330, 320);
+    assert.ok(!row.classList.contains(PINNED_CUT_CLASS), "cut and unmarked until the event");
+    fontEvents.loadingdone[0]();
+    assert.ok(row.classList.contains(PINNED_CUT_CLASS), "the font load re-measured");
+    assert.equal(textOf(row).dataset.act, PINNED_ACT.toggle);
+    // the gear picks a theme whose font is narrower: the same-document settings event re-measures, and the hint
+    // now showing does not keep the row cut (its room counts as the text's)
+    lay(row, 310, 320 - 46.75, 38.75);
+    winEvents["romp:settings"][0]({});
+    assert.ok(!row.classList.contains(PINNED_CUT_CLASS), "the settings change re-measured");
+    // another pane's gear: the storage event, for the settings key only
+    lay(row, 330, 320);
+    winEvents.storage[0]({ key: "some-other-key" });
+    assert.ok(!row.classList.contains(PINNED_CUT_CLASS), "another key is not the settings");
+    winEvents.storage[0]({ key: "romp:settings" });
+    assert.ok(row.classList.contains(PINNED_CUT_CLASS), "the other pane's settings write re-measured");
+  } finally { delete (globalThis as any).window; }
+  // the module's three subscriptions, all on the one measure; no fonts.ready one-shot (loadingdone covers a load in flight at the paint)
+  assert.match(MODULE, /const measure = \(\): void => \{ pinnedMeasureCut\(host\); \};/);
+  assert.match(MODULE, /new ResizeObserver\(measure\)\.observe\(host\)/);
+  assert.match(MODULE, /fonts\.addEventListener\("loadingdone", measure\)/);
+  assert.match(MODULE, /onExternalSettingsChange\(measure\)/);
+  assert.doesNotMatch(MODULE, /fonts\.ready/);
 });
 
 test("paths and PR references link through the caller's linkers: the line pass on every row, the detail pass on every row's fold", () => {

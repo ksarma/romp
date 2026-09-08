@@ -112,7 +112,7 @@ class Dispatch(unittest.TestCase):
         self.assertIn("- pn-0badcafe: Read docs/plan.md before replying", out)
 
     def test_pin_without_text_is_refused_before_any_post(self):
-        for blank in ("   ", "\x1b\x07", "\x01\x02 \x1b[0m", "\x1b[0m\x1b[K"):
+        for blank in ("   ", "\x1b\x07", "\x01\x02 \x1b[0m", "\x1b[0m\x1b[K", "\x1b]0;a title\x07 \x9b0m \x1b(B"):
             with self.subTest(text=blank):
                 out, err = pm._mcp_call("pin_note", {"text": blank})
                 self.assertTrue(err)
@@ -126,6 +126,12 @@ class Dispatch(unittest.TestCase):
         self.assertFalse(err)
         self.assertEqual(self.posts, [("/pinnote", {"id": SID, "text": "red alert", "detail": "bold line"})])
         self.assertEqual(pm._pinned_note_clean("\x01\x02 \x1b[0m"), "")
+        # an OSC hyperlink (ls --hyperlink, ripgrep) goes whole too, its URL with it, so the path reaches the
+        # kernel as a path the row's linker can see (review round 3, 2026-09-08)
+        self.posts.clear()
+        out, err = pm._mcp_call("pin_note", {"text": "see \x1b]8;;https://example.test/a\x07docs/plan.md\x1b]8;;\x07 now"})
+        self.assertFalse(err)
+        self.assertEqual(self.posts, [("/pinnote", {"id": SID, "text": "see docs/plan.md now", "detail": ""})])
 
     def test_a_non_string_text_or_detail_is_refused_before_any_post(self):
         for args, field in (({"text": ["a", "b"]}, "text"), ({"text": 12345}, "text"),

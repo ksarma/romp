@@ -11,9 +11,10 @@ a summary). Kernel side, pinned here:
   store is sid-keyed, or one it never held: loud), "unreadable" (the store file is not a store: the fault
   named, never "no note of yours"); the tombstone that makes "already" possible and its bound;
 - the bounds: a session id (_safe_id) at the store and the routes, since one row under any other key
-  reads the whole file as not-a-store for every session; the text and detail lengths; ANSI escape
-  sequences dropped whole and then control characters (the cleaner the postal tool carries an identical
-  copy of, pinned equal here); a non-object JSON body a 400, and a non-string text or detail too (never
+  reads the whole file as not-a-store for every session; the text and detail lengths; terminal escape
+  sequences of every family (CSI, OSC, DCS, the two-byte ESC forms, their 8-bit introducers) dropped whole
+  and then control characters (the cleaner the postal tool carries an identical copy of, pinned equal
+  here); a non-object JSON body a 400, and a non-string text or detail too (never
   stored as its repr); a pin against a store file that is not a store answers the fault by name (the
   unpin side's "unreadable" account), never a 500 traceback;
 - the POST routes (/pinnote, /unpinnote): the serve token, the answers (the evicted notes named), the
@@ -433,8 +434,8 @@ class Routes(_RouteLab):
                          "controls plus an escape sequence clean to nothing: a blank, never a note reading '[0m'")
         self.assertEqual(km._pinned_note_clean("\x1b[1;32mgreen\x1b[0m \x1b[?25lbold\x1b[K done"), "green bold done",
                          "parameters, private-mode and erase sequences all go whole")
-        self.assertEqual(km._pinned_note_clean("\x1b]8;;x\x07link"), "]8;;xlink",
-                         "only CSI sequences are known here; a stray ESC still drops as a control character")
+        self.assertEqual(km._pinned_note_clean("\x1b]8;;x\x07link"), "link",
+                         "an OSC hyperlink goes whole too (review round 3, 2026-09-08; every family below)")
 
     def test_the_tool_and_the_kernel_share_one_cleaner(self):
         # the bus imports nothing from the kernel, so the tool carries a copy; the two SOURCES are pinned
@@ -443,9 +444,44 @@ class Routes(_RouteLab):
         self.assertEqual(km._PINNED_ANSI_RE.pattern, pm._PINNED_ANSI_RE.pattern)
         self.assertEqual(km._PINNED_CTRL_RE.pattern, pm._PINNED_CTRL_RE.pattern)
         self.assertEqual(inspect.getsource(km._pinned_note_clean), inspect.getsource(pm._pinned_note_clean))
-        for raw in ("  ", "\x01\x02 \x1b[0m", "\x1b[31mred\x1b[0m alert", " line\nbreak\ttab\x00 "):
+        for raw in ("  ", "\x01\x02 \x1b[0m", "\x1b[31mred\x1b[0m alert", " line\nbreak\ttab\x00 ",
+                    "see \x1b]8;;https://example.test/a\x07docs/plan.md\x1b]8;;\x07 now", "\x9b31mred \x1b(Bplain"):
             with self.subTest(raw=raw):
                 self.assertEqual(km._pinned_note_clean(raw), pm._pinned_note_clean(raw))
+
+    def test_every_escape_family_is_dropped_whole(self):
+        # review round 3, 2026-09-08: the cleaner knew CSI only, so an OSC hyperlink (ls --hyperlink, ripgrep)
+        # left its URL fused onto the path, a window title its text, a charset designation its two bytes and
+        # sixel data its whole body, and the 8-bit CSI went untouched, while docs/reference.md said a terminal
+        # escape sequence is dropped whole. The eight cases from the round's evidence, then the 8-bit strings,
+        # the bare C1 controls, and the bound: a string never crosses a line break, so one left unterminated is
+        # cut back to its introducer and the next line stays.
+        cases = (
+            ("\x1b[31mred\x1b[0m alert", "red alert"),                                                          # CSI colour
+            ("see \x1b]8;;https://example.test/a\x07docs/plan.md\x1b]8;;\x07 now", "see docs/plan.md now"),      # OSC 8 hyperlink to BEL
+            ("see \x1b]8;;https://example.test/a\x1b\\docs/plan.md\x1b]8;;\x1b\\ now", "see docs/plan.md now"),  # OSC 8 hyperlink to ST
+            ("\x1b]0;my title\x07hello", "hello"),                                                               # OSC 0 window title
+            ("\x1b(Bplain", "plain"),                                                                            # a charset designation: intermediate, final
+            ("\x1b=x", "x"),                                                                                     # keypad mode: one final byte
+            ("\x1bPq#0;2;0;0;0#0~~@@vv@@~~@@~~$\x1b\\ after", "after"),                                          # DCS (sixel) to ST
+            ("\x9b31mred", "red"),                                                                               # the 8-bit CSI
+            ("\x9d0;title\x9chello\x9033;1|x\x9c there\x9e-\x9c\x9f_\x9c", "hello there"),                       # 8-bit OSC, DCS, PM, APC to the 8-bit ST
+            ("a\x85b\x9fc", "abc"),                                                                             # bare C1 controls
+            ("\x1b7save\x1b8 restore \x1bMup", "save restore up"),                                               # more one-final sequences
+            ("\x1b]0;no terminator\nnext line kept", "0;no terminator\nnext line kept"),                         # unterminated: cut back to its introducer
+            ("\x1bPsixel with no end\nkept", "sixel with no end\nkept"),
+            ("\x1b[31\nred", "31\nred"),                                                                         # a CSI cannot cross a line break either
+        )
+        for raw, want in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(km._pinned_note_clean(raw), want)
+                self.assertEqual(pm._pinned_note_clean(raw), want, "the tool's copy agrees")
+        # and through the route: the hyperlink's path reaches the store as a path, nothing else of the sequence
+        code, res = self._post("/pinnote", {"id": SID, "text": "see \x1b]8;;https://example.test/a\x07docs/plan.md\x1b]8;;\x07 now"})
+        self.assertEqual(code, 200)
+        self.assertEqual(km._pinned_notes_for(SID)[-1]["text"], "see docs/plan.md now")
+        self.assertEqual(self._post("/pinnote", {"id": SID, "text": "\x1b]0;only a title\x07 \x9b0m"})[0], 400,
+                         "sequences of the other families alone clean to nothing too")
 
     def test_a_non_string_text_or_detail_is_a_400_never_a_repr(self):
         # a list, a dict or a number in the body pinned as "['a', 'b']" before (review round 2, 2026-09-08)

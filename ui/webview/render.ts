@@ -11769,7 +11769,8 @@ function toggleLedgerCollapsed() {
 // on a user-todo row (linkTodoLinePaths / linkTodoDetailPaths, the same session resolving relative
 // paths), and a `#123` links to the session's PR (linkifyPrRefs): the one pair of linkers, no second
 // code path. Which rows are CUT by the one-line layout (and so offer the fold with their full text) is
-// measured on the painted rows (pinnedMeasureCut) at every paint and on a width change, not counted.
+// measured on the painted rows (pinnedMeasureCut) at every paint and again on the events that re-width a
+// row (pinnedWatchWidth: the strip's box, a font load, a settings change), not counted.
 const pnFolds: PinnedFoldState = { openDetails: new Set(), moreOpen: new Set() };
 let pnPainted = "";   // pinnedNotesKey of what the strip shows; "" forces the next call to paint
 let pnLatch: UnpinLatch | null = null;   // the unpin(s) the kernel has not confirmed yet (latchUnpinAt)
@@ -11794,8 +11795,9 @@ function renderPinnedNotes(force = false): void {
   host.style.display = strip ? "" : "none";
   if (strip) {
     // which rows the one-line layout cuts is read off the painted rows, never guessed from a character
-    // count (review round 2, 2026-09-08): now, for the rows this frame carries, and again on a width
-    // change of the strip (pinnedWatchWidth, installed once: the tab bar's ResizeObserver idiom)
+    // count (review round 2, 2026-09-08): now, for the rows this frame carries, and again when the
+    // strip's box, the fonts or the settings change (pinnedWatchWidth, installed once: the tab bar's
+    // ResizeObserver idiom, plus the fonts' loadingdone and the settings event)
     pinnedMeasureCut(host);
     pinnedWatchWidth(host);
   }

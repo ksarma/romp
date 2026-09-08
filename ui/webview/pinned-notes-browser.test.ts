@@ -11,14 +11,19 @@
 // desktop and is cut on a phone offers its full text there (the hint, the fold, the title), and the offer
 // follows a width change of the strip through the ResizeObserver, no timer. The page carries the chat
 // page's viewport meta (kernel.py), so the phone context lays out at the device width: without it a
-// phone lays out at 980px and scales, and the phone leg measured a desktop (review round 2). Skips LOUDLY
-// without a playwright browser (CI installs none), as file-comments-regions-browser.test.ts does. Synthetic
-// values only.
+// phone lays out at 980px and scales, and the phone leg measured a desktop (review round 2). (4) The MEASURE
+// itself (review round 3, 2026-09-08): the cut is read in fractions of a pixel from the box the text has with
+// the hint hidden, so the verdict flips exactly where Chrome paints the ellipsis (an overflow under a pixel
+// included, where the integer scrollWidth and clientWidth read equal) and reads the same from a row already
+// wearing the hint (a widen that gives the room back withdraws the offer); and the re-measure runs on the
+// settings event and the fonts' loadingdone, which re-width a row and move no box. Skips LOUDLY without a
+// playwright browser (CI installs none), as file-comments-regions-browser.test.ts does. Synthetic values only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { PINNED_CUT_CLASS } from "./pinned-notes";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -170,6 +175,36 @@ function scene(page: any): Promise<Scene> {
   return page.evaluate(() => (window as any).__scene());
 }
 
+/** The first row's widths, fractional, read the way pinnedRowGeom reads them (a Range for the text's natural
+ *  width; the hint's right edge past the text's for its take), plus the integer pair and the strip's box. */
+type Geom = { host: number; height: number; text: number; box: number; hint: number; sw: number; cw: number; over: boolean };
+function geom(page: any): Promise<Geom> {
+  return page.evaluate((cls: string) => {
+    const host = document.getElementById("pinned-notes")!, item = host.querySelector(".pn-item")!;
+    const t = item.querySelector(".pn-text") as HTMLElement, h = item.querySelector(".ut-more") as HTMLElement;
+    const r = document.createRange(); r.selectNodeContents(t);
+    const tb = t.getBoundingClientRect(), hb = h.getBoundingClientRect(), hostB = host.getBoundingClientRect();
+    return { host: hostB.width, height: hostB.height, text: r.getBoundingClientRect().width, box: tb.width, hint: hb.width > 0 ? hb.right - tb.right : 0,
+      sw: t.scrollWidth, cw: t.clientWidth, over: item.classList.contains(cls) };
+  }, PINNED_CUT_CLASS);
+}
+/** Whether Chrome paints the ellipsis on the first row's text as the row lays out on a fresh paint (the hint
+ *  hidden): the row's pixels under text-overflow: ellipsis differ from the same row's under clip. */
+async function ellipsisPainted(page: any): Promise<boolean> {
+  const clip = await page.evaluate(() => {
+    const st = document.createElement("style"); st.id = "pn-probe"; st.textContent = ".pn-line .ut-more { display: none !important; }"; document.head.appendChild(st);
+    const b = document.querySelector(".pn-line")!.getBoundingClientRect();
+    return { x: Math.floor(b.left), y: Math.floor(b.top), width: Math.ceil(b.width) + 1, height: Math.ceil(b.height) + 1 };
+  });
+  const withEllipsis = await page.screenshot({ clip });
+  await page.evaluate(() => { (document.querySelector(".pn-text") as HTMLElement).style.textOverflow = "clip"; });
+  const withClip = await page.screenshot({ clip });
+  await page.evaluate(() => { (document.querySelector(".pn-text") as HTMLElement).style.textOverflow = ""; document.getElementById("pn-probe")!.remove(); });
+  return !withEllipsis.equals(withClip);
+}
+/** Two frames: a ResizeObserver's callbacks run after layout and before the paint of the frame that follows a change. */
+const settle = (page: any): Promise<void> => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+
 function checkCap(s: Scene, where: string, pageWidth: number): void {
   assert.equal(s.pageWidth, pageWidth, where + ": the page lays out at the context's width (the viewport meta), not a scaled 980px desktop");
   const cap = 11 * s.fontPx;                                      // min(11em, 30vh): 30vh is larger on both viewports here
@@ -287,5 +322,101 @@ test("in a browser, with a mouse: the armed Unpin stands down when the pointer l
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");                           // Enter, Enter: the keyboard confirms
     assert.deepEqual(await posts(page), ["pn-00000000"]);
+  });
+});
+
+test("in a browser: the cut is read in fractions of a pixel from the box the text has with the hint hidden: a sweep of the strip's width around a note's natural width flips the verdict exactly where Chrome paints the ellipsis, through the band where the integer widths read equal, and reads the same from a row already wearing the hint", async (t) => {
+  await inBrowser(t, { viewport: { width: 1200, height: 800 } }, async (page) => {
+    await mount(page, 1, { openAll: false, long: false, text: NOTE60 });
+    const g0 = await geom(page);
+    assert.ok(g0.text > 100 && g0.box > g0.text && g0.hint === 0, "the row fits at 1200 with the hint hidden");
+    const chrome = g0.host - g0.box;   // the mark, the gaps, Unpin and the strip's padding beside the text
+    const seen: Array<{ room: number; overflow: number; ellipsis: boolean; integer: boolean; fromOff: boolean; fromOn: boolean }> = [];
+    for (const room of [1.5, 0.5, 0.05, 0, -0.05, -0.1, -0.3, -0.5, -0.9, -0.95, -1.5, -40]) {   // the box past the text's natural width; negative is an overflow
+      await page.evaluate(([w, cls]: [number, string]) => {
+        const host = document.getElementById("pinned-notes")!;
+        host.style.maxWidth = "none"; host.style.width = w + "px";
+        host.querySelector(".pn-item")!.classList.remove(cls);
+      }, [g0.text + chrome + room, PINNED_CUT_CLASS]);
+      const ellipsis = await ellipsisPainted(page);
+      const r = await page.evaluate((cls: string) => {
+        const w = window as any, host = document.getElementById("pinned-notes")!, item = host.querySelector(".pn-item")!;
+        item.classList.remove(cls);   // a fresh paint: no offer, the hint hidden
+        const t = item.querySelector(".pn-text") as HTMLElement;
+        const integer = t.scrollWidth > t.clientWidth;   // the round-2 read
+        const range = document.createRange(); range.selectNodeContents(t);
+        const overflow = range.getBoundingClientRect().width - t.getBoundingClientRect().width;
+        w.__romp.pinnedMeasureCut(host); const fromOff = item.classList.contains(cls);
+        item.classList.add(cls); w.__romp.pinnedMeasureCut(host); const fromOn = item.classList.contains(cls);   // from a row already offered the hint
+        return { overflow, integer, fromOff, fromOn };
+      }, PINNED_CUT_CLASS);
+      seen.push({ room, ellipsis, ...r });
+    }
+    for (const s of seen) {
+      const at = "at " + s.room + " (overflow " + s.overflow.toFixed(4) + "px)";
+      assert.equal(s.ellipsis, s.overflow > 0, at + ": Chrome paints the ellipsis exactly when the text is wider than its box");
+      assert.equal(s.fromOff, s.ellipsis, at + ": the verdict from a bare row is the ellipsis");
+      assert.equal(s.fromOn, s.ellipsis, at + ": and the same from a row already wearing the hint");
+    }
+    assert.ok(seen.some((s) => s.ellipsis && !s.integer), "the sweep crossed the band the integer pair misses: an overflow under a pixel with the ellipsis painted");
+    assert.ok(seen.some((s) => !s.ellipsis) && seen.some((s) => s.integer), "and the room where the text fits, and an overflow the integers see");
+  });
+});
+
+test("in a browser: a row that has its room back after a widen drops its offer, hint and all, although the hint it was offered took that room while it showed (the ResizeObserver's re-measure reads the box the text has with the hint hidden)", async (t) => {
+  await inBrowser(t, { viewport: { width: 1200, height: 800 } }, async (page) => {
+    await mount(page, 1, { openAll: false, long: false, text: NOTE60 });
+    const g0 = await geom(page);
+    const snug = Math.ceil(g0.text + (g0.host - g0.box)) + 6;   // the text fits by about 6px with the hint hidden; the hint's 47px would not
+    await page.setViewportSize({ width: snug, height: 800 });
+    await settle(page);
+    let g = await geom(page);
+    assert.ok(!g.over && g.hint === 0 && g.box >= g.text + 5, "snug: the row fits with the hint hidden (" + g.box + " for " + g.text + ")");
+    await page.setViewportSize({ width: 380, height: 800 });
+    await page.waitForFunction((c: string) => !!document.querySelector(".pn-item." + c), PINNED_CUT_CLASS);
+    g = await geom(page);
+    assert.ok(g.over && g.hint > 30, "narrow: cut, the hint showing and taking its room (" + g.hint + "px)");
+    await page.setViewportSize({ width: snug, height: 800 });
+    // before round 3 this never came: the box beside the hint stayed short of the text, so the row kept the hint that kept it cut
+    await page.waitForFunction((c: string) => !document.querySelector(".pn-item." + c), PINNED_CUT_CLASS);
+    g = await geom(page);
+    assert.ok(!g.over && g.hint === 0 && g.box >= g.text, "snug again: the same width paints the same strip, whatever showed before");
+    const s = await scene(page);
+    assert.ok(!s.rows[0].hintVisible && s.rows[0].act === undefined, "no hint, no click target");
+  });
+});
+
+test("in a browser: a settings change that re-widths the rows and moves no box (a theme's font) re-measures on the romp:settings event, and a font finishing loading on the fonts' loadingdone; no repaint, no width change, no timer", async (t) => {
+  await inBrowser(t, { viewport: { width: 1200, height: 800 } }, async (page) => {
+    await mount(page, 1, { openAll: false, long: false, text: NOTE60 });
+    const g0 = await geom(page);
+    const roomy = Math.ceil(g0.text + (g0.host - g0.box)) + 20;   // the text fits by about 20px
+    await page.setViewportSize({ width: roomy, height: 800 });
+    await settle(page);
+    const before = await geom(page);
+    assert.ok(!before.over && before.box >= before.text + 19, "fits by 20px (" + before.box + " for " + before.text + ")");
+    // the theme's font is wider: letter-spacing stands in for the swap (the same on every box: every row re-widths
+    // by 60px and the strip's height does not move, so the ResizeObserver has nothing to say)
+    await page.evaluate(() => { document.body.style.letterSpacing = "1px"; });
+    await settle(page);
+    const mid = await geom(page);
+    assert.equal(mid.height, before.height, "the strip's box did not move");
+    assert.ok(mid.text > mid.box, "the text is now wider than its box: the ellipsis is painted");
+    assert.ok(!mid.over, "and unmarked: no event has said so yet (what round 3 found after a theme switch)");
+    await page.evaluate(() => { window.dispatchEvent(new Event("romp:settings")); });   // what the gear dispatches after it writes the settings
+    const after = await geom(page);
+    assert.ok(after.over && after.hint > 30, "the settings event re-measured: cut, the hint offered");
+    // a font load completing: the FontFaceSet's loadingdone (a failed load fires it too, so this needs no font file)
+    await page.evaluate(() => { document.body.style.letterSpacing = ""; });
+    await settle(page);
+    assert.ok((await geom(page)).over, "the row fits again and is still marked: no event yet");
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      document.fonts.addEventListener("loadingdone", () => resolve(), { once: true });   // registered after the strip's listener, so it runs after the measure
+      const f = new FontFace("PnProbe", "url(data:font/woff,AAAA)");
+      document.fonts.add(f);
+      f.load().catch(() => {});
+    }));
+    const done = await geom(page);
+    assert.ok(!done.over && done.hint === 0, "loadingdone re-measured: the offer withdrawn");
   });
 });
