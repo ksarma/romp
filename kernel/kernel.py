@@ -5360,8 +5360,10 @@ def _prune_notify_cards(live_ids):
 # under STATE maps sid → a list of records; resolution STAMPS (`resolved: {kind, t}`, kind one of
 # answered / dismissed / withdrawn) rather than deletes, so a record carries its own history. A
 # record may name the FILE it is about (`file`, an absolute path on this kernel's disk, resolved at
-# filing — the todo-file follow-on, 2026-09-07): the Waiting-on-you chip opens it, and a Send from the
-# file's comments panel can answer the todo however the file was opened (_user_todos_naming_file).
+# filing — the todo-file follow-on, 2026-09-07; or the value AS GIVEN, with a warning on the filing
+# reply, when it could not be resolved — that value names no file): the Waiting-on-you chip opens it,
+# and a Send from the file's comments panel can answer the todo however the file was opened
+# (_user_todos_naming_file).
 # Exactly three events clear one — the user answers (the split card's Reply), the user dismisses,
 # the agent withdraws (the postal tool) — and NOTHING that reasons by inference may write this
 # store: no judge, no unblocker (grep-provable; test_user_todos.py pins that judge.py never names
@@ -5538,25 +5540,74 @@ def _user_todos_from_log(lines):
     return {s: r for s, r in store.items() if r}
 
 
+_URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")   # `scheme://` — a URL, not a path
+
+
+def _normpath_keeping_links(p):
+    """os.path.normpath's cleanup of an ABSOLUTE spelling — `.` and doubled slashes dropped, `dir/..`
+    collapsed — except that a `..` right after a directory SYMLINK stays in the string. The OS walks
+    `link/..` through the link's TARGET, so the lexical collapse names a different file than the one the
+    spelling opens: with repo/docs-link -> vault/docs, `repo/docs-link/../notes/x.md` is vault/notes/x.md
+    on disk but repo/notes/x.md to normpath (the GitHub-link builder hit the same class and moved to
+    realpath). This keeps the spelling — the chip and the request show the path the agent named, which
+    is why it is not realpath — while every `..` in it means what it means to the OS: realpath of the
+    result is the file the agent's spelling opens. A `..` above a kept one is kept too (`link/../..` is
+    two steps from the link's target); `/..` is `/`, as for normpath."""
+    out = []
+    for part in p.split(os.sep):
+        if part in ("", "."):
+            continue
+        if part != "..":
+            out.append(part)
+        elif out and (out[-1] == ".." or os.path.islink(os.sep + os.sep.join(out))):
+            out.append("..")                         # the OS resolves this step through the link: keep it
+        elif out:
+            out.pop()
+    return os.sep + os.sep.join(out)
+
+
 def _user_todo_file(value, sid):
     """A todo's optional `file` as the store keeps it, and the warning the filing reply carries when it
     did not resolve: (stored, warning). (None, None) when no file was given. The value is resolved the
     way a click-to-open path is (_resolve_open_path: ~ expanded, a RELATIVE path against the session's
     recorded cwd) and stored absolute and normalized — the spelling, not the realpath, so the chip and
-    the request show the path the agent named; the comments panel matches by realpath at status time
-    (_user_todos_naming_file). A value that cannot become absolute (a relative path for a session with
-    no recorded cwd) is stored AS GIVEN with a warning — never a refusal: the todo is the person's to
-    see, and a path that does not resolve is worth a line in the tool's reply, not a lost request
-    (the todo-file follow-on, 2026-09-07)."""
-    raw = str(value or "").strip()
+    the request show the path the agent named (normalized by _normpath_keeping_links, so a `..` that
+    crosses a directory symlink still names the file the spelling opens); the comments panel matches by
+    realpath at status time (_user_todos_naming_file). A file:// URI — a spelling the tool's `text`
+    lists as linkable, and one the CLIENT converts before a clicked link reaches the kernel
+    (fileUriToPath), so nothing downstream of this store would — becomes its path here: scheme off,
+    percent-decoded, and it must carry an absolute path (file:///…), never joined onto the cwd as if
+    `file:` were a directory. A value that cannot become a path on this disk — a relative path for a
+    session with no recorded cwd, a URI without an absolute path, another URL scheme, a body value that
+    is not a string — is stored AS GIVEN with a warning that names the reason; never a refusal: the
+    todo is the person's to see, and a path that does not resolve is worth a line in the tool's reply,
+    not a lost request (the todo-file follow-on, 2026-09-07)."""
+    if value is None:
+        return None, None
+    if not isinstance(value, str):                   # a hand-built POST: not a path, so not resolved
+        raw = str(value)
+        return raw, ("the file value %s is not a path string, so it was kept as given; pass the file's "
+                     "absolute path as a string so it opens from the request and its comments can "
+                     "answer it" % raw)
+    raw = value.strip()
     if not raw:
         return None, None
-    p = _resolve_open_path(raw, sid)
+    tail = ("so it was kept as given; pass the file's absolute path so it opens from the request and "
+            "its comments can answer it")
+    if raw[:7].lower() == "file://":
+        p = unquote(raw[7:])
+        if not os.path.isabs(p):                     # file://host/x, file://docs/x: no local absolute path
+            return raw, ("the file path %s did not resolve to an absolute path (a file:// URI must carry "
+                         "the absolute path, as file:///…), %s" % (raw, tail))
+    elif _URL_SCHEME_RE.match(raw):
+        return raw, ("the file path %s did not resolve to an absolute path (it is a URL, not a path on "
+                     "this machine's disk), %s" % (raw, tail))
+    else:
+        p = _resolve_open_path(raw, sid)
     if os.path.isabs(p):
-        return os.path.normpath(p), None
+        return _normpath_keeping_links(p), None
     return raw, ("the file path %s did not resolve to an absolute path (it is relative and no working "
-                 "directory is recorded for this session), so it was kept as given; pass the file's "
-                 "absolute path so it opens from the request and its comments can answer it" % raw)
+                 "directory is recorded for this session), %s" % (raw, tail))
 
 
 def _add_user_todo(sid, text, detail="", file=None):
@@ -5746,13 +5797,23 @@ def _user_todos_naming_file(sid, real):
     spelling on either side still names the same file; a todo whose file lives only in its detail is
     not matched here (it still answers through the opened-from-link path, the client's own todoId).
     Settled todos never appear (_open_user_todos), nor another session's, nor one without `file`;
-    [] with no sid, and [] while the user-todos switch is off (the same read answers [] then)."""
+    [] with no sid, and [] while the user-todos switch is off (the same read answers [] then).
+
+    A `file` the store kept AS GIVEN — a relative path, filed while the session had no recorded cwd
+    (_user_todo_file) — names no file here, ever: the filing reply told the agent as much (pass the
+    absolute path "so ... its comments can answer it"), and a Send that answers a todo is a stamp, so
+    the match is made on the path the kernel resolved at filing or not at all. Never realpath'd bare:
+    Python resolves a relative string against the kernel PROCESS's cwd, which listed the todo on an
+    unrelated file that happened to sit at that relative path under the kernel's own directory (the
+    review, 2026-09-07). The chip's click still resolves the same string against the session's cwd of
+    the moment (the /file route's best effort at opening); opening a file and stamping a todo are held
+    to different standards on purpose."""
     if not sid or not real:
         return []
     out = []
     for t in _open_user_todos(str(sid)):
         f = str(t.get("file") or "")
-        if not f:
+        if not f or not os.path.isabs(f):
             continue
         try:
             same = os.path.realpath(f) == real
@@ -37403,7 +37464,10 @@ def _save_dropped_file(name, b64):
 def _resolve_open_path(p, sid=None):
     """Resolve a click-to-open path to an absolute one: expand ~, and resolve a RELATIVE path against the
     SESSION's cwd — a linkified `design/foo.md` is relative to the repo the agent runs in, NOT the kernel's
-    launch cwd (the user 2026-07-06). An absolute path (incl. a file:// caption link) passes through. Best
+    launch cwd (the user 2026-07-06). An absolute path passes through — a clicked file:// caption link
+    arrives as one, because the CLIENT strips the scheme before posting the path (fileUriToPath); a URI
+    handed to the kernel unconverted is not absolute and would be joined onto the cwd like any relative
+    spelling, so a route that takes a path from an agent converts it first (_user_todo_file). Best
     effort: unknown sid / no cwd leaves a relative path as-is."""
     p = os.path.expanduser(str(p))
     if not os.path.isabs(p) and sid:
@@ -47853,8 +47917,10 @@ class Handler(BaseHTTPRequestHandler):
                 # writes this store. Like the other postal-called routes, the body is shape-validated
                 # and the sid's existence is not (the house style: be honest about outcomes instead).
                 # `file` (the todo-file follow-on, 2026-09-07) is resolved against the session's cwd
-                # and stored absolute (_user_todo_file); a path that does not resolve is kept as given
-                # and named in `warning` — the todo is filed either way, never refused for its file.
+                # and stored absolute (_user_todo_file: a file:// URI becomes its path); a value that
+                # does not resolve — a relative path with no cwd to join, a URL, a body value that is
+                # not a string (handed on AS IS, not str()'d, so the helper can name the shape) — is kept
+                # as given and named in `warning`. The todo is filed either way, never refused for its file.
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -47871,7 +47937,7 @@ class Handler(BaseHTTPRequestHandler):
                     # kernel's own copy of this route applies its own answer to a forwarded ask.
                     return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
                 fraw = body.get("file")
-                fraw = fraw.strip() if isinstance(fraw, str) else (str(fraw) if fraw is not None else "")
+                fraw = fraw.strip() if isinstance(fraw, str) else fraw
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     fwd = {"id": sid, "text": text, "detail": str(body.get("detail") or "")}

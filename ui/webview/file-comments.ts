@@ -741,7 +741,12 @@ class Panel {
   // the todo the send answers when SEVERAL are offered (todoOpts' radio group; the todo-file follow-on, 2026-09-07): the id
   // picked, "" for none, null while nothing was picked — the first candidate then, and again when the pick left the list (a
   // todo settled from elsewhere, or answered by the send before). With one candidate the checkbox (sendOpts.todo) decides.
+  // The two agree on "none": the change handler writes a declined answer to both (the box unchecked is the "" pick, a
+  // "none" pick unchecks the box), because the next status can swap one control for the other — a todo filed or settled
+  // elsewhere changes the count — and a decline held in one slot alone came back as the other's default (the 2026-09-07
+  // review). An answer written to either puts the other back to its default (checked; null, the first offered).
   todoPick: string | null = null;
+  openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
@@ -905,6 +910,7 @@ class Panel {
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
         fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
+        fctodotext: (x) => { const id = x.dataset.id!; if (this.openTodoText.has(id)) this.openTodoText.delete(id); else this.openTodoText.add(id); this.render(); },   // a confirm todo row's fold (todoOpts)
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
@@ -926,6 +932,14 @@ class Panel {
       if (k === "todopick") this.todoPick = t.value;   // the radio group: the todo's id, or "" for none (todoOpts)
       else if (k === "todo" || k === "track" || k === "accept") this.sendOpts[k] = t.checked;
       else return;
+      // the answer-a-todo verdict has two controls — the box when one todo is offered, the radio group when several — and
+      // the next status can swap one for the other (a todo filed or settled elsewhere changes the count; applyStatus keeps
+      // the confirm open), so a verdict recorded in either is written to both: the box unchecked is the "" pick and a
+      // "none" pick unchecks the box; a todo picked or the box checked is an answer in both, the other slot back to its
+      // default. Before, a declined answer held in one slot came back as the other's default and the send stamped a todo
+      // the person had declined (the 2026-09-07 review; todoPick's comment).
+      if (k === "todopick") this.sendOpts.todo = t.value !== "";
+      else if (k === "todo") this.todoPick = t.checked ? null : "";
       this.render();                                   // the list's counts and the preview follow the boxes (refocus keeps the box focused)
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
@@ -3212,23 +3226,50 @@ class Panel {
    *  todo's own text when the kernel listed it (decision 36's generic wording otherwise, since the viewer never receives the
    *  opened-from todo's words). SEVERAL: one radio group — Answer: the first selected, the others, then none — so one send
    *  answers one todo (decision 28). NONE: no control. The label is one line: cut to a line's worth, the whole text on hover
-   *  (an inline clip; the sheets have no rule for this control, the Slice 2 idiom). */
+   *  (an inline clip; the sheets have no rule for this control, the Slice 2 idiom) — and one click away, in full: a row
+   *  whose todo has words carries a fold (fctodotext, keyed by todo id in openTodoText so a re-render keeps it open) that
+   *  shows the whole text under the row, wrapped. The hover never reaches touch, and at the aside's width two todos that
+   *  begin alike clip to the same words, so the label alone could not say which todo the send would stamp (the 2026-09-07
+   *  review; ui/CLAUDE.md: never dead-end a compact view). */
   private todoOpts(opts: HTMLElement, s: Status): void {
     const cands = this.todoCandidates(s);
     if (!cands.length) return;
     // opt()'s row with the label clipped to ONE line (the text is already cut to a line's worth by todoChoiceLabel; the
-    // clip is inline since the sheets have no rule for this control, the Slice 2 idiom) and the whole text on hover
+    // clip is inline since the sheets have no rule for this control, the Slice 2 idiom) and the whole text on hover. With
+    // words to show (title), the label shares its line with the fold's glyph (the Log rows' and the preview's ▸/▾, in
+    // the preview's dress) and the whole text stands under the line while the fold is open: the input's value is the
+    // todo's id (a radio's by construction; the checkbox's is set for this), which keys the fold. A label without words
+    // (none; the opened-from todo the status never listed) has nothing underneath, so it is the row.
     const optRow = (input: HTMLInputElement, text: string, title: string | null): HTMLElement => {
       const l = el("label", "fc-opt");
       const t = el("span", undefined, text);
       t.style.minWidth = "0"; t.style.overflow = "hidden"; t.style.textOverflow = "ellipsis"; t.style.whiteSpace = "nowrap";
       if (title) l.title = title;
       l.appendChild(input); l.appendChild(t);
-      return l;
+      if (!title) return l;
+      const id = input.value;
+      const open = this.openTodoText.has(id);
+      const row = el("div", "fc-todo-opt");
+      row.style.display = "flex"; row.style.flexDirection = "column"; row.style.gap = "3px"; row.style.minWidth = "0";
+      const line = el("div");
+      line.style.display = "flex"; line.style.alignItems = "center"; line.style.gap = "6px"; line.style.minWidth = "0";
+      l.style.flex = "0 1 auto"; l.style.minWidth = "0";   // the label shrinks (its span clips) so the glyph stays on the line
+      const fold = btn(open ? "▾" : "▸", "fctodotext", "fc-sec");
+      fold.dataset.id = id;
+      fold.style.flex = "0 0 auto"; fold.style.padding = "2px 6px";   // a wider target than the glyph alone (a finger)
+      fold.title = open ? "Hide the whole todo" : "Show the whole todo";
+      fold.setAttribute("aria-label", fold.title); fold.setAttribute("aria-expanded", open ? "true" : "false");
+      line.appendChild(l); line.appendChild(fold);
+      row.appendChild(line);
+      if (open) {
+        row.appendChild(el("div", "fc-body fc-todo-text", title));   // the card body's dress: the todo's own lines, wrapped
+      }
+      return row;
     };
     if (cands.length === 1) {
       const c = cands[0];
       const cb = el("input") as HTMLInputElement;
+      cb.value = c.id;   // the todo the box answers: keys its fold (optRow)
       cb.type = "checkbox"; cb.checked = this.sendOpts.todo; cb.dataset.opt = "todo";
       opts.appendChild(optRow(cb, c.text === null ? "answer " + TODO_OPENED_FROM : "answer the todo: " + todoChoiceLabel(c), c.text));
       return;
@@ -3246,7 +3287,10 @@ class Panel {
   }
   private todoCandidates(s: Status): TodoChoice[] { return todoChoices(this.ctx.todoId, s, (id) => answeredTodos.has(id)); }
   /** The todo the next send answers, or null: for one candidate the checkbox's verdict; for several the radio's — the pick
-   *  while it is still offered, none when none was picked, else the first (nothing picked yet, or the pick left the list). */
+   *  while it is still offered, none when none was picked, else the first (nothing picked yet, or the pick left the list).
+   *  The two verdicts agree on none (the change handler writes a decline to both), so a count that changed between the
+   *  choice and the send — the box unchecked, then a second todo listed; none picked, then one todo left — still answers
+   *  nothing; a pick that left the list falls to the first offered, as a fresh confirm would. */
   chosenTodoId(s: Status): string | null {
     const cands = this.todoCandidates(s);
     if (!cands.length) return null;

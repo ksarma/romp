@@ -130,11 +130,16 @@ function linkTodoPaths(node: HTMLElement, sid: string): void {
 // as they open a path in the text: the same viewFile message with the row's session and todo id (openTodoPath).
 // The kernel also lists the todo on the file's own status, so a send from the viewer answers it however the
 // file was opened; the todoId here keeps the opened-from path as it was. Unframed the chip is plain — it
-// names the file, and there is no Files pane to send a click to (the linkTodoPaths gate).
+// names the file, and there is no Files pane to send a click to (the linkTodoPaths gate) — and it LOOKS
+// plain: the sheet paints .wt-file in the accent, the pane's path-link colour (the chip dress replaces the
+// link's underline, so the colour is the only sign it is a link), which a label with no action must not
+// wear — it read as a link and did nothing on a click (the 2026-09-07 review; ui/CLAUDE.md, every control
+// acknowledges). So the plain chip takes the row's own text colour, as the plain path tokens beside it do:
+// `inherit`, set here where framed decides, so the look and the action cannot drift apart.
 function fileChip(file: string, sid: string): HTMLElement {
   const base = file.replace(/\/+$/, "").split("/").pop() || file;
   const chip = framed ? openPathLink(base, file, false, sid) : el("span", "");
-  if (!framed) chip.textContent = base;
+  if (!framed) { chip.textContent = base; chip.style.color = "inherit"; }
   chip.classList.add("wt-file");
   chip.title = file;
   return chip;
