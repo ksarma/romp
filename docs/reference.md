@@ -67,15 +67,15 @@ link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a p
 
 **Pinned notes.** A session can pin a short note above its own transcript: what you should see
 first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
-a strip between the tab bar and the transcript, in the order they were pinned with the newest last,
-and the strip takes no space while a session has none. A row with more behind it shows a
-*details* hint; click the row to read the rest. When more than three notes are pinned, the older
-ones fold behind a *+N more* row. A file path or a pull request number in a note links the way it
-does in a user todo. Each row has an **Unpin** control (click it twice), and the session takes its
-own notes down with `unpin_note`. At most eight notes stay pinned per session; a ninth drops the
-oldest. The notes live in `pinned-notes.json` under Romp's state directory, keyed by session, so
-they survive a kernel restart and are there again when a session is revived. There is no switch:
-the two tools are always offered, since a pinned note asks nothing of you.
+a strip between the tab bar and the transcript, oldest first, and the strip takes no space while a
+session has none. A row with a *details* hint has more text behind it; click the row to read it.
+When more than three notes are pinned, the older ones fold behind a *+N more* row. A file path or
+a pull request number in a note links the way it does in a user todo. Each row has an **Unpin**
+control (click it twice); a session unpins its own notes with `unpin_note`. At most eight notes
+stay pinned per session; a ninth drops the oldest. The notes live in `pinned-notes.json` under
+Romp's state directory, keyed by session, so they survive a kernel restart and reappear when a
+session is revived. There is no switch: the two tools are always offered, since a pinned note asks
+nothing of you.
 
 These are for scripting and for agents rather than daily use:
 
@@ -1984,7 +1984,7 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   tab, which always rebuilds, against rebuilds of a background tab whose
   signature moved) and `bg_miss`, a map from each labelled component of the
   chat-build signature (`judge_gen`, `transcript`, `states`, `tasks`, `todos`,
-  `cut`, `note`, `needs`, plus `cold` for a tab with no cached build and
+  `pins`, `cut`, `note`, `needs`, plus `cold` for a tab with no cached build and
   `nosig` for one whose signature could not be taken) to the background
   rebuilds it caused. A rebuild with several moved components counts under
   each, so the map's sum can exceed `bg_built`. `romp perf` prints the split

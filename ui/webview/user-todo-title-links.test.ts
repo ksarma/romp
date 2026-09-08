@@ -362,7 +362,7 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   assert.match(RENDER, /function linkTodoLinePaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyPathTokens\(node, sid\);\n\}/);
   assert.match(RENDER, /function linkTodoDetailPaths\(node: HTMLElement, sid: string \| null\): void \{\n\s*linkifyFileUris\(node, undefined, undefined, undefined, undefined, sid, true\);\n\}/);
   const bodyMap = RENDER.slice(RENDER.indexOf("delegate(document.body, {"), RENDER.indexOf("delegate(tabs, {"));
-  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},\n/, "the body delegate opens a path link in the todo card or the Reply modal, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
+  assert.match(bodyMap, /\n    openpath: \(elx, ev\) => \{ if \(elx\.closest\("\.todo-card, #ut-reply-prompt, #pinned-notes"\)\) openLinkedPath\(elx, ev as MouseEvent\); \},/, "the body delegate opens a path link in the todo card, the Reply modal or the pinned-notes strip, with the click's gesture, and nowhere else (the file viewer's links reach it too)");
   assert.match(RENDER, /const card = el\("div", "todo-card"\);/, "the card's class, as the handler names it");
   assert.match(RENDER, /overlay\.id = "ut-reply-prompt";/, "the modal's id, as the handler names it");
   const card = RENDER.slice(RENDER.indexOf('const head = el("div", "todo-head ut-head");'), RENDER.indexOf("card.appendChild(row);"));
@@ -374,6 +374,6 @@ test("both hosts apply their todo linker to the line AND the detail, at the row 
   const rmodal = RENDER.slice(RENDER.indexOf("function showUserTodoReply("), RENDER.indexOf('input.className = "ut-reply-input"'));
   assert.match(rmodal, /d\.textContent = todoText;\n\s*linkTodoLinePaths\(d, sid\);/);
   assert.match(rmodal, /dd\.textContent = todoDetail; linkTodoDetailPaths\(dd, sid\);/);
-  assert.equal((RENDER.match(/linkTodoLinePaths\(/g) || []).length, 3, "defined once, applied at the two line sites");
-  assert.equal((RENDER.match(/linkTodoDetailPaths\(/g) || []).length, 3, "defined once, applied at the two detail sites");
+  assert.equal((RENDER.match(/linkTodoLinePaths\(/g) || []).length, 4, "defined once, applied at the two line sites and the pinned-notes strip's rows");
+  assert.equal((RENDER.match(/linkTodoDetailPaths\(/g) || []).length, 4, "defined once, applied at the two detail sites and the strip's details");
 });

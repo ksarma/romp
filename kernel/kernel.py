@@ -519,7 +519,7 @@ class _PerfStats:
     BUILDS = ("chat", "feed", "timeline")
     # builds.chat's bg_miss labels: _chat_build_sig's components (_CHAT_SIG_TAIL plus the transcript and
     # states sections), a tab with no cached build, and a tab whose signature could not be taken
-    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "cut", "note", "needs", "tmux", "cold", "nosig")
+    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "pins", "cut", "note", "needs", "tmux", "cold", "nosig")
     SEND_KINDS = ("full", "delta", "deduped")
 
     def __init__(self):
@@ -15418,7 +15418,7 @@ def _drive(msg, client):
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
               "setAuth", "endSession", "renameSession", "moveSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
               "commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote",
-              "userTodoAnswer", "userTodoDismiss", "commentMerge", "unpinNote")
+              "userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge")
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
@@ -26333,7 +26333,7 @@ def _chat_build_sig(sess, tm=None):
 # whose length varies (one or two files, two values each); the head and the tail are fixed. A component
 # appended to _chat_build_sig must be appended here too; tests/test_chat_fixed_cost_memos.py pins the
 # appends against this tuple.
-_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "cut", "note", "needs", "tmux")
+_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "pins", "cut", "note", "needs", "tmux")
 
 
 def _chat_sig_labels(sig):

@@ -16951,7 +16951,9 @@ setupSettings();
     // focus return) rather than stop it; a viewer link that reaches here, as one does when the viewer's
     // unsaved-comment ask declined the open and the span stayed in the document, must not open the file a
     // second time (the 2026-09-07 review, round 2).
-    openpath: (elx, ev) => { if (elx.closest(".todo-card, #ut-reply-prompt, #pinned-notes")) openLinkedPath(elx, ev as MouseEvent); },   // …and the pinned-notes strip (2026-09-08), whose spans are delegated the same way
+    // …and the pinned-notes strip (2026-09-08), whose spans are delegated the same way. This line is lifted
+    // verbatim by two tests (its trailing comma stripped), so nothing may follow the handler on it.
+    openpath: (elx, ev) => { if (elx.closest(".todo-card, #ut-reply-prompt, #pinned-notes")) openLinkedPath(elx, ev as MouseEvent); },
     uttoggle: (elx) => {
       const tid = elx.dataset.tid; if (!tid) return;
       const open = !utDetailOpen.has(tid);
@@ -17004,55 +17006,6 @@ setupSettings();
       if (stale) { document.removeEventListener("pointerdown", stale, true); (elx as any)._utDisarm = undefined; }
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
       elx.closest(".ut-item")?.remove();
-    },
-  });
-})();
-(() => {
-  // PINNED NOTES (the user 2026-09-08): the strip rebuilds on every pin / unpin / tab switch, so its
-  // three controls are delegated to the stable #pinned-notes host (the click-safety rule, ui/CLAUDE.md;
-  // pinned-notes.ts hangs no listener). A path link inside a row carries data-act openpath, which this
-  // delegate has no handler for, so the click goes on to the body delegate's openpath above.
-  const host = document.getElementById("pinned-notes");
-  if (!host) return;
-  delegate(host, {
-    // the row's text: fold / unfold its detail. The state keys by note id (pnFolds) so the next repaint
-    // paints the same fold; the body appearing and the hint flipping ARE the acknowledgement, local.
-    [PINNED_ACT.toggle]: (elx) => {
-      const nid = elx.dataset.nid; if (!nid) return;
-      const open = !pnFolds.openDetails.has(nid);
-      if (open) pnFolds.openDetails.add(nid); else pnFolds.openDetails.delete(nid);
-      elx.closest(".pn-item")?.querySelector(".pn-detail")?.classList.toggle("open", open);
-      const more = elx.querySelector<HTMLElement>("." + UT_HINT_CLASS);
-      if (more) applyUtHint(more, utHintFor(open));
-      elx.title = utHintFor(open).title;
-    },
-    // the "+N more" fold over the older rows: keyed by session id; a forced repaint flips the label
-    // and shows the rows (the todo card's completed-fold idiom)
-    [PINNED_ACT.more]: (elx) => {
-      const sid = elx.dataset.sid; if (!sid) return;
-      if (pnFolds.moreOpen.has(sid)) pnFolds.moreOpen.delete(sid); else pnFolds.moreOpen.add(sid);
-      renderPinnedNotes(true);
-    },
-    // Unpin arms then confirms in place (the utdismiss idiom, without the coarse-pointer one-shot: the
-    // strip repaints only on new information, so an arm left behind on touch simply waits for the
-    // confirming tap or the next pin/unpin). Optimistic removal, then the kernel's unpinNote op, which
-    // lands on the same _unpin_note the postal tool's route uses; a refused unpin warns, and the
-    // next frame repaints the truth because the painted key is cleared here.
-    [PINNED_ACT.unpin]: (elx) => {
-      const nid = elx.dataset.nid, sid = elx.dataset.sid || activeId;
-      if (!nid || !sid) return;
-      if (!elx.classList.contains("armed")) {
-        elx.classList.add("armed"); elx.textContent = PINNED_UNPIN_ARMED;
-        if (!isCoarsePointer())
-          elx.addEventListener("pointerleave", () => { elx.classList.remove("armed"); elx.textContent = PINNED_UNPIN_LABEL; }, { once: true });
-        return;
-      }
-      vscodeApi?.postMessage({ type: "unpinNote", id: sid, noteId: nid });
-      const item = elx.closest(".pn-item");
-      const strip = item?.closest(".pn-strip");
-      item?.remove();
-      pnPainted = "";                                   // whatever the kernel answers, the next frame paints it
-      if (strip && !strip.querySelector(".pn-item")) { const h = document.getElementById("pinned-notes"); if (h) { h.replaceChildren(); h.style.display = "none"; } }
     },
   });
 })();
@@ -17233,6 +17186,55 @@ setupSettings();
     if (prev?.dataset?.id) reorderTo(draggedId, prev.dataset.id, true);
     else if (next?.dataset?.id) reorderTo(draggedId, next.dataset.id, false);
     tabDragCommitted = true;   // dragend must not treat this as a cancel (it fires next)
+  });
+})();
+(() => {
+  // PINNED NOTES (the user 2026-09-08): the strip rebuilds on every pin / unpin / tab switch, so its
+  // three controls are delegated to the stable #pinned-notes host (the click-safety rule, ui/CLAUDE.md;
+  // pinned-notes.ts hangs no listener). A path link inside a row carries data-act openpath, which this
+  // delegate has no handler for, so the click goes on to the body delegate's openpath above.
+  const host = document.getElementById("pinned-notes");
+  if (!host) return;
+  delegate(host, {
+    // the row's text: fold / unfold its detail. The state keys by note id (pnFolds) so the next repaint
+    // paints the same fold; the body appearing and the hint flipping ARE the acknowledgement, local.
+    [PINNED_ACT.toggle]: (elx) => {
+      const nid = elx.dataset.nid; if (!nid) return;
+      const open = !pnFolds.openDetails.has(nid);
+      if (open) pnFolds.openDetails.add(nid); else pnFolds.openDetails.delete(nid);
+      elx.closest(".pn-item")?.querySelector(".pn-detail")?.classList.toggle("open", open);
+      const more = elx.querySelector<HTMLElement>("." + UT_HINT_CLASS);
+      if (more) applyUtHint(more, utHintFor(open));
+      elx.title = utHintFor(open).title;
+    },
+    // the "+N more" fold over the older rows: keyed by session id; a forced repaint flips the label
+    // and shows the rows (the todo card's completed-fold idiom)
+    [PINNED_ACT.more]: (elx) => {
+      const sid = elx.dataset.sid; if (!sid) return;
+      if (pnFolds.moreOpen.has(sid)) pnFolds.moreOpen.delete(sid); else pnFolds.moreOpen.add(sid);
+      renderPinnedNotes(true);
+    },
+    // Unpin arms then confirms in place (the utdismiss idiom, without the coarse-pointer one-shot: the
+    // strip repaints only on new information, so an arm left behind on touch simply waits for the
+    // confirming tap or the next pin/unpin). Optimistic removal, then the kernel's unpinNote op, which
+    // lands on the same _unpin_note the postal tool's route uses; a refused unpin warns, and the
+    // next frame repaints the truth because the painted key is cleared here.
+    [PINNED_ACT.unpin]: (elx) => {
+      const nid = elx.dataset.nid, sid = elx.dataset.sid || activeId;
+      if (!nid || !sid) return;
+      if (!elx.classList.contains("armed")) {
+        elx.classList.add("armed"); elx.textContent = PINNED_UNPIN_ARMED;
+        if (!isCoarsePointer())
+          elx.addEventListener("pointerleave", () => { elx.classList.remove("armed"); elx.textContent = PINNED_UNPIN_LABEL; }, { once: true });
+        return;
+      }
+      vscodeApi?.postMessage({ type: "unpinNote", id: sid, noteId: nid });
+      const item = elx.closest(".pn-item");
+      const strip = item?.closest(".pn-strip");
+      item?.remove();
+      pnPainted = "";                                   // whatever the kernel answers, the next frame paints it
+      if (strip && !strip.querySelector(".pn-item")) { const h = document.getElementById("pinned-notes"); if (h) { h.replaceChildren(); h.style.display = "none"; } }
+    },
   });
 })();
 // right-click a selection in the transcript → Reply (quote it) / Copy

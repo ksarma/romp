@@ -50,6 +50,7 @@ class SigLabels(unittest.TestCase):
         self.assertEqual(len(re.findall(r"^\s*sig\.append\(", src, re.M)), len(km._CHAT_SIG_TAIL),
                          "one label per sig.append in _chat_build_sig; a new component needs a new label")
         markers = {"judge_gen": "_judge_gen[0]", "tasks": "_task_store_fp(", "todos": "_user_todo_fp(",
+                   "pins": "_pinned_notes_fp(",
                    "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of(",
                    "tmux": 't.get("authLive")'}
         pos = [src.index(markers[lab]) for lab in km._CHAT_SIG_TAIL]
@@ -58,7 +59,7 @@ class SigLabels(unittest.TestCase):
         self.assertIn("sig += [ss.st_mtime, ss.st_size]", src, "the middle: two values per states file")
 
     def test_each_single_component_change_is_attributed_to_its_label(self):
-        base = (1.0, 10, 2.0, 20, 7, ("tf",), ("uf",), "", "note", False, None)   # one states file; no push row
+        base = (1.0, 10, 2.0, 20, 7, ("tf",), ("uf",), "", "", "note", False, None)   # one states file; no push row
         labels = km._chat_sig_labels(base)
         self.assertEqual(labels, ("transcript", "transcript", "states", "states") + km._CHAT_SIG_TAIL)
         for i, lab in enumerate(labels):

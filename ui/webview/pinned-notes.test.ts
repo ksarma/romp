@@ -19,8 +19,8 @@ const CSS = read("ui", "webview", "styles.css");
 const KERNEL = read("kernel", "kernel.py");
 const SKELETON = fs.readFileSync(path.resolve(process.cwd(), "src", "page-skeleton.ts"), "utf8");
 const RENDER_FN = RENDER.slice(RENDER.indexOf("function renderPinnedNotes"), RENDER.indexOf("function renderLedger"));
-const DELEGATE = RENDER.slice(RENDER.indexOf("// PINNED NOTES (the user 2026-09-08): the strip rebuilds"),
-  RENDER.indexOf('const tabs = document.getElementById("tabs");'));
+const dStart = RENDER.indexOf("// PINNED NOTES (the user 2026-09-08): the strip rebuilds");
+const DELEGATE = RENDER.slice(dStart, RENDER.indexOf("\n})();", dStart));
 
 // ── a DOM stand-in: text and element nodes with the members the builder and the PR linker touch ──
 class T {
@@ -210,7 +210,7 @@ test("every row has an Unpin control that is click-safe: declared by data-act, h
   assert.match(DELEGATE, /item\?\.remove\(\);/);
   assert.match(DELEGATE, /pnPainted = "";/, "the next frame repaints the truth, whatever the kernel answered");
   // the op lands on the same store function as the postal tool's route: one code path
-  assert.match(KERNEL, /"userTodoAnswer", "userTodoDismiss", "commentMerge", "unpinNote"\)/);
+  assert.match(KERNEL, /"userTodoAnswer", "userTodoDismiss", "unpinNote", "commentMerge"\)/);
   assert.match(KERNEL, /elif t == "unpinNote" and msg\.get\("noteId"\):[\s\S]{0,600}_unpin_note\(sid, str\(msg\["noteId"\]\)\)/);
   assert.match(KERNEL, /if u\.path == "\/unpinnote":[\s\S]{0,3000}acct = _unpin_note\(sid, nid\)/);
 });

@@ -64,8 +64,8 @@ stand, a warning, a summary. The notes appear in a strip between the tab bar and
 oldest first, and the strip is absent while a session has pinned nothing. Click a row that shows a
 *details* hint to read the rest; when more than three notes are pinned, the older ones fold behind
 a *+N more* row. Paths and pull request numbers in a note are links. **Unpin**, clicked twice,
-takes a note down; the session can also take down its own. A note stays until unpinned, across
-restarts and revivals, and a session keeps at most eight, the oldest making room.
+removes a note; a session can also unpin its own. A note stays until unpinned, across restarts and
+revivals, and a session keeps at most eight; a ninth drops the oldest.
 
 **Opening a markdown document.** A markdown link in the chat opens in the file viewer,
 rendered, with **Raw** one click away — a path on the session's machine, or a link to a
