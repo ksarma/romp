@@ -121,7 +121,7 @@ test('a refused comment on a loose file creates no landmark: anchor-not-found, a
   const r1 = refused(w, { verb: 'comment', path: w.loose, args: { anchor: missing, note: 'x' }, fence: { storeMtimeNs: '' } }, 'anchor-not-found');
   assert.ok(r1.error.includes('~/loose/report.md'), r1.error);
   assertUntouched(w);
-  // The passage edited away between the selection and Enter, its surroundings intact.
+  // The passage edited away between the selection and the save, its surroundings intact.
   const gone = anchorAt(w.text, 'cut p95 latency by 40%', 0);
   fs.writeFileSync(w.loose, w.text.replace('cut p95 latency by 40%', 'cut p95 latency by 35%'));
   refused(w, { verb: 'comment', path: w.loose, args: { anchor: gone.anchor, note: 'x', hintOffset: gone.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-not-found');

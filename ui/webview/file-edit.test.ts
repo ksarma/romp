@@ -44,7 +44,8 @@ test("no exit path can silently eat an edited buffer", () => {
   // …and the REPLACE path (opening file B over a dirty editor) asks the same question — and since
   // 2026-08-20 REPORTS the veto (false), so a relayed open can't mis-tag the surviving viewer
   assert.match(VIEW, /if \(document\.getElementById\("romp-fileview"\) && closeGuard && !closeGuard\(\)\) return false;/);
-  assert.match(VIEW, /const confirmDiscard = \(\): boolean =>\n    !editing \|\| !dirty \|\| window\.confirm/);
+  assert.match(VIEW, /const confirmDiscard = \(\): boolean =>\n    !editing \|\| !dirty \|\| askDiscard\("Discard unsaved changes to "/, "the one discard ask: a confirm on the web, the notice bar in the VS Code webview");
+  assert.match(VIEW, /const askDiscard = \(question: string, kept: string\): boolean => \{\n\s*if \(canPreview\(\)\) return window\.confirm\(question\);/);
   // Escape peels edit mode first, never the whole viewer
   assert.match(VIEW, /if \(editing\) \{\s*\/\/ Escape peels edit mode first, never the whole viewer\n      if \(confirmDiscard\(\)\) exitEdit\(\);\n      return;\n    \}/);
 });

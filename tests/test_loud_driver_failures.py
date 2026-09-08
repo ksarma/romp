@@ -72,8 +72,11 @@ class SourceSweep(unittest.TestCase):
 
     def test_the_courier_swallows_carry_their_rows(self):
         src = getsource(jd)
-        self.assertIn('"pass-crash", note="parse: %r"', src,
-                      "the per-session parse skip names its reason")
+        self.assertIn('"pass-crash", note="scan: %r"', src,
+                      "the per-session scan skip names its reason (it catches the parse, the store load "
+                      "and the segment walk alike since the courier joined the evidence gate, 2026-09-07)")
+        self.assertIn('"pass-crash", note="settle: %r"', src,
+                      "the write-site settle names its reason")
         self.assertIn('"pass-crash", note="link-attach: %r"', src,
                       "the courier-link attach names its reason")
 

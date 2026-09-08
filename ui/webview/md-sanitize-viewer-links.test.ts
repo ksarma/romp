@@ -61,13 +61,14 @@ test("target and rel are written with setAttribute: the `target` property is rea
   assert.doesNotMatch(MD_FN, /\ba\.target\s*=/, "no property write on target");
   assert.doesNotMatch(MD_FN, /\ba\.rel\s*=/, "no property write on rel");
   assert.doesNotMatch(MD_FN, /\ba\.title\s*=/, "no property write on title either (an SVG <a> has none)");
-  assert.match(MD_FN, /a\.setAttribute\("title", joined\);/, "the sibling link's tooltip is set as an attribute");
+  // the file kind's links are dressed by file-view-links.ts linkMarkdownAnchors (fork PR #347), which writes every attribute as one too
+  assert.doesNotMatch(read("file-view-links.ts").split("export function linkMarkdownAnchors(")[1], /\ba\.(title|target|rel|className)\s*=/, "no property write in the module's pass either (an SVG <a> has none of them)");
   assert.match(MD_FN, /SVGAnimatedString/, "the reason is written down beside the write");
 });
 
 test("an SVG anchor's xlink:href is copied to a plain href before either pass, so the delegates and the browser read one attribute", () => {
   const norm = MD_FN.indexOf('querySelectorAll("a[*|href]:not([href])")');
-  const docGate = MD_FN.indexOf("if (doc) {");
+  const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');   // mdBlock's first doc gate (fork PR #347 split the two kinds)
   const sanitize = MD_FN.indexOf("sanitizeMd(");
   assert.ok(norm > -1, "the normalisation pass exists");
   assert.ok(sanitize < norm && norm < docGate, "after the sanitize (the attribute must survive DOMPurify first), before the doc gate (both passes see it)");

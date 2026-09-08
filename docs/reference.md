@@ -1927,7 +1927,32 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
 
 - `now`, `since`, `uptime_s`, `log`: the clock, when the counters started,
   seconds since the process started, and whether the `romp-perf` log is on.
-- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`.
+- `process`: `rss_kb`, `threads`, `cpu_s`, `pid`, and the exact memory gauges:
+  `rss_anon_kb` and `hwm_kb` (the anonymous and the peak resident size from
+  `/proc/self/status`; null with `source` "unavailable" where `/proc` is
+  absent, since `rss_kb` there is a peak from `ru_maxrss` and is never passed
+  off as a current figure), `allocated_blocks` (the interpreter's live
+  allocations, `sys.getallocatedblocks`), `gc_gen2` (generation-2 collections
+  so far) and `malloc` with `arena`, `hblkhd`, `uordblks`, `fordblks` in bytes
+  (glibc's `mallinfo2`: the arena size, the bytes in mmap'd blocks, the bytes in
+  use and the free bytes the allocator holds; the malloc half of the heap only,
+  pymalloc's arenas being invisible to it; null where glibc 2.33 or newer is
+  absent). Two snapshots an hour apart answer where resident memory goes:
+  blocks flat while rss climbs points at the allocator, blocks climbing at an
+  object graph, a `caches` gauge climbing at that cache. `romp perf` prints
+  them on a `memory` line with the window's deltas beside the levels.
+- `caches`: one block per cache the kernel, the judge and the event model keep,
+  each an exact occupancy (a `len()` or a sum of `len()`s under the cache's
+  lock; nothing estimated): `jsonl` with `entries`, `file_bytes` and `records`
+  (the event model's incremental reader), `asm`, `asm_keylocks` and `trailing`
+  (the assembly cache, its per-key locks and the torn-tail memo), `judge_parse`,
+  `judge_recon` and `judge_chain` (the judge's per-session parse, reconciliation
+  and chain memos), `parse` (the kernel's parsed sessions), `built_chat` with
+  `entries` and `ms_bytes` (the cached chat payloads and their materialized
+  serializations), `judge_usage` with `rows`, `img` with `entries` and `bytes`
+  (the data-URL previews), `path_links`, `space_paths`, `session_stamp`,
+  `task_seg` and `session_tok`. `romp perf` prints them on a `caches` line. The
+  memos report their own occupancy under `memos`.
 - `pusher`: `cycles`, `wakes` (every wake call; a burst of wakes runs one
   cycle), `wakes_event` and `wakes_backstop` (how the loop's wait ended),
   `cycle_ms_sum`, `cycle_ms_max` (since start), `cycle_ms_last`,
@@ -1937,7 +1962,19 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,
   so they can add up to more than `push`.
-- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`.
+- `builds`: `chat`, `feed`, `timeline`, each with `cached`, `built`, `ms`; `feed` also carries
+  `dirty`, the rebuilds a kernel-side mutation forced past the view signature (a card reply, a
+  clear, a follow-up: the mutation is invisible to the signature and must not wait out the
+  rebuild interval).
+  `chat` also carries `active_built` and `bg_built` (rebuilds of the watched
+  tab, which always rebuilds, against rebuilds of a background tab whose
+  signature moved) and `bg_miss`, a map from each labelled component of the
+  chat-build signature (`judge_gen`, `transcript`, `states`, `tasks`, `todos`,
+  `cut`, `note`, `needs`, plus `cold` for a tab with no cached build and
+  `nosig` for one whose signature could not be taken) to the background
+  rebuilds it caused. A rebuild with several moved components counts under
+  each, so the map's sum can exceed `bg_built`. `romp perf` prints the split
+  and the non-zero causes after the chat average.
 - `sends`: `full`, `delta`, `deduped`, each a map from slot name (`chat`,
   `feed`, `bars`, `taborder`, ...) to `count` and `bytes`. A deduplicated frame
   was built and compared, then not sent.
@@ -1966,6 +2003,15 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   stands down on the session and `save_goals` refuses to publish over it until
   it reads). `romp perf` prints it on the `goals` line when it is not zero, and
   the kernel warns the chat pane once per episode for a listed session.
+  `lineage_reads` counts `resume_lineage` calls, each a read and parse of one
+  session's whole states file: the episode-boundary check consults it only for
+  a head the memoized episode log does not hold yet, so at steady state the
+  counter stays near zero. A steady non-zero rate has three causes: heads are
+  changing (`/clear` boundaries and first observations); a live session's
+  current leaf is a recorded resume fork, which is never appended to the
+  episode log and so reads its lineage every pass (benign; one read per such
+  session per pass); or the guard order in `_episode_boundary_check` regressed.
+  `romp perf` prints the rate on the `goals` line.
 - `judge`: `passes`, `ms_sum`, `ms_last`, `ms_mean` (wall time; a pass waits
   on model calls), `cpu_ms_sum` (CPU time of the judge tier threads and every
   per-session worker they run; the workers' share is `cpu_ms_workers`; the
@@ -1980,25 +2026,59 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   branch. A hit served a memoized check, a miss built one, a populate stored
   one (a build that failed is a miss with no populate), and a bypass built
   without memoizing because an input file could not be stat'd. `tiers` holds
-  the evidence gate's counters per gated tier (`plan`, `close`, and the four
-  store-only tiers once they are gated): `ran` (per-session stage runs),
-  `skipped` (runs the gate declined because nothing the tier reads had
+  the evidence gate's counters per gated tier (`plan`, `close`, `unblock`,
+  `courier`, `group`, `consolidate`, `distill`, and `index`, the captioner
+  and archiver): `ran` (per-session stage
+  runs), `skipped` (runs the gate declined because nothing the tier reads had
   changed), `stamped` (runs that ended complete and recorded what they
   judged), `bypassed` (runs with no signature to record, or whose parse ran
   under a cut that moved after the gate looked), `incomplete` (runs a
-  deferral or a failed call left unfinished), `due_clock` (runs a background
-  task's deadline made due), plus `stamps`, the number of per-session records
-  held. `skipped / (ran + skipped)` is the share of per-session runs the gate
-  saved; `romp perf` prints it per tier on the `tiers` line and adds
-  `cpu/pass` to the `judge` line, since the judge's CPU share alone cannot
-  tell a cheaper pass from a faster cadence.
+  deferral or a failed call left unfinished; for the courier, scans that
+  produced pending rows, or whose link repair found the sender's tracker
+  completed or the sender outside the discover window, so the next pass scans
+  the session again; for the index tier, sessions that had a caption or an
+  archive to write this pass, or whose captions file, archive record or unit
+  cache exists and did not read, or whose unit-cache publish failed; the
+  read and publish failures each write one `judge-errors.jsonl` row per
+  failure episode, `captions-unreadable`, `session-archive-unreadable`,
+  `units-cache-unreadable` or `units-cache-write-failed`, beside the
+  `store-unreadable` row a goals file that does not read writes, and the
+  session runs again every pass until the file reads; an archive record that
+  reads but is not one is content, so the archiver rebuilds it, with the row
+  still written once), `due_clock` (runs a
+  background task's deadline made due), plus `stamps`, the number of
+  per-session records held. The index tier's signature is the session's
+  parse pair, captions file, archive record and unit cache, and no goal
+  store: its idle path reads none.
+  `skipped / (ran + skipped)` is the share of per-session runs the gate saved;
+  `romp perf` prints it per tier on the `tiers` line and adds `cpu/pass` to
+  the `judge` line, since the judge's CPU share alone cannot tell a cheaper
+  pass from a faster cadence.
 - `memos`: one block per memo the kernel keeps, each a flat map of counters.
   `goals_snap` is the judge pass's goal-store snapshot, which re-reads a store
   only when its file changed: `hit` and `miss` (stores served from memory
   against decoded, summed over passes), `fail` (file versions that did not
   decode), `evict` (entries dropped for files gone from the directory), `punch`
-  (entries copied so a user gesture could be applied to them), and the gauges
-  `entries` and `bytes` (memoized files and their summed size). `goals_shared`
+  (entries copied so a user gesture could be applied to them), `live` and
+  `snap` (the feed's store reads served live through the shared cache against
+  those served from the pass snapshot), and the gauges `entries` and `bytes`
+  (memoized files and their summed size). `lift_gate` is
+  the awaiting-lift job's per-session identity gate: `skip` and `load`
+  (session-cycles that took no store read against the ones that read it, a
+  probe on the shared read-only view), `shared` (probes the shared cache
+  answered), `writer` (session-ticks that loaded the writer's copy because a
+  lift was due) and `noop`
+  (writer loads whose fresh decision filed nothing, the store having moved
+  between the probe and the load), and the gauge `entries` (sessions
+  remembered). `bg_tops` is the placed-launch memo behind that lift and the
+  feed's background-task classification, keyed on the parse object and the
+  store object: `hit` and `miss` (calls answered from the per-version map
+  against looked up), `resolve` (launch ids looked up on a miss, placed or
+  not), `walk` and `walk_neg` (transcript walks, and the walks that left a
+  launch unresolved: an upper bound on what a negative walk cache would
+  save), `idx_build` (placement indexes built, one per store object asked, a
+  writer's private copy included) and the gauge `entries` (sessions holding a
+  map). `goals_shared`
   is the shared read-only goal-store cache the pusher's read-only sites load
   through: `hit`, `miss` and `compare_miss` (the identity matched and the bytes
   did not), `refuse` (a fill under a moving archive, served but not
@@ -2027,6 +2107,84 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   cycle served from the cycle's rows against swept) and `wide_hit` and
   `wide_miss` (the wide walk taken for a live session idle longer than the
   caption window); the memo lives for one cycle, so it has no occupancy gauge.
+  `captions` is the memo behind the captioner-store reader every timeline lane,
+  the feed's held card and the postal join read, keyed on the file's identity
+  (inode, mtime, size) taken before the read: `hit` and `miss` (reads served
+  from memory against read and parsed), `fail` (reads that failed after a
+  successful stat and were not memoized; the kernel's stderr names the file
+  once per episode), `evict` (entries dropped: a lane that left the timeline,
+  the 512-entry bound, or the pop of an entry whose file is now absent), and
+  the gauge `entries`. `states_overlay` is the states-log fold behind the
+  awaiting overlay: `hit` (the records were the cached ones), `append` (only
+  the appended rows were folded), `refold` (every row was folded: a rewrite, a
+  shrink, or the file's first fold), `fail` (a read that failed on a file that
+  exists; the fold answered no overlay, memoized nothing, and the kernel's
+  stderr names the file once per episode), `evict` (entries dropped for
+  sessions that left the alive set), and `entries`. `thread_reg` is the SDK
+  registry reader's memo, keyed like `captions`, with the same `hit`, `miss`,
+  `fail` and `entries`; its `evict` counts the 512-entry bound and the pop of
+  an absent file's entry.
+  `feed_segs` is the feed build's per-session memo of the values that are pure
+  functions of a session's parse and goal store (the seam maps, the tree shape
+  and each top goal's flattened tree), keyed on the parse object, the served
+  store's identity, the names registry, the working bit and the session row's
+  name and colour: `hit` and `miss` (sessions served from the memo against
+  recomputed and stored), `bypass_live` (a build whose parse was a live-merge
+  copy: computed for that build only), `bypass_degraded` (a walk that swallowed
+  an exception: computed, never stored), `bypass_unkeyed` (a store whose
+  identity does not stand for its content: a rewind hold, a failed gesture
+  replay, the shared cache switched off, no store file), `bypass_unscoped` (a
+  build outside a pusher cycle: read but never filled), `evict` (entries dropped
+  for sessions that left the alive set), and the gauge `entries`. `lanes` is the
+  per-lane segment memo in the timeline build: a lane's bars, segment ends,
+  last activity, compaction markers and judging marks, held while the lane's
+  parsed transcript, goal store and captions are the same objects as the
+  previous build's and its other inputs (live, the branch clip, the host's
+  suspensions, the archive file) are unchanged. One outcome per lane per bars
+  build (a full build, or the live-only first paint): `hit` (served), `miss`
+  (derived, and held unless the archive file could not be stat'ed),
+  `live_tail` (a live tail was merged, so the lane was derived and not held),
+  `complain_skip` (the parse or a stage failed, or a mark carries a time the
+  horizon cannot compare) and `unshared_skip` (a private store with content;
+  derived and not held); `evict` (entries dropped for lanes that left a full
+  build's lane set or past the 256-entry bound), the gauge `entries`, and
+  `segs_hit` and `segs_miss`, the segments served against derived, which
+  weight the hit rate by cost.
+  `chat_merge_sets` is the live-tail merge's memo of the sets it derives from
+  a parsed transcript (the uuids and user texts the transcript already holds,
+  and the newest human turn's time), one entry per session keyed on the
+  parsed session object's identity, shared by the chat, feed and timeline
+  builds of one cycle: `hit` and `miss` (merges served from the memo against
+  derived) and the gauge `entries` (sessions held; the pusher drops a session
+  that is neither shown as a tab nor alive).
+  `chat_postal` is the chat fold's memo of a tab's sealed postal cards, keyed
+  on the values the cards embed from outside the transcript (the message log's
+  identity and, per card, its caption and its peer's name and colour): `gate`
+  (fold-gate checks that re-hydrated a tab's sealed cards because one of those
+  values moved, or because the entry was sealed outside the pusher's names
+  snapshot and had to be verified), `hit` (checks that verified the sealed
+  cards from their recorded values without hydrating), and `commit_new` (raw
+  postal events hydrated at fold commits: the events a folding build newly
+  seals, or every relevant event of the prefix a demoted build rebuilds, so a
+  demotion counts its rebuilt tail again; the sealed cards a folding build
+  reuses are not counted). Before this memo every judge pass re-hydrated every tab's
+  sealed cards, although a caption is the only judge-written value a card
+  carries.
+  `chat_ledger` is the chat build's memo of a session's goal-tree walk and
+  live roots (interim: the round-4 plan expects P4's complete chat signature
+  to remove most of the rebuilds it serves), keyed on the parsed transcript's
+  identity, the store's identity and seams, `cleared.jsonl`'s identity and
+  the warm-anchor table's per-session revision: `hit` and `miss`,
+  `bypass_live` (a build that merged live atoms: the last turn's segments
+  differ from the parse's), `bypass_hold` (an armed rewind hold filters a
+  store copy per build), `bypass_empty` (a store with no nodes), `evict`
+  (entries dropped for tabs no longer shown) and the gauge `entries`.
+  `chat_fold_tasks` is the per-turn memo of the transcript's task fold
+  (interim, the same reason). It serves repeated builds over one parse: a
+  live-merged build of an unchanged transcript scans its last turn only. A
+  build after a transcript write scans every turn again, since a parse mints
+  new atom lists. `hit` and `miss` count turns served from the memo against
+  turns scanned, plus the gauge `entries` (sessions held).
 - `http`: request `count` and `ms` per `METHOD /path` for GET, POST, HEAD and
   OPTIONS, the query string removed and `/dist/*`, `/media/*` and
   `/remote/*/…` collapsed to one key each, for at most 64 keys; further keys

@@ -2,7 +2,7 @@
 // "Slice 3: region comments on images"), two rules the rest of the host suite left unpinned:
 //   * the figure's fence. `comment` with a target and `retarget` hash the figure's bytes as they are
 //     at the write, and before this module fenced on the sidecar's mtime alone: a figure regenerated
-//     between the drag and Enter was stamped with the NEW bytes' hash, every reply's fileHash /
+//     between the drag and the save was stamped with the NEW bytes' hash, every reply's fileHash /
 //     embeddedHashes[src] equalled it, and the panel read a rectangle drawn on the old picture as
 //     current on the new one — the one write the hash exists to catch (a regenerated figure marks
 //     its region comments stale), missed at the moment it is made; a markdown file's own mtime
@@ -152,7 +152,7 @@ const CHANGED_RE = /changed on disk since it was shown — reload to see it as i
 
 // ── the figure's fence: a standalone image ──────────────────────────
 
-test('a region comment fenced on the hash the person saw refuses figure-changed when the image was regenerated between the drag and Enter, writing nothing; fenced on the re-issued status\'s hash it lands with that hash; retarget is held to the same rule', () => {
+test('a region comment fenced on the hash the person saw refuses figure-changed when the image was regenerated between the drag and the save, writing nothing; fenced on the re-issued status\'s hash it lands with that hash; retarget is held to the same rule', () => {
   const w = world();
   const sp = storePathFor(w.root, w.chart);
   let st = status(w, w.chart);
@@ -215,7 +215,7 @@ test('a refused figure-changed on a loose image creates no .trackchanges/ beside
 
 // ── the figure's fence: a figure embedded in a markdown file ────────
 
-test('an embedded figure regenerated between the drag and Enter refuses figure-changed under the embeddedHashes[src] fence while the markdown\'s own mtime never moved; a re-place in the contract\'s shape (no src) fences the figure its passage tells', () => {
+test('an embedded figure regenerated between the drag and the save refuses figure-changed under the embeddedHashes[src] fence while the markdown\'s own mtime never moved; a re-place in the contract\'s shape (no src) fences the figure its passage tells', () => {
   const w = world();
   let st = status(w, w.figures);
   assert.deepEqual(st.embeddedHashes, {}, 'no region comment yet names a figure, so the panel has no hash for one');
@@ -226,7 +226,7 @@ test('an embedded figure regenerated between the drag and Enter refuses figure-c
   assert.deepEqual(r.embeddedHashes, { 'figs/latency.png': sha256(LATENCY) }, 'from here the panel holds the figure\'s hash');
   const mdNs = r.fileMtimeNs;
   // A second region on the same figure's other embed line, the figure regenerated between the drag
-  // and Enter. The markdown did not change, so no fence on IT could have caught this.
+  // and the save. The markdown did not change, so no fence on IT could have caught this.
   fs.writeFileSync(w.latency, LATENCY_AGAIN);
   const bytes = fs.readFileSync(sp);
   const second = panelComment(w.figures, w.figText, LATENCY_EMBED, 1, r, 'figs/latency.png', 'Appendix copy.');

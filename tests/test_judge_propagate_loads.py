@@ -1,20 +1,31 @@
 #!/usr/bin/env python3
-"""run_propagate and _drain_undiscovered read each goal store at most once per pass, and the two
-absent-store predicates are memoized across passes on file identity (2026-09-06, the judge-pass
-performance batch, item J4). Before: every pass loaded each recipient, loaded the sender again per
-ref BEFORE checking whether its tracker was already done (it was, for every live ref), loaded every
-sender a third time in the sender loop, and both triage sweeps parsed every ABSENT store to evaluate
-one predicate each — about 168 of 455 loads per pass. Pinned here:
+"""run_propagate reads through the shared read-only store cache and loads a writer only for the
+sender it is about to write; _drain_undiscovered and run_propagate's absent-store sweep answer their
+two predicates from a memo keyed on file identity (2026-09-06, the judge-pass performance batch, item
+J4: every store read at most once per pass; 2026-09-07, round 4 item PROP: the reads moved to
+load_goals_shared). Before J4 every pass loaded each recipient, loaded the sender again per ref BEFORE
+checking whether its tracker was already done (it was, for every live ref), loaded every sender a
+third time in the sender loop, and both triage sweeps parsed every ABSENT store to evaluate one
+predicate each — about 168 of 455 loads per pass. After J4 the one load per sid was still a parse
+(about 2 ms per store per pass) that decided, for every live ref, not to write. Pinned here:
 
-- one load_goals per distinct sid per pass across the recipient scan, the per-ref done check,
-  _ref_goal and the sender loop; the same object serves the recipient scan and the sender loop;
+- every read that decides whether to write is one load_goals_shared per distinct sid per pass (the
+  recipient scan, the per-ref done check, _ref_goal, the sender loop's tracker walk): zero plain
+  loads for an idle pass; a writer load (load_goals) is taken only when the view says a tracker is
+  open under a complete recipient goal or has a reply, exactly once per such sender, and the write
+  predicate is re-derived on the writer's node (a completion published between the view read and the
+  writer load is not recorded twice); the object rollup_status and save_goals receive IS the writer
+  load, never the view, and a pass over every write shape leaves the shared cache on (no poisoning);
 - one publish per dirty sender (rev advances by exactly one for two refs) carrying the rollup over
   every verdict it holds, the CAS discipline intact under a kernel-side write between two refs, a
   failed publish leaving the file untouched for the retry, and an absent sender's publish settled (or
-  not) by _presumed_closed;
+  not) by _presumed_closed; a store this pass published is read again through the shared cache;
+- a recipient whose goals file does not parse answers the same `_unread` fallback on both loaders,
+  memoized as the failed version once (`corrupt` advances by one across two passes), its refs skipped;
 - the absent-store memo: an unchanged store is evaluated once across both sweeps and across passes; a
   changed goals file, a changed override journal and a changed archive each re-evaluate; the identity
-  is taken before the read, in the sweep's own read and in run_propagate's; the key is the full path;
+  is taken before the read, in the sweep's own read and in run_propagate's (a view an earlier ref took
+  feeds the memo under the identity taken before that shared read); the key is the full path;
   entries for vanished stores are evicted; a load that FELL BACK (`_unread`: the store file or the
   journal did not read) is answered but never memoized; the one documented exception (same-size
   in-place rewrite with the mtime put back) is pinned as such.
@@ -95,11 +106,20 @@ class World(unittest.TestCase):
         jd.discover = lambda now, window=None, forks=True: list(self.sessions)
         jd.MESSAGES.parent.mkdir(parents=True, exist_ok=True)
         jd.MESSAGES.write_text("")
+        self._poisoned0 = jd.shared_store_stats()["poisoned"]
 
     def tearDown(self):
-        jd.discover = self._disc
-        jd._rebind_state(self._state)
-        self.td.cleanup()
+        # The frozen-store canary, BEFORE the rebind: a reader that wrote to a shared view switched the
+        # cache off for the process (and _rebind_state lifts that switch, which would hide the poison
+        # from the next test). Every pass in this module must leave the cache on and the counter still.
+        try:
+            self.assertEqual(jd.shared_store_stats()["poisoned"], self._poisoned0,
+                             "a run_propagate site wrote to a shared read-only view")
+            self.assertFalse(jd._SHARED_OFF[0], "the shared cache was switched off during the test")
+        finally:
+            jd.discover = self._disc
+            jd._rebind_state(self._state)
+            self.td.cleanup()
 
     # ── fixtures ──
     def _publish(self, sid, nodes):
@@ -113,20 +133,27 @@ class World(unittest.TestCase):
                                 "kind": "coordinate", "body": "done; nothing else owed"}) + "\n")
 
     def _counting(self, fn):
-        """Run fn with load_goals counted per sid and every returned object kept; restore after."""
-        counts, objs, orig = Counter(), {}, jd.load_goals
+        """Run fn with load_goals (plain, the writer's loader) and load_goals_shared counted per sid, every
+        object the plain loader returned kept; restore after. Returns (fn's result, plain counts, plain
+        objects by sid, shared counts). A shared call that falls back to load_goals (no store file, the
+        cache off) counts under BOTH, as goal_io_stats counts it."""
+        counts, shared, objs, orig, orig_shared = Counter(), Counter(), {}, jd.load_goals, jd.load_goals_shared
 
         def spy(fsid):
             counts[fsid] += 1
             st = orig(fsid)
             objs.setdefault(fsid, []).append(st)
             return st
-        jd.load_goals = spy
+
+        def spy_shared(fsid):
+            shared[fsid] += 1
+            return orig_shared(fsid)
+        jd.load_goals, jd.load_goals_shared = spy, spy_shared
         try:
             out = fn()
         finally:
-            jd.load_goals = orig
-        return out, counts, objs
+            jd.load_goals, jd.load_goals_shared = orig, orig_shared
+        return out, counts, objs, shared
 
     def _io(self):
         s = jd.goal_io_stats()
@@ -137,25 +164,28 @@ class World(unittest.TestCase):
 
 
 class LoadOncePerPass(World):
-    """The per-pass dict: one load per distinct sid across every site of run_propagate."""
+    """The per-pass dicts: one shared read per distinct sid across every read site of run_propagate,
+    and a writer load only for a sender the view says has something to write."""
 
-    def test_a_done_ref_costs_the_sender_no_second_load(self):
-        # THE COMMON LIVE SHAPE: every ref already done. The done check reads the shared object, so
-        # the sender is loaded once whichever order discover lists them in — even when the ref check
-        # runs BEFORE the sender's own recipient turn (discover order recipient-first).
+    def test_a_done_ref_costs_no_plain_load(self):
+        # THE COMMON LIVE SHAPE: every ref already done. The done check reads the shared view, so an
+        # idle pass takes NO writer load at all, whichever order discover lists them in — even when the
+        # ref check runs BEFORE the sender's own recipient turn (discover order recipient-first).
         self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID, done=True)]})
         g5 = _complete(RECIP, 5, origin={"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID})
         self._publish(RECIP, {g5["id"]: g5})
         for order in ((RECIP, SENDER), (SENDER, RECIP)):
             self.sessions = [(s, "/dev/null", None, n) for s, n in zip(order, ("api", "web"))]
-            n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 900))
+            n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
             self.assertEqual(n, 0, "already done: idempotent")
-            self.assertEqual(dict(counts), {SENDER: 1, RECIP: 1},
-                             "one load per sid, discover order %r: the per-ref check took no load" % (order,))
+            self.assertEqual(dict(counts), {}, "discover order %r: no plain load anywhere in an idle pass" % (order,))
+            self.assertEqual(dict(shared), {SENDER: 1, RECIP: 1},
+                             "one shared read per sid: the scan, the per-ref check and the sender walk share it")
 
-    def test_the_same_object_serves_the_recipient_scan_and_the_sender_loop(self):
-        # SENDER is scanned as a recipient (it is discovered) and then walked as a sender whose quiet
-        # tracker has a reply: one load, and the object the sender loop mutates IS the scan's object.
+    def test_the_view_decides_and_the_writer_load_receives_the_verdict(self):
+        # SENDER is scanned as a recipient (it is discovered, one shared read) and then walked as a
+        # sender whose quiet tracker has a reply: the view says due, so the loop takes ONE writer load,
+        # and the object rollup_status mutates IS that writer load — never the frozen view.
         self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID, quiet=True)]})
         self._publish(RECIP, {})
         self._reply(RECIP, SENDER, T + 500)
@@ -166,14 +196,149 @@ class LoadOncePerPass(World):
             return orig_roll(store, closed, now=now)
         jd.rollup_status = spy_roll
         try:
-            n, counts, objs = self._counting(lambda: jd.run_propagate(now=T + 900))
+            n, counts, objs, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
         finally:
             jd.rollup_status = orig_roll
         self.assertEqual(n, 1)
-        self.assertEqual(counts[SENDER], 1, "scan + sender loop: one load")
+        self.assertEqual((shared[SENDER], counts[SENDER]), (1, 1), "the scan's shared read, then the one writer load")
+        self.assertEqual((shared[RECIP], counts[RECIP]), (1, 0), "the recipient is only ever read")
         self.assertEqual(len(rolled), 1)
-        self.assertIs(rolled[0], objs[SENDER][0], "the sender loop rolled up the scan's own object")
+        self.assertIs(rolled[0], objs[SENDER][0], "the sender loop rolled up the writer load")
+        self.assertNotIsInstance(rolled[0], jd.FrozenDict, "and not the shared view")
         self.assertTrue(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"])
+
+    def test_a_dirty_ref_takes_one_writer_load_and_publishes_once(self):
+        # An open tracker under a COMPLETE recipient goal: the view says open, the pass takes exactly
+        # one writer load of the sender, publishes once (rev +1, one write; the CAS base is the writer
+        # load's), and the sender loop's later read of the published version is a shared fill.
+        self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})
+        g5 = _complete(RECIP, 5, origin={"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5})
+        r0, (_h, _m, w0) = _rev(SENDER), self._io()
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
+        self.assertEqual(n, 1)
+        self.assertEqual(dict(counts), {SENDER: 1}, "one writer load, for the sender written")
+        self.assertEqual(dict(shared), {SENDER: 2, RECIP: 1},
+                         "the scan's view, then the sender loop's read of the version this pass published")
+        self.assertEqual(_rev(SENDER), r0 + 1)
+        self.assertEqual(self._io()[2], w0 + 1, "exactly one write")
+        self.assertTrue(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"])
+
+    def test_a_completion_published_between_the_view_and_the_writer_load_is_not_recorded_twice(self):
+        # The re-check on the writer's node: the view said open; before the writer load returns, a
+        # concurrent writer (a peer kernel's propagate, the same shape) publishes the tracker done.
+        # The pass records no second done event and publishes nothing of its own.
+        self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})
+        g5 = _complete(RECIP, 5, origin={"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5})
+        orig, fired = jd.load_goals, []
+
+        def complete_under_the_load(fsid):
+            if fsid == SENDER and not fired:
+                fired.append(1)
+                k = orig(SENDER)
+                jd.record_verdict(k, k["nodes"][SENDER + ":t1"], "courier", "done", T + 700, why="done by a peer kernel")
+                jd._mark_node_done(k, SENDER + ":t1", "done by a peer kernel", T + 700, src="courier")
+                jd.rollup_status(k, False)
+                jd.save_goals(SENDER, k)
+            return orig(fsid)
+        jd.load_goals = complete_under_the_load
+        try:
+            _h, _m, w0 = self._io()
+            n = jd.run_propagate(now=T + 900)
+        finally:
+            jd.load_goals = orig
+        self.assertEqual(fired, [1], "the view said open, so the writer load was taken")
+        self.assertEqual(n, 0, "the writer's node was already done: nothing recorded")
+        self.assertEqual(self._io()[2], w0 + 1, "the concurrent publish is the only write")
+        log = jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["log"]
+        self.assertEqual([e["why"] for e in log if e.get("src") == "courier" and e.get("kind") == "done"],
+                         ["done by a peer kernel"], "one done event, the concurrent writer's")
+
+    def test_the_sender_loop_loads_the_writer_only_for_a_due_tracker(self):
+        # Quiet and cross-host trackers complete on the recipient's reply. With no reply the walk over
+        # the view finds nothing due and takes no writer load; with a reply, one.
+        self._publish(SENDER, {t["id"]: t for t in (_tracker(SENDER, 1, RECIP, MID, quiet=True),
+                                                    _tracker(SENDER, 2, "otherbox:api", MID2))})
+        self._publish(RECIP, {})
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
+        self.assertEqual((n, counts[SENDER], shared[SENDER]), (0, 0, 1), "nothing due: the view alone")
+        self._reply(RECIP, SENDER, T + 500)                              # the quiet tracker's recipient replied
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 901))
+        self.assertEqual((n, counts[SENDER]), (1, 1), "one due tracker: one writer load")
+        got = jd.load_goals(SENDER)["nodes"]
+        self.assertTrue(got[SENDER + ":t1"]["nodeComplete"])
+        self.assertFalse(got[SENDER + ":t2"]["nodeComplete"], "the cross-host tracker has no reply yet")
+        self.assertIn("quiet-filed", [e["why"] for e in got[SENDER + ":t1"]["log"] if e.get("src") == "courier"][-1])
+        self._reply("peer:otherbox:api", SENDER, T + 600)                # the cross-host peer, relay-keyed
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 902))
+        self.assertEqual((n, counts[SENDER]), (1, 1))
+        got = jd.load_goals(SENDER)["nodes"]
+        self.assertTrue(got[SENDER + ":t2"]["nodeComplete"])
+        self.assertIn("cross-host", [e["why"] for e in got[SENDER + ":t2"]["log"] if e.get("src") == "courier"][-1])
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 903))
+        self.assertEqual((n, counts[SENDER], shared[SENDER]), (0, 0, 1), "settled: back to the view alone")
+
+    def test_a_pass_over_every_write_shape_leaves_the_shared_cache_on(self):
+        # The frozen-store canary over one pass that writes through every branch: a dirty ref (t1), a
+        # dismissed-linked recipient (t2), a quiet tracker with a reply (t3), a cross-host tracker
+        # with a reply (t4), and an absent sender the sweep found (DEAD's quiet tracker). A write to
+        # a shared view would raise FrozenStoreError, file a row and switch the cache off; none does.
+        # (World.tearDown asserts the same for every test in the module; this one exercises the
+        # branches together.)
+        g6 = _node(RECIP + ":g6", "the delegated work the user dismissed",
+                   links=[{"peer": SENDER, "goalId": SENDER + ":t2", "msgId": MID2}])
+        jd.record_verdict({"nodes": {g6["id"]: g6}}, g6, "user", "clear", T + 200, why="dismissed")   # the flag is
+        #                                                                     diary-derived: a clear event, not a literal
+        self._publish(SENDER, {t["id"]: t for t in (_tracker(SENDER, 1, RECIP, MID),
+                                                    _tracker(SENDER, 2, RECIP, MID2),
+                                                    _tracker(SENDER, 3, RECIP, "msg-j4-0003", quiet=True),
+                                                    _tracker(SENDER, 4, "otherbox:api", "msg-j4-0004"))})
+        g5 = _complete(RECIP, 5, origin={"peer": SENDER, "goalId": SENDER + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5, g6["id"]: g6})
+        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, "msg-j4-0005", quiet=True)]})
+        self._reply(RECIP, SENDER, T + 500)
+        self._reply("peer:otherbox:api", SENDER, T + 600)
+        self._reply(RECIP, DEAD, T + 500)
+        p0 = jd.shared_store_stats()["poisoned"]
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
+        self.assertEqual(n, 5)
+        self.assertEqual(dict(counts), {SENDER: 2, DEAD: 1},
+                         "one writer load per publish: SENDER's in the recipient loop (t1), then the sender loop's "
+                         "on the version that publish left (t2-t4); DEAD's once; the recipient is never loaded")
+        self.assertEqual(jd.shared_store_stats()["poisoned"], p0)
+        self.assertFalse(jd._SHARED_OFF[0])
+        snd = jd.load_goals(SENDER)["nodes"]
+        self.assertTrue(all(snd[SENDER + ":t%d" % k]["nodeComplete"] for k in (1, 2, 3, 4)))
+        self.assertIn("dismissed", [e["why"] for e in snd[SENDER + ":t2"]["log"] if e.get("src") == "courier"][-1])
+        self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 901))
+        self.assertEqual((n, dict(counts)), (0, {DEAD: 1}),
+                         "the next pass: SENDER (discovered) is a view; DEAD's publish moved its identity, so the "
+                         "sweep's memo missed once and re-read it (the sweep's miss is a writer load)")
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 902))
+        self.assertEqual((n, dict(counts)), (0, {}), "and then idle: views and memo hits only")
+
+    def test_a_recipient_whose_store_does_not_parse_is_the_same_fallback_on_both_loaders(self):
+        # The shared read answers what load_goals answers for a goals file that exists and does not
+        # parse: an empty store marked `_unread` == "store". Propagate finds no complete recipient goal
+        # in it, skips its refs and leaves the sender untouched (no writer load, no publish). The failed
+        # version IS memoized by the shared cache (once per version, counter `corrupt`), so the second
+        # pass costs a hit, not a second failed parse.
+        self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})
+        (jd.GOALDIR / (RECIP + ".json")).write_text("{not json")
+        r0, c0 = _rev(SENDER), jd.shared_store_stats()["corrupt"]
+        self.assertEqual(jd.load_goals(RECIP).get("_unread"), "store")
+        self.assertEqual(jd.load_goals_shared(RECIP).get("_unread"), "store", "the shared loader's answer is the same mark")
+        c1 = jd.shared_store_stats()["corrupt"]
+        self.assertEqual(c1, c0 + 1, "the failed parse ran once, for the shared loader's fill")
+        for now in (T + 900, T + 901):
+            n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=now))
+            self.assertEqual((n, dict(counts)), (0, {}), "nothing to propagate, no writer load")
+            self.assertEqual(shared[RECIP], 1)
+        self.assertEqual(jd.shared_store_stats()["corrupt"], c1, "two passes: the memoized failed version, no re-parse")
+        self.assertEqual(_rev(SENDER), r0, "the sender was not published")
+        self.assertFalse(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"])
 
     def test_two_dirty_refs_to_one_sender_publish_once(self):
         self._publish(SENDER, {t["id"]: t for t in (_tracker(SENDER, 1, RECIP, MID),
@@ -182,12 +347,14 @@ class LoadOncePerPass(World):
         g6 = _complete(RECIP, 6, links=[{"peer": SENDER, "goalId": SENDER + ":t2", "msgId": MID2}])
         self._publish(RECIP, {g5["id"]: g5, g6["id"]: g6})
         r0, (_h, _m, w0) = _rev(SENDER), self._io()
-        n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 900))
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
         self.assertEqual(n, 2)
-        # one load per FILE VERSION: the recipient loop's publish made a new one, and the sender loop
-        # (SENDER is discovered) must read it fresh for its own CAS base — a saved object is never
-        # kept. Only a pass that completed something pays this; an idle pass loads each sid once.
-        self.assertEqual(counts[SENDER], 2)
+        # one WRITER load for both refs (the second ref reads the writer object through _peek), and the
+        # sender loop (SENDER is discovered) reads the version the recipient loop published through the
+        # shared cache — a saved object is never kept, and a read is never a plain load. Only a pass
+        # that completed something pays the second shared read; an idle pass reads each sid once.
+        self.assertEqual((counts[SENDER], shared[SENDER]), (1, 2))
+        self.assertEqual((counts[RECIP], shared[RECIP]), (0, 1))
         self.assertEqual(_rev(SENDER), r0 + 1, "two verdicts, one publish")
         self.assertEqual(self._io()[2], w0 + 1, "exactly one write")
         got = jd.load_goals(SENDER)
@@ -259,8 +426,8 @@ class LoadOncePerPass(World):
         # publish raises. Pinned: the memo describes the FILE, not the failed object (still "open
         # tracker", and a hit, since the file never changed), and the retry publishes once. That a
         # saved object leaves `loaded` is pinned by test_two_dirty_refs_to_one_sender_publish_once
-        # (the sender loop's fresh load after the recipient loop's publish); a new pass starts with
-        # an empty dict either way, so the failed publish's pop is not observable from here.
+        # (the sender loop's shared read of the version the recipient loop published); a new pass
+        # starts with empty dicts either way, so the failed publish's pop is not observable from here.
         self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, quiet=True)]})
         self._reply(RECIP, DEAD, T + 500)
         r0, orig_save = _rev(DEAD), jd.save_goals
@@ -280,12 +447,13 @@ class LoadOncePerPass(World):
         h0, m0, _w = self._io()
         self.assertEqual(jd._absent_store_flags(DEAD), (True, False), "the memo describes the FILE, not the failed object")
         self.assertEqual(self._io()[:2], (h0 + 1, m0), "and it is a hit: the file never changed")
-        n, counts, objs = self._counting(lambda: jd.run_propagate(now=T + 900))
+        n, counts, objs, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
         self.assertEqual(n, 1)
-        self.assertEqual(counts[DEAD], 1, "the sender loop's fresh load; the sweep answered from the memo")
+        self.assertEqual((counts[DEAD], shared[DEAD]), (1, 1),
+                         "the sweep answered from the memo; the loop's view said due, then one writer load")
         self.assertEqual(_rev(DEAD), r0 + 1)
         self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
-        n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 901))
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 901))
         self.assertEqual((n, counts[DEAD]), (0, 1), "identity moved: one miss, and no sender-loop load")
 
     def test_an_absent_senders_single_publish_carries_the_settled_rollup(self):
@@ -346,14 +514,16 @@ class AbsentStoreMemo(World):
         self._publish(DEAD2, {t["id"]: t for t in [_tracker(DEAD2, 1, RECIP, MID, quiet=True)]})
         self._owed(DEAD3)
         h0, m0, _w = self._io()
-        _r, counts, _o = self._pass(T + 900)
+        _r, counts, _o, shared = self._pass(T + 900)
         self.assertEqual({s: counts[s] for s in (DEAD, DEAD2, DEAD3)}, {DEAD: 1, DEAD2: 1, DEAD3: 1},
                          "each absent store parsed once: the sweep's read serves the sender loop and the drain")
         self.assertEqual(self._io()[:2], (h0 + 3, m0 + 3), "three misses (propagate), three hits (the drain)")
         self.assertEqual(self.visits, [DEAD3])
-        _r, counts, _o = self._pass(T + 901)
-        self.assertEqual({s: counts[s] for s in (DEAD, DEAD2, DEAD3)}, {DEAD: 0, DEAD2: 1, DEAD3: 0},
-                         "unchanged: no parse but the open tracker's sender-loop walk")
+        _r, counts, _o, shared = self._pass(T + 901)
+        self.assertEqual({s: counts[s] for s in (DEAD, DEAD2, DEAD3)}, {DEAD: 0, DEAD2: 0, DEAD3: 0},
+                         "unchanged: no plain load anywhere")
+        self.assertEqual({s: shared[s] for s in (DEAD, DEAD2, DEAD3)}, {DEAD: 0, DEAD2: 1, DEAD3: 0},
+                         "the open tracker's sender-loop walk reads the view")
         self.assertEqual(self._io()[:2], (h0 + 9, m0 + 3), "six hits, no miss")
         self.assertEqual(self.visits, [DEAD3, DEAD3], "the drain still finds the owed store, from the memo")
 
@@ -419,19 +589,20 @@ class AbsentStoreMemo(World):
         self.assertEqual(self._io()[:2], (h + 1, m + 1))
 
     def test_run_propagates_own_read_takes_the_identity_before_the_read_too(self):
-        # The recipient loop's _get reads an absent sender (a complete recipient goal refs a tracker
-        # of its that is already done) and leaves the object for the sweep, which memoizes it under
-        # the identity _get took. A publish landing between _get's stat and its read must pair the
-        # OLD identity with the old content, one extra miss next pass; stat AFTER the read would
-        # memoize the post-publish identity against pre-publish flags and serve it as a hit.
+        # The recipient loop's _peek reads an absent sender through the shared cache (a complete
+        # recipient goal refs a tracker of its that is already done) and leaves the VIEW for the
+        # sweep, which memoizes the predicates evaluated on it under the identity _peek took before
+        # the read. A publish landing between that stat and the read must pair the OLD identity with
+        # the old content, one extra miss next pass; stat AFTER the read would memoize the
+        # post-publish identity against pre-publish flags and serve it as a hit.
         self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, done=True)]})
         g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
         self._publish(RECIP, {g5["id"]: g5})
         p, k0 = str(jd.GOALDIR / (DEAD + ".json")), jd._store_identity(DEAD)
-        orig, fired = jd.load_goals, []
+        orig, orig_shared, fired, plain = jd.load_goals, jd.load_goals_shared, [], []
 
         def publish_under_the_read(fsid):
-            st = orig(fsid)                             # the pre-publish content
+            st = orig_shared(fsid)                      # the pre-publish content (the view)
             if fsid == DEAD and not fired:
                 fired.append(1)
                 new = orig(DEAD)
@@ -439,21 +610,54 @@ class AbsentStoreMemo(World):
                 jd.rollup_status(new, False)
                 jd.save_goals(DEAD, new)                # the identity moves while the read is in flight
             return st
-        jd.load_goals = publish_under_the_read
+
+        def counted_plain(fsid):
+            plain.append(fsid)
+            return orig(fsid)
+        jd.load_goals_shared, jd.load_goals = publish_under_the_read, counted_plain
         try:
             self.assertEqual(jd.run_propagate(now=T + 900), 0, "the ref's tracker was already done")
         finally:
-            jd.load_goals = orig
-        self.assertEqual(fired, [1], "_get, not the sweep, performed the read")
+            jd.load_goals_shared, jd.load_goals = orig_shared, orig
+        self.assertEqual(fired, [1], "_peek's shared read, not the sweep, performed the read")
+        self.assertEqual([f for f in plain if f == DEAD], [],
+                         "no plain load of DEAD anywhere: the sweep evaluated the view (the test's own publish reads "
+                         "through the unpatched loader)")
         k1 = jd._store_identity(DEAD)
         self.assertNotEqual(k1, k0)
         self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (False, True)),
-                         "memoized under the identity taken BEFORE the read, with the content that read saw")
+                         "memoized from the view under the identity taken BEFORE the read, with the content that read saw")
         h, m, _w = self._io()
-        n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 901))
-        self.assertEqual((n, counts[DEAD]), (0, 1))
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 901))
+        self.assertEqual((n, counts[DEAD], shared[DEAD]), (0, 0, 1), "the next pass: the view again, no plain load")
         self.assertEqual(self._io()[:2], (h, m + 1), "the stale-identity entry misses; it is never served")
-        self.assertEqual(jd._ABSENT_FLAGS[p], (k1, (True, True)), "re-evaluated on the published content")
+        self.assertEqual(jd._ABSENT_FLAGS[p], (k1, (True, True)), "re-evaluated on the published content, from the view")
+
+    def test_a_view_evaluated_by_the_sweep_never_enters_the_writer_dict(self):
+        # The memo reads the view (a frozen shared object) for its two predicates; the sender loop then
+        # finds the open tracker due and takes a WRITER load for the write. The frozen view is never
+        # what save_goals receives (it would refuse it with a row and the cache would be off).
+        self._publish(DEAD, {t["id"]: t for t in (_tracker(DEAD, 1, RECIP, MID, done=True),
+                                                  _tracker(DEAD, 2, RECIP, MID2, quiet=True))})
+        g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
+        self._publish(RECIP, {g5["id"]: g5})
+        self._reply(RECIP, DEAD, T + 500)
+        saved, orig_save = [], jd.save_goals
+
+        def spy_save(fsid, store):
+            saved.append((fsid, isinstance(store, jd.FrozenDict), isinstance(store.get("nodes"), jd.FrozenDict)))
+            return orig_save(fsid, store)
+        jd.save_goals = spy_save
+        try:
+            h, m, _w = self._io()
+            n, counts, objs, shared = self._counting(lambda: jd.run_propagate(now=T + 900))
+        finally:
+            jd.save_goals = orig_save
+        self.assertEqual(n, 1)
+        self.assertEqual((shared[DEAD], counts[DEAD]), (1, 1), "the ref's view, then the sender loop's writer load")
+        self.assertEqual(self._io()[:2], (h, m + 1), "the sweep evaluated the view: one miss, no load of its own")
+        self.assertEqual(saved, [(DEAD, False, False)], "the object saved is the writer load, not the frozen view")
+        self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t2"]["nodeComplete"])
 
     def test_a_dead_sender_that_gains_a_tracker_is_swept_the_next_pass(self):
         self._plain(DEAD)
@@ -466,12 +670,12 @@ class AbsentStoreMemo(World):
         jd.save_goals(DEAD, st)
         self._reply(RECIP, DEAD, T + 500)
         h, m, _w = self._io()
-        n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 901))
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 901))
         self.assertEqual(n, 1, "swept and completed the next pass")
         self.assertEqual(counts[DEAD], 1, "the miss's read served the sender loop")
         self.assertEqual(self._io()[:2], (h, m + 1))
         self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
-        n, counts, _o = self._counting(lambda: jd.run_propagate(now=T + 902))
+        n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 902))
         self.assertEqual((n, counts[DEAD]), (0, 1), "the publish moved the identity: one re-evaluation")
         self.assertEqual(jd._absent_store_flags(DEAD), (False, True),
                          "no open tracker; the completed top now owes the drain a distill")
@@ -485,7 +689,7 @@ class AbsentStoreMemo(World):
         jd.rollup_status(st, False)
         jd.save_goals(DEAD2, st)
         h, m, _w = self._io()
-        _r, counts, _o = self._counting(lambda: jd._drain_undiscovered(T + 901, self._sids()))
+        _r, counts, _o, shared = self._counting(lambda: jd._drain_undiscovered(T + 901, self._sids()))
         self.assertEqual({s: counts[s] for s in (DEAD, DEAD2, DEAD3)}, {DEAD: 0, DEAD2: 1, DEAD3: 0})
         self.assertEqual(self._io()[:2], (h + 2, m + 1))
         self.assertEqual(self.visits, [])
@@ -495,11 +699,11 @@ class AbsentStoreMemo(World):
         self._owed(DEAD3)
         self.sessions = []
         h, m, _w = self._io()
-        _n, counts, _o = self._counting(lambda: (jd.run_propagate(now=T + 900), jd.run_distill(now=T + 900)))
+        _n, counts, _o, shared = self._counting(lambda: (jd.run_propagate(now=T + 900), jd.run_distill(now=T + 900)))
         self.assertEqual(self._io()[:2], (h + 1, m + 1), "propagate's miss, the drain's hit")
         nd = jd.load_goals(DEAD3)["nodes"][DEAD3 + ":g1"]
         self.assertEqual(nd.get("summary"), "", "no transcript anywhere: the sentinel ends the spinner")
-        _n, counts, _o = self._counting(lambda: jd.run_distill(now=T + 901))
+        _n, counts, _o, shared = self._counting(lambda: jd.run_distill(now=T + 901))
         self.assertEqual(counts[DEAD3], 1, "the settle moved the identity: one re-evaluation")
         self.assertEqual(jd._absent_store_flags(DEAD3), (False, False), "self-retired")
 

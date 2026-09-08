@@ -116,8 +116,13 @@ class _StoreSandbox(unittest.TestCase):
         km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03);
         #                                              these suites pin the ON behavior — the OFF side
         #                                              lives in test_user_todos_switch.py
+        self.poisoned0 = jd.shared_store_stats()["poisoned"]
 
     def tearDown(self):
+        # the shared-cache landing gate (round-4 plan P1): the feed builds in these suites read their
+        # stores through the shared read-only cache and must never have written into one
+        self.assertEqual(jd.shared_store_stats()["poisoned"] - self.poisoned0, 0,
+                         "a feed build wrote into a shared goal store (see judge-errors frozen-store-write)")
         jd.STATE = self.saved
         self.td.cleanup()
         km._user_todos_cache.clear()
@@ -2972,7 +2977,9 @@ class OneInterruptStory(_StoreSandbox):
             mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
             mock.patch.object(km, "_parse_cached", lambda path: {"turns": list(turns)}),
             mock.patch.object(km, "_merge_live_atoms", lambda ps, sid: ps),
-            mock.patch.object(km, "_feed_goals", lambda sid: dict(store)),
+            # build_feed reads the store with its identity key (_feed_goals_view, 2026-09-07); a synthetic
+            # store has no identity guarantee, so it rides a sentinel key (the memo bypasses it)
+            mock.patch.object(km, "_feed_goals_view", lambda sid: (dict(store), object())),
             # the predicate is pinned separately (EscalationFloorPredicate); force-arm it here
             # so these shapes exercise the GUARDS, not the arming gates — arity-proof on purpose
             mock.patch.object(km, "_user_todo_idle", lambda *a, **k: True),

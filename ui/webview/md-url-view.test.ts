@@ -301,20 +301,18 @@ test("local file mode: a relative image is the sibling over the kernel's /file r
   assert.match(OPEN_FN, /mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\)/);
 });
 
-test("local file mode: a relative link opens the sibling in the viewer via ONE delegated data-act listener on the body", () => {
-  // the anchor carries the joined path as data, keeps its href for hover, and is not forced to _blank
-  assert.match(MD_FN, /const joined = joinDocPath\(doc\.path, href\);\s*\n\s*a\.dataset\.act = "fv-open";\s*\n\s*a\.dataset\.path = joined;\s*\n\s*const hash = href\.indexOf\("#"\) >= 0 \? href\.slice\(href\.indexOf\("#"\)\) : "";\s*\n\s*if \(hash\.length > 1\) a\.dataset\.frag = hash;[^\n]*\n\s*a\.setAttribute\("title", joined\);/,
-    "the joined path rides data-path and the link's own #fragment rides data-frag (review fold 2026-09-07)");
-  assert.match(MD_FN, /if \(a\.dataset\.act === "fv-open"\) return;/);
-  // …the delegate: actions.ts's delegate, installed once per open on the body (stable across the
-  // Rendered ⇄ Raw swaps that rebuild its children), preventDefault, then openFileView with this sid
-  assert.match(VIEW, /import \{ delegate \} from "\.\/actions";/);
-  // the fragment rides openFileView's options bag beside the fork's todoId (the 2026-09-07 fold; user-todo-links.test.ts)
-  assert.match(OPEN_FN, /delegate\(body, \{\s*\n\s*"fv-open": \(a, ev\) => \{\s*\n\s*ev\.preventDefault\(\);\s*\n\s*const target = a\.dataset\.path;\s*\n\s*if \(target\) openFileView\(target, sid, \{ frag: a\.dataset\.frag \|\| null \}\);/,
-    "the sibling opens in this viewer, for this sid, landing on its fragment");
-  assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 1, "one listener per open, never in a render path");
-  assert.ok(OPEN_FN.indexOf("delegate(body") < OPEN_FN.indexOf("const renderBody ="), "installed before any render can run");
-  // the chat's document-level delegate ignores scheme-less hrefs, so the click reaches the body listener
+test("local file mode: a relative link becomes a path link on the anchor itself (file-view-links.ts linkMarkdownAnchors), read by the ONE click listener on the body; its own #fragment rides as data-frag and lands after the open", () => {
+  assert.match(MD_FN, /if \(doc && doc\.kind === "file"\) \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(rendered\) linkMarkdownAnchors\(box, doc\.path\);/,
+    "the file kind's anchors are sorted by the module: a path link with the joined path, a section link, a dead link that says why (file-view-links.test.ts)");
+  assert.doesNotMatch(MD_FN, /"fv-open"|joinDocPath\(/, "no second marker and no second join for a sibling link: the path link's act is the chat's (openpath), its path the module's (resolveViewerPath)");
+  const MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view-links.ts"), "utf8");
+  assert.match(MOD, /else if \(frag\) \{ a\.dataset\.frag = frag; a\.setAttribute\("title", a\.getAttribute\("title"\) \+ "#" \+ frag\); \}/, "the link's own #fragment rides data-frag (a #L12 is the line instead)");
+  // the fragment rides openFileView's options bag beside the fork's todoId and line (user-todo-links.test.ts)
+  assert.match(OPEN_FN, /openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null, x\.dataset\.frag \|\| null\);/, "the sibling opens through the host's opener, for this sid, landing on its line or its fragment");
+  assert.match(VIEW, /let openLinkedFile: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void =\n\s*\(path, sid, line, frag\) => \{ openFileView\(path, sid, \{ line, frag \}\); \};/);
+  assert.equal((OPEN_FN.match(/delegate\(body/g) || []).length, 0, "no fv-open delegate in the local viewer: the body's one click listener reads every link (file-view-links.test.ts pins it)");
+  assert.ok(OPEN_FN.indexOf('body.addEventListener("click"') > 0 && OPEN_FN.indexOf('body.addEventListener("click"') < OPEN_FN.indexOf("const fetchFile = "), "installed in the open itself, before any bytes can land");
+  // the chat's document-level delegate ignores a scheme-less href (and a path link's href comes off), so the click reaches the body listener
   assert.match(HANDLER, /if \(!\/\^\[a-z\]\[a-z0-9\+\.-\]\*:\/i\.test\(href\)\) return;/);
 });
 
@@ -324,38 +322,41 @@ test("every heading gets id=md-<slug> after sanitisation, in both modes (the md-
   assert.match(MD_FN, /const heads = Array\.from\(box\.querySelectorAll\("h1, h2, h3, h4, h5, h6"\)\) as HTMLElement\[\];\s*\n\s*const slugs = uniqueSlugs\(heads\.map\(\(h\) => headingSlug\(h\.textContent \|\| ""\)\)\);\s*\n\s*heads\.forEach\(\(h, i\) => \{ h\.id = "md-" \+ slugs\[i\]; \}\);/);
   const sanitize = MD_FN.indexOf("sanitizeMd(");
   const ids = MD_FN.indexOf('h.id = "md-"');
-  const docGate = MD_FN.indexOf("if (doc) {");
+  const docGate = MD_FN.indexOf('if (doc && doc.kind === "url") {');
   assert.ok(sanitize > -1 && sanitize < ids && ids < docGate, "after DOMPurify, and OUTSIDE the doc gate: every mode, every caller (and after it, so SANITIZE_NAMED_PROPS never prefixes the viewer's own md- ids)");
   assert.match(MD_FN, /an unprefixed id="tabs" would dress a heading in the chat page's[\s\S]*?#tabs CSS and shadow getElementById\("tabs"\)/, "the prefix's reason is written down");
 });
 
-test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank; every other anchor still does", () => {
-  // setAttribute, not the properties: an SVG <a> is a link too now, and its `target` property is read-only (md-sanitize-viewer-links.test.ts)
-  assert.match(MD_FN, /if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\s*\n\s*a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/);
-  // the fragment branch is in the UNCONDITIONAL loop — a document with no location still lands its own links
+test("a `#fragment` anchor is stamped fv-anchor and gets NO _blank in a URL document (or one with no location); every other anchor there still does; a file's anchors are the module's", () => {
+  // setAttribute, not the properties: an SVG <a> is a link too, and its `target` property is read-only (md-sanitize-viewer-links.test.ts);
+  // LINK_SEL and linkHref, so the SVG anchor is reached and read like the HTML one
+  assert.match(MD_FN, /\} else \{\n(?:\s*\/\/[^\n]*\n)*\s*box\.querySelectorAll\(LINK_SEL\)\.forEach\(\(node\) => \{\n\s*const a = node as HTMLElement \| SVGElement;\n\s*if \(linkHref\(a\)\.startsWith\("#"\)\) \{ a\.dataset\.act = "fv-anchor"; return; \}\n\s*a\.setAttribute\("target", "_blank"\);\n\s*a\.setAttribute\("rel", "noopener"\);/);
   const finalLoop = MD_FN.slice(MD_FN.lastIndexOf('box.querySelectorAll(LINK_SEL)'));   // every link element, not only <a href>
-  assert.ok(finalLoop.includes('a.dataset.act = "fv-anchor"'), "stamped in the final, doc-independent pass");
-  assert.ok(finalLoop.includes('if (a.dataset.act === "fv-open") return;'), "…which also leaves the sibling links alone");
+  assert.ok(finalLoop.includes('a.dataset.act = "fv-anchor"'), "stamped in the arm every non-file document takes: a URL, or no location at all");
+  assert.ok(!finalLoop.includes("linkMarkdownAnchors"), "…and never over a local file's anchors, which the module sorted in the other arm");
 });
 
-test("scrollToFragment: decode, slug, find md-<slug> inside THIS box, scrollIntoView; nothing found → inert", () => {
+test("scrollToFragment: decode, then the ONE lookup (an id, an <a name>, the heading whose slug it is) inside THIS rendered box, scrollIntoView; nothing found → inert", () => {
   const fn = VIEW.split("function scrollToFragment(")[1].split("\n}")[0];
   assert.match(fn, /let frag = fragment\.replace\(\/\^#\/, ""\);/);
   assert.match(fn, /try \{ frag = decodeURIComponent\(frag\); \} catch \{/);
   assert.match(fn, /if \(!frag\) return false;/);
-  assert.match(fn, /const target = box\.querySelector\('\[id="md-' \+ headingSlug\(frag\) \+ '"\]'\);/, "the box, never document.getElementById");
+  assert.match(fn, /const target = fragmentTarget\(box\.querySelector\("\.fileview-md"\) \|\| box, frag\);/, "the rendered box, never document.getElementById; the lookup is file-view-links.ts's, which mark time reads too");
+  const MOD = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view-links.ts"), "utf8");
+  assert.match(MOD, /\|\| root\.querySelector\('\[id="md-' \+ headingSlug\(id\) \+ '"\]'\) \|\| undefined;/, "the heading arm reads the slug the ids were minted with");
   assert.match(fn, /if \(!target\) return false;/);
   assert.match(fn, /target\.scrollIntoView\(\{ block: "start" \}\);/);
   assert.doesNotMatch(fn, /location\.|document\.getElementById|window\.open/);
 });
 
-test("both viewers handle fv-anchor in their body delegate: preventDefault, then scrollToFragment on the body", () => {
+test("the URL viewer handles fv-anchor in its body delegate: preventDefault, then scrollToFragment on the body; the local viewer's section links land through the same function", () => {
   const H = /"fv-anchor": \(a, ev\) => \{ ev\.preventDefault\(\); scrollToFragment\(body, a\.getAttribute\("href"\) \|\| ""\); \},/;
-  assert.match(OPEN_FN, H, "the local viewer's existing delegate gained the handler");
   assert.match(URL_FN, H, "the URL viewer installs its own delegate for it");
   assert.equal((URL_FN.match(/delegate\(body/g) || []).length, 1, "one listener per open");
   assert.ok(URL_FN.indexOf("delegate(body") < URL_FN.indexOf("const renderBody ="), "installed before any render can run");
   assert.doesNotMatch(URL_FN, /"fv-open"/, "no sibling-path links in URL mode — those are absolute and the chat's delegate routes them");
+  assert.doesNotMatch(OPEN_FN, /"fv-anchor"/, "the local viewer stamps none: its section links wear the module's class (file-view-links.test.ts)");
+  assert.match(OPEN_FN, /scrollToFragment\(body, x\.getAttribute\("href"\) \|\| ""\);/, "…and land through the one function");
 });
 
 test("the opened URL's own #fragment lands after the FIRST rendered paint — once, and only with a rendered body", () => {
@@ -414,13 +415,13 @@ test("rendered markdown never carries data-* attributes into the page, in the vi
   assert.equal((SAN.match(/DOMPurify\.sanitize\(/g) || []).length, 1, "the module holds the one DOMPurify.sanitize call");
   assert.match(SAN, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
   // the viewer's own stamps are set AFTER the sanitize, so they are unaffected
-  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-open"'));
+  assert.ok(MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf('a.dataset.act = "fv-anchor"') && MD_FN.indexOf("sanitizeMd(") < MD_FN.indexOf("linkMarkdownAnchors(box"));
 });
 
 test("local file mode: a sibling link's #fragment lands after the first RENDERED paint, once", () => {
   // the fragment rides openFileView's options bag beside the fork's todoId, and the open answers with its verdict
   // (the 2026-09-07 fold; user-todo-links.test.ts pins the todoId half)
-  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; frag\?: string \| null \}\): boolean \{/);
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null, opts\?: \{ todoId\?: string \| null; line\?: number \| null; frag\?: string \| null \}\): boolean \{/);
   assert.match(OPEN_FN, /let pendingFrag: string \| null = opts\?\.frag \|\| null;/);
   assert.match(OPEN_FN, /if \(rendered && pendingFrag\) \{\s*\n\s*const h = pendingFrag; pendingFrag = null;\s*\n\s*requestAnimationFrame\(\(\) => \{ if \(wrap\.isConnected\) scrollToFragment\(body, h\); \}\);/);
 });

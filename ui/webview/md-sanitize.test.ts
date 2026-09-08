@@ -113,13 +113,15 @@ test("md-sanitize.ts holds the dashboard's ONLY DOMPurify.sanitize call; render.
   assert.equal((read("file-view.ts").match(/sanitizeMd\(/g) || []).length, 1, "mdBlock");
 });
 
-test("the submit backstop: one preventDefault listener on the viewer body in openFileView AND openUrlView, beside the click delegate", () => {
+test("the submit backstop: one preventDefault listener on the viewer body in openFileView AND openUrlView, beside the click listener", () => {
   const VIEW = read("file-view.ts");
   const local = VIEW.split("export function openFileView(")[1].split("\nexport function ")[0];
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];
   for (const [name, fn] of [["openFileView", local], ["openUrlView", url]] as const) {
     assert.equal((fn.match(/body\.addEventListener\("submit", \(ev\) => \{ ev\.preventDefault\(\); \}\);/g) || []).length, 1, name + " installs the backstop once per open");
-    assert.ok(fn.indexOf("delegate(body, {") < fn.indexOf('body.addEventListener("submit"'), name + ": beside the click delegate, on the same stable body");
+    // the same stable body carries the click listener: openFileView's one listener (file-view-links.test.ts; fork PR #347),
+    // openUrlView's delegate for its fv-anchor stamp
+    assert.ok(fn.includes("delegate(body, {") || fn.includes('body.addEventListener("click"'), name + ": the same stable body carries the click listener");
     assert.ok(fn.indexOf('body.addEventListener("submit"') < fn.indexOf("body.replaceChildren("), name + ": installed before any render swaps the body's children");
   }
 });

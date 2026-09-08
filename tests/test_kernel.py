@@ -342,7 +342,7 @@ class ViewBuilder(unittest.TestCase):
                       {"id": "3", "subject": "c", "activeForm": None, "status": "pending"}]
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: [dict(t) for t in live_store]
-        km._fold_tasks = lambda session: [dict(t) for t in stale_fold]
+        km._fold_tasks = lambda session, sid=None: [dict(t) for t in stale_fold]
         try:
             todo = next(e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo")
         finally:
@@ -357,7 +357,7 @@ class ViewBuilder(unittest.TestCase):
         # ERROR — it does NOT quietly show the lossy fold (which could be wrong, the whole bug).
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None            # store unreadable
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
         try:
             todo = next(e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo")
         finally:
@@ -369,7 +369,7 @@ class ViewBuilder(unittest.TestCase):
         # a done/absent list is a non-event — an unreadable store there is not worth alarming on, so no card.
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "a", "activeForm": None, "status": "completed"}]
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "a", "activeForm": None, "status": "completed"}]
         try:
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
         finally:
@@ -381,7 +381,7 @@ class ViewBuilder(unittest.TestCase):
         # stale transcript fold — no card, and NO error (the store was read fine, it's just empty).
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: []              # authoritative-empty (cleared / none)
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
         try:
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
         finally:
@@ -440,11 +440,11 @@ class ViewBuilder(unittest.TestCase):
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None            # store unresolvable, as in the repro
         try:
-            km._fold_tasks = lambda session: real_fold(bg)
+            km._fold_tasks = lambda session, sid=None: real_fold(bg)
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
-            km._fold_tasks = lambda session: real_fold(batch)
+            km._fold_tasks = lambda session, sid=None: real_fold(batch)
             kinds_batch = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
-            km._fold_tasks = lambda session: real_fold(mixed)
+            km._fold_tasks = lambda session, sid=None: real_fold(mixed)
             todo = [e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo"]
         finally:
             (km._read_task_store, km._fold_tasks) = saved
@@ -1647,8 +1647,9 @@ class ViewBuilder(unittest.TestCase):
             "rompUuid": SID, "seq": 2, "lastNode": top, "nodes": nodes,
             "placements": placements, "status": status}))
         km._task_seg_cache.clear()
-        km._BG_TOPS_CACHE.clear()          # both classifier caches key on store/transcript file stats —
-        km._SESSION_STAMP_CACHE.clear()    # cleared so a same-stat rewrite can't serve a stale verdict
+        km._BG_TOPS_CACHE.clear()          # the launch-segment positives, the (parse, store)-keyed placement
+        km._SESSION_STAMP_CACHE.clear()    # memo and the stat-keyed stamp read: cleared so an earlier fixture's
+        #                                    answer under this sid, or a same-stat rewrite, serves nothing here
         saved = km._tmux_sessions
         km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None,
@@ -4891,10 +4892,13 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(comp[0]["tree"][0]["status"], "done")
         self.assertTrue(any(a["column"] == "needs_input" for a in d["asks"]), "the blocked goal is a BLOCKED card")
         # card tint is the recency colormap (age → hawaii ramp), not a flat session color. It rides FULL
-        # frames only (an older bundle destructures it); the delta path and the dedup signature strip it,
-        # because a colour that ticks with the clock is not a change (tests/test_feed_delta.py).
-        self.assertEqual(comp[0]["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
-        self.assertNotEqual(comp[0]["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
+        # frames only (an older bundle destructures it), stamped at serialization since 2026-09-07 (_feed_body);
+        # the built card carries none, and the delta path never does, because a colour that ticks with the
+        # clock is not a change (tests/test_feed_delta.py).
+        self.assertNotIn("trgb", comp[0])
+        wire = next(a for a in json.loads(km._feed_body(d))["asks"] if a["itemId"] == comp[0]["itemId"])
+        self.assertEqual(wire["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
+        self.assertNotEqual(wire["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
 
     def test_cards_for_segments_resolves_segment_to_owning_top_card(self):
         # reverse-hover: a hovered timeline bar's segment id → the TOP goal card that owns it (inverse
@@ -5372,8 +5376,9 @@ class ViewBuilder(unittest.TestCase):
         # unchanged, so the punch (the gesture's replay + rollup, both in place) must land on a copy:
         # otherwise the reopen would be baked into the object the NEXT pass serves for a file that does
         # not hold it. Contract: the memoized object always equals a fresh raw parse of its file
-        # version; the served copy carries the reopen; a second gesture in the same pass works the same
-        # copy; build_feed reads and never writes.
+        # version; the served copy carries the reopen; a second gesture in the same pass punches a FRESH
+        # copy (the served identity keys the feed's per-session memo, 2026-09-07); build_feed reads and
+        # never writes.
         g = self._settled_store()
         path = jd.GOALDIR / (SID + ".json")
         raw = json.loads(path.read_bytes())                # the version this pass memoizes
@@ -5394,7 +5399,9 @@ class ViewBuilder(unittest.TestCase):
             self.assertIs(km._feed_goals(SID), served, "later reads in the pass serve that one copy")
             self.assertTrue(jd.optimistic_followup(SID, g, text="and the null case", now=NOW + 1))
             km._note_user_goal_write(SID)
-            self.assertIs(km._feed_goals(SID), served, "a second gesture punches the copy already made")
+            served2 = km._feed_goals(SID)
+            self.assertIsNot(served2, served, "a second gesture punches a fresh copy, never the first one in place")
+            self.assertEqual(served2["status"].get(g), "working")
             self.assertEqual(memo_obj, raw)
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
             self.assertEqual(card["column"], "working")
