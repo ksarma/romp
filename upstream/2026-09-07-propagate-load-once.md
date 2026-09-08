@@ -1,13 +1,15 @@
 ---
 title: Perf J4: `run_propagate` loads each goal store once per pass and publishes each dirty sender once after the recipient loop; the two absent-store sweeps (`run_propagate`'s absent-sender sweep and `_drain_undiscovered`) answer from a memo keyed on the identity of the store file, its override journal and its archive
-status: candidate
+status: offered
 where: fork PR #266 (`judge-propagate`, merged 2026-09-07 in batch #277): `kernel/judge.py` (`run_propagate`, `_drain_undiscovered`, the absent-store memo; `goal_io_stats` gains `absent_hits`, `absent_misses`), `kernel/kernel.py`, `bin/romp`, `docs/reference.md`; tests `tests/test_judge_propagate_loads.py` (21), `tests/test_perf_stats.py`, `tests/romp-perf.bats`
 added: 2026-09-07
 pr: 266
 tier: fix
-offered:
+offered: their PR #1059
 closed:
 ---
 Upstream's `run_propagate` reads each store several times per pass (the sender again per ref before a done check every live ref fails, and a third time in the sender loop), and both triage sweeps over stores no discovered session owns parse every one of those stores every pass: at steady state on a 30-session kernel about 168 of the 455 loads per pass were these re-reads, with a live ceiling of about 150 ms per pass. One `load_goals` object per store serves the recipient scan, the per-ref done check, the recipient maps and the sender loop; a dirty sender is published once and then dropped from the dict, so the next touch reloads with a fresh CAS base (the rebase unions per-node logs by time, source and kind, so one publish carrying several courier rows merges as several publishes did). The memo takes the identity before the read, so a publish landing under the read costs one extra miss rather than a stale hit; an unchanged store costs three stats per sweep instead of a parse; entries are evicted for stores gone from the directory and cleared on rebind. A load that fell back (the store file or journal exists but did not read; marked `_unread` by P6) is answered for the pass but never memoized, since nothing on disk changes before such a read succeeds again and a dead store's entry would otherwise pin "nothing open, nothing owed" until a write that may never come. Micro-bench of the pass: 144 to 24 loads, 74 to 27 ms.
 
 Stacked on P6 (`awaiting-lift-identity-gate`, #264) for the `_unread` mark; `romp-perf` (fork #199) for the two counters only. A known stale docstring: `run_propagate` and `_publish` say `save_goals` pops the CAS base and never re-arms it, which fix 3 of `judge-head-three-fixes` (#279) made untrue; the behaviour there stays correct and the reload after publish is now an avoidable load. Fix the docstrings in the offer.
+
+OFFERED 2026-09-08: offered upstream inside bundle PR #1059 (Identity memos on the judge's goal-store loads, saves and scans, and a shared read-only cache for the pusher; label fix; branch store-memos-offer; head b168928b; a draft while the branch is rebased onto the moved upstream tip) with `judge-failure-scan-memo`, `chain-membership-memo`, `goals-pass-snapshot-memo`, `save-goals-noop-disk-memo`, `shared-goal-store-cache` and the journal half of `awaiting-lift-identity-gate`'s `_unread` mark. Reworked at the rebase onto upstream's #1019: `run_propagate` keeps its per-session catches around the pass's one shared read, and the identity memo re-takes the identity after the load, so a quarantine moving the file under a pre-read key is never memoized.
