@@ -2005,9 +2005,13 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   time), and `cycle_ms_p50`, `cycle_ms_p90`, `cycle_ms_ring_max`, `ring_n`
   from the last 256 cycles. The interval is 1.0 s (`PUSH_MIN_INTERVAL_S` in
   the kernel): a cycle starts no sooner than that after the previous one
-  began unless a chat tab a connected client is watching changed (streamed
-  text, an echo), which runs its cycle at once. `ROMP_PUSH_MIN_INTERVAL=<seconds>`
-  in the kernel's environment overrides it; 0 removes the bound.
+  began unless the live tail of a chat tab a connected client is watching
+  changed (an SDK session's streamed text, an echo, a turn's end, the
+  session ending), which runs its cycle at once. A tmux session's mid-turn
+  output has no event: it refreshes on the backstop cycle, which runs at the
+  later of the previous cycle's end plus 0.5 s and its start plus the
+  interval. `ROMP_PUSH_MIN_INTERVAL=<seconds>` in the kernel's environment
+  overrides it; 0 removes the bound.
 - `stages_ms`: `jobs` (the cycle's tick jobs outside the push), `push`, and
   inside it `push.chat`, `push.feed`, `push.timeline`, `push.send`. The
   `push.*` stages count every push, including the one a connecting page gets,

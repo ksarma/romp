@@ -42536,16 +42536,18 @@ _skel_wire = None   # (timeline, frame, pre, sig) — the lanes {type:"data"} fr
 # is real-time on its own delta path, unaffected). Idle fleets still reuse indefinitely via the sig.
 REBUILD_MIN_S = 2.0
 # The pusher loop's cadence (perf round 5, decision 3, 2026-09-08). PUSH_BACKSTOP_S is the poll: with no
-# wake at all a cycle still runs this long after the previous one ended, for the changes nothing pokes us
-# for (a tmux session's mid-turn output). PUSH_MIN_INTERVAL_S is a rate bound on cycle STARTS: after a
+# wake at all a cycle still runs, at the later of the previous cycle's end plus this and its start plus
+# PUSH_MIN_INTERVAL_S, for the changes nothing pokes us for (a tmux session's mid-turn output, which has
+# no wake and so follows the interval). PUSH_MIN_INTERVAL_S is a rate bound on cycle STARTS: after a
 # cycle, a wake that is not a watched tab's live-tail wake (see _pusher_wake_live) waits until this long
 # after the previous cycle began, and every wake that arrives during that wait is served by the one cycle
 # that follows. Round 4 made the builders 3-5x cheaper and the process line did not move: the pusher was
 # wall-saturated (0.93 wakes/s against 0.32 cycles/s), so cheaper cycles became twice as many cycles
 # (0.65/s at a 1.37 s mean, 89% of wall busy). The bound turns that saving into idle CPU; REBUILD_MIN_S
 # above bounds the full view rebuilds within a cycle and is unchanged. The chat pane is exempt where it
-# is watched: streamed text and echoes for the tab a connected client is looking at run their cycle at
-# once, so its latency is what it was. Override for a measurement or to restore the old loop:
+# is watched and its backend reports the change: an SDK session's streamed text, echoes, turn end and
+# death for the tab a connected client is looking at run their cycle at once, so their latency is what
+# it was. Override for a measurement or to restore the old loop:
 # ROMP_PUSH_MIN_INTERVAL=<seconds> in the kernel's environment (0 removes the bound; the loop is then
 # exactly the pre-interval one).
 PUSH_BACKSTOP_S = 0.5
