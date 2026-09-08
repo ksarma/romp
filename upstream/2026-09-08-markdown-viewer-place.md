@@ -3,7 +3,7 @@ title: The markdown viewer keeps the reader's place across a reload, a view swit
 status: candidate
 where: fork branch mdviewer-s2 (ui/webview/reader-place.ts new; ui/webview/file-view.ts renderBody with its SVG Source branch, the ResizeObserver repaint and its scroll-time read, the seam's aside hook, setTextSize, noteBar, enterEdit, exitEdit, openUrlView; ui/webview/anchor-map.ts sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowSpan, placeTokens, commentsOnly, sourceTable (the one-entry source half of the rendered index) and the child-identity cache shape; ui/webview/file-comments.ts hideFloatOnScroll on the body's scroll and a figure's load; ui/webview/styles.css and feed.css; the legs file-view-place-browser, file-view-place-blocks-browser, file-view-place-reveal-browser, file-view-place-edits-browser, file-view-place-float-browser, file-view-place-html-browser, file-view-place-svg-source-browser, file-view-place-wrapper-end-browser, file-view-float-anchoring-browser, file-view-leg-page-browser, file-view-notebar-browser, file-comments-float-scroll-browser, file-view-fold-browser over ui/webview/real-viewer-leg.ts, file-view-place.test.ts, file-view-place-blocks.test.ts, file-view-place-comment-blocks.test.ts, file-view-place-svg-source.test.ts, file-view-place-source-cache.test.ts, file-view-leg-tree.test.ts, md-sanitize-wide-media-browser.test.ts, file-comments-regions-browser.test.ts; the moved pins; tools/file-review-plan.test.mjs; docs/guide.md; plans/markdown-viewer.md)
 added: 2026-09-08
-pr:
+pr: 396
 tier: fix
 offered:
 closed:
