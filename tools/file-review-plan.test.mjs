@@ -298,7 +298,7 @@ test('the margin-layout note stands beside the Slice 2 build note and names what
   assert.ok(slice2.includes('each takes the larger of it and the previous card\'s bottom plus the gap'));
   assert.ok(slice2.includes('The pure rule is `card-layout.ts` (`layoutCards`); the panel measures and applies (`placeCards`)'));
   const layout = read('ui', 'webview', 'card-layout.ts');
-  assert.ok(/export function layoutCards\(items: LayoutItem\[\], gap: number = CARD_GAP\): Layout/.test(layout), 'the module exports the rule');
+  assert.ok(/export function layoutCards\(items: LayoutItem\[\], gap: number = CARD_GAP, focus: string \| null = null\): Layout/.test(layout), 'the module exports the rule');
   assert.ok(/Math\.max\(it\.desired as number, floor\)/.test(layout), 'the push-down rule is the larger of desired and the floor');
   assert.ok(/import \{ layoutCards, CARD_GAP, type LayoutItem, type PlacedItem \} from "\.\/card-layout";/.test(panel), 'the panel imports it');
   assert.ok(/placeCards\(fromRender: boolean\): void \{/.test(panel));

@@ -1283,6 +1283,47 @@ Send section's edge in both sheets, after the shared rule it overrides, and in C
 the track and the first row — the Send box alone, the Resolved fold, the foot — with the Send box's own only behind a
 row).
 
+The focus follow-on (2026-09-08): reviewing a document with a few dozen comments and changes, the user clicked a
+comment's highlight and saw the highlight rise to the top edge of the body with no card beside it. A change card for a
+whole replaced paragraph — its old text struck and its new text marked, several hundred pixels tall — stood above the
+comment's card in the track; the placement pass only ever pushed cards down, so the comment's card sat a full viewport
+below its highlight, and the click's scroll went as far as kept the highlight's top in view and no further. Built: the
+pass anchors the layout on a FOCUS (`focusCard`; `focusKey` was already the name of the keyboard-focus reader), the card the person last acted on — a highlight or a change mark
+clicked, a card opened by its head, a reference link followed, a Show more, the card a save landed in — and
+`layoutCards` takes it as its third argument. The focused card sits exactly at its mark (clamped to the top inset when
+the mark is under the header, as any first card is); the cards above it, by desired top, are laid by the push-down rule
+first and then moved UP from the focus, each by the least that puts its end a gap above the card under it, so a card the
+focused card never met stays where it was; the loose group joins that chain when the moved cards reach it, moving up by
+the same minimum, to the track's start and past it only when the cards above the focus do not fit between the start and
+the focus (the focused card wins; a card moved past the start cannot be scrolled to, and the centering keeps the
+focused card in view); the cards below follow the push-down rule from its end as before. Without a focus the rule is
+unchanged. A card the focus moved up past its own mark draws its leader down the gutter (`data-pulled`, `--fc-pull`),
+as a pushed card draws one up. The focus is set before the render whose pass lays the card (`showCard`; the head-click
+listener in `installLayout`; `focusOn`, which `goTo` and `scrollCard` call and which runs a pass when the focus
+changed), and the mark is then centered (`centerOn`) so the mark and its card sit together mid-view; the least-scroll
+fallback stays for a focused card taller than the track, where the mark's top stays in view and the head is cut by the
+excess alone. The focus clears when the list no longer holds the card (a status, the filter, a fold), when the layout
+ends (`layoutOff`: the fold to the list, edit mode, the panel's close) and with the panel (`dispose`). Tall cards fold:
+in the margin layout a change card's old and new text, a comment's body and a run of turns wear `fc-clip`, and the
+sheets cap each at eight of its lines (`8lh`), the last lines fading (a mask) where the pass found the cap cut the
+content (`clipCards`: `data-clipped`, read before the cards' heights, since the fold changes them); the card's foot
+then offers Show more (`fcclip`, a `fileview-btn` through the delegate root, hidden as rendered until the pass finds a
+part cut), Show less once open, keyed like the expand state (`openBodies`; the card wears `fc-more`) so the choice
+survives a re-render; Show more makes the card the focus and centers its mark, as opening a card does. The list layout
+caps nothing. Tests: `card-layout.test.ts` (the focus rule: the tall card moved up by the least that clears the focused
+card, the cards above shifting only as needed, the cards below unchanged, the loose group joining the chain and
+passing the start only when the cards do not fit, and no focus, a loose focus and an unknown focus giving the old
+result), `file-comments-focus.test.ts` (the panel over the review stand-in: the focus set by a highlight click, a
+change mark, a head click that opens, a reference link and Show more, passed to the pass and laying the card level with
+a tall card above moved up; cleared when the card is gone from the status and on the fold; a tall part clipped in the
+margin and not in the list; Show more and Show less, surviving a re-render), `file-comments-focus-browser.test.ts`
+(Chromium and Firefox over a rendered body with a replaced paragraph's tall change card open above a comment: the
+comment's card level with its highlight within a pixel and both in view after the click — which the panel before the
+fix failed, the card a viewport below — the change card moved up and folded to eight lines with Show more, Show more
+opening it whole as the focus, Show less, and the narrow fold clipping nothing), `tests/test_guide_files_focus.py` (the
+guide's sentence held to the panel and the sheets) and `tools/file-review-plan-focus.test.mjs` (this paragraph held to
+the panel, the layout, the sheets and the modules it names).
+
 The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that
 recurs. Before it, a comment on a passage whose 24 characters of context matched another copy's was
 refused `anchor-ambiguous`, whichever copy was selected, and a stored comment carried nothing but its
@@ -1991,6 +2032,17 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   alone in three worlds — comments alone, a resolved comment with its fold first, a pending change with
   its foot first — and reads one hairline at the section's top level with the track's bottom, none on
   the first row, the Send box's own only behind a row, and nothing past the aside's edge.
+- The focus follow-on (2026-09-08): `card-layout.test.ts` gains the focus rule (the focused card at its
+  mark, the cards above moved up by the least that clears it, the cards below as before, the loose group
+  joining the chain, and the old result with no focus, a loose focus or an unknown one);
+  `file-comments-focus.test.ts` drives the panel over the review stand-in (the focus set by a highlight
+  click, a change mark, a head click, a reference link and Show more, cleared when the card leaves the
+  status and on the fold; the fold of a tall part in the margin and not in the list; Show more and Show
+  less across a re-render); `file-comments-focus-browser.test.ts` measures the defect's scene in Chromium
+  and Firefox (the comment's card level with its highlight after the click, the tall change card above
+  moved up and folded with Show more, the narrow fold clipping nothing); `tests/test_guide_files_focus.py`
+  holds the guide's sentence to the panel and the sheets; `tools/file-review-plan-focus.test.mjs` holds the
+  follow-on's paragraph to the code and the modules it names.
 - The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
   DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
   payload, the Reply modal's chip, no chip without the field, the detail link beside it);
