@@ -2120,7 +2120,16 @@ The snapshot's fields, all plain numbers (`ms` is milliseconds of wall time):
   lift was due) and `noop`
   (writer loads whose fresh decision filed nothing, the store having moved
   between the probe and the load), and the gauge `entries` (sessions
-  remembered). `bg_tops` is the placed-launch memo behind that lift and the
+  remembered). `nudge_walk` is the auto-nudge walk's per-cycle cost (it runs
+  for every alive session every cycle, wake-only when the toggle is off):
+  `walked` and `gated` (session-cycles visited, and the ones a session gate
+  returned on), `loads` and `shared` (store reads taken for the decision, and
+  the ones the shared read-only cache answered), `plan_hit`, `plan_miss` and
+  `plan_bypass` (the planner-placement gate served from its memo, computed and
+  memoized, or computed uncached over a non-shared store), `deleg_hit` and
+  `deleg_miss` (the delegated-work check, same memo), `lifted` (lifts the
+  wake-only dead-man filed), `evict` (entries dropped for sessions that left
+  the alive set) and the gauge `entries`. `bg_tops` is the placed-launch memo behind that lift and the
   feed's background-task classification, keyed on the parse object and the
   store object: `hit` and `miss` (calls answered from the per-version map
   against looked up), `resolve` (launch ids looked up on a miss, placed or

@@ -147,7 +147,7 @@ class Collector(unittest.TestCase):
                                               "lineage_reads"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
-                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
+                         {"goals_snap", "lift_gate", "nudge_walk", "goals_shared", "wire", "intr_marks", "sessions_scope",
                           "captions", "states_overlay", "thread_reg", "bg_tops",
                           "feed_segs", "lanes",
                           "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
@@ -181,6 +181,14 @@ class Collector(unittest.TestCase):
                          "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
                          "answered, the writer loads and the ones that filed nothing, plus its occupancy")
         for k, v in snap["memos"]["lift_gate"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["nudge_walk"]),
+                         {"walked", "gated", "loads", "shared", "plan_hit", "plan_miss", "plan_bypass",
+                          "deleg_hit", "deleg_miss", "lifted", "evict", "entries"},
+                         "the auto-nudge walk (round 5): session-cycles visited and gated, the decision's store reads "
+                         "and the shared-cache answers, the placement gate's memo counters and its bypass, the "
+                         "delegated check's, the wake-only lifts filed, evictions, plus its occupancy")
+        for k, v in snap["memos"]["nudge_walk"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["bg_tops"]),
                          {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
