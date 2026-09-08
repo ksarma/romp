@@ -3615,15 +3615,20 @@ def _mcp_call(name, args):
         if kind not in ("delegate", "coordinate", "question"):
             return ("Need 'kind': one of delegate (the recipient owns the work now), "
                     "coordinate (aligning/heads-up), or question (you need an answer).", True)
+        # The request's SHAPE is checked before the sender's identity: a malformed flag is the
+        # caller's own error and is refused as one whether or not this session resolved, so the
+        # answer never depends on the environment the tool happens to run in (2026-09-08: with
+        # the identity check first, a string `tracked` from an unresolved session was answered
+        # with the identity refusal instead of the field's, which is what CI saw).
+        tracked, terr = _as_bool(args.get("tracked"), "tracked")
+        if terr:
+            return ("Cannot send: %s. Pass a JSON boolean (tracked: true), not a string." % terr, True)
         if not mid:
             # the bus would refuse this anyway (anonymous mail arrives "from unknown"); say it
             # HERE with the actionable half — the sender's own identity is what's broken
             return ("Cannot send: this session's own identity did not resolve (no session id), so "
                     "the mail would arrive anonymously and the recipient could not place or answer "
                     "it. This is a session-identity bug worth surfacing to the user.", True)
-        tracked, terr = _as_bool(args.get("tracked"), "tracked")
-        if terr:
-            return ("Cannot send: %s. Pass a JSON boolean (tracked: true), not a string." % terr, True)
         tracked = tracked and kind == "delegate"
         try:
             payload = {"to": to, "from": me or "unknown", "from_id": mid, "body": body, "kind": kind}
