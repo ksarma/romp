@@ -966,7 +966,14 @@ inline `padding-bottom` written only when it changes and cleared by `layoutOff` 
 mode, the panel's close), and makes the list as tall as puts the track's farthest position at the body's, or as the
 last card's end, whichever is more, so the body itself reaches every card's end. Padding cannot lengthen a body that
 does not scroll (a short file, a picture sized to its box); there the track goes on alone as far as the last card's
-end, and a pass or a status reply leaves it there instead of pulling it back to the body (`followBody`). The track
+end, and a pass or a status reply leaves it there instead of pulling it back to the body (`followBody`). Such padding is
+taken back in the pass that wrote it: a box's padding comes out of its content box, and content sized to the box by a
+`min-height: 100%` (the standalone picture's box, which centers the picture in itself; the Raw view's) shrank by it
+instead of scrolling, so the body gained no range and a centered picture rose by half the footer at every open of the
+panel and fell back at the close, on no new information about it; the pass writes the padding, measures, and clears it
+where the body's scroll height is still its box's, and keeps it where the body did lengthen (a picture nearly the box's
+height, whose own box outgrows the padded content box: the body scrolls then, to a card at the picture's foot) — the
+third review. The track
 holds cards alone: every row the list held stands in the footer above Send (`moveRows`), the foot with Accept all ·
 Reject all first, then a wait's loader, a refusal row, the "… N more changes" and Resolved folds and the empty note,
 in the list's order. A row at the top of a track locked to the body's scroll was out of view for a reader anywhere but
@@ -1029,7 +1036,13 @@ out of the locked track, a reflow inside the body left the cards off their marks
 the panel's bottom. The two tiers, the offset-free centering and the save's scroll are the follow-on's second review
 (2026-09-07), which also found the sheets' margin comment still attributing the level-with placement to the user and
 held it to this note's record; the pass without a render that un-pushes a card (the leader's attribute and its length
-leave the reused node) stood already and gained its pin in that round. Tests: `card-layout.test.ts` (the rule),
+leave the reused node) stood already and gained its pin in that round. The third review (2026-09-07) found the two tiers
+had reached styles.css alone, the feed page's sheet still carrying the first cut while the byte-equal pins stood red,
+and mirrored the block into feed.css; found the padding's shift of a centered picture and of a short Raw file, and made
+the pass take the padding back where it bought no range; and found the panel's own section comment still attributing
+the level-with placement to the user, and held it to this note's record as the sheets' had been. The loose group's
+place — cards with no mark at the top of the track, out of view for a reader anywhere else — is the third review's one
+finding left to the user's word, under Open questions. Tests: `card-layout.test.ts` (the rule),
 `file-comments-margin.test.ts` (the panel driven over a measuring stand-in), `file-comments-margin-browser.test.ts`
 (Chromium and Firefox: placed tops against marks, the collision, the lock to the far end, the fold); from the review,
 `file-comments-margin-review.test.ts` (the panel over a stand-in with the focus-fixup rule, clamped scroll positions,
@@ -1056,7 +1069,16 @@ off the reply's store, and at source the offset-free term and the save's scroll 
 `styles-fc-margin-attribution.test.ts` (each sheet's margin comment held to the record
 `tools/file-review-plan-attribution.test.mjs` holds this note to) and
 `tools/file-review-plan-margin-review-2.test.mjs` (the second review's statements here held to the panel, the sheets
-and the modules they name).
+and the modules they name); from the third review, `feed-css-margin-fit.test.ts` (feed.css's two tiers as declared and
+held to styles.css's rules, and in Chromium and Firefox under feed.css alone the fit at the review's panel heights),
+`file-comments-margin-image-pad.test.ts` (over the first review's stand-in with a picture world: the padding taken back
+where it bought no range, kept over a picture nearly the box's height, a short Raw file's taken back and a scrolling
+file's kept, and at source the write-then-measure), `file-comments-margin-image-browser.test.ts` (in Chromium and
+Firefox over the viewer's image body: the picture where the box centered it before and after the panel's open, its card
+level with the rectangle, and the near-full picture's padding kept), `file-comments-margin-attribution.test.ts` (the
+panel's section comment held to the record the plan's and the sheets' pins hold) and
+`tools/file-review-plan-margin-review-3.test.mjs` (the third review's statements here held to the panel, the sheets and
+the modules they name).
 
 ### Slice 3: region comments on images
 
@@ -1509,7 +1531,23 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   ask with its hedges, nothing level-with attributed to the user); and
   `tools/file-review-plan-margin-review-2.test.mjs` holds the account's second-review statements to the
   panel, the sheets and these modules (the second round's commit, like the first's, added modules this
-  section did not name; found in review, 2026-09-07).
+  section did not name; found in review, 2026-09-07). From the follow-on's third review (2026-09-07):
+  `feed-css-margin-fit.test.ts` holds feed.css's margin sections to the two tiers and to styles.css's
+  rules (the second review's change reached styles.css alone, and the byte-equal pins said so while
+  nothing measured the feed page's fit), and in Chromium and Firefox under feed.css alone measures the
+  fit at the review's panel heights; `file-comments-margin-image-pad.test.ts` drives the panel over the
+  first review's stand-in with a picture world (the box's min-height and the centering modelled) and
+  pins the footer's padding taken back in the pass that wrote it where the body gained no range, kept
+  over a picture nearly the box's height, a short Raw file's taken back and a scrolling file's kept, and
+  at source the write-then-measure; `file-comments-margin-image-browser.test.ts` measures the same over
+  the viewer's image body in Chromium and Firefox (the picture where the box centered it before and
+  after the panel's open, its card level with the rectangle, the near-full picture's padding kept);
+  `file-comments-margin-attribution.test.ts` holds the panel's margin-layout section comment to the
+  record the plan's and the sheets' pins hold (the first two rounds' corrections reached the plan and
+  the sheets, not the panel source); and `tools/file-review-plan-margin-review-3.test.mjs` holds the
+  account's third-review statements to the panel, the sheets and these modules (the third round's
+  commit, like the two before it, added modules this section did not name; found in the review's
+  consolidation, 2026-09-07).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
@@ -1685,7 +1723,14 @@ document stands on its own, each with the reasoning it was given.
 
 Every question raised by this document, by its reviews, or in the design interview has been ruled
 on; see Decisions. The margin layout (the follow-on note under Slice 2) awaits the user's word: it
-is the build's reading of the ask, not a ruling, and the walk answers it.
+is the build's reading of the ask, not a ruling, and the walk answers it. With it, the loose group's
+place: a card with no mark (a whole-file comment, a change the Rendered view cannot paint, a detached
+anchor, a region whose figure has not loaded) stands at the top of the track, which the lock keeps out
+of view for a reader anywhere but the top of the text; the follow-on's third review confirmed that and
+proposed a pinned band between the composer and the track for those cards, in the list's order, with
+its own scroll and a fold beyond a few — a new surface, so it waits for the same word rather than
+landing with the review's fixes (the save's scroll, `showLoose`, already brings a whole-file comment's
+card into view).
 
 ## Upstream
 
