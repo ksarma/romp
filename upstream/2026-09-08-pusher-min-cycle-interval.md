@@ -3,7 +3,7 @@ title: A minimum interval of 1.0 s between pusher cycle starts (PUSH_MIN_INTERVA
 status: candidate
 where: fork PR #386 (`perf5-cadence`): kernel/kernel.py `PUSH_MIN_INTERVAL_S` / `PUSH_BACKSTOP_S` / `_pusher` / `_pusher_wake_live` / `_note_live_wake` / `_take_live_wake_sids` / `_watched_sids` / `_live_wake_watched` / `_optimistic_echo` / `_PerfStats` with the pusher counters wakes_live, held, held_ms, exempt; kernel/sdk_backend.py `push_live` / `_wake_push_live` and the six live-tail wake sites; bin/romp the perf pusher line; tests/test_pusher_cadence.py plus the re-aimed tests/test_perf_stats.py, tests/test_sdk_kernel.py, tests/test_kernel_cmd_gesture.py, tests/test_sdk_error_visibility.py, tests/test_live_tail_rev.py, tests/test_restart_redelivery.py, tests/test_kernel_ws_heartbeat.py and tests/romp-perf.bats; docs/reference.md
 added: 2026-09-08
-pr:
+pr: 386
 tier: fix
 offered:
 closed:
