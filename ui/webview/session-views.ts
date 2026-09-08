@@ -42,7 +42,7 @@ export interface SessionViews {
 // The chat's tab-menu Tags section reads and edits through this exact shape.
 // `pending`: the union's local tag is an optimistic create's row, wearing the placeholder id the
 // kernel's ack replaces (views-writes.ts isPlaceholderId) — it renders, and takes no gesture: an
-// op addressed by that id would be refused as a tag that does not exist (round 4 of the
+// op addressed by that id would be refused as a tag that does not exist (the
 // 2026-09-05 review). Every builder of an action on a union checks it.
 /** One section's tags, merged by name: `members` and `ids` across every tag of the name; `locals` and
  *  `remotes` the tags themselves, each with ITS OWN members — for a rule that reaches the tabs one tag

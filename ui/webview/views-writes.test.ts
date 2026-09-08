@@ -1,8 +1,8 @@
 // THE CHAT PANE'S VIEWS WRITES ARE ACKNOWLEDGED (the user 2026-09-05, who lost a batch of tag
 // renames and assignments). The tab menu's Tags flyout had the timeline dialog's shape: every
 // gesture posted the WHOLE blob from the pane's own un-echoed optimistic copy, so a New tag… then a
-// Move to carried the pre-burst `at` stamp and the kernel's stale-writer guard refused the second
-// against the first; the copy cleared on an exact echo or after THREE frames, whichever came first.
+// second gesture on it carried the pre-burst `at` stamp and the kernel's stale-writer guard refused the
+// second against the first; the copy cleared on an exact echo or after THREE frames, whichever came first.
 // Now: tag gestures post TARGETED tagEdit ops; lens and order edits keep the whole-blob write; both
 // carry a writeId the kernel's ack names, and the optimistic copy clears on the ACK — never on a
 // frame count. Executed tests on the pure module (views-writes.ts) plus source pins on render.ts
@@ -32,7 +32,7 @@ test("executed: a refusal drops ITS write only and names the tag and the reason;
   const why = 'a tag named "web" already exists';
   const r = ackOutcome([W1, W2], { type: "tagEditAck", writeId: "w1", ok: false, error: why, views: S1 });
   assert.deepEqual(r, { inflight: [W2], clearPending: false, rederive: true, refusal: why },
-    "the refused write is dropped; the rename still in flight is not — the copy is re-derived without the refused change (round 3 of the 2026-09-05 review: a refusal cleared the whole list, and a later write flapped off and back on)");
+    "the refused write is dropped; the rename still in flight is not — the copy is re-derived without the refused change (the 2026-09-05 review: a refusal cleared the whole list, and a later write flapped off and back on)");
   assert.deepEqual(ackOutcome([W1], { type: "tagEditAck", writeId: "w1", ok: false, error: why, views: S1 }),
     { inflight: [], clearPending: true, rederive: false, refusal: why }, "with nothing else in flight the store's blob (in the ack) is what stands");
   // the whole-blob path's refusal lists the tags the guard kept, each with a NAME-FREE reason; the
@@ -79,7 +79,7 @@ test("executed: the pending copy re-derives from the store's blob plus the write
   assert.equal(createInFlight([B, W1]), true, "a create in flight gates the next New tag…");
 });
 
-test("executed: a refusal's nameless summary row (the entries past the door's row bound, round 8 of the 2026-09-05 review) renders as its reason alone, after the named rows", () => {
+test("executed: a refusal's nameless summary row (the entries past the door's row bound, the 2026-09-05 review) renders as its reason alone, after the named rows", () => {
   const rows = [
     { tid: "g9", name: "qa", reason: "a write is read to 64 tags and it was past that bound, so it was not created" },
     { reason: "3 more entries past the 64-tag read bound were not read (1 of them this write edited)", more: 3, moreEdited: 1 },
@@ -119,18 +119,18 @@ test("executed: capsAdopts — the caps frame adopts the kept blob only when vie
   assert.equal(adoptViews(held, restored), false, "the connect push meets the gate first and is turned away…");
   assert.equal(capsAdopts(restored, 900), true, "…and the caps frame that follows names it (viewsSeq 900): adopted, zero residual, no wait on the pusher's repost");
   assert.equal(adoptViews(restored, { active: "all", tags: [], seq: 899 }), false, "the gate re-arms at its seq: the store's own order gates again");
-  // the residual round 6 left: a pusher-thread frame built before a concurrent write (seq 1000), enqueued
+  // the residual an earlier fix left: a pusher-thread frame built before a concurrent write (seq 1000), enqueued
   // between the connect push (seq 1001, adopted) and the caps frame — turned away and kept
   const stale = { active: "all", tags: [], seq: 1000 } as any;
   assert.equal(capsAdopts(stale, 1001), false, "the caps frame names the connect push's seq, not the stale frame's: discarded, the gate stands at 1001");
   assert.equal(capsAdopts(stale, null), false, "the connect push carried no views blob (viewsSeq null): nothing to match, nothing adopted");
   assert.equal(capsAdopts(stale, "1000"), false, "a non-number is no seq");
-  assert.equal(capsAdopts(stale, undefined), true, "a caps frame without the field (a kernel from before it) adopts the kept blob — the round-6 rule");
+  assert.equal(capsAdopts(stale, undefined), true, "a caps frame without the field (a kernel from before it) adopts the kept blob — the pre-field rule");
   assert.equal(capsAdopts(null, 900), false); assert.equal(capsAdopts(undefined, undefined), false, "nothing kept: nothing to adopt, whatever the frame says");
   assert.equal(capsAdopts({ active: "all", tags: [] } as any, 900), false, "a kept blob without a seq cannot match (unreachable: the gate adopts every seq-less blob)");
 });
 
-// ROUND 8 of the 2026-09-05 review: the caps frame's viewsSeq is also the kernel's ANNOUNCEMENT of its current store
+// The 2026-09-05 review: the caps frame's viewsSeq is also the kernel's ANNOUNCEMENT of its current store
 // (the served blob's seq, or the store's current seq when the connect push carried no views frame — a chat page's
 // sentinel cycle sends no tabOrder; null only when the kernel has no store at all). A restart over a store restored
 // from an older copy, met by such a reconnect, kept nothing for capsAdopts to match: the pusher's next frame (the
@@ -153,10 +153,10 @@ test("executed: announcedSeq + adoptViews(announced) — a caps frame that adopt
   assert.equal(announcedSeq("900"), null); assert.equal(announcedSeq(NaN), null, "a non-number is no seq");
 });
 
-// ROUND 9: the slot is cleared only by an adoption that CHANGES the held blob. In the browser a pane sees the local
+// The 2026-09-05 review: the slot is cleared only by an adoption that CHANGES the held blob. In the browser a pane sees the local
 // blob only through the federation router, which replays its stored blob on every merged re-emit (a remote host's
 // push, a `closed` frame, a view-order storage event, a host drop) — a re-arrival of the blob the pane already holds,
-// at its own seq. Round 8's clear on ANY adoption spent the slot on that re-arrival, and the restored store the
+// at its own seq. The earlier clear on any adoption spent the slot on that re-arrival, and the restored store the
 // router adopted and re-emitted next at the announced seq was turned away by the pane: router 900, pane 1000,
 // silently, until the next write (federation-views-seq.test.ts executes the failure against the real router).
 test("executed: announcedAfter — a re-arrival of the held blob (the same seq) leaves the slot; a different seq, a seq-less side, or the announced seq itself clears it; null stays null", () => {
@@ -183,14 +183,14 @@ test("executed: announcedAfter — a re-arrival of the held blob (the same seq) 
 test("pins: render.ts keeps the last blob its gate turned away, lets it go on the next adoption, and on the caps frame adopts it only when viewsSeq names it — before anything else it does there", () => {
   const take = RENDER.slice(RENDER.indexOf("function takeViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function takeViews(")));
   assert.match(take, /if \(adoptViews\(sessionViews, v, announcedViewsSeq\)\) \{ announcedViewsSeq = announcedAfter\(sessionViews, v, announcedViewsSeq\); adoptBase\(v\); rejectedViews = null; return true; \}\s*\n\s*rejectedViews = v;/,
-    "an adoption lets the kept blob go and re-derives the announced slot from the held blob BEFORE it moves (cleared only when the adoption changes it — round 9; the move is adoptBase, which also carries the strip's pins across a renamed tag); a rejection keeps this one (the LAST turned away — the connect push is the last frame before caps on the handler's thread); the gate reads the announced seq (round 8)");
+    "an adoption lets the kept blob go and re-derives the announced slot from the held blob BEFORE it moves (cleared only when the adoption changes it; the move is adoptBase, which also carries the strip's pins across a renamed tag); a rejection keeps this one (the LAST turned away — the connect push is the last frame before caps on the handler's thread); the gate reads the announced seq");
   const caps = RENDER.slice(RENDER.indexOf("function onKernelCaps("), RENDER.indexOf("function onUnknownOp("));
   assert.match(caps, /kernelCaps = new Set\([\s\S]*?\);\n\s*const adopted = capsAdopts\(rejectedViews, m\.viewsSeq\);\n\s*if \(adopted && rejectedViews\) adoptBase\(rejectedViews\);\n\s*announcedViewsSeq = adopted \? null : announcedSeq\(m\.viewsSeq\);\n\s*rejectedViews = null;\n\s*if \(viewsWrites\.length\) \{/,
-    "the verdict runs on EVERY caps frame, in-flight writes or not, on the frame's viewsSeq, and before the in-flight drop: the dropped copy reverts to the adopted base; the kept blob is let go either way; a frame that adopted nothing leaves the announced seq in the one slot (round 8)");
+    "the verdict runs on EVERY caps frame, in-flight writes or not, on the frame's viewsSeq, and before the in-flight drop: the dropped copy reverts to the adopted base; the kept blob is let go either way; a frame that adopted nothing leaves the announced seq in the one slot");
   assert.equal((RENDER.match(/announcedViewsSeq = /g) || []).length, 2, "past its declaration the slot is written in exactly two places: the gate's re-derivation on adoption, and the caps frame");
   assert.match(caps, /\} else if \(!adopted\) return;/, "nothing in flight and nothing adopted: the caps frame changes nothing shown");
   assert.match(caps, /if \(activeId\) assertPeekFor\(activeId\);[^\n]*\n\s*renderTabs\(\);\n\}/, "an adoption renders like any views arrival: the peek is re-derived and the strip redrawn");
-  assert.doesNotMatch(RENDER, /forgetSeq|adoptOnCaps/, "the held seq is never forgotten and no kept blob is adopted unnamed: the gate is never left open (round 6's refuters: the one-cycle flap window)");
+  assert.doesNotMatch(RENDER, /forgetSeq|adoptOnCaps/, "the held seq is never forgotten and no kept blob is adopted unnamed: the gate is never left open (the one-cycle flap window an earlier fix left)");
 });
 
 test("executed: write ids are unique per page across same-ms gestures", () => {
@@ -207,7 +207,7 @@ test("pins: render.ts posts a writeId on every views write and routes both acks 
   assert.match(RENDER, /warnToast\("Tag edit not applied — " \+ out\.refusal\);/, "the toast adds no second name: the reason names the tag once and says what was kept");
   const pte = RENDER.slice(RENDER.indexOf("function postTagEdit("), RENDER.indexOf("\n}\n", RENDER.indexOf("function postTagEdit(")));
   assert.match(pte, /if \(!kernelCaps\.has\("tagEdit"\)\) \{\s*\n\s*const edited = \[edit\.tid, edit\.tid_from, edit\.tid_to\]\.filter\(\(t\): t is string => !!t\);\s*\n\s*const row = newId \? viewTags\(nv\)\.find\(\(t\) => t\.id === newId\) : undefined;\s*\n\s*if \(row\) \{ if \(\/\^pending-\/\.test\(row\.id\)\) row\.id = "g" \+ Date\.now\(\)\.toString\(36\); edited\.push\(row\.id\); \}\s*\n\s*postViews\(nv, edited\);\s*\n\s*return;\s*\n\s*\}/,
-    "no `tagEdit` capability announced (an older kernel) → the pre-cap whole-blob write naming the tags it changed; a create's row takes a client-minted g… id, never the pending- placeholder, and is named as edited (round 3 of the 2026-09-05 review)");
+    "no `tagEdit` capability announced (an older kernel) → the pre-cap whole-blob write naming the tags it changed; a create's row takes a client-minted g… id, never the pending- placeholder, and is named as edited (the 2026-09-05 review)");
   assert.match(pte, /const writeId = holdViews\(nv, \{ edit, newId \}\);\s*\n\s*if \(vscodeApi\) vscodeApi\.postMessage\(\{ type: "tagEdit", writeId, edit \}\);/,
     "a tag gesture is a targeted op, NESTED under `edit` so no tag name sits at the top level where the federation router reads session addresses");
   assert.match(RENDER, /else if \(m\.type === "viewsAck" \|\| m\.type === "tagEditAck"\) onViewsAck\(m\);/);
@@ -235,7 +235,7 @@ test("pins: render.ts posts a writeId on every views write and routes both acks 
 
 test("pins: every views arrival in render.ts goes through the ONE seq-gated adopter, and the exact-echo clear is legacy-only", () => {
   const take = RENDER.slice(RENDER.indexOf("function takeViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function takeViews(")));
-  assert.match(take, /if \(adoptViews\(sessionViews, v, announcedViewsSeq\)\) \{ announcedViewsSeq = announcedAfter\(sessionViews, v, announcedViewsSeq\); adoptBase\(v\); rejectedViews = null; return true; \}/, "adopt by write sequence, never by arrival order — or by the seq the caps frame announced; the slot is re-derived from the held blob before it moves (round 9), and the move is adoptBase");
+  assert.match(take, /if \(adoptViews\(sessionViews, v, announcedViewsSeq\)\) \{ announcedViewsSeq = announcedAfter\(sessionViews, v, announcedViewsSeq\); adoptBase\(v\); rejectedViews = null; return true; \}/, "adopt by write sequence, never by arrival order — or by the seq the caps frame announced; the slot is re-derived from the held blob before it moves, and the move is adoptBase");
   assert.match(take, /what: "views-stale-blob"/, "an ignored blob leaves one breadcrumb per page load — a visible fact, not a flicker");
   assert.doesNotMatch(RENDER, /pendingViewsAge/, "no frame counter anywhere in render.ts");
   const cap = RENDER.slice(RENDER.indexOf("function captureViews("), RENDER.indexOf("\n}\n", RENDER.indexOf("function captureViews(")));
@@ -249,7 +249,7 @@ test("pins: every views arrival in render.ts goes through the ONE seq-gated adop
   assert.match(adopt, /const prev = sessionViews;\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);[\s\S]*followAdoption\(st, prev, v, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/,
     "the held blob is taken before the base moves and the follow reads the renames against it, and the base moves before any store write (its TABGROUPS_EVENT render reads the new blob)");
   assert.equal((RENDER.match(/(?<!function )adoptBase\(/g) || []).length, 2,
-    "reached from exactly two places: inside the gate, and the caps frame's adoption of the blob the gate last turned away (rounds 6 and 7)");
+    "reached from exactly two places: inside the gate, and the caps frame's adoption of the blob the gate last turned away");
   assert.match(RENDER, /if \(adopted && rejectedViews\) adoptBase\(rejectedViews\);/, "…that second one is the reconnect event's adoption and nothing else");
 });
 
@@ -262,10 +262,14 @@ test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blo
   assert.doesNotMatch(body, /op: "(?:addMember|removeMember|rename|recolor|delete)", name:/, "no op but create carries a tag name");
   assert.match(body, /const postUnionEdits = \(nv: SessionViews, \.\.\.edits: UnionEdit\[\]\) =>/);
   assert.match(body, /for \(const op of ops\) postTagEdit\(nv, op\);/, "N ops, the one copy shown for all of them");
+  assert.match(body, /else if \(edits\.some\(\(e\) => e\.mirrored\)\) \{ pendingSessionViews = nv; renderTabs\(\); \}/,
+    "a remote-only edit has no local op: its mirror shows until the next frame");
   assert.match(RENDER, /const a = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const r = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);/,
     "the move: two edits on one blob — the strip never shows the half-moved state");
   assert.match(RENDER, /\{ op: "move", tid_from: rem\.tid, tid_to: add\.tid, sid: id \}/,
     "…posted as ONE atomic op when both tags are local (both halves land or neither)");
+  assert.match(RENDER, /if \(pendingSessionViews && v && !viewsWrites\.length\) pendingSessionViews = null;/,
+    "…which captureViews lets go on any frame, seq or not — a copy with no write in flight is that mirror alone");
   assert.match(RENDER, /postTagEdit\(nv, \{ op: "create", name, color, sids: \[id\] \}, tg\.id\);/,
     "New tag… is ONE create carrying the session — the tag and its first member land together; the kernel mints the id (the placeholder rides along for the legacy path's re-id)");
   assert.match(fly, /if \(e2\.key !== "Enter"\) return;\s*\n\s*if \(createInFlight\(viewsWrites\)\) return;/, "one create at a time: Enter is ignored while one is in flight");
@@ -273,7 +277,7 @@ test("pins: the Tags flyout's local edits are targeted ops on ONE optimistic blo
   assert.doesNotMatch(fly, /postViews\(/, "no whole-blob write anywhere in the flyout's tag edits");
 });
 
-// ── ROUND 4 of the 2026-09-05 review: a lens or order write is built from the STORE's blob, never the
+// ── The 2026-09-05 review: a lens or order write is built from the STORE's blob, never the
 // pending copy. Built from the pending copy, the whole-blob write carried every targeted edit still in
 // flight as this page's claim on those tags, and a rename the kernel had refused as a duplicate landed
 // through the next lens toggle (two tags, one name). The copy the page SHOWS still includes the in-flight

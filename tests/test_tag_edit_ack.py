@@ -114,7 +114,7 @@ class _Wire(unittest.TestCase):
 
 class TargetedTagEdits(_Wire):
     """The tagEdit message: {type, writeId, edit: {op, tid?, name?, newName?, color?, sid?|sids?}}.
-    Every op but create addresses the tag by its stored id (the 2026-09-05 review, findings 3/5/7/9):
+    Every op but create addresses the tag by its stored id (the 2026-09-05 review):
     a create's ack returns the kernel-minted `tid` and `name`; the op rides nested under `edit` so
     the message has no top-level `name` or `session` a federation router could read as an address."""
 
@@ -165,7 +165,7 @@ class TargetedTagEdits(_Wire):
         self.assertEqual(store_tag("tag 2")["id"], a["tid"])
 
     def test_a_rename_to_an_existing_name_is_refused_and_no_gesture_in_the_refusal_window_reaches_the_other_tag(self):
-        """Finding 7: addressed by NAME, a recolor queued behind a refused rename went looking for the
+        """Addressed by NAME, a recolor queued behind a refused rename went looking for the
         name the rename would have given the tag — and found the OTHER tag that already had it."""
         self.seed()                                                        # web = gA, #3b82f6
         tid = self.edit("w1", {"op": "create", "name": "api", "color": "#54B204"})["tid"]
@@ -276,9 +276,9 @@ class TargetedTagEdits(_Wire):
         self.assertTrue(store_tag("api")["id"].startswith("g"), "the kernel mints the id, /tag's shape")
 
     def test_a_move_is_one_write_both_halves_or_neither(self):
-        """The tab strip's "Move to <tag>" (the 2026-09-05 review, finding 14): off the home tag,
-        onto the target, as ONE write under the lock — a refused destination leaves the source's
-        membership exactly as it was, and the store moves its write sequence once per move."""
+        """The `move` op (the tab strip's "Move to <tag>" row posts it): off the source tag, onto the
+        target, as ONE write under the lock — a refused destination leaves the source's membership
+        exactly as it was, and the store moves its write sequence once per move."""
         self.seed()                                                        # web = gA holding SID1
         api = self.edit("w1", {"op": "create", "name": "api", "color": "#54B204"})["tid"]
         writes, real = [], km._set_timeline_views
@@ -288,7 +288,7 @@ class TargetedTagEdits(_Wire):
         finally:
             km._set_timeline_views = real
         self.assertEqual((a["ok"], a["tid"], a["name"]), (True, api, "api"))
-        self.assertEqual(store_tag("web")["members"], [], "off the home tag…")
+        self.assertEqual(store_tag("web")["members"], [], "off the source tag…")
         self.assertEqual([m["sid"] for m in store_tag("api")["members"]], [SID1], "…onto the target")
         self.assertEqual(len(writes), 1, "ONE store write for the move, not one per half")
         # a refused DESTINATION: nothing moves — the source keeps the session
@@ -357,9 +357,9 @@ class WholeBlobAcks(_Wire):
         self.assertIn("stale dashboard write", self.notices[0][0])
 
     def test_a_refusal_on_a_tag_the_client_did_not_edit_is_ok_with_the_refusal_listed(self):
-        """Finding 4: a lens change from a dashboard that had slept through another's tag edit was
+        """A lens change from a dashboard that had slept through another's tag edit was
         acked as a refusal and toasted — for a tag the user never touched. `edited` names the tag
-        ids the write changed; a refusal outside them is a stale copy, not a lost edit. Round 5: a
+        ids the write changed; a refusal outside them is a stale copy, not a lost edit. A
         lens write (`edited` empty) changes no tag at all, so its stale copy is not even judged —
         the ack is clean and its blob carries the store's web; a write naming ANOTHER tag as edited
         still lists the untouched tag's kept copy."""
@@ -399,10 +399,10 @@ class WholeBlobAcks(_Wire):
         self.assertFalse(c["ok"])
 
     def test_the_notice_is_filed_only_when_the_poster_edited_the_kept_tag(self):
-        """Round 3 of the 2026-09-05 review: the benign case — a kept tag outside `edited`, acked ok —
+        """The 2026-09-05 review: the benign case — a kept tag outside `edited`, acked ok —
         still filed a red "reload that dashboard to resync" notice plus stderr for every kept tag.
         Now the notice follows the ack's verdict: a lost edit is loud; a stale copy of an untouched tag
-        is one quiet stderr line and nothing on the dashboard. Round 5: a lens write (`edited` empty)
+        is one quiet stderr line and nothing on the dashboard. A lens write (`edited` empty)
         changes no tag and logs nothing at all — the quiet line is for a write that names other tags."""
         import contextlib
         import io
@@ -462,7 +462,7 @@ class WholeBlobAcks(_Wire):
         self.assertNotIn('"web"', self.notices[0][0], "the untouched tag is not the user's problem")
 
     def test_every_quiet_label_carries_its_cause(self):
-        """Round 9 of the 2026-09-05 review: the quiet stderr line labelled a kept deletion "(deletion)"
+        """The 2026-09-05 review: the quiet stderr line labelled a kept deletion "(deletion)"
         and an unread copy "(unread)", but a differing copy of an unedited tag stood bare beside them —
         the one label without a cause. Now it reads "(differing copy)", so the line is uniform."""
         self.seed()
@@ -487,13 +487,13 @@ class WholeBlobAcks(_Wire):
         self.assertIsNotNone(store_tag("api"), "the unedited absence was not a deletion")
 
     def test_a_stale_copy_cannot_resurrect_a_tag_deleted_elsewhere_but_a_named_create_lands(self):
-        """Round 3 of the 2026-09-05 review, a pre-existing hole: the guard refused a stale DELETION
+        """The 2026-09-05 review, a pre-existing hole: the guard refused a stale DELETION
         (a tag absent from the copy) but not a stale RESURRECTION (a tag absent from the store) — an
         incoming unknown tag was always kept as new. With `edited`, the two creates a whole-blob write
         can carry are distinguishable: a tag the client did not name as edited is something another
         dashboard deleted after the copy was taken, and is kept out; a tag it did name is a genuine
         create (the legacy path's client-minted id); a write without `edited` keeps the old reading.
-        Round 5: a lens write (`edited` empty) changes no tag, so the deleted tag is not even judged —
+        A lens write (`edited` empty) changes no tag, so the deleted tag is not even judged —
         the re-creation refusal is for a write that names OTHER tags as edited."""
         import contextlib
         import io
@@ -546,7 +546,7 @@ class WholeBlobAcks(_Wire):
         self.assertEqual(store_tag("api")["id"], api_tid, "the old reading stands for a client that cannot say")
 
     def test_the_refusal_names_the_tag_once_and_says_what_was_kept(self):
-        """Finding 15: the reason carried the name and the client prefixed it again."""
+        """The reason carried the name and the client prefixed it again."""
         served = self.seed()
         stale = json.loads(json.dumps(served))
         time.sleep(1.1)
@@ -608,14 +608,14 @@ class WholeBlobAcks(_Wire):
 
 
 class EditedBoundsTheWrite(_Wire):
-    """Round 5 of the 2026-09-05 review (the HIGH finding): a lens or order write carries `edited: []`
+    """The 2026-09-05 review (the HIGH finding): a lens or order write carries `edited: []`
     and is built from the store's blob the client last adopted, and the door still applied its tag
     set as a whole-blob replacement judged by the guard's second-resolution stamps — so a targeted
     edit that landed in the SAME second as that blob's `at` (its mtime equal to the writer's
     evidence, not newer by the guard's clock) was silently reverted by the next lens change: a rename
     undone, a create deleted, a member lost. Now `edited` bounds what a write may change: an empty
     list changes no tag; a list of ids changes those tags only, a differing copy of any other tag
-    kept from the store quietly; no `edited` at all keeps the round-4 legacy reading."""
+    kept from the store quietly; no `edited` at all keeps the legacy reading."""
 
     def test_the_reproduction_a_same_second_targeted_edit_survives_a_lens_write(self):
         served = self.seed()                                           # the dashboard's adopted copy: web[SID1]
@@ -641,12 +641,12 @@ class EditedBoundsTheWrite(_Wire):
         self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["api"]}, "the lens landed")
         self.assertEqual(km._timeline_views()["tagOrder"], ["docs", "api"], "…and the order")
         self.assertEqual(sorted(t["id"] for t in a["views"]["tags"]), sorted(t["id"] for t in store["tags"]),
-                         "the ack's blob is the store's tag set (in the write's order, round 6)")
+                         "the ack's blob is the store's tag set (in the write's order)")
         self.assertEqual(self.notices, [], "the normal lens path: nothing said")
         self.assertGreater(a["seq"], store["seq"], "the write moved the store")
 
     def test_an_order_write_orders_the_stored_array_too_the_pill_drags_contract(self):
-        """Round 6 of the 2026-09-05 review: under an empty `edited` the door copied the store's tags
+        """The 2026-09-05 review: under an empty `edited` the door copied the store's tags
         in STORE order and discarded the posted array order, so a pill drag moved tagOrder and left
         the array as it was — a reader without this kernel's tagOrder (a peer's dashboard) kept
         showing the old order, and the clients' comments promised a re-sort that never landed. The
@@ -678,7 +678,7 @@ class EditedBoundsTheWrite(_Wire):
         self.assertEqual(self.notices, [])
 
     def test_a_lens_write_cannot_store_a_dangling_active_it_is_validated_against_the_tags_that_stand(self):
-        """Round 6 of the 2026-09-05 review: the normalizer validated `active` against the POSTED
+        """The 2026-09-05 review: the normalizer validated `active` against the POSTED
         blob's tags, so a copy whose active named a tag deleted elsewhere wrote that id to disk under
         an empty `edited` (the store's tags stood; the blob's active did not point at any of them).
         Served as "all" by every read's re-normalization, but stored wrong. Validated against what
@@ -743,7 +743,7 @@ class EditedBoundsTheWrite(_Wire):
 
 
 class WriteSequence(_Wire):
-    """The store's WRITE SEQUENCE (the 2026-09-05 review, findings 1/8/19): every accepted write
+    """The store's WRITE SEQUENCE (the 2026-09-05 review): every accepted write
     moves `seq` forward, the blob carries it, so every frame that embeds the blob (the timeline
     skeleton, the feed frame, the tabOrder frames — all built from _views_client) and every ack
     carries the same number. A client adopts a blob only when its seq is at least the one it
@@ -806,7 +806,7 @@ class WriteSequence(_Wire):
 
 
 class Capability(_Wire):
-    """The kernel says what it can do (the 2026-09-05 review, findings 2/12): {type: "caps"} in
+    """The kernel says what it can do (the 2026-09-05 review): {type: "caps"} in
     reply to every `ready`, after the pushes; the same list on /version. A message no handler took
     is logged once per type and answered {type: "unknownOp", op, writeId?} on the poster's socket,
     so a client waiting on an ack learns the op is unsupported instead of pinning its copy."""
@@ -877,7 +877,7 @@ class Capability(_Wire):
         return next(m for m in reversed(self.sent) if m["type"] == "caps")
 
     def test_the_caps_frame_carries_the_seq_of_the_connect_pushs_own_views_blob_not_a_fresh_read(self):
-        """Round 7 of the 2026-09-05 review: a client that kept the blob its seq gate last turned away
+        """The 2026-09-05 review: a client that kept the blob its seq gate last turned away
         adopts it on the caps frame; it must do so only when that blob IS the connect push's (the
         restore case), so the frame names the connect push's seq — read from the frame the push
         enqueued, not from the store, which a write between the push and the caps frame moves on."""
@@ -924,7 +924,7 @@ class Capability(_Wire):
         self.handler._push_one = lambda c: km._send_client(c, ("working",), {"type": "working", "names": []})
         self.assertEqual(self._ready()["viewsSeq"], s0,
                          "a push that served no views blob: the store's current seq, the one the next push serves "
-                         "(round 8 of the 2026-09-05 review — null left a page's gate armed at a pre-restore seq)")
+                         "(null left a page's gate armed at a pre-restore seq)")
         km._views_path().unlink()
         km._flags_cache.clear()
         self.assertIsNone(self._ready()["viewsSeq"], "no store at all: nothing has a seq, null")
@@ -1000,7 +1000,7 @@ class SetterReturnsRefusals(unittest.TestCase):
 
 class ReadCacheAfterWrite(_Wire):
     """The views read cache is keyed on the file's (mtime_ns, size) and was never touched by a write
-    (round 3 of the 2026-09-05 review). The kernel's file mtime clock is coarse (a few ms), so two
+    (the 2026-09-05 review). The kernel's file mtime clock is coarse (a few ms), so two
     same-size writes in one tick shared a key, and the second write's ack — built by reading the store
     — could serve the FIRST write's blob. Now the write itself refreshes the cache entry with the blob
     it wrote. This harness runs with the production cache (no clears): every ack in this file is
@@ -1036,7 +1036,7 @@ class ReadCacheAfterWrite(_Wire):
 
 
 class LegacyStoreStampedOnce(_Wire):
-    """A store from before the write sequence (every install upgrading, round 3 of the 2026-09-05
+    """A store from before the write sequence (every install upgrading, the 2026-09-05
     review): served seq-less, it left every client on the null rule — adopt anything — until the
     first write, so the seq gate could not protect that first write against a frame the pusher built
     before it. The first READ stamps it once, through the setter (one write); after that the file is
@@ -1067,7 +1067,7 @@ class LegacyStoreStampedOnce(_Wire):
             on_disk = json.loads(p.read_text())
             self.assertEqual(on_disk["seq"], v["seq"], "…and the file does too")
             self.assertEqual(on_disk["tags"][0]["members"], [{"host": "", "sid": SID1}], "nothing else changed")
-            self.assertTrue(on_disk["tags"][0].get("mtime"), "every tag is given an mtime by the stamp (round 5): "
+            self.assertTrue(on_disk["tags"][0].get("mtime"), "every tag is given an mtime by the stamp: "
                             "the mark that tells a tag a store once held from a client's own create")
             self.assertLessEqual(on_disk["tags"][0]["mtime"], on_disk["at"], "a file without `at`: the stamp's own time")
             self.assertEqual(self.notices, [], "a stamp is not a refusal: nothing is said")
@@ -1107,7 +1107,7 @@ class LegacyStoreStampedOnce(_Wire):
 
 
 class LegacyTagsStampedOnFirstRead(_Wire):
-    """Round 5 of the 2026-09-05 review: the write door stamps an mtime on a tag only when it changes,
+    """The 2026-09-05 review: the write door stamps an mtime on a tag only when it changes,
     and the first-read stamp changes nothing, so a tag from before the per-tag stamp never got one —
     and the foreign-file rule (an unknown tag WITH an mtime existed in a store once and is not
     re-created; one without is the writer's own create) let a deleted legacy tag come back through
@@ -1150,7 +1150,7 @@ class LegacyTagsStampedOnFirstRead(_Wire):
 
 
 class SeqFloorOutlivesTheCacheEntry(_Wire):
-    """Round 5 of the 2026-09-05 review: a store read as missing forgets its cache entry (rightly: a
+    """The 2026-09-05 review: a store read as missing forgets its cache entry (rightly: a
     file that then appears must not be judged against a store that no longer exists), and with it
     forgot the seq floor — so a file restored from an older copy was served under its old seq, and
     every dashboard holding a higher one ignored it until the next kernel write. The floor is kept
@@ -1190,7 +1190,7 @@ class SeqFloorOutlivesTheCacheEntry(_Wire):
         self.assertGreater(a["seq"], v["seq"] + 100)
 
     def test_the_floor_is_per_store_so_two_state_dirs_in_one_process_do_not_share_one(self):
-        """Round 6 of the 2026-09-05 review: the floor was one module-wide number keyed on nothing,
+        """The 2026-09-05 review: the floor was one module-wide number keyed on nothing,
         while the read cache beside it is keyed by path — so a process serving two state dirs (a test
         suite; a kernel rebound to another root) re-stamped a cold read of a small-seq file in the
         fresh dir past the OTHER store's seq: a write on read, ordered against a store it never held."""
@@ -1217,7 +1217,7 @@ class SeqFloorOutlivesTheCacheEntry(_Wire):
 
 
 class ForeignWriteReStamped(_Wire):
-    """A write to timeline-views.json OUTSIDE the kernel (round 3 of the 2026-09-05 review): the
+    """A write to timeline-views.json OUTSIDE the kernel (the 2026-09-05 review): the
     timeline's Electron branch writes the file itself with the seq it holds, so a panel holding an
     older frame publishes a seq lower than what every dashboard holds, and they all ignore the file
     until the next kernel write. The reader treats a changed file whose seq fell behind the last one
@@ -1267,7 +1267,7 @@ class ForeignWriteReStamped(_Wire):
 
 
 class MigrationStampsTheArchivedTag(_Wire):
-    """Round 4 of the 2026-09-05 review: the hidden-to-archived migration built its diff base from the
+    """The 2026-09-05 review: the hidden-to-archived migration built its diff base from the
     same tag dicts it mutated (the archived tag's dict was aliased, and the dict copy was shallow), so
     the base already carried the migration and an EXISTING archived tag gained its members with no
     fresh mtime. A dashboard holding the pre-migration copy could then post the whole blob and strip
@@ -1284,7 +1284,7 @@ class MigrationStampsTheArchivedTag(_Wire):
         self.assertEqual([m["sid"] for m in arch["members"]], sorted([SID2, SID3]), "the hidden entry joined the existing tag")
         self.assertTrue(arch.get("mtime"), "the migrated tag carries a FRESH edit stamp: its members changed")
         self.assertTrue(next(t for t in v["tags"] if t["id"] == "gA").get("mtime"),
-                        "an untouched tag is given one too (round 5): every tag a migrated store holds carries an mtime")
+                        "an untouched tag is given one too: every tag a migrated store holds carries an mtime")
         self.assertNotIn("hidden", json.loads(p.read_text()))
         # the pre-migration dashboard posts its whole copy (no `at`, no mtimes): the guard refuses
         # the archived hunk — the migrated members stand — and the ack says so
@@ -1298,7 +1298,7 @@ class MigrationStampsTheArchivedTag(_Wire):
 
 
 class ReaderRestampUnwritable(_Wire):
-    """Round 4 of the 2026-09-05 review: the reader's re-stamp write had no error handling, so an
+    """The 2026-09-05 review: the reader's re-stamp write had no error handling, so an
     unwritable or full state dir made every READ raise, and the feed's build aborted with it. Now an
     OSError on that write is logged once per distinct error, the file is served as read (normalized)
     and cached under its own key so reads stop retrying the write, and the next successful write
@@ -1363,7 +1363,7 @@ class ReaderRestampUnwritable(_Wire):
             km._VIEWS_RESTAMP_ERR[0] = None
 
     def test_a_judged_foreign_file_on_an_unwritable_store_is_served_judged_and_the_next_write_persists_it(self):
-        """Round 5 of the 2026-09-05 review: the OSError branch served and cached the file AS READ in
+        """The 2026-09-05 review: the OSError branch served and cached the file AS READ in
         every case — in the judged case that is the foreign copy the judgment had just refused, so an
         unwritable store served the deleted tag back and the newer member gone, and the next RMW write,
         built from that cache, persisted them. The judgment is now a step apart from the write, and
@@ -1420,7 +1420,7 @@ class ReaderRestampUnwritable(_Wire):
 
 
 class ForeignWriteJudged(_Wire):
-    """Round 4 of the 2026-09-05 review: the re-stamp of a file written outside the kernel whose seq
+    """The 2026-09-05 review: the re-stamp of a file written outside the kernel whose seq
     fell behind used the file's own content as the guard's base, so a stale Electron blob was blessed
     wholesale — a tag deleted since came back, a member added since was lost, silently. The writer's
     own seq says it held an older copy, so the file is now judged against the LAST SERVED blob: the
@@ -1462,7 +1462,7 @@ class ForeignWriteJudged(_Wire):
         self.assertIn('"api" (re-creation)', text, "…naming each tag")
         # no served blob: a store read as missing forgets what was served, and a file that then
         # appears is kept as written — nothing to judge it against — but ORDERED past the last
-        # served seq, which outlives the entry (round 5; SeqFloorOutlivesTheCacheEntry)
+        # served seq, which outlives the entry (SeqFloorOutlivesTheCacheEntry)
         p.unlink()
         self.assertEqual(km._timeline_views()["tags"], [])
         recreated = json.loads(json.dumps(foreign))
@@ -1475,7 +1475,7 @@ class ForeignWriteJudged(_Wire):
 
 
 class WholeBlobNameCollisions(_Wire):
-    """Round 4 of the 2026-09-05 review (the verifier's reproduction): a rename the targeted op refused
+    """The 2026-09-05 review (the verifier's reproduction): a rename the targeted op refused
     as a duplicate landed anyway through a whole-blob lens write the dialog built from its PENDING
     copy, and neither the whole-blob door nor the normalizer deduped names — two tags with one name,
     which every name-keyed surface shows as one. The door now refuses a renamed or new tag whose name
@@ -1493,7 +1493,7 @@ class WholeBlobNameCollisions(_Wire):
         pending["actives"] = {"timeline": {"tags": ["web"]}, "chat": {"all": True}, "outline": {"all": True}}
         a = self.post({"type": "setTimelineViews", "writeId": "w3", "views": pending, "edited": []})
         self.assertEqual((a["ok"], a["refused"]), (True, []),
-                         "a lens write changes no tag (round 5), so the pending rename is not even judged")
+                         "a lens write changes no tag, so the pending rename is not even judged")
         self.assertEqual(sorted(t["name"] for t in km._timeline_views()["tags"]), ["api", "web"], "ONE tag per name")
         self.assertEqual(km._timeline_views()["actives"]["timeline"], {"tags": ["web"]}, "the lens landed")
         self.assertEqual(self.notices, [], "nothing the user did in THIS write was refused")
@@ -1537,7 +1537,7 @@ class WholeBlobNameCollisions(_Wire):
         self.assertEqual(store_tag("web")["id"], c["tid"])
 
     def test_a_refused_rename_settles_its_stored_name_so_a_new_tag_under_it_is_refused_too(self):
-        """Round 5 of the 2026-09-05 review: B (api → web, refused against A = web) stood as "api" but
+        """The 2026-09-05 review: B (api → web, refused against A = web) stood as "api" but
         never claimed it, so a new C named "api" in the same write landed beside it — twins under the
         kept name. The pass now runs to a fixpoint: a refused rename settles its stored name and the
         takers are re-checked, in either array order, with or without `edited`."""
@@ -1572,7 +1572,7 @@ class WholeBlobNameCollisions(_Wire):
                 self.assertIn('"api" (name collision)', self.notices[0][0])
 
     def test_names_are_stripped_at_the_door_so_a_padded_spelling_is_the_same_name(self):
-        """Round 5 of the 2026-09-05 review: the targeted door stripped a rename, the whole-blob door
+        """The 2026-09-05 review: the targeted door stripped a rename, the whole-blob door
         stripped nothing, so "web " beside "web" passed the collision pass as two names. Names are
         now clamped and stripped in the normalizer — the first step of every write and every read —
         and the targeted door's lookup uses the same basis."""
@@ -1612,7 +1612,7 @@ class WholeBlobNameCollisions(_Wire):
 
 
 class SetterJudgesUnderTheFileLock(_Wire):
-    """Round 6 of the 2026-09-05 review: the reader's re-stamp of a file written outside the kernel
+    """The 2026-09-05 review: the reader's re-stamp of a file written outside the kernel
     holds _views_file_lock across its judge and write, but the write door judged first and took the
     lock for the write alone. A re-stamp landing in between was written over by a blob judged
     against the pre-re-stamp store: the foreign write's lens change and its creates gone, under a
@@ -1673,7 +1673,7 @@ class SetterJudgesUnderTheFileLock(_Wire):
 
 
 class CapNeverDropsAKeptStoreTag(_Wire):
-    """Round 6 of the 2026-09-05 review (the MEDIUM finding): the door assembled the set that stands
+    """The 2026-09-05 review (the MEDIUM finding): the door assembled the set that stands
     as the blob's tags first and the store's kept copies after, then sliced it to _VIEWS_MAX_TAGS —
     so when a stale client's tags plus the store's keeps exceeded the cap, the tag dropped was
     exactly the one the ack had just said was kept ("this write did not edit it, so it was not
@@ -1771,8 +1771,8 @@ class CapNeverDropsAKeptStoreTag(_Wire):
 
 
 class PastTheDoorBoundNothingVanishesSilently(_Wire):
-    """Round 7 of the 2026-09-05 review: the door reads a posted blob under twice the cap so a 33rd
-    tag reaches the cap pass (round 6) — but the normalizer's slice still dropped everything past
+    """The 2026-09-05 review: the door reads a posted blob under twice the cap so a 33rd
+    tag reaches the cap pass — but the normalizer's slice still dropped everything past
     the 64th BEFORE the judge saw it: no row, absent from the ack's blob, invisible to the ack's
     `ok` (computed from rows), so a client whose `edited` named only ids past the bound was acked
     ok and adopted a blob missing its own creates. Now every posted entry the slice leaves unread
@@ -1803,7 +1803,7 @@ class PastTheDoorBoundNothingVanishesSilently(_Wire):
         self.assertIn("its changes to 38 tags were not applied", text)
         self.assertIn("reload that dashboard to resync", text)
         self.assertIn('Refused: "t32" (over the cap), "t33" (over the cap), "t34" (over the cap) and 35 more', text,
-                      "the labels after the point, as many as fit; the rows carry every reason (round 8)")
+                      "the labels after the point, as many as fit; the rows carry every reason")
         self.assertLessEqual(len(text), km.SYNC_NOTICE_FIT)
 
     def test_creates_past_the_bound_that_edited_names_are_refused_never_acked_ok(self):
@@ -1862,8 +1862,8 @@ class PastTheDoorBoundNothingVanishesSilently(_Wire):
 
 
 class ReaderRestampKeepsTheDiskCap(_Wire):
-    """Round 7 of the 2026-09-05 review: the reader's first-read stamp and the hidden migration judged
-    the file's own content through the door, which since round 6 reads its blob under twice the cap
+    """The 2026-09-05 review: the reader's first-read stamp and the hidden migration judged
+    the file's own content through the door, which since the 2026-09-05 review reads its blob under twice the cap
     while the base is normalized under the cap — so a file holding more than 32 tags had its excess
     (the migration's appended "archived" tag first) judged as creates and refused by the cap pass,
     under a red notice worded as a stale DASHBOARD write ("reload that dashboard to resync"), on a
@@ -1895,7 +1895,7 @@ class ReaderRestampKeepsTheDiskCap(_Wire):
         self.assertEqual(text, "the views file held 41 tags, over the store's 32-tag cap; no dashboard wrote this. "
                                "9 tags were dropped when it was re-stamped on read (hidden entries migrated into the "
                                "archived tag): \"t32\" (1 member), \"t33\" (1 member) and 7 more",
-                         "cause and count first, the dropped tags after, as many as fit (round 8)")
+                         "cause and count first, the dropped tags after, as many as fit")
         self.assertLessEqual(len(text), km.SYNC_NOTICE_FIT)
         self.assertNotIn("dashboard write", text)
         self.assertNotIn("reload", text)
@@ -1949,7 +1949,7 @@ class ReaderRestampKeepsTheDiskCap(_Wire):
         self.assertIn("8 tags were dropped", text)
 
     def test_the_served_row_carries_the_cause_whole_however_many_tags_were_dropped(self):
-        """Round 8 of the 2026-09-05 review: the notice put its point — no dashboard wrote this — LAST,
+        """The 2026-09-05 review: the notice put its point — no dashboard wrote this — LAST,
         after one entry per dropped tag; the kernel serves a sync notice cut at 300 (_sync_notice_rows)
         and the dashboard's bell cuts it again at 240 (SYNC_NOTICE_FIT), so with two or more tags
         dropped the user saw a list of names and never the cause. The served row is the whole notice."""
@@ -2014,9 +2014,9 @@ class ReaderRestampKeepsTheDiskCap(_Wire):
 
 
 class ReaderRestampUnwritableNamesTheDrop(_Wire):
-    """Round 8 of the 2026-09-05 review: the file-fact notice fired only after the stamp WRITE succeeded.
+    """The 2026-09-05 review: the file-fact notice fired only after the stamp WRITE succeeded.
     On an unwritable or full state dir the reader served and cached the capped blob and said nothing
-    about what the cap left out, and the next RMW writer (a tag edit, the inherit at a creation) wrote
+    about what the cap left out, and the next RMW writer (a tag edit through _edit_tag, the inherit at a creation) wrote
     that cached blob: the file's excess tags were dropped for good with no notice ever filed. The
     notice now fires whether or not the write lands, once per file state, and on the failed write it
     says the drop becomes permanent at the next write unless the file is brought under the cap."""
@@ -2098,7 +2098,7 @@ class ReaderRestampUnwritableNamesTheDrop(_Wire):
         with contextlib.redirect_stderr(io.StringIO()):
             v = km._timeline_views()
         self.assertEqual(len(v["tags"]), 5)
-        self.assertEqual(self.notices, [], "an unwritable store alone is a log line, not a notice (round 4)")
+        self.assertEqual(self.notices, [], "an unwritable store alone is a log line, not a notice")
 
     def test_a_cold_read_while_the_disk_stays_full_says_it_again_the_file_state_is_unchanged_and_unfixed(self):
         self._file(40, at=1000)
@@ -2111,7 +2111,7 @@ class ReaderRestampUnwritableNamesTheDrop(_Wire):
         self.assertEqual(self.notices[0], self.notices[1])
 
     def test_two_cold_readers_racing_to_the_lock_on_a_full_disk_name_the_drop_once(self):
-        """Round 9 of the 2026-09-05 review: the cache hit check runs before the file lock, and the
+        """The 2026-09-05 review: the cache hit check runs before the file lock, and the
         in-lock re-check compared the stat key alone — which a FAILED write leaves unchanged. Two readers
         that both missed a cold cache (the pusher and a handler, on a kernel starting over a full disk)
         serialized on the lock, and the loser re-stated the same key, judged again, failed again and
@@ -2161,7 +2161,7 @@ class ReaderRestampUnwritableNamesTheDrop(_Wire):
 
 
 class RefusalRowsAreBounded(_Wire):
-    """Round 8 of the 2026-09-05 review: round 7 gave every posted entry past the door's read bound a
+    """The 2026-09-05 review: the review gave every posted entry past the door's read bound a
     refusal row of its own, and with it the rows, the loud notice and the ack's `error` became O(N) in
     the posted array. A 100k-entry post (a client bug, or any local page holding the socket — the WS
     reader takes frames of any length) drew a ~22 MB ack that overran WS_QUEUE_BYTES: the poster's own
@@ -2260,7 +2260,7 @@ class RefusalRowsAreBounded(_Wire):
 
 
 class AckErrorNamesThePostersRefusalFirst(_Wire):
-    """Round 9 of the 2026-09-05 review: round 8 bounded the ack's one-line `error` at 1000 characters
+    """The 2026-09-05 review: the review bounded the ack's one-line `error` at 1000 characters
     but kept the judge's order, in which the quiet rows (differing copies of tags the poster did not
     edit, acked ok on their own) precede the cap pass. With eight or more quiet rows the toast named
     only refusals the user never made and cut the one row that made `ok` false. Now the rows `edited`
@@ -2356,7 +2356,7 @@ class AckErrorNamesThePostersRefusalFirst(_Wire):
 
 
 class SentinelConnectPushCaps(_Wire):
-    """Round 8 of the 2026-09-05 review: a chat page's connect push sends no tabOrder frame on a sentinel
+    """The 2026-09-05 review: a chat page's connect push sends no tabOrder frame on a sentinel
     cycle (_tab_list_tmux returned None — a boot-time tmux collapse with nothing to carry), so the caps
     frame named null. After a restart over a store restored from an older copy nothing then re-armed the
     page's gate: the next pusher tabOrder (the store's older seq) was rejected and kept, and no second
@@ -2408,9 +2408,9 @@ class SentinelConnectPushCaps(_Wire):
             (km.NAMES, km._tmux_sessions, km._mark_views_dirty, km._chat_tab_sessions, km._cached_feed, km._tab_list_tmux) = saved
 
     def test_a_write_between_a_blob_less_push_and_the_caps_frame_moves_what_the_caps_names(self):
-        """The served-blob case is unchanged (Capability pins it: the caps names the push's own blob, not a
-        write that landed after it). With no blob served there is no such blob to name: the caps frame
-        names the store as of the caps frame — the post-write seq, which is what the next push carries."""
+        """With no blob served there is no served blob to name: the caps frame names the store as of the
+        caps frame — the post-write seq, which is what the next push carries (Capability pins the
+        served-blob case, where a write after the connect push's own blob is NOT what the caps names)."""
         s0 = self.seed()["seq"]
 
         def push(c):
@@ -2426,8 +2426,8 @@ class SentinelConnectPushCaps(_Wire):
         """The failure's shape end to end on the kernel side: the page holds a seq from before the restore,
         the restarted kernel (a cold cache, no floor) serves the restored file under its old seq, the
         sentinel connect push carries no blob — and the caps frame names that old seq, which the next
-        pusher frame carries, so the client fixer's rule (adopt a later frame whose seq equals viewsSeq
-        even below the held one) has the event it needs."""
+        pusher frame carries, so the client's rule (adopt a later frame whose seq equals viewsSeq even
+        below the held one) has the event it needs."""
         s_page = self.seed()["seq"]
         p = km._views_path()
         older = json.loads(p.read_text())

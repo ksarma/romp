@@ -43,6 +43,7 @@ test("both webviews render the pipe-down banner with the held count", () => {
   // re-arm, 2026-08-18 — pinned in chat-delta-resync.test.ts) and marks unconfirmed sends lost
   // (send-pending.test.ts, 2026-09-06); the banner wiring is identical.
   for (const [name, src] of [["render.ts", RENDER], ["feed.ts", FEED]] as const) {
+    // the feed has no tab re-ask and no sends, so both down-edge groups are optional and its bare form still matches
     assert.match(src,
       /if \(m\.type === "pipeState"\) \{ (?:if \(!m\.up\) awaitingFull\.clear\(\); )?(?:if \(!m\.up\) markPendingLost\("connection"\); )?pipeBanner\(!!m\.up, Number\(m\.queued\) \|\| 0\); return; \}/,
       `${name} must handle pipeState`);

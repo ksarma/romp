@@ -52,7 +52,7 @@ test("a kernel's `caps` frame describes THAT kernel: the local one reaches the p
   });
 });
 
-// ROUNDS 6 and 7 of the 2026-09-05 review, the refuters' F6/F7: the local caps frame adopts the blob each store's
+// The 2026-09-05 review: the local caps frame adopts the blob each store's
 // gate last turned away when its viewsSeq (the seq of the blob the kernel's own connect push served) names it,
 // and RE-EMITS before the caps frame is handed on — the panes see the local blob only through these re-emits,
 // so the restored blob must meet their own gate before their caps door adopts it.
@@ -106,7 +106,7 @@ test("a healthy reconnect keeps both stores' gates: the connect push is adopted,
     fm.inbound("", order(views(1001, "untagged")));
     fm.inbound("", lanes(views(1001, "untagged")));
     // the pusher thread's frame, built from its cache before that write and enqueued BETWEEN the push and the caps
-    // frame — the window round 6 left open: turned away and kept…
+    // frame — the window an earlier fix left open: turned away and kept…
     fm.inbound("", order(views(1000)));
     fm.inbound("", lanes(views(1000)));
     assert.equal(lastOf(emitted, "tabOrder").views.seq, 1001);
@@ -143,7 +143,7 @@ test("a caps frame whose push served no views blob (viewsSeq null) adopts nothin
     n = emitted.length;
     fm.inbound("", { type: "caps", caps: ["tagEdit"] });
     assert.deepEqual(typesOf(emitted.slice(n)), ["caps"], "the kept blobs were let go: a field-less frame finds nothing to adopt");
-    // kept again, and a frame from a kernel before the field adopts it — the round-6 rule
+    // kept again, and a frame from a kernel before the field adopts it — the pre-field rule
     fm.inbound("", order(views(900, "untagged")));
     fm.inbound("", lanes(views(900, "untagged")));
     n = emitted.length;
@@ -153,11 +153,11 @@ test("a caps frame whose push served no views blob (viewsSeq null) adopts nothin
   });
 });
 
-// ROUND 8: the caps frame's viewsSeq is also the kernel's announcement of its current store (the served blob's seq, or
+// The 2026-09-05 review: the caps frame's viewsSeq is also the kernel's announcement of its current store (the served blob's seq, or
 // the store's current seq when the connect push carried no views frame; null only when the kernel has no store at
 // all). A reconnect whose push carried no blob (a chat page's sentinel cycle sends no tabOrder) keeps nothing for
-// round 7's rule to match; each replayed store remembers the announced seq in one slot until its next adoption that
-// moves the store (round 9: a re-arrival of the stored blob leaves it), and
+// the earlier rule to match; each replayed store remembers the announced seq in one slot until its next adoption that
+// moves the store (a re-arrival of the stored blob leaves it), and
 // the later blob at exactly that seq — the pusher's next frame after a restart over a store restored from an older
 // copy — is adopted below the stored one.
 test("the local caps frame's viewsSeq is remembered when a store kept nothing it names: the LATER blob at that seq is adopted below the stored one, another lower seq is turned away, the slot clears on an adoption that moves the store, and null, a missing field and a remote's frame announce nothing", () => {
@@ -233,10 +233,10 @@ test("…and across lanes payloads: an older LOCAL data frame keeps the stored v
   });
 });
 
-// ROUND 9: the slot is cleared only by an adoption that CHANGES the stored blob. A re-arrival of the blob a store
+// The 2026-09-05 review: the slot is cleared only by an adoption that CHANGES the stored blob. A re-arrival of the blob a store
 // already holds (the same seq) is no new information and leaves the slot, so the blob at the announced seq is still
-// adopted after it; a newer write still clears it (round 8's honesty rule).
-test("round 9: a same-seq re-arrival leaves each store's announced slot standing — the announced blob is still adopted after it; a newer blob clears it", () => {
+// adopted after it; a newer write still clears it (the earlier honesty rule).
+test("a same-seq re-arrival leaves each store's announced slot standing — the announced blob is still adopted after it; a newer blob clears it", () => {
   withManager((fm, emitted) => {
     fm.inbound("", order(views(1000)));
     fm.inbound("", lanes(views(1000)));
@@ -266,10 +266,10 @@ test("round 9: a same-seq re-arrival leaves each store's announced slot standing
   });
 });
 
-// ROUND 9's failure, executed end to end. A PANE behind the router fills its slot from the same caps frame the router
+// The 2026-09-05 review's last failure, executed end to end. A PANE behind the router fills its slot from the same caps frame the router
 // does, but sees the local blob only through the router's re-emits — and every merged re-emit (a remote host's push
 // or lanes payload, a `closed` frame, a view-order storage event, a host drop) hands it the router's STORED blob at
-// the pane's own held seq. Round 8 cleared the pane's slot on that same-seq adoption; the pusher's frame then reached
+// the pane's own held seq. The earlier clear on any adoption spent the pane's slot on that same-seq adoption; the pusher's frame then reached
 // the router (adopted through its intact slot, re-emitted at the announced seq) and the pane turned it away: router
 // 900, pane 1000, silently, until the next write. The gates below are the composition render.ts's takeViews /
 // onKernelCaps and the timeline's _takeViews / setCaps use (views-writes.test.ts pins the former; timeline-views-
@@ -299,14 +299,14 @@ function withPanes(fn: (fm: any, chat: any, tl: any, emitted: any[]) => void): v
 const remoteOrder = () => ({ type: "tabOrder", order: [V], tabs: [{ id: V, name: "api" }], views: views(5) });
 const remoteLanes = () => ({ type: "data", data: { sessions: [{ id: V, name: "api" }], turns: {}, messages: [], judging: [], now: 1000, views: views(5) } });
 const betweens: [string, (fm: any) => void][] = [
-  ["no re-emit between (round 8's case)", () => {}],
+  ["no re-emit between (the earlier case)", () => {}],
   ["a remote host's tabOrder push", (fm) => fm.inbound("TESTHOST", remoteOrder())],
   ["a remote host's lanes payload", (fm) => fm.inbound("TESTHOST", remoteLanes())],
   ["a `closed` frame", (fm) => fm.inbound("", { type: "closed", id: U })],
   ["a synthetic re-emit (a view-order storage event, a host drop)", (fm) => { fm.emitMergedOrder(); fm.emitMergedTimeline(false); }],
 ];
 for (const [what, between] of betweens) {
-  test("round 9: the panes behind the router adopt the restored store after a sentinel-cycle reconnect with " + what, () => {
+  test("the panes behind the router adopt the restored store after a sentinel-cycle reconnect with " + what, () => {
     withPanes((fm, chat, tl, emitted) => {
       fm.inbound("", order(views(1000)));
       fm.inbound("", lanes(views(1000)));

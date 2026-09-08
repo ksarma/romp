@@ -262,15 +262,20 @@ class CorroborationNeverInheritsTheCollapse(ClosedHonestyBase):
         self.assertEqual([m.get("id") for m in self.closed_broadcasts()], [SID])
 
 
-class FakePost:
+class FakePost(km.Handler):
     """Just enough of the HTTP handler for do_POST's /end branch: path + body in, (code, json) out.
-    _authorize is stubbed open — the gate under test is the kill corroboration, not auth."""
+    A real Handler (no socket, no __init__ of its own base) rather than a bare duck type: since the
+    2026-09-08 fold of upstream's request-bodies change, do_POST reads the body through
+    Handler._read_post_body (authorize first, then a bounded read), and a fake without that method
+    raised into the catch-all, whose traceback 500 this _send could not parse, so no response was
+    recorded at all. _authorize is stubbed open: the gate under test is the kill corroboration, not auth."""
 
     def __init__(self, path, body=b"{}"):
         self.path = path
         self.headers = {"Content-Length": str(len(body))}
         self.rfile = io.BytesIO(body)
         self.client_address = ("127.0.0.1", 0)
+        self.close_connection = False                    # keep-alive until the body read says otherwise
         self.responses = []
 
     def _origin_ok(self):
@@ -279,7 +284,9 @@ class FakePost:
     def _authorize(self, q):
         return True, None, ""
 
-    def _send(self, code, body, ctype="text/plain"):
+    def _send(self, code, body, ctype="text/plain", headers=None):
+        # `headers` is what a body refusal passes (Connection: close); recording it keeps such a refusal
+        # legible as a wrong status code rather than a swallowed TypeError and an empty response list
         self.responses.append((code, json.loads(body)))
 
 

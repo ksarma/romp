@@ -17,15 +17,20 @@ stamp (those remain the 6h backstop's job, the one case a timer is the only tool
 Since performance plan 4 (P16) the tick reads in two phases: every rule is decided on the shared
 read-only store (jd.load_goals_shared) and written nowhere; the writer's copy (jd.load_goals) is loaded
 only when that decision found a lift due, decided on again, and only that second decision is filed. The
-LiftGate class counts the two loaders apart.
+LiftGate class counts the two loaders apart. Since the 2026-09-08 fold both phases read through the
+per-session boundary (jd.load_goals_shared_or_fault, jd.load_goals_or_fault): a store that exists and
+cannot be read answers (None, fault), and the tick forgets its inputs gate for the session and retries
+next cycle instead of ruling on an empty store.
 
 SYNTHETIC fixtures only: placeholder UUIDs, invented task descriptions.
 """
+import errno
 import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from romp_load import load_source
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -153,6 +158,38 @@ class AwaitingLift(unittest.TestCase):
         self.assertIsNotNone(self._stamp(), "precondition: the goal starts stamped")
         self._tick()
         self.assertIsNone(self._stamp(), "every dispatch came back → the wait is over")
+
+    def test_a_faulting_store_forgets_the_gate_so_the_next_tick_retries(self):
+        """The inputs gate (_lift_seen) is recorded before the store read; a read FAULT must forget it,
+        exactly as a raised ruling does, or the next tick over the same inputs would skip the session
+        and the lift would wait for the transcript to change."""
+        self._transcript([_launch("t1", LAUNCH), _launch("t2", LAUNCH + 5),
+                          _notification("t1", BACK), _notification("t2", BACK + 5)])
+        self._seed()
+        km._lift_seen.pop(SID, None)
+        km.jd._STORE_FAULTS.pop(SID, None)
+        target, orig, orig_disk = km.jd.GOALDIR / (SID + ".json"), Path.read_text, km.jd._disk_read
+
+        def faulting(path, *a, **kw):
+            if path == target:
+                raise OSError(errno.EIO, "Input/output error", str(path))
+            return orig(path, *a, **kw)
+
+        def faulting_disk(fd, path_s):
+            # Phase 1 PROBES through jd.load_goals_shared, whose store read is the descriptor read
+            # jd._disk_read, not Path.read_text (the writer's load_goals in phase 2 reads through
+            # Path.read_text): both reads fault, so the probe itself meets the fault, after the gate
+            # was recorded and before any lift was found due.
+            if path_s == str(target):
+                raise OSError(errno.EIO, "Input/output error", path_s)
+            return orig_disk(fd, path_s)
+        with mock.patch.object(Path, "read_text", faulting), \
+                mock.patch.object(km.jd, "_disk_read", faulting_disk):
+            self._tick()
+        self.assertIsNotNone(self._stamp(), "nothing is written to a store that could not be read")
+        self.assertNotIn(SID, km._lift_seen, "the gate is forgotten on a fault, not spent...")
+        self._tick()
+        self.assertIsNone(self._stamp(), "...so the very next tick, same inputs, retries and lifts")
 
     def test_one_still_running_keeps_the_stamp(self):
         self._transcript([_launch("t1", LAUNCH), _launch("t2", LAUNCH + 5),
@@ -1037,14 +1074,16 @@ class LiftGate(unittest.TestCase):
         km.jd.load_goals_shared = probed
         self.assertEqual((self._tick(), self.last_probes), (0, 1), "the next tick retries the read")
 
-    # ---- a load that FELL BACK is no better than one that raised ----
+    # ---- a read that FAULTED, or a load that FELL BACK, is no better than a ruling that raised ----
     def _read_fails_once(self, target):
         """Patch the two reads of `target` so each raises OSError ONCE (the EMFILE/EIO shape a busy kernel
         meets) and every later read is real: jd._disk_read, the shared loader's descriptor read (of the
-        store, or of the journal through _journal_read), which hands the read to load_goals; and
-        Path.read_text, load_goals' store read and _replay_overrides' journal read, which swallow the error
-        and answer an empty store / skip the journal, `_unread`-marked. Returns the counter of raised
-        reads: 2 when the probe met the failure through both loaders."""
+        store, or of the journal through _journal_read); and Path.read_text, load_goals' store read and
+        _replay_overrides' journal read. A STORE fault raises out of either loader (load_goals never answers
+        an empty store for a file it could not read, 2026-09-07) and the lift's boundary answers (None,
+        fault); a JOURNAL fault is handed from the shared loader to load_goals, whose replay skips the
+        journal, `_unread`-marked. Returns the counters of raised reads (`fired` in total, `disk` and
+        `text` apart)."""
         import errno
         real = Path.read_text
         real_disk = km.jd._disk_read
@@ -1065,21 +1104,26 @@ class LiftGate(unittest.TestCase):
         self.addCleanup(setattr, km.jd, "_disk_read", real_disk)
         return state
 
-    def test_a_swallowed_store_read_failure_is_not_cached_as_nothing_to_lift(self):
+    def test_a_faulting_store_read_is_not_cached_as_nothing_to_lift(self):
         import contextlib, io
         self._returned_dispatch()
         self._seed()                                     # stamped, its dispatch returned: a lift is due
+        km.jd._STORE_FAULTS.pop(SID, None)
         state = self._read_fails_once(km.jd.GOALDIR / (SID + ".json"))
         with contextlib.redirect_stderr(io.StringIO()):
-            # the shared read failed and handed the read to load_goals, whose read failed too and was
-            # swallowed: an empty store (one writer-style load, the fallback; no lift is due on it)
-            self.assertEqual((self._tick(), self.last_probes), (1, 1))
-        self.assertEqual(state["fired"], 2, "both loaders met the failure")
-        self.assertIsNotNone(self._stamp(), "tick 1 saw the fallback, not the stamp: no lift yet")
-        self.assertNotIn(SID, km._lift_seen, "a fallback answer is not the files' content: no entry")
+            # the probe's descriptor read faulted: the shared loader raises (no read is handed to load_goals
+            # for a file that exists and did not read), the boundary answers (None, fault), and phase 2 never
+            # runs: one probe, zero writer loads, nothing written
+            self.assertEqual((self._tick(), self.last_probes), (0, 1))
+        self.assertEqual((state["disk"], state["text"]), (1, 0),
+                         "the probe met the fault; load_goals was never reached, its read is still armed")
+        state["text"] = 1                                # disarm the never-met writer read: the checks below read the file
+        self.assertIsNotNone(self._stamp(), "tick 1 read no store: no lift yet, and no empty store was written")
+        self.assertNotIn(SID, km._lift_seen, "a fault is not the files' content: no entry")
         self.assertEqual((self._tick(), self.last_probes), (1, 1),
                          "the file reads fine now and is unchanged: probed anyway, the lift is due, one writer load")
         self.assertIsNone(self._stamp(), "…and the stamp lifts one cycle late, not never")
+        self.assertNotIn(SID, km.jd._STORE_FAULTS, "the successful read ended the fault episode")
 
     def test_a_swallowed_journal_read_failure_is_not_cached_as_nothing_to_lift(self):
         import contextlib, io

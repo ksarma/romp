@@ -2,7 +2,7 @@
 """An SDK input echo is the ONLY visible record of a send the transcript hasn't caught up on — since
 queued sends forward into the CLI mid-turn (2026-07-17) there is a window where a message is neither
 queued nor landed, and the echo must own it (the user 2026-07-20: a reply sat invisible in the chat,
-and one message was silently LOST across a kernel restart with no trace anywhere). Four durability
+and one message was silently LOST across a kernel restart with no trace anywhere). Five durability
 guarantees, each pinned here:
   1. the live-tail overflow cap never evicts an echo (work atoms are disposable; echoes aren't),
   2. NO floor retires an SDK echo (2026-09-06): an echo prunes only by its own text landing, and a
@@ -82,12 +82,12 @@ class NoFloorRetiresAnEcho(unittest.TestCase):
     """Guarantee 2. The genuine-human-turn floor once retired path-bearing echoes — the image-extraction
     case, where the CLI's composer paste hook rewrites a pasted image path to "[Image #N]" and the echo's
     text can never match. That hook runs only in the terminal composer: an SDK session's input is
-    stream-json, and the CLI takes the text as typed (counts over 71 SDK sessions' transcripts,
-    2026-09-06: 0 image blocks in 8,569 user records; every image-path text landed verbatim). So on this
-    backend the rule had only false positives — a `.png` echo retired while its message sat in the CLI's
-    queue — and no echo is floored any more: an echo retires by its own text landing or by the dropped
-    marking. `_path_bearing` stays, narrowed to the hook's set, for the tmux settle that borrows it
-    (kernel._tmux_echo_settle): there a send IS a paste into the composer."""
+    stream-json, and the CLI takes the text as typed (a count over one installation's SDK transcripts,
+    2026-09-06: 0 image blocks in 8,569 user records across 71 sessions; every image-path text landed
+    verbatim). So on this backend the rule had only false positives — a `.png` echo retired while its
+    message sat in the CLI's queue — and no echo is floored any more: an echo retires by its own text
+    landing or by the dropped marking. `_path_bearing` stays, narrowed to the hook's set, for the tmux
+    settle that borrows it (kernel._tmux_echo_settle): there a send IS a paste into the composer."""
 
     def _backend(self):
         return sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
@@ -159,11 +159,11 @@ class FedEchoesOutliveTheFloor(unittest.TestCase):
     """An echo whose text the session has fed to the CLI (SdkSession._inflight_texts, the fed-turn twin
     of `inflight`) is in flight by construction — the CLI queues a mid-turn send behind the running turn
     and splices it at the next tool boundary — so no floor may retire it. It retires on its text landing
-    (the absorbed atom's queued_command text) or on the CLI dying with it (the dropped marking). The
-    fed-texts guard that first bought this (2026-09-06, morning) is gone by the evening: the floor itself
-    went (NoFloorRetiresAnEcho), so fed or unfed, dropped or live, an echo is never floored — these pin
-    that the fed lifecycle and the CLI-death marking still behave. SYNTHETIC fixtures only; the session
-    is registered without a thread."""
+    (the absorbed atom's queued_command text) or on the CLI dying with it (the dropped marking). A
+    fed-texts guard once shielded exactly these echoes from the floor; the floor itself is gone now
+    (NoFloorRetiresAnEcho), so fed or unfed, dropped or live, an echo is never floored — these pin that
+    the fed lifecycle and the CLI-death marking still behave. SYNTHETIC fixtures only; the session is
+    registered without a thread."""
 
     IMG = "compare against /tmp/notes-api/docs/before.png please"
 
@@ -194,22 +194,21 @@ class FedEchoesOutliveTheFloor(unittest.TestCase):
 
     def test_a_fed_image_echo_survives_the_floor(self):
         # a human record at t=39 (the sibling's landing) postdates the fed echo at t=38; the old rule
-        # retired an image-bearing echo here — the guard holds it, the CLI still has the message
+        # retired an image-bearing echo here — the CLI still has the message
         k, e = self._fed_echo(self.IMG, t=38)
         self.assertEqual(self.s.fed_texts(), [self.IMG])
         self.be.prune_live(SID, tx_uuids=set(), tx_user_texts={"the first comment": 39}, human_floor=39)
         self.assertIn(k, self.be._live.get(SID, {}), "a fed echo outranks the floor")
 
     def test_it_still_retires_when_its_text_lands(self):
-        # the queued_command attachment lands the text (the kernel's _atom_user_texts covers that shape);
-        # the by-text prune is untouched by the guard
+        # the queued_command attachment lands the text (the kernel's _atom_user_texts covers that shape)
         k, e = self._fed_echo(self.IMG, t=38)
         self.be.prune_live(SID, tx_uuids=set(), tx_user_texts={self.IMG: 69}, human_floor=69)
         self.assertNotIn(SID, self.be._live, "landing retires a fed echo as before")
 
     def test_the_unfed_image_echo_survives_too(self):
-        # nothing fed, nothing landed: an image-path echo used to floor away here (the pre-guard rule);
-        # with no floor at all it stays, like any echo of a message the transcript has not caught up on
+        # nothing fed, nothing landed: an image-path echo used to floor away here; with no floor at all
+        # it stays, like any echo of a message the transcript has not caught up on
         k, e = _echo(self.IMG, t=38)
         self.be._live[SID] = dict([(k, e)])
         self.assertEqual(self.s.fed_texts(), [])
@@ -856,8 +855,8 @@ class AbsorbedSendsCountAsLandedAtBoot(_SpliceWorld):
         self.assertIs(be._text_landed(self.SID, self.SENT, self.T), True)
 
     def test_boot_reseed_neither_refeeds_nor_flags_an_absorbed_send(self):
-        # the F1 shape: the CLI spliced the message (attachment written), the kernel died before the
-        # next merged build pruned the echo. Pre-fix: the echo was re-queued and the CLI ran it twice.
+        # the incident's shape: the CLI spliced the message (attachment written), the kernel died before
+        # the next merged build pruned the echo. Pre-fix: the echo was re-queued and the CLI ran it twice.
         self._write(self._running_turn() + self._splice())
         be = self._backend([self._echo()])
         self.assertEqual(self._queue(), [], "a landed send is never re-queued — the CLI would run it twice")
@@ -893,8 +892,8 @@ class AbsorbedSendsCountAsLandedAtBoot(_SpliceWorld):
         self.assertIs(be._text_landed(self.SID, "ok", self.T), True)
 
     def test_a_superstring_record_is_not_a_match(self):
-        # the whole collapsed text, never a substring: a found echo is handed to the by-text prune, which
-        # matches exactly — a substring "find" would leave an echo nothing ever prunes
+        # the whole text, never a substring: a found echo is handed to the by-text prune, which matches
+        # exactly — a substring "find" would leave an echo nothing ever prunes
         self._write([self._user(self.T + 2, "ok go ahead with the rename", "u1", None)])
         be = self._backend([])
         self.assertIs(be._text_landed(self.SID, "ok", self.T), False)

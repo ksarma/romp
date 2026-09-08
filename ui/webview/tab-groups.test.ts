@@ -218,7 +218,7 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
   assert.ok(!RENDER.includes('"group-active"'), "no delegate handler for a no-op either");
   assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/, "the header folds, so its cursor promises the click");
-  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-name \{ color: var\(--fg\); text-decoration: underline; text-decoration-color: var\(--accent\);/, "the mark: the name in the prose tone, accent-underlined");
+  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-chip \{ text-decoration: underline; text-decoration-color: var\(--accent\);/, "the mark: the tag's chip accent-underlined (T251 put the chip where the name was; its inline colour makes a prose-tone lift moot)");
   // the hidden active tab's stand-in in render.ts: focus lands on the header, ←/→ step from it, and a
   // pick of a folded-away session opens its section (the strip follows the gesture)
   assert.match(RENDER, /const home = activeId \? homeSectionOf\(lastStripItems, activeId\) : null;\s*\n\s*if \(!home \|\| home\.name === null \|\| !bar\) return;\s*\n\s*Array\.from\(bar\.querySelectorAll<HTMLElement>\("\.tab-group-head"\)\)\.find\(\(h\) => h\.dataset\.group === home\.name\)\?\.focus\(\);/,
@@ -381,9 +381,10 @@ test("the section chrome is a LABEL's (the user 2026-09-06): the surface's sub-l
   assert.match(head, /letter-spacing: 0\.04em;/);
   assert.match(head, /color: var\(--dim\);/);
   assert.match(CSS, /\.tab-group-count \{ opacity: 0\.7; \}/, "the count inherits the header's size — no em nested inside an em");
-  assert.match(CSS, /\.tab-group-name \{ font-weight: 600; \}/);
-  assert.match(CSS, /\.tab-group-swatch \{ flex: 0 0 auto; width: 3px; height: 12px; border-radius: 1px; background: var\(--dim\); \}/,
-    "the tag's color as a short bar — a 7px dot beside a name is a session pip");
+  // T251 (the user 2026-09-07): the swatch+name pair retired for THE CHIP the tag wears everywhere —
+  // the shared tag-menu builder's pill, bold like the name it replaces, sized by the header
+  assert.match(CSS, /\.tab-group-chip \{ flex: 0 0 auto; font-weight: 600; line-height: 1\.2; \}/);
+  assert.doesNotMatch(CSS, /\.tab-group-swatch|\.tab-group-name \{/, "the bar and the plain name are gone");
   assert.doesNotMatch(CSS, /\.tab-group-dot/, "the dot is gone");
   const sizes = new Set(Array.from(CSS.matchAll(/\n\.tab-group-[^{\n]*\{[^}]*font-size: ([^;]+);/g)).map((m) => m[1]));
   assert.deepEqual([...sizes], ["0.82em"], "one font-size across every section rule (the flag's glyph keeps the tab glyph's own class)");
@@ -393,14 +394,13 @@ test("the section chrome is a LABEL's (the user 2026-09-06): the surface's sub-l
 test("the header's structure and gestures read as a label: chevron (flips with the fold) → color bar → name → count; a keyboard button; hover/focus say fold, never open; tokens only (the user 2026-09-06)", () => {
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   const at = (t: string) => { const i = head.indexOf(t); assert.ok(i >= 0, "present: " + t); return i; };
-  assert.ok(at('el("span", "tab-group-caret")') < at('el("span", "tab-group-swatch")')
-    && at('el("span", "tab-group-swatch")') < at('el("span", "tab-group-name")')
-    && at('el("span", "tab-group-name")') < at('el("span", "tab-group-count")'), "chevron, bar, name, count");
+  assert.ok(at('el("span", "tab-group-caret")') < at('tagChip(name, sec.color, { inheritSize: true })')
+    && at('tagChip(name, sec.color, { inheritSize: true })') < at('el("span", "tab-group-count")'), "chevron, the tag's CHIP, count");
   assert.match(head, /caret\.textContent = "▸";/);
   assert.match(CSS, /\.tab-group-head:not\(\.collapsed\) \.tab-group-caret \{ transform: rotate\(90deg\); \}/,
     "the fold state flips it — the sheet's fold-caret idiom, a CSS transition, no timer");
   assert.match(CSS, /\.tab-group-caret \{[^}]*transition: transform 0\.12s ease;/);
-  assert.match(head, /if \(sec\.color\) swatch\.style\.background = sec\.color;/, "the tag's color from the views store");
+  assert.match(head, /tagChip\(name, sec\.color, \{ inheritSize: true \}\)/, "the tag's color from the views store, on the SHARED chip (T251)");
   // none of a tab's affordances
   assert.ok(!head.includes("tab-close") && !head.includes("tabStateClass(") && !head.includes("tab-dot") && !head.includes("tabCtxGauge("),
     "no close, no state class of its own, no tab pip, no gauge");
@@ -416,8 +416,36 @@ test("the header's structure and gestures read as a label: chevron (flips with t
     "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape); the open header's count button beside the flag (tab-hide.test)");
   assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) \(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| \(focusedDoor && h\.querySelector<HTMLElement>\("\.tab-group-door"\)\) \|\| h\)\.focus\(\); else focusActiveTab\(\);/,
     "…falling back to the active tab when the group is gone or now holds it");
-  // hover/focus: the label brightens and the chevron takes the accent — no row wash (that reads "select me")
+  // hover/focus: the count brightens to --fg, the chevron takes the accent, and the CHIP brightens by a
+  // filter on its own identity colour (T251b — a --fg swap would erase the tag) — no row wash ("select me")
   assert.match(CSS, /\.tab-group-head:hover, \.tab-group-head:focus-visible \{ color: var\(--fg\); \}/);
+  assert.match(CSS, /\.tab-group-head:hover \.tab-group-chip, \.tab-group-head:focus-visible \.tab-group-chip \{ filter: brightness\(1\.3\); \}/);
+  {
+    // the RENDERED outcome, not the sheet's text: the chip's inline style is what the header's colour rule
+    // cannot reach (inline beats class), so the cue must be a property the chip never sets inline. Run the
+    // real builder against a stub document and read the style it writes.
+    const created: { tag: string; attrs: Record<string, string>; kids: unknown[] }[] = [];
+    const g = globalThis as any;
+    const saved = g.document;
+    const savedWin = g.window;
+    g.document = {
+      createElement: (tag: string) => { const n = { tag, attrs: {} as Record<string, string>, kids: [] as unknown[],
+        setAttribute(k: string, v: string) { this.attrs[k] = v; }, appendChild(c: unknown) { this.kids.push(c); },
+        addEventListener() { /* unused by tagChip */ } }; created.push(n); return n; },
+      createTextNode: (t: string) => ({ text: t }),
+      addEventListener() { /* the module wires its closers + the menu-echo writer at load (T107) */ },
+    };
+    g.window = { addEventListener() { /* the storage listener at load */ } };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { tagChip } = require("./tag-menu");
+      const chip = tagChip("infra", "#54B204", { inheritSize: true });
+      const style: string = chip.attrs.style;
+      assert.match(style, /color:#54B204;/, "the identity colour rides inline — the header's --fg rule cannot recolour it…");
+      assert.ok(!/filter\s*:/.test(style), "…so the fold cue is a FILTER, a property the chip never sets inline: the class rule wins by construction");
+      assert.ok(!/font-size/.test(style), "and the header-hosted chip inherits the header's size");
+    } finally { g.document = saved; g.window = savedWin; }
+  }
   assert.match(CSS, /\.tab-group-head:hover \.tab-group-caret, \.tab-group-head:focus-visible \.tab-group-caret \{ color: var\(--accent\); \}/);
   for (const m of CSS.matchAll(/\n\.tab-group-head:hover[^{\n]*\{([^}]*)\}/g)) assert.doesNotMatch(m[1], /background/, "no wash on hover");
   assert.match(CSS, /\.tab-group-head:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: -1px; \}/);
@@ -653,7 +681,7 @@ test("executed: a LOCAL-ONLY member of a MIXED union — the remote same-named t
 });
 
 test("executed: TWO TAGS WITH DIFFERENT NAMES holding one tab — a pin under each is its own; the drag order picks the home, each home's pin stands, and off clears one", () => {
-  // tags a (gA) and b (gB) both hold web; both folded. Round 4 of the review: an on under b replaced
+  // tags a (gA) and b (gB) both hold web; both folded. An earlier cut: an on under b replaced
   // the entry set under a, and web folded away under a after the user's last gesture on it was on.
   const ab = (order?: string[]) => viewTagUnion({ active: "all", tags: [
     { id: "gA", name: "a", color: "#4EC9B0", members: ["web", "x1"] },
@@ -752,7 +780,7 @@ test("executed: a rename is followed ONCE PER BROWSER — the store remembers, b
   assert.deepEqual(st1.pinned, [{ sid: "web", name: "ops", id: "g7" }, { sid: "web", name: "infra" }]);
   assert.deepEqual(st1.followed, { g7: "ops" });
   assert.equal(followTagRenames(st1, tagRenames(V0, V1), u1), st1, "pane 2 adopting the same frame right after: the same object, no second write");
-  // ROUND 5's BUG (the no-id face): the user turns the pin off under ops; then pane 2's socket redials and
+  // THE LATE-PANE BUG (the no-id face): the user turns the pin off under ops; then pane 2's socket redials and
   // it adopts the rename frame late, computing the rename against its stale base — web came back under ops
   const off = setPinned(st1, secOf(u1, "ops"), "web", false);
   assert.deepEqual(off.pinned, [{ sid: "web", name: "infra" }]);
@@ -834,7 +862,7 @@ test("executed: the follow's memory is pruned PER HOST — a detached host's tag
   const off = setPinned(st1, secOf(viewTagUnion({ ...R1, tagOrder: ["platform"] }), "platform"), "web", false);
   assert.deepEqual([off.pinned, off.followed], [[{ sid: "web", name: "infra", id: "g7" }], { "TESTHOST-A:t1": "platform" }]);
   assert.equal(followTagRenames(off, tagRenames(R1, D), viewTagUnion(D)), off, "the detach frame renames nothing");
-  // ROUND 6's BUG: the x → y follow, with A away, pruned the memory to the blob's tags — and A's went with them
+  // THE DETACH BUG: the x → y follow, with A away, pruned the memory to the blob's tags — and A's went with them
   const away = followTagRenames(off, tagRenames(D, D2), viewTagUnion(D2));
   assert.deepEqual(away.pinned, off.pinned, "no pin names x");
   assert.deepEqual(away.followed, { "TESTHOST-A:t1": "platform", g8: "y" }, "A's memory stands: the blob carries none of A's tags, so it cannot say the tag is gone");
@@ -855,7 +883,7 @@ test("executed: the follow's memory is pruned PER HOST — a detached host's tag
     "g99 is not in the local store and A lists no t9: dropped; Z contributes no tag, so its memory waits with it");
 });
 
-test("executed: the follow's memory is checked against EVERY adopted blob — a remembered tag the blob names by another name was renamed on while no client watched, and the pins under the remembered name are carried to the blob's name, the rename this browser owes (round 8; round 7 dropped the entry and the pin stayed under a name no tag had), so the tag's next rename is followed as watched; a tag under the remembered name keeps its entry (the late pane still stands down); an absent host's entries still wait; a DOWN host's rename back is watched; with no memory of the tag the limit stands", () => {
+test("executed: the follow's memory is checked against EVERY adopted blob — a remembered tag the blob names by another name was renamed on while no client watched, and the pins under the remembered name are carried to the blob's name, the rename this browser owes (an earlier cut dropped the entry, and the pin stayed under a name no tag had), so the tag's next rename is followed as watched; a tag under the remembered name keeps its entry (the late pane still stands down); an absent host's entries still wait; a DOWN host's rename back is watched; with no memory of the tag the limit stands", () => {
   // host A's tag t1 (web) holds A:m1; the user pins A:m1 under web — a remote-only entry, nothing to follow by id
   const t1 = (name: string) => rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]);
   const g8 = (name: string) => ({ id: "g8", name, color: "#e0af68", members: ["tests"] });
@@ -871,18 +899,18 @@ test("executed: the follow's memory is checked against EVERY adopted blob — a 
   st = setPinned(st, secOf(viewTagUnion(V0), "web"), "TESTHOST-A:m1", true);
   const st1 = followTagRenames(st, tagRenames(V0, V1), viewTagUnion(V1));
   assert.deepEqual([st1.pinned, st1.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api" }]);
-  // the late pane (round 5): the user turns the pin off under api, and a pane adopting the rename frame late stands down —
+  // the late pane: the user turns the pin off under api, and a pane adopting the rename frame late stands down —
   // t1 is under api, where its pins were carried
   const off = setPinned(st1, secOf(viewTagUnion(V1), "api"), "TESTHOST-A:m1", false);
   assert.deepEqual(off.pinned, []);
   assert.equal(followTagRenames(off, tagRenames(V0, V1), viewTagUnion(V1)), off, "the late pane stands down");
-  // the detach (round 6): A's memory waits with its host, through a local rename followed while A is away
+  // the detach: A's memory waits with its host, through a local rename followed while A is away
   assert.equal(followTagRenames(st1, tagRenames(V1, D), viewTagUnion(D)), st1, "the detach frame: the memory stands, nothing is written");
   const away = followTagRenames(st1, tagRenames(D, D2), viewTagUnion(D2));
   assert.deepEqual([away.pinned, away.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api", g8: "y" }]);
-  // ROUND 7's BUG: the reattach frame names t1 `web` — the tag moved on while no client watched (t1 was not in
+  // THE STALE-MEMORY BUG: the reattach frame names t1 `web` — the tag moved on while no client watched (t1 was not in
   // the held blob, so the frame names no rename), and the memory of its pins' last home, api, is stale. Kept, it
-  // read the next rename to api as already followed (the counterfactual below). ROUND 8: dropped alone, it left
+  // read the next rename to api as already followed (the counterfactual below). Dropped alone, it left
   // the pin under api, where it matched nothing and the tab folded away until the user pinned it again — the
   // memory names the rename this browser OWES, api → web, and the pin is carried on this adoption
   assert.deepEqual(tagRenames(D2, V4), [], "(a tag absent from the held blob is no rename)");
@@ -899,7 +927,7 @@ test("executed: the follow's memory is checked against EVERY adopted blob — a 
   const kept = followTagRenames({ ...repin, followed: away.followed }, tagRenames(V4, V5), viewTagUnion(V5));
   assert.deepEqual(kept.pinned, repin.pinned, "(had the memory survived the reattach frame unchecked, the rename read as already followed …");
   assert.deepEqual(strip(vis, viewTagUnion(V5), kept, "loose"), [["#api(folded)", "#y(folded)", "#null", "loose"], ["TESTHOST-A:m1", "tests"]], "… and the tab folded away with no gesture on it)");
-  // no detach at all — the PAGE was closed while A renamed t1 back to web (the class round 6 widened): the reopened
+  // no detach at all — the PAGE was closed while A renamed t1 back to web (the same class, wider): the reopened
   // page's first frame has no held blob to name a rename, and the memory alone names the one owed
   const V1w = { ...V1, remoteTags: [t1("web")] };
   const reopened = followTagRenames(st1, tagRenames(null, V1w), viewTagUnion(V1w));
@@ -928,14 +956,14 @@ test("executed: the follow's memory is checked against EVERY adopted blob — a 
   const upApi = { ...upV, remoteTags: [t1("api")] };
   const dAgain = followTagRenames(dBack, tagRenames(upV, upApi), viewTagUnion(upApi));
   assert.deepEqual([dAgain.pinned, dAgain.followed], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api", g8: "y" }]);
-  // a memory whose host is absent still waits (round 6), and a deleted tag's still goes, on a frame with no renames too
+  // a memory whose host is absent still waits, and a deleted tag's still goes, on a frame with no renames too
   const waiting = { ...back, followed: { g8: "y", "TESTHOST-Z:t9": "away", "TESTHOST-A:t9": "gone", g99: "gone" } };
   assert.deepEqual(followTagRenames(waiting, [], viewTagUnion(V4)).followed, { g8: "y", "TESTHOST-Z:t9": "away" });
   const stands = { ...back, followed: { g8: "y", "TESTHOST-Z:t9": "away" } };
   assert.equal(followTagRenames(stands, [], viewTagUnion(V4)), stands, "…and nothing to drop is no write: the same object");
 });
 
-test("executed: a stale memory is a rename this browser OWES (round 8) — a pane whose held blob predates TWO renames of a remote tag (web → api, followed by another pane, which carried the pin to api; then api → ops) computes the coalesced web → ops and carries the pin from api to ops itself, so the watching pane's api → ops stands down with the pin under ops in EITHER adoption order; a pin turned off under api is re-applied by neither; a local tag's pin follows by id either way; the carry reads the renamed tag's OWN members", () => {
+test("executed: a stale memory is a rename this browser OWES — a pane whose held blob predates TWO renames of a remote tag (web → api, followed by another pane, which carried the pin to api; then api → ops) computes the coalesced web → ops and carries the pin from api to ops itself, so the watching pane's api → ops stands down with the pin under ops in EITHER adoption order; a pin turned off under api is re-applied by neither; a local tag's pin follows by id either way; the carry reads the renamed tag's OWN members", () => {
   const t1 = (name: string) => rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]);
   const g8 = { id: "g8", name: "x", color: "#e0af68", members: ["tests"] };
   const V0 = { active: "all", tags: [g8], remoteTags: [t1("web")], tagOrder: ["web", "api", "ops", "x"], seq: 4 };
@@ -955,7 +983,7 @@ test("executed: a stale memory is a rename this browser OWES (round 8) — a pan
   const b = followTagRenames(st1, rB, u2);
   assert.deepEqual([b.pinned, b.followed], [[{ sid: "TESTHOST-A:m1", name: "ops" }], { "TESTHOST-A:t1": "ops" }], "B carries api → ops itself");
   assert.equal(followTagRenames(b, rP, u2), b, "P's frame: api → ops is followed, and it stands down");
-  assert.deepEqual(strip(vis, u2, b, "loose"), onStrip, "the tab stays on the strip (round 7 left the pin under api: folded away, no gesture on it)");
+  assert.deepEqual(strip(vis, u2, b, "loose"), onStrip, "the tab stays on the strip (an earlier cut left the pin under api: folded away, no gesture on it)");
   // P FIRST: the watched rename is followed, and B's coalesced one reads as followed
   const p = followTagRenames(st1, rP, u2);
   assert.deepEqual([p.pinned, p.followed], [[{ sid: "TESTHOST-A:m1", name: "ops" }], { "TESTHOST-A:t1": "ops" }]);
@@ -1000,7 +1028,7 @@ test("executed: a stale memory is a rename this browser OWES (round 8) — a pan
   assert.deepEqual(withWeb.pinned, [{ sid: "TESTHOST-A:m2", name: "infra" }, { sid: "web", name: "ops", id: "g9" }], "…while g9's own pin is carried, by id");
 });
 
-test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9) — followAdoption returns the state untouched when the blob names every tag as the held one does, so a pane whose local socket is dead, re-adopting its stale blob on every router re-emit after a fresher pane carried the pin, neither carries it back nor re-stamps; and the memory's stamp orders the evidence — a blob older than the stamp for a tag's store stands down on that tag, so a late intermediate frame moves nothing, while a newer blob proceeds; the stamp persists, migrates, and drops junk", () => {
+test("executed: a stale pane's re-adoption of its held blob is NO NEWS — followAdoption returns the state untouched when the blob names every tag as the held one does, so a pane whose local socket is dead, re-adopting its stale blob on every router re-emit after a fresher pane carried the pin, neither carries it back nor re-stamps; and the memory's stamp orders the evidence — a blob older than the stamp for a tag's store stands down on that tag, so a late intermediate frame moves nothing, while a newer blob proceeds; the stamp persists, migrates, and drops junk", () => {
   // host A's t1 (web) holds A:m1, pinned under web; A's own store seq rides each remoteTag row (the kernel's)
   const t1 = (name: string, seq?: number) => ({ ...rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]), ...(seq !== undefined ? { seq } : {}) });
   const g8 = { id: "g8", name: "x", color: "#e0af68", members: ["tests"] };
@@ -1015,7 +1043,7 @@ test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9)
   const p1 = followAdoption(st, V0, V1);
   assert.deepEqual([p1.pinned, p1.followed, p1.followedSeq], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api" }, { "TESTHOST-A:t1": 11 }]);
   assert.deepEqual(strip(vis, u1, p1, "loose"), [["#api(folded)", "TESTHOST-A:m1", "#x(folded)", "#null", "loose"], ["tests"]]);
-  // ROUND 9's BUG: B re-adopts V0 — a view-order storage event, a remote host's push, a `closed` frame, a host drop: the
+  // THE RE-ADOPTION FLAP: B re-adopts V0 — a view-order storage event, a remote host's push, a `closed` frame, a host drop: the
   // router re-emits its stored blob and an equal seq is admitted — three times. Memory api against blob web read as
   // the rename B owed, api → web, and each re-adoption carried the pin back and re-stamped; P's strip folded m1 away
   // until P's next adoption carried it forward: six writes over three rounds, the pin moving each time
@@ -1030,7 +1058,7 @@ test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9)
   assert.deepEqual([q1.pinned, q1.followed, q1.followedSeq], [[{ sid: "TESTHOST-A:m1", name: "api" }], { "TESTHOST-A:t1": "api" }, undefined], "no seq: no stamp");
   assert.equal(followAdoption(q1, B0, B0), q1, "the re-adoption is caught by the names alone");
   assert.deepEqual(followTagRenames(q1, [], viewTagUnion(B0), B0).pinned, [{ sid: "TESTHOST-A:m1", name: "web" }],
-    "(the check run on it regardless, with nothing to order by, carries the pin back — the round-8 behavior the name check now guards)");
+    "(the check run on it regardless, with nothing to order by, carries the pin back — the behavior the name check now guards)");
   // (b) the stamp alone: the check run on B's stale blob stands down on t1, A's seq 10 being older than the stamp 11
   assert.equal(followTagRenames(p1, [], u0, V0), p1, "B's blob is older than the memory's evidence for t1: nothing follows, nothing is owed, nothing is re-stamped");
   // the late INTERMEDIATE frame — the same class with no re-emit: P is on V2 (memory ops @12); B, held V0, adopts V1
@@ -1088,7 +1116,7 @@ test("executed: a stale pane's re-adoption of its held blob is NO NEWS (round 9)
   }
 });
 
-test("executed: a NEWER blob with the held names is news (round 10) — two panes over one store, adoptBase mirrored: the tag renamed BACK to the name a stale pane holds, after another pane carried the pin from a blob it never saw, has the owed rename carried (before: the no-news shortcut answered first, the pin stayed under the stale name and the tab folded away until the tag's next rename); the shortcut yields only to a stamped entry the blob names otherwise under a seq past the stamp, so the round-9 scenarios — the re-adoption flap, the late intermediate frame, a members-only change, a local seq bump, an unstamped host — still write nothing", () => {
+test("executed: a NEWER blob with the held names is news — two panes over one store, adoptBase mirrored: the tag renamed BACK to the name a stale pane holds, after another pane carried the pin from a blob it never saw, has the owed rename carried (before: the no-news shortcut answered first, the pin stayed under the stale name and the tab folded away until the tag's next rename); the shortcut yields only to a stamped entry the blob names otherwise under a seq past the stamp, so the no-news scenarios — the re-adoption flap, the late intermediate frame, a members-only change, a local seq bump, an unstamped host — still write nothing", () => {
   // the two-pane simulator: one shared store, each pane adopting as render.ts adoptBase does
   const store = new Map<string, string>();
   let writes = 0;
@@ -1120,7 +1148,7 @@ test("executed: a NEWER blob with the held names is news (round 10) — two pane
   const base = setPinned(foldAll(parseTabGroups(null), "web", "api", "ops", "qa", "x"), secOf(viewTagUnion(V0), "web"), M1, true);
   try {
     // D — THE FINDING. P and B both adopt V0 and V1 (pin under api @11); B's local socket dies. P adopts V2 (pin → ops @12) and
-    // closes. A renames ops → api (V3 @13). B redials and adopts V3 against its held V1: the same names, so the round-9
+    // closes. A renames ops → api (V3 @13). B redials and adopts V3 against its held V1: the same names, so the no-news
     // shortcut answered "no news" and returned the state — the memory ops @12 against the blob's api @13 never read as the
     // rename B owed. A remote-only pin has no id: nothing matched it under ops, and the tab folded away.
     reset(base);
@@ -1158,7 +1186,7 @@ test("executed: a NEWER blob with the held names is news (round 10) — two pane
     P.adopt(L0); B.adopt(L0); P.adopt(L1); B.adopt(L1); P.adopt(L2);
     assert.equal(B.adopt(L3), true);
     assert.deepEqual(stored(), [[{ sid: "m1", name: "api", id: "g1" }], { g1: "api" }, { g1: 7 }], "the memory follows the tag");
-    // ROUND 9 UNCHANGED — S1, the re-adoption flap: B's socket is dead; it re-adopts V0 on every router re-emit while P follows
+    // UNCHANGED — S1, the re-adoption flap: B's socket is dead; it re-adopts V0 on every router re-emit while P follows
     reset(base);
     P = new Pane(); B = new Pane();
     P.adopt(V0); B.adopt(V0); P.adopt(V1);
@@ -1202,7 +1230,7 @@ test("executed: a NEWER blob with the held names is news (round 10) — two pane
   }
 });
 
-test("executed: the owed rename against a MIXED pin (round 9 coverage) — a pin under a mixed section turned off is re-applied by neither adoption order; the remote half unpinned after a watched split stands through the remote tag's next owed rename with the local-id entry untouched; and a local-id entry whose name went stale is not the pin a watched rename of a NEWER same-named local tag moves (the `!x.local` clause)", () => {
+test("executed: the owed rename against a MIXED pin — a pin under a mixed section turned off is re-applied by neither adoption order; the remote half unpinned after a watched split stands through the remote tag's next owed rename with the local-id entry untouched; and a local-id entry whose name went stale is not the pin a watched rename of a NEWER same-named local tag moves (the `!x.local` clause)", () => {
   const t1 = (name: string) => rt("TESTHOST-A", "t1", name, ["TESTHOST-A:m1"]);
   const g9 = { id: "g9", name: "api", color: "#fff", members: ["TESTHOST-A:m1"] };
   const V0 = { active: "all", tags: [g9], remoteTags: [t1("web")], tagOrder: ["api", "web", "ops", "qa"], seq: 4 };
@@ -1262,8 +1290,8 @@ test("executed: a REMOTE host's rename of a MIXED section — the entry carries 
   assert.deepEqual(st.pinned, [{ sid: "TESTHOST-A:m1", name: "infra", id: "g9" }]);
   const vis = ["web", "TESTHOST-A:m1", "loose"];
   // host A renames its tag to ops, the client watching: the entry stays (g9 still holds the tab under infra)
-  // and the ops half is added — the mirror of the local rename's kept old-name half. Round 4 found the entry
-  // left alone here, and A:m1 folded away under ops once ops was its home.
+  // and the ops half is added — the mirror of the local rename's kept old-name half. An earlier cut left the entry
+  // alone here, and A:m1 folded away under ops once ops was its home.
   const renamedV = { active: "all", tags: [g9], remoteTags: [{ ...A, name: "ops" }] };
   const ru = viewTagUnion(renamedV);
   const st2 = followTagRenames(st, tagRenames(mixedV, renamedV), ru);
@@ -1303,7 +1331,7 @@ test("executed: TWO same-named tags both holding the tab, renamed in ONE frame �
   const V2 = { active: "all", tags: [], remoteTags: [{ ...A, name: "ops" }, { ...B, name: "platform" }] };
   const u2 = viewTagUnion(V2);
   const once = followTagRenames(st, tagRenames(V0, V2), u2);
-  assert.deepEqual(once.pinned, [{ sid: "web", name: "ops" }, { sid: "web", name: "platform" }], "both halves — round 4 found only the first rename followed, and web folded away under platform");
+  assert.deepEqual(once.pinned, [{ sid: "web", name: "ops" }, { sid: "web", name: "platform" }], "both halves — an earlier cut followed only the first rename, and web folded away under platform");
   const V1 = { active: "all", tags: [], remoteTags: [{ ...A, name: "ops" }, B] };
   const twice = followTagRenames(followTagRenames(st, tagRenames(V0, V1), viewTagUnion(V1)), tagRenames(V1, V2), u2);
   assert.deepEqual(twice.pinned, once.pinned, "the same two renames a frame apart: the same entries");
@@ -1378,7 +1406,8 @@ test("executed: prunePinned drops the pins of tags and sessions that no longer e
   // on a transient frame (a views blob mid-write, a host's tags not yet arrived) and put a tab away
   assert.equal(RENDER.split("prunePinned(").length - 1, 1, "one call site: writeTabGroupsPruned, which the pin row and the snapshot's Hide and Show share (tab-hide.test)");
   assert.match(RENDER, /function writeTabGroupsPruned\(st: TabGroupsState\): void \{\s*\n\s*writeTabGroups\(prunePinned\(st, viewTagUnion\(effViews\(\)\), knownTabIds\(\), reachableHosts\(\)\)\);\s*\n\}/);
-  assert.match(RENDER, /writeTabGroupsPruned\(togglePinned\(tabGroups\(\), sec, id\)\); build\(\);/);
+  assert.match(RENDER, /writeTabGroupsPruned\(setPinned\(tabGroups\(\), sec, id, !on\)\); build\(\);/,
+    "the row SETS the state it rendered (!on) through the one prune site: a toggle would flip whatever a re-render stored between the render and the click");
   assert.match(RENDER, /function knownTabIds\(\): Set<string> \{ return new Set<string>\(\[\.\.\.order, \.\.\.tabMeta\.keys\(\)\]\); \}/);
   const TG = ui("webview", "tab-groups.ts");
   const plan = TG.slice(TG.indexOf("export function planStrip("), TG.indexOf("export function reorderTagOrder("));
@@ -1410,7 +1439,7 @@ test("executed: a host DETACHED, DOWN, or PENDING (attached and up, its tab list
   const knownD = new Set(["tests", "web", "TESTHOST-B:m1", "loose"]);
   const pruned = prunePinned(togglePinned(st, secOf(detached, "qa"), "tests"), detached, knownD, new Set(["TESTHOST-B"]));
   assert.deepEqual(pruned.pinned, [{ sid: "TESTHOST-A:m1", name: "infra", id: "g9" }, { sid: "TESTHOST-B:m1", name: "pool" }, { sid: "tests", name: "qa", id: "g1" }],
-    "A's member's entry stands untouched — its host is in no list, so it is not judged (round 4 found it dropped); B's is judged and stands; web's under review is THE LIMIT: a local sid, judged, and no union named review holds it");
+    "A's member's entry stands untouched — its host is in no list, so it is not judged (an earlier cut dropped it); B's is judged and stands; web's under review is THE LIMIT: a local sid, judged, and no union named review holds it");
   assert.deepEqual(strip(["tests", "web", "TESTHOST-B:m1", "loose"], detached, pruned, "loose"), [["#qa(folded)", "tests", "#pool(folded)", "TESTHOST-B:m1", "#null", "web", "loose"], []], "meanwhile: web, in no tag, trails");
   // A REATTACHES: its tabs and tags are back, and A:m1 renders pinned with no gesture on it
   assert.deepEqual(strip(vis, all, pruned, "loose"), [["#qa(folded)", "tests", "#infra(folded)", "TESTHOST-A:m1", "#review(folded)", "#pool(folded)", "TESTHOST-B:m1", "#null", "loose"], ["web"]],
@@ -1427,7 +1456,7 @@ test("executed: a host DETACHED, DOWN, or PENDING (attached and up, its tab list
   // the hosts the pin row's write passes (render.ts reachableHosts → reachableFrom): the router's attached hosts
   // less the down ones, less the ones whose tab list has not reached THIS pane (its pending set): an attached, up
   // host in that window lists sessions none of which is a known tab here yet, so judged, every pin on them would
-  // drop (round 6 of the 2026-09-06 review)
+  // drop
   const lists = { hosts: () => ["TESTHOST-A", "TESTHOST-B", "TESTHOST-C"], down: () => ["TESTHOST-C"], pending: () => ["TESTHOST-B"] };
   assert.deepEqual([...reachableFrom(lists)], ["TESTHOST-A"], "attached, less down, less pending");
   assert.deepEqual([...reachableFrom({ hosts: () => ["TESTHOST-A"] })], ["TESTHOST-A"], "a router without the other lists: attached is reachable");
@@ -1437,7 +1466,7 @@ test("executed: a host DETACHED, DOWN, or PENDING (attached and up, its tab list
   const knownEarly = new Set(["tests", "web", "TESTHOST-A:m1", "loose"]);
   const early = reachableFrom({ hosts: () => ["TESTHOST-A", "TESTHOST-B"], down: () => [], pending: () => ["TESTHOST-B"] });
   assert.deepEqual(prunePinned(togglePinned(st, secOf(all, "qa"), "tests"), all, knownEarly, early).pinned.map((p) => p.sid), ["TESTHOST-A:m1", "TESTHOST-B:m1", "web", "tests"], "B:m1's pin waits for B's tabs");
-  assert.deepEqual(prunePinned(togglePinned(st, secOf(all, "qa"), "tests"), all, knownEarly, HOSTS).pinned.map((p) => p.sid), ["TESTHOST-A:m1", "web", "tests"], "(judged by attached-and-up alone, as before round 6, it dropped)");
+  assert.deepEqual(prunePinned(togglePinned(st, secOf(all, "qa"), "tests"), all, knownEarly, HOSTS).pinned.map((p) => p.sid), ["TESTHOST-A:m1", "web", "tests"], "(judged by attached-and-up alone, it dropped)");
   // …and the same window on A's REATTACH, whose entries the detach left standing: A:m1 not yet known, A pending
   const knownReattach = new Set(["tests", "web", "TESTHOST-B:m1", "loose"]);
   const reattach = reachableFrom({ hosts: () => ["TESTHOST-A", "TESTHOST-B"], down: () => [], pending: () => ["TESTHOST-A"] });
@@ -1514,7 +1543,7 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   assert.match(pin, /lb\.textContent = "Show when folded";/);
   assert.match(pin, /sb2\.textContent = on \? `stays on the strip while \$\{home\.name\} is folded` : `keep this tab on the strip while \$\{home\.name\} is folded`;/,
     "the copy speaks of the home section alone — and the write is per section, so it is the whole truth");
-  assert.match(pin, /writeTabGroupsPruned\(togglePinned\(tabGroups\(\), sec, id\)\); build\(\);/,
+  assert.match(pin, /writeTabGroupsPruned\(setPinned\(tabGroups\(\), sec, id, !on\)\); build\(\);/,
     "the write prunes (writeTabGroupsPruned, the one prune site), notifies (TABGROUPS_EVENT → renderTabs) and the flyout repaints its ✓ — no renderTabs() call of its own");
   assert.doesNotMatch(pin, /renderTabs\(\)|setTimeout/);
   // every store read on a path that WRITES passes the unions, so an entry in the earlier shape is migrated
@@ -1532,7 +1561,7 @@ test("the toggle is a row in the tab menu's Tags flyout beside the Move-to rows:
   // pins that both adoption paths reach it)
   const adopt = RENDER.slice(RENDER.indexOf("function adoptBase("), RENDER.indexOf("function captureViews("));
   assert.match(adopt, /const prev = sessionViews;\s*\n\s*sessionViews = v;\s*\n\s*const unions = viewTagUnion\(v\);\s*\n\s*const st = readTabGroups\(unions\);\s*\n\s*const next = followAdoption\(st, prev, v, unions\);\s*\n\s*if \(next !== st\) writeTabGroups\(next\);/,
-    "…and runs the follow on EVERY adoption, renames or none — the memory check needs the blob that names a remembered tag otherwise (round 7) — through followAdoption, with the held blob: a blob that is no news about tag names returns the state untouched (round 9), and the adopted blob carries the seqs the memory is stamped with");
+    "…and runs the follow on EVERY adoption, renames or none — the memory check needs the blob that names a remembered tag otherwise — through followAdoption, with the held blob: a blob that is no news about tag names returns the state untouched, and the adopted blob carries the seqs the memory is stamped with");
   assert.doesNotMatch(adopt, /if \(!renames\.length\) return;/, "no early return on a frame without renames");
   assert.equal(RENDER.split("followAdoption(").length - 1, 1, "one call site: the adoption");
   assert.equal(RENDER.split("followTagRenames(").length - 1, 0, "…and the follow itself is reached only through it");
@@ -1582,7 +1611,10 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
   // label folded into the name. (The active section's header was a no-op "labeled group" then; since the
   // section folds like any other it is the same button as the rest, with aria-current on it.)
   assert.match(MAKE_HEAD, /caret\.setAttribute\("aria-hidden", "true"\);/, "the chevron is decoration");
-  assert.match(MAKE_HEAD, /swatch\.setAttribute\("aria-hidden", "true"\);/, "so is the color bar");
+  // T251: the color bar retired for the tag's CHIP, which carries the NAME — words, not decoration, so it is
+  // never aria-hidden (the header's explicit aria-label still outranks name-from-content)
+  assert.match(MAKE_HEAD, /const chip = tagChip\(name, sec\.color, \{ inheritSize: true \}\);/, "the chip carries the name");
+  assert.ok(!/chip\.setAttribute\("aria-hidden"/.test(MAKE_HEAD), "…and is words, never hidden decoration");
   assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ said;/, "the pip too: its phrase rides the label instead (without the open header's click phrase, which the count button beside it speaks: tab-hide.test)");
   assert.match(MAKE_HEAD, /let spoken = words\.label;/, "the label starts as headWords' (name and count, in words — executed above)");
   assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip and the flag; an aria-label outranks name-from-content, so the header says what was appended and nothing that leaked in");
@@ -1650,4 +1682,33 @@ test("executed: the words of the way back: the open header whose snapshot the pa
   assert.equal(headWords("infra", 3, 3, true, true, false, true).title, "infra — 3 sessions folded; holds the tab you are reading; click to open this group");
   assert.equal(headWords("infra", 2, 0, true, false, false, true).title, "infra — folded, but all 2 sessions are set to show when folded, so none is hidden; click to open this group");
   assert.equal(headWords("infra", 3, 3, true, true, false, true).label, headWords("infra", 3, 3, true, true).label, "the spoken label as before");
+});
+
+test("the group header wears the SHARED tag chip — one vocabulary with the tags bar and the feed (T251)", () => {
+  const MENU = ui("webview", "tag-menu.ts");
+  assert.match(MENU, /export function tagChip\(label: string, color\?: string \| null, opts\?: \{ inheritSize\?: boolean \}\): HTMLElement \{/,
+    "the chip is a named builder, not a lookalike");
+  assert.match(MENU, /const chip = tagChip\(c\.label, c\.color\);/, "the tags bar builds its chips through it");
+  assert.match(MENU, /\("var\(--dim, " \+ TAG_BTN_GRAY \+ "\)"\)/, "the uncoloured fallback is a THEME TOKEN — the light theme is never handed a dark gray");
+  const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+  assert.match(head, /chip\.classList\.add\("tab-group-chip"\);/);
+  assert.ok(!/font-size/.test(head), "the header sets no size of its own — the chip inherits the header's 0.82em (no nested em)");
+});
+
+test("the section snapshot holds the reader's place in the hidden transcript (the T249 fold, 2026-09-08): captured in the pass that hides the views, written back when the snapshot hides; the scroll listener stays upstream's", () => {
+  // T249 makes the per-view saved spot follow the reader: the #content scroll listener records every scroll of the
+  // ACTIVE view (scroll-keep.ts followReader). The snapshot host is a child of #content, so entering the snapshot
+  // hides the views, the browser clamps scrollTop to the snapshot's height, and that scroll event (plus every
+  // scroll of a long snapshot) would land on the hidden active view: leaving the snapshot then landed at the
+  // bottom or on the snapshot's offset, not on the line being read. The hold lives in the snapshot's own code;
+  // the listener's text is upstream's, pinned in scroll-keep-on-show.test.ts.
+  assert.match(RENDER, /let snapKeep: \{ v: View; scrollTop: number; stick: boolean \} \| null = null;/, "one held spot: the view it belongs to and what followReader would overwrite");
+  const SHOW = RENDER.slice(RENDER.indexOf("function showActive("), RENDER.indexOf("function landActive("));
+  assert.match(SHOW, /if \(snapView && renderSnapshot\(\)\) \{\s*\n\s*for \(const v of views\.values\(\)\) v\.el\.style\.display = "none";\s*\n(?:\s*\/\/[^\n]*\n)*\s*const av = activeId \? views\.get\(activeId\) : null;\s*\n\s*if \(av && !snapKeep\) snapKeep = \{ v: av, scrollTop: av\.scrollTop, stick: av\.stick \};/,
+    "captured once per visit, from the view's fields, in the synchronous pass that hides the views (the clamp's scroll event is only queued by then; tab-snapshot.test.ts pins the if/for adjacency)");
+  const HIDE = RENDER.slice(RENDER.indexOf("function hideSnapshot(): void {"), RENDER.indexOf("function snapshotHoldsFocus("));
+  assert.match(HIDE, /if \(snapKeep\) \{ snapKeep\.v\.scrollTop = snapKeep\.scrollTop; snapKeep\.v\.stick = snapKeep\.stick; snapKeep = null; \}/,
+    "written back when the snapshot hides, which every exit takes (leaveSnapshot, a row pick, the section gone from the strip) before landActive reads the spot");
+  assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "the hide, and so the write-back, precedes the transcript path's land");
+  assert.match(RENDER, /followReader\(activeId \? views\.get\(activeId\) : null, c\.scrollTop, nearBottom\(c\), pendingBuildRaf != null\);/, "the listener itself is upstream's, untouched");
 });

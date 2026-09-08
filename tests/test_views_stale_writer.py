@@ -115,10 +115,10 @@ class StaleWriterGuard(unittest.TestCase):
 
     def test_a_legacy_tag_is_stamped_on_its_first_read_so_an_evidence_less_writer_stands_down(self):
         # a tag never touched since before the mtime feature has no stamp in the FILE; the first
-        # read gives it one (round 5 of the 2026-09-05 review — so the foreign-file rule can tell it
+        # read gives it one (the 2026-09-05 review — so the foreign-file rule can tell it
         # from a client's own create), and from then on the guard judges it like any other tag: a
         # blob with no evidence at all (no `at`, no mtimes) cannot de-member it, loudly, while a
-        # copy echoing the served `at` can. Until round 5 the file's tag stayed unstamped and the
+        # copy echoing the served `at` can. Before this change the file's tag stayed unstamped and the
         # legacy last-writer-wins stood for it.
         km._atomic_write(km._views_path(), json.dumps(
             {"active": "all", "tags": [{"id": "gL", "name": "legacy", "color": "",

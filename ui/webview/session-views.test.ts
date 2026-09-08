@@ -60,8 +60,9 @@ test("executed: the canonical key ignores list order AND which key the kernel us
 
 test("the tabOrder frame carries the blob and the strip filters on it, composing with #only", () => {
   // the frame's provenance rides along since T233 (captureViews still runs before the strip is applied; the
-  // kernel's own name, selfHost, is adopted first of all — pr-links.test.ts pins that line)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/,
+  // kernel's own name, selfHost, is adopted first of all, pr-links.test.ts pins that line) and the frame's
+  // live set reaches applyTabOrder beside it (T258)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*\}/,
     "echo-less frames still reach captureViews — an older kernel must age out a pending edit");
   assert.match(RENDER, /const inViewIds = ids\.filter\(tabInView\);/);
   assert.match(RENDER, /const visibleIds = only \? inViewIds\.filter\(\(id\) => matchesOnly\(nameOf\(id\), only\)\) : inViewIds;/);
@@ -83,7 +84,7 @@ test("every cycling path walks the VISIBLE order — keyboard can never land on 
 test("optimistic edits hold until the kernel echoes them exactly or acks the write — never a frame count (2026-09-05)", () => {
   // the three-frame yield that lived here dropped good edits and kept refused ones alike; the
   // write's ack (views-writes.test.ts) is the event that settles the copy
-  assert.match(RENDER, /function captureViews\(v: SessionViews \| null\) \{[\s\S]{0,900}viewsKey\(v\) === viewsKey\(pendingSessionViews\)/);
+  assert.match(RENDER, /function captureViews\(v: SessionViews \| null\) \{[\s\S]{0,1300}viewsKey\(v\) === viewsKey\(pendingSessionViews\)/);
   assert.doesNotMatch(RENDER, /pendingViewsAge/);
   assert.match(RENDER, /function postViews\(v: SessionViews, edited: string\[\] = \[\]\) \{[\s\S]{0,600}setTimelineViews", views: v, writeId, edited/);
 });
@@ -101,18 +102,19 @@ test("the hide MECHANISM is fully retired (the user 2026-08-24) — reveal survi
   assert.doesNotMatch(RENDER, /Hide from chat & timeline/);
   assert.doesNotMatch(RENDER, /hideIn\(/, "no hide gesture anywhere");
   assert.match(RENDER, /function revealSession\(id: string\) \{ const r = revealIn\(effViews\(\), id\); postLens\(\{ active: r\.active, actives: r\.actives \}\); \}/,
-    "the reveal is a lens write on the store's blob (round 4 of the 2026-09-05 review)");
+    "the reveal is a lens write on the store's blob (the 2026-09-05 review)");
 });
 
 test("federation carries the LOCAL kernel's views blob through merged tabOrder re-emits", () => {
   const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
   // stored only when its write sequence is at least the stored one (or the one the local kernel's caps frame
   // announced), the last blob turned away is kept for that caps frame to adopt, and the announced slot is
-  // re-derived from the stored blob before it moves — cleared only when the adoption changes it (round 9)
+  // re-derived from the stored blob before it moves — cleared only when the adoption changes it
   // (federation-views-seq.test.ts executes all four rules)
   assert.match(FED, /if \(host === LOCAL && m\.views && typeof m\.views === "object"\) \{\s*\n\s*if \(adoptViews\(this\.localViews, m\.views, this\.localViewsAnnounced\)\) \{ this\.localViewsAnnounced = announcedAfter\(this\.localViews, m\.views, this\.localViewsAnnounced\); this\.localViews = m\.views; this\.localViewsRejected = null; \}\s*\n\s*else this\.localViewsRejected = m\.views;\s*\n\s*\}/);
-  // the merged frame also carries the LOCAL kernel's own name (selfHost), read from its tabOrder frame (pr-links)
-  assert.match(FED, /\{ type: "tabOrder", order, tabs, views: this\.localViews \?\? undefined, selfHost: this\.localSelfHost \|\| undefined \}/,
+  // the merged frame also carries the union of every host's live set (T258) and the LOCAL kernel's own
+  // name (selfHost), read from its tabOrder frame (pr-links)
+  assert.match(FED, /\{ type: "tabOrder", order, tabs, live, views: this\.localViews \?\? undefined, selfHost: this\.localSelfHost \|\| undefined \}/,
     "without this the browser dashboard's chat never receives the blob at all");
 });
 
@@ -185,7 +187,7 @@ test("executed: the union renders in the USER'S order — tagOrder governs, remo
     .map((u) => u.name), ["constructor"], "a prototype-key tag name builds and orders cleanly");
 });
 
-test("executed: a union whose local tag wears a create's placeholder id is marked pending — it renders and takes no gesture (round 4 of the 2026-09-05 review)", () => {
+test("executed: a union whose local tag wears a create's placeholder id is marked pending — it renders and takes no gesture (the 2026-09-05 review)", () => {
   const A = "11111111-2222-3333-4444-555555555501", B = "11111111-2222-3333-4444-555555555502";
   const v: any = { active: "all", tags: [{ id: "gA", name: "web", color: "#3b82f6", members: [A] }, { id: "pending-abc", name: "api", color: "#54B204", members: [B] }] };
   const u = viewTagUnion(v);

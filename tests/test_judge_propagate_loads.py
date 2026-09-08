@@ -20,20 +20,25 @@ predicate each — about 168 of 455 loads per pass. After J4 the one load per si
   every verdict it holds, the CAS discipline intact under a kernel-side write between two refs, a
   failed publish leaving the file untouched for the retry, and an absent sender's publish settled (or
   not) by _presumed_closed; a store this pass published is read again through the shared cache;
-- a recipient whose goals file does not parse answers the same `_unread` fallback on both loaders,
-  memoized as the failed version once (`corrupt` advances by one across two passes), its refs skipped;
+- a recipient whose goals file does not parse is quarantined aside by load_goals (upstream #1019, the
+  2026-09-08 fold) and both loaders then answer the legitimate fresh store, once (`corrupt` advances by
+  one for the shared loader's hand-off, the path then reads as absent), its refs skipped;
 - the absent-store memo: an unchanged store is evaluated once across both sweeps and across passes; a
   changed goals file, a changed override journal and a changed archive each re-evaluate; the identity
   is taken before the read, in the sweep's own read and in run_propagate's (a view an earlier ref took
   feeds the memo under the identity taken before that shared read); the key is the full path;
-  entries for vanished stores are evicted; a load that FELL BACK (`_unread`: the store file or the
-  journal did not read) is answered but never memoized; the one documented exception (same-size
-  in-place rewrite with the mtime put back) is pinned as such.
+  entries for vanished stores are evicted; a store read that RAISES is answered None and never
+  memoized, a store loaded without its unreadable override journal (`_unread`) is answered but never
+  memoized, a store whose files moved under the read (a publish, or load_goals' quarantine of an
+  unparseable file) is answered but never memoized under the stale identity; the one documented
+  exception (same-size in-place rewrite with the mtime put back) is pinned as such.
 
 SYNTHETIC fixtures only. Private synthetic sids: load_goals replays the per-sid override journal, and
 node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures);
 every test runs under its own _rebind_state root, so its journal and memo entries die with it."""
+import contextlib
 import errno
+import io
 import json
 import os
 import shutil
@@ -319,24 +324,37 @@ class LoadOncePerPass(World):
         n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 902))
         self.assertEqual((n, dict(counts)), (0, {}), "and then idle: views and memo hits only")
 
-    def test_a_recipient_whose_store_does_not_parse_is_the_same_fallback_on_both_loaders(self):
-        # The shared read answers what load_goals answers for a goals file that exists and does not
-        # parse: an empty store marked `_unread` == "store". Propagate finds no complete recipient goal
-        # in it, skips its refs and leaves the sender untouched (no writer load, no publish). The failed
-        # version IS memoized by the shared cache (once per version, counter `corrupt`), so the second
-        # pass costs a hit, not a second failed parse.
+    def test_a_recipient_whose_store_does_not_parse_is_quarantined_once_and_fresh_on_both_loaders(self):
+        # Upstream #1019 (steer 1 of the 2026-09-08 fold) superseded the fork's `_unread` == "store" fallback
+        # and the shared cache's per-version memo of it: a goals file that exists and does not parse is moved
+        # aside by load_goals (one sidecar, one store-quarantined row, one stderr line) and the legitimate
+        # fresh store is the answer on both loaders. The shared loader hands the bytes to load_goals (counter
+        # `corrupt`, once) and caches nothing; the path then reads as absent. Propagate finds no complete
+        # recipient goal in the fresh store, skips its refs and leaves the sender untouched (no writer load
+        # of the sender, no publish).
         self._publish(SENDER, {t["id"]: t for t in [_tracker(SENDER, 1, RECIP, MID)]})
-        (jd.GOALDIR / (RECIP + ".json")).write_text("{not json")
+        gp = jd.GOALDIR / (RECIP + ".json")
+        gp.write_text("{not json")
         r0, c0 = _rev(SENDER), jd.shared_store_stats()["corrupt"]
-        self.assertEqual(jd.load_goals(RECIP).get("_unread"), "store")
-        self.assertEqual(jd.load_goals_shared(RECIP).get("_unread"), "store", "the shared loader's answer is the same mark")
+        with contextlib.redirect_stderr(io.StringIO()):
+            a = jd.load_goals_shared(RECIP)
+        self.assertEqual((type(a), a["nodes"], a.get("_unread")), (dict, {}, None),
+                         "the shared loader's answer: load_goals' fresh store, private, unmarked")
+        self.assertFalse(gp.exists(), "the corrupt file was moved aside")
+        self.assertEqual(len(list(jd.GOALDIR.glob(RECIP + ".json.corrupt-*"))), 1)
+        rows = [json.loads(l) for l in jd.ERRORS.read_text().splitlines() if l.strip()]
+        self.assertEqual([r["fsid"] for r in rows if r["err"] == "store-quarantined"], [RECIP], "one row, load_goals' own")
+        b = jd.load_goals(RECIP)
+        self.assertEqual((b["nodes"], b.get("_unread")), ({}, None), "the writer's loader: the same fresh store (absent path)")
         c1 = jd.shared_store_stats()["corrupt"]
-        self.assertEqual(c1, c0 + 1, "the failed parse ran once, for the shared loader's fill")
+        self.assertEqual(c1, c0 + 1, "the bytes were handed to load_goals once")
         for now in (T + 900, T + 901):
             n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=now))
-            self.assertEqual((n, dict(counts)), (0, {}), "nothing to propagate, no writer load")
-            self.assertEqual(shared[RECIP], 1)
-        self.assertEqual(jd.shared_store_stats()["corrupt"], c1, "two passes: the memoized failed version, no re-parse")
+            self.assertEqual((n, counts[SENDER], shared[RECIP]), (0, 0, 1),
+                             "nothing to propagate, no writer load of the sender; the recipient's one shared read "
+                             "(absent now: handed to load_goals for the fresh store)")
+        self.assertEqual(jd.shared_store_stats()["corrupt"], c1, "two passes over the absent path: no second hand-off")
+        self.assertEqual(len(list(jd.GOALDIR.glob(RECIP + ".json.corrupt-*"))), 1, "quarantined once, never per pass")
         self.assertEqual(_rev(SENDER), r0, "the sender was not published")
         self.assertFalse(jd.load_goals(SENDER)["nodes"][SENDER + ":t1"]["nodeComplete"])
 
@@ -591,10 +609,13 @@ class AbsentStoreMemo(World):
     def test_run_propagates_own_read_takes_the_identity_before_the_read_too(self):
         # The recipient loop's _peek reads an absent sender through the shared cache (a complete
         # recipient goal refs a tracker of its that is already done) and leaves the VIEW for the
-        # sweep, which memoizes the predicates evaluated on it under the identity _peek took before
-        # the read. A publish landing between that stat and the read must pair the OLD identity with
-        # the old content, one extra miss next pass; stat AFTER the read would memoize the
-        # post-publish identity against pre-publish flags and serve it as a hit.
+        # sweep, which evaluates the predicates on it under the identity _peek took before the read,
+        # then re-takes the identity and memoizes only when it still stands (the post-load identity
+        # re-check, upstream #1019's fold, 2026-09-08). A publish landing between that stat and the
+        # read is caught by the re-check: nothing memoized, one extra miss next pass; before the
+        # re-check the entry paired the OLD identity with the old content and healed at the next
+        # miss. A stat taken only AFTER the read would memoize the post-publish identity against
+        # pre-publish flags and serve it as a hit.
         self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, done=True)]})
         g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
         self._publish(RECIP, {g5["id"]: g5})
@@ -625,12 +646,12 @@ class AbsentStoreMemo(World):
                          "through the unpatched loader)")
         k1 = jd._store_identity(DEAD)
         self.assertNotEqual(k1, k0)
-        self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (False, True)),
-                         "memoized from the view under the identity taken BEFORE the read, with the content that read saw")
+        self.assertNotIn(p, jd._ABSENT_FLAGS,
+                         "the identity taken BEFORE the read no longer stands after it: nothing memoized from the view")
         h, m, _w = self._io()
         n, counts, _o, shared = self._counting(lambda: jd.run_propagate(now=T + 901))
         self.assertEqual((n, counts[DEAD], shared[DEAD]), (0, 0, 1), "the next pass: the view again, no plain load")
-        self.assertEqual(self._io()[:2], (h, m + 1), "the stale-identity entry misses; it is never served")
+        self.assertEqual(self._io()[:2], (h, m + 1), "read again under the new identity; never a stale hit")
         self.assertEqual(jd._ABSENT_FLAGS[p], (k1, (True, True)), "re-evaluated on the published content, from the view")
 
     def test_a_view_evaluated_by_the_sweep_never_enters_the_writer_dict(self):
@@ -774,12 +795,14 @@ class AbsentStoreMemo(World):
         self.assertNotIn(str(jd.GOALDIR / (DEAD + ".json")), jd._ABSENT_FLAGS)
         self.assertEqual(jd._absent_store_flags(DEAD), (False, False), "retried on the next call")
 
-    # ---- a load that FELL BACK is no better than one that raised ----
+    # ---- a load that answered less than the files hold is no better than one that raised ----
     def _read_fails_once(self, target):
         """Patch Path.read_text so the first read of `target` raises OSError and every later read is
-        real (the awaiting-lift gate's tests use the same shape). load_goals swallows a store-file
-        failure into a fresh EMPTY store; _replay_overrides logs and skips the journal; both mark
-        the object `_unread`. Returns the counter of raised reads."""
+        real: the store or journal exists and could not be read (the awaiting-lift gate's tests use the
+        same shape). load_goals RAISES a store-file failure (upstream #1019; before the 2026-09-08 fold
+        it answered an empty store marked `_unread`); _replay_overrides logs and skips the journal and
+        marks the object `_unread`. The store's fd readers (load_goals_shared, _disk_rev) never call
+        read_text, so only the writer's loader sees the fault. Returns the counter of raised reads."""
         real = Path.read_text
         state = {"fired": 0}
 
@@ -792,23 +815,39 @@ class AbsentStoreMemo(World):
         self.addCleanup(setattr, Path, "read_text", real)
         return state
 
-    def test_a_swallowed_store_read_failure_is_answered_but_not_memoized(self):
-        # load_goals does not raise on a store file it cannot read: it answers a fresh empty store,
-        # marked `_unread`. That store's (False, False) serves this pass (the sweeps skip the store,
-        # as they always did) but no entry is written: nothing on disk changes before the next read
-        # succeeds, so an entry would be a hit saying "nothing open" for a store holding an open
-        # tracker, until its next write. (The raise above is the other shape; the memo must cover both.)
+    def test_a_store_read_fault_raises_out_of_the_load_and_is_not_memoized(self):
+        # load_goals raises on a store file it cannot read (upstream #1019, steer 1 of the 2026-09-08 fold:
+        # there is no fallback store to answer from), so the caller skips the store this pass (None), as
+        # the sweeps always did, and no entry is written: nothing on disk changes before the next read
+        # succeeds, so an entry would be a hit saying "nothing open" for a store holding an open tracker,
+        # until its next write.
         self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, quiet=True)]})
         p, k0 = str(jd.GOALDIR / (DEAD + ".json")), jd._store_identity(DEAD)
         state = self._read_fails_once(jd.GOALDIR / (DEAD + ".json"))
         h, m, _w = self._io()
-        self.assertEqual(jd._absent_store_flags(DEAD), (False, False), "the fallback's answer, this pass only")
+        self.assertIsNone(jd._absent_store_flags(DEAD), "the raise: skipped this pass")
         self.assertEqual(state["fired"], 1)
-        self.assertNotIn(p, jd._ABSENT_FLAGS, "an unread store is never memoized")
+        self.assertNotIn(p, jd._ABSENT_FLAGS, "a store that did not read is never memoized")
         self.assertEqual(jd._store_identity(DEAD), k0, "nothing on disk moved: the key alone could not tell")
         self.assertEqual(jd._absent_store_flags(DEAD), (True, False), "the next call re-reads the file")
         self.assertEqual(self._io()[:2], (h, m + 2), "two misses, no stale hit")
         self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (True, False)))
+
+    def test_a_quarantined_store_is_not_memoized_under_the_corrupt_files_identity(self):
+        # load_goals moves an unparseable store aside and answers the legitimate fresh store (upstream
+        # #1019). The key was taken before the read and names the corrupt file, which is gone by the time
+        # the answer is in hand; the identity re-taken after the read differs, so nothing is memoized under
+        # it. The next call takes the absent identity and memoizes the fresh store's answer there.
+        self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID, quiet=True)]})
+        p = jd.GOALDIR / (DEAD + ".json")
+        p.write_text("{not json")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(jd._absent_store_flags(DEAD), (False, False), "the fresh store's answer, this pass")
+        self.assertFalse(p.exists(), "the corrupt file was moved aside")
+        self.assertEqual(len(list(jd.GOALDIR.glob(DEAD + ".json.corrupt-*"))), 1)
+        self.assertNotIn(str(p), jd._ABSENT_FLAGS, "never memoized under the identity of a file that is gone")
+        self.assertEqual(jd._absent_store_flags(DEAD), (False, False))
+        self.assertIsNone(jd._ABSENT_FLAGS[str(p)][0][1], "memoized under the absent identity")
 
     def test_a_skipped_journal_replay_is_answered_but_not_memoized(self):
         # The store file reads; the override journal does not. _replay_overrides logs, skips it and
@@ -830,21 +869,31 @@ class AbsentStoreMemo(World):
         self.assertEqual(self._io()[:2], (h, m + 2), "two misses, no stale hit")
         self.assertEqual(jd._ABSENT_FLAGS[p], (k0, (False, True)))
 
-    def test_run_propagate_does_not_memoize_a_sender_whose_read_fell_back(self):
-        # The same mark through run_propagate's own read: a complete recipient goal refs an absent
-        # sender's open tracker; _get reads the sender (the store file fails once: an empty `_unread`
-        # object with no tracker to mark) and leaves it for the sweep, which must not memoize it. The
-        # next pass reads the real file and completes the tracker.
+    def test_run_propagate_files_a_row_for_a_sender_whose_read_raises_and_completes_it_the_next_pass(self):
+        # The raise through run_propagate's own read (upstream #1019; before the 2026-09-08 fold the writer
+        # load answered an empty `_unread` store with no tracker to mark): a complete recipient goal refs an
+        # absent sender's open tracker; the view (_peek, the shared loader's fd read) says open, then _get's
+        # writer load of the sender raises (the store file fails once). The recipient's pass-crash row names
+        # the sender, the ref waits, and the sweep evaluates the VIEW the ref took (the file's truth, read
+        # before the fault) and memoizes it under the identity taken before that read. The next pass reads
+        # the file at the ref and completes the tracker.
         self._publish(DEAD, {t["id"]: t for t in [_tracker(DEAD, 1, RECIP, MID)]})
         g5 = _complete(RECIP, 5, origin={"peer": DEAD, "goalId": DEAD + ":t1", "msgId": MID})
         self._publish(RECIP, {g5["id"]: g5})
         p = str(jd.GOALDIR / (DEAD + ".json"))
         state = self._read_fails_once(jd.GOALDIR / (DEAD + ".json"))
-        self.assertEqual(jd.run_propagate(now=T + 900), 0, "the fallback holds no tracker to complete")
+        self.assertEqual(jd.run_propagate(now=T + 900), 0, "the sender's writer load raised: nothing to complete this pass")
         self.assertEqual(state["fired"], 1)
-        self.assertNotIn(p, jd._ABSENT_FLAGS)
+        rows = [json.loads(l) for l in jd.ERRORS.read_text().splitlines() if l.strip()] if jd.ERRORS.exists() else []
+        crash = [r for r in rows if r["err"] == "pass-crash"]
+        self.assertEqual([(r["judge"], r["fsid"]) for r in crash], [("propagate", RECIP)], "the recipient's row, once")
+        self.assertIn(DEAD[:8], crash[0]["note"], "...naming the sender whose store raised")
+        self.assertEqual([r["err"] for r in rows if r["err"] != "pass-crash"], [],
+                         "no store-unreadable row: a fault met inside a pass is the pass's row, not the boundary's")
         self.assertFalse(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
-        self.assertEqual(jd.run_propagate(now=T + 901), 1, "the next pass reads the file and completes it")
+        self.assertEqual(jd._ABSENT_FLAGS[p][1], (True, False),
+                         "the view the ref took read the file before the fault: its truth, memoized by the sweep")
+        self.assertEqual(jd.run_propagate(now=T + 901), 1, "the next pass reads the file at the ref and completes it")
         self.assertTrue(jd.load_goals(DEAD)["nodes"][DEAD + ":t1"]["nodeComplete"])
 
     def test_rebind_clears_the_memo(self):

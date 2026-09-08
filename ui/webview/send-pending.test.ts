@@ -3,12 +3,15 @@
 // pending bubble at the bottom vanished and the message reappeared higher up with no cue; and the
 // client's bubble had a 20 s lifetime, so when the kernel's own echo was pruned early the send simply
 // looked delivered. Now: (1) a pending send has NO lifetime — it ends on a landing, the kernel's
-// never-delivered verdict, or the user's ✕; (2) a landed absorbed atom wears a "joined mid-turn" header
-// and, when it landed above the tail, leaves a cue where the bubble sat ("delivered into the running
-// turn at HH:MM · jump"); (3) every composer send posts a clientDiag breadcrumb (never the text).
+// never-delivered verdict, or the user's ✕; (2) the pending bubble is drawn AT ITS SEND POSITION from the
+// start — right after its anchor, the last stable kernel event at the press — so the steps that stream
+// in afterwards land below it and the absorbed atom, which the kernel places at the send time, replaces
+// it in the same spot (T252, the user 2026-09-07: a header plus a button that jumps somewhere and later
+// disappears is weird; the first cut's "joined mid-turn" header and the jump/✕ cue are gone);
+// (3) every composer send posts a clientDiag breadcrumb (never the text).
 // The 2026-09-06 adversarial review then fixed the decision's frame: (4) every verdict is read from the
-// events AFTER the send's anchor, never from a 30-event tail count; (5) the cue anchors on a RENDERED
-// event; (6) the lost verdict shares the anchor; (7) exact text, one landing per send; (8) a connection
+// events AFTER the send's anchor, never from a 30-event tail count; (5) [retired with the cue];
+// (6) the lost verdict shares the anchor; (7) exact text, one landing per send; (8) a connection
 // drop repaints once; (9) the bare label is per bubble; (10) the kernel's own copy clears "not confirmed".
 // Round 3 of that review: (11) receipt is attributed per send, like landings; (12) the ✕ removes the
 // bubble's own entry; (13) a stamp taken late reads the events' own times. Round 4: (14) a late stamp
@@ -18,7 +21,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { newPending, pendingBody, reconcilePending, dropPending, cueAnchor, landedIn, provisionalIn, bareGroupLabel, type TailEvent, type PendingSend } from "./send-pending";
+import { newPending, pendingBody, reconcilePending, dropPending, injectionGroups, scanFrom, queuedCopyToHide, landedIn, provisionalIn, bareGroupLabel, type TailEvent, type PendingSend } from "./send-pending";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const RENDER = read("render.ts");
@@ -39,12 +42,22 @@ const filler = (n: number, prefix = "f"): TailEvent[] =>
 // ── (1) no lifetime ──────────────────────────────────────────────────────────────────────────────
 
 test("a pending send survives past 20 s — and past any time — without confirmation", () => {
-  const list = press([{ kind: "assistant", md: "still working on the earlier step" }], TEXT);
-  // nothing happens for a minute, then an hour
-  for (const later of [T0 + 21_000, T0 + 60_000, T0 + 3_600_000]) {
-    const r = reconcilePending([{ kind: "assistant", md: "…" }], list);
-    assert.equal(r.keep.length, 1, `still pending at +${(later - T0) / 1000}s`);
-    assert.equal(r.inject.length, 1, "…and still shown: nothing in the payload accounts for it");
+  const list = press([{ kind: "assistant", md: "still working on the earlier step", uuid: "a0" }], TEXT);
+  // nothing happens for a minute, then an hour: the wall clock moves on and the kernel's stamps move on
+  // with it, and the decision reads neither
+  const realNow = Date.now;
+  try {
+    for (const later of [T0 + 21_000, T0 + 60_000, T0 + 3_600_000]) {
+      Date.now = () => later;
+      const r = reconcilePending([
+        { kind: "assistant", md: "still working on the earlier step", uuid: "a0" },
+        { kind: "assistant", md: "…", uuid: "a-" + later, ts: new Date(later).toISOString() },
+      ], list);
+      assert.equal(r.keep.length, 1, `still pending at +${(later - T0) / 1000}s`);
+      assert.equal(r.inject.length, 1, "…and still shown: nothing in the payload accounts for it");
+    }
+  } finally {
+    Date.now = realNow;
   }
   assert.doesNotMatch(RENDER, /OPT_TTL_MS/, "the 20 s backstop is gone from render.ts");
 });
@@ -60,7 +73,7 @@ test("it clears on the kernel's echo (suppressed) and ends on the landing (retir
     { kind: "tool", uuid: "t9" },
   ], list);
   assert.equal(r.keep.length, 0, "a landed user atom ends it");
-  assert.deepEqual(r.landed.map((l) => l.idx), [1], "…naming the landed event, for the cue");
+  assert.deepEqual(r.landed.map((l) => l.idx), [1], "…naming the landed event: the slot the bubble held");
 });
 
 test("an image send lands even though the paths are gone from the text", () => {
@@ -156,39 +169,200 @@ test("what was already there at the press is background: an older identical mess
   assert.equal(r.inject.length, 1, "…and cover nothing: our bubble shows beside the older copies (two sends, two bubbles)");
 });
 
-// ── (5) the cue anchors on a rendered event ──────────────────────────────────────────────────────
+// ── (5) the bubble sits at its send position: right after its anchor, from the first paint ────────
 
-test("cueAnchor: the last kernel event after the landed atom, or null when it landed at the tail", () => {
-  const events: TailEvent[] = [
-    { kind: "user", uuid: "u1", md: "first comment" },
-    { kind: "user", uuid: "att1", md: "second comment", absorbed: true },
-    { kind: "tool", uuid: "t1" },
-    { kind: "tool", uuid: "t2" },
-    { kind: "user", uuid: "echo:9", md: "a third send, still pending at the kernel" },
-    { kind: "queued", uuid: "optimistic:123", texts: [{ md: "ours" }] },
-  ];
-  assert.equal(cueAnchor(events, 1), "t2", "under the event the bubble sat under — never our injection or the kernel's echo");
-  assert.equal(cueAnchor(events.slice(0, 2), 1), null, "landed AT the tail: the swap was in place, no cue owed");
-  assert.equal(cueAnchor([events[0], events[1], { kind: "tool" }], 1), null, "nothing stable to hang it on");
+test("the pending bubble is placed right after its anchor and stays there while steps stream in below (T252)", () => {
+  const tail: TailEvent[] = [{ kind: "user", md: "first", uuid: "u1" }, { kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, TEXT);
+  assert.equal(list[0].at?.after, "a1", "anchored to the last stable kernel event at the press");
+  let r = reconcilePending(tail, list);
+  assert.deepEqual(injectionGroups(tail, r.inject), [{ idx: 2, sends: [list[0]] }], "at the press the slot IS the tail");
+  // two tool steps stream in while the CLI holds the send: they land below the bubble, the bubble does not move
+  const streaming: TailEvent[] = [...tail, { kind: "tool", uuid: "t1" }, { kind: "tool", uuid: "t2" }];
+  r = reconcilePending(streaming, list);
+  assert.equal(r.inject.length, 1, "still pending, still drawn");
+  assert.deepEqual(injectionGroups(streaming, r.inject), [{ idx: 2, sends: [list[0]] }], "same slot: after a1, above t1 and t2");
+  // the CLI takes it at the boundary: the kernel places the absorbed atom at its SEND time — the bubble's slot
+  const landed: TailEvent[] = [...tail, { kind: "user", md: TEXT, uuid: "att1", absorbed: true }, { kind: "tool", uuid: "t1" }, { kind: "tool", uuid: "t2" }];
+  r = reconcilePending(landed, list);
+  assert.deepEqual(r.landed.map((l) => l.idx), [2], "the landing replaces the bubble in place: same index");
+  assert.equal(r.keep.length, 0);
 });
 
-test("cueAnchor skips what the chat does not draw: a thinking tail anchors on the tool before it in compact mode", () => {
-  const events: TailEvent[] = [
-    { kind: "user", uuid: "u1", md: "first comment" },
-    { kind: "user", uuid: "att1", md: "second comment", absorbed: true },
-    { kind: "tool", uuid: "t1" },
-    { kind: "thinking", uuid: "th1" },
-  ];
-  const compact = (e: TailEvent) => e.kind !== "thinking";
-  assert.equal(cueAnchor(events, 1, compact), "t1", "compact mode hides thinking — the cue needs an item that renders");
-  assert.equal(cueAnchor(events, 1), "th1", "full mode draws the thinking block, so the bubble did sit under it");
-  assert.equal(cueAnchor([events[0], events[1], events[3]], 1, compact), null, "only hidden events after the landing: no place for a cue");
-  // render.ts hands over the current mode's rule, and compact mode is what hides thinking (compact.ts)
-  assert.match(RENDER, /const cueRendered = \(e: TailEvent\): boolean => !\(settings\.compact && e\.kind === "thinking"\);/);
-  assert.match(RENDER, /const after = cueAnchor\(s\.events as TailEvent\[\], idx, cueRendered\);/);
+test("several pending sends: each after its own anchor, in send order; same anchor → one group in order", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, "one", "two");                 // pressed against the same frame
+  const later: TailEvent[] = [...tail, { kind: "tool", uuid: "t1" }];
+  const third = newPending("three", undefined, T0 + 9);
+  const all = [...list, third];
+  const r = reconcilePending(later, all);                  // the third is stamped now, after t1
+  assert.equal(third.at?.after, "t1");
+  assert.deepEqual(injectionGroups(later, r.inject), [
+    { idx: 2, sends: [third] },                            // highest slot first, so the caller can splice bottom-up
+    { idx: 1, sends: [list[0], list[1]] },                 // one bare group for the two that share an anchor, in send order
+  ]);
+  // no events at all: the only slot is the head, which is also the tail
+  const none = press([], "hello");
+  assert.deepEqual(injectionGroups([], reconcilePending([], none).inject), [{ idx: 0, sends: [none[0]] }]);
+  // an anchor that left the resident window: everything resident is later than the send, so the slot is the head
+  assert.equal(scanFrom([{ kind: "tool", uuid: "zz" }], { after: "gone", place: null, seen: [], queued: 0 }), 0);
 });
 
-// ── (6) the lost verdict shares the anchor ───────────────────────────────────────────────────────
+test("a send pressed while an earlier send's echo is the newest event is placed BELOW that echo (review of the first cut)", () => {
+  // the anchor skips the kernel's echo atoms (an echo is not a stable place to bound the landing scan), but as a
+  // PLACEMENT that inverted consecutive sends: the second message sat above the first until both landed. A user
+  // event the kernel stamped at or before the press — an echo, a never-delivered bubble, a landed atom — is
+  // older than this send, so the bubble goes below it, exactly where the absorbed atom will be placed by time.
+  const isoAt = (s: number) => new Date(s * 1000).toISOString();
+  const S = Math.floor(T0 / 1000);
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1", ts: isoAt(S - 30) }];
+  const first = press(tail, "first message");
+  const echoed: TailEvent[] = [...tail, { kind: "user", md: "first message", uuid: "echo:1", ts: isoAt(S - 2) }];
+  reconcilePending(echoed, first);                              // the kernel's echo covers the first send
+  const second = newPending("second message", undefined, T0);   // pressed with the echo as the newest event
+  const list = [...first, second];
+  const r = reconcilePending(echoed, list);
+  assert.equal(second.at?.after, "a1", "the scan anchor still skips the echo");
+  assert.deepEqual(r.inject, [second]);
+  assert.deepEqual(injectionGroups(echoed, r.inject), [{ idx: 2, sends: [second] }], "…but the bubble is placed below it");
+  // a never-delivered bubble from an earlier send: older than this press, so below it too
+  const lost: TailEvent[] = [...tail, { kind: "user", md: "older", uuid: "echo:9", undelivered: true, ts: isoAt(S - 5) }];
+  const p = press(lost, "newer");
+  assert.deepEqual(injectionGroups(lost, reconcilePending(lost, p).inject), [{ idx: 2, sends: [p[0]] }]);
+  // a user event that arrives AFTER the press is a later send: the bubble stays above it
+  const later: TailEvent[] = [...tail, { kind: "user", md: "someone else's later message", uuid: "u7", ts: isoAt(S + 30) }];
+  const q = newPending("mine", undefined, T0);
+  reconcilePending(tail, [q]);                                  // pressed against the tail before u7 arrived
+  assert.deepEqual(injectionGroups(later, reconcilePending(later, [q]).inject), [{ idx: 1, sends: [q] }]);
+});
+
+test("the placement floor is the last user event AT THE PRESS, by identity, never a clock (second review)", () => {
+  // a press-time frame already proves precedence: every event resident at the press is older than the send. Comparing
+  // the client's press second with the kernel host's stamps re-inverted the order whenever the kernel clock led by more
+  // than the gap between two presses (a phone, a remote browser), and misplaced a bubble below a later-received event
+  // when the client clock led. So the press records the last user event's uuid (an echo counts) as the floor.
+  const isoAt = (s: number) => new Date(s * 1000).toISOString();
+  const S = Math.floor(T0 / 1000);
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1", ts: isoAt(S - 30) }];
+  // kernel host 3 s AHEAD: the first send's echo is stamped after the second press's second
+  const echoed: TailEvent[] = [...tail, { kind: "user", md: "first", uuid: "echo:1", ts: isoAt(S + 3) }];
+  const second = newPending("second", undefined, T0);
+  let r = reconcilePending(echoed, [second]);
+  assert.equal(second.at?.place, "echo:1", "the floor is recorded at the press");
+  assert.deepEqual(injectionGroups(echoed, r.inject), [{ idx: 2, sends: [second] }], "below the echo, whatever the clocks say");
+  // the echo → landed swap: the floor's uuid is gone, the landed atom carries its text — still the floor
+  const landedFirst: TailEvent[] = [...tail, { kind: "user", md: "first", uuid: "u1", absorbed: true, ts: isoAt(S + 3) }, { kind: "tool", uuid: "t1" }];
+  r = reconcilePending(landedFirst, [second]);
+  assert.deepEqual(injectionGroups(landedFirst, r.inject), [{ idx: 2, sends: [second] }], "below the landed first message, above the later tool");
+  // client clock AHEAD: a peer's message the kernel receives after the press, stamped at or before the press second,
+  // was not resident at the press — the bubble stays above it
+  const peerLater: TailEvent[] = [...tail, { kind: "user", md: "a peer's message", uuid: "u9", ts: isoAt(S - 1) }];
+  const mine = newPending("mine", undefined, T0);
+  reconcilePending(tail, [mine]);
+  assert.deepEqual(injectionGroups(peerLater, reconcilePending(peerLater, [mine]).inject), [{ idx: 1, sends: [mine] }]);
+  // no user event at the press: no floor, the anchor rules
+  const bare = press(tail, "alone");
+  assert.equal(bare[0].at?.place, null);
+  assert.deepEqual(injectionGroups(tail, reconcilePending(tail, bare).inject), [{ idx: 1, sends: [bare[0]] }]);
+  // a LATE entry (pressed against no frame) reads the frame's own stamps for its floor, like its anchor
+  const lateFrame: TailEvent[] = [...tail, { kind: "user", md: "older", uuid: "echo:5", ts: isoAt(S - 2) }, { kind: "user", md: "newer", uuid: "echo:6", ts: isoAt(S + 2) }];
+  const late: PendingSend = { ...newPending("late one", undefined, T0), late: true };
+  reconcilePending(lateFrame, [late]);
+  assert.equal(late.at?.place, "echo:5", "the last user event the kernel stamped before the press");
+  assert.doesNotMatch(read("send-pending.ts").split("export function placementIndex(")[1].split("\n}")[0], /eventSecond|pressS|p\.ts/, "placement reads no clock");
+});
+
+test("the text fallback finds the floor by ORDINAL, so a later send of the same text never pulls the bubble down (third review)", () => {
+  // A = "ok" pressed and echoed; B = "next" pressed with echo:A the newest user event; A lands, two steps stream,
+  // then the user sends "ok" again. The fallback used to take the LAST same-text user event — the new send's echo —
+  // and B's bubble dropped to the tail under a message pressed after it, until B landed.
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const echoedA: TailEvent[] = [...tail, { kind: "user", md: "ok", uuid: "echo:A" }];
+  const b = newPending("next", undefined, T0);
+  reconcilePending(echoedA, [b]);
+  assert.equal(b.at?.place, "echo:A");
+  assert.equal(b.at?.placeOrd, 1, "one same-text user event from the anchor through the floor");
+  const later: TailEvent[] = [...tail, { kind: "user", md: "ok", uuid: "uA", absorbed: true }, { kind: "tool", uuid: "t1" }, { kind: "tool", uuid: "t2" }, { kind: "user", md: "ok", uuid: "echo:C" }];
+  assert.deepEqual(injectionGroups(later, reconcilePending(later, [b]).inject), [{ idx: 2, sends: [b] }], "below uA, above t1 — not under the newer echo");
+  const laterLanded: TailEvent[] = [...later.slice(0, 4), { kind: "user", md: "ok", uuid: "uC" }];
+  assert.deepEqual(injectionGroups(laterLanded, reconcilePending(laterLanded, [b]).inject), [{ idx: 2, sends: [b] }], "…nor under its landed atom");
+  // two identical echoes as the tail: the floor is the SECOND, so after both land the bubble sits below the second
+  const twin: TailEvent[] = [...tail, { kind: "user", md: "ok", uuid: "echo:A1" }, { kind: "user", md: "ok", uuid: "echo:A2" }];
+  const c = newPending("next", undefined, T0 + 1);
+  reconcilePending(twin, [c]);
+  assert.equal(c.at?.placeOrd, 2);
+  const twinLanded: TailEvent[] = [...tail, { kind: "user", md: "ok", uuid: "uA1" }, { kind: "user", md: "ok", uuid: "uA2" }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(twinLanded, reconcilePending(twinLanded, [c]).inject), [{ idx: 3, sends: [c] }]);
+  // the floor sits ABOVE the anchor (steps followed the last message before the press): the anchor already covers
+  // it, and a later same-text send must not become a floor
+  const stepsAfter: TailEvent[] = [{ kind: "user", md: "ok", uuid: "u0" }, { kind: "tool", uuid: "t0" }, { kind: "assistant", md: "…", uuid: "a1" }];
+  const d = press(stepsAfter, "next")[0];
+  assert.equal(d.at?.placeOrd, 0, "no same-text event after the anchor: the floor is not in play");
+  const stepsAfterLater: TailEvent[] = [...stepsAfter, { kind: "tool", uuid: "t3" }, { kind: "user", md: "ok", uuid: "echo:D" }];
+  assert.deepEqual(injectionGroups(stepsAfterLater, reconcilePending(stepsAfterLater, [d]).inject), [{ idx: 3, sends: [d] }], "right after the anchor");
+});
+
+test("a bubble that changes slot marks the view stale, so the incremental repaint never trusts a shifted prefix (second review)", () => {
+  // chatTail lowers v.rendered to the kernel index and the normal-mode append path re-renders from there, assuming
+  // the DOM prefix still matches s.events — which also requires the bubble's SLOT to be unchanged. The settle
+  // signature therefore carries each group's slot beside its texts.
+  const fn = RENDER.split("function reconcileOptimistic(")[1].split("\nfunction ")[0];
+  assert.match(fn, /settle\(groups\.flatMap\(\(g\) => g\.sends\.map\(\(p\) => g\.idx \+ ":" \+ p\.text\)\)\);/);
+  assert.match(fn, /const groups = injectionGroups\(s\.events as TailEvent\[\], inject\);/);
+});
+
+test("queuedCopyToHide: the newest not-yet-hidden copy of the text, never a copy the kernel marked non-cancelable", () => {
+  // the kernel marks a queued copy cancelable:false when no recall exists (a tmux queue): that copy stays the
+  // one bubble shown, with its honest "can't be recalled" tooltip, and ours is suppressed as before — hiding it
+  // behind our bubble's ✕ offered a cancel the kernel would refuse (review of the first cut)
+  const texts = [{ md: "a" }, { md: "b", cancelable: false }, { md: "a", hiddenByPending: true }, { md: "a" }];
+  assert.equal(queuedCopyToHide(texts, "a"), 3, "the newest visible copy");
+  assert.equal(queuedCopyToHide(texts.slice(0, 3), "a"), 0, "…skipping one already hidden");
+  assert.equal(queuedCopyToHide(texts, "b"), -1, "a non-cancelable copy is never hidden");
+  assert.equal(queuedCopyToHide(texts, "zzz"), -1);
+  assert.equal(queuedCopyToHide([{ md: " a " }], "a"), 0, "trimmed match, like every other text test");
+  // render.ts: a copy the helper refuses keeps covering our bubble (the send leaves `inject`); the bubble's id
+  // goes along, so the copy hidden is the one naming the send (section 18 below)
+  assert.match(RENDER, /const k = queuedCopyToHide\(q\.texts, p\.text, p\.sendId\);/);
+  assert.match(RENDER, /if \(k < 0\) return null;\s*\/\/ no copy to hide/);
+  assert.match(RENDER, /const hid = hideQueuedCopy\(s, p\);\s*\n\s*if \(hid === null\) covered\.add\(p\); else if \(hid\.held\) heldBy\.set\(p, hid\.held\);/);
+  assert.match(RENDER, /const inject = r\.inject\.filter\(\(p\) => !covered\.has\(p\)\);/);
+});
+
+test("the kernel's queued copy at the tail is hidden for a send drawn in place — one bubble per message (T252)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, TEXT);
+  const r = reconcilePending([...tail, { kind: "tool", uuid: "t1" }, { kind: "queued", texts: [{ md: TEXT }] }], list);
+  assert.equal(list[0].received, true, "the kernel's copy proves receipt");
+  assert.deepEqual(r.inject, [list[0]], "…but ours stays drawn, at its slot");
+  assert.deepEqual(r.unqueue, [list[0]], "and the caller drops the kernel's tail copy for it");
+  // an ECHO atom covers ours as before: the kernel draws that atom itself, at the send time
+  const r2 = reconcilePending([...tail, { kind: "user", md: TEXT, uuid: "echo:1" }], press(tail, TEXT));
+  assert.equal(r2.inject.length, 0);
+  assert.equal(r2.unqueue.length, 0);
+});
+
+test("render.ts draws the bubble at its slot, strips its own injections before applying kernel indices, and carries no header or cue", () => {
+  assert.match(RENDER, /const groups = injectionGroups\(s\.events as TailEvent\[\], inject\);\s*\n\s*for \(const g of groups\)\s*\n\s*s\.events\.splice\(g\.idx, 0, \{ kind: "queued", bare: true, texts: g\.sends\.map\(mk\), uuid: OPT_PREFIX \+ g\.sends\[0\]\.ts/,
+    "the bare group is spliced at the slot, never pushed at the tail");
+  assert.doesNotMatch(RENDER, /s\.events\.push\(\{ kind: "queued", bare: true/, "no tail push remains");
+  assert.match(RENDER, /function stripOptimistic\(s: Session\): void \{/, "one strip, used by every ingest path");
+  const tail = RENDER.slice(RENDER.indexOf("function chatTail(msg: any) {"), RENDER.indexOf("s.events.length = from;"));
+  assert.match(tail, /stripOptimistic\(s\);/, "the delta's kernel index is applied to KERNEL events only — a mid-array bubble would shift it");
+  // …but only once the delta is going to be applied: stripping before the gap/head early returns left s.events
+  // without the bubble while the DOM still showed it (review of the first cut)
+  const afterReturns = tail.slice(tail.indexOf("if (from < 0) return;"));
+  assert.match(afterReturns, /stripOptimistic\(s\);/, "the strip sits after both early returns");
+  assert.doesNotMatch(tail.slice(0, tail.indexOf("if (from > kernelLen) {")), /stripOptimistic\(s\);/, "…and not before the gap check");
+  assert.match(tail, /const kernelLen = s\.events\.reduce\(\(n, e\) => n \+ \(isOptimistic\(e\) \? 0 : 1\), 0\);/, "the gap check counts kernel events without mutating");
+  for (const gone of ["absorbedHeader", "absorbedCues", "noteAbsorbedLanding", "renderAbsorbedCue", "appendAbsorbedCues", "dismissAbsorbedCue", "cueRendered", "abjump", "abdismiss", "absorbed-tag", "turn-absorbed-cue"])
+    assert.ok(!RENDER.includes(gone), gone + " is gone from render.ts");
+  for (const gone of [".absorbed-tag", ".turn-absorbed-cue", ".absorbed-cue-line", ".absorbed-cue-act"])
+    assert.ok(!CSS.includes(gone), gone + " is gone from styles.css");
+  // the "not confirmed" state and the ✕ on the pending bubble itself stay
+  assert.match(RENDER, /if \(t\.optimistic && t\.lost\) bubble\.dataset\.lost = "1";/);
+  assert.match(RENDER, /if \(t\.optimistic\) x\.dataset\.qopt = "1";/);
+});
 
 test("a resend of a never-delivered message is not retired by the old verdict — only a verdict after the send counts", () => {
   // the flow the never-delivered bubble offers: copy to composer, Enter — the old bubble is still in the tail
@@ -274,7 +448,7 @@ test("the bare group's label counts lost and sending bubbles separately", () => 
   assert.match(bareGroupLabel(1, 1).title, /^The connection dropped after this was sent[\s\S]*The rest: on its way/);
   // render.ts builds the label from the bubbles' own states, and the ✕'s recount reads them back off the
   // surviving bubbles (data-lost) — never off the label's previous class
-  assert.match(RENDER, /const nLost = ev\.texts\.filter\(\(t\) => t\.lost\)\.length;\s*\n\s*fillBareLabel\(label, nLost, ev\.texts\.length - nLost\);/);
+  assert.match(RENDER, /const nLost = texts\.filter\(\(t\) => t\.lost\)\.length;\s*\n\s*fillBareLabel\(label, nLost, texts\.length - nLost\);/);
   assert.match(RENDER, /if \(t\.optimistic && t\.lost\) bubble\.dataset\.lost = "1";/);
   assert.match(RENDER, /const nLost = bubbles\.filter\(\(b\) => \(b as HTMLElement\)\.dataset\.lost === "1"\)\.length;\s*\n\s*fillBareLabel\(label, nLost, bubbles\.length - nLost\);/);
   assert.doesNotMatch(RENDER, /label\.classList\.contains\("lost"\)/);
@@ -350,10 +524,11 @@ test("queued copies are handed out by position: one new copy confirms one send; 
   const list = press(tail, "continue", "continue");
   let r = reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }] }], list);
   assert.deepEqual(list.map((p) => p.received), [true, undefined]);
-  assert.deepEqual(r.inject, [list[1]], "one kernel copy, one of ours: two bubbles for two sends");
+  assert.deepEqual(r.inject, [list[0], list[1]], "both drawn in place (T252); the kernel's one copy is hidden for the first");
+  assert.deepEqual(r.unqueue, [list[0]]);
   r = reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }, { md: "continue" }] }], list);
   assert.deepEqual(list.map((p) => p.received), [true, true]);
-  assert.equal(r.inject.length, 0);
+  assert.deepEqual(r.unqueue, [list[0], list[1]], "two kernel copies, both hidden: two bubbles for two sends, in place");
   // a second press that already saw the first send's copy counts it as background, not as its own
   const a = press(tail, "continue");
   reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }] }], a);
@@ -433,7 +608,7 @@ test("a send pressed against no frame (a placeholder tab): the first frame's cop
   // a first frame that predates the send entirely stamps exactly as a press-time stamp would
   list = [late()];
   reconcilePending([frame[0], frame[1]], list);
-  assert.deepEqual(list[0].at, { after: "a1", seen: ["u-old"], queued: 0 });
+  assert.deepEqual(list[0].at, { after: "a1", place: "u-old", placeText: TEXT, placeOrd: 0, placeIds: undefined, seen: ["u-old"], queued: 0 });   // placeIds: the floor carried no ids
   // a press-time stamp reads no stamp: its frame predates the press by construction, so an identical
   // message that landed within the press's own second is still background
   const prompt = press([frame[1], { kind: "user", md: TEXT, uuid: "u-same-second", ts: isoAt(Math.floor(T0 / 1000)) }], TEXT);
@@ -443,13 +618,12 @@ test("a send pressed against no frame (a placeholder tab): the first frame's cop
   assert.match(RENDER, /const p = newPending\(text, imgPaths\);\s*\n\s*arr\.push\(p\);/);
   assert.match(RENDER, /if \(!s\) \{ p\.late = true; return p; \}/);
   // the clock the bound compares against: the kernel stamps the echo atom at its receipt of the send, in
-  // whole seconds, and the chat builder ships every event's stamp as iso(t)
+  // whole seconds (sdk_backend.py send). That the chat builder ships every event's stamp as iso(t) is
+  // proven behaviourally, not pinned here: tests/test_kernel_fed_echo_absorbed.py (ChatEventSaysAbsorbed)
+  // reads a built user event's ts back as iso(t) of its atom.
   const SDK = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
   assert.match(SDK, /sent_t = int\(time\.time\(\)\)/);
-  assert.match(SDK, /"type": "user", "uuid": key, "session_id": sid, "t": sent_t,/);
-  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  assert.match(KERNEL, /t = a\.get\("t"\); ts = iso\(t\) if t else None/);
-  assert.match(KERNEL, /def iso\(t\):\s*\n\s*"""Epoch → the ISO-8601 UTC/);
+  assert.match(SDK, /"t": sent_t\b/);
 });
 
 test("a late stamp presumes the first frame's newest queued copy of the text is this send's own (busy and held queues)", () => {
@@ -464,11 +638,13 @@ test("a late stamp presumes the first frame's newest queued copy of the text is 
     const list = [late()];
     let r = reconcilePending([step, q], list);
     assert.equal(list[0].at?.queued, 0, "the frame's one copy is presumed this press's, not background");
-    assert.equal(r.inject.length, 0, "the kernel's copy covers our bubble for the whole wait: no double bubble beside it");
+    assert.equal(r.inject.length, 1, "ours stays drawn at its send slot (T252)…");
+    assert.equal(r.unqueue.length, 1, "…and the kernel's copy is the one hidden: no double bubble");
     assert.equal(list[0].received, true);
-    // every later push, the same copy keeps covering it — the entry never sat uncovered until the CLI took it
+    // every later push, the same copy keeps proving receipt — the entry never sat unconfirmed until the CLI took it
     r = reconcilePending([step, q], list);
-    assert.equal(r.inject.length, 0);
+    assert.equal(r.inject.length, 1);
+    assert.equal(r.unqueue.length, 1);
     // …and when the CLI takes the text, the landing ends the bubble (a tmux route: no echo in between)
     r = reconcilePending([step, { kind: "user", md: TEXT, uuid: "u1", ts: isoAt(S + 40) }], list);
     assert.deepEqual(r.landed.map((l) => l.idx), [1]);
@@ -482,23 +658,26 @@ test("a late stamp presumes the first frame's newest queued copy of the text is 
   // follows covers it, exactly as at a press-time stamp
   const early = [late()];
   let r = reconcilePending([step], early);
-  assert.deepEqual(early[0].at, { after: "a1", seen: [], queued: 0 });
+  assert.deepEqual(early[0].at, { after: "a1", place: null, placeText: undefined, placeOrd: 0, placeIds: undefined, seen: [], queued: 0 });
   assert.equal(r.inject.length, 1);
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], early);
-  assert.equal(r.inject.length, 0);
+  assert.equal(r.inject.length, 1);
+  assert.equal(r.unqueue.length, 1, "the copy that follows is this send's: hidden, ours drawn, receipt proven");
   assert.equal(early[0].received, true);
   // two identical sends pressed against the same placeholder frame own one copy EACH — and when the frame
   // lists only one of them (the kernel had not received the second), the second waits for its own
   const pair = [late(), late()];
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }, { md: TEXT }] }], pair);
   assert.deepEqual(pair.map((p) => p.at?.queued), [0, 0]);
-  assert.equal(r.inject.length, 0, "both copies are the pair's: neither bubble doubles");
+  assert.equal(r.inject.length, 2, "both copies are the pair's: both hidden, both of ours drawn");
+  assert.equal(r.unqueue.length, 2);
   const pair2 = [late(), late()];
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], pair2);
   assert.deepEqual(pair2.map((p) => p.at?.queued), [0, 0], "fewer copies than presses: the count floors at zero");
-  assert.equal(r.inject.length, 1, "one copy covers one send; the other waits for its own");
+  assert.equal(r.inject.length, 2, "both drawn; one copy proves one send, the other waits for its own");
+  assert.equal(r.unqueue.length, 1);
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }, { md: TEXT }] }], pair2);
-  assert.equal(r.inject.length, 0);
+  assert.equal(r.unqueue.length, 2);
   // a press-time stamp presumes nothing: its frame predates the press, so every listed copy is background
   const prompt = press([step, { kind: "queued", texts: [{ md: TEXT }] }], TEXT);
   assert.equal(prompt[0].at?.queued, 1);
@@ -510,40 +689,6 @@ test("a late stamp presumes the first frame's newest queued copy of the text is 
   assert.equal(dropPending(covered, TEXT), mine);
   assert.equal(covered.length, 0);
 });
-
-// ── (2) the absorbed header and the mid-turn cue ─────────────────────────────────────────────────
-
-test("the landed absorbed atom wears the 'joined mid-turn' header, with the taken-at time one level deeper", () => {
-  assert.match(RENDER, /if \(\(ev as any\)\.absorbed && !romp && !injected && !tagged\) turn\.appendChild\(absorbedHeader\(\(ev as any\)\.landedAt\)\);/);
-  assert.match(RENDER, /function absorbedHeader\(landedAt\?: number \| null\): HTMLElement \{\s*\n\s*const h = el\("div", "absorbed-tag"\);\s*\n\s*h\.textContent = "joined mid-turn";/);
-  assert.match(RENDER, /h\.title = "Sent while the session was working[^"]*"\s*\n\s*\+ \(typeof landedAt === "number" \? ", and the session took it at " \+ hhmm\(landedAt\) : ""\)/,
-    "the time rides the tooltip, not the one-line head");
-  // one header family: the follow-up header's size and alignment, dim rather than accent
-  assert.match(CSS, /\.absorbed-tag \{ max-width: 72%; margin-bottom: 1px; font-size: 0\.82em; color: var\(--dim\); \}/);
-});
-
-test("a landing above the tail leaves the cue where the bubble sat; jump scrolls to the atom; both actions retire it", () => {
-  // recorded at the landing that retired the bubble (never re-derived per build), keyed to the anchor event
-  assert.match(RENDER, /for \(const \{ idx \} of r\.landed\) noteAbsorbedLanding\(s, idx\);/);
-  assert.match(RENDER, /function noteAbsorbedLanding\(s: Session, idx: number\): void \{[\s\S]{0,400}?if \(!ev \|\| !ev\.absorbed \|\| !ev\.uuid\) return;\s*\n\s*const after = cueAnchor\(s\.events as TailEvent\[\], idx, cueRendered\);\s*\n\s*if \(!after\) return;/);
-  assert.match(RENDER, /cues\.push\(\{ after, target: ev\.uuid, landedAt: typeof ev\.landedAt === "number" \? ev\.landedAt : null \}\);/);
-  // rendered with the anchor item on every window build (single events, tool groups, retry groups), so it keeps its place
-  assert.equal((RENDER.match(/appendAbsorbedCues\(v, s, /g) || []).length, 3, "hung under every item shape appendItem renders");
-  assert.match(RENDER, /line\.appendChild\(document\.createTextNode\("delivered into the running turn"\s*\n\s*\+ \(c\.landedAt != null \? " at " \+ hhmm\(c\.landedAt\) : ""\)\)\);/);
-  // click-safe: data-act on the body delegate; jump = scrollToAnchor on the atom's uuid, and the cue is done
-  assert.match(RENDER, /jump\.dataset\.act = "abjump"; jump\.dataset\.target = c\.target;/);
-  assert.match(RENDER, /x\.dataset\.act = "abdismiss"; x\.dataset\.target = c\.target;/);
-  assert.match(RENDER, /abjump: \(elx\) => \{[\s\S]{0,400}?dismissAbsorbedCue\(sidC, target\);[\s\S]{0,200}?if \(target\) scrollToAnchor\(target\);/);
-  assert.match(RENDER, /abdismiss: \(elx\) => \{[\s\S]{0,300}?dismissAbsorbedCue\(sidC, elx\.dataset\.target \|\| ""\);/);
-  // the interrupt marker's chrome, shared by selector rather than copied
-  assert.match(CSS, /\.turn-absorbed-cue \.dot, \.turn-interrupt \.dot \{ background: var\(--dim\); border: none; \}/);
-  assert.match(CSS, /\.absorbed-cue-line, \.interrupt-line \{[^}]*font-style: italic/);
-  assert.match(CSS, /\.absorbed-cue-act,\n\.undelivered-act \{/);
-  // the cue leaves with its tab, like the pending sends
-  assert.equal((RENDER.match(/absorbedCues\.delete\(id\);/g) || []).length, 2);
-});
-
-// ── (3) the breadcrumb ───────────────────────────────────────────────────────────────────────────
 
 test("every composer send posts a clientDiag breadcrumb — sid, time, length, route; never the text", () => {
   const m = RENDER.match(/vscodeApi\.postMessage\(\{ type: "clientDiag", surface: "chat", what: "send",\s*\n\s*data: \{ ([^}]*) \} \}\);/);
@@ -557,11 +702,53 @@ test("every composer send posts a clientDiag breadcrumb — sid, time, length, r
   assert.ok(fn.includes('what: "send"'));
 });
 
-// ── (15) identity: the send id (2026-09-08) ──────────────────────────────────────────────────────
+// ── (15) one record, several sends ───────────────────────────────────────────────────────────────
+
+test("two back-to-back sends the CLI took as ONE record retire both bubbles; a third with other text stays", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const list = press(tail, "continue", "continue", "and the docstring");
+  // the kernel's user event for the batched record: md is the blocks joined; `blocks` lists each send
+  const rec: TailEvent = { kind: "user", md: "continue continue", uuid: "u1", blocks: ["continue", "continue"] };
+  const r = reconcilePending([...tail, rec], list);
+  assert.deepEqual(r.landed.map((l) => [l.p, l.idx]), [[list[0], 1], [list[1], 1]], "one copy per block, in send order");
+  assert.deepEqual(r.keep, [list[2]], "the third send's text is in no block");
+  assert.equal(landedIn(rec, list[2]), false);
+  assert.equal(landedIn(rec, list[0]), true);
+  // two sends of DIFFERENT texts batched the same way: each block is its own send's landing
+  const list2 = press(tail, "continue", "and the docstring");
+  const rec2: TailEvent = { kind: "user", md: "continue and the docstring", uuid: "u2", blocks: ["continue", "and the docstring"] };
+  const r2 = reconcilePending([...tail, rec2], list2);
+  assert.deepEqual(r2.landed.map((l) => [l.p.text, l.idx]), [["continue", 1], ["and the docstring", 1]]);
+  // a record of two copies that was already there at the press is background twice over
+  const list3 = press([...tail, rec], "continue");
+  assert.deepEqual(list3[0].at?.seen, ["u1", "u1"], "seen counts copies, not events");
+  assert.equal(reconcilePending([...tail, rec], list3).keep.length, 1, "neither copy is this send's");
+  // across pushes: the first of three identical sends retired on its own record earlier; the two-block
+  // record then retires exactly the two that remain — the claims on one record are counted
+  const list4 = press(tail, "continue", "continue", "continue");
+  let r4 = reconcilePending([...tail, { kind: "user", md: "continue", uuid: "u0" }], list4);
+  assert.deepEqual(r4.landed.map((l) => l.p), [list4[0]]);
+  r4 = reconcilePending([...tail, { kind: "user", md: "continue", uuid: "u0" }, rec], r4.keep);
+  assert.deepEqual(r4.landed.map((l) => l.p), [list4[1], list4[2]]);
+  assert.equal(r4.keep.length, 0);
+  // a fourth identical send pressed later finds every copy already there: the record of two is two
+  const list5 = press([...tail, { kind: "user", md: "continue", uuid: "u0" }, rec], "continue");
+  assert.deepEqual(list5[0].at?.seen, ["u0", "u1", "u1"], "the press lists the two-block record twice");
+  assert.equal(reconcilePending([...tail, { kind: "user", md: "continue", uuid: "u0" }, rec], list5).keep.length, 1);
+  // the same counting for the kernel's copies: a record of several sends is never an echo (one text each)
+  assert.equal(provisionalIn({ kind: "user", md: "continue continue", uuid: "echo:1", blocks: ["continue", "continue"] }, list[0]), true,
+    "…but were one ever shipped with blocks, its copies would be read the same way");
+});
+
+// ── (16) identity: the send id (2026-09-08) ──────────────────────────────────────────────────────
 // The incident: a composer send and a todo reply queued during one open turn were fused by the CLI into
 // ONE record whose text matched neither bubble, so the first stayed "sending…" until a ✕. The kernel now
 // feeds one text at a time (tests/test_queued_sends_not_fused.py); on this side every send carries an id
 // the kernel echoes back on its copies, and the decisions match on it wherever a copy carries one.
+// Folded onto T252 (2026-09-08): the id decides WHICH kernel copy is this send's; the placement floor
+// decides WHERE the bubble sits. A queued copy naming the send is therefore a queued cover like an
+// id-less text match: ours stays drawn at its slot (`inject`) and that copy is hidden (`unqueue`). An
+// echo atom naming the send covers ours outright, as an id-less echo does: the kernel draws that atom.
 
 test("a landing names the send by id: the id decides, the words do not", () => {
   const list = press([{ kind: "assistant", md: "…", uuid: "a1" }], "first words", "Re: the ask — the reply");
@@ -594,22 +781,28 @@ test("a kernel copy that names ANOTHER send never covers this one, however simil
   let r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
                             { kind: "queued", texts: [{ md: TEXT, sendId: "s-someone-else" }] }], list);
   assert.equal(r.inject.length, 1, "our bubble stays: the copy is another send's");
+  assert.equal(r.unqueue.length, 0, "…and no copy is hidden for it");
   assert.equal(p.received, undefined, "…and proves nothing about our receipt");
-  // the copy carrying OUR id covers us
+  // the copy carrying OUR id is this send's: a queued cover (T252), so ours is drawn at its slot and the
+  // kernel's copy of it is the one hidden
   r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
                         { kind: "queued", texts: [{ md: TEXT, sendId: p.sendId }] }], list);
-  assert.equal(r.inject.length, 0, "the kernel's copy of THIS send covers our bubble");
+  assert.deepEqual(r.inject, [p], "ours stays drawn at its slot (T252)");
+  assert.deepEqual(r.unqueue, [p], "…and the kernel's copy of THIS send is the one hidden for it");
   assert.equal(p.received, true, "…and proves the kernel has it");
-  // an id-less copy (an older kernel) covers by text, as before
+  // an id-less copy (an older kernel) covers by text, as before: in place
   const q = press([{ kind: "assistant", md: "…", uuid: "a1" }], TEXT);
   r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" }, { kind: "queued", texts: [{ md: TEXT }] }], q);
-  assert.equal(r.inject.length, 0, "no id on the copy → the text match still covers");
+  assert.deepEqual(r.unqueue, [q[0]], "no id on the copy → the text match still covers, in place");
   // the kernel's echo atom, likewise: its ids decide when it carries any
   const e = press([{ kind: "assistant", md: "…", uuid: "a1" }], TEXT);
   r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
                         { kind: "user", md: TEXT, uuid: "echo:9", sendIds: ["s-someone-else"] }], e);
   assert.equal(r.inject.length, 1, "another send's echo does not hide ours");
   assert.ok(provisionalIn({ kind: "user", md: TEXT, uuid: "echo:9", sendIds: [e[0].sendId] }, e[0]), "ours does");
+  r = reconcilePending([{ kind: "assistant", md: "…", uuid: "a1" },
+                        { kind: "user", md: TEXT, uuid: "echo:9", sendIds: [e[0].sendId] }], e);
+  assert.equal(r.inject.length, 0, "…and the kernel's echo atom, naming the send, covers the bubble outright: the kernel draws that atom");
 });
 
 test("the ✕ removes exactly its own entry of two wearing the same words — by id", () => {
@@ -630,7 +823,7 @@ test("the DOM half posts the id with the send and carries it on the ✕ (render.
   assert.match(RENDER, /sendId: p\.sendId \}\);\n/, "the injected bubble carries its id, so its own kernel copy is matched by it");
 });
 
-// ── (16) the id is exact where the words are not (the 2026-09-08 review of the id change) ────────
+// ── (17) the id is exact where the words are not (the 2026-09-08 review of the id change) ────────
 // Three places still let the words or a clock outvote an id the kernel had echoed back: a queued copy
 // carrying this send's id was handed out by POSITION (two identical sends, two id-carrying copies: the
 // second found position 0 taken and showed a phantom "sending…" beside the kernel's own copy of it); a
@@ -642,21 +835,23 @@ test("two identical sends whose queued copies both carry ids each clear on their
   const chip = (...ps: PendingSend[]): TailEvent => ({ kind: "queued", texts: ps.map((p) => ({ md: "continue", sendId: p.sendId })) });
   const list = press(tail, "continue", "continue");
   let r = reconcilePending([...tail, chip(...list)], list);
-  assert.equal(r.inject.length, 0, "two sends, two kernel copies naming them: nothing of ours is added to the group");
+  assert.deepEqual(r.inject, list, "two sends, drawn at their slots (T252)");
+  assert.deepEqual(r.unqueue, list, "two kernel copies naming them, both hidden: two bubbles for two sends, no third");
   assert.deepEqual(list.map((p) => p.received), [true, true], "each copy proves its own send's receipt");
   // three identical sends, the same
   const trio = press(tail, "continue", "continue", "continue");
   r = reconcilePending([...tail, chip(...trio)], trio);
-  assert.equal(r.inject.length, 0);
+  assert.deepEqual(r.unqueue, trio);
   assert.deepEqual(trio.map((p) => p.received), [true, true, true]);
   // the kernel's queue order is its own: the chip listing B before A changes nothing
   const pair = press(tail, "continue", "continue");
   r = reconcilePending([...tail, chip(pair[1], pair[0])], pair);
-  assert.equal(r.inject.length, 0);
-  // only B's copy has arrived: A is the one still showing, whichever is first with the text
+  assert.deepEqual(r.unqueue, pair, "the chip listing B before A changes nothing");
+  // only B's copy has arrived: B's is the copy hidden; A's bubble waits for its own
   const two = press(tail, "continue", "continue");
   r = reconcilePending([...tail, chip(two[1])], two);
-  assert.deepEqual(r.inject, [two[0]], "the copy names B, so B is covered and A shows");
+  assert.deepEqual(r.inject, two, "both drawn: A uncovered, B at its slot over its hidden copy");
+  assert.deepEqual(r.unqueue, [two[1]], "the copy names B, so B's is the copy hidden; A's bubble waits for its own");
   assert.deepEqual(two.map((p) => p.received), [undefined, true]);
   // a drop before the chip marked both 'not confirmed': the chip naming both clears both
   const dropped = press(tail, "continue", "continue");
@@ -667,22 +862,25 @@ test("two identical sends whose queued copies both carry ids each clear on their
   // id-less one is handed out by position, and A is the one entry left to take it
   const mixed = press(tail, "continue", "continue");
   r = reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue" }, { md: "continue", sendId: mixed[1].sendId }] }], mixed);
-  assert.equal(r.inject.length, 0);
+  assert.deepEqual(r.unqueue, mixed, "B takes its own by id; the id-less one is handed out by position, and A is the one entry left to take it");
   assert.deepEqual(mixed.map((p) => p.received), [true, true]);
   // copies naming OTHER sends are neither ours nor positions: they cover nothing and count for nothing
   const strangers = press(tail, "continue", "continue");
   r = reconcilePending([...tail, { kind: "queued", texts: [{ md: "continue", sendId: "s-someone-else" }, { md: "continue", sendId: "s-another" }] }], strangers);
   assert.equal(r.inject.length, 2, "two copies of other sends cover neither of ours");
+  assert.equal(r.unqueue.length, 0, "…and neither is hidden");
   assert.deepEqual(strangers.map((p) => p.received), [undefined, undefined]);
-  // the group's next push without B's copy (the CLI took it): B's bubble steps back in until its landing,
-  // and A's copy still covers A. No position bookkeeping crosses the two.
+  // the group's next push without B's copy (the CLI took it): B's bubble waits for its landing, and A's
+  // copy still covers A. No position bookkeeping crosses the two.
   const later = press(tail, "continue", "continue");
   reconcilePending([...tail, chip(...later)], later);
   r = reconcilePending([...tail, chip(later[0])], later);
-  assert.deepEqual(r.inject, [later[1]]);
+  assert.deepEqual(r.inject, later, "B's copy gone (the CLI took it): both drawn, B's bubble waiting for its landing");
+  assert.deepEqual(r.unqueue, [later[0]], "A's copy still covers A; no position bookkeeping crosses the two");
   r = reconcilePending([...tail, chip(later[0]), { kind: "user", md: "continue", uuid: "u1", sendIds: [later[1].sendId] }], later);
   assert.deepEqual(r.landed.map((l) => l.p), [later[1]]);
-  assert.equal(r.inject.length, 0);
+  assert.deepEqual(r.inject, [later[0]]);
+  assert.deepEqual(r.unqueue, [later[0]]);
 });
 
 test("a late stamp against a queued copy that NAMES the send presumes nothing: the id is the identity", () => {
@@ -691,27 +889,30 @@ test("a late stamp against a queued copy that NAMES the send presumes nothing: t
   const S = Math.floor(pressMs / 1000);
   const late = (): PendingSend => ({ ...newPending(TEXT, undefined, pressMs), late: true });
   const step: TailEvent = { kind: "assistant", md: "…", uuid: "a1", ts: isoAt(S - 2) };
-  // the frame's copy carries this send's id: covered by it, exactly, on every push it is listed
+  // the frame's copy carries this send's id: covered by it, exactly, on every push it is listed (ours drawn
+  // at its slot, that copy hidden: T252)
   let p = late();
   let r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT, sendId: p.sendId }] }], [p]);
-  assert.equal(r.inject.length, 0);
+  assert.deepEqual(r.unqueue, [p], "covered by its own copy, exactly, on every push it is listed");
   assert.equal(p.received, true);
   assert.equal(p.at?.queued, 0, "an id-carrying copy is never an id-less position");
   // an older id-less copy sits beside it: that one is background, not presumed ours (we know which is ours)
   p = late();
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }, { md: TEXT, sendId: p.sendId }] }], [p]);
   assert.equal(p.at?.queued, 1, "the id-less copy is background; the presumption is off once the frame names the send");
-  assert.equal(r.inject.length, 0, "covered by its own copy");
+  assert.deepEqual(r.unqueue, [p], "covered by its own copy");
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], [p]);
   assert.equal(r.inject.length, 1, "once its own copy is gone (the CLI took it), the older copy covers nothing: ours shows until it lands");
+  assert.equal(r.unqueue.length, 0, "…and the older copy is not hidden for it");
   // two identical late presses, the frame naming only the first: the second waits for its own copy, and the
   // first's copy is not lent to it by position
   const pair = [late(), late()];
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT, sendId: pair[0].sendId }] }], pair);
-  assert.deepEqual(r.inject, [pair[1]]);
+  assert.deepEqual(r.inject, pair, "both drawn at their slots");
+  assert.deepEqual(r.unqueue, [pair[0]], "the first's copy is hidden for the first, and not lent to the second by position");
   assert.deepEqual(pair.map((q) => q.received), [true, undefined]);
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT, sendId: pair[0].sendId }, { md: TEXT, sendId: pair[1].sendId }] }], pair);
-  assert.equal(r.inject.length, 0);
+  assert.deepEqual(r.unqueue, pair);
   assert.deepEqual(pair.map((q) => q.received), [true, true]);
   // id-less copies keep the presumption (an older kernel names nothing), as the round-4 test above pins
   const old = late();
@@ -788,4 +989,40 @@ test("a provisional tab's held sends post their bubble's id at adoption, like ev
   assert.deepEqual(posted.map((m) => m.sendId), registered.map((p) => p.sendId), "each post carries the id of the bubble registered for it");
   assert.notEqual(posted[0].sendId, posted[1].sendId, "two identical texts, two ids: the kernel can tell them apart");
   for (const m of posted) { assert.equal(m.type, "sendMessage"); assert.equal(m.id, "11111111-2222-3333-4444-555555555555"); assert.ok(m.sendId); }
+});
+
+// ── (18) the id and the floor together (the 2026-09-08 fold of T252 onto the send id) ────────────
+// The floor is found by identity across the echo → landed swap: the uuid first, then the ids the floor
+// event carried at the press, and the text ordinal only when no record after the anchor carries them.
+// The kernel copy hidden for a bubble drawn in place is the one naming the send, wherever it sits in the
+// queue; the newest id-less copy of its text stands in when none does.
+
+test("the placement floor is followed by ID across the echo → landed swap; the text ordinal stands in when no record carries its ids", () => {
+  const a1: TailEvent = { kind: "assistant", md: "…", uuid: "a1" };
+  const echoX: TailEvent = { kind: "user", md: "continue", uuid: "echo:x", sendIds: ["sX"] };
+  const list = press([a1, echoX], "and the docstring");
+  assert.equal(list[0].at?.place, "echo:x");
+  assert.deepEqual(list[0].at?.placeIds, ["sX"], "the floor's ids are recorded at the press");
+  assert.equal(list[0].at?.placeOrd, 1);
+  // X lands under a new uuid; an OLDER absorbed atom of the same text is placed above it, at ITS send time
+  const later: TailEvent[] = [a1, { kind: "user", md: "continue", uuid: "u-w", absorbed: true }, { kind: "user", md: "continue", uuid: "u-x", sendIds: ["sX"] }];
+  assert.deepEqual(injectionGroups(later, reconcilePending(later, list).inject), [{ idx: 3, sends: [list[0]] }],
+    "below X's record, found by its id; the ordinal alone would have stopped at the older atom");
+  // the ids gone from the frame (a kernel that no longer maps the landing): the ordinal rule, as before
+  const idless: TailEvent[] = [a1, { kind: "user", md: "continue", uuid: "u-x2" }];
+  assert.deepEqual(injectionGroups(idless, reconcilePending(idless, list).inject), [{ idx: 2, sends: [list[0]] }]);
+  // an id-less floor records no ids and is found as before
+  const plain = press([a1, { kind: "user", md: "continue", uuid: "echo:p" }], "and the docstring");
+  assert.equal(plain[0].at?.placeIds, undefined);
+});
+
+test("queuedCopyToHide hides the copy NAMING the send first, else the newest id-less copy of its text; a copy naming another send is never a position", () => {
+  const texts = [{ md: "a", sendId: "s1" }, { md: "a" }, { md: "a", sendId: "s2" }];
+  assert.equal(queuedCopyToHide(texts, "a", "s1"), 0, "the copy naming the send, wherever it sits in the queue");
+  assert.equal(queuedCopyToHide(texts, "a", "s9"), 1, "no copy names it: the newest ID-LESS copy of the text");
+  assert.equal(queuedCopyToHide(texts, "a"), 1, "…and the same with no id at all");
+  assert.equal(queuedCopyToHide([{ md: "a", sendId: "s1", cancelable: false }, { md: "a" }], "a", "s1"), -1, "its own copy, non-cancelable: nothing hidden, the kernel's bubble stays");
+  assert.equal(queuedCopyToHide([{ md: "a", sendId: "s2" }], "a", "s1"), -1, "only another send's copy: nothing to hide");
+  // render.ts hands the helper the bubble's id (hideQueuedCopy)
+  assert.match(RENDER, /const k = queuedCopyToHide\(q\.texts, p\.text, p\.sendId\);/);
 });

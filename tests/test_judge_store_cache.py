@@ -8,6 +8,7 @@ Writers stay on load_goals. All fixtures SYNTHETIC; this module uses a PRIVATE s
 fresh state root per test (the root CLAUDE.md, "Goal-store fixtures use a PRIVATE synthetic sid")."""
 import contextlib
 import copy
+import errno
 import io
 import json
 import os
@@ -18,6 +19,7 @@ import threading
 import unittest
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
 # Hermetic state BEFORE the loads — they resolve their state root at import time, and only
@@ -293,27 +295,82 @@ class SharedStoreCache(unittest.TestCase):
         self.assertEqual((io1["loads"] - io0["loads"], io1["loads_shared"] - io0["loads_shared"]), (1, 0),
                          "handed to load_goals, which counts it: loads + loads_shared stays one read per call")
 
-    def test_a_corrupt_store_is_parsed_once_per_version(self):
+    def test_a_corrupt_store_is_handed_to_load_goals_and_quarantined_once(self):
+        # Upstream #1019 (steer 1 of the 2026-09-08 fold) superseded the per-version corrupt memo: the shared
+        # loader never keeps a fresh store for bytes the writer's loader would move aside. Bytes that do not
+        # parse go to load_goals, which quarantines the file (one stderr line, one store-quarantined row) and
+        # answers the legitimate fresh store. The path then reads as absent, so nothing is cached for it and
+        # the next call is the absent-store answer.
         p = self._seed()
         p.write_bytes(b"{not a store")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             a = jd.load_goals_shared(SID)
             b = jd.load_goals_shared(SID)
-        self.assertEqual((a["nodes"], a["_baseRev"]), ({}, 0), "load_goals' answer to a file that does not parse")
+        self.assertEqual((a["nodes"], a["_baseRev"]), ({}, 0), "load_goals' fresh store, once the bad bytes are aside")
         self.assertEqual(type(a), dict)
         self.assertIsNot(a, b, "a fresh store each time (private, mutable)")
-        self.assertEqual((a.get("_unread"), b.get("_unread")), ("store", "store"),
-                         "the file exists and this is not its content: marked on the fill and on the hit, as "
-                         "load_goals marks it, with the reason save_goals refuses on")
-        self.assertEqual(jd.load_goals(SID).get("_unread"), "store")
-        self.assertEqual((self._delta("corrupt"), self._delta("hit")), (1, 1), "the failed parse ran once")
-        self.assertEqual(err.getvalue().count("goals-shared:"), 1, "said once per version")
-        self.assertEqual(jd.shared_store_stats()["entries"], 1, "remembered under the version's key and bytes")
-        p.write_bytes(b"{still not a store")               # a new version: parsed (and reported) once more
-        with contextlib.redirect_stderr(err):
-            jd.load_goals_shared(SID)
-        self.assertEqual(self._delta("corrupt"), 2)
+        self.assertNotIn("_unread", a, "legitimately fresh: the evidence is preserved aside")
+        self.assertFalse(p.exists(), "the corrupt file was moved aside")
+        self.assertEqual(len(list(jd.GOALDIR.glob(SID + ".json.corrupt-*"))), 1)
+        rows = [r for r in self._errors() if r["err"] == "store-quarantined"]
+        self.assertEqual([r["fsid"] for r in rows], [SID], "one row, load_goals' own")
+        self.assertIn("could not be parsed", err.getvalue())
+        self.assertEqual((self._delta("corrupt"), self._delta("absent")), (1, 1), "handed over once; then the path is absent")
+        self.assertEqual(jd.shared_store_stats()["entries"], 0, "nothing cached for a file that did not parse")
+
+    def _eio_on_open(self, path):
+        orig_open = os.open
+
+        def faulting_open(p, *a, **kw):
+            if os.fspath(p) == str(path):
+                raise OSError(errno.EIO, "Input/output error", str(path))
+            return orig_open(p, *a, **kw)
+        return mock.patch.object(os, "open", faulting_open)
+
+    def test_a_read_fault_raises_from_load_goals_shared_and_caches_nothing(self):
+        # The shared loader raises a read fault exactly as load_goals does (upstream #1019): no empty store,
+        # no stale view, and the entry for the path is dropped. The pusher's builders take it through
+        # load_goals_shared_or_fault, which files the fault once per episode (the next test).
+        p = self._seed()
+        self.assertIsInstance(jd.load_goals_shared(SID), jd.FrozenStore)
+        self.assertEqual(jd.shared_store_stats()["entries"], 1)
+        with self._eio_on_open(p):
+            with self.assertRaises(OSError) as cm:
+                jd.load_goals_shared(SID)
+        self.assertEqual(cm.exception.errno, errno.EIO, "the fault itself, at the open")
+        self.assertEqual(jd.shared_store_stats()["entries"], 0, "nothing cached for a file that did not read")
+        self.assertIsInstance(jd.load_goals_shared(SID), jd.FrozenStore, "reads again once the fault clears")
+        orig_read = jd._disk_read
+
+        def faulting_read(fd, path_s):
+            if path_s == str(p):
+                raise OSError(errno.EIO, "Input/output error", path_s)
+            return orig_read(fd, path_s)
+        with mock.patch.object(jd, "_disk_read", faulting_read):
+            self.assertRaises(OSError, jd.load_goals_shared, SID)
+        self.assertEqual(jd.shared_store_stats()["entries"], 0, "...and at the read: a warm entry is re-read every call")
+        self.assertEqual(self._delta("absent"), 0, "a fault is not an absent store")
+
+    def test_load_goals_shared_or_fault_files_one_row_per_episode(self):
+        p = self._seed()
+        store, fault = jd.load_goals_shared_or_fault(SID)
+        self.assertIsInstance(store, jd.FrozenStore)
+        self.assertIsNone(fault)
+        with self._eio_on_open(p):
+            for _ in range(3):
+                store, fault = jd.load_goals_shared_or_fault(SID)
+                self.assertIsNone(store, "never an empty store")
+                self.assertEqual(fault.errno, errno.EIO)
+        rows = [r for r in self._errors() if r["err"] == "store-unreadable"]
+        self.assertEqual([r["fsid"] for r in rows], [SID], "one row for the episode, not one per call")
+        self.assertEqual(jd.unreadable_store_sids(), [SID], "the episode is listed for the kernel's warn and the /perf gauge")
+        store, fault = jd.load_goals_shared_or_fault(SID)
+        self.assertIsInstance(store, jd.FrozenStore, "the episode ends on the read")
+        self.assertEqual(jd.unreadable_store_sids(), [])
+        with self._eio_on_open(p):
+            jd.load_goals_shared_or_fault(SID)
+        self.assertEqual(len([r for r in self._errors() if r["err"] == "store-unreadable"]), 2, "a new episode files again")
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_journal_is_served_uncached_and_keeps_logging(self):

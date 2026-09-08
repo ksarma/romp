@@ -373,8 +373,9 @@ toward nothing.
 A judge call bills **the account of the session it judges** — the same pick the
 session's own Billing selector holds, read from the same registry, with the same
 selection (an explicit login pick → the login; otherwise the configured API
-key source when one exists, else the login). With `ROMP_API_KEY_REF` configured,
-each key-billed judge call resolves the reference through `op read --no-newline`; a
+key source when one exists, else the login). With a key provider configured
+(`ROMP_API_KEY_CMD`, or the 1Password shorthand `ROMP_API_KEY_REF`), each
+key-billed judge call runs the provider (the key command, or `op read --no-newline`); a
 retrieval that fails is not retried by later calls in the same judging pass, and the first
 call of a pass to reach the key gates the others until its retrieval returns. The next pass,
 or a changed source, retries.
@@ -386,13 +387,19 @@ with a credential error; it cannot silently use the machine login or a stale
 key. An explicitly login-billed call does not run `op`.
 
 Legacy `ANTHROPIC_API_KEY` and Claude login remain supported when no runtime
-provider is selected. See [Service environment and credentials](reference.md#service-environment-and-credentials)
-for setup, service PATH and authentication requirements, and migration.
+provider is selected. See [API keys from a secret manager at
+runtime](reference.md#api-keys-from-a-secret-manager-at-runtime) for setup,
+service PATH and authentication requirements, and migration.
 
 With `ROMP_CREDENTIAL_COMMAND` set (see [Installing without keys on
 disk](reference.md#installing-without-keys-on-disk)), a judge child env also
 carries the set that command printed, minus `ANTHROPIC_API_KEY`, which the same
-explicit decision re-adds only for a key-mode call. A credential-class refusal
+explicit decision re-adds only for a key-mode call. A set that carries that
+key is a configured key source: a key-mode call injects it, and the no-source
+rule (with no key source selected, Romp injects nothing and Claude Code's own
+credential applies; see [API keys from a secret manager at
+runtime](reference.md#api-keys-from-a-secret-manager-at-runtime)) does not
+apply while the set holds one. A credential-class refusal
 on a judge call marks the cached set stale, so the next call re-runs the
 command; the model catalog fetch reads the set's `ANTHROPIC_LP_API_KEY` the
 same way.
@@ -471,12 +478,22 @@ permission/API-error floors: one interrupt at a time, the present event first.
   `STATE/judge-errors.jsonl` (the row contract above; kinds are parse,
   call, give-up, sweep-cut, cite-miss, rate-limited, task-store, history-unreadable,
   task-key-collision — a duplicated to-do mirror key, reconciled per node
-  and surfaced loudly — and the read-failure kinds the evidence gate's strict
-  readers write once per failure episode when a file exists and does not
-  read: store-unreadable, states-unreadable, cleared-unreadable,
-  stall-unreadable, captions-unreadable, session-archive-unreadable,
-  units-cache-unreadable, plus units-cache-write-failed for a unit-cache
-  publish that did not land),
+  and surfaced loudly, store-unreadable: a goals file that cannot be read,
+  filed once per fault episode and ended by the next successful read,
+  store-unwritable: a goals file whose publish failed under a user gesture,
+  store-quarantined: a goals file whose bytes did not parse, moved aside,
+  and the read-failure kinds the evidence gate's strict readers write once
+  per failure episode when a side file exists and does not read:
+  states-unreadable, cleared-unreadable, stall-unreadable,
+  captions-unreadable, session-archive-unreadable, units-cache-unreadable,
+  archive-unreadable for the cleared-card archive, with unread-store-save
+  for a publish refused over that archive, plus units-cache-write-failed
+  for a unit-cache publish that did not land).
+  A file that does not parse is never deleted: it is moved beside its path as
+  `<file>.corrupt-<utc stamp>` (a `-n` suffix when two land in the same second)
+  before a fresh one is written, so the bytes survive for inspection, and the
+  `*.json` globs that enumerate stores skip it; the same sidecar convention
+  applies to any other state file romp moves aside as unparseable.
   `STATE/judge-auth.json` (the per-session judge-auth-down latch — see
   "Billing" above).
 - Debugging: run the judge's own code against the live store

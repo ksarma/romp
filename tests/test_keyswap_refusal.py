@@ -804,6 +804,28 @@ class HelpAndDocsAgree(unittest.TestCase):
             self.assertIn("Input/output error", ref[bootout - 1500:m.start()], "the reason for the wait")
         self.assertNotIn("launchctl bootstrap gui/", " ".join(src.split()))
 
+    def test_the_drop_in_key_paragraph_ends_on_the_fork_s_key_free_guidance(self):
+        # upstream's paragraph on a key that reaches a supervised manager through a systemd drop-in or a plist
+        # entry closed by telling the operator to move it into service.env, which this fork's own file-mode
+        # section forbids (API keys never go in it) and whose kernel reports such a line as a problem under
+        # ROMP_EXPECTED_AUTH=key (sdk_backend._warn_credential_lines_in_env_file). The 2026-09-08 fold's round 3
+        # re-ended it on the fork's guidance (remove the key from the drop-in); round 4 added the rotation the
+        # kernel's own rows for such a line demand, with the file-mode section's reason (a key in a unit is a copy
+        # that outlives its rotation). The anchor it points at is the file-mode heading.
+        ref = self._read("docs/reference.md")
+        flat = " ".join(ref.split())
+        self.assertNotIn("Move such a key into `service.env`", flat)
+        self.assertIn("Remove the line and rotate the value: a key in a unit or plist is a copy that outlives its rotation. "
+                      "Do not move it into `service.env`, which stays key-free (see [the file mode](#api-keys-on-disk-the-file-mode)) "
+                      "and may name a provider instead.", flat)
+        self.assertIn("\n### API keys on disk: the file mode\n", ref, "the heading the anchor resolves to")
+        # the kernel's two rows for a credential-shaped line in a unit (command mode; a declared auth) say the same:
+        # remove and rotate. Adjacent string literals joined, so a row split across source lines reads whole.
+        src = re.sub(r'"\s*"', "", self._read("kernel/sdk_backend.py"))
+        for row in ("copies on disk the command mode exists to remove. Remove them and rotate the values.",
+                    "A credential in a unit contradicts the declared auth model; remove the lines and rotate the values."):
+            self.assertIn(row, src, "the kernel row the paragraph agrees with")
+
     def test_the_docs_show_the_command_mode_report_with_placeholder_fingerprints(self):
         ref = self._read("docs/reference.md")
         for line in ("key source  command (ROMP_CREDENTIAL_COMMAND is set)", "candidates  hp <- selected, lp",
@@ -1130,6 +1152,21 @@ class _Backend(_Env):
         self.be.sessions[SID] = s
         return s
 
+    def connect(self, s):
+        """What a connect does for the stamps: _options on the live session object."""
+        import sys
+        import types
+        fake = None
+        if "claude_agent_sdk" not in sys.modules and not sb.sdk_importable():
+            fake = types.ModuleType("claude_agent_sdk")
+            fake.HookMatcher = lambda **kw: kw
+            sys.modules["claude_agent_sdk"] = fake
+        try:
+            return self.be._options(s, dict)
+        finally:
+            if fake is not None:
+                sys.modules.pop("claude_agent_sdk", None)
+
 
 class _CommandMode(_Backend):
     """The backend of _Backend (a keyless manager, the login or the apiKeyHelper bills) in COMMAND
@@ -1174,20 +1211,6 @@ class _CommandMode(_Backend):
         with open(os.path.join(d, "settings.json"), "w") as fh:
             json.dump({"apiKeyHelper": h}, fh)
 
-    def connect(self, s):
-        """What a connect does for the stamps: _options on the live session object."""
-        import sys
-        import types
-        fake = None
-        if "claude_agent_sdk" not in sys.modules and not sb.sdk_importable():
-            fake = types.ModuleType("claude_agent_sdk")
-            fake.HookMatcher = lambda **kw: kw
-            sys.modules["claude_agent_sdk"] = fake
-        try:
-            return self.be._options(s, dict)
-        finally:
-            if fake is not None:
-                sys.modules.pop("claude_agent_sdk", None)
 
 
 class HelperSessionsConverge(_CommandMode):
@@ -1426,6 +1449,53 @@ class HelperSessionsConverge(_CommandMode):
         self.assertEqual(self.be.cycle_key(SID), "cycling")
         s._launched_key_fp = ks.fingerprint(OLD_KEY)
         self.assertEqual(self.be.cycle_key(SID), "current")
+
+
+class KeyCommandFileMode(_Backend):
+    """FILE mode with upstream's key command (a ROMP_API_KEY_CMD line: kernel/keysource.py's `command` kind,
+    #1029, the generic provider). A provider like the 1Password reference, so a status read never runs it and
+    never presents the hash of its command LINE as a key fingerprint (R9; the 2026-09-08 fold's review found
+    credential_fingerprint still asking for `op` alone), and a keyed launch's work-key line says which command
+    ran: upstream's wording, since the fork's "credential command" is the command MODE's (ROMP_CREDENTIAL_COMMAND,
+    kernel/envsource.py) and the two kinds share the tag `command`. The fake command is a script in a temp dir
+    printing a value assembled at run time; nothing key-shaped."""
+
+    def setUp(self):
+        super().setUp()
+        self.key = fixture_value("cmdkey")
+        self.script = os.path.join(self.d, "fetch-key.sh")
+        with open(self.script, "w") as fh:
+            fh.write("#!/bin/sh\necho '%s'\n" % self.key)
+        os.chmod(self.script, 0o700)
+        self.write_env("ROMP_PERF=1\nROMP_EXPECTED_AUTH=key\nROMP_API_KEY_CMD=%s\n" % self.script)
+        self.logged.clear()
+        self.be = self.construct()
+
+    def test_a_status_read_answers_no_fingerprint_for_a_key_command(self):
+        src = sb.work_api_key_source()
+        self.assertEqual(src.kind, "command")
+        self.assertTrue(src.configured)
+        self.assertTrue(src.fingerprint(), "the descriptor's own identity is the hash of its command line...")
+        self.assertEqual(self.be.credential_fingerprint(), ("", ""),
+                         "...which is a configuration's, not a credential's: nothing to fingerprint, nothing run")
+        st = self.be.key_source_status()
+        self.assertEqual((st["source"], st["fp"], st["fpKind"]), ("file", "", ""))
+        health = self.be.api_health_snapshot()["keySource"]
+        self.assertEqual((health["fingerprint"], health["fingerprintKind"]), ("", ""))
+        self.assertNotIn(src.fingerprint(), json.dumps(st) + json.dumps(health))
+        self.assertEqual(self.be.work_key_fp(), "")
+        self.assertNotIn(self.key, json.dumps(st) + json.dumps(health) + "".join(self.logged))
+
+    def test_a_keyed_launch_names_the_key_command_in_the_work_key_line(self):
+        s = self._live("key", auth="key")
+        kw = self.connect(s)
+        self.assertTrue(kw["env"].get("ANTHROPIC_API_KEY") == self.key, "the command's key is injected")
+        lines = [m for m in self.logged if m.startswith("work key: sessions now launch on the key sha256:")]
+        self.assertEqual(len(lines), 1, self.logged)
+        self.assertIn("retrieved at runtime by the key command (ROMP_API_KEY_CMD)", lines[0])
+        self.assertNotIn("credential command", lines[0], "the command MODE's wording is for ROMP_CREDENTIAL_COMMAND")
+        self.assertNotIn(self.key, lines[0])
+        self.assertIn(ks.fingerprint(self.key), lines[0])
 
 
 class EnvFileCredentialWarning(_Backend):
