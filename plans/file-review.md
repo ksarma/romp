@@ -813,6 +813,17 @@ four reply types.
   (`kernel.py:34486-34493`); the shell forwards `todoId`, `files.ts` passes it to
   `openFileView(path, sid, {todoId})`, and relative paths resolve on the kernel through
   `_resolve_open_path`. When the pane is not framed by the shell, the detail stays plain text.
+- From a todo that names its file (the todo-file follow-on, 2026-09-07): a user todo record
+  carries an optional `file`, the absolute path the kernel resolved when the todo was filed
+  (`add_user_todo`'s `file` argument; a relative path resolves against the session's cwd; a path
+  that does not resolve is stored as given and the reply warns). The Waiting-on-you pane shows
+  it as a chip on the row and in the Reply modal (the basename, the full path on hover), which
+  posts the same `viewFile` message as a linkified path: path, sid, identity, todoId. The
+  `fileComments` status reply lists the open todos of the session whose `file` is the status'd
+  file (`todos: [{id, text}]`), so the panel's Send confirm offers to answer a todo however the
+  file was opened: one candidate is the checkbox, several are one radio group, and the chosen
+  id goes out as `fileCommentsSend`'s `todoId`. A todo that names its file only in the detail
+  still works through the opened-from link alone.
 - From the viewer: the Comments action, on any file, on a machine whose kernel has node. If the
   action is missing, the gear's row beside "File links open in" names the machine and the reason
   (`no-node`), and the same row warns when the agent-side tooling is not linked and offers to run
@@ -823,12 +834,17 @@ four reply types.
   symlinked by `install.sh:173` and appended to the system prompt by both backends) gains one
   sentence in its Working style section, after the paragraph on locating paths (the user
   2026-09-06), in the person's voice and conditional on the tool: when you want me to look at a
-  file, flag it with `add_user_todo` if you have that tool, with the file's absolute path in the
-  detail; I open it from there, and my comments come back to you as a message with instructions;
-  without the tool, say so in your reply. It does not go in the Housekeeping section, which
-  `CLAUDE.md` reserves for explaining romp's artifacts. The vendored skill gains the sentence on
-  asking for another look. Both speak as the person and name only what the agent already sees,
-  so the veil holds.
+  file, flag it with `add_user_todo` if you have that tool, and give the file's absolute path as
+  its `file` argument (not only as an absolute path in the detail, which can still describe it);
+  I open it from there, and my comments come back to you as a message with instructions; if you
+  don't have the tool, ask for the look in your reply and name the file. (As approved, the
+  sentence put the path in the detail; the todo-file follow-on, 2026-09-07, moved it to the `file`
+  argument, the structured link the chip and the Send confirm read, and left the detail its
+  descriptive role. Decision 35 says the same, and `tests/test_file_review_plan_prompt_sentence.py`
+  holds this bullet, that decision and the prompt to one another.) It does not go in the
+  Housekeeping section, which `CLAUDE.md` reserves for explaining romp's artifacts. The vendored
+  skill gains the sentence on asking for another look, naming the file. Both speak as the person
+  and name only what the agent already sees, so the veil holds.
 - An ended session's todo is hidden from Waiting on you until the session is revived, since the
   board lists living sessions only and gates ended ones (`kernel.py:25731, 26082-26087`; the
   chat's own card gate is at `24047-24062`), so a todo can vanish; the file is still on disk and
@@ -1179,6 +1195,30 @@ the modules they name); from the review's consolidation, `feed-css-margin-footer
 Send section's edge in both sheets, after the shared rule it overrides, and in Chromium and Firefox one hairline between
 the track and the first row — the Send box alone, the Resolved fold, the foot — with the Send box's own only behind a
 row).
+
+The todo-file follow-on (2026-09-07): after the end-to-end walk the user asked that the link between a
+user todo and its file be structured, not a path in the detail's free text, and that any Send on the
+file answer the todo, not only a Send from a viewer opened through the todo's link. The record gains
+`file` (kernel), `add_user_todo` gains the argument and the session prompt says to pass it (postal),
+and on the panel side: `Status` gains `todos`, the open todos of the session that name the file,
+which the kernel adds to the `status` reply; `todoChoices` (`file-comments-model.ts`) lists the
+candidates: the todo the file was opened from first, with its text when the status lists it, then the
+status's todos in the kernel's order, each once, minus the todos a send from this page has stamped.
+The confirm renders one candidate as the checkbox (checked, the todo's text cut to one line, the
+whole text on hover and in the row's fold) and several as one radio group, Answer: the first selected, the others, none, so
+one send still answers one todo (decision 28); `chosenTodoId` is what `doSend` puts in `todoId`. After
+a send the list follows the next status, which no longer carries the settled todo; the page's memory of
+what it stamped covers the moment before that status, and a send the kernel could not stamp leaves the
+todo offered, as before. A status asked after the send's reply that still lists the todo is the kernel's
+word that it is open (a parked send stamps at its drain; a recalled or lost answer reopens the todo) and
+releases the memory, so the todo is offered again — the review found a reopened todo hidden from every
+confirm on the page until a reload; only the todo the file was opened from whose `file` is another file,
+which no status of that viewer lists, stays answered for good. In Waiting on you the todo's `file` is a chip on the row and in the Reply modal
+(`fileChip`: openPathLink's span restyled, so the list delegate's and the modal's `openpath` open it
+with the same `viewFile` message: path, sid, identity, todoId); the detail's linkified paths stay. The
+chat's todo card and its Reply modal show the same chip (render.ts `todoFileChip`; the `.ut-file` pill in styles.css,
+which the review found missing: the class named no rule, so the card's chip was a plain link). The guide's Waiting on
+you and Files sections say both.
 
 ### Slice 3: region comments on images
 
@@ -1705,6 +1745,18 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   alone in three worlds — comments alone, a resolved comment with its fold first, a pending change with
   its foot first — and reads one hairline at the section's top level with the track's bottom, none on
   the first row, the Send box's own only behind a row, and nothing past the aside's edge.
+- The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts` under a
+  DOM stand-in and drives the chip (rendered from the frame's `file`, its posted `viewFile`
+  payload, the Reply modal's chip, no chip without the field, the detail link beside it);
+  `file-comments-todo-choices.test.ts` drives the confirm (the checkbox from the status's `todos`
+  with no opened-from todo, the radio group with several, the chosen id in the `fileCommentsSend`
+  request, the todo gone after a send when the next status omits it, the stamp latch, the one-line
+  label) and runs `todoChoices`; `tests/test_guide_todo_file_chip.py` holds the guide's Waiting on
+  you and Files sections to the pane and the panel; `tools/file-review-plan.test.mjs` holds the
+  follow-on's note and its Getting into it bullet to the model, the panel and the pane;
+  `tests/test_file_review_plan_prompt_sentence.py` holds the From the session's side bullet,
+  decision 35 and `claude/romp-session-prompt.md` to one another on the `file` argument (the
+  review, 2026-09-07: the bullet still put the path in the detail after the prompt moved it).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the
@@ -1731,10 +1783,12 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
 `docs/guide.md`: "Reviewing a document" (`:29-45`) becomes a section on file comments and tracked
 changes, states that quote chips remain for one-off notes, tells the user to track the folder a
 session will write into, and to keep figures out of tracked folders until Slice 1's refusal is
-in place; "Waiting on you" notes the linked path and the ended-session case; "Files"
+in place; "Waiting on you" notes the linked path and the ended-session case (and, from the
+todo-file follow-on, the file chip); "Files"
 (`:126-138`) gains the panel, the poll, the consent gate the guide omits today, commenting in
 either view and on images and PDFs, the comments log and the `.gitignore` opt-out, and where to
-look when the action is missing; with the margin-layout follow-on (2026-09-07) it says that beside
+look when the action is missing (and, from the todo-file follow-on, that a Send answers the todo
+that named the file however the file was opened); with the margin-layout follow-on (2026-09-07) it says that beside
 the file each card sits level with the passage it is about and scrolls with the text, and that a
 narrow column lists the cards (`tests/test_guide_files_margin_layout.py` holds the sentence to the
 panel and both sheets). `docs/reference.md`, under install-time switches, notes the
@@ -1855,7 +1909,9 @@ document stands on its own, each with the reasoning it was given.
     through romp.
 34. **Whole-file comments on every file**, not only images and PDFs.
 35. **Sessions learn the pattern from romp's default session prompt** and from the skill: name
-    the file's absolute path in the todo's detail; ask for another look the same way.
+    the file's absolute path in the todo's detail; ask for another look the same way. (The todo-file
+    follow-on, 2026-09-07: the path goes to `add_user_todo`'s `file` argument, and the detail may
+    still describe it; the prompt's sentence says so. See Getting into it.)
 36. **The three Send checkboxes** keep their generic wording: answer the todo; turn on tracking so
     the session's edits come back as changes; accept the N pending changes.
 

@@ -289,3 +289,56 @@ test('the UX bullet on progressive disclosure carries the margin clause, the gui
     assert.ok(fs.existsSync(path.join(REPO, 'ui', 'webview', f)), `${f} exists`);
   }
 });
+
+// ── the todo-file follow-on (2026-09-07): the plan's record against the model, the panel and the pane ──
+// The Getting into it bullet and the note beside Slice 2's build record describe the structured todo→file path
+// and the confirm's two controls; the sources named here do what they say, so a change to one side without the
+// other fails here (the pattern of the Slice 3 pins above).
+const gettingIn = section('### Getting into it', '## Build slices');
+// `slice2` is the margin-layout block's above: the same section, read once
+const waiting = read('ui', 'webview', 'waiting.ts');
+
+test('Getting into it states the structured path: the record\'s file, the chip, the status\'s todos, one send answers one todo', () => {
+  assert.ok(gettingIn.includes('From a todo that names its file (the todo-file follow-on, 2026-09-07)'));
+  assert.ok(gettingIn.includes('carries an optional `file`'));
+  assert.ok(gettingIn.includes('the basename, the full path on hover'));
+  assert.ok(gettingIn.includes('`todos: [{id, text}]`'));
+  assert.ok(gettingIn.includes('one candidate is the checkbox, several are one radio group'));
+  assert.ok(gettingIn.includes("the chosen id goes out as `fileCommentsSend`'s `todoId`"));
+  assert.ok(gettingIn.includes('still works through the opened-from link alone'), 'the detail-path todo is not broken by the structured one');
+  // the model, the panel and the pane do what the bullet says
+  assert.ok(/todos\?: Array<\{ id: string; text: string \}> \| null;/.test(model), 'Status carries the kernel\'s list');
+  assert.ok(/export function todoChoices\(/.test(model));
+  assert.ok(/cb\.type = "checkbox"; cb\.checked = this\.sendOpts\.todo; cb\.dataset\.opt = "todo";/.test(panel), 'one candidate: the checkbox');
+  assert.ok(/r\.type = "radio"; r\.name = "fc-todo"; r\.value = c\.id; r\.checked = c\.id === pick; r\.dataset\.opt = "todopick";/.test(panel), 'several: the radio group');
+  assert.ok(/const todoId = this\.chosenTodoId\(s\);[\s\S]*?if \(todoId\) msg\.todoId = todoId;/.test(panel), 'the chosen id is the send\'s todoId');
+  assert.ok(/function fileChip\(file: string, sid: string\): HTMLElement \{/.test(waiting), 'the pane\'s chip');
+  assert.ok(/chip\.title = file;/.test(waiting), 'the full path on hover');
+  assert.ok(/const chip = framed \? openPathLink\(base, file, false, sid\) : el\("span", ""\);/.test(waiting), 'a path link: the same viewFile message as a linkified path');
+});
+
+test('the follow-on note sits beside the Slice 2 build note and states the candidate order, the two controls and the latch as built', () => {
+  assert.ok(slice2.includes('The todo-file follow-on (2026-09-07):'));
+  assert.ok(slice2.includes("the todo the file was opened from first, with its text when the status lists it, then the status's todos in the kernel's order, each once, minus the todos a send from this page has stamped"));
+  assert.ok(slice2.includes('one radio group, Answer: the first selected, the others, none'));
+  assert.ok(slice2.includes('`chosenTodoId` is what `doSend` puts in `todoId`'));
+  assert.ok(slice2.includes('a send the kernel could not stamp leaves the todo offered'));
+  assert.ok(slice2.includes("the detail's linkified paths stay"));
+  // the order the note states is the order the model builds, and each once minus the answered
+  const tc = model.slice(model.indexOf('export function todoChoices('), model.indexOf('export const TODO_OPENED_FROM'));
+  assert.ok(tc.indexOf('if (todoId)') < tc.indexOf('for (const t of listed)'), 'the opened-from todo is pushed before the listed ones');
+  assert.ok(/if \(seen\.has\(id\) \|\| answered\(id\)\) return;/.test(tc), 'each once, minus the answered');
+  assert.ok(/if \(todoId && reply\.todoStamped\) answeredTodos\.add\(todoId\);/.test(panel), 'the latch is the stamp');
+  assert.ok(/\{ id: "", label: "none", title: null \}/.test(panel), 'the none choice closes the group');
+  assert.ok(/g\.appendChild\(el\("span", "fc-note", "Answer:"\)\);/.test(panel), 'the group is led by Answer:');
+  assert.ok(/if \(this\.todoPick === ""\) return null;/.test(panel) && /return cands\[0\]\.id;/.test(panel), 'none answers nothing; nothing picked answers the first');
+});
+
+test('the Tests section names the follow-on\'s modules, and they exist', () => {
+  for (const f of ['ui/webview/waiting-file-chip.test.ts', 'ui/webview/file-comments-todo-choices.test.ts', 'tests/test_guide_todo_file_chip.py']) {
+    assert.ok(fs.existsSync(path.join(REPO, f)), `${f} exists`);
+    const bare = f.replace('ui/webview/', '');
+    assert.ok(tests.includes('`' + bare + '`') || tests.includes('`' + f + '`'), `the Tests section names ${f}`);
+  }
+  assert.ok(tests.includes('The todo-file follow-on (2026-09-07): `waiting-file-chip.test.ts` boots `waiting.ts`'));
+});

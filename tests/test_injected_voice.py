@@ -266,6 +266,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         km._user_todos_cache.clear()
         self.td.cleanup()
 
+    def _file_warning(self):
+        """The warning POST /usertodo answers for a `file` that cannot become absolute, rendered for a session
+        with no recorded cwd (a PRIVATE synthetic sid no store knows, so nothing is minted under it)."""
+        stored, warning = km._user_todo_file("docs/report.md", "7b7b7b7b-1111-4222-8333-944444444444")
+        self.assertEqual(stored, "docs/report.md", "kept as given")
+        self.assertIsInstance(warning, str)
+        self.assertIn("did not resolve", warning)
+        return warning
+
     def _bodies(self):
         """Every message romp injects, by name, rendered from the same synthetic store."""
         nodes = _nodes()
@@ -318,6 +327,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # applies — it must read as the agent's own notes, never a tracking system's; naming
             # withdraw_user_todo is correct (the agent holds that tool)
             "user-todo context block": km._user_todo_context_block(SID),
+            # the filing reply's file WARNING (the todo-file follow-on, 2026-09-07): the kernel's words for a
+            # `file` that did not resolve (a relative path, no working directory recorded for the session),
+            # which the postal tool's add_user_todo relays verbatim into the agent's reply — so the same veil
+            "user-todo file warning": self._file_warning(),
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
@@ -628,11 +641,13 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # never a status ask — bolting a progress question onto it would be noise
             # …and the file-comments message is the person's own comments with instructions on how
             # to answer them — its ask is "address these and ask me for another look", not a status
+            # …and the user-todo file warning is a tool reply's clause about a path that did not resolve —
+            # it tells the agent what to pass next time, and asks for nothing
             if (name.startswith("file comments message")       # every form of the Send to session message
                     or name in ("typed follow-up on a summary",
                                 "debt reminder (question)", "debt reminder (handoff)",
                                 "debt reminder (several)", "comment thread opener", "user-todo answer",
-                                "user-todo context block", "edit trace", "reject trace",
+                                "user-todo context block", "user-todo file warning", "edit trace", "reject trace",
                                 "reject trace (one change)", "reject trace (count unknown)",
                                 "save trace", "save trace (one change)",
                                 "comment-thread merge", "compaction suggestion")):
@@ -805,6 +820,11 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results = {}
             canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
             results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            # the file the need is about (2026-09-07): the kernel's warning for an unresolved path
+            # rides the reply behind the tool's own lead-in, which is what is scanned here
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34", "warning": "that path did not resolve"}
+            results["add: noted, path unresolved"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})[0]
             results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
@@ -828,6 +848,7 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])
+        self.assertIn("About the file: that path did not resolve", results["add: noted, path unresolved"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
         self.assertIn("Already closed", results["withdraw: already answered"])

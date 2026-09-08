@@ -3171,13 +3171,14 @@ MCP_TOOLS = [
     # its parent session — the right behavior (the need belongs to the session the user talks to),
     # it just means "who filed this" is always the session, never an individual subagent.
     {"name": "add_user_todo",
-     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
+     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI)"},
-                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"}},
+                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"},
+                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; the person sees it as a link that opens the file, and their comments on that file can answer this todo"}},
                      "required": ["text"]}},
     {"name": "withdraw_user_todo",
-     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a stale request.",
+     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a need that no longer stands.",
      "inputSchema": {"type": "object",
                      "properties": {"id": {"type": "string", "description": "the id add_user_todo returned"}},
                      "required": ["id"]}},
@@ -3311,16 +3312,54 @@ def _mcp_call(name, args):
         text = str(args.get("text") or "").strip()
         if not text:
             return "Need 'text' — one short line: what you need from them and why.", True
-        res = _kernel_post("/usertodo", {"id": mid, "text": text,
-                                         "detail": str(args.get("detail") or "").strip()})
+        body = {"id": mid, "text": text, "detail": str(args.get("detail") or "").strip()}
+        # `file` (the todo-file follow-on, 2026-09-07): the file the need is about, sent only when
+        # given. The KERNEL resolves it (a relative path against the session's cwd) and stores
+        # the absolute path; it never refuses a todo for its file, and says in `warning` when
+        # the path did not resolve — surfaced below, never swallowed, so the agent can fix the
+        # path while the need already stands. A string is stripped; anything else (the schema
+        # says string, but nothing between the model and this call enforces it) rides the post
+        # AS GIVEN, never str()'d: the kernel keeps a non-string as its text with a warning that
+        # names the shape, whereas its repr — "['/x/y.md']" — is a relative spelling the kernel
+        # would join onto the cwd and store as an absolute path naming nothing, silently (the
+        # review's catch, 2026-09-07). None and a blank string are no file, as before.
+        file_ = args.get("file")
+        if isinstance(file_, str):
+            file_ = file_.strip()
+        if file_ is not None and file_ != "":
+            body["file"] = file_
+        res = _kernel_post("/usertodo", body)
         tid = res.get("todoId") if isinstance(res, dict) else None
         if not tid:
             # LOUD, never a silent drop: an unsaved need the agent believes is filed is exactly
             # the vanishing this tool exists to stop.
             return ("Couldn't save that — the person you work for will NOT see it. Say what you "
                     "need directly in your next reply instead, or try again shortly."), True
-        return ("Noted (id %s) — the person you work for will see it. Withdraw it "
-                "(withdraw_user_todo) the moment the need is met or moot." % tid), False
+        out = ("Noted (id %s) — the person you work for will see it. Withdraw it "
+               "(withdraw_user_todo) the moment the need is met or moot." % tid)
+        warning = str(res.get("warning") or "").strip()
+        if warning:
+            out += " About the file: " + warning
+        elif "file" in body and not res.get("file"):
+            # Version skew (the review, 2026-09-08): a kernel that predates a todo's file reads
+            # id/text/detail alone and answers {ok, todoId} — the file was neither stored nor warned
+            # about — while a kernel that takes it echoes `file` as the record keeps it, or warns
+            # (_user_todo_file answers one or the other for every value this tool posts: None and
+            # a blank never leave here). So a reply with neither is the older route, and it is
+            # named here rather than swallowed: the kernel's own forward to a remote makes the same
+            # inference and warns, but a session's tool posts to its OWN host's kernel, which that
+            # branch never sees — and this machine's kernel is exactly the one a checkout update
+            # leaves running until its restart, while every new or revived session spawns this tool
+            # from the checkout. Not an error flag: the todo is filed and stands (an error here
+            # reads as "not saved", and the retry files a duplicate); the loss is said, in the
+            # tool's own veiled words (test_injected_voice.py: no tracking-system nouns, and the
+            # kernel is "the session manager", as set_emoji's reply has it), with the remedy.
+            out += (" About the file: %s was not recorded — the session manager on this machine runs "
+                    "an older version that does not keep a todo's file (an update and a restart fix "
+                    "that), so this todo shows without a link to the file. If the link matters, "
+                    "withdraw this todo and file it again with the path in its text or detail."
+                    % body["file"])
+        return out, False
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain
         # answer — never a silent success (plans/user-todos.md).

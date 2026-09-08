@@ -86,6 +86,7 @@ import {
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
   pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
+  todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
@@ -229,10 +230,23 @@ const STATUS_DEADLINE_MS = 15000;
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
-// (which re-opens with the same todoId), or the Reply modal's other link all find it. Another device or
-// document has no view of this set; the kernel's own settled check (plan: the reply warns, nothing is
-// stamped) stays the backstop there.
+// (which re-opens with the same todoId), or the Reply modal's other link all find it. The todo-file follow-on
+// made the kernel list the open todos naming the file on every status, and stop once the todo is settled — so
+// for a LISTED todo this set covers the moment between the send and the next status only: a status ISSUED after
+// the send's reply landed that still lists the todo is the kernel's word that the todo is open (CLAUDE.md, the
+// authoritative source) — a parked send stamps only when it drains, not when it is accepted, and a recalled or
+// lost answer reopens the todo (kernel _reopen_user_todo) — and applyStatus releases the memory for it, so the
+// confirm offers it again as Waiting on you shows it. Before that release a todo the kernel had reopened stayed
+// hidden from every confirm on the page until a reload (the review, 2026-09-07). The release is keyed on the
+// request counter, not the clock: `answeredAt` holds reqSeq as it stood at the latch, and a status whose reqId
+// is past it was issued after the reply (markOverlapped has already flagged every status still out at that
+// moment, so an earlier ask that lands later is dropped or, when its clocks prove it newer, applied WITHOUT
+// releasing: it may have read the store before the stamp). What the set keeps for good is the todo the file
+// was opened from whose `file` is another file: no status of this viewer lists it, and decision 28 wants later
+// sends to show no box for it. Another device or document has no view of this set; the kernel's own settled
+// check (plan: the reply warns, nothing is stamped) stays the backstop there.
 const answeredTodos = new Set<string>();
+const answeredAt = new Map<string, number>();
 
 // ── image embeds: the source text behind a rendered <img> ─────────────────────────────────────────
 // A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
@@ -873,7 +887,15 @@ class Panel {
   sending = false;
   sendOpts = { todo: true, track: true, accept: true };   // all checked by default (decision 8); `accept` is the Slice 2 checkbox
   sentNote: string | null = null;
-  todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
+  // the todo the send answers when SEVERAL are offered (todoOpts' radio group; the todo-file follow-on, 2026-09-07): the id
+  // picked, "" for none, null while nothing was picked — the first candidate then, and again when the pick left the list (a
+  // todo settled from elsewhere, or answered by the send before). With one candidate the checkbox (sendOpts.todo) decides.
+  // The two agree on "none": the change handler writes a declined answer to both (the box unchecked is the "" pick, a
+  // "none" pick unchecks the box), because the next status can swap one control for the other — a todo filed or settled
+  // elsewhere changes the count — and a decline held in one slot alone came back as the other's default (the 2026-09-07
+  // review). An answer written to either puts the other back to its default (checked; null, the first offered).
+  todoPick: string | null = null;
+  openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
@@ -984,7 +1006,6 @@ class Panel {
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
     live = this;
-    this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
     this.input.rows = COMPOSER_ROWS;
     this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
@@ -1074,6 +1095,7 @@ class Panel {
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
         fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
+        fctodotext: (x) => { const id = x.dataset.id!; if (this.openTodoText.has(id)) this.openTodoText.delete(id); else this.openTodoText.add(id); this.render(); },   // a confirm todo row's fold (todoOpts)
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
@@ -1091,8 +1113,18 @@ class Panel {
     row.addEventListener("change", (ev) => {
       const t = ev.target as HTMLInputElement | null;
       const k = t ? t.dataset.opt : undefined;
-      if (!t || k !== "todo" && k !== "track" && k !== "accept" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
-      this.sendOpts[k] = t.checked;
+      if (!t || !this.owns(t)) return;                 // a control the file's markup carries flips nothing
+      if (k === "todopick") this.todoPick = t.value;   // the radio group: the todo's id, or "" for none (todoOpts)
+      else if (k === "todo" || k === "track" || k === "accept") this.sendOpts[k] = t.checked;
+      else return;
+      // the answer-a-todo verdict has two controls — the box when one todo is offered, the radio group when several — and
+      // the next status can swap one for the other (a todo filed or settled elsewhere changes the count; applyStatus keeps
+      // the confirm open), so a verdict recorded in either is written to both: the box unchecked is the "" pick and a
+      // "none" pick unchecks the box; a todo picked or the box checked is an answer in both, the other slot back to its
+      // default. Before, a declined answer held in one slot came back as the other's default and the send stamped a todo
+      // the person had declined (the 2026-09-07 review; todoPick's comment).
+      if (k === "todopick") this.sendOpts.todo = t.value !== "";
+      else if (k === "todo") this.todoPick = t.checked ? null : "";
       this.render();                                   // the list's counts and the preview follow the boxes (refocus keeps the box focused)
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
@@ -1225,6 +1257,7 @@ class Panel {
     if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
+    this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
@@ -1239,6 +1272,20 @@ class Panel {
     this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to (stands down while the editor holds the body)
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
+  }
+  /** The page's memory of the todos its sends stamped (answeredTodos) ends for every todo `s` lists whose latch
+   *  predates the ask: the status was issued after the send's reply landed, and the kernel stamps — or parks — before
+   *  it replies, so a todo it still lists is open (a parked send, stamped at its drain; a recalled answer, reopened).
+   *  A status issued before the reply (its reqId at or under the latch's) releases nothing: it may have read the
+   *  store before the stamp. Only an APPLIED status releases — a dropped one is not what the confirm is built from. */
+  private releaseAnswered(s: Reply): void {
+    if (!Array.isArray(s.todos)) return;
+    for (const t of s.todos) {
+      const id = t && typeof t === "object" ? t.id : undefined;
+      if (typeof id !== "string" || !id) continue;
+      const at = answeredAt.get(id);
+      if (at !== undefined && at < s.reqId) { answeredTodos.delete(id); answeredAt.delete(id); }
+    }
   }
   /** Bring the view's bytes to the text a status describes: its hunks and anchors are offsets into the file the
    *  host read, so when the file mtime the status carries is not the view's, the view is asked to re-fetch and the
@@ -3086,18 +3133,21 @@ class Panel {
         pending = decided.length;
       }
       const counts = sendCounts(parts, acceptAll, pending);
-      const answerTodo = !!this.ctx.todoId && this.sendOpts.todo && !this.todoAnswered;
+      // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
+      // status lists it as naming this file — as the checkbox or the radio group left it; one id, or none
+      const todoId = this.chosenTodoId(s);
       const msg: Record<string, unknown> = {
         sid: this.ctx.sid, path: this.ctx.path, tracked, comments: parts.comments,
         accepted: counts.accepted, rejected: counts.rejected, watermark: parts.watermark,
       };
-      if (answerTodo) msg.todoId = this.ctx.todoId;
+      if (todoId) msg.todoId = todoId;
       const reply = await this.sendOnce(msg, false);
       this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
       // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
-      if (answerTodo && reply.todoStamped) { this.todoAnswered = true; answeredTodos.add(this.ctx.todoId!); }
+      if (todoId && reply.todoStamped) answeredTodos.add(todoId);
+      if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
       this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
@@ -3229,7 +3279,8 @@ class Panel {
     const a = document.activeElement as HTMLElement | null;
     if (!a || !this.root || !this.root.contains(a) || !a.dataset) return null;
     const k: FocusKey | null = a.dataset.act ? { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot }
-      : a.dataset.opt ? { act: "opt", key: a.dataset.opt } : null;   // a confirm checkbox, re-found by its option
+      // a confirm checkbox, re-found by its option; a radio of the todo group by its option AND its value (the todo id, "" for none)
+      : a.dataset.opt ? { act: "opt", key: a.dataset.opt, id: a.dataset.opt === "todopick" ? (a as HTMLInputElement).value : undefined } : null;
     if (!k) return null;
     const cards = this.sections.cards;
     if (typeof a.closest === "function") {
@@ -3249,7 +3300,11 @@ class Panel {
    *  too, but no tabindex. */
   private findControl(k: FocusKey): HTMLElement | null {
     if (!this.root) return null;
-    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;   // the panel's own option names, never a sidecar's text
+    // the panel's own option names, never a sidecar's text; a todo radio is told by its value, compared, never in a selector
+    if (k.act === "opt") {
+      const all = Array.from(this.root.querySelectorAll('[data-opt="' + k.key + '"]')) as HTMLElement[];
+      return (k.id === undefined ? all[0] : all.find((n) => (n as HTMLInputElement).value === k.id)) || null;
+    }
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
       if (d.act === k.act && d.id === k.id && d.key === k.key && d.slot === k.slot && (n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON")) return n;
@@ -3923,7 +3978,7 @@ class Panel {
       if (counts.accepted || counts.rejected) ul.appendChild(el("li", undefined, counts.accepted + " accepted, " + counts.rejected + " rejected"));
       cf.appendChild(ul);
       const opts = el("div", "fc-opts");
-      if (this.ctx.todoId && !this.todoAnswered) opts.appendChild(this.opt("todo", "answer the todo this file was opened from"));
+      this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
       if (pending) opts.appendChild(this.opt("accept", "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes")));
       if (opts.childNodes.length) cf.appendChild(opts);
@@ -3954,6 +4009,85 @@ class Panel {
     cb.type = "checkbox"; cb.checked = this.sendOpts[key]; cb.dataset.opt = key;
     l.appendChild(cb); l.appendChild(el("span", undefined, label));
     return l;
+  }
+  /** The confirm's answer-a-todo control (the todo-file follow-on, 2026-09-07). The candidates are todoChoices': the todo
+   *  the file was opened from and every open todo of the session that names this file (the status's `todos`), minus those
+   *  a send from this page has answered. ONE candidate: the checkbox, checked by default (decision 8), labelled with the
+   *  todo's own text when the kernel listed it (decision 36's generic wording otherwise, since the viewer never receives the
+   *  opened-from todo's words). SEVERAL: one radio group — Answer: the first selected, the others, then none — so one send
+   *  answers one todo (decision 28). NONE: no control. The label is one line: cut to a line's worth, the whole text on hover
+   *  (an inline clip; the sheets have no rule for this control, the Slice 2 idiom) — and one click away, in full: a row
+   *  whose todo has words carries a fold (fctodotext, keyed by todo id in openTodoText so a re-render keeps it open) that
+   *  shows the whole text under the row, wrapped. The hover never reaches touch, and at the aside's width two todos that
+   *  begin alike clip to the same words, so the label alone could not say which todo the send would stamp (the 2026-09-07
+   *  review; ui/CLAUDE.md: never dead-end a compact view). */
+  private todoOpts(opts: HTMLElement, s: Status): void {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return;
+    // opt()'s row with the label clipped to ONE line (the text is already cut to a line's worth by todoChoiceLabel; the
+    // clip is inline since the sheets have no rule for this control, the Slice 2 idiom) and the whole text on hover. With
+    // words to show (title), the label shares its line with the fold's glyph (the Log rows' and the preview's ▸/▾, in
+    // the preview's dress) and the whole text stands under the line while the fold is open: the input's value is the
+    // todo's id (a radio's by construction; the checkbox's is set for this), which keys the fold. A label without words
+    // (none; the opened-from todo the status never listed) has nothing underneath, so it is the row.
+    const optRow = (input: HTMLInputElement, text: string, title: string | null): HTMLElement => {
+      const l = el("label", "fc-opt");
+      const t = el("span", undefined, text);
+      t.style.minWidth = "0"; t.style.overflow = "hidden"; t.style.textOverflow = "ellipsis"; t.style.whiteSpace = "nowrap";
+      if (title) l.title = title;
+      l.appendChild(input); l.appendChild(t);
+      if (!title) return l;
+      const id = input.value;
+      const open = this.openTodoText.has(id);
+      const row = el("div", "fc-todo-opt");
+      row.style.display = "flex"; row.style.flexDirection = "column"; row.style.gap = "3px"; row.style.minWidth = "0";
+      const line = el("div");
+      line.style.display = "flex"; line.style.alignItems = "center"; line.style.gap = "6px"; line.style.minWidth = "0";
+      l.style.flex = "0 1 auto"; l.style.minWidth = "0";   // the label shrinks (its span clips) so the glyph stays on the line
+      const fold = btn(open ? "▾" : "▸", "fctodotext", "fc-sec");
+      fold.dataset.id = id;
+      fold.style.flex = "0 0 auto"; fold.style.padding = "2px 6px";   // a wider target than the glyph alone (a finger)
+      fold.title = open ? "Hide the whole todo" : "Show the whole todo";
+      fold.setAttribute("aria-label", fold.title); fold.setAttribute("aria-expanded", open ? "true" : "false");
+      line.appendChild(l); line.appendChild(fold);
+      row.appendChild(line);
+      if (open) {
+        row.appendChild(el("div", "fc-body fc-todo-text", title));   // the card body's dress: the todo's own lines, wrapped
+      }
+      return row;
+    };
+    if (cands.length === 1) {
+      const c = cands[0];
+      const cb = el("input") as HTMLInputElement;
+      cb.value = c.id;   // the todo the box answers: keys its fold (optRow)
+      cb.type = "checkbox"; cb.checked = this.sendOpts.todo; cb.dataset.opt = "todo";
+      opts.appendChild(optRow(cb, c.text === null ? "answer " + TODO_OPENED_FROM : "answer the todo: " + todoChoiceLabel(c), c.text));
+      return;
+    }
+    const pick = this.chosenTodoId(s) || "";
+    const g = el("div", "fc-opts fc-todo-pick");
+    g.setAttribute("role", "radiogroup"); g.setAttribute("aria-label", "Answer a todo with this send");
+    g.appendChild(el("span", "fc-note", "Answer:"));
+    for (const c of [...cands.map((x) => ({ id: x.id, label: todoChoiceLabel(x), title: x.text })), { id: "", label: "none", title: null }]) {
+      const r = el("input") as HTMLInputElement;
+      r.type = "radio"; r.name = "fc-todo"; r.value = c.id; r.checked = c.id === pick; r.dataset.opt = "todopick";
+      g.appendChild(optRow(r, c.label, c.title));
+    }
+    opts.appendChild(g);
+  }
+  private todoCandidates(s: Status): TodoChoice[] { return todoChoices(this.ctx.todoId, s, (id) => answeredTodos.has(id)); }
+  /** The todo the next send answers, or null: for one candidate the checkbox's verdict; for several the radio's — the pick
+   *  while it is still offered, none when none was picked, else the first (nothing picked yet, or the pick left the list).
+   *  The two verdicts agree on none (the change handler writes a decline to both), so a count that changed between the
+   *  choice and the send — the box unchecked, then a second todo listed; none picked, then one todo left — still answers
+   *  nothing; a pick that left the list falls to the first offered, as a fresh confirm would. */
+  chosenTodoId(s: Status): string | null {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return null;
+    if (cands.length === 1) return this.sendOpts.todo ? cands[0].id : null;
+    if (this.todoPick === "") return null;
+    if (this.todoPick && cands.some((c) => c.id === this.todoPick)) return this.todoPick;
+    return cands[0].id;
   }
   private renderLog(s: Status | null): HTMLElement {
     const box = el("div", "fc-log");

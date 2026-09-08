@@ -264,7 +264,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 // A USER TODO (plans/user-todos.md): a need the agent flagged for the person it works for — a
 // decision, input, or action only they can provide — open until answered, dismissed, or withdrawn.
 // Fixed store values only (createdT is stamped once): this rides the dedup-compared chat payload.
-interface UserTodo { id: string; text: string; detail?: string; createdT?: number }
+interface UserTodo { id: string; text: string; detail?: string; createdT?: number; file?: string }   // file: the absolute path of the file the todo is about, as the kernel filed it (the todo-file follow-on, 2026-09-07) — the row and the Reply modal show it as a chip (todoFileChip)
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
@@ -1828,6 +1828,30 @@ function linkTodoLinePaths(node: HTMLElement, sid: string | null): void {
 }
 function linkTodoDetailPaths(node: HTMLElement, sid: string | null): void {
   linkifyFileUris(node, undefined, undefined, undefined, undefined, sid, true);
+}
+// The file a todo NAMES (the todo-file follow-on, 2026-09-07): the record's own `file`, the absolute path the
+// kernel resolved when the todo was filed, trails the row's text and the Reply modal's quoted line as a chip —
+// the basename as the label, the full path on hover — so the file is one click away whether or not the text
+// spells its path: the session prompt now hands the path to add_user_todo's `file` argument, and the detail
+// need not repeat it, so a todo filed that way had no link on this surface at all (the 2026-09-07 review).
+// The chip is a path link (path-links.ts openPathLink: the same span, data-act and keyboard handlers a
+// linkified path carries), so the body delegate's openpath opens it exactly as it opens a path in the text,
+// from the same stable root — nothing is bound on the chip; this card rebuilds every push. It is marked as
+// a bare path with the todo's session (data-rel, data-sid), the way linkifyPathTokens marks an absolute path
+// written in the text, so openLinkedPath opens it against the todo's OWN session rather than the active tab:
+// the Files pane then names that session, and its status lists this todo among the ones naming the file, so
+// a Send from there answers it (kernel _user_todos_naming_file). An absolute path passes through both hosts'
+// resolvers unchanged (kernel _resolve_open_path, the extension's openFile). The chip sits INSIDE the text
+// span, after the linkified text and before the "details" hint: inline, it wraps as a word of the line does,
+// its label is never scanned by the linkifiers that ran before it, and a click on it reaches its own data-act
+// before the span's uttoggle (the nearest data-act wins, actions.ts). The Waiting-on-you pane shows the same
+// file the same way (waiting.ts fileChip); `.ut-file` names the chip for the sheet.
+function todoFileChip(file: string, sid: string | null): HTMLElement {
+  const base = file.replace(/\/+$/, "").split("/").pop() || file;
+  const chip = openPathLink(base, file, true, sid);
+  chip.classList.add("ut-file");
+  chip.title = file;   // the full path on hover; the label is the basename
+  return chip;
 }
 // Make bare file:// URLs AND bare file paths inside a rendered CHAT message clickable (assistant replies +
 // your own bubbles) — a relative `design/foo.md` opens too, resolved against the session's cwd (the user
@@ -3439,6 +3463,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       txt.textContent = t.text;
       linkTodoLinePaths(txt, renderingSid || null);   // a path in the line opens like one in the detail: the todo's own session resolves it
       linkifyPrRefs(txt, prRepoFor(renderingSid));   // a `#123` in the ask links to the session's PR (pr-links.ts)
+      if (t.file) txt.append(" ", todoFileChip(t.file, renderingSid || null));   // the file the todo names, one click away whether or not the text spells its path (todoFileChip)
       // progressive disclosure: the one-line version by default, detail one click away — and the row
       // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
       // exists, nothing when it doesn't, so a bare ask and one with context read differently at a
@@ -3456,6 +3481,7 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
       (reply as any)._uttext = t.text;   // rides the node like qx's _qmd: the modal quotes the need it answers
       (reply as any)._utdetail = t.detail || "";   // …and its detail, so the whole need is in view while answering
+      (reply as any)._utfile = t.file || "";   // …and the file it names, as the row's chip
       reply.textContent = "Reply";
       reply.title = "answer this — your reply goes straight to the session";
       const dis = el("button", "ut-btn ut-dismiss");
@@ -8342,7 +8368,7 @@ function showForkPrompt(sid: string, uuid: string): void {
 // at the send — never sendMessage plus a separate stamp, so the two can't diverge. A modal, not
 // an inline input on the card: the card rebuilds on every push, which would clobber a half-typed
 // inline box; the overlay lives outside #content and survives.
-function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = ""): void {
+function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""): void {
   document.getElementById("ut-reply-prompt")?.remove();
   const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "ut-reply-prompt";
   const box = el("div", "picker-box confirm-box");
@@ -8350,6 +8376,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
   linkTodoLinePaths(d, sid);   // the quoted line's paths open like the row's
   linkifyPrRefs(d, prRepoFor(sid));
+  if (todoFile) d.append(" ", todoFileChip(todoFile, sid));   // the file the todo names, as on the row: the body delegate opens it from here too
   // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
   // whole need stays in view while the answer is typed, without opening the fold first; a bare
   // ask adds nothing here
@@ -16929,7 +16956,7 @@ setupSettings();
     utreply: (elx) => {
       const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
       if (!tid || !sid) return;
-      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "", ((elx as any)._utdetail as string) || "");
+      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "", ((elx as any)._utdetail as string) || "", ((elx as any)._utfile as string) || "");
     },
     // Dismiss arms then confirms in place (the cmtdelete idiom): clearing an ask the agent still
     // waits on deserves a second click, but is light enough to skip a modal. Optimistic removal —
