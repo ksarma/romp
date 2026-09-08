@@ -67,25 +67,42 @@
 // element carries the nested block's text (the review round 2, and the plan's defect "an unclosed HTML wrapper
 // swallows later blocks"; read as that block, a Raw switch from paragraph 80 landed on `<summary>`, 3500px up); and
 // two html blocks a blank line apart (`<p>Alpha</p>` over `<p>Beta</p>`, a README's centred heading over its tagline)
-// pair the first to nothing and the second to both elements. So a block paired to several elements is trusted only
-// when its own source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text,
-// whitespace apart: that parser is the one the sanitizer read the block with, so entities, inline tags and line breaks
-// decode the same on both sides and nothing is decoded by hand (the review round 3: a hand decoder threw on an
-// out-of-range numeric entity, which stopped the Raw click and the text-size step where it stood, and knew six entity
-// names, so a caption hanging on `&mdash;` read as swallowed). A pairing the parse does not confirm reads as NO place
+// pair the first to nothing and the second to both elements; and a wrapper whose closing tag is the document's last
+// block, or is missing, is paired to exactly ONE element, itself, holding every paragraph after it (the review round
+// 4: trusted as any one element was, the Raw switch from a nested paragraph landed on the `<div align="center">` row
+// with the passage 1395px below the viewport, and the paragraph's Raw row switched to Rendered borrowed the wrapper's
+// box and landed on paragraph 43). So an html block's pairing, to one element or several, is trusted only when its
+// own source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text, whitespace
+// apart: that parser is the one the sanitizer read the block with, so entities, inline tags and line breaks decode the
+// same on both sides and nothing is decoded by hand (the review round 3: a hand decoder threw on an out-of-range
+// numeric entity, which stopped the Raw click and the text-size step where it stood, and knew six entity names, so a
+// caption hanging on `&mdash;` read as swallowed). Any other block's one element is trusted without a parse (its source
+// is markdown, not html); an html block is told from the rest by marked's lexer over its own text, the lexer the map's
+// table comes from, asked only for a block that opens with `<`. A pairing the parse does not confirm reads as NO place
 // from whichever element is at the edge (a swallowed paragraph, the wrapper itself, a picture or a rule inside the run,
 // either of two adjacent html blocks), so the numeric scrollTop stands, as it did before the slice; and a seat that
 // would borrow such a block's box for a block with no element of its own (the swallowed paragraph read from Raw, a Raw
 // row of the wrapper's own) declines the same way, the body unmoved (the review round 3: a Raw row of `<summary>`
 // seated the whole swallowed run, 3200px, in Rendered). An html block of sibling tags, each in its source, is read as
-// one block still. Where DOMParser is absent (a stand-in) such a block reads as no place too.
+// one block still. Where DOMParser is absent (a stand-in) such a block reads as no place too. Two shapes the parse
+// reads as no place though the pairing is right, both malformed input and each recorded in the plan's Slice 2 build
+// note: an html block holding a tag the sanitizer removes, when the removal changes the block's text (a `<script>` or
+// `<style>` inside a tag goes with its text) or its element count (a `<style>`, an `<iframe>` or a form control between
+// two `<p>`s goes, the control's text staying as a text node), parses to other elements or other text than the
+// sanitizer kept (a removed tag nested inside a tag, its text kept as a `<label>`'s is or none as an `<iframe>`'s, is
+// trusted as ever); and a hex character reference with no digits (`&#x;`), which Chromium decodes to U+FFFD
+// when its fast-path parser reads a short string of simple tags (the block's source alone) and keeps as the literal
+// text when its full parser reads it, which the sanitizer's whole-document parse is whenever the note holds a tag
+// outside that path's subset (a heading, a code block, emphasis, a picture), so the two sides disagree on that one
+// form in nearly every note. Every other entity form, valid or not, decodes alike on both sides.
 //
 // Written over the DOM the viewer builds and nothing else (querySelector, childNodes, getBoundingClientRect,
 // scrollTop, and for a Rendered code line the document's caret hit test and a Range's rects, both absent from a
 // stand-in) and the anchor map's block table, so a stand-in with no layout (every box at 0,0) reads no place and seats
 // nothing, and the node tests over the viewer run unchanged; the browser legs (file-view-place-browser.test.ts,
-// file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts, file-view-place-html-browser.test.ts)
-// measure the real thing.
+// file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts, file-view-place-html-browser.test.ts,
+// file-view-place-wrapper-end-browser.test.ts) measure the real thing.
+import { Lexer } from "marked";
 import { followPassage } from "./file-comments";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
 
@@ -194,16 +211,27 @@ const placeOf = (source: string, view: View, spans: SourceRange[], b: number, bo
 
 // ── the elements paired to a block: trusted, or a pairing the map got wrong (the header's "what the place refuses") ──
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
-/** Block `b`'s elements when the pairing can be trusted, null when it cannot. One element or none always can (every
- *  block but an html block renders as one; the wrapper itself, once the map pairs it right). Several are an html
- *  block's, and are trusted when the block's own source, parsed by the browser's HTML parser, yields as many elements
- *  with the same text, whitespace apart: the parser the sanitizer read the block with, so entities, inline tags and
- *  `<br>` decode alike on both sides and nothing is decoded here. A wrapper's swallowed run (one element parsed, the
- *  rest of the document paired) and the second of two adjacent html blocks (one parsed, two paired) are not; nor is any
- *  such block where DOMParser is absent (a stand-in). */
+/** Whether the block is an html block (marked's `html` token), the one kind whose element count the map's pairing
+ *  guesses. Every kind of html block opens with `<` after at most three spaces, so a block that does not is none and
+ *  costs no lex (every paragraph); one that does is lexed alone, by the lexer the anchor map's block table comes from:
+ *  a block's kind is decided at its first line, at a block's start either way, so the block's own text lexes to the
+ *  token it lexed to inside the file (a paragraph opening with an inline tag or an autolink lexes to a paragraph). */
+function isHtmlBlock(source: string, span: SourceRange): boolean {
+  if (!/^ {0,3}</.test(source.slice(span.start, Math.min(span.end, span.start + 4)))) return false;
+  try { const t = Lexer.lex(source.slice(span.start, span.end))[0]; return !!t && t.type === "html"; } catch { return false; }
+}
+/** Block `b`'s elements when the pairing can be trusted, null when it cannot. None always can, and one element of any
+ *  block but an html block (every other block renders as exactly one). An html block's, one or several, are trusted
+ *  when the block's own source, parsed by the browser's HTML parser, yields as many elements with the same text,
+ *  whitespace apart: the parser the sanitizer read the block with, so entities, inline tags and `<br>` decode alike on
+ *  both sides and nothing is decoded here. A wrapper's swallowed run (one element parsed, the rest of the document
+ *  paired), a wrapper closing at the document's end or never closed (one element parsed, with the block's own text; one
+ *  paired, holding every paragraph after it: the review round 4, which found the third round trusting any one element)
+ *  and the second of two adjacent html blocks (one parsed, two paired) are not; nor is any such block where DOMParser
+ *  is absent (a stand-in). */
 function ownedElements(md: Element, source: string, span: SourceRange, b: number): Element[] | null {
   const els = renderedBlockElements(md, source, b);
-  if (els.length <= 1) return els;
+  if (!els.length || (els.length === 1 && !isHtmlBlock(source, span))) return els;
   if (typeof DOMParser !== "function") return null;
   const parsed = elementsOf(new DOMParser().parseFromString(source.slice(span.start, span.end), "text/html").body);
   if (parsed.length !== els.length) return null;
@@ -232,9 +260,11 @@ function lineSpanIn(source: string, span: SourceRange, k: number): SourceRange |
 /** A Rendered markdown code block: its code element (`pre > code`) and how many of the block's source lines the code
  *  does not show (`skip`: the fence line of a fenced block; none for an indented one, whose lines the code shows one
  *  for one, indentation apart). null for any other block, an html block's `<pre>` included: the tag is its first line,
- *  so its lines and the code's are one off, and the block keeps the depth rule (the review round 3). */
-type Code = { code: Element; skip: number };
-function codeOf(source: string, span: SourceRange, els: Element[]): Code | null {
+ *  so its lines and the code's are one off, and the block keeps the depth rule (the review round 3). Exported for the
+ *  pure part's test (file-view-place-blocks.test.ts): the stand-in has no hit test, so only the browser leg reaches it
+ *  through a seat. */
+export type Code = { code: Element; skip: number };
+export function codeOf(source: string, span: SourceRange, els: Element[]): Code | null {
   if (els.length !== 1 || String(els[0].tagName).toUpperCase() !== "PRE") return null;
   const head = source.slice(span.start, Math.min(span.end, span.start + 8));
   const skip = /^ {0,3}(?:`{3,}|~{3,})/.test(head) ? 1 : /^(?: {4}|\t)/.test(head) ? 0 : -1;

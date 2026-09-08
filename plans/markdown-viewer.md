@@ -559,35 +559,59 @@ text, and which test holds each rule:
      after it as a replacement of no height: at the edge when the deleted block reached below it, at its old
      distance otherwise. Without the rule the successor sat 30px above the edge, the reader's depth into a block
      that was gone. file-view-place-blocks.test.ts and file-view-place-edits-browser.test.ts.
-   - *What the place refuses.* Where the reading is unreliable readPlace answers null and seatPlace seats nothing,
-     so the viewer leaves the body's scrollTop alone, as it did before the slice, rather than seating a guess;
-     where the body then lands is the browser's own (its scroll anchoring re-finds an anchor in the new content
-     when it can: pane 900, a swap with the reader at 1969 landed at 2617 with no write of the viewer's; under
-     `overflow-anchor: none` the number stands). One cause, in reading the Rendered view (the Raw rows pair with
-     nothing and are read as they stand): every block but an html block renders as one element, an html block of
-     sibling tags as several, and the anchor map's pairing across one is a resync on the blocks after it, which the
-     map as it stands gets wrong two ways, both Slice 5's flattened walk to take up (the plan's High defect, an
-     unclosed HTML wrapper swallowing later blocks). A block paired to several elements is trusted only when its
-     own source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text,
-     whitespace apart: the parser the sanitizer read the block with, so entities, inline tags and line breaks
-     decode alike on both sides and nothing is decoded by hand. (5c0c737c decoded the source itself and looked for
-     the element's text in it: the decoder threw a RangeError on an entity past U+10FFFF, inside the Raw
-     click and the text-size step, so the view stayed and the size was stored unpainted, and it knew six entity
-     names, so a caption hanging on `&mdash;`, a badge over a tagline or a tag holding `<b>` read as swallowed and
-     the switch left the numeric scrollTop, paragraph 28 on top both ways.) Refused, from whichever element is at
-     the edge: (1) a wrapper the browser nests the following markdown into (`<details>` with a blank line after
-     its summary, a centred `<div>`), paired to every element after it, from a swallowed paragraph, the wrapper
-     itself, a picture or a rule in the run (read as the wrapper's block, a Raw switch from paragraph 80 landed on
-     `<summary>`, 3500px up, and from a picture 100px in, 1750px up); and a Raw row of the wrapper's own switched to
-     Rendered seats nothing (5c0c737c seated the whole run, paragraph 74 at scrollTop 3585 for 360); (2)
-     two html blocks a blank line apart (`<p>Alpha</p>` over `<p>Beta</p>`, a README's centred heading over its
-     tagline), which the map pairs as nothing and both, from either element (5c0c737c read the second as its block
-     and put the Raw view one row off). The edits leg lands after the wrapper both ways (its first scene
-     can be tightened to exact once the map pairs the wrapper to its own element);
-     file-view-place-html-browser.test.ts pins each refusal as no scrollTop written by the viewer across the switch
-     (a setter trap on the body), and the accepted shapes (inline tags, a line break, the README pair, named
-     entities, an entity with no semicolon or past U+10FFFF) as the tag's own Raw row and the return to the tag;
-     file-view-place-blocks.test.ts the same over the stand-in, its DOMParser built on the same parser.
+   - *What the place refuses.* Where the reading is unreliable readPlace answers null and seatPlace seats nothing, so
+     the viewer leaves the body's scrollTop alone, as it did before the slice, rather than seating a guess; where the
+     body then lands is the browser's own (its scroll anchoring re-finds an anchor in the new content when it can:
+     pane 900, a swap with the reader at 1969 landed at 2617 with no write of the viewer's; under `overflow-anchor:
+     none` the number stands). One cause, in reading the Rendered view (the Raw rows pair with nothing and are read as
+     they stand): every block but an html block renders as one element, an html block of sibling tags as several, and
+     the anchor map's pairing across one is a resync on the blocks after it, which the map as it stands gets wrong two
+     ways, both Slice 5's flattened walk to take up (the plan's High defect, an unclosed HTML wrapper swallowing later
+     blocks). A block paired to several elements, and an html block paired to one, is trusted only when its own
+     source, parsed by the browser's HTML parser (DOMParser), yields as many elements with the same text, whitespace
+     apart: the parser the sanitizer read the block with, so entities, inline tags and line breaks decode alike on
+     both sides (one form excepted, refusal (4) below) and nothing is decoded by hand; any other block's one element
+     is trusted without a parse, and an html block is told from the rest by marked's lexer over its own text, the
+     lexer the block table comes from, asked only for a block that opens with `<`, so a paragraph pays no lex and one
+     opening with an inline tag or an autolink is trusted as its own element. (5c0c737c decoded the source itself and
+     looked for the element's text in it: the decoder threw a RangeError on an entity past U+10FFFF, inside the Raw
+     click and the text-size step, so the view stayed and the size was stored unpainted, and it knew six entity names,
+     so a caption hanging on `&mdash;`, a badge over a tagline or a tag holding `<b>` read as swallowed and the switch
+     left the numeric scrollTop, paragraph 28 on top both ways.) Refused, from whichever element is at the edge: (1) a
+     wrapper the browser nests the following markdown into (`<details>` with a blank line after its summary, a centred
+     `<div>`), paired to every element after it, from a swallowed paragraph, the wrapper itself, a picture or a rule
+     in the run (read as the wrapper's block, a Raw switch from paragraph 80 landed on `<summary>`, 3500px up, and
+     from a picture 100px in, 1750px up), and a wrapper whose closing tag is the document's last block, or is missing,
+     paired to its one element, itself, holding every paragraph after it (the Slice 2 review over 66368710, which
+     trusted any one element: a Raw switch from a nested paragraph 60 landed on the `<div align="center">` row with
+     the passage 1395px below the viewport and came back 42px off, and paragraph 60's Raw row switched to Rendered
+     borrowed the wrapper's box and landed on paragraph 43), refused from the wrapper and from a nested paragraph, in
+     both directions; and a Raw row of the wrapper's own switched to Rendered seats nothing (5c0c737c seated the whole
+     run, paragraph 74 at scrollTop 3585 for 360); (2) two html blocks a blank line apart (`<p>Alpha</p>` over
+     `<p>Beta</p>`, a README's centred heading over its tagline), which the map pairs as nothing and both, from either
+     element (5c0c737c read the second as its block and put the Raw view one row off); (3) an html block, one tag or
+     several, holding a tag the sanitizer removes when the removal changes the block's text (a `<script>` or `<style>`
+     inside a tag goes with its text) or its element count (a `<style>`, an `<iframe>` or a form control between two
+     `<p>`s), so the block's source parses to other elements or other text than the sanitizer kept (pane 900,
+     `<div>Caption text <script>alert(1)</script> after.</div>` after paragraph 40: no write, the browser's landing on
+     paragraph 36 at -51, back +201.5 for -2.5; a `<label>` inside a tag, its text kept, or an `<iframe>` inside one,
+     no text, is trusted: Raw on the tag's own row, back -2.5); (4) a hex character reference with no digits (`&#x;`,
+     `&#X;`), which Chromium decodes to U+FFFD when its fast-path parser reads a short string of simple tags (the
+     block's source alone, as DOMParser sees it) and keeps as the literal when its full parser reads it, which the
+     sanitizer's whole-document parse is whenever the note holds a heading, a code block, emphasis or a picture, so
+     the two sides disagree on that one form in nearly every note (the same numbers as (3); `&mdash;` in the same
+     shape seats); every other entity form, valid or not, decodes alike on both sides. (3) and (4) are malformed
+     input, measured by the review's probe over the real viewer and recorded here rather than pinned; the body's
+     landing is the browser's own. The edits leg lands after the wrapper both ways (its first scene can be tightened
+     to exact once the map pairs the wrapper to its own element); file-view-place-html-browser.test.ts pins (1) and
+     (2) as no scrollTop written by the viewer across the switch (a setter trap on the body), and the accepted shapes
+     (inline tags, a line break, the README pair, named entities, an entity with no semicolon or past U+10FFFF) as the
+     tag's own Raw row and the return to the tag; file-view-place-wrapper-end-browser.test.ts pins the centred div
+     closed last, the same div never closed and `<details open>` closed at the end as no scrollTop written either way,
+     and the one-tag html block, the paragraph opening with an inline tag and the one opening with an autolink as
+     their own Raw row and the return within 1.5px; file-view-place-blocks.test.ts the same over the stand-in, its
+     DOMParser built on the same parser, and codeOf's html `<pre>` exclusion (null; a fenced block skip 1, an indented
+     block skip 0).
    - *Where it runs.* renderBody reads the place against the text the body was PAINTED from (`shownText`: a reload
      has put the new bytes in `text` before the swap), swaps, runs the seam's hooks, then seats, the order the #348
      selection keeper set (hooks first, then the restore), so the panel's paint pass has run before the body moves
@@ -599,6 +623,24 @@ text, and which test holds each rule:
      the top row by a row). file-view-place.test.ts pins the order in file-view.ts, file-view-place-svg-source.test.ts
      the Source view's; md-url-view.test.ts pins it in openUrlView's renderBody, the seat between the paint and the
      fragment landing; file-view-place-svg-source-browser.test.ts measures the Source view's reload and toggle.
+   - *What a paint costs.* The seat reads the anchor map's block table, so every paint of a text view builds the
+     rendered index for the new root, panel or no panel; at 5,000 paragraphs (a 1.2 MB note) a fresh root cost 147 ms
+     (the lex 48, the walk over the tokens about 70, the pairing of blocks to elements about 22) and the Raw rows 35,
+     so the Rendered click reached its frame about 155 ms after the base's, at pane 900 and 380 alike (the Raw click
+     within noise; the scroll frames unchanged, the per-frame read being a cache hit). The source half of the index
+     (the normalized text, the placed tokens, the block table and each block's walk) is kept for the last source
+     (anchor-map.ts sourceTable, one entry keyed on the text), so a fresh root over unchanged text (a view switch, a
+     reload of the same bytes) pays the pairing alone, 22 ms, and the Rendered click reaches its frame 20 to 40 ms
+     after the base's (pane 900: base 574 to 586 ms, before the cache 730 to 744, after it 594 to 602; pane 380: 577
+     to 586, 722 to 748, 622 to 626; medians of seven clicks, interleaved runs), and a reload of the same bytes under
+     Rendered paints within 30 ms of the base's (565 and 558 ms for 561 and 532; before the cache 679 to 726; the Raw
+     reload's 35 ms row check stands, being the rows' own). The first paint of new text (an open, a reload after a
+     write) still lexes and walks it, once: 93 ms for the root over a 43 ms block table, where the table and the index
+     each lexed before. The walk waits for the first Rendered root, so a Raw view (any non-markdown file, whose text
+     the block table lexes as markdown once) pays the lex alone, as before.
+     file-view-place-source-cache.test.ts counts one Lexer.lex across the block table and three roots over one source
+     (four before the cache) and pins the pairing as each root's own: a root whose text mismatches the file refuses
+     its block and a fresh root over the same source maps it still.
    - *Numbers.* The same at 380 and 900px: a reload inserting twenty paragraphs above paragraph 40 kept it at the
      top (before: paragraph 28 at 900px, 29 at 380px), in the Raw view too and with the aside open (the margin
      layout); the Rendered, Raw, Rendered round trip came back to paragraph 40 at the same height, pane 900
@@ -729,14 +771,14 @@ text, and which test holds each rule:
    aside the row's whole width with the aside below at the two narrow widths, two columns at 900, the card
    `inline-size` and the row `normal`. Before the cleanup the row's `container-type` read `inline-size` and nothing
    else in the leg differed.
-10. *Tests and infrastructure.* The twelve legs (file-view-place-browser, file-view-notebar-browser,
+10. *Tests and infrastructure.* The thirteen legs (file-view-place-browser, file-view-notebar-browser,
     file-comments-float-scroll-browser, file-view-fold-browser, and the review's file-view-place-blocks-browser,
     file-view-place-reveal-browser, file-view-place-edits-browser, file-view-float-anchoring-browser,
-    file-view-leg-page-browser, file-view-place-float-browser, file-view-place-html-browser and
-    file-view-place-svg-source-browser) share one test-only page module,
+    file-view-leg-page-browser, file-view-place-float-browser, file-view-place-html-browser,
+    file-view-place-svg-source-browser and file-view-place-wrapper-end-browser) share one test-only page module,
     `ui/webview/real-viewer-leg.ts` (the viewer bundled from the tree, a fetch answering the file route from an
     editable table, an .svg served as an image with the kernel's Content-Type, a poster answering the panel's status
-    ask so the real aside opens on a click, a probe action counting the seam's paints), instead of twelve copies of
+    ask so the real aside opens on a click, a probe action counting the seam's paints), instead of thirteen copies of
     the same eighty lines; a leg runs over another tree from that tree's vscode-extension (the cwd names the tree, as
     for every browser leg), which is how each leg was run over a copy of the base commit's sources and shown red there
     (place 4 of 4 scenes, note bar 2 of 2, float 2 of 2, fold on the row's container-type; the review's blocks leg 6
@@ -750,7 +792,13 @@ text, and which test holds each rule:
     second test red, and the floated-figure leg 0 of 1 over that tree with topVisibleIndex's pass-over removed,
     where the Raw switch lands on the `<img` row at scrollTop 338 for 464 and a reload drops the passage 40px; over
     the base the same leg's Raw assertion is red too, the numeric scrollTop showing paragraph 4 in the pane and the
-    `<img` row in the chat). The page writes
+    `<img` row in the chat; over the tree after its third fixes, 66368710: the wrapper-end leg 1 of 3, the Raw switch
+    from the nested paragraph writing scrollTop 2934.6 on the div closed last and the reverse switch 2073, the
+    controls green; and the html leg's wrapped-line scene, which since the fourth round runs its two pane drags twice,
+    with the browser's scroll anchoring on and then off, is red over the base on the anchoring-off pass alone, the
+    character at -2502 for -20.4 with no write, since with anchoring on Chromium holds the character within 0.2px and
+    the seat's delta falls under its half-pixel threshold, so that pass pins the point the seat computes and the other
+    the seat's presence). The page writes
     every value it inlines into its script with `<` as `\u003c` (scriptLiteral), since an HTML tokenizer ends script
     data at the first `</script` whatever the JavaScript around it: a fixture holding one cut the harness script off
     before the fetch stub, and the viewer fetched the harness page itself as the note

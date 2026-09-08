@@ -310,12 +310,13 @@ shrinks; one whose width is a percentage keeps the height it names.
 the file is read again after a session writes it, when you switch between Rendered and
 Raw, when the pane is resized or the Comments panel opens or closes, and when the text
 size changes. When the viewer cannot tell which passage is at the top, as with an HTML
-block that wraps the markdown after it, it keeps the scroll position instead. A notice
-from the viewer (a line past the end of the file, an edit the viewer refuses) sits above
-the file's text, wherever you have scrolled to, and stays through a switch of view and a
-reload until the next notice replaces it or you open the editor. A notice raised while
-you edit (a save that failed) goes when you leave the editor; a warning about the
-comments log stays when the save that raised it closes the editor.
+block that wraps the markdown after it, it leaves the view where the browser puts it, and
+the passage at the top might change. A notice from the viewer (a line past the end of the
+file, an edit the viewer refuses) sits above the file's text, wherever you have scrolled
+to, and stays through a switch of view and a reload until the next notice replaces it or
+you open the editor. A notice raised while you edit (a save that failed) goes when you
+leave the editor; a warning about the comments log stays when the save that raised it
+closes the editor.
 
 **A file's own HTML.** The Rendered view keeps the HTML a markdown file carries, under the
 rules GitHub applies to a README, so nothing in a file can move, hide or cover the viewer's

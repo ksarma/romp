@@ -13,15 +13,19 @@
 // elements with the same text; the review found the hand decoder throwing on an out-of-range entity and refusing a
 // caption on `&mdash;`), refused the wrapper's run from any element (a picture, a rule) and a seat on the wrapper's own
 // rows, refused both of two adjacent html blocks, and kept the line rule to a line that stands (a rewritten or
-// recurring line falls to the depth rule). The real thing is measured in headless Chromium by
-// file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts and file-view-place-html-browser.test.ts.
+// recurring line falls to the depth rule). The fourth round refused a wrapper's one-element pairing too (a wrapper
+// closing at the document's end, or never closed, is paired to itself alone, holding every paragraph after it; the third
+// round trusted any one element), keeping a one-tag html block and any other block's one element, and pinned codeOf's
+// html `<pre>` exclusion here (the stand-in has no hit test, so a seat cannot reach it). The real thing is measured in
+// headless Chromium by file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts,
+// file-view-place-html-browser.test.ts and file-view-place-wrapper-end-browser.test.ts.
 // The stand-in is the anchor-map suite's minimal tree (marked's output parsed into nodes, no jsdom) with a box per
 // element a test gives it; an element with no box reads as having no layout. Its DOMParser parses with the same
 // parser, so the trusted pairing reads as it does in a browser. Synthetic fixtures only.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { marked } from "marked";
-import { topVisibleIndex, blockIndexAt, blockHolding, followPlace, seatedTop, readPlace, seatPlace, type Place } from "./reader-place";
+import { topVisibleIndex, blockIndexAt, blockHolding, followPlace, seatedTop, readPlace, seatPlace, codeOf, type Place } from "./reader-place";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements } from "./anchor-map";
 
 // ── a DOM stand-in ─────────────────────────────────────────────────────────────────────────────────
@@ -488,6 +492,77 @@ test("readPlace / seatPlace: an html wrapper the browser nests the following mar
   assert.equal(readPlace(H(rendered(docAB, 100 - 3 * 48 - 20, 40).body), docAB), null, "Alpha's element at the edge: no place");
   assert.equal(readPlace(H(rendered(docAB, 100 - 4 * 48 - 20, 40).body), docAB), null, "Beta's element at the edge: no place");
   assert.equal(readPlace(H(rendered(docAB, 100 - 2 * 48 - 20, 40).body), docAB)!.start, spansAB[2].start, "paragraph 2 before them reads as ever");
+});
+
+test("readPlace / seatPlace: a wrapper whose closing tag is the document's last block, or is missing, is paired to its one element, holding every paragraph after it, and that pairing is refused like a run's (the wrapper at the edge reads as no place; a Raw place on a nested paragraph or on the wrapper's own row seats nothing); a one-tag html block, a paragraph opening with an inline tag and one opening with an autolink read as their own blocks; codeOf knows a markdown code block from an html <pre>", () => {
+  for (const [what, tail] of [["closed as the last block", "\n\n</div>\n"], ["never closed", "\n"]] as const) {
+    const doc = "# Report\n\n" + paras(1, 4) + "\n\n<div align=\"center\">\n\n" + paras(5, 12) + tail;
+    const spans = sourceBlockSpans(doc);
+    const wb = spans.findIndex((sp) => doc.slice(sp.start, sp.end).startsWith("<div"));
+    const r = rendered(doc, 0, 40);
+    // the fixture: the stand-in nests paragraphs 5 to 12 inside the div as a browser does, the div is the last top-level element, and the map pairs the wrapper's block to it alone
+    assert.equal(r.blocks.length, 6, what + ": the heading, four paragraphs and the div at the top level");
+    assert.equal(r.blocks[5].tagName, "DIV", what);
+    assert.equal(r.blocks[5].childNodes.filter((n) => n instanceof FakeElement).length, 8, what + ": the eight paragraphs after the wrapper are nested in it");
+    assert.deepEqual(renderedBlockElements(El(r.md), doc, wb), [r.blocks[5]], what + ": the wrapper's block is paired to the one element");
+    const b8 = blockIndexAt(spans, doc.indexOf("Paragraph 8:"));
+    assert.equal(renderedBlockElements(El(r.md), doc, b8).length, 0, what + ": a nested paragraph's block has no element of its own");
+    // the div straddles the edge (its box 80..120, the edge at 100): the one element's text is the nested paragraphs', not the block's own, so no place
+    const r2 = rendered(doc, 100 - 5 * 48 - 20, 40);
+    assert.equal(readPlace(H(r2.body), doc), null, what + ": the wrapper at the edge reads as no place (the third round read the wrapper's block, 20px in, and seated that depth as a fraction of its one Raw row)");
+    // a Raw place on nested paragraph 8 seated in this Rendered view: no element of its own, and the nearest block before it with one is the wrapper, refused: no seat, the body unmoved
+    const kept: Place = { source: doc, view: "raw", start: spans[b8].start, end: spans[b8].end, top: -3, height: 20, atTop: false, prev: spans[b8 - 1], next: spans[b8 + 1] };
+    r2.body.scrollTop = 500;
+    assert.equal(seatPlace(H(r2.body), doc, kept), false, what + ": the nested paragraph's Raw place seats nothing (the third round borrowed the wrapper's box)");
+    assert.equal(r2.body.scrollTop, 500, what + ": the numeric scrollTop stands");
+    // the wrapper's own Raw row seated in Rendered: its pairing is refused, so no seat either
+    const onWrapper: Place = { source: doc, view: "raw", start: spans[wb].start, end: spans[wb].end, top: -8, height: 20, atTop: false, prev: spans[wb - 1], next: spans[wb + 1], line: { start: spans[wb].start, end: spans[wb].end, top: -8 } };
+    assert.equal(seatPlace(H(r2.body), doc, onWrapper), false, what + ": the wrapper's own row seats nothing");
+    assert.equal(r2.body.scrollTop, 500, what);
+    // a paragraph before the wrapper reads as ever
+    const r4 = rendered(doc, 100 - 3 * 48 - 20, 40);
+    assert.equal(doc.slice(readPlace(H(r4.body), doc)!.start, readPlace(H(r4.body), doc)!.end), PARA(3), what + ": paragraph 3 before the wrapper");
+  }
+  // the blocks the widened rule must keep, each one element: a one-tag html block (its parse yields the tag with its own
+  // text), and two paragraphs whose source opens with `<` (an inline tag, an autolink), which are no html blocks and
+  // are trusted without a parse (parsed as html, `<b>Note:</b> ...` is one B with less text than the paragraph, and the
+  // autolink a bogus element, so a rule that parsed every `<`-opening block would refuse both)
+  const CTRL: Array<[string, string]> = [
+    ["a one-tag html block", "<p align=\"center\">Centered caption: one tag, its own block.</p>"],
+    ["a paragraph opening with an inline tag", "<b>Note:</b> a paragraph that opens with an inline tag and runs on."],
+    ["a paragraph opening with an autolink", "<https://example.test/docs> opens this paragraph with an autolink."],
+  ];
+  const docC = "# Report\n\n" + paras(1, 2) + "\n\n" + CTRL.map((c) => c[1]).join("\n\n") + "\n\n" + PARA(3) + "\n";
+  const spansC = sourceBlockSpans(docC);
+  CTRL.forEach(([what, src], k) => {
+    const b = spansC.findIndex((sp) => docC.slice(sp.start, sp.end) === src);
+    assert.ok(b > 0, what + ": the fixture holds it as one block");
+    const rc = rendered(docC, 100 - (3 + k) * 48 - 20, 40);   // element 3 + k straddles the edge
+    assert.equal(rc.blocks[3 + k].tagName, "P", what + ": one P element");
+    assert.equal(renderedBlockElements(El(rc.md), docC, b).length, 1, what + ": paired to it");
+    const q = readPlace(H(rc.body), docC);
+    assert.ok(q, what + ": a place");
+    assert.equal(docC.slice(q!.start, q!.end), src, what + ": its own block");
+    assert.equal(q!.top, -20, what + ": the block's box");
+  });
+  // codeOf: a markdown code block shows the block's lines one for one (the fence line skipped for a fenced block, none
+  // for an indented one); an html block's <pre> is none (the tag is its first line, so its lines and the block's are one
+  // off), and the block keeps the depth rule (the review round 3; pinned by the html leg alone until this round)
+  const HTML_PRE = "<pre>\nhtml line 1: words\nhtml line 2: words\n</pre>";
+  const FENCED = "```text\nfenced line 1: words\nfenced line 2: words\n```";
+  const INDENTED = "    indented line 1: words\n    indented line 2: words";
+  const docK = "# Report\n\n" + HTML_PRE + "\n\n" + FENCED + "\n\n" + INDENTED + "\n\n" + PARA(1) + "\n";
+  const spansK = sourceBlockSpans(docK);
+  const rk = rendered(docK, 0, 40);
+  const codeFor = (src: string) => { const b = spansK.findIndex((sp) => docK.slice(sp.start, sp.end) === src); assert.ok(b > 0, "the fixture holds " + JSON.stringify(src.slice(0, 12)) + " as one block"); const els = renderedBlockElements(El(rk.md), docK, b); assert.equal(els.length, 1); return codeOf(docK, spansK[b], els); };
+  assert.equal(codeFor(HTML_PRE), null, "an html block's <pre> is no code block: the depth rule (a rule taking every <pre> answered skip 0 and seated line 11 for line 10)");
+  assert.equal(codeFor(FENCED)!.skip, 1, "a fenced block: the fence line is skipped");
+  assert.equal(codeFor(FENCED)!.code.tagName, "CODE", "its code element");
+  assert.equal(codeFor(INDENTED)!.skip, 0, "an indented block: no line skipped");
+  assert.equal(codeFor(PARA(1)), null, "a paragraph is no code block");
+  // and the html <pre> still reads as its block: one element whose parse yields the tag with the same text
+  const rk2 = rendered(docK, 100 - 1 * 48 - 20, 40);
+  assert.equal(docK.slice(readPlace(H(rk2.body), docK)!.start, readPlace(H(rk2.body), docK)!.end), HTML_PRE, "the html <pre> block at the edge reads as its block");
 });
 
 test("readPlace / seatPlace, Raw: the row at the edge is kept with its block, and a reload seats the row where it was: lines inserted above it inside the block, lines deleted below it; the row itself rewritten, or a row whose text recurs, falls to the block's depth rule", () => {

@@ -29,7 +29,13 @@
 //   - a Rendered code block of long lines in a 380px pane, the reader partway into line 50's wrapped rows: round 2
 //     recorded the hit row's top and seated the line's first character there, so the first pane drag moved the passage
 //     by a wrapped row (the first character from -20.4 to -2.1); now the first character's top is what is kept, and the
-//     drag to 900px and back holds it within 2px.
+//     drag to 900px and back holds it within 2px. Two passes over the same drags: with the sheets' default overflow-anchor
+//     Chromium's own anchoring lands the character within 0.2px, so the seat's delta is under its half-pixel threshold
+//     and the viewer writes nothing (the base commit, with no seat, is green here); that pass pins the POINT the seat
+//     computes, since a wrong rule seats another point over the browser's landing (round 2's row top, -2.1; the block's
+//     fraction, +0.95). With anchoring off (a test-only style on the body) only the viewer's seat can hold the
+//     character; that pass pins the seat's PRESENCE (the base keeps the numeric scrollTop, clamped to 4787 at 900px,
+//     and the character goes to -2502, then +922 back at 380).
 // A refusal is pinned as what the viewer does, not where the body lands: a setter trap on the body's scrollTop records
 // every script write across the switch, and a refused switch makes none. Where the body lands is then the browser's
 // own: with the sheets' default overflow-anchor Chromium's scroll anchoring re-finds an anchor in the new content and
@@ -267,7 +273,7 @@ test("in a browser, the real module: an html <pre> block keeps the depth rule ac
   });
 });
 
-test("in a browser, the real module: a Rendered code block of long lines in a 380px pane, the reader partway into line 50's wrapped rows: the line's first character is what the place keeps, so a drag to 900px and back holds it within 2px (the second round kept the hit row's top and the first drag moved the passage by a wrapped row)", { timeout: 180000 }, async (t) => {
+test("in a browser, the real module: a Rendered code block of long lines in a 380px pane, the reader partway into line 50's wrapped rows: the line's first character is what the place keeps, so a drag to 900px and back holds it within 2px, with the browser's scroll anchoring on (the second round kept the hit row's top and the first drag moved the passage by a wrapped row) and off, where only the viewer's seat can hold it (the base keeps the numeric scrollTop and the character goes 2500px off)", { timeout: 180000 }, async (t) => {
   await inBrowser(t, async (browser) => {
     const LINES = Array.from({ length: 120 }, (_, i) => (i === 0 ? "def f1(x):  # line 1 of a long code block" : `    return x + ${i + 1}  # ` + "a long trailing comment that wraps in a narrow pane ".repeat(3).trim()));
     const DOC = "# Report\n\n" + paras(1, 10) + "\n\n```python\n" + LINES.join("\n") + "\n```\n\n" + paras(11, 20) + "\n";
@@ -297,13 +303,22 @@ test("in a browser, the real module: a Rendered code block of long lines in a 38
     await frames(page, 3);                                                   // the scroll-time read
     const start = await firstCharTop(page, 50);
     near(start, -20.4, "the scene starts with line 50's first character 20.4px above the edge (the hit a pixel below the edge is on its second wrapped row)", 1);
-    for (const [width, want] of [[900, -20.4], [380, -20.4]] as const) {
-      const paints: number = await page.evaluate(() => (window as any).__paints);
-      await page.setViewportSize({ width, height: 600 });
-      await paintsReach(page, paints + 1);
-      await frames(page, 2);
-      const now = await firstCharTop(page, 50);
-      near(now, want, `at ${width}px line 50's first character is where it was (the second round: -2.1 at the first drag, the hit row's top seated as the line's)`, 2);
+    // Two passes over the same drags (the header): with the sheets' default overflow-anchor Chromium's own anchoring
+    // lands the character within 0.2px and the viewer writes nothing, so the pass pins the point the seat computes (a
+    // wrong rule seats another point over the browser's landing); with anchoring off, a test-only style on the body
+    // (the sheets declare none, plan item 5), only the viewer's seat can hold the character, so the pass pins the seat
+    // itself: the base commit, with no seat, keeps the numeric scrollTop and the character goes 2500px off.
+    for (const anchoring of ["on", "off"] as const) {
+      if (anchoring === "off") await page.evaluate(() => { (document.querySelector(".fileview-body") as HTMLElement).style.overflowAnchor = "none"; });
+      for (const width of [900, 380] as const) {
+        await trapWrites(page);
+        const paints: number = await page.evaluate(() => (window as any).__paints);
+        await page.setViewportSize({ width, height: 600 });
+        await paintsReach(page, paints + 1);
+        await frames(page, 2);
+        const now = await firstCharTop(page, 50);
+        near(now, -20.4, `with the browser's anchoring ${anchoring}, at ${width}px line 50's first character is where it was (the viewer's scrollTop writes across the drag: ${JSON.stringify(await writes(page))}; the second round: -2.1 at the first drag with anchoring on, the hit row's top seated as the line's; the base with anchoring off: -2502 at 900px, no write)`, 2);
+      }
     }
     assert.deepEqual(errors, [], "no script error");
     await page.close();

@@ -9,11 +9,11 @@
 // status) is written with `<` as `\u003c` (scriptLiteral): an HTML tokenizer ends script data at the first `</script`
 // whatever the JavaScript around it, so a fixture holding one used to cut the harness script off before the fetch stub,
 // leaving the viewer to fetch the harness page itself as the note (file-view-leg-page-browser.test.ts pins the escape).
-// Twelve legs measure over it (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
+// Thirteen legs measure over it (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
 // file-view-fold-browser, and the Slice 2 review's file-view-place-blocks-browser, file-view-place-reveal-browser,
 // file-view-place-edits-browser, file-view-float-anchoring-browser, file-view-leg-page-browser,
-// file-view-place-float-browser, file-view-place-html-browser and file-view-place-svg-source-browser); this module
-// exists so they do not carry twelve copies of the same page. Test-only:
+// file-view-place-float-browser, file-view-place-html-browser, file-view-place-svg-source-browser and
+// file-view-place-wrapper-end-browser); this module exists so they do not carry thirteen copies of the same page. Test-only:
 // no webview bundle imports it. playwright and esbuild are resolved from the extension's own package.json, so a
 // single-file run (infra: the bundle written under TMPDIR) finds them too. The tree under test is the
 // cwd's, ../ui/webview from the vscode-extension npm test runs in, as for every browser leg; to run a leg over another
