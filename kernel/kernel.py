@@ -5542,27 +5542,60 @@ def _user_todos_from_log(lines):
 
 _URL_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")   # `scheme://` — a URL, not a path
 
+try:
+    # The longest path string the OS takes, its terminator counted (PATH_MAX: 4096 on Linux, 1024 on
+    # macOS). A spelling that long or longer is ENAMETOOLONG to lstat and open alike, so no probe of it
+    # can answer and no file bears it — what _normpath_keeping_links and _user_todo_file key on.
+    _PATH_MAX = int(os.pathconf(os.sep, "PC_PATH_MAX"))
+except (OSError, ValueError, AttributeError):
+    _PATH_MAX = 4096
+
+
+def _is_dir_link(p):
+    """Is `p` a symlink whose target is a directory — the one shape of link the OS walks `..` THROUGH.
+    islink is true of a link to a FILE, and of a dangling one, too — but `link/..` is ENOTDIR (ENOENT)
+    to the OS for those: that spelling opens nothing, so there is nothing to keep (the review,
+    2026-09-07: `fl/../x.md` with fl -> t.txt was stored as given and the chip opened nothing, while
+    realpath walked the `..` lexically and a Send from x.md offered the todo). Both probes swallow
+    OSError and ValueError."""
+    return os.path.islink(p) and os.path.isdir(p)
+
 
 def _normpath_keeping_links(p):
     """os.path.normpath's cleanup of an ABSOLUTE spelling — `.` and doubled slashes dropped, `dir/..`
-    collapsed — except that a `..` right after a directory SYMLINK stays in the string. The OS walks
+    collapsed — except that a `..` right after a DIRECTORY symlink stays in the string. The OS walks
     `link/..` through the link's TARGET, so the lexical collapse names a different file than the one the
     spelling opens: with repo/docs-link -> vault/docs, `repo/docs-link/../notes/x.md` is vault/notes/x.md
     on disk but repo/notes/x.md to normpath (the GitHub-link builder hit the same class and moved to
-    realpath). This keeps the spelling — the chip and the request show the path the agent named, which
+    realpath). This keeps the spelling — the chip and the todo's row show the path the agent named, which
     is why it is not realpath — while every `..` in it means what it means to the OS: realpath of the
     result is the file the agent's spelling opens. A `..` above a kept one is kept too (`link/../..` is
-    two steps from the link's target); `/..` is `/`, as for normpath."""
+    two steps from the link's target); `/..` is `/`, as for normpath; a `..` after a link to a FILE, or a
+    dangling one, collapses as normpath collapses it (_is_dir_link: the OS opens nothing for that
+    spelling, so the lexical answer is the file the agent named).
+
+    The link probe needs the prefix as one string, and re-joining it for every `..` made the cost
+    quadratic in the spelling: a 180 KB `file` held the /usertodo handler thread, under the GIL, for 8 s
+    before the todo was written, past the postal bus's 2 s timeout, whose "try again" filed a duplicate
+    per retry (the review, 2026-09-07). The prefix's length is carried instead, and no prefix of
+    PATH_MAX or more is joined or probed: lstat refuses it (islink answers False either way), so the
+    result is unchanged and the work is linear in the spelling."""
     out = []
+    n = 0                                            # len(os.sep + os.sep.join(out)), kept incrementally
     for part in p.split(os.sep):
         if part in ("", "."):
             continue
         if part != "..":
             out.append(part)
-        elif out and (out[-1] == ".." or os.path.islink(os.sep + os.sep.join(out))):
+            n += len(part) + 1
+        elif out and out[-1] == "..":
+            out.append("..")                         # a step above a kept one: two steps from the target
+            n += 3
+        elif out and n < _PATH_MAX and _is_dir_link(os.sep + os.sep.join(out)):
             out.append("..")                         # the OS resolves this step through the link: keep it
+            n += 3
         elif out:
-            out.pop()
+            n -= len(out.pop()) + 1
     return os.sep + os.sep.join(out)
 
 
@@ -5571,7 +5604,7 @@ def _user_todo_file(value, sid):
     did not resolve: (stored, warning). (None, None) when no file was given. The value is resolved the
     way a click-to-open path is (_resolve_open_path: ~ expanded, a RELATIVE path against the session's
     recorded cwd) and stored absolute and normalized — the spelling, not the realpath, so the chip and
-    the request show the path the agent named (normalized by _normpath_keeping_links, so a `..` that
+    the todo's row show the path the agent named (normalized by _normpath_keeping_links, so a `..` that
     crosses a directory symlink still names the file the spelling opens); the comments panel matches by
     realpath at status time (_user_todos_naming_file). A file:// URI — a spelling the tool's `text`
     lists as linkable, and one the CLIENT converts before a clicked link reaches the kernel
@@ -5583,22 +5616,29 @@ def _user_todo_file(value, sid):
     that cannot become a path on this disk — a relative path for a session with no recorded cwd, a URI
     without an absolute path, another URL scheme, a body value that is not a string, a spelling holding
     a NUL byte (no path holds one, and Python 3.12's os.path.realpath RAISES on it rather than answering,
-    so a stored one is matched by nothing) — is stored AS GIVEN with a warning that names the reason;
-    never a refusal: the todo is the person's to see, and a path that does not resolve is worth a line
-    in the tool's reply, not a lost request (the todo-file follow-on, 2026-09-07)."""
+    so a stored one is matched by nothing), a spelling still PATH_MAX or longer once normalized (no path
+    that long opens on this machine: ENAMETOOLONG) — is stored AS GIVEN with a warning that names the
+    reason; never a refusal: the todo is the person's to see, and a path that does not resolve is worth
+    a line in the tool's reply, not a lost todo (the todo-file follow-on, 2026-09-07). The NUL is checked
+    on the value AS GIVEN, before any resolution: os.path.expanduser hands a `~name` spelling's name to
+    pwd.getpwnam, which raises ValueError on an embedded NUL, and a check on the converted spelling alone
+    never saw `~\\0/x.md` — the route answered 500 and filed nothing (the review, 2026-09-07). The words
+    of every warning reach the agent verbatim (the postal tool appends them to its reply), so they name
+    the object a todo, never by a word CONTEXT.md's User todo entry avoids."""
     if value is None:
         return None, None
+    opens = "so the person can open it from the todo and their comments on it can answer the todo"
     if not isinstance(value, str):                   # a hand-built POST: not a path, so not resolved
         raw = str(value)
         return raw, ("the file value %s is not a path string, so it was kept as given; pass the file's "
-                     "absolute path as a string so it opens from the request and its comments can "
-                     "answer it" % raw)
+                     "absolute path as a string %s" % (raw, opens))
     raw = value.strip()
     if not raw:
         return None, None
-    tail = ("so it was kept as given; pass the file's absolute path so it opens from the request and "
-            "its comments can answer it")
-    if raw[:5].lower() == "file:":
+    tail = "so it was kept as given; pass the file's absolute path " + opens
+    if "\x00" in raw:
+        p = raw                                      # never resolved: the check below names the byte
+    elif raw[:5].lower() == "file:":
         # file:///x (an empty authority, the client's own spelling) and file:/x (no authority, RFC 8089)
         # both name /x; file://host/x and file://docs/x carry no local absolute path
         rest = raw[5:]
@@ -5617,7 +5657,13 @@ def _user_todo_file(value, sid):
         return raw, ("the file path %s did not resolve to a path on this machine's disk (it holds a NUL "
                      "byte, which no path can), %s" % (raw.replace("\x00", "\\0"), tail))
     if os.path.isabs(p):
-        return _normpath_keeping_links(p), None
+        p = _normpath_keeping_links(p)
+        if len(p) >= _PATH_MAX:
+            # shown by its head and its length: a spelling this long repeated whole is the reply
+            return raw, ("the file path %s… (%d characters) did not resolve to a path on this machine's disk "
+                         "(no path longer than %d characters opens here), %s"
+                         % (raw[:60], len(raw), _PATH_MAX - 1, tail))
+        return p, None
     return raw, ("the file path %s did not resolve to an absolute path (it is relative and no working "
                  "directory is recorded for this session), %s" % (raw, tail))
 
@@ -5824,19 +5870,22 @@ def _user_todos_naming_file(sid, real):
 
     A `file` the store kept AS GIVEN — a relative path, filed while the session had no recorded cwd
     (_user_todo_file) — names no file here, ever: the filing reply told the agent as much (pass the
-    absolute path "so ... its comments can answer it"), and a Send that answers a todo is a stamp, so
-    the match is made on the path the kernel resolved at filing or not at all. Never realpath'd bare:
-    Python resolves a relative string against the kernel PROCESS's cwd, which listed the todo on an
-    unrelated file that happened to sit at that relative path under the kernel's own directory (the
-    review, 2026-09-07). The chip's click still resolves the same string against the session's cwd of
-    the moment (the /file route's best effort at opening); opening a file and stamping a todo are held
-    to different standards on purpose."""
+    absolute path "so ... their comments on it can answer the todo"), and a Send that answers a todo is
+    a stamp, so the match is made on the path the kernel resolved at filing or not at all. Never
+    realpath'd bare: Python resolves a relative string against the kernel PROCESS's cwd, which listed
+    the todo on an unrelated file that happened to sit at that relative path under the kernel's own
+    directory (the review, 2026-09-07). The chip's click still resolves the same string against the
+    session's cwd of the moment (the /file route's best effort at opening); opening a file and stamping
+    a todo are held to different standards on purpose. A spelling of PATH_MAX or more is kept as given
+    the same way (no file bears it) and skipped here for the same reason, and for one more: realpath
+    walks it one lstat per component on the growing prefix — quadratic, on every comments reply of the
+    session — to answer with a lexical collapse the chip cannot open."""
     if not sid or not real:
         return []
     out = []
     for t in _open_user_todos(str(sid)):
         f = str(t.get("file") or "")
-        if not f or not os.path.isabs(f):
+        if not f or not os.path.isabs(f) or len(f) >= _PATH_MAX:
             continue
         try:
             same = os.path.realpath(f) == real

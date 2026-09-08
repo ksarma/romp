@@ -3340,6 +3340,25 @@ def _mcp_call(name, args):
         warning = str(res.get("warning") or "").strip()
         if warning:
             out += " About the file: " + warning
+        elif "file" in body and not res.get("file"):
+            # Version skew (the review, 2026-09-08): a kernel that predates a todo's file reads
+            # id/text/detail alone and answers {ok, todoId} — the file was neither stored nor warned
+            # about — while a kernel that takes it echoes `file` as the record keeps it, or warns
+            # (_user_todo_file answers one or the other for every value this tool posts: None and
+            # a blank never leave here). So a reply with neither is the older route, and it is
+            # named here rather than swallowed: the kernel's own forward to a remote makes the same
+            # inference and warns, but a session's tool posts to its OWN host's kernel, which that
+            # branch never sees — and this machine's kernel is exactly the one a checkout update
+            # leaves running until its restart, while every new or revived session spawns this tool
+            # from the checkout. Not an error flag: the todo is filed and stands (an error here
+            # reads as "not saved", and the retry files a duplicate); the loss is said, in the
+            # tool's own veiled words (test_injected_voice.py: no tracking-system nouns, and the
+            # kernel is "the session manager", as set_emoji's reply has it), with the remedy.
+            out += (" About the file: %s was not recorded — the session manager on this machine runs "
+                    "an older version that does not keep a todo's file (an update and a restart fix "
+                    "that), so this todo shows without a link to the file. If the link matters, "
+                    "withdraw this todo and file it again with the path in its text or detail."
+                    % body["file"])
         return out, False
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain

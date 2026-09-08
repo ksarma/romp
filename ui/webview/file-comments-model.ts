@@ -442,10 +442,18 @@ const oneLine = (s: string, max: number): string => {
 // ── the todo a send answers (the todo-file follow-on, 2026-09-07) ─────────────────────────────────
 /** A user todo a send from this file may answer: the one the file was opened from (`ctx.todoId` — its text when the
  *  status lists it, else null, since the viewer never receives that todo's words) and every open todo of the session
- *  whose `file` is this file (`Status.todos`, in the kernel's order), each once, minus those a send from this page
- *  already answered. One candidate is the confirm's checkbox; several are one radio group with the first selected, so
- *  one send answers one todo (decision 28); none, no control. The kernel stops listing a todo once it is settled, so
- *  the one a send answered leaves at the next status without the panel forgetting anything of its own. */
+ *  whose `file` is this file (`Status.todos`, in the kernel's order), each once, minus those `answered` names. One
+ *  candidate is the confirm's checkbox; several are one radio group with the first selected, so one send answers one
+ *  todo (decision 28); none, no control. The kernel stops listing a todo once it is settled, so the one a send answered
+ *  leaves at the next status without the panel forgetting anything of its own.
+ *
+ *  `answered` is the page's memory of the todos its sends stamped, and it is for the moment before that next status
+ *  ONLY: this function drops whatever the predicate names, so the caller must stop naming a todo once a status issued
+ *  after the send lists it. That list is the kernel's word (CLAUDE.md, the authoritative source), and a todo on it is
+ *  open — the send was parked (a queued send stamps when it drains, not when it is accepted), or the answer was
+ *  recalled and the kernel reopened the todo — so a memory that outlives the status hides an open todo from the
+ *  confirm while Waiting on you shows it. What the memory keeps for good is the todo the file was opened from when its
+ *  `file` is another file: no status of this viewer lists it, and decision 28 wants later sends to show no box for it. */
 export type TodoChoice = { id: string; text: string | null };
 export function todoChoices(todoId: string | null | undefined, s: Pick<Status, "todos"> | null | undefined, answered: (id: string) => boolean): TodoChoice[] {
   const listed = (Array.isArray(s?.todos) ? s!.todos! : []).filter((t) => t && typeof t === "object" && typeof t.id === "string" && t.id);

@@ -831,12 +831,17 @@ four reply types.
   symlinked by `install.sh:173` and appended to the system prompt by both backends) gains one
   sentence in its Working style section, after the paragraph on locating paths (the user
   2026-09-06), in the person's voice and conditional on the tool: when you want me to look at a
-  file, flag it with `add_user_todo` if you have that tool, with the file's absolute path in the
-  detail; I open it from there, and my comments come back to you as a message with instructions;
-  without the tool, say so in your reply. It does not go in the Housekeeping section, which
-  `CLAUDE.md` reserves for explaining romp's artifacts. The vendored skill gains the sentence on
-  asking for another look. Both speak as the person and name only what the agent already sees,
-  so the veil holds.
+  file, flag it with `add_user_todo` if you have that tool, and give the file's absolute path as
+  its `file` argument (not only as an absolute path in the detail, which can still describe it);
+  I open it from there, and my comments come back to you as a message with instructions; if you
+  don't have the tool, ask for the look in your reply and name the file. (As approved, the
+  sentence put the path in the detail; the todo-file follow-on, 2026-09-07, moved it to the `file`
+  argument, the structured link the chip and the Send confirm read, and left the detail its
+  descriptive role. Decision 35 says the same, and `tests/test_file_review_plan_prompt_sentence.py`
+  holds this bullet, that decision and the prompt to one another.) It does not go in the
+  Housekeeping section, which `CLAUDE.md` reserves for explaining romp's artifacts. The vendored
+  skill gains the sentence on asking for another look, naming the file. Both speak as the person
+  and name only what the agent already sees, so the veil holds.
 - An ended session's todo is hidden from Waiting on you until the session is revived, since the
   board lists living sessions only and gates ended ones (`kernel.py:25731, 26082-26087`; the
   chat's own card gate is at `24047-24062`), so a todo can vanish; the file is still on disk and
@@ -1471,7 +1476,10 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   request, the todo gone after a send when the next status omits it, the stamp latch, the one-line
   label) and runs `todoChoices`; `tests/test_guide_todo_file_chip.py` holds the guide's Waiting on
   you and Files sections to the pane and the panel; `tools/file-review-plan.test.mjs` holds the
-  follow-on's note and its Getting into it bullet to the model, the panel and the pane.
+  follow-on's note and its Getting into it bullet to the model, the panel and the pane;
+  `tests/test_file_review_plan_prompt_sentence.py` holds the From the session's side bullet,
+  decision 35 and `claude/romp-session-prompt.md` to one another on the `file` argument (the
+  review, 2026-09-07: the bullet still put the path in the detail after the prompt moved it).
 - `ui/webview/pdf-lazy.test.ts` (Slice 4), on `editor-lazy.test.ts`'s model and in a file of its
   own, so a Node under pdf.js's floor fails the PDF tests by name and leaves the editor pins
   standing: the PDF chunk staying lazy (no main-bundle source imports pdfjs-dist or the chunk; the

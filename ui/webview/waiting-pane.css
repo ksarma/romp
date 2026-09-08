@@ -49,4 +49,9 @@ border-radius:var(--radius-pill,999px);font-size:11px;line-height:1.5;
 overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
 background:var(--overlay-10, rgba(255,255,255,0.10));color:var(--accent,#9cd2ff);text-decoration:none}
 .wt-file.file-uri-link:hover{filter:brightness(1.12);text-decoration:none}
-#ut-reply-prompt .wt-file{align-self:flex-start;margin:2px 0 4px}
+/* In the Reply modal the chip is ALONE on its line (a flex item of .confirm-box's column), so the row's 32% share —
+   sized for a line shared with the session chip, the age and two buttons — does not apply: the cap is the line. The
+   chip shrink-wraps its label (align-self) up to the whole line, and only a basename longer than the line ends in the
+   ellipsis. Under the row's cap it was ~110px on a phone, and two sibling drafts (…_v2_final.md, …_v3_final.md)
+   opened to the same chip with the file's name in the title alone (the 2026-09-07 review). */
+#ut-reply-prompt .wt-file{align-self:flex-start;max-width:100%;margin:2px 0 4px}

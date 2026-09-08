@@ -10,7 +10,9 @@ review findings on the reference's account of it, both pinned here:
   nothing and no Send from the file it meant offers the todo); only a relative path from a session with no
   recorded cwd is kept as given with a warning the tool's reply relays. The reference used to say a path
   that "does not resolve on the session's machine" earns the warning, an existence claim the kernel does not
-  make. The sentences are held to the code by running the same helper the filing runs.
+  make. The sentences are held to the code by running the same helper the filing runs. What clears the todo
+  (Reply, Dismiss, the session's withdraw) is the next sentence's claim, pinned in
+  tests/test_reference_todo_file_withdraw.py only.
 - CONTEXT.md's **User todo** entry lists "request" under _Avoid_, and the same follow-on purged the word from
   docs/guide.md (tests/test_guide_todo_file_chip.py) while the reference's paragraph, its two MCP rows and
   the File comments paragraph kept saying "request" for the same object. The avoid list is read from
@@ -123,9 +125,12 @@ class TheParagraphSaysWhatTheKernelDoes(_Sandbox):
         self.assertIn("The kernel that holds the session makes the path absolute and stores it: `~` is expanded, a "
                       "relative path is read against the session's working directory like one in the text, and a "
                       "`file://` URI becomes its path.", self.para)
+        # The existence claim ends at "no Send offers the todo." The sentence after it, which names the three
+        # events that clear the todo (Reply, Dismiss, the session's withdraw), is pinned ONCE, in
+        # tests/test_reference_todo_file_withdraw.py against the ADR; round 2 reworded it and this module's
+        # copy of the old "only Reply or Dismiss" wording went red, so the clause is not repeated here.
         self.assertIn("The kernel does not check that the file exists. A mistyped absolute path is stored as typed, "
-                      "with no warning; its chip opens nothing, no Send offers the todo, and only Reply or Dismiss "
-                      "clears it.", self.para)
+                      "with no warning; its chip opens nothing and no Send offers the todo.", self.para)
         self.assertIn("A value the kernel cannot make absolute is kept as given: the todo is still filed, and the "
                       "tool's reply says why and asks for the absolute path. That happens for a relative path from "
                       "a session whose working directory the kernel does not know, a `file://` URI that does not "

@@ -16,6 +16,11 @@ The tools' descriptions, their arguments' descriptions and the add tool's own re
 todo or a need, never a "request" — the word CONTEXT.md's User todo entry lists under _Avoid_, which the
 same follow-on purged from the docs while the strings an agent reads still carried it (Vocabulary).
 
+Named test_*.py like every Python test module (CLAUDE.md, tests/README.md), and held to that name
+(UnderTheRatchets): the ratchets over tests/ visit only files that pass `fn.startswith("test_")`, while
+pytest's default collection also takes *_test.py, so a module named that way runs and is never scanned.
+This one shipped as postal_service_todo_file_test.py and was renamed in the same review.
+
 SYNTHETIC fixtures only: a private placeholder sid, the notes-api demo world under a temp dir.
 """
 import io
@@ -273,6 +278,35 @@ class Vocabulary(_Stubbed):
         out, err, _ = self.add("docs/report.md")
         self.assertFalse(err)
         self._assert_no_avoid_word(out, "the add_user_todo reply")
+
+
+class UnderTheRatchets(unittest.TestCase):
+    """This module is named so the ratchets over tests/ scan it. tests/test_state_isolation_order.py (the
+    hermetic-state preamble before the first load) and tests/test_postal_marker_form.py (no bare postal
+    marker in a fixture) each visit only the files that pass `fn.startswith("test_") and fn.endswith(".py")`;
+    pytest's default collection also takes *_test.py, so a module named that way runs and escapes both.
+    This one shipped as postal_service_todo_file_test.py: an edit moving its load_source calls above the
+    preamble would have passed the state-isolation ratchet unchanged, and a direct script run of the edited
+    module would then have resolved STATE from the real ~/.local/state/romp (the 2026-08-12 incident the
+    ratchet exists for). The ratchet's own reader is run over this file here too, so the module reports its
+    preamble's order itself, whichever way it is run."""
+
+    SELF = os.path.basename(os.path.realpath(__file__))
+
+    def test_named_so_the_tests_ratchets_visit_it(self):
+        self.assertTrue(self.SELF.startswith("test_") and self.SELF.endswith(".py"),
+                        "%s: the ratchets over tests/ scan test_*.py only; a *_test.py name runs under pytest "
+                        "and escapes them" % self.SELF)
+
+    def test_the_state_isolation_ratchets_reader_sees_the_preamble_before_the_loads(self):
+        ratchet = load_source("romp_state_isolation_ratchet", os.path.join(HERE, "test_state_isolation_order.py"))
+        first_load, first_set, rsd_handled = ratchet.scan(os.path.realpath(__file__))
+        self.assertIsNotNone(first_load, "this module loads romp code; the reader must see the load")
+        self.assertIsNotNone(first_set, "the reader must see XDG_STATE_HOME assigned")
+        self.assertIsNotNone(rsd_handled, "the reader must see ROMP_STATE_DIR handled")
+        self.assertLess(first_set, first_load, "XDG_STATE_HOME is set before the first load")
+        self.assertLess(rsd_handled, first_load, "ROMP_STATE_DIR is handled before the first load")
+        self.assertNotIn(self.SELF, ratchet.EXEMPT, "no exemption: the preamble is the rule")
 
 
 if __name__ == "__main__":
