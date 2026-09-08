@@ -166,7 +166,7 @@ DOTTED = {
     "jd.episode_rows": ("sig", "episodes"),
     "jd.episode_settles": ("sig", "episodes"),
     "jd.load_archive": ("sig", "archive"),
-    "jd.load_goals_shared": ("sig", "store"),
+    "jd.load_goals_shared_or_fault": ("sig", "store"),   # the shared read behind the per-session fault boundary (upstream #1019)
     "em.MSG_TAG_RE.search": ("pure", "over a text"),
     "em.parse_teammate_message": ("pure", "over a text"),
     "sb.echo_text_key": ("pure", "over a text"),

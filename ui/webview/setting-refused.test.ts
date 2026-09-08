@@ -20,6 +20,7 @@ const ROOT = path.resolve(process.cwd(), "..");
 const KERNEL = fs.readFileSync(path.join(ROOT, "kernel", "kernel.py"), "utf8");
 const VIEW = fs.readFileSync(path.join(ROOT, "ui", "romp-timeline-view.js"), "utf8");
 const FEED = fs.readFileSync(path.join(ROOT, "ui", "webview", "feed.ts"), "utf8");
+const GATE = fs.readFileSync(path.join(ROOT, "ui", "webview", "feed-card-gate.ts"), "utf8");
 const RENDER = fs.readFileSync(path.join(ROOT, "ui", "webview", "render.ts"), "utf8");
 const BOOT = fs.readFileSync(path.join(ROOT, "ui", "webview", "timeline-boot.ts"), "utf8");
 
@@ -135,9 +136,14 @@ test("feed: the card bell's latch drops, the card repaints, the reason toasts (s
   assert.match(arm, /feedToast\(m\.text\);/);
   assert.doesNotMatch(arm, /showErrDialog/);
   assert.match(arm, /window\.parent\?\.postMessage\(\{ romp: "notify", kind: "refused", text: m\.text,/);
-  // the release precedes the paint, and the paint key still reads the latch (else the bell would not repaint)
+  // the release precedes the paint, and the paint key still reads the latch (else the bell would not repaint):
+  // the fork's per-card update gate (feed-card-gate.ts cardInputsKey, in place of upstream's cardPaintKey; fold
+  // ui-code DECISION 5) carries the bell's effective state through cardNotifyOn, which reads pendingNotify
+  // first, so dropping the latch changes the card's inputs key and the card repaints
   assert.ok(arm.indexOf("pendingNotify.delete") < arm.indexOf("render();"));
-  assert.match(FEED, /\+ "\|" \+ \(pendingNotify\.has\(it\.itemId\) \? String\(pendingNotify\.get\(it\.itemId\)\) : ""\)/);
+  assert.match(FEED, /function cardNotifyOn\(it: \{ itemId: string; notify\?: boolean \| null \}\): boolean \{\n\s*return pendingNotify\.has\(it\.itemId\) \? !!pendingNotify\.get\(it\.itemId\) : !!it\.notify;/);
+  assert.match(FEED, /notifyOn: cardNotifyOn,/, "the gate's env reads the latch-aware bell state");
+  assert.match(GATE, /env\.notifyOn\(it\) \? "n" : "",/, "…and the inputs key carries it");
   // and the page still has NO warn handler: undelivered-err.test.ts pins that, and it stays true on purpose
   assert.doesNotMatch(FEED, /m\.type === "warn"/);
 });

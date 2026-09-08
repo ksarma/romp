@@ -38,6 +38,8 @@ PRIVATE synthetic sids (goal-minting fixtures never share the placeholder sid: i
 replayed on every load), invented text, a notes-api with web/api sessions; the journals are removed in
 tearDown."""
 import builtins
+import contextlib
+import errno
 import io
 import json
 import os
@@ -111,6 +113,42 @@ def boundary(t, uuid, parent):
 
 TWO_TURNS = [uline(T0, "task A", "u1"), aline(T0 + 30, "did A", "a1", "u1"),
              uline(T0 + 100, "task B", "u2", "a1"), aline(T0 + 130, "did B", "a2", "u2")]
+
+
+TRIAGE_JUDGES = ("planner", "closer", "unblocker", "courier", "grouper", "consolidator", "distiller")   # the tiers' row names
+
+
+@contextlib.contextmanager
+def _store_read_fault(path):
+    """A goals store that exists and cannot be READ (an EACCES: nothing on disk moves, so no signature re-arms
+    by itself). Both readers of the file fault for exactly this path: the writer's loader's Path.read_text
+    (load_goals through _read_store_json) and the fd readers' jd._disk_read (load_goals_shared, the save
+    path's _disk_rev and _disk_entry), so no tier reads it by another route. Bytes that do not parse are the
+    other case, and not a fault: load_goals quarantines them aside and answers the fresh store (upstream
+    #1019, steer 1 of the 2026-09-08 fold, which replaced the fork's fallback store and its stand-downs)."""
+    real_read_text, real_disk_read = Path.read_text, jd._disk_read
+    target = str(path)
+
+    def read_text(p, *a, **k):
+        if str(p) == target:
+            raise OSError(errno.EACCES, "Permission denied", target)
+        return real_read_text(p, *a, **k)
+
+    def disk_read(fd, path_s):
+        if path_s == target:
+            raise OSError(errno.EACCES, "Permission denied", target)
+        return real_disk_read(fd, path_s)
+    Path.read_text, jd._disk_read = read_text, disk_read
+    try:
+        yield
+    finally:
+        Path.read_text, jd._disk_read = real_read_text, real_disk_read
+
+
+def _fresh_store_text(sid):
+    """A published fresh store's bytes: the file exists and parses, so a read fault injected on it is the only
+    thing between a tier and its content."""
+    return json.dumps({k: v for k, v in jd._fresh_store(sid).items() if not k.startswith("_")})
 
 
 class _Gate(unittest.TestCase):
@@ -1377,35 +1415,68 @@ class StoreCompleteness(_Gate):
         self.assertEqual(jd.load_goals(SID)["nodes"][top["id"]].get("summary"), "Shipped the search endpoint.")
         self._converge(tiers=("distill",))
 
-    def test_a_store_that_does_not_parse_never_stamps(self):
-        # every tier stands down over a fallback store (_fallback_store): the file is left byte-identical (the
-        # grouper and consolidator used to record their signature on the empty fallback and publish it over the
-        # file, the planner and closer their whole pass), the run is incomplete so the sid stays due, no save
-        # is attempted (so no refusal and no pass-crash row), and load_goals logs one row per failure episode,
-        # not per tier or per pass
+    def test_a_store_read_fault_never_stamps(self):
+        # Upstream #1019 (steer 1 of the 2026-09-08 fold) replaced the fork's fallback store: a goals file that
+        # exists and cannot be READ raises out of load_goals, so every triage tier's run ends there. The pool
+        # tiers raise through _gated, which counts the run incomplete, and their runner files the pass-crash
+        # row; the courier's scan catches its own load, marks the run and files the same row with its "store"
+        # note. No tier writes (the file is byte-identical), no tier stamps (the sid stays due), and the
+        # boundary's store-unreadable row is not a triage pass's (load_goals_or_fault is the kernel's and the
+        # index tier's miss path; the index skips here on its hit path). Readable again with nothing on disk
+        # moved, every tier runs to completion and stamps. A read fault never moves the file, so the store is
+        # touched once to re-arm the tiers; bytes that do not parse are the next test's case.
         self._session(SID)
         self._converge()
         gp = jd.GOALDIR / (SID + ".json")
-        good = gp.read_text()
-        gp.write_text("{ not the store")                                 # exists, unreadable as a store
-        for _ in range(2):
-            self._reset()
-            self._pass(tiers=ALL_TIERS)
-            for t in TRIAGE_TIERS:                                       # the index tier's signature carries no store:
-                s = self._st(t)                                          #  it skips (IndexGate holds its miss path)
-                self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
-                                 "%s: a fallback view marks the run incomplete, so the sid stays due" % t)
-            self.assertEqual(self._st("index")["skipped"], 1, "the index reads no store on its hit path: it skips")
-        self.assertEqual(gp.read_text(), "{ not the store", "no tier wrote")
-        self.assertEqual(len(self._rows("store-unreadable")), 1, "one row per failure episode")
-        self.assertEqual(len(self._rows("unread-store-save")), 0, "every tier stood down before its save")
-        self.assertEqual(len(self._rows("pass-crash")), 0)
-        gp.write_text(good)                                              # the file reads again: nothing else moved
-        self._reset()
+        good = gp.read_bytes()
+        st = gp.stat()
+        os.utime(gp, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))   # re-arm: every triage signature carries the store
+        with _store_read_fault(gp):
+            for i in (1, 2):
+                self._reset()
+                self._pass(tiers=ALL_TIERS)
+                for t in TRIAGE_TIERS:                                   # the index tier's signature carries no store:
+                    s = self._st(t)                                      #  it skips (IndexGate holds its miss path)
+                    self.assertEqual((s["ran"], s["incomplete"], s["stamped"]), (1, 1, 0),
+                                     "%s: a store that does not read ends the run incomplete, so the sid stays due" % t)
+                self.assertEqual(self._st("index")["skipped"], 1, "the index reads no store on its hit path: it skips")
+                crash = self._rows("pass-crash")
+                self.assertEqual(len(crash), 7 * i, "one pass-crash row per triage tier per pass")
+                self.assertEqual(sorted(r["judge"] for r in crash[-7:]), sorted(TRIAGE_JUDGES))
+                self.assertTrue(all(r["fsid"] == SID and "Permission denied" in r["note"] for r in crash),
+                                "every row names the session and the fault")
+                self.assertTrue(all(r["note"].startswith("store: ") for r in crash if r["judge"] == "courier"),
+                                "the courier's scan files the store note every pass wrapper uses")
+        self.assertEqual(gp.read_bytes(), good, "no tier wrote")
+        self.assertEqual(len(self._rows("store-unreadable")), 0, "the boundary row is not a triage pass's to file")
+        self.assertEqual(len(self._rows("store-quarantined")), 0, "a read fault is never mistaken for bytes that do not parse")
+        self._reset()                                                    # the fault lifted: nothing on disk moved
         self._pass(tiers=ALL_TIERS)
         self.assertEqual(tuple(self._st(t)["stamped"] for t in TRIAGE_TIERS), (1,) * len(TRIAGE_TIERS),
                          "readable again: every tier runs to completion and stamps")
-        self.assertEqual(len(self._rows("store-unreadable")), 1)
+        self.assertEqual(len(self._rows("pass-crash")), 14, "no row for a pass that read")
+
+    def test_a_store_that_does_not_parse_is_quarantined_once_and_every_tier_stamps_on_the_fresh_store(self):
+        # Bytes that do not parse are no longer a stand-down (upstream #1019, steer 1 of the 2026-09-08 fold;
+        # the fork's fallback store held every tier back until the file read): load_goals moves the file aside
+        # (one sidecar, one store-quarantined row, one stderr line) and answers the fresh store, every tier runs
+        # to completion on it, and the planner re-mints and republishes, so the fixture converges as a fresh
+        # session does. Bounded: the path reads as absent after the move, so the quarantine fires once, never
+        # once per tier or per pass; no tier crashes and the boundary row is never filed.
+        self._session(SID)
+        self._converge()
+        gp = jd.GOALDIR / (SID + ".json")
+        gp.write_text("{ not the store")                                 # exists, and is not a store: re-arms every tier
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._converge(tiers=ALL_TIERS)
+        self.assertEqual(len(list(jd.GOALDIR.glob(SID + ".json.corrupt-*"))), 1, "the evidence is preserved aside, once")
+        rows = self._rows("store-quarantined")
+        self.assertEqual([r["fsid"] for r in rows], [SID], "one row, load_goals' own")
+        self.assertIn("could not be parsed", rows[0]["note"])
+        self.assertEqual(len(self._rows("pass-crash")), 0, "no tier stood down or crashed on the fresh store")
+        self.assertEqual(len(self._rows("store-unreadable")), 0)
+        self.assertTrue(gp.exists() and json.loads(gp.read_text())["nodes"], "the fresh store was judged and republished")
+        self.assertTrue(all(self._stamp(t) is not None for t in ALL_TIERS), "every tier converged to a stamp on it")
 
     @unittest.skipIf(os.geteuid() == 0, "root reads a mode-000 file")
     def test_an_unreadable_journal_never_stamps(self):
@@ -2397,25 +2468,41 @@ class IndexReaders(_Gate):
         self._tasks(path)
         self.assertEqual(len(self._rows("units-cache-write-failed")), 2, "a good publish ended the episode: the next failure logs again")
 
-    def test_a_fallback_store_stands_the_captioner_down_and_memoizes_nothing(self):
-        # the seams _ready_tasks applies are the store's: a task list built over the empty fallback is not the
-        # session's (a seamed turn's first segment would be captioned as the whole turn), so tasks_for stands
-        # down as every stage does on this view, and publishes no cache, so the next pass reads the store again
-        # rather than serving a list made without it until the transcript moves
+    def test_a_store_read_fault_stands_the_captioner_down_and_memoizes_nothing(self):
+        # the seams _ready_tasks applies are the store's: a task list built without the store is not the
+        # session's (a seamed turn's first segment would be captioned as the whole turn), so tasks_for reads it
+        # through load_goals_or_fault (upstream #1019, steer 1 of the 2026-09-08 fold; before it the fork's
+        # fallback store stood the stage down) and on a fault stands down: no tasks, the run marked incomplete,
+        # no cache published (so the next pass reads the store again rather than serving a list made without it
+        # until the transcript moves), and the boundary's one store-unreadable row per fault episode. Bytes that
+        # do not parse are not a fault: load_goals quarantines them and the tasks are built on the fresh store.
         path = self._session(SID)
         gp = jd.GOALDIR / (SID + ".json")
         gp.parent.mkdir(parents=True, exist_ok=True)
-        gp.write_text("{ not the store")
+        gp.write_text(_fresh_store_text(SID))                            # exists and parses: only the read faults
+        with _store_read_fault(gp):
+            jd._judge_ctx.stage_incomplete = False
+            self.assertEqual(self._tasks(path), [], "no task list without the store")
+            self.assertTrue(jd._judge_ctx.stage_incomplete, "the boundary's fault marked the stage")
+            self.assertFalse((jd.PCACHE / (SID + ".json")).exists(), "nothing memoized")
+            self.assertEqual(len(self._rows("store-unreadable")), 1)
+            jd._judge_ctx.stage_incomplete = False
+            self.assertEqual(self._tasks(path), [], "still faulting: still stood down")
+            self.assertTrue(jd._judge_ctx.stage_incomplete)
+            self.assertEqual(len(self._rows("store-unreadable")), 1, "one row per fault episode, not per call")
         jd._judge_ctx.stage_incomplete = False
-        self.assertEqual(self._tasks(path), [], "no task list over a view that is not the session's")
-        self.assertTrue(jd._judge_ctx.stage_incomplete, "load_goals marked the stage")
-        self.assertFalse((jd.PCACHE / (SID + ".json")).exists(), "nothing memoized")
-        self.assertEqual(len(self._rows("store-unreadable")), 1)
-        gp.unlink()                                                      # absent IS the empty store: not a fallback
-        jd._judge_ctx.stage_incomplete = False
-        self.assertTrue(self._tasks(path), "the store reads (as empty): the tasks are built and published")
+        self.assertTrue(self._tasks(path), "the store reads again: the tasks are built and published")
         self.assertFalse(jd._judge_ctx.stage_incomplete)
         self.assertTrue((jd.PCACHE / (SID + ".json")).exists())
+        self.assertEqual(len(self._rows("store-unreadable")), 1, "the episode ended on the read")
+        (jd.PCACHE / (SID + ".json")).unlink()                           # a miss: the store is read again
+        gp.write_text("{ not the store")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertTrue(self._tasks(path), "bytes that do not parse: quarantined, the tasks built on the fresh store")
+        self.assertFalse(jd._judge_ctx.stage_incomplete, "a quarantine is not a stand-down")
+        self.assertFalse(gp.exists())
+        self.assertEqual(len(self._rows("store-quarantined")), 1)
+        self.assertTrue((jd.PCACHE / (SID + ".json")).exists(), "the fresh store's task list is the session's: published")
 
 
 class IndexGate(_Gate):
@@ -2424,7 +2511,7 @@ class IndexGate(_Gate):
     new evidence. A session is skipped only when its pinned parse pair, captions file, archive record and
     unit cache are identical to the last run that found no work and voided no read; a session with a
     caption owed or an archive refresh due, a reader that failed on a file that exists, a failed cache
-    publish, a fallback store on the miss path or a crash in a body leaves no stamp and runs again next
+    publish, a store read fault on the miss path or a crash in a body leaves no stamp and runs again next
     pass. The signature carries no goal store (decision 7): the hit path reads none."""
 
     TURN_C = (uline(T0 + 200, "task C", "u3", "a2"), aline(T0 + 230, "did C", "a3", "u3"))
@@ -2788,34 +2875,38 @@ class IndexGate(_Gate):
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (0, 1, 0, 0))
 
-    def test_a_fallback_store_on_the_miss_path_voids_only_that_sessions_stamp(self):
+    def test_a_store_read_fault_on_the_miss_path_voids_only_that_sessions_stamp(self):
         # plan test (d): the miss path loads the store for the seams; a goals file that exists and does not
-        # read stands the session down (no caption over a view that is not the session's, no cache published)
-        # and marks THAT run; the other session, re-armed on its hit path in the same pass, stamps
+        # READ stands the session down (upstream #1019, steer 1 of the 2026-09-08 fold: tasks_for reads it
+        # through load_goals_or_fault, which files the boundary's row; before it the fork's fallback store stood
+        # the stage down): no caption over a task list built without the store, no cache published, THAT run
+        # marked; the other session, re-armed on its hit path in the same pass, stamps. Bytes that do not parse
+        # are quarantined and the tasks built on the fresh store (IndexReaders).
         path = self._session(SID)
         self._session(SID2, name="api")
         self._converge(tiers=("index",))
         gp = jd.GOALDIR / (SID + ".json")
         gp.parent.mkdir(parents=True, exist_ok=True)
-        gp.write_text("{ not the store")
+        gp.write_text(_fresh_store_text(SID))                            # exists and parses: only the read faults
         self._append(path, *self.TURN_C)                                 # SID misses its cache: the store is read
         self._rearm_hit(SID2)
         before, before2 = self._stamp("index", SID), self._stamp("index", SID2)
         self._reset()
-        self._pass(tiers=("index",))
+        with _store_read_fault(gp):
+            self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (2, 0, 1, 1))
-        self.assertEqual(self._stamp("index", SID), before, "the fallback voided this session's stamp: the stale one stands")
+        self.assertEqual(self._stamp("index", SID), before, "the fault voided this session's stamp: the stale one stands")
         self.assertNotEqual(self._stamp("index", SID2), before2, "and only this one: the other re-stamped")
         self.assertEqual(len(self._rows("store-unreadable")), 1)
-        self.assertFalse(self._captioned("did C"), "stood down: no caption over a view that is not the session's")
+        self.assertFalse(self._captioned("did C"), "stood down: no caption over a task list built without the store")
         self.assertNotEqual(json.loads((jd.PCACHE / (SID + ".json")).read_text())["key"],
                             json.loads(json.dumps(list(jd._frame_parse_key(SID, [str(path)])[0]))),
-                            "nothing memoized over the fallback: the cache still holds the pre-append key")
-        gp.unlink()                                                      # absent IS the empty store: not a fallback
-        self._reset()
+                            "nothing memoized under the fault: the cache still holds the pre-append key")
+        self._reset()                                                    # the fault lifted: nothing on disk moved
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (1, 1, 0, 1), "the store reads: the new turn is captioned")
         self.assertTrue(self._captioned("did C"))
+        self.assertEqual(len(self._rows("store-unreadable")), 1, "the episode ended on the read")
         self._reset()
         self._pass(tiers=("index",))
         self.assertEqual(self._ran(), (1, 1, 1, 0))

@@ -450,7 +450,9 @@ class UpdateRemote(unittest.TestCase):
         self.assertIn("romp up on it starts the new code", detail, "the way to start it is named for the user")
         self.assertNotIn("restartExpected", km._remotes["TESTHOST"], "no restart is coming: the gap is not expected")
         apply = next(a[-1] for a in calls if isinstance(a[-1], str) and "reset --hard" in a[-1])
-        marker = 'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN"; exit 0; fi'
+        # $K trails every outcome after the guarded cleanup (upstream #1025, folded 2026-09-08): a REFKEPT on
+        # a downed host would otherwise be dropped
+        marker = 'if [ -f "$LOGDIR/down-by-romp" ]; then echo "SYNCED:$NEW:DOWN$K"; exit 0; fi'
         self.assertIn(marker, apply)
         self.assertLess(apply.index("restart-all --quiet"), apply.index(marker),
                         "a manager that owns the kernel still gets the quiet restart (its start cleared any marker)")
@@ -1088,6 +1090,13 @@ class ApplyScriptRuns(unittest.TestCase):
         self._git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "base")
         self._git("update-ref", "refs/heads/%s" % km._P2P_REF, "HEAD")
         self.sha = self._git("rev-parse", "--short", "HEAD").strip()
+        self.full = self._git("rev-parse", "HEAD").strip()      # what the kernel's rev-parse fake answers (see _script)
+        # the stubs below live INSIDE the checkout: excluded, so the apply's own dirtiness re-check (`git status
+        # --porcelain`, upstream #1025: an untracked file is a dirty tree and answers DIRTYNOW) reads it clean,
+        # as a real host's bin/ is. Untracked and ignored, so `reset --hard` leaves them in place
+        os.makedirs(os.path.join(self.host, ".git", "info"), exist_ok=True)
+        with open(os.path.join(self.host, ".git", "info", "exclude"), "a") as fh:
+            fh.write("/bin/\n")
         self._stub(os.path.join(self.host, "bin", "romp-serve"), "exit 0")
         self._stub(os.path.join(self.stubs, "pkill"), "exit 0")     # the immediate path's kill, made inert
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": self.PORT}
@@ -1126,7 +1135,11 @@ class ApplyScriptRuns(unittest.TestCase):
             if argv[0] == "git" and "push" in argv:
                 return _R()
             if argv[0] == "git" and "rev-parse" in argv:
-                return _R(out="1" * 40)
+                # the sandbox's own full HEAD: the apply's WANT is the local head the push sent, and its
+                # first gate (upstream #1025, folded 2026-09-08) refuses with REFMISMATCH when the scratch
+                # ref on the host holds anything else. The discover fake's HEAD below stays a different
+                # sha, so the host is not "already up to date"
+                return _R(out=self.full)
             cmd = argv[-1]
             if "for d in" in cmd:
                 return _R(out="DIR:%s\nHEAD:%s\nDIRTY:" % (self.host, "2" * 40))

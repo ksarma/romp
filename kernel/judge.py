@@ -1635,9 +1635,20 @@ def _work_key_configured():
 
 def _key_source_unconfigured():
     """True only when the selected key source is KNOWN to be unconfigured without retrieving anything: the
-    kernel's configured wire when it is up; a standalone caller wiring the key callback alone leaves the
+    command source's set when it carries the key (kernel/envsource.py; the set is the kernel's cached read,
+    already merged into every child env by _judge_env, so consulting it here retrieves nothing new); else
+    the kernel's configured wire when it is up; a standalone caller wiring the key callback alone leaves the
     verdict to the retrieval (as before); no wire at all reads the source descriptor. Never _work_key():
-    a resolve here would run outside the per-pass gate."""
+    a resolve here would run outside the per-pass gate.
+
+    The set is consulted FIRST (the 2026-09-08 fold of upstream's no-source rule): the kernel's configured
+    wire reads the FILE source's descriptor, which on a command-mode box with no key line answers "no
+    source", and a key-billed call would then run keyless on the CLI's own credential with the set's key
+    ignored. A set carrying the key is a configured source, so the call takes the keyed path below and the
+    key reaches the child through the work-key wire alone (one door: _judge_env pops it from the overlay).
+    A set WITHOUT the key is not a source, the same verdict the backend gives it."""
+    if _ENV_SET_FN is not None and _env_set().get("ANTHROPIC_API_KEY"):
+        return False
     if _WORK_KEY_CONFIGURED_FN is not None:
         return not _WORK_KEY_CONFIGURED_FN()
     if _WORK_KEY_FN is not None:

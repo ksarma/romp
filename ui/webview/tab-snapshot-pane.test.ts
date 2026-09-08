@@ -18,8 +18,13 @@ import { noteLine } from "./tab-snapshot";
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const CSS = ui("webview", "styles.css");
-const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), RENDER.indexOf("function showActive() {"));
-const SHOW = RENDER.slice(RENDER.indexOf("function showActive() {"), RENDER.indexOf("function showActive() {") + 6500);
+// the slices end / start at showActive's signature, which T249 (upstream, folded 2026-09-08) gave a `keep`
+// parameter; a missing anchor fails here instead of sliding the windows over the whole file
+const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null) {";
+const SHOW_AT = RENDER.indexOf(SHOW_SIG);
+assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP and SHOW");
+const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), SHOW_AT);
+const SHOW = RENDER.slice(SHOW_AT, SHOW_AT + 6500);
 const TABS = RENDER.slice(RENDER.indexOf("function renderTabs() {"), RENDER.indexOf("function dismissTabMenu() {"));
 const HEAD = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
 const DELEGATE = RENDER.slice(RENDER.indexOf('"toggle-group": (el) => {'), RENDER.indexOf('"toggle-group": (el) => {') + 1400);
@@ -193,7 +198,7 @@ test("snapshot rows update in place, keyed by session id, so the row a keyboard 
   const node = SNAP.slice(SNAP.indexOf("function snapshotRowNode("), SNAP.indexOf("function fillSnapshotRow("));
   assert.match(node, /item\.dataset\.id = r\.id;/, "the key, on the item the list holds");
   assert.match(node, /fillSnapshotRow\(btn, r, now\);\s*\n\s*item\.appendChild\(btn\);\s*\n\s*return item;/, "one fill for both paths");
-  const fill = SNAP.slice(SNAP.indexOf("function fillSnapshotRow("), SNAP.indexOf("function showActive() {"));
+  const fill = SNAP.slice(SNAP.indexOf("function fillSnapshotRow("));   // to SNAP's end: showActive's signature is where SNAP stops
   assert.match(fill, /btn\.className = "snap-row" \+ \(r\.closed \? " closed" : ""\) \+ \(r\.loading \? " loading" : ""\);/, "the classes rewritten, not toggled one by one");
   assert.match(fill, /btn\.replaceChildren\(\);/, "the parts emptied, then appended in order: the button stands");
   assert.match(fill, /const nowEl = el\("span", "snap-now"\); nowEl\.textContent = r\.loading \? "opening…" : r\.now; btn\.appendChild\(nowEl\);/, "the parts as before");

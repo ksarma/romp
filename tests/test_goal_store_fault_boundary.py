@@ -14,6 +14,7 @@ made it.
 
 SYNTHETIC fixtures only: private synthetic sids, the notes-api demo world (`web` / `api` / `tests`),
 message ids stamped TESTHOST; the per-sid override journals are cleaned in tearDown."""
+import contextlib
 import errno
 import itertools
 import json
@@ -21,7 +22,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
-from importlib.machinery import SourceFileLoader
+from romp_load import load_source
 from pathlib import Path
 from unittest import mock
 
@@ -33,7 +34,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 # pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel_storefault", os.path.join(BIN, "romp-kernel")).load_module()
+km = load_source("romp_kernel_storefault", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
 
 A = "9c0d1e2f-3a4b-4c5d-8e6f-0a1b2c3d4e5f"      # the session whose store FAULTS
@@ -81,15 +82,27 @@ def _store(sid, text, **node):
             "lastNode": gid}
 
 
+@contextlib.contextmanager
 def _fault_on(path):
-    """Path.read_text raises EIO for `path` alone; every other read is untouched."""
-    orig = Path.read_text
+    """Every read of `path` raises EIO; every other read is untouched. Two seams, because this fork reads a
+    store two ways: Path.read_text (load_goals via _read_store_json, the archive, the ledgers) and the
+    descriptor reader jd._disk_read(fd, path_s), which load_goals_shared, the save path's _disk_rev and
+    _disk_entry and run_propagate's shared per-store read go through (the shared read-only cache and the
+    disk-side memo, 2026-09-06). A fixture that faults only the first never reaches the pusher's boundary
+    (the 2026-09-08 fold's rule for every store-fault fixture)."""
+    orig, orig_disk = Path.read_text, jd._disk_read
 
     def faulting(p, *a, **kw):
         if p == path:
             raise OSError(errno.EIO, "Input/output error", str(p))
         return orig(p, *a, **kw)
-    return mock.patch.object(Path, "read_text", faulting)
+
+    def faulting_disk(fd, path_s):
+        if str(path_s) == str(path):
+            raise OSError(errno.EIO, "Input/output error", str(path))
+        return orig_disk(fd, path_s)
+    with mock.patch.object(Path, "read_text", faulting), mock.patch.object(jd, "_disk_read", faulting_disk):
+        yield
 
 
 class _World(unittest.TestCase):
@@ -195,7 +208,11 @@ class FeedBoundary(_World):
     def test_the_timeline_frame_ships_with_one_lane_faulting(self):
         km._BARS_COMPLAINED.clear()
         with _fault_on(self.a_file):
-            tl = km.build_timeline(NOW, self.tmux, with_bars=False)
+            # this fork's skeleton build (with_bars=False, 2026-09-06) reads no live lane's store, so it ships
+            # with nothing to file; the fault is met by the bars build, the one that reads the lane's goals
+            self.assertIsNotNone(km.build_timeline(NOW, self.tmux, with_bars=False), "the skeleton ships")
+            self.assertEqual(self._rows("store-unreadable"), [], "the skeleton reads no live lane's store")
+            tl = km.build_timeline(NOW, self.tmux, with_bars=True)
             self.assertIsNotNone(tl, "the frame ships")
             lanes = {s["id"] for s in tl.get("sessions") or []} if isinstance(tl, dict) else set()
             self.assertIn(B, lanes, "the healthy lane is there")
@@ -361,10 +378,10 @@ class NudgeTickBoundary(_World):
             def send(self, sid, body):
                 test.sent.append((sid, body))
         for p in (mock.patch.object(km, "_session_flag", lambda sid, flag: False),
-                  mock.patch.object(km, "_compacting_now", lambda sid: False),
+                  mock.patch.object(km, "_compacting_now", lambda sid, **kw: False),
                   mock.patch.object(km, "_api_error", lambda path: None),
                   mock.patch.object(km, "_session_working", lambda turns: False),
-                  mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, sid="": False),
+                  mock.patch.object(km, "_interrupt_suppresses_nudge", lambda turns, sid="", **kw: False),   # (family=)
                   mock.patch.object(km, "_backend_queued", lambda sid: False),
                   mock.patch.object(km, "_backend_rewind_pending", lambda sid: False),
                   mock.patch.object(km, "_last_state", lambda sid: ("", 0)),
@@ -409,14 +426,17 @@ class TriagePassBoundary(_World):
         p.start()
         self.addCleanup(p.stop)
         self.seen = []
-        orig = jd.load_goals
+        # both loaders are recorded: this fork's propagate pass reads a store ONCE per pass (store-memos, 2026-09-06),
+        # its view reads through the shared loader and its writer load through load_goals
+        for name in ("load_goals", "load_goals_shared"):
+            orig = getattr(jd, name)
 
-        def recording(fsid):
-            self.seen.append(fsid)
-            return orig(fsid)
-        p = mock.patch.object(jd, "load_goals", recording)
-        p.start()
-        self.addCleanup(p.stop)
+            def recording(fsid, _orig=orig):
+                self.seen.append(fsid)
+                return _orig(fsid)
+            p = mock.patch.object(jd, name, recording)
+            p.start()
+            self.addCleanup(p.stop)
 
     def _discover(self, sids):
         names = {A: "web", B: "api", P: "tests"}
@@ -499,7 +519,8 @@ class TriagePassBoundary(_World):
     def test_run_propagate_continues_past_a_faulting_session(self):
         with _fault_on(self.a_file):
             jd.run_propagate(now=NOW)
-        self.assertGreaterEqual(self.seen.count(B), 2, "both arms of the pass reached the healthy session")
+        self.assertIn(B, self.seen, "the pass reached the healthy session after the fault (one read per store per "
+                                    "pass in this fork, so once through either loader is the whole pass)")
         rows = self._rows("pass-crash")
         self.assertTrue(rows, "the faulting session's rows are filed")
         self.assertEqual({(r["judge"], r["fsid"]) for r in rows}, {("propagate", A)},

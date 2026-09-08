@@ -8,37 +8,46 @@
 //
 // feed.ts has import-time DOM side effects (the repo convention: no test imports it), so this has two
 // halves — the harness below runs the PINNED lines against the pure modules they call (paint-gate.ts,
-// feed-flip.ts), and the source pins hold feed.ts to exactly that wiring.
+// feed-card-gate.ts), and the source pins hold feed.ts to exactly that wiring.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { paintHeld, paintReleased } from "./paint-gate";
-import { flipNeeded } from "./feed-flip";
+import { sameKeySeq } from "./feed-card-gate";
 
 type Ask = { itemId: string; column: string };
 type Payload = { asks: Ask[] };
+const COLS = ["asks", "needsInput", "completed"] as const;   // feed.ts FLY_COLS
 
 // The harness: feed.ts's render() gate, flip decision, release path and the follow-move backstop, line for
-// line (the pins below are what keep this honest), over a list whose "content" is its painted cards.
+// line (the pins below are what keep this honest), over a list whose "content" is its painted cards. The
+// fork's flip decision is PER COLUMN (feed-card-gate.ts sameKeySeq: a column's DOM key sequence against its
+// planned one; a prior fold ruled it over upstream's board-level flipNeeded/prevCols, and this fold kept it,
+// ui-code DECISION 2), so the painted key sequences stand in for the columns' DOM here.
 function feedHarness() {
   const st = {
     hidden: false, intersecting: true,
     asks: [] as Ask[], painted: 0,                     // painted = list.childElementCount after the last paint
     pendingFollowMove: new Map<string, true>(),
     paintDirty: false, skipFlipOnce: false,
-    prevCols: new Map<string, string>(),
-    paints: 0, flipChecks: 0, lastNeedFlip: null as boolean | null,
+    domKeys: { asks: [], needsInput: [], completed: [] } as Record<string, string[]>,   // childKeys(cols[k]) after the last paint
+    paints: 0, flipChecks: 0, lastFlipCols: null as string[] | null,
   };
-  const columnsOf = (asks: Ask[]) => new Map(asks.map((a, i) => ["a:" + a.itemId, a.column + ":" + i] as const));
-  const flipNeededSpy = (a: Map<string, string>, b: Map<string, string>) => { st.flipChecks++; return flipNeeded(a, b); };
+  // the planned key sequence per column (bucketed like reconcileCol's input; a working card sits in the asks column)
+  const planned = (asks: Ask[]) => {
+    const b: Record<string, string[]> = { asks: [], needsInput: [], completed: [] };
+    for (const a of asks) b[(COLS as readonly string[]).includes(a.column) ? a.column : "asks"].push("a:" + a.itemId);
+    return b;
+  };
+  const sameKeySeqSpy = (a: readonly string[], b: readonly string[]) => { st.flipChecks++; return sameKeySeq(a, b); };
   function render() {
     if (paintHeld(st.hidden, st.intersecting, st.painted > 0)) { st.paintDirty = true; return; }
-    const nextCols = columnsOf(st.asks);
-    const needFlip = !st.skipFlipOnce && flipNeededSpy(st.prevCols, nextCols);
+    const buckets = planned(st.asks);
+    const differing = st.skipFlipOnce ? [] : COLS.filter((k) => !sameKeySeqSpy(st.domKeys[k], buckets[k]));
     st.skipFlipOnce = false;
-    st.prevCols = nextCols;
-    st.lastNeedFlip = needFlip;
+    st.lastFlipCols = differing;
+    for (const k of COLS) st.domKeys[k] = buckets[k];   // reconcileCol writes the planned sequence into each column
     st.paints++; st.painted = st.asks.length;
   }
   // applyFeedPayload: model swap + reconcileFollowMove (a prediction the kernel now lists as working is
@@ -62,7 +71,7 @@ function feedHarness() {
     st.skipFlipOnce = true;
     render();
   }
-  return { st, render, applyFeedPayload, backstop, releasePaint, columnsOf };
+  return { st, render, applyFeedPayload, backstop, releasePaint, planned };
 }
 
 test("hidden → ten payloads → zero paints, while the asks model and the follow-move bookkeeping keep updating", () => {
@@ -91,7 +100,7 @@ test("the follow-move backstop that fires after a confirming payload was applied
   assert.equal(f.st.paints, 1, "and the backstop's render() is held like any other");
 });
 
-test("release → exactly one synchronous paint, the flip decision skipped, prevCols = the painted columns", () => {
+test("release → exactly one synchronous paint, no column flies, and the painted key sequences are the next flip baseline", () => {
   const f = feedHarness();
   f.applyFeedPayload({ asks: [{ itemId: "g1", column: "asks" }, { itemId: "g2", column: "needsInput" }] });
   f.st.hidden = true;
@@ -100,16 +109,16 @@ test("release → exactly one synchronous paint, the flip decision skipped, prev
   const checksBefore = f.st.flipChecks;
   f.st.hidden = false; f.releasePaint();           // visibilitychange → visible
   assert.equal(f.st.paints, 2, "one paint for the whole hidden stretch");
-  assert.equal(f.st.lastNeedFlip, false, "cards snap into place");
-  assert.equal(f.st.flipChecks, checksBefore, "flipNeeded was not even consulted");
-  assert.deepEqual(f.st.prevCols, f.columnsOf(f.st.asks), "the flip baseline is what was painted");
+  assert.deepEqual(f.st.lastFlipCols, [], "cards snap into place: no column differs for the release paint");
+  assert.equal(f.st.flipChecks, checksBefore, "sameKeySeq was not even consulted");
+  assert.deepEqual(f.st.domKeys, f.planned(f.st.asks), "the columns' key sequences, the next flip baseline, are what was painted");
   assert.equal(f.st.paintDirty, false);
   f.releasePaint();                                // a second release event (the observer's callback) owes nothing
   assert.equal(f.st.paints, 2);
   // the NEXT move, seen live, glides again: the skip was one-shot
   f.applyFeedPayload({ asks: [{ itemId: "g1", column: "working" }, { itemId: "g2", column: "completed" }, { itemId: "g3", column: "completed" }] });
   assert.equal(f.st.paints, 3);
-  assert.equal(f.st.lastNeedFlip, true);
+  assert.deepEqual(f.st.lastFlipCols, ["asks", "completed"], "g3 left asks for completed: both columns fly");
 });
 
 test("a display:none pane holds too, and the tab's return alone does not release it — the observer does", () => {
@@ -135,8 +144,12 @@ test("render() is gated first, on the shared pure decision, and nothing else in 
   assert.match(SRC, /let feedIntersecting = true;/, "visible until the observer says otherwise: no observer → the tab alone gates");
 });
 
-test("the flip is skipped exactly once after a release, and prevCols still records what was painted", () => {
-  assert.match(SRC, /const needFlip = !skipFlipOnce && flipNeeded\(prevCols, nextCols\);\n\s*skipFlipOnce = false;\n\s*prevCols = nextCols;/);
+test("the flip is skipped exactly once after a release, and the painted key sequences are still the next baseline", () => {
+  // the fork's per-column gate (feed-card-gate.ts sameKeySeq) in place of upstream's flipNeeded/prevCols, ui-code
+  // DECISION 2: the snap empties the differing set and is spent before flipCols; reconcileCol then writes the
+  // painted sequences, which the next render compares against
+  assert.match(SRC, /const differing = skipFlipOnce \? \[\] : FLY_COLS\.filter\(\(k\) => !sameKeySeq\(childKeys\(cols\[k\]\), [\s\S]*?\);\n\s*skipFlipOnce = false;\n\s*const flipCols = /);
+  assert.doesNotMatch(SRC, /flipNeeded|columnsOf\(|prevCols/, "no board-level flip baseline beside the per-column gate");
   assert.match(SRC, /askEls\.clear\(\); groupEls\.clear\(\);\n\s*skipFlipOnce = false;/, "the empty-board paint spends the snap too");
   const rel = body("releasePaint");
   assert.match(rel, /if \(!paintReleased\(paintDirty, document\.hidden, feedIntersecting\)\) return;\n\s*paintDirty = false;\n\s*skipFlipOnce = true;\n\s*render\(\);/);

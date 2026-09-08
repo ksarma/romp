@@ -17,8 +17,13 @@ const CSS = ui("webview", "styles.css");
 const GUIDE = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
-const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), RENDER.indexOf("function showActive() {"));
-const SHOW = RENDER.slice(RENDER.indexOf("function showActive() {"), RENDER.indexOf("function showActive() {") + 3200);
+// the slices end / start at showActive's signature, which T249 (upstream, folded 2026-09-08) gave a `keep`
+// parameter; a missing anchor fails here instead of sliding the windows over the whole file
+const SHOW_SIG = "function showActive(keep?: { uuid: string; y: number } | null) {";
+const SHOW_AT = RENDER.indexOf(SHOW_SIG);
+assert.ok(SHOW_AT >= 0, "render.ts: showActive's signature moved; re-anchor SNAP and SHOW");
+const SNAP = RENDER.slice(RENDER.indexOf("let snapView: string | null = null;"), SHOW_AT);
+const SHOW = RENDER.slice(SHOW_AT, SHOW_AT + 3200);
 
 const T0 = 1781100000;
 const iso = (t: number) => new Date(t * 1000).toISOString();
@@ -233,7 +238,11 @@ test("pinned: render.ts shows the snapshot on a header click — snapView set BE
   assert.match(RENDER, /const leavingSnap = snapView !== null;\s*\n\s*snapView = null;\s*\n\s*if \(collapsedTabIds\.has\(id\)\) unfoldSectionOf\(id\);\s*\n\s*if \(activeId === id && anchor == null && anchorT == null\) \{[^\n]*\n\s*if \(leavingSnap\) \{ renderTabs\(\); showActive\(\); \}/,
     "setActive: the pick ends the snapshot, opens a folded-away tab's section, and puts the transcript back even when the pick is the tab already active");
   assert.match(RENDER, /if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "the header whose section the pane shows is marked");
-  assert.match(CSS, /\.tab-group-head\.snap-shown \.tab-group-name \{ color: var\(--fg\); \}/);
+  // T251 (upstream, folded 2026-09-08; catch-up 2 ui DECISION 1): the header's name is the shared tag chip, coloured
+  // inline, so the fork's prose-tone rule for .snap-shown is gone (it could not win against the inline colour); the
+  // class stays on the header (above) and the holds-active mark is the accent underline on the chip
+  assert.doesNotMatch(CSS, /\.snap-shown \.tab-group-name/, "no rule on the retired name span");
+  assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-chip \{ text-decoration: underline; text-decoration-color: var\(--accent\);/);
 });
 
 test("pinned: the open-from-card path — a real button per row, data-act=open on the ONE stable host's delegate, opens + focuses the session", () => {
