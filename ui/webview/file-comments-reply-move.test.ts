@@ -373,7 +373,7 @@ test("own card → the change card hosting it: the session's track-edit binds th
   assert.equal(h.card(passage.id), null, "the comment's own card is gone: the list shows it on the change's card");
   const hosted = h.hosted(passage.id);
   assert.ok(hosted && hosted.contains(compo), "the box stands in the comment's box on the change card");
-  assert.deepEqual(h.kids(hosted!), ["fc-reply fc-reply-you", "fc-replies", "fc-composer fc-composer-in", "fc-actions"], "below the turns, above the buttons");
+  assert.deepEqual(h.kids(hosted!), ["fc-reply fc-reply-you", "fc-replies fc-clip", "fc-composer fc-composer-in", "fc-actions"], "below the turns, above the buttons");
   assert.ok(h.card("chg:h1")!.classList.contains("open"), "the change card is open for it");
   assert.equal(h.q('.fc-card[data-id="chg:h1"] .fc-card-head')!.getAttribute("aria-disabled"), "true", "…and its head is held");
   assert.deepEqual(h.sections(), NO_SLOT, "the slot is empty");

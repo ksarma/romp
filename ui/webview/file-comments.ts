@@ -1055,6 +1055,17 @@ class Panel {
   sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
   cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
   expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
+  // the focus (the focus follow-on, 2026-09-08): the card the person last acted on — a mark clicked, a card opened by its
+  // head, a reference followed, a Show more, a save — which the pass anchors the layout on (card-layout.ts): level with its
+  // mark whatever stands above it, the cards above moved up by the least that clears it. Before it, a tall change card above
+  // a comment pushed the comment's card a viewport below its highlight, and the click on the highlight scrolled the
+  // highlight to the body's top edge with the card still out of sight. Cleared when the list no longer holds the card
+  // (placeCards), when the layout ends (layoutOff: the fold, edit mode, the panel's close) and with the panel (dispose).
+  focusCard: string | null = null;
+  // Show more (the same follow-on): the cards whose long parts — a change's old and new text, a long comment, a long run of
+  // turns — show whole in the margin layout, where the sheet otherwise folds each to about eight lines (clipCards); keyed
+  // like openCards, so the choice survives a re-render
+  openBodies = new Set<string>();
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
@@ -1173,6 +1184,14 @@ class Panel {
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
+        // Show more / Show less on a card the margin layout folded (clipCards): more makes the card the focus and centers its
+        // mark, as opening a card by its head does (afterRender); less is a fold and moves nothing
+        fcclip: (x) => {
+          const key = x.dataset.id!;
+          if (this.openBodies.has(key)) this.openBodies.delete(key);
+          else { this.openBodies.add(key); this.focusCard = key; this.expandIntent = { key, wasOpen: false }; }
+          this.render();
+        },
         // an inline change mark opens its card, and only that: like fcopen below, it cancels the click. A mark inside the
         // author's link (a deletion point placed at the start of a link's label, a substitution's point and tint over it,
         // an insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the card
@@ -1507,6 +1526,7 @@ class Panel {
     this.clearLanding();
     this.stopPoll();
     if (this.margin) this.layoutOff();
+    this.focusCard = null;
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
     this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
@@ -2290,6 +2310,7 @@ class Panel {
       if (v.hidden.some((g) => g.changes.some((c) => c.key === key))) this.moreChangesOpen = true;
     }
     this.openCards.add(key);
+    this.focusCard = key;                               // the focus: the render's pass lays the card level with its mark (card-layout.ts)
     this.render();
     this.scrollCard(key);
   }
@@ -2906,7 +2927,7 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
-    if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
+    if (this.margin && this.focusOn(key) && this.centerOn(key)) return;   // the margin layout: the card the focus, level with its mark; the mark to the body's center, the card beside it (the lock brings the track)
     const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
@@ -2966,7 +2987,7 @@ class Panel {
     row.style.background = ""; row.style.boxShadow = "";
   }
   scrollCard(id: string): void {
-    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
+    if (this.margin && this.focusOn(id) && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: the card the focus, level with its mark, its mark to the center; a loose card into the track's box, the body along with it
     this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
   }
 
@@ -2975,9 +2996,9 @@ class Panel {
    *  body (`load` does not bubble, so a capture listener on the body hears every figure's); the window's resize; the
    *  sizes of the body, the row and the track (the aside joins at its first build, the body's content at each pass —
    *  watchContent — and the cards at each render); and a click on a card's head — heard here, under the delegate root
-   *  and so BEFORE the delegate toggles the card, so that afterRender knows the card that just opened was opened by a
-   *  click and centers its mark. Never on scroll: the lock is the scroll's whole effect, and the pass moves nothing a
-   *  scroll changes. */
+   *  and so BEFORE the delegate toggles the card, so that the render's pass anchors the layout on the card that just
+   *  opened (focusCard) and afterRender knows to center its mark. Never on scroll: the lock is the scroll's whole
+   *  effect, and the pass moves nothing a scroll changes. */
   private installLayout(row: HTMLElement): void {
     const body = this.ctx.body(), track = this.sections.cards;
     body.addEventListener("scroll", () => this.mirrorScroll("body"));
@@ -2986,7 +3007,11 @@ class Panel {
     track.addEventListener("click", (ev) => {
       const t = ev.target as HTMLElement | null;
       const x = t && typeof t.closest === "function" ? (t.closest("[data-act]") as HTMLElement | null) : null;   // what the delegate resolves
-      if (x && x.dataset.act === "fccard" && x.dataset.id) this.expandIntent = { key: x.dataset.id, wasOpen: this.openCards.has(x.dataset.id) };
+      if (x && x.dataset.act === "fccard" && x.dataset.id) {
+        const wasOpen = this.openCards.has(x.dataset.id);
+        this.expandIntent = { key: x.dataset.id, wasOpen };
+        if (!wasOpen) this.focusCard = x.dataset.id;    // a card opened by its head is the focus (focusCard); a fold is a dismissal and moves nothing
+      }
     });
     window.addEventListener("resize", this.onWindowResize);
     if (typeof ResizeObserver !== "undefined") {
@@ -3049,6 +3074,7 @@ class Panel {
     this.watchContent(body);
     const kids = (): HTMLElement[] => Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[];
     this.moveRows(kids());
+    this.clipCards(kids());                            // which parts the fold cut, and the Show more rows: before the heights are read
     const bodyRect = body.getBoundingClientRect(), trackRect = track.getBoundingClientRect();
     const offset = trackRect.top - bodyRect.top;
     const scroll = body.scrollTop;
@@ -3066,12 +3092,17 @@ class Panel {
       nodes.set(key, child); laid.push(child);
       if (isCard && watch) this.cardSizer?.observe(child);
     }
-    const out = layoutCards(items, CARD_GAP);
+    if (this.focusCard !== null && !nodes.has(this.focusCard)) this.focusCard = null;   // the card is gone from the list (a status, the filter, a fold): no focus
+    const out = layoutCards(items, CARD_GAP, this.focusCard);
     for (const p of out.placed) {
       const node = nodes.get(p.key)!;
       node.style.top = p.top + "px";
       if (p.pushed >= 1) { node.dataset.pushed = "1"; node.style.setProperty("--fc-push", Math.min(p.pushed, p.top) + "px"); }
       else { delete node.dataset.pushed; node.style.removeProperty("--fc-push"); }
+      // a card the focus moved up past its mark (card-layout.ts): a leader DOWN from its end to the mark's height
+      const pull = p.desired === null ? 0 : p.desired - (p.top + p.height);
+      if (pull >= 1) { node.dataset.pulled = "1"; node.style.setProperty("--fc-pull", pull + "px"); }
+      else { delete node.dataset.pulled; node.style.removeProperty("--fc-pull"); }
     }
     const order = out.placed.map((p) => nodes.get(p.key)!);
     if (order.some((node, i) => node !== laid[i])) this.moving(order, () => { for (const node of order) list.appendChild(node); });
@@ -3105,6 +3136,7 @@ class Panel {
     this.root?.classList.remove("fc-margin");
     this.padBody(this.ctx.body(), 0);
     this.placed = new Map(); this.cardsEnd = 0;
+    this.focusCard = null;                              // the focus is the margin layout's; the list has none
     this.cardSizer?.disconnect();
   }
   /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
@@ -3136,6 +3168,48 @@ class Panel {
       if (foot) this.sections.send.insertBefore(foot, this.sections.send.firstChild);
       for (const r of rows) if (r !== foot) send.insertBefore(r, box);
     });
+  }
+  /** The fold of a tall card (the focus follow-on, 2026-09-08). In the margin layout each long part of a card — a change's
+   *  old and new text (`.fc-diff`), a comment's body, a run of turns — wears `fc-clip`, and the sheet caps it at about eight
+   *  of its lines with a fade (`.fc-margin .fc-card:not(.fc-more) .fc-clip`); this reads which parts the cap cut (a part whose
+   *  content is taller than its box), marks them for the fade (`data-clipped`) and shows the card's Show more row, rendered
+   *  hidden, so a card with nothing cut offers no toggle. A card in `openBodies` wears `fc-more`: no cap, no fade, and the
+   *  row reads Show less. Run before the cards' heights are measured, since the row is part of the height. The list layout
+   *  runs no pass and caps nothing: the rows stay hidden there. */
+  private clipCards(kids: HTMLElement[]): void {
+    for (const card of kids) {
+      if (!card.classList.contains("fc-card") || !card.dataset.id) continue;
+      const row = card.querySelector(".fc-clip-row") as HTMLElement | null;
+      if (!row) continue;                              // a closed card: no parts
+      const open = this.openBodies.has(card.dataset.id);
+      let cut = false;
+      for (const part of Array.from(card.querySelectorAll(".fc-clip")) as HTMLElement[]) {
+        const over = !open && part.scrollHeight > part.clientHeight + 1;
+        if (over) { part.dataset.clipped = "1"; cut = true; } else delete part.dataset.clipped;
+      }
+      row.hidden = !(open || cut);
+    }
+  }
+  /** The Show more / Show less row at an open card's foot (clipCards): a button through the delegate root (fcclip, with the
+   *  delegate's flash), hidden until the pass finds a part cut. */
+  private clipRow(key: string): HTMLElement {
+    const row = el("div", "fc-clip-row");
+    const open = this.openBodies.has(key);
+    const b = btn(open ? "Show less" : "Show more", "fcclip");
+    b.dataset.id = key;
+    b.title = open ? "Fold the long text back to a few lines" : "Show the whole text";
+    b.setAttribute("aria-expanded", open ? "true" : "false");
+    row.appendChild(b);
+    row.hidden = true;
+    return row;
+  }
+  /** Make `key` the focus (focusCard): the pass anchors the layout on it from now on, and runs at once when the focus
+   *  changed, so the scroll that follows (centerOn) reads the card where it now stands, level with its mark. False for a key
+   *  the list shows no card for (a fold hides it; a card not rendered), which changes nothing. */
+  private focusOn(key: string): boolean {
+    if (!this.sections.cards.querySelector('.fc-card[data-id="' + cssId(key) + '"]')) return false;
+    if (this.focusCard !== key) { this.focusCard = key; this.placeCards(false); }
+    return true;
   }
   /** Move nodes with `move`, and give the keyboard back to the control it was on when the move detached it: a node
    *  taken out of the document — an insertBefore or appendChild of a node already in it takes it out first — loses its
@@ -3222,9 +3296,13 @@ class Panel {
     if (track.scrollTop > at && atEnd(body)) want = Math.min(track.scrollTop, Math.max(at, this.cardsEnd - track.clientHeight));
     this.writeScroll(track, want, "body");
   }
-  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
-   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
-   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
+  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it. The
+   *  card IS level because every caller makes it the focus first (focusOn, showCard: the pass anchors the layout on it,
+   *  card-layout.ts). Before the focus follow-on (2026-09-08) a card pushed down by a tall card above it was brought in
+   *  only as far as kept the mark's top in view, which put the mark at the body's top edge with the card still a
+   *  viewport below (the defect the user hit). That fallback stays for the one case left, a focused card taller than
+   *  the track: the body scrolls the least that shows the card's end, as far as keeps the mark's top in view, so the
+   *  head is cut by the excess alone. Where the body cannot scroll that far (its end, in a body the padding could not
    *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
    *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
    *  loose card moves nothing, afterRender).
@@ -3974,7 +4052,7 @@ class Panel {
     const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
-    const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
+    const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : "") + (this.openBodies.has(c.id) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.id;
     card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
@@ -4078,7 +4156,7 @@ class Panel {
     const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
     if (crop) card.appendChild(crop);
     else if (c.target && this.pageUndrawn(c)) card.appendChild(this.cropWaitNote(c));   // no bitmap to cut: the slot says so and reaches the page
-    card.appendChild(el("div", "fc-body", c.body));
+    card.appendChild(el("div", "fc-body fc-clip", c.body));   // a long body folds in the margin layout (clipCards)
     // the open card says in words what the region tags say — why the staleness is unknown (unknownReason), that the image
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
@@ -4105,6 +4183,7 @@ class Panel {
         acts.appendChild(rv);
       }
     }
+    card.appendChild(this.clipRow(c.id));               // Show more, when the pass finds a part cut (clipCards)
     card.appendChild(acts);
     for (const n of [this.loader("card:" + c.id), this.errRow("card:" + c.id)]) if (n) card.appendChild(n);
     return card;
@@ -4112,7 +4191,7 @@ class Panel {
   /** The turns under a comment, in `ts` order: words as before; a revision (the session's answering
    *  track-edit, recorded as a reply with old and new text) as the same row with the texts instead of a body. */
   private renderTurns(turns: CardTurn[]): HTMLElement {
-    const rs = el("div", "fc-replies");
+    const rs = el("div", "fc-replies fc-clip");         // a long run of turns folds in the margin layout (clipCards)
     for (const r of turns) {
       const row = el("div", "fc-reply" + (r.author === "you" ? " fc-reply-you" : ""));
       const meta = el("div", "fc-meta");
@@ -4160,7 +4239,7 @@ class Panel {
     const s = this.status;
     const inFlux = !!s && !this.textCurrent(s);
     const slot = "change:" + c.id;
-    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
+    const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : "") + (this.openBodies.has(c.key) ? " fc-more" : ""));   // fc-more: its long parts shown whole (clipCards)
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
     card.dataset.cue = "change";                       // the left edge's colour: --text-muted for a change — the sheets' [data-cue] rules
     if (!isOpen) card.dataset.act = "fccard";
@@ -4196,8 +4275,11 @@ class Panel {
     if (isOpen) {
       const held = c.comments.some((cm) => cm.id === this.replyTo()) ? this.heldNote() : null;   // the held head's words, for a hosted comment's reply
       if (held) card.appendChild(held);
-      card.appendChild(this.diffBody(c.oldText, c.newText));
+      const diff = this.diffBody(c.oldText, c.newText);
+      diff.classList.add("fc-clip");                   // a replaced paragraph's old and new text: the tall part the margin layout folds (clipCards)
+      card.appendChild(diff);
       for (const cm of c.comments) card.appendChild(this.renderHosted(cm));
+      card.appendChild(this.clipRow(c.key));           // Show more, when the pass finds a part cut
     }
     if (!c.detached) {
       const acts = el("div", "fc-actions");
@@ -4241,7 +4323,7 @@ class Panel {
     if (c.resolved) meta.appendChild(el("span", "fc-tag", "resolved"));
     meta.appendChild(el("span", "fc-time", clock(c.ts)));
     row.appendChild(meta);
-    row.appendChild(el("div", "fc-body", c.body));
+    row.appendChild(el("div", "fc-body fc-clip", c.body));   // folds with the change card's other parts (clipCards)
     box.appendChild(row);
     if (c.replies.length) box.appendChild(this.renderTurns(c.replies));
     const acts = el("div", "fc-actions");

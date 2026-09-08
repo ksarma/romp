@@ -191,6 +191,13 @@ const answer = (page: any, status: Record<string, unknown>): Promise<void> => pa
 const lastVerb = (page: any): Promise<string> => page.evaluate(() => { const p = (window as any).__posted; return p.length ? p[p.length - 1].verb : ""; });
 const awaitVerb = (page: any, verb: string): Promise<void> => page.waitForFunction((verb: string) => { const p = (window as any).__posted; return p.length > 0 && p[p.length - 1].verb === verb; }, verb, { timeout: 5000 });
 const click = (page: any, sel: string): Promise<void> => page.evaluate((sel: string) => { (document.querySelector(sel) as HTMLElement).click(); }, sel);
+/** Press Show more on a card the margin layout folded (its row shows); false when the card offers none. */
+const unfold = (page: any, key: string): Promise<boolean> => page.evaluate((key: string) => {
+  const row = document.querySelector('.fileview-aside .fc-card[data-id="' + key + '"] .fc-clip-row') as HTMLElement | null;
+  if (!row || row.hidden) return false;
+  (row.querySelector("button") as HTMLElement).click();
+  return true;
+}, key);
 const cardSel = (key: string, inner: string): string => '.fileview-aside .fc-card[data-id="' + key + '"] ' + inner;
 const wholeIn = (c: Box, of: Box): boolean => c.top >= of.top - 1 && c.bottom <= of.bottom + 1;
 const NS9 = "1757145600000000009", NS10 = "1757145600000000010";
@@ -210,6 +217,10 @@ for (const name of ["chromium", "firefox"]) {
         const k = "p" + c.para;
         await click(page, cardSel(KEYS[k], ".fc-card-head"));   // opens the card; the click centers it
         await frames(page, 3);
+        // the margin layout folds a run of turns past eight lines (the focus follow-on, 2026-09-08): the candidates' heights
+        // here are their WHOLE heights, so a card offering Show more is shown whole first (which centers it again, as the
+        // opening did); the choice is keyed, so the card's later openings below are whole too
+        if (await unfold(page, KEYS[k])) await frames(page, 3);
         s = await scene(page, KEYS);
         const card = s.cards[k], mark = s.marks[k]!;
         assert.ok(mark, k + "'s mark is painted");

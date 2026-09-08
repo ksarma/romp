@@ -531,5 +531,5 @@ test("at source: the pass runs from render (before the click's centering) and fr
   assert.doesNotMatch(SRC, /"scroll", \(\) => this\.(scheduleLayout|placeCards)/, "no pass on scroll");
   assert.match(SRC, /getComputedStyle\(row\)\.flexDirection !== "column"/, "the sheet's fold verdict, read off the row");
   assert.match(SRC, /body\.addEventListener\("load", \(\) => this\.scheduleLayout\(\), true\);/, "a figure's load, captured");
-  assert.match(SRC, /const out = layoutCards\(items, CARD_GAP\);/);
+  assert.match(SRC, /const out = layoutCards\(items, CARD_GAP, this\.focusCard\);/, "the pure rule, given the focus (the focus follow-on, 2026-09-08)");
 });

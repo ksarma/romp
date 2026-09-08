@@ -1839,6 +1839,20 @@ a.fileview-gh-note { border-style: dashed; }
 .fc-margin .fc-cards > .fc-group { display: none; }
 .fc-margin .fc-card[data-pushed]::before { content: ""; position: absolute; left: -7px; top: calc(-1 * var(--fc-push, 0px)); height: var(--fc-push, 0px);
   border-left: 1px dashed var(--text-faint); }
+/* A card the focus moved up past its mark (card-layout.ts; the focus follow-on, 2026-09-08: the card the person last acted
+   on sits level with its mark, and the cards above it move up by the least that clears it) draws its leader DOWN the
+   gutter from its end to the mark's height (--fc-pull, set per card), as a pushed card draws one up. */
+.fc-margin .fc-card[data-pulled]::after { content: ""; position: absolute; left: -7px; top: 100%; height: var(--fc-pull, 0px);
+  border-left: 1px dashed var(--text-faint); }
+/* The fold of a tall card (the same follow-on; file-comments.ts clipCards). In the margin layout a long part of a card — a
+   change's old and new text, a comment's body, a run of turns (.fc-clip) — is capped at eight of its own lines (lh: the
+   part's line height) and clipped, its last lines fading out where the pass found the cap cut the content (data-clipped;
+   a mask, so the fade is the same over a turn's wash as over the card), and the card's foot offers Show more; a card the
+   person opened whole (fc-more) has no cap. The list layout shows every part whole, and the row stays hidden there. */
+.fc-margin .fc-card:not(.fc-more) .fc-clip { max-height: 8lh; overflow: hidden; }
+.fc-margin .fc-card:not(.fc-more) .fc-clip[data-clipped] { -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent); mask-image: linear-gradient(to bottom, black 65%, transparent); }
+.fc-clip-row { display: flex; }
+.fc-clip-row[hidden] { display: none; }
 /* highlights, both views (painted by anchor-map.ts): a comment is a RING around its passage, never a fill a diff
    colour would occlude, each wrapped line its own rounded box; the text-changed state (quote gone, context found)
    wears a dashed ring, and so does a located copy the panel cannot confirm as the one chosen (file-comments.ts
