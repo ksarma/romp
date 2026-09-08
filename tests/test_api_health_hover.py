@@ -418,6 +418,48 @@ class StateFileRows(unittest.TestCase):
         self.assertTrue(sb.ApiHealth._row_ok(good[0]))
         self.assertTrue(sb.ApiHealth._row_ok(dict(good[0], t=int(T0))), "an int stamp is a number")
 
+    def test_an_int_t_past_float_range_is_skipped_as_one_row_and_the_rest_of_the_history_kept(self):
+        """Review round 5: math.isfinite converts an int to float first and raises OverflowError past about 309
+        digits, and json.loads reads a 400-digit integer literal as such an int (1e400 reads as inf, which the finite
+        check already rejects). The raise left _row_ok for _seed's outer guard, which dropped every restored row and
+        bucket for the one row, against the promise that a bad row is skipped and counted and the other rows kept."""
+        d = tempfile.mkdtemp()
+        ah = sb.ApiHealth(d)
+        label = _label(ah)
+        key = label + "|fable"
+        for e in _storm(T0 - 600, T0, label):
+            ah._push(e)
+        ah.snapshot(T0)                                        # unknown -> thrashing at T0, persisted
+        p = Path(d, sb.API_HEALTH_STATE_FILE)
+        doc = json.loads(p.read_text())
+        good = list(doc["transitions"])
+        self.assertEqual([(r["from"], r["to"], r["t"]) for r in good], [("unknown", "thrashing", T0)])
+        huge = dict(good[0], t=10 ** 400)
+        doc["transitions"] = [good[0], huge]
+        p.write_text(json.dumps(doc))
+        back = json.loads(p.read_text())["transitions"][1]["t"]
+        self.assertIsInstance(back, int, "json reads the literal back as an int, not as inf")
+        with self.assertRaises(OverflowError):
+            float(back)
+        lines = []
+        ah2 = sb.ApiHealth(d, boot_at=T0 + 10, log=lines.append)
+        snap = ah2.snapshot(T0 + 11)
+        self.assertEqual([ln for ln in lines if "unreadable" in ln], [], "the file is readable; one ROW is not")
+        skipped = [ln for ln in lines if "malformed row(s) skipped" in ln]
+        self.assertEqual(len(skipped), 1, lines)
+        self.assertIn("1 malformed", skipped[0])
+        self.assertEqual(ah2.boot_stamp, T0 + 10, "nothing to clamp: the one row the seed could stamp is before the boot")
+        self.assertEqual(snap["bootAt"], T0 + 10)
+        self.assertEqual([(r["from"], r["to"], r["t"]) for r in snap["transitions"]],
+                         [("unknown", "thrashing", T0), ("thrashing", "unknown", T0 + 10)],
+                         "the sound row kept, the restart row filed after it")
+        b = snap["buckets"][key]
+        self.assertEqual((b["state"], b["stateSince"]), ("unknown", T0 + 10), "the bucket came back")
+        self.assertEqual([r["t"] for r in b["transitions"]], [T0, T0 + 10], "its own tail too")
+        self.assertFalse(sb.ApiHealth._row_ok(huge), "rejected as a row, no raise")
+        self.assertFalse(sb.ApiHealth._row_ok(dict(good[0], t=-(10 ** 400))), "the negative side too")
+        self.assertTrue(sb.ApiHealth._row_ok(dict(good[0], t=1e300)), "a large float the range holds is a number")
+
 
 class Route(unittest.TestCase):
     """The route as the shell's fetch meets it: the real dispatcher, the credential the browser carries."""

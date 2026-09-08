@@ -2344,15 +2344,23 @@ class ApiHealth:
     @staticmethod
     def _row_ok(r) -> bool:
         """A persisted transition row: a dict with a non-empty string `bucket` and `to` and a finite numeric `t`.
-        A `t` that is missing, null, a bool, a string or not finite fails the row, so the seed's max over the
-        restored stamps never meets one (review round 4: `float(r.get("t") or 0)` passed a null t, the max then
-        raised on it, and the outer guard dropped EVERY restored row and bucket, not the one)."""
+        A `t` that is missing, null, a bool, a string, not finite, or an int no float can hold fails the row, so
+        the seed's max over the restored stamps never meets one (review round 4: `float(r.get("t") or 0)` passed
+        a null t, the max then raised on it, and the outer guard dropped EVERY restored row and bucket, not the
+        one; round 5: math.isfinite converts an int to float first and RAISES OverflowError past about 309 digits
+        instead of answering, and json.loads reads a 400-digit integer literal as such an int, so the raise left
+        this check for the same outer guard, with the same loss)."""
         if not isinstance(r, dict):
             return False
         b, to, t = r.get("bucket"), r.get("to"), r.get("t")
         if not (isinstance(b, str) and b and isinstance(to, str) and to):
             return False
-        return isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t)
+        if not isinstance(t, (int, float)) or isinstance(t, bool):
+            return False
+        try:
+            return math.isfinite(t)
+        except OverflowError:       # an int beyond float range: not a stamp float(t) can read
+            return False
 
     def _seed(self, boot_at: float):
         """Restore the per-bucket (state, stateSince, why, evidence) and the transition tail from
@@ -2378,8 +2386,8 @@ class ApiHealth:
 
         Never raises: this runs inside SdkBackend.__init__, and an exception here pinned the SDK backend
         unavailable for the kernel's whole life. A row that is not JSON, lacks its fields, or carries a
-        missing, null or non-numeric `t` or a non-string `bucket` is skipped and counted; the skips are
-        logged once, and the other rows are kept."""
+        missing, null, non-numeric or non-finite `t` (an int past float range included) or a non-string
+        `bucket` is skipped and counted; the skips are logged once, and the other rows are kept."""
         # floor, so int(boot_stamp) == int(boot_at) (/version's started) whenever nothing is clamped: a float one step
         # below a whole second multiplies to more than half an ulp below it, so the floor never lands on the next second
         base = math.floor(boot_at * 1000) / 1000.0
