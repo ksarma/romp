@@ -109,12 +109,30 @@ class FakeWake:
         return self.flag
 
 
-def run_loop(kernel, schedule, until, cycle_s=CYCLE, watched=(WATCHED,), durations=None):
+class RacingWake(FakeWake):
+    """A FakeWake whose chosen clear() calls first do what a producer racing the loop does between wait()
+    returning and clear(): record the watched tab's live-tail change and set the event. The loop reads the
+    register AFTER its clear, so the recorded sid is read by this very cycle; a read before the clear would
+    miss it, and the clear would then drop the set as well."""
+
+    def __init__(self, kernel, clock, schedule, until, inject_on=()):
+        super().__init__(kernel, clock, schedule, until)
+        self.inject_on = set(inject_on)             # 1-based indices of the clear() calls that race
+        self.clears = 0
+
+    def clear(self):
+        self.clears += 1
+        if self.clears in self.inject_on:
+            self._fire((self.clock.t, "live", WATCHED))
+        super().clear()
+
+
+def run_loop(kernel, schedule, until, cycle_s=CYCLE, watched=(WATCHED,), durations=None, wake_cls=FakeWake, **wake_kw):
     """Run the REAL kernel._pusher on the fake clock until `until`; return (cycle start times, the
     pusher counters). `durations`: per-cycle durations, else `cycle_s` for every cycle. `watched`: the
     active tab of each connected chat client for the run."""
     clock = FakeClock()
-    wake = FakeWake(kernel, clock, schedule, until)
+    wake = wake_cls(kernel, clock, schedule, until, **wake_kw)
     starts = []
 
     def cycle():
@@ -222,6 +240,21 @@ class MinimumInterval(unittest.TestCase):
         # were the settle a plain wake, the repaint would wait out the interval from the exempt cycle's start
         starts, p, _ = run_loop(km, [(0.375, "live", WATCHED), (0.5, "plain", None)], until=1.5)
         self.assertEqual(starts, [0.0, 0.375, 1.375])
+
+    def test_a_live_wake_racing_the_clear_is_read_by_this_cycle(self):
+        # the branch's ordering claim (review 2026-09-08, should-fix 4): a producer records the watched tab and
+        # sets the event between the loop's wait() returning and its clear(); the clear drops the set, and
+        # the read that follows the clear still finds the sid, so the cycle runs at once
+        starts, p, _ = run_loop(km, [(0.375, "plain", None)], until=1.0, wake_cls=RacingWake, inject_on=(1,))
+        self.assertEqual(starts, [0.0, 0.375])
+        self.counters(p, exempt=1, held=0, wakes=2, wakes_live=1)
+
+    def test_a_live_wake_racing_the_hold_clear_is_read_too(self):
+        # the same race at the in-hold clear: the second clear() of the run
+        starts, p, _ = run_loop(km, [(0.375, "plain", None), (0.5, "plain", None)], until=1.0,
+                                wake_cls=RacingWake, inject_on=(2,))
+        self.assertEqual(starts, [0.0, 0.5])
+        self.counters(p, exempt=1, held=1, held_ms=125.0, wakes=3, wakes_live=1)
 
     def test_the_backstop_alone_runs_at_most_one_cycle_per_interval(self):
         # no wakes at all: the 0.5 s backstop ends each wait at cycle end + 0.5 (0.75), and the interval
