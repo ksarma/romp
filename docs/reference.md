@@ -108,6 +108,7 @@ These are for scripting and for agents rather than daily use:
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp perf [--interval <s>] [--json]`, `romp perf log on\|off` | The kernel's performance counters as rates over two snapshots (below); `--json` prints one raw snapshot; `log on\|off` turns the `romp-perf` stderr log on or off without a restart |
 | `romp perf client [--minutes <n>] [--json]` | What the open dashboards' browsers spent on the frames they received (below): handler milliseconds per minute by frame type with window p50/p90/p99 and max, the worst minute's main-thread-free p90, long animation frames and their attributed callbacks, the worst minute, heap and DOM, the slowest frames — per dashboard and pane over the last `<n>` minutes (default 10) |
+| `romp api-health` | The API-health signal as JSON (see [The API-health signal](#the-api-health-signal)): per-credential, per-model-family retry and give-up rates over rolling windows, with a derived state |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
 | `romp new --model <id> <name>` | Model for the SDK session: a family alias such as `fable` (follows the family's newest release) or a full id such as `claude-fable-5` (a pin); re-asserted if `<name>` already runs |
@@ -122,7 +123,7 @@ These are for scripting and for agents rather than daily use:
 | `romp end <session>` | End a session |
 | `romp move <session> <dir>` | Move an SDK session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
 | `romp emoji <session> [<emoji>\|--clear]` | Put one emoji before the session's name on its tab; `--clear` removes it, and an empty argument is a usage error, not a clear; with no argument, print the current one (an empty line when there is none). Exactly one emoji is accepted; a refusal prints the kernel's reason. A live session is named by name or id, a dormant one by id, for setting, clearing and reading alike. A read by an id that has a record on this machine comes from the names registry and works with the kernel stopped; any other read (a name, or the id of a session an attached machine owns) goes through the kernel's `GET /emoji?target=`, which forwards to the owning machine as the set does. See [A session's tab emoji](#a-sessions-tab-emoji) |
-| `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
+| `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it. The hub files this machine under the name it declares only when that name is a machine name (letters, digits, dots, hyphens or underscores, starting with a letter or digit, at most 128 characters). Any other declared name is refused with a 400 that states the rule and echoes nothing, is recorded nowhere, and is said once on both machines: on the hub, one stderr line and one Log entry under the `refused` kind, naming the value as a clipped repr; on this machine, one stderr line, one dial-log record and one Log entry carrying the hub's reason, after which the same name is not re-sent until it, or the hub's kernel, changes. A hub's `POST /tunnels/trust` for a host it has never seen (the remembered-hosts entry that tiers relayed mail by origin) holds the wider rule that registry's writers share, a machine name or an ssh alias (letters, digits, dots, hyphens, underscores, at-signs, colons or square brackets, not starting with a hyphen, at most 255 characters), because a hub keys an attached peer by its ssh alias and carries that alias when you set trust between two of your machines; anything else is refused the same way, on the hub, with nothing recorded. `ROMP_HOST_NAME` (the kernel) and `ROMP_POSTAL_HOST` (the postal bus) override the declared name only when they clear the same rule; an unusable value (a space, an at-sign, a trailing newline) is set aside once, on stderr or in the bus log, and the derived name (the short hostname, else the platform's machine name, else a minted id) is used |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
@@ -144,6 +145,24 @@ connection. The body is a JSON object; an array, string, number or `null` is a
 and `false` apply, an absent field or an explicit `null` reads as the route's
 default, and anything else (the string `"false"`, `0`, `1`) is a 400 naming the
 field, with nothing acted on.
+
+Three routes exist for the Obsidian timeline panel, which has the state
+directory but no socket to the kernel: `POST /flag` (`{id, flag, value}`: one
+of the lane gear's toggles, `hideFromFeed`, `postalServiceOff` or `notify`,
+with a JSON boolean; here `value` is required, and an absent or `null` value is
+a 400, never a default, since a missing value must not read as "off"), `POST
+/views` (`{views, edited?, writeId?}`: the whole views blob, judged as the
+dashboards' write is and answered with the same `viewsAck` document, `ok`, the
+post-write `views` and `seq`, any `refused` tags and an `error` line), and
+`POST /order` (`{order: [sid, …]}`, merged into the saved order so lanes the
+drag did not carry keep their slots). Each lands through the setter its socket
+op uses; a store that cannot be read or written answers 200 with `ok:false` and
+the reason the dashboards see, and an unknown key or a wrong type is a 400
+naming it. The panel finds the kernel through the `serve-port` record the
+kernel writes beside `serve-token` in the state directory once its socket is
+bound; with no record, or nothing answering on it, the panel refuses the
+gesture and says the kernel is not running rather than writing a file the
+kernel cannot check.
 
 `--env` gives one session its own environment, so two sessions in the same
 directory can run with different toggles (a `FEATURE_FLAG=1`, a `CLAUDE_CODE_*`
@@ -1470,7 +1489,12 @@ the next manager restart. Four variables in the service environment
   largest process, it is the one killed, and the session is cut as after any CLI
   death. The kernel and the other sessions are untouched either way.
 - `ROMP_CLI_SCOPE_MEMORY_HIGH`: the soft limit (`MemoryHigh=`). Above it, the
-  scope is throttled and its memory reclaimed; nothing is killed.
+  scope is throttled and its memory reclaimed; the limit itself kills nothing.
+  A throttled scope does raise memory pressure, and on a machine where
+  `systemd-oomd` is set to act on the user manager's pressure (`systemctl show
+  user@$(id -u).service -p ManagedOOMMemoryPressure` prints `kill`) it can kill
+  the whole scope, `OOMPolicy=continue` notwithstanding; check that setting
+  before relying on the soft limit alone.
 - `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX`: the swap limit (`MemorySwapMax=`). Without
   it, a scope at `MemoryMax` pushes pages to swap instead of being killed, until
   the machine's swap is used up, and the swapping slows every other process. On
@@ -1503,8 +1527,10 @@ systemd refuses (a size past its range; `OOMPolicy=` on a scope before systemd
 253) and reports it the same way, quoting systemd.
 The wrapper checks the same rule on every launch and reports a value it refuses
 on stderr as `romp-cli-scope: ignored: …`, which the kernel logs as a problem
-naming the session; on a launch the kernel drove, an `ignored:` line naming a
-rule means the value reached the wrapper some other way.
+naming the session and counts in `/api-health` (`cliScope.limitsIgnored`, see
+[The API-health signal](#the-api-health-signal)); on a launch the kernel drove,
+an `ignored:` line naming a rule means the value reached the wrapper some other
+way.
 
 The rules are syntax, and two kinds of value that pass them can still be refused
 by the machine: a memory property this systemd does not take on a scope
@@ -1513,7 +1539,7 @@ write, because it is below the user manager's own `oom_score_adj` or because
 `/proc/self/oom_score_adj` cannot be opened for writing (a read-only `/proc` in
 a hardened container). Without a check at the kernel's start, each would be
 refused again on every launch, one `ignored:` line and one problem each, while
-the kernel's log and `/api-health` (the `cliScope` block, below) said the value
+the kernel's boot line and `/api-health` (the `cliScope` block) said the value
 was in force. So with the scopes on, the kernel runs the wrapper's own steps
 once at its start: it starts a probe scope carrying the memory properties, and
 has a throwaway child write the adjustment to its own `oom_score_adj`. A refusal
@@ -1533,10 +1559,11 @@ on each launch. The wrapper keeps the same guard on every launch. Its pre-flight
 scope carries the properties. If that fails, it retries bare; if the bare scope
 starts, it tries once more with the properties, and only that second failure
 drops them, for that launch, with one `ignored:` line quoting the failure that
-decided. (A bare failure is the fallback counted under `cliScope.fallbacks`.)
-The CLI then starts in its scope without the memory limits; the adjustment is
-still written. On a launch the kernel drove, an `ignored:` line quoting a
-systemd rejection means the machine changed under the running kernel.
+decided. (A bare failure is the fallback described above, counted under
+`cliScope.fallbacks`.) The CLI then starts in its scope without the memory
+limits; the adjustment is still written. On a launch the kernel drove, an
+`ignored:` line quoting a systemd rejection means the machine changed under the
+running kernel.
 
 Whenever a memory limit is set, the wrapper also sets `OOMPolicy=continue` on
 the scope. A scope's default is `stop`: when Linux's OOM killer kills one
@@ -1560,14 +1587,14 @@ probe that exits non-zero or does not answer (its scope fails to start, it does
 not finish, its command is killed or exits without a marker) is tried once more;
 one that exits 0 without printing a marker is not. When no try gives a verdict,
 that is a problem line too: it says what each try did (one try, or two) and
-quotes systemd's refusal, the exit status, or what was printed; the verdict
-stays `null`, and `cliScope.unsettled` names the check.
+quotes systemd's refusal, the exit status, or what was printed; and the check is
+left unsettled: the verdict stays `null`, and `cliScope.unsettled` names it.
 Whether the memory limits apply is then unknown until the next kernel start. To
 check a live session, run from a shell inside it: `cat /sys/fs/cgroup$(cut -d:
 -f3 /proc/self/cgroup)/memory.max` prints the limit in bytes, `max` when none
 applies, and fails when the controller is not there.
 
-A suggested starting point for a shared 62 GB machine:
+A suggested starting point for a shared 64 GB machine:
 `ROMP_CLI_SCOPE_MEMORY_MAX=16G`, `ROMP_CLI_SCOPE_MEMORY_HIGH=12G`,
 `ROMP_CLI_SCOPE_MEMORY_SWAP_MAX=0`, `ROMP_CLI_SCOPE_OOM_SCORE_ADJ=500`. One
 session can still take a quarter of the machine, more than any ordinary tool
@@ -1801,373 +1828,6 @@ launch and take over from the declared auth. For any other credential-shaped
 name it says only that a credential in the file contradicts the declared auth
 model. With no declaration nothing is said; that is upstream's ordinary
 file-key installation.
-
-## The API-health signal
-
-`GET /api-health` returns one JSON document describing how the API is treating
-the sessions this kernel runs. It is computed from frames the kernel already
-parses: the per-attempt retry frame, each successful response, and the settle
-of a turn the CLI gave up on. The route takes the serve token, like every read
-that is more than a bare counter; `romp api-health` prints the document. The
-kernel takes no action on it: a consumer reads the signal and applies its own
-policy (move traffic to another key, hold a batch).
-
-Events are bucketed by **auth-source label** and **model family**
-(`"<auth>|<family>"`, for example `key:0123456789ab|fable`), because rate
-limits are per model family per account: pooled, one family's storm disappears
-under another family's clean traffic. The auth label is a salted digest: the
-same key or login gives the same label within one install, and nothing about
-the key itself is in it. The salt lives at `STATE/api-health-salt`, minted once
-at 0600; an empty file switches to unsalted digests. `key:helper`, `key:env`
-and `key:managed` name sources whose material the kernel never holds.
-
-### Top-level fields
-
-- `schema`: `1`, incremented on any incompatible change.
-- `asOf`: wall-clock epoch seconds at which this response was computed from the
-  event ring. Every window and every state is computed at read time, so `asOf`
-  is the response time. A clock step moves it; a reader that wants a freshness
-  check a clock step cannot fake uses `seq`.
-- `bootId`, `bootAt`, `uptimeS`: the kernel process identity, the same id
-  `/version` and `X-Romp-Boot` carry. `bootAt` is the boot's stamp in this
-  signal: the kernel's start truncated to the millisecond, the precision of
-  every other stamp in the payload, or, when the previous kernel's last
-  transition overlaps the start, one millisecond past that row; every bucket
-  the boot seeded carries this same number as its `stateSince`, and so does
-  every row the boot filed. `/version`'s `started` is the whole-second boot
-  time. A changed `bootId` means a restart, and the windows restarted with it.
-- `complete`: true once the longest window (900 s) fits inside the uptime.
-- `seq`: count of ring events (attempts, successful responses and give-ups)
-  ingested since boot. Monotonic within a boot: two reads with the same `seq`
-  saw no traffic in between.
-- `lastEventAt`: the newest event of any kind in the ring, across every bucket.
-- `coverage`: `sdkSessionsLive` (SDK-backed sessions the backend holds that have
-  not ended); `inTurn` (of those, sessions with a turn in flight: working or
-  retrying); `retrying` (sessions inside a retry storm right now, the cheapest
-  direct thrash indicator, independent of the ratio thresholds);
-  `tmuxSessionsUncovered` (tmux-backed sessions, which have no SDK stream and are
-  outside the signal; `null` when the kernel could not enumerate them);
-  `sidechainExcluded` (a constant `true`: subagent traffic is
-  outside the signal on both sides of the ratio). A reader that sees `inTurn >
-  0` and a `lastEventAt` minutes old should treat the signal as unknown rather
-  than healthy.
-- `cliScope`: the per-session scopes (see "What survives a restart" and
-  "Per-session memory limits").
-  - `on`, true when the kernel chose at boot to run CLIs in scopes.
-  - `fallbacks`, CLI launches since boot on which the scope wrapper's pre-flight
-    scope failed, so it ran the CLI directly and reported `romp-cli-scope:
-    fallback: …` on stderr. Each is also a problem line in the kernel log, in
-    exactly this form: `cli scope: session <name> (<sid8>) started its CLI
-    outside a scope — <line>`, where `<sid8>` is the first 8 characters of the
-    session id and `<line>` is the wrapper's whole stderr line, its
-    `romp-cli-scope: fallback:` prefix included. The wrapper's refusal,
-    `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit status 127), is
-    not counted: no CLI starts, and the failure is reported on the session's
-    error card. `lastFallbackAt`, epoch seconds of the newest fallback; `null`
-    when there was none. `on: true` with `fallbacks > 0` means scopes were on at
-    boot and some launches ran without one: those sessions' work is in the
-    service cgroup, and a service restart kills it.
-  - The limits: `memoryMax`, `memoryHigh`, `memorySwapMax` (the size strings)
-    and `oomScoreAdj` (an integer), each `null` when its variable is unset, when
-    its value was rejected, or when the scopes are off (no scope starts, so no
-    limit applies).
-  - `rejected`, the names of the variables whose values were refused, by their
-    rule or by this machine at the kernel's start (memory properties systemd
-    rejected; an adjustment the process could not write), each also a problem
-    line at the kernel's start.
-  - `memoryControllerDelegated`, the kernel's start-time check of whether a
-    probe scope carrying the memory properties had a `memory.max` file in its
-    cgroup: `true`, `false` (systemd holds the sizes above and applies nothing;
-    also a problem line), or `null` when no memory limit is set, the scopes are
-    off, or the check could not be settled. A `null` beside a memory limit shown,
-    with `on: true`, is that last case: a check at the kernel's start did not
-    answer, and `unsettled` says which.
-  - `unsettled`, the names of the kernel's start-time checks that were due and
-    settled nothing: `memoryLimits` (the probe scope carrying the memory
-    properties did not answer, or failed both with and without them),
-    `memoryController` (the check inside it gave no marker), `oomScoreAdj` (the
-    throwaway child's write did not answer). Empty when every due check
-    answered, and when none was due (the scopes off, no limit set). A value
-    listed above whose check is named here is set and handed to the wrapper as
-    read, and whether it applies is not known at the kernel's start; the other
-    fields cannot show this (`oomScoreAdj` present, `rejected` empty and
-    `memoryControllerDelegated` `true` read the same whether the adjustment's
-    check answered or not). Each named check is also a line in the boot log
-    saying why.
-  - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
-    also a problem line, `cli scope: session <name> (<sid8>) started its CLI
-    without a per-session limit — <line>`). It counts lines, not launches: one
-    launch writes one line for each value the wrapper refuses, one for the
-    memory properties together when systemd rejects them, and one for an
-    adjustment it could not write. `on: true` with a limit set and
-    `limitsIgnored > 0` means a value the kernel accepted at its start was
-    refused at a launch: the machine changed under the running kernel, or the
-    value reached the wrapper outside the kernel's hand-off (see "Per-session
-    memory limits").
-- `config`: the constants in force (see "Derived state").
-- `keySource`: the key source the kernel decided at boot, plus what is live
-  now: `mode` (`file` or `command`), `selector`, `sessionKeyPath` (`injected`,
-  `helper` or `login`: how a session launched now gets its key), `expectedAuth`,
-  `helperConfigured`, `execStartShell` (`true` when the unit starts the manager
-  through a shell; `null` when no unit was found), `credentialNamesFound`
-  (`serviceEnv`, `unit`, `environment`: credential-shaped names, never values),
-  `lastRun` (command mode: `ok`, `at`, `reason`, `exitCode`, `durationS`,
-  `stale` (a failed run standing on the previous set), `failures`
-  (consecutive) and `lastOkAt`; else `null`),
-  `fingerprint` and `fingerprintKind` (`key` or `helper`) of the credential a
-  session launched now would bill, `setFingerprint` and `names` of the
-  command's set, and `sessionsByFingerprint` (live sessions per launch
-  fingerprint; `""` counts sessions launched with no credential the kernel
-  fingerprinted). See [Installing without keys on
-  disk](#installing-without-keys-on-disk).
-- `overall`: `state`, the most severe state among buckets that are not
-  `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every
-  bucket is), and `worstBucket`, the bucket that set it. There are no pooled
-  windows: summing 429 rates across auth sources mixes unrelated quotas.
-- `buckets`: keyed `"<auth>|<family>"`.
-- `transitions`: the last 50 state transitions across every bucket, newest
-  last, each `{t, bucket, auth, family, from, to, why, evidence}`.
-- `rate429Basis`: the constant `"attempts"` (see "Windows").
-
-### Windows
-
-Each bucket carries three windows (`60`, `300`, `900` seconds, ending at
-`asOf`), each with:
-
-- `requests`: attempts with a status, `ok + rateLimited + overloaded +
-  serverErrors + otherErrors`. `noStatus` (a connection-level failure) and
-  `gaveUp` sit outside the sum: a give-up is already inside one of the status
-  counters, since the exhausting attempt emits no retry frame and the settle is
-  the only place it can be counted.
-- `rate429` = `rateLimited / requests`, `rate5xx` = `(overloaded +
-  serverErrors) / requests`; both `null` at zero requests.
-- `retries`, `sessionsRetrying`, `turnsRetrying`: attempts, distinct sessions
-  and distinct turns with at least one retry in the window.
-- `complete`: false while the window is longer than the kernel's uptime.
-
-`rate429` is an attempt share, not a request share: one stuck turn contributes
-up to `max_retries` attempts. The payload says so (`"rate429Basis":
-"attempts"`); read `sessionsRetrying` and `turnsRetrying` beside it to tell one
-stuck session from a saturated key. A high `rate429` with `gaveUp` at zero is
-traffic being slowed, not blocked; a consumer whose action is expensive should
-require `gaveUp` or `turnsRetrying` over its own span, not `state` alone.
-
-The signal covers each session's main thread only. A subagent's retries never
-reach the kernel (the CLI folds them into a progress frame the SDK drops), so
-its responses are not counted either; counting one side would dilute every
-rate during a storm. `coverage.sidechainExcluded` is `true` to say so.
-tmux-backed sessions and the judges' own calls have no SDK stream and are
-outside the signal.
-
-Retries carry no model field, so they are attributed to the session's
-last-learned family: attempts between a mid-storm model fallback and its first
-successful reply file under the previous family. Successful responses use their
-own model and are exact.
-
-### Per-bucket state fields
-
-- `state`: `unknown`, `healthy`, `thrashing`, `degraded` or `recovering` (see
-  "Derived state").
-- `stateSince`: epoch seconds of the read that recorded the transition into the
-  current state. Every transition is stamped with the time of the read that
-  found it (`transitions[].t`), and `stateSince` is that stamp for the newest
-  one, so `asOf - stateSince` is how long the state has held as observed. For
-  `unknown` it is the read that found no qualifying window, or the boot time
-  after a restart.
-- `evidence`: `{window, rate429, rate5xx, n}`, the window that decided the
-  newest transition, its two rates and its `requests`, recorded at that
-  transition and kept with the state; they are the numbers the transition's
-  `why` carries. When the state is `unknown`, `window` and the rates are `null`
-  and `n` is `requests` over 900 s at read time.
-- `why`: the newest transition's reason in words, the same string as its row.
-- `transitions`: this bucket's own last 50 transitions, newest last, in the
-  same row shape as the top-level list. It is kept per bucket, not filtered
-  from the top-level list, so a neighbour that churns through fifty
-  transitions does not push this bucket's history out of view.
-- `lastError`: the newest attempt or give-up that was not a success, from
-  memory only (lost at restart): `at`; `status` (the HTTP status, or `null`);
-  `category` (the CLI's error category string, for example `rate_limit`,
-  `overloaded` or `server_error`; `null` when the frame carried none); `class`
-  (the counter it landed in); `kind` (`retry` or `gaveup`). There is no text
-  field, by design: the wire carries none today, and the transcript's 429 text
-  names the organisation and the model.
-
-### Derived state
-
-`state` is computed at read time as a pure function of the bucket's event ring,
-the last persisted `(state, stateSince)` and `asOf`. It has no other inputs and
-no thread of its own.
-
-- `unknown`: no window of the bucket has `requests >= minRequests` (10). Any
-  state moves to `unknown` when that is so; it is also the state after boot and
-  the state of a bucket whose traffic has stopped. `stateSince` is the read
-  that found it so. From `unknown`, the first read with a qualifying window
-  classifies afresh: an enter condition gives `thrashing` or `degraded`,
-  otherwise `healthy`. `unknown` keeps no memory of the state before it; a
-  consumer that wants to join an incident across an `unknown` gap reads
-  `transitions`.
-- `healthy`: the default once there is evidence.
-- `thrashing`: the 429 share is high. The actionable state: a consumer can move
-  traffic to another key or organisation.
-- `degraded`: the server-side error share (`overloaded` plus `serverErrors`) is
-  high while the 429 share is not. A provider-side problem another key may not
-  fix, so a separate state.
-- `recovering`: the exit condition has been met, but the hold time has not
-  passed.
-
-The transitions follow, with the constants that `config` echoes. A rule reads a
-window only when that window has `requests >= minRequests`:
-
-- Enter `thrashing`: `rate429(300 s) >= enter429` (0.20), or `rate429(900 s) >=
-  enter429Slow` (0.15), or `rate429(60 s) >= enter429Fast` (0.50) with
-  `requests(60 s) >= fastMinRequests` (20). From `healthy`, `recovering` and
-  `unknown`, and from `degraded` at once: `thrashing` takes precedence over
-  `degraded` whenever the 429 condition holds, on entry and afterwards.
-- Enter `degraded`: the same conditions on `rate5xx` (`enter5xx` 0.20,
-  `enter5xxSlow` 0.15, `enter5xxFast` 0.50) while the 429 condition does not
-  hold, from `healthy`, `recovering` and `unknown`. There is no direct
-  `thrashing -> degraded`: leaving `thrashing` goes through `recovering`, and
-  `recovering -> degraded` fires in the same read when the 5xx condition holds
-  (two rows with one `t`).
-- `thrashing -> recovering`: `rate429(300 s) <= exit429` (0.10) and
-  `rate429(900 s) <= exit429`, both windows qualifying, held at every instant of
-  the last `holdS` (120 s). `degraded -> recovering`: the same on `rate5xx` with
-  `exit5xx` (0.10).
-- `recovering -> healthy`: both exit conditions (429 and 5xx) held throughout
-  the last `holdS`, and `asOf - stateSince >= holdS`. Both are required because
-  the persisted state is `(state, stateSince)` alone and nothing says which
-  state `recovering` came from. A bucket with one rate between its exit and
-  enter thresholds stays `recovering`, which is the accurate label.
-- `recovering -> thrashing | degraded`: the enter condition again, immediately.
-
-Enter and exit thresholds differ, exits need a hold on two windows, and every
-decision needs a minimum sample, so a bucket near a cap does not flap. A
-reading between exit and enter (0.10 to 0.15 on the 900 s window) holds the
-state however long it lasts, and traffic too thin to qualify the 300 s window
-cannot satisfy an exit, so it holds the state too; the windows beside the state
-show what the traffic is doing.
-
-"Held throughout the last `holdS`" is decided exactly, without sampling. A
-window's counts change only at breakpoints, the instant an event's timestamp
-enters the window and the instant it leaves, so the exit condition is
-evaluated at `asOf - holdS`, at `asOf` and at each breakpoint between. Evaluating the 900 s window
-at `asOf - holdS` needs events back to `asOf - 1020`, so `config.retentionS`
-is 1020 and the ring keeps nothing older. A read that finds a transition stamps
-it with `t = asOf`, appends it to `transitions`, rewrites the state file and
-logs one line in the kernel log (`api-health: <bucket> <from> -> <to> — <why>`).
-A reader polling every few seconds observes every transition within one poll of
-its breakpoint; a sparser reader observes the state at its read times and the
-transitions those reads find, and nothing in between: a state entered and left
-between two reads is not recorded, and `recovering -> healthy` needs a read at
-least `holdS` after the read that entered `recovering`. Nothing derives while
-nobody reads.
-
-### Persistence and restart
-
-A read that observes a transition rewrites `STATE/api-health.json`, whole and
-atomically (a temp in the same directory, then a rename). The file holds each
-bucket's `state`, `stateSince`, `why` and `evidence` and the `transitions`
-tail, so it stays bounded however many transitions pass; per-request events
-are never written. The event ring itself is in memory only, so a restart
-empties the windows: `seq` restarts at 0, `bootId` changes, `complete` stays
-false until each window fits inside the new uptime, and every bucket the state
-file knows comes back `unknown` with `stateSince` at the boot's stamp. For each
-bucket whose persisted state was not already `unknown` the reload files
-`<state> -> unknown` at that stamp, so the transitions list is continuous across
-the restart, and the first read with enough evidence records `unknown -> <state>`
-after it. The boot's stamp is the kernel's start truncated to the millisecond,
-or one millisecond past the newest transition the file carries when that one
-is not before the start (the previous kernel filed it after this one started,
-or the clock stepped), so the restart row is always the newest row; the payload
-serves that stamp as `bootAt`, and the kernel log says when it was moved. The
-pre-restart state is not carried over: an empty ring is no
-evidence. A state file, or an entry in it, that cannot be read is skipped and
-logged, and never keeps the SDK backend from starting.
-
-Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
-kernel that boots without a state file seeds one from that ledger's last 64 KB,
-once, and leaves the ledger alone; once the state file exists the ledger is
-never read again and can be deleted.
-
-### The bottom bar's indicator
-
-The dashboard's bottom bar carries an API cell (a dot and a word beside the
-spend figures) that is computed independently of this signal, from two things
-the kernel owns directly:
-
-- Each alive session's newest transcript API-error record, latched until the
-  session produces assistant output again (a user prompt does not clear it,
-  romp's own retry included), plus the live retrying state of SDK sessions.
-- The retry-pause file (`retry-paused.json` under the state directory). A
-  pause writes `paused`, `t` (when it began, the auto-resume floor) and its
-  `reason`: `limit`, `spend`, or none for a manual stop. A spend pause adds
-  `bills`, the billing the capped session was on (`login` or `key`); only
-  fresh assistant output from a session on that billing lifts it. Un-pausing
-  a spend pause, by that lift or by the Resume button, records `liftedAt`
-  (the time of the output record that lifted it, or of the Resume click) and
-  `supersedes` (the floor of the pause it cleared; informational, nothing
-  reads it); both ride every later write until a newer spend un-pause
-  replaces them, and a spend-limit record older than `liftedAt` engages
-  nothing, since the lift already ruled on it. A limit or manual un-pause
-  records neither. When a limit pause lifts while a spend-limit record is
-  standing, the file reads unpaused for one cycle before the spend pause
-  engages: each writer rules on one signal per cycle, and the spend engage
-  runs before the lift in the pusher's order, so it sees a paused file and
-  rules on the record the next cycle.
-
-The kernel pushes the cell's frame to shell clients only when it changed, and
-again to a shell that sends `ready`:
-
-```json
-{"type": "apiHealth", "state": "ok | degraded | paused",
- "cls": "429 | 529 | offline | errors | ''", "reason": "'' | limit | spend | manual",
- "text": "<the rail's words>", "waiting": 0, "retrying": 0, "blocked": 0,
- "since": 0, "tmux": 0, "seq": 0,
- "sessions": [{"sid": "", "name": "", "color": null, "kind": "retrying | blocked",
-               "cls": "", "status": null, "since": 0, "suppressed": false}]}
-```
-
-`seq` counts the retry-pause file's writes since the kernel started. A press
-on the detail's pause button writes that file, so the frame that answers the
-press carries a moved `seq` whatever state it brings, and the shell clears
-the button's acknowledgment on it; a frame from before the press carries the
-old one. It is an event counter, not a clock, and restarts at 0 with the
-kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class over the
-affected sessions, ties resolved 429, then 529, then offline, then errors.
-`since` is the pause's time when paused, else the earliest affected session's
-event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
-counts alive tmux-backed sessions, which the cell sees through their
-transcripts only. Every timestamp is an event's time, never the clock, so an
-unchanged world sends nothing. On-you failures (a too-long prompt, a spent
-model allowance, a dead credential, a refusal) are not counted; a spend cap is,
-and engages the `spend` pause in the same cycle.
-
-The cell's hover and its click detail carry a **History** section read from
-this signal: the shell fetches `GET /api-health` when the hover or the detail
-opens, and again when a frame lands on an open one, authenticating with the
-dashboard's own cookie the way its other reads do. Nothing polls; the frame
-carries no history and is unchanged. The section shows `overall.state` with
-the worst bucket's `stateSince` and `why` (naming the bucket and the bucket
-count when there is more than one; a bucket the boot seeded is `unknown`
-since `bootAt`: the boot time or, when an older kernel's last row overlaps
-it, one millisecond past that row, because the backend seeds its `stateSince`
-with the stamp it serves as `bootAt`, the one the tail uses for the boot),
-one row per window from `config.windows` (`requests` plus `noStatus` as the
-attempts, saying how many of them had no status when there are any, `rate429`
-and `rate5xx` as percentages over the attempts with a status, `gaveUp`, and
-`sessionsRetrying` as the sessions that retried in the window; a window
-reads `no attempts` only when every one of those is zero; a window whose
-`complete` is false says how long the kernel has been up), up to six rows
-of `transitions` newest first with the state entered and how long it held
-(until the same bucket's next transition, `so far` for the current one; a
-hold from before `bootAt` ends at the boot, since every bucket comes back
-`unknown` at a restart), and the payload's `asOf`. A row the boot filed
-(`<state> -> unknown`, its `why` the restart reason) reads `kernel
-restarted`; where the tail crosses `bootAt` without such a row (the bucket
-was already `unknown` when the previous kernel stopped, so the boot filed
-nothing), a `kernel restarted` divider is inserted, and it takes none of the
-six slots. A read that fails (a non-2xx, or no answer) shows one line saying
-so in place of the rows, never the previous numbers.
 
 ## Kernel performance counters
 
@@ -2641,6 +2301,382 @@ in progress in the same shape, plus a derived `p90_le` per type, `active`
 other browser API is behind a feature check, and nothing in the module throws
 into the pane.
 
+## The API-health signal
+
+`GET /api-health` returns one JSON document describing how the API is treating
+the sessions this kernel runs. It is computed from frames the kernel already
+parses: the per-attempt retry frame, each successful response, and the settle
+of a turn the CLI gave up on. The route takes the serve token, like every read
+that is more than a bare counter; `romp api-health` prints the document. The
+kernel takes no action on it: a consumer reads the signal and applies its own
+policy (move traffic to another key, hold a batch).
+
+Events are bucketed by **auth-source label** and **model family**
+(`"<auth>|<family>"`, for example `key:0123456789ab|fable`), because rate
+limits are per model family per account: pooled, one family's storm disappears
+under another family's clean traffic. The auth label is a salted digest of the
+credential's identity: for a key the kernel injected, the fingerprint recorded
+at the session's launch (the same 12 hex the kernel log and `romp keyswap`
+print; the key itself is never read for this, so a 1Password-sourced key is not
+retrieved per session start); for a login, the account digest the usage bars
+stamp. The same key or login gives the same label within one install, and
+nothing about the key itself is in it. The salt lives at
+`STATE/api-health-salt`, minted once at 0600; an empty file makes the label
+that fingerprint or account digest itself, so a bucket can be matched to the
+log. `key:helper`, `key:env` and `key:managed` name sources whose material the
+kernel never holds.
+
+### Top-level fields
+
+- `schema`: `1`, incremented on any incompatible change.
+- `asOf`: wall-clock epoch seconds at which this response was computed from the
+  event ring. Every window and every state is computed at read time, so `asOf`
+  is the response time. A clock step moves it; a reader that wants a freshness
+  check a clock step cannot fake uses `seq`.
+- `bootId`, `bootAt`, `uptimeS`: the kernel process identity, the same id
+  `/version` and `X-Romp-Boot` carry. `bootAt` is the boot's stamp in this
+  signal: the kernel's start truncated to the millisecond, the precision of
+  every other stamp in the payload, or, when the previous kernel's last
+  transition overlaps the start, one millisecond past that row; every bucket
+  the boot seeded carries this same number as its `stateSince`, and so does
+  every row the boot filed. `/version`'s `started` is the whole-second boot
+  time. A changed `bootId` means a restart, and the windows restarted with it.
+- `complete`: true once the longest window (900 s) fits inside the uptime.
+- `seq`: count of ring events (attempts, successful responses and give-ups)
+  ingested since boot. Monotonic within a boot: two reads with the same `seq`
+  saw no traffic in between.
+- `lastEventAt`: the newest event of any kind in the ring, across every bucket.
+- `coverage`: `sdkSessionsLive` (SDK-backed sessions the backend holds that have
+  not ended); `inTurn` (of those, sessions with a turn in flight: working or
+  retrying); `retrying` (sessions inside a retry storm right now, the cheapest
+  direct thrash indicator, independent of the ratio thresholds);
+  `tmuxSessionsUncovered` (tmux-backed sessions, which have no SDK stream and are
+  outside the signal; `null` when the kernel could not enumerate them; Codex-backed
+  sessions carry no Anthropic API traffic, are outside the signal too, and are
+  counted in neither field);
+  `sidechainExcluded` (a constant `true`: subagent traffic is
+  outside the signal on both sides of the ratio). A reader that sees `inTurn >
+  0` and a `lastEventAt` minutes old should treat the signal as unknown rather
+  than healthy.
+- `cliScope`: scope bookkeeping carried on this payload, not part of the API
+  signal itself: the per-session scopes (see "What survives a restart" and
+  "Per-session memory limits").
+  - `on`, true when the kernel chose at boot to run CLIs in scopes.
+  - `fallbacks`, CLI launches since boot on which the scope wrapper's pre-flight
+    scope failed, so it ran the CLI directly and reported `romp-cli-scope:
+    fallback: …` on stderr. Each is also a problem line in the kernel log, in
+    exactly this form: `cli scope: session <name> (<sid8>) started its CLI
+    outside a scope — <line>`, where `<sid8>` is the first 8 characters of the
+    session id and `<line>` is the wrapper's whole stderr line, its
+    `romp-cli-scope: fallback:` prefix included. The wrapper's refusal,
+    `romp-cli-scope: refused: …` (`ROMP_CLI_REAL` unset, exit status 127), is
+    not counted: no CLI starts, and the failure is reported on the session's
+    error card. `lastFallbackAt`, epoch seconds of the newest fallback; `null`
+    when there was none. `on: true` with `fallbacks > 0` means scopes were on at
+    boot and some launches ran without one: those sessions' work is in the
+    service cgroup, and a service restart kills it.
+  - The limits: `memoryMax`, `memoryHigh`, `memorySwapMax` (the size strings)
+    and `oomScoreAdj` (an integer), each `null` when its variable is unset, when
+    its value was rejected, or when the scopes are off (no scope starts, so no
+    limit applies).
+  - `rejected`, the names of the variables whose values were refused, by their
+    rule or by this machine at the kernel's start (memory properties systemd
+    rejected; an adjustment the process could not write), each also a problem
+    line at the kernel's start.
+  - `memoryControllerDelegated`, the kernel's start-time check of whether a
+    probe scope carrying the memory properties had a `memory.max` file in its
+    cgroup: `true`, `false` (systemd holds the sizes above and applies nothing;
+    also a problem line), or `null` when no memory limit is set, the scopes are
+    off, or the check could not be settled. A `null` beside a memory limit shown,
+    with `on: true`, is that last case: a check at the kernel's start did not
+    answer, and `unsettled` says which.
+  - `unsettled`, the names of the kernel's start-time checks that were due and
+    settled nothing: `memoryLimits` (the probe scope carrying the memory
+    properties did not answer, or failed both with and without them),
+    `memoryController` (the check inside it gave no marker), `oomScoreAdj` (the
+    throwaway child's write did not answer). Empty when every due check
+    answered, and when none was due (the scopes off, no limit set). A value
+    listed above whose check is named here is set and handed to the wrapper as
+    read, and whether it applies is not known at the kernel's start; the other
+    fields cannot show this (`oomScoreAdj` present, `rejected` empty and
+    `memoryControllerDelegated` `true` read the same whether the adjustment's
+    check answered or not). Each named check is also a line in the boot log
+    saying why.
+  - `limitsIgnored`, wrapper `romp-cli-scope: ignored: …` lines since boot (each
+    also a problem line, `cli scope: session <name> (<sid8>) started its CLI
+    without a per-session limit — <line>`). It counts lines, not launches: one
+    launch writes one line for each value the wrapper refuses, one for the
+    memory properties together when systemd rejects them, and one for an
+    adjustment it could not write. `on: true` with a limit set and
+    `limitsIgnored > 0` means a value the kernel accepted at its start was
+    refused at a launch: the machine changed under the running kernel, or the
+    value reached the wrapper outside the kernel's hand-off (see "Per-session
+    memory limits").
+- `config`: the constants in force (see "Derived state").
+- `keySource`: the key source the kernel decided at boot, plus what is live
+  now: `mode` (`file` or `command`), `selector`, `sessionKeyPath` (`injected`,
+  `helper` or `login`: how a session launched now gets its key), `expectedAuth`,
+  `helperConfigured`, `execStartShell` (`true` when the unit starts the manager
+  through a shell; `null` when no unit was found), `credentialNamesFound`
+  (`serviceEnv`, `unit`, `environment`: credential-shaped names, never values),
+  `lastRun` (command mode: `ok`, `at`, `reason`, `exitCode`, `durationS`,
+  `stale` (a failed run standing on the previous set), `failures`
+  (consecutive) and `lastOkAt`; else `null`),
+  `fingerprint` and `fingerprintKind` (`key` or `helper`) of the credential a
+  session launched now would bill, `setFingerprint` and `names` of the
+  command's set, and `sessionsByFingerprint` (live sessions per launch
+  fingerprint; `""` counts sessions launched with no credential the kernel
+  fingerprinted). See [Installing without keys on
+  disk](#installing-without-keys-on-disk).
+- `overall`: `state`, the most severe state among buckets that are not
+  `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every
+  bucket is), and `worstBucket`, the bucket that set it. There are no pooled
+  windows: summing 429 rates across auth sources mixes unrelated quotas.
+- `buckets`: keyed `"<auth>|<family>"`.
+- `transitions`: the last 50 state transitions across every bucket, newest
+  last, each `{t, bucket, auth, family, from, to, why, evidence}`.
+- `rate429Basis`: the constant `"attempts"` (see "Windows").
+
+### Windows
+
+Each bucket carries three windows (`60`, `300`, `900` seconds, ending at
+`asOf`), each with:
+
+- `requests`: attempts with a status, `ok + rateLimited + overloaded +
+  serverErrors + otherErrors`. `noStatus` (a connection-level failure) and
+  `gaveUp` sit outside the sum: a give-up is already inside one of the status
+  counters, since the exhausting attempt emits no retry frame and the settle is
+  the only place it can be counted.
+- `rate429` = `rateLimited / requests`, `rate5xx` = `(overloaded +
+  serverErrors) / requests`; both `null` at zero requests.
+- `retries`, `sessionsRetrying`, `turnsRetrying`: attempts, distinct sessions
+  and distinct turns with at least one retry in the window.
+- `complete`: false while the window is longer than the kernel's uptime.
+
+`rate429` is an attempt share, not a request share: one stuck turn contributes
+up to `max_retries` attempts. The payload says so (`"rate429Basis":
+"attempts"`); read `sessionsRetrying` and `turnsRetrying` beside it to tell one
+stuck session from a saturated key. A high `rate429` with `gaveUp` at zero is
+traffic being slowed, not blocked; a consumer whose action is expensive should
+require `gaveUp` or `turnsRetrying` over its own span, not `state` alone.
+
+The signal covers each session's main thread only. A subagent's retries never
+reach the kernel (the CLI folds them into a progress frame the SDK drops), so
+its responses are not counted either; counting one side would dilute every
+rate during a storm. `coverage.sidechainExcluded` is `true` to say so.
+tmux-backed sessions and the judges' own calls have no SDK stream and are
+outside the signal.
+
+Retries carry no model field, so they are attributed to the session's
+last-learned family: attempts between a mid-storm model fallback and its first
+successful reply file under the previous family. Successful responses use their
+own model and are exact.
+
+### Per-bucket state fields
+
+- `state`: `unknown`, `healthy`, `thrashing`, `degraded` or `recovering` (see
+  "Derived state").
+- `stateSince`: epoch seconds of the read that recorded the transition into the
+  current state. Every transition is stamped with the time of the read that
+  found it (`transitions[].t`), and `stateSince` is that stamp for the newest
+  one, so `asOf - stateSince` is how long the state has held as observed. For
+  `unknown` it is the read that found no qualifying window, or the boot time
+  after a restart.
+- `evidence`: `{window, rate429, rate5xx, n}`, the window that decided the
+  newest transition, its two rates and its `requests`, recorded at that
+  transition and kept with the state; they are the numbers the transition's
+  `why` carries. When the state is `unknown`, `window` and the rates are `null`
+  and `n` is `requests` over 900 s at read time.
+- `why`: the newest transition's reason in words, the same string as its row.
+- `transitions`: this bucket's own last 50 transitions, newest last, in the
+  same row shape as the top-level list. It is kept per bucket, not filtered
+  from the top-level list, so a neighbour that churns through fifty
+  transitions does not push this bucket's history out of view.
+- `lastError`: the newest attempt or give-up that was not a success, from
+  memory only (lost at restart): `at`; `status` (the HTTP status, or `null`);
+  `category` (the CLI's error category string, for example `rate_limit`,
+  `overloaded` or `server_error`; `null` when the frame carried none); `class`
+  (the counter it landed in); `kind` (`retry` or `gaveup`). There is no text
+  field, by design: the wire carries none today, and the transcript's 429 text
+  names the organisation and the model.
+
+### Derived state
+
+`state` is computed at read time as a pure function of the bucket's event ring,
+the last persisted `(state, stateSince)` and `asOf`. It has no other inputs and
+no thread of its own.
+
+- `unknown`: no window of the bucket has `requests >= minRequests` (10). Any
+  state moves to `unknown` when that is so; it is also the state after boot and
+  the state of a bucket whose traffic has stopped. `stateSince` is the read
+  that found it so. From `unknown`, the first read with a qualifying window
+  classifies afresh: an enter condition gives `thrashing` or `degraded`,
+  otherwise `healthy`. `unknown` keeps no memory of the state before it; a
+  consumer that wants to join an incident across an `unknown` gap reads
+  `transitions`.
+- `healthy`: the default once there is evidence.
+- `thrashing`: the 429 share is high. The actionable state: a consumer can move
+  traffic to another key or organisation.
+- `degraded`: the server-side error share (`overloaded` plus `serverErrors`) is
+  high while the 429 share is not. A provider-side problem another key may not
+  fix, so a separate state.
+- `recovering`: the exit condition has been met, but the hold time has not
+  passed.
+
+The transitions follow, with the constants that `config` echoes. A rule reads a
+window only when that window has `requests >= minRequests`:
+
+- Enter `thrashing`: `rate429(300 s) >= enter429` (0.20), or `rate429(900 s) >=
+  enter429Slow` (0.15), or `rate429(60 s) >= enter429Fast` (0.50) with
+  `requests(60 s) >= fastMinRequests` (20). From `healthy`, `recovering` and
+  `unknown`, and from `degraded` at once: `thrashing` takes precedence over
+  `degraded` whenever the 429 condition holds, on entry and afterwards.
+- Enter `degraded`: the same conditions on `rate5xx` (`enter5xx` 0.20,
+  `enter5xxSlow` 0.15, `enter5xxFast` 0.50) while the 429 condition does not
+  hold, from `healthy`, `recovering` and `unknown`. There is no direct
+  `thrashing -> degraded`: leaving `thrashing` goes through `recovering`, and
+  `recovering -> degraded` fires in the same read when the 5xx condition holds
+  (two rows with one `t`).
+- `thrashing -> recovering`: `rate429(300 s) <= exit429` (0.10) and
+  `rate429(900 s) <= exit429`, both windows qualifying, held at every instant of
+  the last `holdS` (120 s). `degraded -> recovering`: the same on `rate5xx` with
+  `exit5xx` (0.10).
+- `recovering -> healthy`: both exit conditions (429 and 5xx) held throughout
+  the last `holdS`, and `asOf - stateSince >= holdS`. Both are required because
+  the persisted state is `(state, stateSince)` alone and nothing says which
+  state `recovering` came from. A bucket with one rate between its exit and
+  enter thresholds stays `recovering`, which is the accurate label.
+- `recovering -> thrashing | degraded`: the enter condition again, immediately.
+
+Enter and exit thresholds differ, exits need a hold on two windows, and every
+decision needs a minimum sample, so a bucket near a cap does not flap. A
+reading between exit and enter (0.10 to 0.15 on the 900 s window) holds the
+state however long it lasts, and traffic too thin to qualify the 300 s window
+cannot satisfy an exit, so it holds the state too; the windows beside the state
+show what the traffic is doing.
+
+"Held throughout the last `holdS`" is decided exactly, without sampling. A
+window's counts change only at breakpoints, the instant an event's timestamp
+enters the window and the instant it leaves, so the exit condition is
+evaluated at `asOf - holdS`, at `asOf` and at each breakpoint between. Evaluating the 900 s window
+at `asOf - holdS` needs events back to `asOf - 1020`, so `config.retentionS`
+is 1020 and the ring keeps nothing older. A read that finds a transition stamps
+it with `t = asOf`, appends it to `transitions`, rewrites the state file and
+logs one line in the kernel log (`api-health: <bucket> <from> -> <to> — <why>`).
+A reader polling every few seconds observes every transition within one poll of
+its breakpoint; a sparser reader observes the state at its read times and the
+transitions those reads find, and nothing in between: a state entered and left
+between two reads is not recorded, and `recovering -> healthy` needs a read at
+least `holdS` after the read that entered `recovering`. Nothing derives while
+nobody reads.
+
+### Persistence and restart
+
+A read that observes a transition rewrites `STATE/api-health.json`, whole and
+atomically (a temp in the same directory, then a rename). The file holds each
+bucket's `state`, `stateSince`, `why` and `evidence` and the `transitions`
+tail, so it stays bounded however many transitions pass; per-request events
+are never written. The event ring itself is in memory only, so a restart
+empties the windows: `seq` restarts at 0, `bootId` changes, `complete` stays
+false until each window fits inside the new uptime, and every bucket the state
+file knows comes back `unknown` with `stateSince` at the boot's stamp. For each
+bucket whose persisted state was not already `unknown` the reload files
+`<state> -> unknown` at that stamp, so the transitions list is continuous across
+the restart, and the first read with enough evidence records `unknown -> <state>`
+after it. The boot's stamp is the kernel's start truncated to the millisecond,
+or one millisecond past the newest transition the file carries when that one
+is not before the start (the previous kernel filed it after this one started,
+or the clock stepped), so the restart row is always the newest row; the payload
+serves that stamp as `bootAt`, and the kernel log says when it was moved. The
+pre-restart state is not carried over: an empty ring is no
+evidence. A state file, or an entry in it, that cannot be read is skipped and
+logged, and never keeps the SDK backend from starting.
+
+Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
+kernel that boots without a state file seeds one from that ledger's last 64 KB,
+once, and leaves the ledger alone; once the state file exists the ledger is
+never read again and can be deleted.
+
+### The bottom bar's indicator
+
+The dashboard's bottom bar carries an API cell (a dot and a word beside the
+spend figures) that is computed independently of this signal, from two things
+the kernel owns directly:
+
+- Each alive session's newest transcript API-error record, latched until the
+  session produces assistant output again (a user prompt does not clear it,
+  romp's own retry included), plus the live retrying state of SDK sessions.
+- The retry-pause file (`retry-paused.json` under the state directory). A
+  pause writes `paused`, `t` (when it began, the auto-resume floor) and its
+  `reason`: `limit`, `spend`, or none for a manual stop. A spend pause adds
+  `bills`, the billing the capped session was on (`login` or `key`); only
+  fresh assistant output from a session on that billing lifts it. Un-pausing
+  a spend pause, by that lift or by the Resume button, records `liftedAt`
+  (the time of the output record that lifted it, or of the Resume click) and
+  `supersedes` (the floor of the pause it cleared; informational, nothing
+  reads it); both ride every later write until a newer spend un-pause
+  replaces them, and a spend-limit record older than `liftedAt` engages
+  nothing, since the lift already ruled on it. A limit or manual un-pause
+  records neither. When a limit pause lifts while a spend-limit record is
+  standing, the file reads unpaused for one cycle before the spend pause
+  engages: each writer rules on one signal per cycle, and the spend engage
+  runs before the lift in the pusher's order, so it sees a paused file and
+  rules on the record the next cycle.
+
+The kernel pushes the cell's frame to shell clients only when it changed, and
+again to a shell that sends `ready`:
+
+```json
+{"type": "apiHealth", "state": "ok | degraded | paused",
+ "cls": "429 | 529 | offline | errors | ''", "reason": "'' | limit | spend | manual",
+ "text": "<the rail's words>", "waiting": 0, "retrying": 0, "blocked": 0,
+ "since": 0, "tmux": 0, "seq": 0,
+ "sessions": [{"sid": "", "name": "", "color": null, "kind": "retrying | blocked",
+               "cls": "", "status": null, "since": 0, "suppressed": false}]}
+```
+
+`seq` counts the retry-pause file's writes since the kernel started. A press
+on the detail's pause button writes that file, so the frame that answers the
+press carries a moved `seq` whatever state it brings, and the shell clears
+the button's acknowledgment on it; a frame from before the press carries the
+old one. It is an event counter, not a clock, and restarts at 0 with the
+kernel. `waiting` is `retrying` plus `blocked`. `cls` is the plurality class over the
+affected sessions, ties resolved 429, then 529, then offline, then errors.
+`since` is the pause's time when paused, else the earliest affected session's
+event (a record's timestamp, or the retrying turn's start), else 0. `tmux`
+counts alive tmux-backed sessions, which the cell sees through their
+transcripts only. Every timestamp is an event's time, never the clock, so an
+unchanged world sends nothing. On-you failures (a too-long prompt, a spent
+model allowance, a dead credential, a refusal) are not counted; a spend cap is,
+and engages the `spend` pause in the same cycle.
+
+The cell's hover and its click detail carry a **History** section read from
+this signal: the shell fetches `GET /api-health` when the hover or the detail
+opens, and again when a frame lands on an open one, authenticating with the
+dashboard's own cookie the way its other reads do. Nothing polls; the frame
+carries no history and is unchanged. The section shows `overall.state` with
+the worst bucket's `stateSince` and `why` (naming the bucket and the bucket
+count when there is more than one; a bucket the boot seeded is `unknown`
+since `bootAt`: the boot time or, when an older kernel's last row overlaps
+it, one millisecond past that row, because the backend seeds its `stateSince`
+with the stamp it serves as `bootAt`, the one the tail uses for the boot),
+one row per window from `config.windows` (`requests` plus `noStatus` as the
+attempts, saying how many of them had no status when there are any, `rate429`
+and `rate5xx` as percentages over the attempts with a status, `gaveUp`, and
+`sessionsRetrying` as the sessions that retried in the window; a window
+reads `no attempts` only when every one of those is zero; a window whose
+`complete` is false says how long the kernel has been up), up to six rows
+of `transitions` newest first with the state entered and how long it held
+(until the same bucket's next transition, `so far` for the current one; a
+hold from before `bootAt` ends at the boot, since every bucket comes back
+`unknown` at a restart), and the payload's `asOf`. A row the boot filed
+(`<state> -> unknown`, its `why` the restart reason) reads `kernel
+restarted`; where the tail crosses `bootAt` without such a row (the bucket
+was already `unknown` when the previous kernel stopped, so the boot filed
+nothing), a `kernel restarted` divider is inserted, and it takes none of the
+six slots. A read that fails (a non-2xx, or no answer) shows one line saying
+so in place of the rows, never the previous numbers.
+
 ## Where things live
 
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
@@ -2728,6 +2764,19 @@ reason, or `parent-gone: the manager exited; the kernel followed it`. A second
 SIGTERM during the drain is ignored; the first writes the row. The manager's
 log says `exited without a restart request (signal or crash); respawning` when
 a kernel exits that it did not ask to stop or restart.
+
+The two host registries there, `remotes.json` (attached and checked-in
+machines, each row with that machine's serve token) and `remotes-known.json`
+(machines remembered for re-attach, with the mail tier you set for each), are
+read at boot under the rule their doors apply: a checked-in row's host must be
+a machine name, an attached row's an ssh alias, a remembered row's either. A
+row that fails (one filed before the doors applied the rule) is set aside,
+never loaded and never written back: the rows are moved to
+`<file>.refused-<UTC stamp>` beside the original (`-1`, `-2` when a second one
+lands in the same second; the `remotes.json` sidecar is 0600, since its rows
+carry tokens), the file is rewritten without them, and one stderr line plus one
+Log entry under the `refused` kind names each host as a clipped repr, never the
+raw string.
 
 ## Switches
 

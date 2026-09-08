@@ -392,6 +392,45 @@ class BarsDeltas(unittest.TestCase):
         self.assertEqual(st.c["dstate"]["bars"]["rev"], rev, "a frame that did not go does not advance what the client holds")
         self.assertIsNot(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", p3))
 
+    def test_o_a_raising_send_on_the_delta_path_leaves_the_revision_and_the_held_split_unchanged(self):
+        """A frame that did not go does not advance what the client holds: the revision stays, and the held split
+        stays the one the last frame that went was written from, so the payload that failed is not an identity hit
+        next cycle and the compare runs against the state the client really holds."""
+        st = _Stream("bars")
+        st.push(_bars({S1: self._turn(S1, 1)}, [], []))
+        fr = st.push(_bars({S1: self._turn(S1, 2)}, [], [], now=1005))
+        self.assertEqual([f["type"] for f in fr], ["delta"])
+        rev, held = st.c["dstate"]["bars"]["rev"], st.c["dstate"]["bars"]["parts"]
+        def boom(s): raise RuntimeError("synthetic socket failure")   # not a "bytes behind" drop: no bell row
+        st.c["send"] = boom
+        p3 = _bars({S1: self._turn(S1, 3)}, [], [], now=1010)
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(st.push(p3), [])
+        self.assertFalse(st.c["alive"], "a failed send marks the client dead")
+        self.assertEqual(st.c["dstate"]["bars"]["rev"], rev, "a frame that did not go does not advance what the client holds")
+        self.assertIs(st.c["dstate"]["bars"]["parts"], held, "…nor the split its state was written from")
+        self.assertIsNot(st.c["dstate"]["bars"]["parts"], km._delta_parts("bars", p3))
+
+    def test_p_an_unchanged_compare_leaves_the_repost_timer_on_the_last_frame_that_went(self):
+        """The unchanged branch adopts the split but leaves `at` alone, and so does the identity short-circuit: the
+        repost timer counts from the last frame that WENT, so a content-equal rebuild every cycle cannot postpone the
+        repost that keeps the pane's clock and fade alive."""
+        st = _Stream("bars")
+        p = _bars({S1: self._turn(S1, 2)}, [], [])
+        st.push(p)                                                 # the keyed full: the frame that went
+        ds = st.c["dstate"]["bars"]
+        ds["at"] -= km._DEDUP_REPOST_S - 5                         # …55 s ago
+        at0 = ds["at"]
+        q = dict(p, now=1002)                                      # a content-equal rebuild: compared once, adopted
+        self.assertEqual(st.push(q), [])
+        self.assertIs(ds["parts"], km._delta_parts("bars", q), "the compare adopted the new split")
+        self.assertEqual(st.push(q), [], "…so the same object is an identity hit")
+        self.assertEqual(ds["at"], at0, "neither branch moved the repost timer")
+        with mock.patch.object(km, "_DEDUP_REPOST_S", km._DEDUP_REPOST_S - 10):   # the window closes on the 55 s old frame
+            fr = st.push(q)
+        self.assertEqual([f["type"] for f in fr], ["delta"], "the repost goes, timed from the frame that went")
+        self.assertEqual(fr[0]["coll"], {}); self.assertEqual(fr[0]["rest"], {"now": 1002})
+
 
     def test_g_a_bar_appended_to_an_earlier_lane_crosses_alone_and_lands_in_its_lane(self):
         """The flat key order changes (the new bar sits before the later lanes' bars) but the assembled
@@ -865,20 +904,18 @@ class TwoThreadsOneClient(unittest.TestCase):
         self.assertEqual(st.c["dstate"]["bars"]["rev"], 0)
 
 
-
-
 def _bar(i):
     return {"id": "seg-%d" % i, "t": i, "end": i + 1, "open": False}
 
 
 def _sig(p):
-    return km._bars_sig(km._delta_parts("bars", p))
+    return km._parts_sig(km._delta_parts("bars", p))
 
 
-class TupleSignatureForTheBars(unittest.TestCase):
-    """P5 (2026-09-06): the pusher's bars signature is _bars_sig — (rest_sig, the split's (collection, key order,
-    entry strings)) from the _delta_parts split it makes at the wire fill — not json.dumps(bars) plus a sort_keys
-    re-dump of the stripped payload. Equal tuples mean equal entries, lanes and remainder."""
+class TupleSignatureForTheSlots(unittest.TestCase):
+    """The pusher dedups a slot payload on _parts_sig — (rest_sig, the split's (collection, key order, entry
+    strings)) from the _delta_parts split it makes at the wire fill — not on json.dumps(payload) plus a sort_keys
+    re-dump of the payload minus its clock. Equal tuples mean equal entries, key order and remainder."""
 
     def test_the_tuple_ignores_the_clock_and_moves_on_any_entry_lane_or_remainder(self):
         p = _bars({S1: [_bar(1)], S2: [_bar(2)]}, [{"sid": S1, "judge": "closer", "t": 1, "t1": 2}], [{"id": "m1", "sent": 1}])
@@ -925,9 +962,9 @@ class TupleSignatureForTheBars(unittest.TestCase):
         km._delta_parts_cache.clear()                 # a connect push on another thread evicted the single slot
         c = _Client()
         with mock.patch.object(km, "_delta_parts", side_effect=AssertionError("re-split")):
-            km._send_slot(c, "bars", p, json.dumps(p), km._bars_sig(parts), parts)
+            km._send_slot(c, "bars", p, json.dumps(p), km._parts_sig(parts), parts)
             self.assertIs(c["dstate"]["bars"]["parts"], parts, "the keyed full records the split it was handed")
-            km._send_slot(c, "bars", p, json.dumps(p), km._bars_sig(parts), parts)
+            km._send_slot(c, "bars", p, json.dumps(p), km._parts_sig(parts), parts)
             self.assertEqual(len(c.frames), 1, "the same split: the identity short-circuit, no compare, no re-split")
         # without a split handed down the path splits for itself, as every caller before the fill did
         q = _bars({S1: [_bar(1), _bar(2)]}, [], [], now=1001)
@@ -941,43 +978,125 @@ class TupleSignatureForTheBars(unittest.TestCase):
         frac = km._DELTA_MAX_FRACTION; km._DELTA_MAX_FRACTION = 10.0
         self.addCleanup(setattr, km, "_DELTA_MAX_FRACTION", frac)
         p = _bars({S1: [_bar(1)]}, [], []); parts = km._delta_parts("bars", p); calls = []
-        lazy = km._LazyWire(lambda: (calls.append("p"), json.dumps(p))[1], km._bars_est(parts))
+        lazy = km._LazyWire(lambda: (calls.append("p"), json.dumps(p))[1], km._parts_est(parts))
         c = _Client()
-        km._send_slot(c, "bars", p, lazy, km._bars_sig(parts), parts)      # the keyed full: made once, keyed
+        km._send_slot(c, "bars", p, lazy, km._parts_sig(parts), parts)      # the keyed full: made once, keyed
         self.assertEqual(calls, ["p"]); self.assertIn("_keys", c.frames[0]); self.assertEqual(lazy.size(), len(json.dumps(p)))
-        km._send_slot(c, "bars", p, lazy, km._bars_sig(parts), parts)      # unchanged: the size only
+        km._send_slot(c, "bars", p, lazy, km._parts_sig(parts), parts)      # unchanged: the size only
         self.assertEqual(calls, ["p"])
         q = _bars({S1: [_bar(1), _bar(2)]}, [], [], now=1001); qparts = km._delta_parts("bars", q)
-        qlazy = km._LazyWire(lambda: (calls.append("q"), json.dumps(q))[1], km._bars_est(qparts))
-        km._send_slot(c, "bars", q, qlazy, km._bars_sig(qparts), qparts)   # a delta goes: the whole frame is never made
+        qlazy = km._LazyWire(lambda: (calls.append("q"), json.dumps(q))[1], km._parts_est(qparts))
+        km._send_slot(c, "bars", q, qlazy, km._parts_sig(qparts), qparts)   # a delta goes: the whole frame is never made
         self.assertEqual([f["type"] for f in c.frames], ["bars", "delta"])
         self.assertEqual(calls, ["p"]); self.assertFalse(qlazy.materialized())
         self.assertLess(qlazy.size(), len(json.dumps(q)), "unmade: the estimate (the frame's own keys are not in it)")
         self.assertGreater(qlazy.size(), 0)
         legacy = _Client(); legacy.pop("delta")                            # a whole-frame client makes it, once
-        km._send_slot(legacy, "bars", q, qlazy, km._bars_sig(qparts), qparts)
-        km._send_slot(legacy, "bars", q, qlazy, km._bars_sig(qparts), qparts)
+        km._send_slot(legacy, "bars", q, qlazy, km._parts_sig(qparts), qparts)
+        km._send_slot(legacy, "bars", q, qlazy, km._parts_sig(qparts), qparts)
         self.assertEqual(calls, ["p", "q"]); self.assertEqual([f["type"] for f in legacy.frames], ["bars"])
         self.assertEqual(legacy.frames[0], q)
 
     def test_the_size_guard_reads_the_estimate_and_falls_back_to_a_whole_frame(self):
         # _DELTA_MAX_FRACTION at its real value: a near-total change against a lazy `pre` crosses whole (the
-        # estimate a few percent under the frame only makes that slightly more eager), and the whole frame is
-        # then made — once — for the keyed full
+        # estimate a little under the frame only makes that slightly more eager), and the whole frame is then
+        # made — once — for the keyed full
         st = _Stream("bars")
         st.push(_bars({S1: [_bar(1)]}, [], []))
         big = _bars({S1: [_bar(i) for i in range(40)], S2: [_bar(i) for i in range(40)]}, [], [], now=1020)
         parts = km._delta_parts("bars", big); calls = []
-        lazy = km._LazyWire(lambda: (calls.append(1), json.dumps(big))[1], km._bars_est(parts))
+        lazy = km._LazyWire(lambda: (calls.append(1), json.dumps(big))[1], km._parts_est(parts))
         n0 = len(st.c.frames)
-        km._send_slot(st.c, "bars", big, lazy, km._bars_sig(parts), parts)
+        km._send_slot(st.c, "bars", big, lazy, km._parts_sig(parts), parts)
         self.assertEqual([f["type"] for f in st.c.frames[n0:]], ["bars"], "a near-total change crosses whole")
         self.assertEqual(calls, [1]); self.assertIn("_keys", st.c.frames[-1])
 
+    def test_the_feed_slot_takes_the_same_tuple_and_a_reordered_card_re_sends_once_then_dedups(self):
+        def card(i, **f):
+            d = {"itemId": "%s:g%d" % (S1, i), "sid": S1, "text": "Synthetic goal %d" % i, "t": i, "column": "working",
+                 "tree": [{"id": "%s:g%d.1" % (S1, i), "text": "step", "status": "done"}]}
+            d.update(f)
+            return d
+        fsig = lambda p: km._parts_sig(km._delta_parts("feed", p))
+        p = _feed([card(1), card(2)])
+        self.assertEqual(fsig(p), fsig(_feed([card(1), card(2)], now=2000, buildId=2)), "the clock and the build id are not in it")
+        self.assertNotEqual(fsig(p), fsig(_feed([card(1), card(2, text="changed")])), "a card's field")
+        self.assertNotEqual(fsig(p), fsig(_feed([card(1), card(2), card(3)])), "a card appended")
+        self.assertNotEqual(fsig(p), fsig(_feed([card(1), card(2)], working=[S1])), "the remainder")
+        self.assertEqual([name for name, _o, _e in fsig(p)[1]], ["asks"])
+        # the sort_keys form was key-order-insensitive at every level; the tuple compares the strings a client
+        # receives, so a card whose nested keys are reordered with equal content is one spurious frame (never a
+        # stale client), then deduped — on the legacy path a whole frame, on the delta path a one-card set
+        f1 = _feed([card(1), card(2), card(3)])
+        f2 = _feed([card(1), dict(reversed(list(card(2).items()))), card(3)], now=1001)
+        f3 = _feed([dict(a) for a in f2["asks"]], now=1002)
+        self.assertEqual(km._dedup_sig(f1, json.dumps(f1)), km._dedup_sig(f2, json.dumps(f2)), "the old signature deduped this")
+        self.assertNotEqual(fsig(f1), fsig(f2)); self.assertEqual(fsig(f2), fsig(f3))
+        c = _Client(); c.pop("delta")
+        for f in (f1, f2, f3):
+            km._send_slot(c, "feed", f, json.dumps(f), fsig(f))
+        self.assertEqual([f["type"] for f in c.frames], ["feed", "feed"], "the reordered card re-sends once, then dedups")
+        self.assertEqual(list(c.frames[1]["asks"][1]), list(f2["asks"][1]), "the frame carries the new order")
+        frac = km._DELTA_MAX_FRACTION; km._DELTA_MAX_FRACTION = 10.0
+        self.addCleanup(setattr, km, "_DELTA_MAX_FRACTION", frac)
+        d = _Client()
+        for f in (f1, f2, f3):
+            km._send_slot(d, "feed", f, json.dumps(f), fsig(f))
+        self.assertEqual([f["type"] for f in d.frames], ["feed", "delta"])
+        self.assertEqual(d.frames[1]["coll"], {"asks": {"set": {S1 + ":g2": f2["asks"][1]}}}, "the one card whose string moved")
+
+    def test_a_lane_renamed_in_place_with_equal_bars_moves_the_tuple_and_re_sends(self):
+        # the key order carries the lanes: the same bars under another lane name, in the same position, are the same
+        # entry strings in the same order — only the keys tell them apart (the lane-move case above pops and appends,
+        # which reorders the strings too, so it passes without the key order)
+        p = _bars({S1: [_bar(1)], S2: [_bar(2)]}, [], [])
+        r = _bars({S3: [_bar(1)], S2: [_bar(2)]}, [], [], now=1001)
+        self.assertEqual([e for _n, _o, e in _sig(p)[1]], [e for _n, _o, e in _sig(r)[1]], "equal entry strings, in order")
+        self.assertNotEqual(_sig(p), _sig(r), "…and the key order tells the lanes apart")
+        c = _Client(); c.pop("delta")                 # a legacy client dedups on the tuple alone
+        km._send_slot(c, "bars", p, json.dumps(p), _sig(p))
+        km._send_slot(c, "bars", r, json.dumps(r), _sig(r))
+        self.assertEqual([list(f["turns"]) for f in c.frames], [[S1, S2], [S3, S2]], "the renamed lane crosses; the client is not left holding the old one")
+
+    def test_a_deduped_whole_frame_client_never_materializes_a_fresh_cell(self):
+        # a content-equal rebuild mints a new payload and a new lazy cell; a legacy client that holds the frame dedups on
+        # the tuple, and the dedup costs the cell its size() only — the frame is never serialized
+        p = _bars({S1: [_bar(1)]}, [], []); parts = km._delta_parts("bars", p)
+        legacy = _Client(); legacy.pop("delta")
+        a = km._LazyWire(lambda: json.dumps(p), km._parts_est(parts))
+        km._send_slot(legacy, "bars", p, a, km._parts_sig(parts), parts)
+        self.assertTrue(a.materialized()); self.assertEqual(len(legacy.frames), 1, "the first frame goes, made once")
+        q = json.loads(json.dumps(p)); q["now"] = 1001; qparts = km._delta_parts("bars", q); calls = []
+        b = km._LazyWire(lambda: (calls.append(1), json.dumps(q))[1], km._parts_est(qparts))
+        km._send_slot(legacy, "bars", q, b, km._parts_sig(qparts), qparts)
+        self.assertEqual(len(legacy.frames), 1, "deduped"); self.assertEqual(calls, [], "…without serializing the new cell")
+        self.assertFalse(b.materialized()); self.assertEqual(b.size(), km._parts_est(qparts), "the estimate answered the size guard")
+
+    def test_a_whole_frame_whose_encode_raises_leaves_the_dedup_slot_for_a_retry(self):
+        # _send_client materializes a lazy frame BEFORE it writes the client's dedup slot: an encode that raises leaves
+        # the slot empty, so the next cycle's send is not deduped against a frame that never went
+        p = _bars({S1: [_bar(1)]}, [], []); parts = km._delta_parts("bars", p)
+        legacy = _Client(); legacy.pop("delta")
+        boom = [True]
+
+        def encode():
+            if boom[0]:
+                boom[0] = False
+                raise ValueError("synthetic encode failure")
+            return json.dumps(p)
+        cell = km._LazyWire(encode, km._parts_est(parts))
+        with self.assertRaises(ValueError):
+            km._send_slot(legacy, "bars", p, cell, km._parts_sig(parts), parts)
+        self.assertEqual(legacy.frames, []); self.assertFalse(cell.materialized())
+        self.assertNotIn(("timelinebars",), legacy.get("sent", {}), "no frame went: the dedup slot is not written")
+        km._send_slot(legacy, "bars", p, cell, km._parts_sig(parts), parts)      # the retry: the encode works, the frame goes
+        self.assertEqual([f["type"] for f in legacy.frames], ["bars"]); self.assertTrue(cell.materialized())
+        self.assertEqual(legacy["sent"][("timelinebars",)][0], km._parts_sig(parts))
+
 
 class KeyerParsesTheKindOnce(unittest.TestCase):
-    """P8 rider (2026-09-06): _delta_split parses a collection's kind once (_delta_keyer) instead of once per item;
-    the keys are byte-identical to the per-item form (_delta_key, kept as its wrapper)."""
+    """_delta_split parses a collection's kind once (_delta_keyer) instead of once per item; the keys are
+    byte-identical to the per-item form (_delta_key, kept as its wrapper)."""
 
     def test_delta_key_and_the_keyer_agree_on_every_kind_and_shape(self):
         items = [{"id": "a"}, {"id": ""}, {"id": None}, {"id": 1.0}, {"id": "#1"}, {"itemId": "x:g1"}, {"itemId": ""},
@@ -1019,9 +1138,15 @@ class KeyerParsesTheKindOnce(unittest.TestCase):
         with self.assertRaises(ValueError):
             km._delta_split("dictlist:id", {"la" + SEP + "ne": []})
 
+    def test_the_keyer_is_built_once_per_split(self):
+        # the perf claim itself: one _delta_keyer call per _delta_split, however many items — parsing the kind string
+        # per item was a visible share of the per-entry pass on a board of thousands of bars
+        calls = []; real = km._delta_keyer
+        with mock.patch.object(km, "_delta_keyer", side_effect=lambda kind: calls.append(kind) or real(kind)):
+            ents, order = km._delta_split("dictlist:id", {S1: [_bar(i) for i in range(50)], S2: [_bar(i) for i in range(50)]})
+        self.assertEqual(len(order), 100); self.assertEqual(len(ents), 100)
+        self.assertEqual(calls, ["dictlist:id"], "the kind is parsed once per split, not once per item")
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class HandlerWiring(unittest.TestCase):

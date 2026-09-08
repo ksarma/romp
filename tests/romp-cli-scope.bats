@@ -634,7 +634,7 @@ _wrapper_fns() {   # $@: function names — their bodies, lifted verbatim out of
     # here without a user namespace, so its own function runs, lifted, against a file this user cannot open
     # for writing — the same two checks it makes on the real one, in the same shell. Before this, the one
     # line asserted the floor for any failure, so a read-only /proc in a hardened container sent the operator
-    # hunting a floor (round-4 finding, 2026-09-06)
+    # hunting a floor (a review finding, 2026-09-06)
     [ "$(id -u)" -ne 0 ] || skip "root can open anything"
     : > "$TEST_DIR/oom_score_adj" && chmod 444 "$TEST_DIR/oom_score_adj"
     run sh -c "$(_wrapper_fns ignored apply_adj)"$'\n''apply_adj "$1" "$2"; cat "$2"' sh 500 "$TEST_DIR/oom_score_adj"
@@ -663,7 +663,7 @@ _wrapper_fns() {   # $@: function names — their bodies, lifted verbatim out of
 
 @test "the adjustment applies on the fallback path too: a session run directly still carries it, with the one fallback line" {
     # the write is to /proc/self and needs no scope; before it moved ahead of the pre-flight, a fallback
-    # launch skipped it silently while /api-health kept reporting the adjustment as in force
+    # launch skipped it silently while the kernel's boot line kept calling the adjustment in force
     [ -r /proc/self/oom_score_adj ] || skip "no /proc/self/oom_score_adj on this box"
     local cur; cur="$(cat /proc/self/oom_score_adj)"
     [ "$cur" -le 900 ] || skip "this process already sits near the top of the range"

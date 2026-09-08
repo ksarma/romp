@@ -84,11 +84,12 @@ test("userMd() renders through the breaks:true instance and the SAME sanitizer a
   // both renderers take the sanitized DOM back to link PR references before serializing (pr-links.ts, 2026-09-06);
   // since Slice 1 of plans/markdown-viewer.md the sanitizer is sanitizeMd (md-sanitize.ts), one call shared with the
   // file viewer, which returns the sanitized <body>; the profile (MD_PURIFY, upstream's ALLOW_DATA_ATTR: false and
-  // GitHub's rules on top) is spelled there and nowhere in render.ts
-  const fn = RENDER.match(/function userMd\(src: string\): string \{[\s\S]*?\n\}/)?.[0] || "";
+  // GitHub's rules on top) is spelled there and nowhere in render.ts; both signatures carry an optional repo
+  // parameter for the PR links (the 2026-09-08 fold of upstream's converged userMd), so the match on them is loose
+  const fn = RENDER.match(/function userMd\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(fn, "userMd() must exist");
   assert.match(fn, /const clean = sanitizeMd\(userMdHtml\(src\)\);/);
-  const mdFn = RENDER.match(/function md\(src: string, repo: string \| null = prRepoFor\(\)\): string \{[\s\S]*?\n\}/)?.[0] || "";
+  const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.match(mdFn, /const clean = sanitizeMd\(dirty\);/, "md() sanitizes through the same shared call");
   assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
   assert.doesNotMatch(RENDER, /from "dompurify"|DOMPurify\.sanitize|MD_PURIFY/, "render.ts holds no sanitizer of its own");

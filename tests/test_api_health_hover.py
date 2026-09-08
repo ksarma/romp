@@ -47,6 +47,7 @@ sb = load_source("romp_sdk_backend_apih_hover", os.path.join(BIN, "romp_sdk_back
 
 SID = "88888888-aaaa-4bbb-8ccc-000000000001"     # this module's private synthetic sid
 KEY_MATERIAL = "test-key-material-" + "h" * 28    # invented; not shaped like any provider's key
+KEY_FP = sb._keysrc.fingerprint(KEY_MATERIAL)      # what _options records at a keyed launch (_launched_key_fp)
 T0 = 1_756_800_000.0                              # a fixed synthetic epoch: the derivation is pure in `now`
 TOK = km.TOKEN
 JS = km._LANDING_APIH_JS
@@ -66,7 +67,7 @@ def _storm(t_from, t_to, label, step=14.0):
 
 
 def _label(ah):
-    return sb.api_health_auth_label("ANTHROPIC_API_KEY", salt=ah.salt(), work_key=KEY_MATERIAL, launched_keyed=True)
+    return sb.api_health_auth_label("ANTHROPIC_API_KEY", salt=ah.salt(), key_fp=KEY_FP, launched_keyed=True)
 
 
 def _serve_get(path, headers=None):

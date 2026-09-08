@@ -524,7 +524,9 @@ export function reconcilePending(events: TailEvent[], list: PendingSend[]): Reco
       // ids landed two sends: the kernel's fold, stamped per send it landed)
       const named = names(e, p);
       const spoken = named || !e.uuid ? 0 : spokenFor(at, e.uuid);
-      if (landedIdx < 0 && landedCopies(e, p) > spoken + (named ? 0 : claimed.get(i + "\0" + p.text) || 0)) { landedIdx = i; continue; }
+      // a send that landed needs no cover and no verdict: scanning on would claim a later echo (another send's
+      // cover) as its own, mark it spoken for that send and record it as a floor (T252c second review)
+      if (landedIdx < 0 && landedCopies(e, p) > spoken + (named ? 0 : claimed.get(i + "\0" + p.text) || 0)) { landedIdx = i; break; }
       if (lostIdx < 0 && lostCopies(e, p) > spoken) { lostIdx = i; continue; }
       if (echoIdx < 0 && provisionalCopies(e, p) > spoken) echoIdx = i;   // the first echo no earlier entry claimed (`seen`)
     }

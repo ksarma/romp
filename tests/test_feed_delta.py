@@ -1171,7 +1171,7 @@ class TupleSignatureDedupsTheFeed(unittest.TestCase):
         push = KSRC[KSRC.index("def _push(targets"):]
         push = push[:push.index("\ndef ")]
         self.assertIn("feed_sig = _feed_sig(feed_parts)", push)
-        self.assertIn("bars_sig = _bars_sig(bars_parts)", push)
+        self.assertIn("bars_sig = _parts_sig(bars_parts)", push)   # the bars ride upstream's generic split; _parts_sig is its name (upmerge4, R6)
         self.assertNotIn("_dedup_sig(feed", push, "no whole re-dump of the feed for its signature")
 
     def test_a_card_with_reordered_nested_keys_re_sends_once_then_dedups(self):

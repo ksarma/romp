@@ -14,23 +14,24 @@ ROMP_CLI_SCOPE=0 for every backend construction):
     wrapper and ROMP_CLI_REAL carries the real CLI when on; both untouched when off;
   * a missing or non-executable wrapper degrades loudly (a problem line, once) to the direct path;
   * the wrapper's fallback notice (a failed pre-flight, the CLI run directly; its `fallback:` form)
-    is logged the moment it arrives, as a problem naming the session, and counted, since on that path
-    the CLI starts and nothing else would ever read it; its `refused:` line (ROMP_CLI_REAL unset, exit
-    127) is only buffered — no CLI started, and the launch-error path reports it;
+    is logged the moment it arrives, as a problem naming the session, since on that path the CLI
+    starts and nothing else would ever read it; its `refused:` line (ROMP_CLI_REAL unset, exit 127)
+    is only buffered — no CLI started, and the launch-error path reports it;
   * the per-session limits (2026-09-06; cli_scope_limits, CLI_SCOPE_LIMITS): the size and
     oom_score_adj rules, agreement with the wrapper's own shell rules on one shared corpus, the
     once-per-backend read, the _options overlay (vetted values down as themselves, refused ones down
     empty, unset ones not sent), the /api-health fields, and the wrapper's third stderr form
-    (`ignored:`), logged at arrival and counted apart from the fallbacks;
+    (`ignored:`), logged at arrival as a problem naming the session and counted apart from the
+    fallbacks;
   * the boot probe (_cli_scope_settle, on a scripted runner): the property probe scope with the
     wrapper's retry chain and the deciding failure quoted, the memory-controller check inside a probe
     scope (its verdict a marker the command prints, so a scope that never started is unsettled, not
     "no controller"), the adjustment write in a throwaway child — what each refuses lands in
-    `rejected`, the controller verdict rides /api-health as memoryControllerDelegated, a check that
-    does not answer settles nothing and the boot line lists each value under its own verdict (never an
-    unsettled value as in force, never a settled one as unknown), /api-health names the unsettled checks,
-    and no probe runs with the scopes off, without a runner, or for a limit that is not set; every cell
-    of that table is pinned in SettleTable.
+    `rejected`, the controller verdict is kept on the backend as cli_scope_memory_delegated, a check
+    that does not answer settles nothing and the boot line lists each value under its own verdict
+    (never an unsettled value as in force, never a settled one as unknown), `unsettled` names the
+    checks that settled nothing, and no probe runs with the scopes off, without a runner, or for a
+    limit that is not set; every cell of that table is pinned in SettleTable.
 Synthetic fixtures only: placeholder sid, /bin/true as the CLI.
 """
 import json
@@ -326,7 +327,7 @@ class ConstructionVerdict(_Backend):
         try:
             be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)   # the test floor: off
             self.assertFalse(be.cli_scope)
-            self.assertFalse("ROMP_CLI_REAL" in os.environ, "ROMP_CLI_REAL present")
+            self.assertNotIn("ROMP_CLI_REAL", os.environ)
         finally:
             if before is not None:
                 os.environ["ROMP_CLI_REAL"] = before
@@ -339,7 +340,7 @@ class OptionsWiring(_Backend):
         self.be.cli_scope = False
         kw = self._kw()
         self.assertEqual(kw["cli_path"], "/bin/true")
-        self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL present")
+        self.assertNotIn("ROMP_CLI_REAL", kw["env"])
 
     def test_on_spawns_the_wrapper_with_the_real_cli_in_the_env(self):
         self.be.cli_scope = True
@@ -369,7 +370,7 @@ class OptionsWiring(_Backend):
             sb.cli_scope_wrapper = before
         for kw in (kw1, kw2):
             self.assertEqual(kw["cli_path"], "/bin/true", "the session still starts, on the direct path")
-            self.assertFalse("ROMP_CLI_REAL" in kw["env"], "ROMP_CLI_REAL present")
+            self.assertNotIn("ROMP_CLI_REAL", kw["env"])
         loud = [(m, p) for m, p in problems if "no-such-wrapper" in m]
         self.assertEqual(len(loud), 1, "reported once per backend, as a problem: %r" % (problems,))
         self.assertTrue(loud[0][1])
@@ -435,12 +436,11 @@ class FallbackNotice(_Backend):
         self.assertEqual(sess.stderr_tail().splitlines(),
                          ["some CLI chatter", "sh: /x/bin/romp-cli-scope: Permission denied"])
 
-    def test_the_refusal_line_is_not_logged_as_a_fallback(self):
+    def test_the_refusal_line_is_not_counted_as_a_fallback(self):
         # the wrapper's other line (ROMP_CLI_REAL unset, exit 127): no CLI started, so nothing ran
         # outside a scope, and the launch fails — _record_launch_error reports the line from the
-        # stderr tail. Logging it here too reported the one event twice, the first time as a CLI
-        # "started outside a scope" when none had started; the fork's /api-health counter does not
-        # count it either, for the same reason.
+        # stderr tail. Counting and logging it here too reported the one event twice, the first time
+        # as a CLI "started outside a scope" when none had started.
         problems = self._capture()
         sess = self._sess()
         sess._on_cli_stderr(self.REFUSAL + "\n")
@@ -451,9 +451,8 @@ class FallbackNotice(_Backend):
         self.assertEqual(self.be.api_health_snapshot()["cliScope"]["fallbacks"], 0)
 
     def test_the_generic_prefix_alone_is_not_a_fallback(self):
-        # only the fallback FORM is logged and counted: a line with the wrapper's prefix and neither
-        # second word (a future third message, say) is buffered and nothing more, rather than
-        # misreported or miscounted
+        # only the fallback FORM counts: a line with the wrapper's prefix and neither second word (a
+        # future third message, say) is buffered and nothing more, rather than miscounted
         problems = self._capture()
         self._sess()._on_cli_stderr(sb.CLI_SCOPE_NOTICE_PREFIX + " something else entirely\n")
         self.assertEqual(problems, [])
@@ -478,7 +477,8 @@ class FallbackNotice(_Backend):
 
     def test_the_prefixes_are_what_the_wrapper_writes(self):
         # the constants and the script agree: every stderr line the wrapper writes starts with the
-        # generic prefix, exactly one in the fallback form and exactly one in the refusal form
+        # generic prefix, exactly one in the fallback form, one in the refusal form and one in the
+        # ignored form
         with open(os.path.join(BIN, "romp-cli-scope")) as f:
             src = f.read()
         lines = [ln for ln in src.splitlines() if ">&2" in ln and "echo" in ln]
@@ -606,6 +606,23 @@ class LimitRules(unittest.TestCase):
         self.assertIn("apply to nothing", rows[0][0])
         self.assertIn("scopes are off", rows[0][0])
 
+    def test_with_the_scopes_off_a_refused_value_is_still_a_problem_but_the_line_places_no_session_in_a_scope(self):
+        # the rule holds either way (a bad value in the environment is worth a problem line), but with
+        # the scopes off there is no scope for "sessions run in their scopes without that limit" to be
+        # true of, so that clause is left off
+        rows, log = self._log()
+        in_force, rejected, _, _ = sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}, log=log, scope_on=False)
+        self.assertEqual((in_force, rejected), ({}, {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}))
+        self.assertEqual(len(rows), 1, rows)
+        m, problem = rows[0]
+        self.assertTrue(problem)
+        self.assertIn("not a size", m)
+        self.assertIn("not applied", m)
+        self.assertNotIn("in their scopes", m)
+        rows, log = self._log()
+        sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"}, log=log, scope_on=True)
+        self.assertIn("sessions run in their scopes without that limit", rows[0][0], "and with them on, it is said")
+
     def test_no_log_callback_is_fine(self):
         self.assertEqual(sb.cli_scope_limits({"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"})[1], {"ROMP_CLI_SCOPE_MEMORY_MAX": "abc"})
 
@@ -630,7 +647,8 @@ class LimitRules(unittest.TestCase):
 
 class LimitsOnTheBackend(_Backend):
     """Read once at construction from the manager's environment; handed down by _options; reported by
-    api_health_snapshot; the wrapper's `ignored:` line logged at arrival and counted."""
+    api_health_snapshot; the wrapper's `ignored:` line logged at arrival as a problem naming the session,
+    and counted."""
 
     def _construct(self, **env):
         saved = {k: os.environ.get(k) for k in env}
@@ -742,8 +760,8 @@ class LimitsOnTheBackend(_Backend):
         self.assertEqual(snap["unsettled"], [], "nothing was due, so nothing is unsettled")
         json.dumps(snap)
         # an unsettled check rides by name: the one field that tells a set value whose check did not
-        # answer from a settled one (oomScoreAdj 500 beside memoryControllerDelegated true reads as settled
-        # otherwise; round-3 finding, 2026-09-06)
+        # answer from a settled one (oomScoreAdj 500 beside memoryControllerDelegated true reads as
+        # settled otherwise)
         self.be.cli_scope_unsettled = ["oomScoreAdj"]
         snap = self.be.api_health_snapshot()["cliScope"]
         self.assertEqual((snap["oomScoreAdj"], snap["unsettled"]), (500, ["oomScoreAdj"]))
@@ -834,10 +852,10 @@ class LimitsOnTheBackend(_Backend):
         self.assertFalse("ROMP_CLI_SCOPE_MEMORY_HIGH" in env, "ROMP_CLI_SCOPE_MEMORY_HIGH present")
         self.assertFalse("ROMP_CLI_SCOPE_MEMORY_SWAP_MAX" in env, "ROMP_CLI_SCOPE_MEMORY_SWAP_MAX present")
 
-    def test_a_boot_probe_that_does_not_settle_reaches_api_health_as_a_null_verdict_beside_the_limit(self):
+    def test_a_boot_probe_that_does_not_settle_leaves_a_null_verdict_and_hands_the_value_down(self):
         # end to end for the deciding property probe raising: nothing rejected, the value handed down as
-        # read, memoryControllerDelegated null BESIDE the limit (how the docs say "not settled" reads in
-        # /api-health), the log says so in a plain line, and no line calls the limits in force
+        # read, the controller verdict None beside the limit and `unsettled` naming the check, the log
+        # says so in a plain line, and no line calls the limits in force
         real_run = subprocess.run
         runs = _Runs((1, b"Failed to connect to bus: Connection timed out\n"), (0, b""),
                      subprocess.TimeoutExpired(PROPS_PROBE, 10), passthrough=real_run)
@@ -864,11 +882,12 @@ class LimitsOnTheBackend(_Backend):
         self.assertFalse(any("in force" in m for m in lines), lines)
         self.assertEqual([p["text"] for p in be.problems() if p["text"].startswith("cli scope:")], [],
                          "plain lines: the wrapper reports on each launch")
-        snap = be.api_health_snapshot()["cliScope"]
-        self.assertEqual((snap["on"], snap["memoryMax"], snap["rejected"], snap["memoryControllerDelegated"], snap["unsettled"]),
-                         (True, "16G", [], None, ["memoryLimits"]), "and `unsettled` names the check, so null is not the only sign")
         env = be._options(sb.SdkSession(be, {"sid": SID, "name": "web", "cwd": self.d, "mode": "acceptEdits"}), dict)["env"]
         self.assertEqual(env["ROMP_CLI_SCOPE_MEMORY_MAX"], "16G", "handed down as read")
+        # /api-health shows the same: the limit beside a null verdict, and `unsettled` naming the check
+        snap = be.api_health_snapshot()["cliScope"]
+        self.assertEqual((snap["memoryMax"], snap["memoryControllerDelegated"], snap["unsettled"]),
+                         ("16G", None, ["memoryLimits"]))
 
     def test_with_the_scopes_off_the_backend_runs_no_probe_however_the_limits_read(self):
         real_run = subprocess.run
@@ -922,8 +941,8 @@ class LimitsSettledAtBoot(unittest.TestCase):
     """cli_scope_limits with a runner: the wrapper's own steps run once at the kernel's start, against
     this box, so a value the syntax passes but the box refuses (OOMPolicy= on scopes before systemd 253;
     an adjustment below the inherited oom_score_adj floor) lands in `rejected` once instead of being
-    refused on every launch — one `ignored:` line and one problem each — while the boot log and
-    /api-health called it in force. A user manager without the memory controller, which takes the
+    refused on every launch — one `ignored:` line and one problem each — while the boot log called
+    it in force. A user manager without the memory controller, which takes the
     properties and applies nothing, is caught inside a probe scope and reported."""
 
     def _log(self):
@@ -1048,7 +1067,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         # says so, quoting both, the values stand as read (the wrapper reports on each launch: its
         # `ignored:` line if the properties are refused, its fallback line if the bus is away), and the
         # last line does not claim the limits are in force. Before this, the None path logged nothing
-        # and the boot log said "in force" (round-2 finding, 2026-09-06).
+        # and the boot log said "in force" (a review finding, 2026-09-06).
         rows, log = self._log()
         runs = _Runs((1, b"Failed to connect to bus: Connection timed out\n"), (0, b""),
                      subprocess.TimeoutExpired(PROPS_PROBE, 10), (0, b""))
@@ -1074,7 +1093,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         # no-memory-max, exit 0 either way), and a non-zero exit means the scope never ran: retried once,
         # then UNSETTLED — a problem line quoting systemd, the verdict null, never `false` with the
         # DelegateControllers advice. Before this, a transient scope-start failure here read as "not
-        # delegated" for the kernel's whole life (round-2 finding, 2026-09-06).
+        # delegated" for the kernel's whole life (a review finding, 2026-09-06).
         rows, log = self._log()
         fault = (1, b"Failed to start transient scope unit: Connection timed out\n")
         runs = _Runs((0, b""), fault, fault, (0, b""))
@@ -1135,7 +1154,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
 
     def test_a_user_manager_without_the_memory_controller_is_a_problem_and_a_false_verdict(self):
         # systemd took the properties (the first probe passed), and the probe scope's cgroup has no
-        # memory.max: the values stay set (systemd holds them; /api-health shows them with the flag),
+        # memory.max: the values stay set (systemd holds them; the verdict says whether they apply),
         # the in-force line says they apply to nothing, and the problem line names the check to run
         rows, log = self._log()
         runs = _Runs((0, b""), NO, (0, b""))
@@ -1195,7 +1214,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
 
     def test_an_adjustment_file_that_cannot_be_opened_is_rejected_as_that_not_as_the_floor(self):
         # the probe's own exit for a failed open (a read-only /proc in a hardened container): the line
-        # quotes the shell and never sends the operator hunting a floor (round-4 finding, 2026-09-06)
+        # quotes the shell and never sends the operator hunting a floor (a review finding, 2026-09-06)
         rows, log = self._log()
         runs = _Runs((0, b""), HAS, (3, b"sh: 1: cannot create /proc/self/oom_score_adj: Read-only file system\n"))
         in_force, rejected, _d, unsettled = sb.cli_scope_limits(BOTH, log=log, run=runs)
@@ -1238,7 +1257,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
         self.assertIn("oom_score_adj check could not run", rows[0][0])
         self.assertIn("no sh", rows[0][0])
         # the memory limits' checks answered and the adjustment's did not: the boot line says so of each,
-        # never that whether ALL of them apply is unknown (round-3 finding, 2026-09-06)
+        # never that whether ALL of them apply is unknown (a review finding, 2026-09-06)
         self.assertEqual(rows[1][0], "cli scope: per-session limits — memoryMax=16G memorySwapMax=0 in force; oomScoreAdj=500 "
                                      "set but not settled (the oom_score_adj check settled nothing at start, as logged above)")
         self.assertEqual(unsettled, ["oomScoreAdj"])
@@ -1316,7 +1335,7 @@ class LimitsSettledAtBoot(unittest.TestCase):
             self.assertIn("/proc/1/oom_score_adj", err, "the shell names the file it could not open")
 
 
-# ---- every cell of the boot probe's table (2026-09-06, round-4 and round-5 fixes) ----
+# ---- every cell of the boot probe's table (2026-09-06, after two review passes) ----
 
 FAULT = (1, b"Failed to start transient scope unit: Connection timed out\n")
 FAULT_B = (1, b"Failed to start transient scope unit: Transport endpoint is not connected\n")
@@ -1652,11 +1671,11 @@ class SettleTable(_Backend):
     each no-verdict attempt kind (ATTEMPTS) recovered by either marker, paired with every kind on the
     retry, or followed by either odd print, and each odd print alone; and every adjustment outcome
     (ADJ_PARTS) beside every memory verdict a boot line can carry (MEM_PARTS) — plus SETTLE_ANCHORS, a
-    few rows whose line is written out in full. The round-3 review found the wording keyed on the
-    controller retry alone (a raise then a start failure read as two start failures; a start failure then
-    a raise lost systemd's text), the boot line calling settled values unknown when only the adjustment
-    check did not answer, and /api-health with no field for that; round 4 found the table pinning a third
-    of the controller pairs while claiming every cell, the start-refusal remark at the sentence's end
+    few rows whose line is written out in full. Review found the wording keyed on the controller retry
+    alone (a raise then a start failure read as two start failures; a start failure then a raise lost
+    systemd's text), the boot line calling settled values unknown when only the adjustment check did
+    not answer, and /api-health with no field for that; a later pass found the table pinning a third of
+    the controller pairs while claiming every cell, the start-refusal remark at the sentence's end
     (about the retry, whichever attempt it was), and the adjustment line naming the floor for every
     status while dropping the shell's text — so the rows are now enumerated rather than listed."""
 
@@ -1709,8 +1728,8 @@ class SettleTable(_Backend):
                 json.dumps(snap)
 
     def test_the_table_covers_every_check_and_every_attempt_kind(self):
-        # the names /api-health can carry all occur, and each way a controller attempt can give no
-        # verdict (_cli_scope_attempt) is pinned in some cell
+        # every check name occurs as unsettled in some cell, and each way a controller attempt can give
+        # no verdict (_cli_scope_attempt) is pinned in some cell
         named = {c for row in SETTLE_TABLE for c in row["unsettled"]}
         self.assertEqual(named, set(sb.CLI_SCOPE_CHECKS))
         self.assertEqual(set(sb.CLI_SCOPE_CHECK_NAMES), set(sb.CLI_SCOPE_CHECKS))

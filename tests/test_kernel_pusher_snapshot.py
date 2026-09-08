@@ -131,11 +131,11 @@ class OneSnapshotPerCycle(_CycleFixture):
 
 
 class OneDiscoverPerCycle(_CycleFixture):
-    """perf batch 2 P3 (2026-09-06): the cycle's discover rows are memoized on the scope, so the tick
-    jobs' _alive_sessions calls, the _path_of misses under _compacting_now and the builders share ONE
-    _sessions sweep per (window, forks) key — one fingerprint through _sessions — with or without a
-    client. Fingerprints are attributed through _sessions, not counted globally: direct jd.discover
-    callers exist (the wide walk, postal enrichment, analytics) and a global count is fixture-fragile."""
+    """The cycle's discover rows are memoized on the scope, so the tick jobs' _alive_sessions calls, the
+    _path_of misses under _compacting_now and the builders share ONE _sessions sweep per (window, forks)
+    key — one fingerprint through _sessions — with or without a client. Fingerprints are attributed
+    through _sessions, not counted globally: direct jd.discover callers exist (the wide walk, postal
+    enrichment, analytics) and a global count is fixture-fragile."""
 
     def _cycle(self, client):
         depth, inside, outside, keys = [0], [], [], set()
@@ -187,12 +187,72 @@ class OneDiscoverPerCycle(_CycleFixture):
         fps = []
         orig = jd._discover_fingerprint
         jd._discover_fingerprint = lambda *a, **k: fps.append(1) or orig(*a, **k)
+        s0 = dict(km._sessions_scope_stats)
         try:
             km._sessions(int(time.time()))
             km._sessions(int(time.time()))
         finally:
             jd._discover_fingerprint = orig
         self.assertEqual(len(fps), 2, "no scope, no memo: two reads are two sweeps")
+        self.assertEqual(dict(km._sessions_scope_stats), s0,
+                         "…and no counter moved: the stats are bumped only under an open scope, which is why they need no lock")
+
+    def test_a_hit_hands_out_a_copy_too(self):
+        # the docstring says hit OR miss: a consumer that appends to the FIRST hit's list must not grow the memo either
+        km._live_scope.sessions = {}
+        try:
+            now = int(time.time())
+            km._sessions(now)                                   # the miss
+            b = km._sessions(now)                               # the first hit
+            b.append({"sid": "11111111-2222-3333-4444-999999999999"})
+            c = km._sessions(now)
+            self.assertIsNot(c, b)
+            self.assertEqual(sorted(r["sid"] for r in c), sorted([SID, SID2]), "the mutation stayed with the hit's caller")
+        finally:
+            km._live_scope.sessions = None
+
+    def test_an_empty_window_is_still_one_sweep_per_cycle(self):
+        # an empty row list is a valid memo value: a kernel with no session in the window (and none live) must not
+        # re-sweep on every read of the cycle
+        old = time.time() - 3 * 86400
+        for path in self.paths.values():
+            os.utime(path, (old, old))
+        self.row = {}
+        fps, keys, d = self._cycle(None)
+        self.assertEqual(d["miss"], len(keys), "one sweep per key, the empty result memoized")
+        self.assertEqual(fps, d["miss"])
+        self.assertGreaterEqual(d["hit"], 5, "the tick jobs were served the empty list from the memo")
+
+    def test_the_key_is_normalized_like_discover(self):
+        # the memo key is normalized the way discover normalizes its own: None, the default window and a float
+        # spelling of it, with forks given as a truthy int, are one key (the docstring's promise; no in-cycle caller
+        # passes an explicit window today)
+        km._live_scope.sessions = {}
+        try:
+            s0 = dict(km._sessions_scope_stats)
+            now = int(time.time())
+            km._sessions(now)
+            km._sessions(now, window=jd.WINDOW)
+            km._sessions(now, window=float(jd.WINDOW), forks=1)
+            d = {k: km._sessions_scope_stats[k] - s0[k] for k in s0}
+            self.assertEqual((d["miss"], d["hit"]), (1, 2))
+            self.assertEqual(list(km._live_scope.sessions), [(jd.WINDOW, True)])
+        finally:
+            km._live_scope.sessions = None
+
+    def test_build_session_does_not_write_into_the_cycles_row(self):
+        # the row dicts are shared read-only across the cycle; build_session's one write (path_override) goes to a copy,
+        # or the override would leak into every later consumer of the cycle's rows
+        km._live_scope.sessions = {}
+        km.Sessions.live = lambda: dict(self.row)
+        try:
+            now = int(time.time())
+            m = km.build_session(SID, now, tmux=self.row, path_override=self.paths[SID2])
+            self.assertIsNotNone(m)
+            row = next(r for r in km._sessions(now) if r["sid"] == SID)
+            self.assertEqual(row["path"], self.paths[SID], "the override stayed with that build")
+        finally:
+            km._live_scope.sessions = None
 
     def test_a_read_hands_out_a_copy_of_the_cycles_rows(self):
         # the headless _alive_sessions fallback returns _sessions' list as its own; a consumer that
@@ -237,14 +297,16 @@ class OneDiscoverPerCycle(_CycleFixture):
 
 
 class TickReadsTheRowsPath(_CycleFixture):
-    """perf batch 2 P3 (2026-09-06): _interrupt_block_tick and the user-todo floor hand _compacting_now
-    the row's own path and live meta. Beyond the saved _path_of sweep, this is a behaviour change for a
-    LIVE session idle longer than 48h: _path_of searched only the 48h set and answered None, so the gate
-    read an empty parse, and an optimistic compact click could not be disproved by the session's own
-    compact_boundary for the 180 s cap — the tick skipped the row that long. With the row's path the
-    gate reads the cached parse, and the boundary (the event) retires the click."""
+    """_interrupt_block_tick hands _compacting_now the row's own path and live meta. Beyond the saved
+    _path_of sweep, this is a behaviour change for a LIVE session idle longer than 48h: _path_of searched
+    only the 48h set and answered None, so the gate read an empty parse, and an optimistic compact click
+    could not be disproved by the session's own compact_boundary for the 180 s cap — the tick skipped the
+    row that long. With the row's path the gate reads the cached parse, and the boundary (the event)
+    retires the click."""
 
-    def _boundary_transcript(self):
+    def _boundary_transcript(self, offset=0):
+        """SID2's transcript with a compact_boundary at now + offset (its mtime set idle longer than the caption
+        window), parsed into the cache as the background warm leaves it. Returns (path, now)."""
         t = int(time.time())
         recs = [{"type": "user", "timestamp": "2026-06-11T00:00:00.000Z", "uuid": "u1", "parentUuid": None,
                  "promptSource": "typed", "message": {"role": "user", "content": "hello there"}},
@@ -253,14 +315,14 @@ class TickReadsTheRowsPath(_CycleFixture):
                              "stop_reason": "end_turn"}},
                 {"type": "system", "subtype": "compact_boundary", "uuid": "cb1", "parentUuid": None,
                  "logicalParentUuid": "a1", "isMeta": False,
-                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t)),
+                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t + offset)),
                  "compactMetadata": {"trigger": "manual", "preTokens": 1000, "postTokens": 100}}]
         path = self.paths[SID2]
         Path(path).write_text("\n".join(json.dumps(r) for r in recs) + "\n")
         old = time.time() - 3 * 86400
         os.utime(path, (old, old))                       # idle longer than the caption window
         km._parse_cache.clear()
-        km._parse(path, SID2, int(time.time()))          # the cached parse holds the boundary (_warm_fleet_bg)
+        km._parse(path, SID2, int(time.time()))          # the cached parse holds the boundary, as the background warm leaves it
         return path, t
 
     def test_the_rows_path_lets_the_boundary_disprove_an_optimistic_click(self):
@@ -273,6 +335,29 @@ class TickReadsTheRowsPath(_CycleFixture):
         self.assertFalse(km._compacting_now(SID2, tm=self.row[SID2], path=path),
                          "with the row's path the cached parse's boundary retires the click")
         self.assertNotIn(SID2, km._compact_clicked, "…on the event, not a timer")
+
+    def test_the_tick_reads_the_rows_own_live_meta(self):
+        # The tick hands _compacting_now the row's live meta beside its path, so the gate reads the CYCLE's `since`
+        # (when the row's state began) rather than refetching liveness per row. Visible when the two diverge: a
+        # boundary that landed after the row's state began but BEFORE the click does not retire the click by itself,
+        # and it is the row's `since` that reads the compaction as over (a boundary since the state's start); a
+        # refetched meta whose `since` postdates the boundary would keep the session reading as compacting, and the
+        # tick would skip the row.
+        path, t = self._boundary_transcript(offset=-20)        # the boundary 20 s ago
+        fetched = {sid: dict(m) for sid, m in self.row.items()}
+        fetched[SID2]["since"] = t + 3600                       # a fresh liveness read: a state that began after the boundary
+        km.Sessions.live = lambda: dict(fetched)
+        self.row[SID2]["since"] = NOW - 5                       # the cycle's row: its state began before the boundary
+        km._compact_clicked[SID2] = t - 10                      # clicked after the boundary: the boundary alone leaves it standing
+        seen = []
+        saved = km._api_error
+        km._api_error = lambda p: seen.append(p) or {"text": "overloaded"}   # truthy: the tick stops at this gate
+        try:
+            km._interrupt_block_tick(int(time.time()), self.row)
+        finally:
+            km._api_error = saved
+        self.assertIn(path, seen, "with the row's own meta the gate read the compaction as over: the tick reached the next gate")
+        self.assertIn(SID2, km._compact_clicked, "the click itself stands: no boundary followed it")
 
     def test_the_tick_no_longer_skips_the_old_live_session(self):
         path, t = self._boundary_transcript()

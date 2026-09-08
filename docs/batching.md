@@ -22,10 +22,10 @@ also runs on every push to main).
    `scripts/land.sh` refuses any base but main (a merged PR's branch, an open PR's branch, a branch
    with no PR), unless the base is the branch of the other PR in the same call, which then merges
    first.
-2. Give it one tier label: `fix`, `tests-only`, `feature`, or `major-feature`
-   (`gh pr edit N --add-label fix`); `docs`, upstream's coming name for tests-only, is accepted
-   too. A `major-feature` PR is discussed before it joins a batch; a `hold` label keeps a PR out
-   of the next batch.
+2. Give it one tier label: `docs`, `fix`, `feature`, or `major-feature`
+   (`gh pr edit N --add-label fix`); `tests-only`, the old name for `docs` (upstream renamed the
+   label on 2026-09-08 and still accepts the old spelling), is accepted too. A `major-feature` PR is
+   discussed before it joins a batch; a `hold` label keeps a PR out of the next batch.
 3. Optionally end the body with a trailer the batch body reads:
    `<!-- romp-pr: {"tier":"fix","rounds":8,"sweep":{"pytest":"8461 passed","bats":528,"npm":3013,"typecheck":"clean"},"sweep_head":"<sha>","flakes":[]} -->`.
    A missing trailer is not a failure; the member is listed under "Read these first" with "not

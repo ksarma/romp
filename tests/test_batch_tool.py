@@ -300,8 +300,8 @@ class Plan(_Base):
         self.assertEqual(st["base"], fx.bare_rev("main"))
 
     def test_docs_and_tests_only_are_tiers_a_member_can_carry(self):
-        """`docs` is upstream's coming rename of tests-only; the fork accepts both ahead of the rename
-        (its own PRs keep tests-only), so a member labeled either way is planned with that tier and
+        """`docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08; the old spelling
+        stays accepted as an alias), so a member labeled either way is planned with that tier and
         never listed as unlabeled (2026-09-07 sync; the fork's pr-tier.yml counts the same labels)."""
         fx = self.fx
         fx.branch("a", {"docs/a.md": "a\n"})
@@ -2001,8 +2001,9 @@ class PrTierWorkflow(unittest.TestCase):
     """The fork's copy of .github/workflows/pr-tier.yml, upstream's check that every PR carries exactly
     one tier label, also counts `batch` and `docs` (2026-09-07 sync). A batch PR carries `batch` and no
     tier, and ci_of folds a red check into "ci: failure", so upstream's list would hold every batch PR
-    red; `docs` is upstream's coming rename of tests-only. The workflow's jq filter is run here as the
-    workflow runs it, so the labels it counts and the labels batch.py knows stay in step."""
+    red; `docs` is upstream's name for tier 0 (renamed from tests-only on 2026-09-08, the old spelling
+    still accepted). The workflow's jq filter is run here as the workflow runs it, so the labels it
+    counts and the labels batch.py knows stay in step."""
 
     WORKFLOW = ROOT / ".github" / "workflows" / "pr-tier.yml"
 
@@ -2035,3 +2036,22 @@ class PrTierWorkflow(unittest.TestCase):
         text = self.WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("Fork divergence", text)
         self.assertIn("scripts/batch.py", text)
+
+    def test_the_tier_policy_job_is_gated_to_the_upstream_repository_and_the_header_says_so(self):
+        """The fork's copy of .github/workflows/tier-policy.yml, upstream's second check, carries a
+        job-level `if:` that runs the Tier policy job only on the upstream repository: on the fork the
+        job evaluates nothing and posts no Tier policy verdict, so a batch PR with no tier label is not
+        marked failing. The guard is the fork's one functional change to upstream's file (the header
+        paragraph explaining it is the other addition), and this pin exists so a future fold that takes
+        upstream's workflow whole fails here instead of silently dropping it. The pattern tolerates
+        GitHub's `${{ }}` wrapper, either quote style and extra spaces; the four-space indent keeps the
+        guard job-level."""
+        text = (ROOT / ".github" / "workflows" / "tier-policy.yml").read_text(encoding="utf-8")
+        self.assertIn("\njobs:", text, "the jobs block is what this test slices")
+        head, jobs = text.split("\njobs:", 1)
+        self.assertRegex(
+            jobs, r"\n    if:\s*(\$\{\{\s*)?github\.repository\s*==\s*['\"]romp-on/romp['\"]",
+            "the job-level `if:` guard is the fork's divergence from upstream's workflow; a fold that takes "
+            "upstream's file whole must put it back")
+        self.assertIn("Fork divergence", head)
+        self.assertIn("scripts/batch.py", head)

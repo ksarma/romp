@@ -199,7 +199,12 @@ test("the words are plain: no em dash, no romp nouns, no 'fleet'", () => {
 test("the strip has no API health cell to mirror (the strip twin is a named follow-up), and the docs carry the hover", () => {
   assert.ok(!STRIP.includes("rail-api") && !STRIP.includes("apiHealth"), "nothing in strip.ts renders the API health cell yet");
   assert.ok(JS.includes("strip.ts") || KERNEL.includes("the VS Code strip twin (strip.ts"), "the follow-up is named in the cell's header");
-  const sec = REFERENCE.slice(REFERENCE.indexOf("### The bottom bar's indicator"), REFERENCE.indexOf("## Kernel performance counters"));
+  // the subsection runs to the next top-level heading, whatever it is: the API-health section sits at upstream's
+  // position since the 2026-09-08 fold (before "Where things live", after the performance counters), and a bound
+  // named after a neighbour broke when the neighbour moved
+  const secStart = REFERENCE.indexOf("### The bottom bar's indicator"), secEnd = REFERENCE.indexOf("\n## ", secStart);
+  assert.ok(secStart >= 0 && secEnd > secStart, "the bottom-bar subsection is in reference.md and a top-level heading follows it");
+  const sec = REFERENCE.slice(secStart, secEnd);
   assert.ok(sec.includes("**History**") && sec.includes("`GET /api-health`") && sec.includes("`kernel restarted`"));
   assert.ok(GUIDE.includes("the history under it") && GUIDE.includes("last 1, 5 and 15 minutes"));
 });
