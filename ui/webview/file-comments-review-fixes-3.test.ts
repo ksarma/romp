@@ -22,7 +22,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  ctrlKey: boolean; metaKey: boolean;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -295,7 +296,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: () => { /* inert */ }, scrollToOffset: () => { /* inert */ },
     // fetchFile: the bytes and the mtime now on disk (the HEAD table's, when the test set one)
@@ -345,6 +346,8 @@ async function openPanel(w: World, s: Status = status()): Promise<{ unit: El; bu
 }
 const input = (aside: El): El => aside.querySelector(".fc-input")!;
 const press = (el: El, key: string) => dispatch(el, new Ev("keydown", { key }));
+/** The save chord (Ctrl+Enter; Cmd+Enter is the same key policy): a plain Enter is a newline in the box now. */
+const chord = (el: El) => dispatch(el, new Ev("keydown", { key: "Enter", ctrlKey: true }));
 const cards = (aside: El): number => aside.querySelectorAll(".fc-card").length;
 const sendLabel = (aside: El): string => aside.querySelector('[data-act="fcsend"]')!.textContent;
 const errText = (row: El): string => row.childNodes[0].textContent;
@@ -352,7 +355,7 @@ const errText = (row: El): string => row.childNodes[0].textContent;
 async function enterComment(w: World, aside: El, note: string): Promise<any> {
   aside.querySelector('[data-act="fcfile"]')!.click();
   input(aside).value = note;
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
   assert.ok(post, "Enter posted the comment");
   return post;
@@ -576,7 +579,7 @@ test("a No on the consent popup: nothing is written, the composer says so under 
   w.ctx.ensureEditingAllowed = async () => { asked++; return false; };
   aside.querySelector('[data-act="fcfile"]')!.click();
   input(aside).value = "Add a summary at the top.";
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   assert.equal(asked, 1, "the consent was asked");
   assert.equal(lastOf(w, "fileComments", "comment"), undefined, "no comment went out");
   const err = aside.querySelector(".fc-composer .fc-err")!;

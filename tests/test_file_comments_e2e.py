@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""File comments (plans/file-review.md, Slices 1 to 4) — end to end, with nothing stubbed below the wire.
+"""File comments (plans/file-review.md, Slices 1 to 5 and the anchors follow-on) — end to end, with nothing
+stubbed below the wire.
 
 tests/test_file_comments.py proves the kernel's half against a STUB host script; the host's own node
 tests prove its half against the vendored CLIs. This module joins the pieces the way the dashboard
@@ -14,12 +15,20 @@ scripted: `_send_or_park` records the message instead of injecting it, the names
 that knows one session, `web`, whose recorded cwd is the project root (so the reject trace finds an
 owner), and that session's backend `send` is a recorder.
 
+The todo-file follow-on (2026-09-07) is walked here too: a todo filed through the real POST /usertodo
+with `file`, listed by a status on that file, answered by a send carrying its id, gone at the next status;
+and the same loop from the postal tool's side, the real `add_user_todo` posting over a loopback socket to
+the real handler on a ThreadingHTTPServer, with the kernel's path warning read back out of the tool's reply.
+Another session's todo naming the same file is neither listed for this session nor stamped by its send.
+
 Skipped when node is missing (the host script and the CLIs run under it). Synthetic only: the
 notes-api demo world, a placeholder sid, a `.git/` directory as the project landmark (store-io reads
 nothing from it).
 """
 import binascii
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -31,6 +40,7 @@ import threading
 import zlib
 from romp_load import load_source
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -50,8 +60,12 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)
 km = load_source("romp_kernel_filecomments_e2e", os.path.join(BIN, "romp-kernel"))
 jd = km.jd
+# the postal bus, whose add_user_todo is the door a session's request comes through; loaded under the same
+# hermetic state root (it reads XDG_STATE_HOME at import too), pointed at the test's own kernel server per test
+pm = load_source("romp_postal_filecomments_e2e", os.path.join(BIN, "romp-postal-service"))
 
 SID = "11111111-2222-3333-4444-555555555555"
+OSID = "7f7f7f7f-1111-4222-8333-944444444444"   # another session on this machine (a PRIVATE synthetic sid)
 NODE = shutil.which("node")
 TEXT = "# Findings\n\nThe api session cut p95 latency by 40%.\n\nWe recommend shipping the cache in v1.2.\n"
 EDITED = "# Findings\n\nThe api session cut p95 latency by 45%.\n\nWe recommend shipping the cache in v1.2.\n"
@@ -89,13 +103,26 @@ def store_io(file):
     return json.loads(r.stdout)
 
 
-def make_anchor(text, start, end):
-    """The engine's own anchor for text[start:end] — what the browser's anchor-map builds."""
+def make_anchor(text, start, end, ctx=None):
+    """The engine's own anchor for text[start:end] — what the browser's anchor-map builds at the engine's
+    default 24 characters of context; `ctx` asks for a wider one, the anchor the host stores when 24 ties."""
     src = ("const fs = (await import('fs')).default; const m = await import(process.argv[1]); const e = m.default || m;"
-           " const [t, a, b] = JSON.parse(fs.readFileSync(0, 'utf8'));"
-           " console.log(JSON.stringify(e.makeAnchor(t, a, b)));")
+           " const [t, a, b, c] = JSON.parse(fs.readFileSync(0, 'utf8'));"
+           " console.log(JSON.stringify(c == null ? e.makeAnchor(t, a, b) : e.makeAnchor(t, a, b, c)));")
     r = _node(["--input-type=module", "-e", src, "--", Path(os.path.join(VENDOR, "engine.js")).as_uri()],
-              stdin=json.dumps([text, start, end]))
+              stdin=json.dumps([text, start, end, ctx]))
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def locate_anchor(text, anchor, hint=None):
+    """Where the engine places a stored anchor in `text`, with `hint` breaking ties — the call the
+    webview's anchor-map makes to paint a comment, passing the comment's anchorAt as the hint."""
+    src = ("const fs = (await import('fs')).default; const m = await import(process.argv[1]); const e = m.default || m;"
+           " const [t, a, h] = JSON.parse(fs.readFileSync(0, 'utf8'));"
+           " console.log(JSON.stringify(e.locateAnchor(t, a, h == null ? undefined : h)));")
+    r = _node(["--input-type=module", "-e", src, "--", Path(os.path.join(VENDOR, "engine.js")).as_uri()],
+              stdin=json.dumps([text, anchor, hint]))
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
@@ -334,6 +361,190 @@ def test_a_passage_comment_in_a_project_lands_in_the_root_sidecar(world):
     assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "store-moved")
     assert "appeared on disk" in bad["error"] and "reload" in bad["error"]
     assert len(json.loads(Path(r["storePath"]).read_text())["comments"]) == 2
+
+
+# Two copies of a sentence with the same 24 characters either side (the engine's default context, the
+# browser's anchor): the "## Day 1" / "## Day 2" headings that tell them apart lie 48 characters back.
+# The shape of tests/fixtures/file_comments/report.md, which the host's node tests use for the same tie.
+TWICE = ("# Findings\n\n## Day 1\n\nThe tests pass on every supported platform. Ship it.\n"
+         "No regressions were seen in the nightly run.\n\n## Day 2\n\n"
+         "The tests pass on every supported platform. Ship it.\nNo regressions were seen in the nightly run.\n")
+
+
+def nth(text, quote, n):
+    """The offset of the nth (0-based) occurrence of `quote` in `text`; the fixture must have it."""
+    i = -1
+    for _ in range(n + 1):
+        i = text.index(quote, i + 1)
+    return i
+
+
+def ties(text, anchor):
+    """Whether `anchor` has more than one best hit in `text`: the engine's earliest and latest tied hits
+    (the hint pinned to each end) differ — the host's own test for a tie, asked of the engine directly."""
+    return locate_anchor(text, anchor, 0)["from"] != locate_anchor(text, anchor, len(text))["from"]
+
+
+def test_a_comment_on_the_second_of_two_identical_lines_keeps_its_place_and_its_position_follows_an_edit_above(world):
+    """The anchors follow-on (2026-09-07), over the kernel wire on a REAL tie: the browser's 24-character
+    anchor for the second "Ship it." has two best hits, so the request is refused `anchor-ambiguous` when
+    it carries no position and placed on the chosen copy when it carries the selection's offset; the
+    stored anchor is widened one step (48 characters, where the headings differ) so a reader with no hint
+    lands on that copy too, and the comment carries `anchorAt`, the offset it located at. The vendored
+    track-edit writes the sidecar back with the position as it was, a read never rewrites the sidecar, the
+    next write the host makes refreshes it, and the webview paints with that position as the engine's
+    tie-break, so the highlight stays on the line that was chosen."""
+    world.fp.write_text(TWICE)
+    first, second = nth(TWICE, "Ship it.", 0), nth(TWICE, "Ship it.", 1)
+    anchor = make_anchor(TWICE, second, second + len("Ship it."))
+    assert anchor == make_anchor(TWICE, first, first + len("Ship it.")), "the fixture: the browser's anchors for the two copies are the same"
+    assert ties(TWICE, anchor), "the fixture: the engine alone cannot tell the copies apart"
+    # no position sent: refused over the wire, and nothing is written
+    bad = world.op("comment", world.fp, {"note": "Not yet.", "anchor": anchor}, NO_STORE)
+    assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "anchor-ambiguous")
+    assert "occurs more than once" in bad["error"] and "position was not sent" in bad["error"]
+    assert not (world.root / ".trackchanges").exists(), "a refusal writes nothing"
+    # the selection's offset settles it
+    r = world.comment(world.fp, "Not yet.", anchor=anchor, hint=second)
+    c = r["store"]["comments"][0]
+    assert c["anchorAt"] == second
+    assert c["id"] == "%d-%d" % (c["ts"], second)
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt"}
+    assert c["anchor"] != anchor, "not the browser's anchor: 24 characters tied"
+    assert c["anchor"] == make_anchor(TWICE, second, second + len("Ship it."), 48), "widened one step, no more"
+    assert "2\n\nThe tests" in c["anchor"]["prefix"], "the prefix now reaches into the heading that differs"
+    assert not ties(TWICE, c["anchor"]), "the stored anchor has one best hit"
+    assert locate_anchor(TWICE, c["anchor"])["from"] == second, "a reader with no hint (the other hosts) lands on the chosen copy"
+    disk = json.loads(Path(r["storePath"]).read_text())["comments"][0]
+    assert (disk["anchor"], disk["anchorAt"]) == (c["anchor"], second)
+    assert locate_anchor(TWICE, c["anchor"], c["anchorAt"])["from"] == second
+    assert world.fp.read_text() == TWICE, "the file is untouched"
+    # the session inserts two lines above with the vendored CLI: the file moves, and the CLI writes the sidecar
+    # back with the position as it was
+    inserted = "Added one.\nAdded two.\n"
+    world.track_edit("# Findings\n", "# Findings\n" + inserted)
+    moved = world.fp.read_text()
+    assert nth(moved, "Ship it.", 1) == second + len(inserted)
+    s = world.ok("status", world.fp)
+    assert s["store"]["comments"][0]["anchorAt"] == second, "a read never rewrites the sidecar: the position is the CLI's"
+    assert len(s["hunks"]) == 1, "the insertion is a pending change"
+    # the next write the host makes refreshes the position and leaves the anchor's fields as they were
+    r2 = world.ok("resolve", world.fp, {"commentId": c["id"], "on": True}, world.fence_of(s))
+    c2 = r2["store"]["comments"][0]
+    assert c2["anchorAt"] == second + len(inserted)
+    assert c2["anchor"] == c["anchor"]
+    assert moved[c2["anchorAt"]:c2["anchorAt"] + len("Ship it.")] == "Ship it."
+    s2 = world.ok("status", world.fp)
+    assert s2["store"]["comments"][0]["anchorAt"] == second + len(inserted), "status shows the moved position"
+    # what the webview paints: the engine with the stored position as the hint lands on the second line
+    loc = locate_anchor(moved, c2["anchor"], c2["anchorAt"])
+    assert loc == {"from": second + len(inserted), "to": second + len(inserted) + len("Ship it.")}
+    assert loc["from"] != nth(moved, "Ship it.", 0), "the second line, not the first"
+
+
+# One paragraph over a thousand characters long, three times: a phrase in its middle has identical
+# surroundings for more than the host's ANCHOR_CTX_CAP (480) characters on both sides of every copy, so no
+# width of context tells the copies apart. The host's node tests generate the same file.
+PARA = ("The quick brown fox jumps over the lazy dog. " * 12 + "Here is the marker phrase to comment on. "
+        + "Pack my box with five dozen liquor jugs. " * 12).strip()
+REPEAT = "# Repeats\n\n%s\n\n%s\n\n%s\n" % (PARA, PARA, PARA)
+MARKER = "the marker phrase"
+
+
+def anchor_ctx_cap():
+    """The host's own ANCHOR_CTX_CAP, read from its export rather than copied here."""
+    r = _node(["--input-type=module", "-e", "const m = await import(process.argv[1]); console.log(m.ANCHOR_CTX_CAP);",
+               "--", Path(HOST).as_uri()])
+    assert r.returncode == 0, r.stderr
+    return int(r.stdout)
+
+
+def test_the_repeat_fixture_puts_the_marker_more_than_the_cap_from_both_ends_of_its_paragraph():
+    cap = anchor_ctx_cap()
+    assert cap == 480, "the plan's number; the fixture below is sized for it"
+    at = PARA.index(MARKER)
+    assert at > cap and len(PARA) - at - len(MARKER) > cap
+    assert PARA.count(MARKER) == 1 and REPEAT.count(MARKER) == 3
+
+
+def test_a_comment_on_a_passage_tied_past_the_cap_is_saved_at_the_cap_with_its_position_which_follows_recorded_changes_only(world):
+    """The anchors follow-on (2026-09-07), over the kernel wire on a tie the widening cannot break: with no
+    position the request is refused `anchor-ambiguous`; with the selection's offset the comment is saved with
+    its anchor at the cap and `anchorAt` beside it, the one thing that tells the copies apart. After an
+    insertion above that the vendored CLI recorded as a pending change, the next host write moves each
+    position to the one copy the record can have carried it to (the review's round 1, 2026-09-07: the anchor
+    alone cannot tell the copies apart, the recorded change can). After an edit nobody recorded (a direct write
+    to the file, which the sidecar's fingerprint no longer matches) the positions stand, on that write and on
+    the ones after it, and the webview, painting with one as the engine's tie-break, still lands on the chosen
+    copy because the engine picks the nearest tied hit."""
+    fp = world.root / "docs" / "repeat.md"
+    fp.write_text(REPEAT)
+    m = nth(REPEAT, MARKER, 1)
+    anchor = make_anchor(REPEAT, m, m + len(MARKER))
+    assert ties(REPEAT, anchor)
+    bad = world.op("comment", fp, {"note": "Which copy?", "anchor": anchor}, NO_STORE)
+    assert (bad["type"], bad["code"]) == ("fileCommentsFailed", "anchor-ambiguous")
+    assert "docs/repeat.md" in bad["error"] and "position was not sent" in bad["error"]
+    assert not (world.root / ".trackchanges").exists(), "a refusal writes nothing"
+    r = world.comment(fp, "Say it once.", anchor=anchor, hint=m)
+    c = r["store"]["comments"][0]
+    assert (c["anchorAt"], c["id"]) == (m, "%d-%d" % (c["ts"], m))
+    cap = anchor_ctx_cap()
+    assert c["anchor"] == make_anchor(REPEAT, m, m + len(MARKER), cap), "saved at the cap"
+    assert (len(c["anchor"]["prefix"]), len(c["anchor"]["suffix"])) == (cap, cap)
+    assert ties(REPEAT, c["anchor"]), "the anchor alone still ties"
+    assert locate_anchor(REPEAT, c["anchor"], c["anchorAt"])["from"] == m, "the stored position picks the copy"
+    assert json.loads(Path(r["storePath"]).read_text())["comments"][0]["anchorAt"] == m
+    # the third copy too, with its own position
+    third = nth(REPEAT, MARKER, 2)
+    r2 = world.comment(fp, "And here.", fence=world.fence_of(r), anchor=make_anchor(REPEAT, third, third + len(MARKER)), hint=third)
+    assert [x["anchorAt"] for x in r2["store"]["comments"]] == [m, third]
+    anchors = [x["anchor"] for x in r2["store"]["comments"]]
+    # a line lands above through the vendored CLI, a recorded change: the CLI writes the sidecar back with the
+    # positions as they were, a read never rewrites it, and the next host write moves both positions through
+    # the record (every copy moved by the insertion, and no copy but the chosen one lies within its length)
+    inserted = "Added.\n"
+    world.track_edit("# Repeats\n", "# Repeats\n" + inserted, path=fp)
+    moved = fp.read_text()
+    assert nth(moved, MARKER, 1) == m + len(inserted)
+    s = world.ok("status", fp)
+    assert [x["anchorAt"] for x in s["store"]["comments"]] == [m, third], "a read never rewrites the sidecar"
+    assert len(s["hunks"]) == 1, "the insertion is a pending change"
+    r3 = world.ok("reply", fp, {"commentId": c["id"], "note": "Still once."}, world.fence_of(s))
+    after = r3["store"]["comments"]
+    followed = [m + len(inserted), third + len(inserted)]
+    assert [x["anchorAt"] for x in after] == followed, "each position moved to the one copy the recorded insertion can have carried it to"
+    assert [x["anchor"] for x in after] == anchors, "the anchors' own fields are untouched"
+    assert len(after[0]["replies"]) == 1
+    assert [x["anchorAt"] for x in json.loads(Path(r3["storePath"]).read_text())["comments"]] == followed
+    # what the webview paints: the refreshed position names the chosen copy exactly
+    assert locate_anchor(moved, after[0]["anchor"], after[0]["anchorAt"]) == {"from": followed[0], "to": followed[0] + len(MARKER)}
+    assert locate_anchor(moved, after[1]["anchor"], after[1]["anchorAt"])["from"] == followed[1]
+    # a line lands between the first copy and the chosen one by a write nobody recorded (away from the pending
+    # insertion: an unrecorded edit beside a record is folded into it when the sidecar loads, and the record
+    # then vouches for it): the file no longer matches the sidecar's fingerprint, so no record vouches for
+    # where the copies went, and the next host write leaves both positions as they are
+    raw = "Nobody recorded this line.\n"
+    fp.write_text(moved.replace(PARA + "\n\n", PARA + "\n\n" + raw, 1))
+    raw_moved = fp.read_text()
+    assert nth(raw_moved, MARKER, 0) == nth(moved, MARKER, 0), "the first copy did not move"
+    assert nth(raw_moved, MARKER, 1) == followed[0] + len(raw)
+    s2 = world.ok("status", fp)
+    assert len(s2["hunks"]) == 1, "the recorded insertion is still the one pending change"
+    r4 = world.ok("resolve", fp, {"commentId": c["id"], "on": True}, world.fence_of(s2))
+    assert [x["anchorAt"] for x in r4["store"]["comments"]] == followed, "kept: nothing recorded the shift"
+    assert r4["store"]["comments"][0]["resolved"] is True
+    # that write stamped the sidecar's fingerprint for the text as it is now, and the next one still finds no
+    # record that carries a position past the pending insertion's few characters: the unrecorded shift is
+    # never recovered by a later write; only the painter's nearest-wins covers it
+    r5 = world.ok("resolve", fp, {"commentId": c["id"], "on": False}, world.fence_of(r4))
+    assert [x["anchorAt"] for x in r5["store"]["comments"]] == followed, "kept again"
+    assert [x["anchor"] for x in r5["store"]["comments"]] == anchors
+    assert [x["anchorAt"] for x in json.loads(Path(r5["storePath"]).read_text())["comments"]] == followed
+    # what the webview paints: the stale position is nearest the chosen copy, a paragraph from the others
+    loc = locate_anchor(raw_moved, anchors[0], followed[0])
+    assert loc == {"from": followed[0] + len(raw), "to": followed[0] + len(raw) + len(MARKER)}
+    assert locate_anchor(raw_moved, anchors[1], followed[1])["from"] == followed[1] + len(raw)
 
 
 def test_track_reply_answers_into_the_comment_and_status_derives_unsent(world):
@@ -695,6 +906,83 @@ def test_reject_reverts_the_file_tells_the_owning_session_once_and_a_stale_file_
     assert len(world.traced) == 1, "a send is not a trace"
 
 
+def fingerprint_of(file):
+    """The vendored store layer's fingerprint of a file's current text — what the sidecar must carry for a
+    later load to take its records as they are (no rebase, no detaching)."""
+    src = ("const s = await import(process.argv[1]); const fs = await import('node:fs');"
+           " console.log(JSON.stringify(s.fingerprintOf(fs.readFileSync(process.argv[2], 'utf8'))));")
+    r = _node(["--input-type=module", "-e", src, "--", Path(os.path.join(VENDOR, "store-io.mjs")).as_uri(), str(file)])
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_a_save_from_the_editor_writes_the_file_and_the_remapped_change_together_tells_the_session_logs_the_edit_and_a_stale_file_fence_writes_nothing(world):
+    """Slice 5: the editor's Save over a tracked file with one pending change. The person typed a line ABOVE
+    the change, so the editor's field (track-cm, remapping through every keystroke) holds the record at an
+    offset moved by the insertion's length; the `save` verb carries the new text and that record, and the
+    real host writes the sidecar (the record at its new offset, the fingerprint over the new text) and the
+    file together, logs the edit in the kernel's direct-edit shape, and the kernel tells the owning session
+    with the SAME trace a saveFile sends. A stale fileMtimeNs refuses file-moved first and writes nothing.
+    The remap is the engine's rule applied by hand: an insertion before a record adds its length to `from`."""
+    s0 = world.ok("status", world.fp)
+    world.ok("set-tracked", world.fp, {"on": True, "scope": "file"}, world.fence_of(s0))
+    world.track_edit("cut p95 latency by 40%", "cut p95 latency by 45%")
+    s = world.ok("status", world.fp)
+    assert len(s["hunks"]) == 1
+    rec = s["store"]["suggestions"][0]
+    assert EDITED[rec["from"]:rec["from"] + len(rec["newText"])] == rec["newText"], "the record indexes the file's text"
+    inserted = "A line the person typed above the change.\n"
+    at = EDITED.index("The api session")
+    content = EDITED[:at] + inserted + EDITED[at:]
+    remapped = dict(rec, **{"from": rec["from"] + len(inserted)})
+    assert content[remapped["from"]:remapped["from"] + len(rec["newText"])] == rec["newText"], "the remapped record fits the new text"
+    args = {"content": content, "suggestions": [remapped], "accepted": [], "rejected": []}
+    text_before, sidecar_before = world.fp.read_bytes(), Path(s["storePath"]).read_bytes()
+    # a stale file fence refuses file-moved: nothing written, nothing logged, nothing told
+    stale = world.op("save", world.fp, args, dict(world.fence_of(s, file=True), fileMtimeNs="1"))
+    assert (stale["type"], stale["code"]) == ("fileCommentsFailed", "file-moved")
+    assert "reload" in stale["error"]
+    assert world.fp.read_bytes() == text_before and Path(s["storePath"]).read_bytes() == sidecar_before
+    assert [e["kind"] for e in world.log_lines(s)] == ["set-tracked"]
+    assert world.traced == []
+    # the save: the sidecar's record moved with the text, the fingerprint is the new text's, the file holds the new text
+    r = world.ok("save", world.fp, args, world.fence_of(s, file=True))
+    assert world.fp.read_text() == content
+    assert r["fileMtimeNs"] == str(world.fp.stat().st_mtime_ns) and r["fileMtimeNs"] != s["fileMtimeNs"], "the file's mtime moved"
+    assert r["storeMtimeNs"] == str(Path(r["storePath"]).stat().st_mtime_ns) and r["storeMtimeNs"] != s["storeMtimeNs"], "the sidecar's too"
+    assert r["logged"] is True
+    store = json.loads(Path(r["storePath"]).read_text())
+    saved = store["suggestions"]
+    assert len(saved) == 1 and saved[0]["id"] == rec["id"]
+    assert (saved[0]["from"], saved[0]["oldText"], saved[0]["newText"]) == (remapped["from"], rec["oldText"], rec["newText"]), "the record moved by the insertion"
+    assert store["fingerprint"] == fingerprint_of(world.fp), "the sidecar describes the file as saved"
+    h = r["hunks"][0]
+    assert (h["id"], h["curFrom"], h["newText"]) == (rec["id"], remapped["from"], rec["newText"]), "the reply's hunks index the new text"
+    assert content[h["curFrom"]:h["curTo"]] == h["newText"]
+    # exactly one trace, the direct edit's, to the session whose tree holds the file, after the reply (plans/file-review.md, Consent, trace, routing)
+    real = os.path.realpath(str(world.fp))
+    assert world.traced == [(SID, km._edit_trace_body(real))]
+    assert "I just edited `%s` directly on disk" % km._tilde(real) in world.traced[0][1]
+    assert world.injected == [], "a trace is a direct backend send: nothing parked, no todo stamped"
+    assert world.order[-2:] == ["reply", "trace"], "the fileCommentsResult is on the wire before the trace goes"
+    # the log has the edit entry, written by the host in the kernel's direct-edit shape; nothing decided, so no other entry
+    entries = world.log_lines(r)
+    assert [e["kind"] for e in entries] == ["set-tracked", "edit"]
+    e = entries[1]
+    assert e["author"] == "you"
+    assert (e["mtimeBeforeNs"], e["mtimeAfterNs"]) == (s["fileMtimeNs"], r["fileMtimeNs"])
+    assert (e["bytesBefore"], e["bytesAfter"]) == (len(EDITED.encode()), len(content.encode()))
+    assert "+" + inserted in e["diff"] and e["truncated"] is False
+    assert r["log"] == entries, "the panel's Log is current in the reply"
+    # a later track-edit still succeeds: the session's tooling loads the saved sidecar as it is
+    world.track_edit("shipping the cache", "shipping the response cache")
+    s3 = world.ok("status", world.fp)
+    assert [x["oldText"] for x in s3["hunks"]] == ["cut p95 latency by 40%", "shipping the cache"], "two changes, the saved one first"
+    assert world.fp.read_text() == content.replace("shipping the cache", "shipping the response cache")
+    assert s3["hunks"][0]["curFrom"] == remapped["from"], "the saved change kept its place"
+    assert len(world.traced) == 1, "a track-edit is the session's own write: no trace"
+
+
 def test_accept_all_on_a_sidecar_with_no_comments_prunes_it_and_the_log_keeps_the_decision(world):
     s0 = world.ok("status", world.fp)
     world.ok("set-tracked", world.fp, {"on": True, "scope": "file"}, world.fence_of(s0))
@@ -830,7 +1118,8 @@ def test_a_region_on_an_embedded_figure_carries_the_embed_anchor_and_src_and_a_s
     r = world.ok("comment", md, {"note": "Label the axes.", "anchor": anchor, "hintOffset": start,
                                  "target": {"kind": "image", "region": dict(REGION), "src": "fig.png"}}, NO_STORE)
     c = r["store"]["comments"][0]
-    assert set(c) == set(KEEP) | {"anchor", "target"}
+    assert set(c) == set(KEEP) | {"anchor", "anchorAt", "target"}, "an anchored comment carries its stored position too"
+    assert c["anchorAt"] == start
     assert c["anchor"] == anchor, "placed like a passage comment, so every host shows it on the embed line"
     assert list(c["target"]) == ["kind", "region", "hash", "src"]
     assert (c["target"]["src"], c["target"]["region"]) == ("fig.png", STORED)
@@ -981,3 +1270,166 @@ def test_a_region_comment_on_a_pdf_page_stores_the_page_and_the_hash_a_regenerat
     assert "Comment %s (on the region at 0.50, 0.50, 0.25, 0.25 of page 3):\nCrop the header.\n" % c["id"] in text
     assert "never run track-edit on it" in text
     assert pdf.read_bytes() == minimal_pdf(3), "no verb touched the PDF"
+
+
+def _serve_post(path, body):
+    """Drive the REAL do_POST dispatcher over a fake socket (tests/test_user_todos.py's harness), with the
+    serve token: the door the postal tool's add_user_todo comes through."""
+    raw = json.dumps(body).encode()
+    h = km.Handler.__new__(km.Handler)
+    h.client_address = ("127.0.0.1", 0)
+    h.headers = {"Content-Length": str(len(raw)), "X-Romp-Token": km.TOKEN}
+    h.path = path
+    h.command = "POST"
+    h.request_version = "HTTP/1.1"
+    h.wfile = io.BytesIO()
+    h.rfile = io.BytesIO(raw)
+    h.close_connection = True
+    captured = {}
+    h.send_response = lambda code, *a: captured.__setitem__("status", code)
+    h.send_header = lambda k, v: None
+    h.end_headers = lambda: None
+    h.log_message = lambda *a: None
+    h.do_POST()
+    return captured.get("status"), json.loads(h.wfile.getvalue().decode() or "{}")
+
+
+def test_a_todo_filed_with_its_file_is_listed_by_status_answered_by_a_send_with_its_id_and_gone_after(world):
+    """The todo-file follow-on (2026-09-07), end to end: the session files a todo naming the report through
+    the real route (a relative path, resolved against its cwd); a status on the file lists that todo and not
+    the one whose path lives only in its detail; a send carrying its id answers it; the next status no longer
+    lists it. An unresolvable path is filed all the same, kept as given, with the warning on the reply."""
+    code, res = _serve_post("/usertodo", {"id": SID, "text": "Need a look at the morning report", "file": "docs/report.md"})
+    assert code == 200 and res["ok"] and "warning" not in res, res
+    tid = res["todoId"]
+    rec = km._user_todos()[SID][1]
+    assert (rec["id"], rec["file"]) == (tid, str(world.fp)), "resolved against the session's cwd, stored absolute"
+    listed = [{"id": tid, "text": "Need a look at the morning report"}]
+    s = world.ok("status", world.fp)
+    assert s["todos"] == listed, s["todos"]
+    assert world.ok("status", world.other)["todos"] == [], "another file lists nothing"
+    r1 = world.comment(world.fp, "Which cache?")
+    assert r1["todos"] == listed, "every successful reply carries the list, not the status verb alone"
+    cs = r1["store"]["comments"]
+    comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+    rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                    "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": tid})
+    assert rep == {"type": "fileCommentsSent", "reqId": rep["reqId"], "queued": False}, rep
+    assert world.injected[0]["user_todo"] == tid
+    assert km._user_todos()[SID][1]["resolved"]["kind"] == "answered"
+    assert "resolved" not in world.todo(), "the detail-path todo is untouched: one send answers one todo"
+    s2 = world.ok("status", world.fp)
+    assert s2["todos"] == [], "answered, so gone at the next status"
+    assert s2["unsent"]["comments"] == []
+    # an unresolvable path: filed, kept as given, the warning on the reply, and it matches no file
+    saved = km._cwd_of
+    km._cwd_of = lambda s: ""
+    try:
+        code, res = _serve_post("/usertodo", {"id": SID, "text": "Need a look at the other note", "file": "docs/other.md"})
+    finally:
+        km._cwd_of = saved
+    assert code == 200 and res["ok"] and "did not resolve" in res["warning"], res
+    assert km._user_todos()[SID][2]["file"] == "docs/other.md"
+    assert world.ok("status", world.other)["todos"] == []
+
+
+def test_another_sessions_todo_naming_the_same_file_is_neither_listed_here_nor_stamped_by_a_send_from_here(world):
+    """The status lists the todos of the REQUEST's session only: another session's todo naming the same
+    file is not offered to this session's panel, and a send from this session carrying that id sends the
+    comments but stamps nothing — the reply says so and names the id — so one session's send never
+    settles another session's request."""
+    other = km._add_user_todo(OSID, "Need a look at the report as well", file=str(world.fp))
+    assert km._user_todos()[OSID][0]["file"] == str(world.fp)
+    assert world.ok("status", world.fp)["todos"] == [], "the other session's todo is not this session's"
+    rep = world.ws({"type": "fileComments", "sid": OSID, "path": str(world.fp), "verb": "status"})
+    assert rep["type"] == "fileCommentsResult", rep
+    assert rep["todos"] == [{"id": other, "text": "Need a look at the report as well"}], "listed for its own session"
+    r1 = world.comment(world.fp, "Which cache?")
+    cs = r1["store"]["comments"]
+    comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+    rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                    "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": other})
+    assert rep["type"] == "fileCommentsSent" and rep["queued"] is False, rep
+    assert other in rep["warning"] and "nothing was marked" in rep["warning"], rep["warning"]
+    assert world.injected[0]["sid"] == SID and world.injected[0]["user_todo"] is None, "sent, nothing stamped"
+    assert "resolved" not in km._user_todos()[OSID][0], "the other session's request still stands"
+    assert "resolved" not in world.todo()
+
+
+class _QuietHandler(km.Handler):
+    """The real handler, without the per-request access log on the test's stderr."""
+
+    def log_message(self, *a):
+        pass
+
+
+@contextlib.contextmanager
+def _kernel_server():
+    """The REAL kernel handler listening on a loopback port, the way the bus reaches it: the same
+    ThreadingHTTPServer the serve layer's own tests run it under (tests/test_kernel.py ServeSecurity)."""
+    from http.server import ThreadingHTTPServer
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _QuietHandler)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        yield srv.server_address[1]
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        t.join(10)
+
+
+def test_the_postal_tool_files_the_todo_over_the_wire_and_a_send_from_the_file_answers_it(world):
+    """The session's side of the loop with nothing scripted between the tool and the store: the real
+    postal `add_user_todo` (its `file` argument, a relative path) posts over a loopback socket to the real
+    handler; the tool's reply names the minted id and says nothing about the file; a status on the file
+    lists that todo with the tool's own text; a send carrying the id answers it; the next status no longer
+    lists it. Then the warning: with no working directory recorded for the session, the path is kept as
+    given, the todo is filed all the same, and the kernel's words reach the agent through the tool's reply.
+    The bus reads the kernel's switch by the same file name, so the switch the world turned on is the one
+    the tool consults."""
+    saved = (pm.KERNEL_BASE, pm.SERVE_TOKEN, pm.USER_TODOS_SWITCH, pm._self_identity, pm._heartbeat)
+    with _kernel_server() as port, mock.patch.dict(os.environ):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)      # the no-live-kernel seam makes _kernel_post a no-op; a kernel answers here
+        pm.KERNEL_BASE = "http://127.0.0.1:%d" % port
+        pm.SERVE_TOKEN = km.TOKEN
+        pm.USER_TODOS_SWITCH = jd.STATE / km.USER_TODOS_SWITCH_FILE
+        pm._self_identity = lambda: (SID, "web")
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            assert pm._user_todos_on(), "the switch the world turned on, read by the bus"
+            out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the morning report", "file": "docs/report.md"})
+            assert not err, out
+            m = re.search(r"Noted \(id (ut-[0-9a-f]{8})\)", out)
+            assert m and "About the file" not in out, out
+            tid = m.group(1)
+            rec = km._user_todos()[SID][1]
+            assert (rec["id"], rec["text"], rec["file"]) == (tid, "Need a look at the morning report", str(world.fp))
+            listed = [{"id": tid, "text": "Need a look at the morning report"}]
+            assert world.ok("status", world.fp)["todos"] == listed
+            assert world.ok("status", world.other)["todos"] == []
+            r1 = world.comment(world.fp, "Which cache?")
+            cs = r1["store"]["comments"]
+            comments = [{"id": cs[0]["id"], "desc": "on this file", "body": "Which cache?"}]
+            rep = world.ws({"type": "fileCommentsSend", "sid": SID, "path": str(world.fp), "tracked": False,
+                            "comments": comments, "accepted": 0, "rejected": 0, "watermark": cs[0]["ts"], "todoId": tid})
+            assert rep == {"type": "fileCommentsSent", "reqId": rep["reqId"], "queued": False}, rep
+            assert world.injected[0]["user_todo"] == tid
+            assert km._user_todos()[SID][1]["resolved"]["kind"] == "answered"
+            assert world.ok("status", world.fp)["todos"] == [], "answered, so gone at the next status"
+            # the kernel's warning for a path that did not resolve, read out of the tool's reply
+            saved_cwd = km._cwd_of
+            km._cwd_of = lambda s: ""
+            try:
+                out, err = pm._mcp_call("add_user_todo", {"text": "Need a look at the other note", "file": "docs/other.md"})
+            finally:
+                km._cwd_of = saved_cwd
+            assert not err, "filed all the same: a warning is not a failure"
+            m = re.search(r"Noted \(id (ut-[0-9a-f]{8})\)", out)
+            assert m, out
+            assert "About the file: the file path docs/other.md did not resolve to an absolute path" in out, out
+            assert km._user_todos()[SID][2] == {"id": m.group(1), "text": "Need a look at the other note",
+                                                "createdT": km._user_todos()[SID][2]["createdT"], "file": "docs/other.md"}
+            assert world.ok("status", world.other)["todos"] == [], "a path kept as given names no file on disk"
+        finally:
+            pm.KERNEL_BASE, pm.SERVE_TOKEN, pm.USER_TODOS_SWITCH, pm._self_identity, pm._heartbeat = saved

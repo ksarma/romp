@@ -58,7 +58,7 @@ class T extends N {
     return tail;
   }
 }
-type Init = { key?: string; clientX?: number; clientY?: number; pointerId?: number; button?: number };
+type Init = { key?: string; ctrlKey?: boolean; metaKey?: boolean; clientX?: number; clientY?: number; pointerId?: number; button?: number };
 type Ev = Init & { type: string; target: N; currentTarget: N | null; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
@@ -323,7 +323,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     pdfPages: () => pages as unknown as HTMLElement[],
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { rendered.push(cb); }, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: noop, reload: noop,
     ...ctxOver,
@@ -354,7 +354,7 @@ async function harness(over: Partial<FileViewActionCtx> & { kind?: "media" | "pd
     /** A fresh status the way the poll or a save brings one: the onSaved hook re-asks, the reply lands. */
     restatus: async (o: Partial<Status> = {}) => { saved[0]({ mtimeNs: "1757145600000000001", logged: true }); await tick(); await reply({ type: "fileCommentsResult", reqId: last().reqId, ...status(o) }); },
     float: () => { const f = doc.body.querySelectorAll(".fc-float"); return f[f.length - 1]; },
-    input: () => main.querySelector("input.fc-input")!,
+    input: () => main.querySelector("textarea.fc-input")!,
     dispose: () => { for (const cb of closers) cb(); },
   };
 }
@@ -391,7 +391,7 @@ test("a standalone image: the overlay wraps the picture after status, and the em
   assert.equal(h.q(".fileview-imgbox img"), h.media);
 });
 
-test("a drag on a standalone image opens the composer on the region, Enter saves comment {target, note} with no anchor, and the card and rectangle follow", async () => {
+test("a drag on a standalone image opens the composer on the region, the save chord saves comment {target, note} with no anchor, and the card and rectangle follow", async () => {
   drawn.length = 0;
   const h = await harness();
   await h.ok();
@@ -418,7 +418,7 @@ test("a drag on a standalone image opens the composer on the region, Enter saves
   assert.equal(pending.getAttribute("data-act"), null, "and is not a control");
   // Enter: comment {note, target} — fractions of the natural size, no anchor, no hash (the host stamps it)
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -589,12 +589,12 @@ test("a write about a figure is fenced on its bytes: figure-changed is never ret
   const writes = () => h.posted.filter((m) => m.type === "fileComments" && m.verb === "comment").length;
   h.drag(overlay, [150, 240], [250, 300]);
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.equal(h.last().fence.figureHash, H1, "the hash the status holds for the picture");
   const n0 = asks();
-  // the figure was regenerated between the drag and Enter: the host hashed other bytes than the fence names
+  // the figure was regenerated between the drag and the save: the host hashed other bytes than the fence names
   await h.refuse("figure-changed", "docs/figure.png changed on disk since it was shown — reload to see it as it is now, then draw the region again; nothing was changed");
   assert.equal(writes(), 1, "never retried: a retry would stamp the new bytes with a rectangle drawn on the old ones");
   assert.equal(asks(), n0 + 1, "the comments are re-read, as after a figure the poll saw move");
@@ -609,7 +609,7 @@ test("a write about a figure is fenced on its bytes: figure-changed is never ret
   // drawn again on the new picture: the fence names the bytes the fresh status read
   h.drag(overlay, [150, 240], [250, 300]);
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.equal(h.last().fence.figureHash, H2);
@@ -619,7 +619,7 @@ test("a write about a figure is fenced on its bytes: figure-changed is never ret
   await h.restatus({ ...withStore([regionComment({}, { hash: H2 })]), fileHash: null });
   h.drag(overlay, [110, 210], [190, 260]);
   h.input().value = "Second note.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.deepEqual(h.last().fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "" }, "the mtime keys alone: a fence the panel cannot arm is left off, never guessed");
@@ -651,7 +651,7 @@ test("a figure in rendered markdown: the drag's comment carries BOTH the embed l
   assert.equal(h.q(".fc-composer")!.hidden, false);
   assert.equal(h.q(".fc-composer-ref .fc-note")!.textContent, "On the region at 0.17, 0.20, 0.33, 0.30");
   h.input().value = "The axis label is wrong.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -700,7 +700,7 @@ test("a figure whose src the viewer rewrote through /file still matches its embe
   const [fig, chart] = h.qa(".fileview-md img");
   h.drag((fig.parentNode as E).querySelector(".fc-overlay")!, [150, 240], [250, 300]);
   h.input().value = "Axis.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "comment");
   assert.deepEqual(h.last().args.target, { kind: "image", region: REGION, src: "figure.png" }, "matched to its embed through the /file path");
@@ -715,9 +715,9 @@ test("a figure whose src the viewer rewrote through /file still matches its embe
   assert.equal((chart.parentNode as E).querySelector(".fc-region-pending"), null, "a refused region is not shown as pending");
   const before = h.posted.length;
   h.input().value = "Wrong chart.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
-  assert.equal(h.posted.length, before, "Enter saves nothing");
+  assert.equal(h.posted.length, before, "the chord saves nothing");
   assert.equal(h.q(".fc-composer .fc-err")!.textContent.startsWith("Nothing saved: the line that embeds this image was not found"), true);
   assert.equal(h.input().value, "Wrong chart.", "the note stays");
   h.dispose();
@@ -778,7 +778,7 @@ test("a PDF: one overlay per page in the chunk's own wrapper (no span, the canva
   assert.ok(overlays[1].querySelector(".fc-region-pending"), "the pending region on page 2");
   assert.equal(overlays[0].querySelector(".fc-region-pending"), null, "and not on page 1");
   h.input().value = "Crop the header.";
-  h.input().dispatch("keydown", { key: "Enter" });
+  h.input().dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -941,7 +941,7 @@ test("the sheets: the region rules sit inside the mirrored file-comments block, 
     const block = css.slice(a, b);
     assert.match(block, /\n\.fc-imgwrap \{ position: relative; display: inline-block; max-width: 100%; \}\n\.fc-imgwrap > img \{ display: block; \}\n/, f + ": the wrapper hugs a block picture");
     assert.match(block, /\n\.fc-overlay \{ position: absolute; inset: 0; cursor: crosshair; touch-action: none; \}\n/, f);
-    assert.match(block, /\n\.fc-overlay-off \{ pointer-events: none; cursor: default; \}\n\.fc-overlay-off \.fc-region \{ pointer-events: auto; \}\n/, f + ": a coarse pointer reads through the overlay, the rectangles still click");
+    assert.match(block, /\n\.fc-overlay-off \{ pointer-events: none; cursor: default; touch-action: auto; \}\n\.fc-overlay-off \.fc-region \{ pointer-events: auto; \}\n/, f + ": a coarse pointer reads through the overlay and pans, the rectangles still click (one declaration)");
     assert.match(block, /\n\.fc-region \{ position: absolute; box-sizing: border-box; border: 2px solid var\(--fc-author, var\(--warn\)\);/, f + ": the author's colour, the ring's colour as the fallback");
     assert.match(block, /\n\.fc-region\.fc-stale \{ border-style: dashed; \}\n\.fc-region\.fc-unknown \{ border-style: dotted; \}\n/, f);
     assert.match(block, /\n\.fc-region-chip::after \{ content: attr\(data-label\); \}\n/, f + ": the chip's label is generated, never a text node");

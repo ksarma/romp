@@ -7,8 +7,8 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { marked } from "marked";
-import type { FileViewActionCtx } from "./file-view";
-import type { Status, StoreComment, LogEntry } from "./file-comments-model";
+import type { FileViewActionCtx, TrackedEdit } from "./file-view";
+import type { Status, StoreComment, LogEntry, Hunk } from "./file-comments-model";
 
 // ── the DOM stand-in ───────────────────────────────────────────────────────────────────────────────
 class Doc {
@@ -52,7 +52,7 @@ class T extends N {
     return tail;
   }
 }
-type Ev = { type: string; target: N; currentTarget: N | null; key?: string; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
+type Ev = { type: string; target: N; currentTarget: N | null; key?: string; ctrlKey?: boolean; metaKey?: boolean; defaultPrevented: boolean; preventDefault(): void; stopPropagation(): void };
 const kebab = (k: string | symbol): string => String(k).replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
 type Compound = { tag: string | null; classes: string[]; attrs: Array<[string, string | null]> };
 function parseSelector(sel: string): Compound[] {
@@ -143,9 +143,9 @@ class E extends N {
   addEventListener(type: string, fn: (ev: Ev) => void): void { (this.listeners.get(type) || this.listeners.set(type, []).get(type)!).push(fn); }
   removeEventListener(type: string, fn: (ev: Ev) => void): void { const l = this.listeners.get(type); if (l) l.splice(l.indexOf(fn), 1); }
   /** Dispatch with bubbling: every ancestor's listeners run until one stops propagation. */
-  dispatch(type: string, init: { key?: string } = {}): Ev {
+  dispatch(type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}): Ev {
     let stopped = false;
-    const ev: Ev = { type, target: this, currentTarget: null, key: init.key, defaultPrevented: false,
+    const ev: Ev = { type, target: this, currentTarget: null, key: init.key, ctrlKey: init.ctrlKey, metaKey: init.metaKey, defaultPrevented: false,
       preventDefault() { this.defaultPrevented = true; }, stopPropagation() { stopped = true; } };
     for (let n: N | null = this; n && !stopped; n = n.parentNode) {
       if (!(n instanceof E)) continue;
@@ -249,6 +249,8 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
   const body = doc.createElement("div"); body.className = "fileview-body"; main.appendChild(body);
   if (html !== undefined) { const md = doc.createElement("div"); md.className = "fileview-md"; md.innerHTML = html; body.appendChild(md); }
   const posted: Posted[] = [];
+  const tracked: Array<TrackedEdit | null> = [];      // the panel's half of editing over pending changes, as registered (Slice 5)
+  let editingNow = false;
   const closers: Array<() => void> = [];
   const saved: Array<(info: { mtimeNs: string; logged: boolean }) => void> = [];
   const modes: string[] = [];
@@ -259,7 +261,7 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
     body: () => body as unknown as HTMLElement, mode: () => "rendered", text: () => (src === undefined ? null : src),
     mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: (cb) => { saved.push(cb); }, onClose: (cb) => { closers.push(cb); },
-    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop,
+    post: (m) => { posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => editingNow, setTrackedEdit: (t) => { tracked.push(t); }, guardClose: noop,
     aside: (el) => { if (el) { aside = el as unknown as E; main.appendChild(aside); } else if (aside) { aside.remove(); aside = null; } },
     setMode: (m) => { modes.push(m); }, scrollToOffset: noop, reload: noop,
     ...ctxOver,
@@ -269,7 +271,8 @@ async function harness(over: Partial<FileViewActionCtx> & { html?: string; src?:
   const last = (): Posted => posted[posted.length - 1];
   const reply = async (data: Record<string, unknown>) => { win.dispatchEvent(new MessageEvent("message", { data })); await tick(); await tick(); };
   return {
-    fc, main, body, unit, button, posted, modes, saved, last,
+    fc, main, body, unit, button, posted, modes, saved, last, tracked,
+    setEditing: (on: boolean) => { editingNow = on; },
     ok: (over: Partial<Status> = {}) => reply({ type: "fileCommentsResult", reqId: last().reqId, ...status(over) }),
     refuse: (code: string, error: string) => reply({ type: "fileCommentsFailed", reqId: last().reqId, verb: last().verb, code, error }),
     sent: (queued = false) => reply({ type: "fileCommentsSent", reqId: last().reqId, queued }),
@@ -296,10 +299,10 @@ test("a status refusal is not a wait and not a moved fence: the cards say what f
   assert.ok(h.q(".fc-sec-head .fc-err")!.textContent.includes(CORRUPT), "the head's row names the reason");
   // Comment on this file, a note, Enter: the panel re-asks status ONCE and sends no verb with an empty fence
   h.click('[data-act="fcfile"]');
-  const input = h.q("input.fc-input")!;
+  const input = h.q("textarea.fc-input")!;
   input.value = "Add a summary at the top.";
   const before = h.posted.length;
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.posted.length, before + 1, "one re-ask");
   assert.equal(h.last().verb, "status");
@@ -311,7 +314,7 @@ test("a status refusal is not a wait and not a moved fence: the cards say what f
   assert.equal(input.value, "Add a summary at the top.", "the note stays");
   assert.equal(h.q(".fc-cards")!.textContent, "The comments could not be read, so none can be shown or written.", "still not a wait");
   // the person mends the sidecar and presses Enter again: the re-ask succeeds and the comment carries the real fence
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "status");
   await h.ok();
@@ -333,9 +336,9 @@ test("a status still in flight is waited for, not fenced blind: the cards wear t
   assert.ok(cards.querySelector(".fc-load"), "no refusal yet: the wait wears the romp loader (ui/CLAUDE.md)");
   assert.equal(cards.querySelector(".fc-empty"), null, "…and no line claims a read that nothing is making");
   h.click('[data-act="fcfile"]');
-  const input = h.q("input.fc-input")!;
+  const input = h.q("textarea.fc-input")!;
   input.value = "Lead with the numbers.";
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   assert.equal(h.last().verb, "status");
   await h.ok({ store: null, storeMtimeNs: null });
@@ -452,9 +455,9 @@ test("a click on a rendered picture offers Comment; the anchor is the embed's so
   assert.equal(imgs[0].style.outline, "2px solid var(--accent)");
   assert.equal(imgs[1].classList.contains("fc-presel"), false);
   assert.ok(h.body.contains(imgs[0]), "framed, never wrapped or removed");
-  const input = h.q("input.fc-input")!;
+  const input = h.q("textarea.fc-input")!;
   input.value = "Use the p99 chart instead.";
-  input.dispatch("keydown", { key: "Enter" });
+  input.dispatch("keydown", { key: "Enter", ctrlKey: true });
   await tick();
   const c = h.last();
   assert.equal(c.verb, "comment");
@@ -601,4 +604,85 @@ test("a todo naming several files is answered by the first send: a later viewer 
   e.click('[data-act="fcsend"]');
   assert.ok(e.q('input[data-opt="todo"]'), "…and a later viewer from the same todo still offers it");
   e.dispose();
+});
+
+// ── editing over pending changes (Slice 5): the save through the panel ─────────────────────────────
+// The viewer's editor sends Save here when the file is tracked or has a sidecar (file-view-seam.test.ts drives the viewer's
+// side over a stub editor); these drive the panel's half: what begin() hands the editor, the save frame and its fence, the
+// one retry a moved sidecar or config gets when the records are unchanged, the refusal when they are not, and a success
+// applied as the status with nothing re-read.
+const chg = (id: string, from: number, oldText: string, newText: string) => ({
+  rec: { id, author: "api", authorId: SID, ts: T0, kind: "sub", from, newText, oldText },
+  hunk: { id, author: "api", ts: T0, kind: "sub", curFrom: from, curTo: from + newText.length, baseFrom: from, baseTo: from + oldText.length, oldText, newText, anchor: null } as Hunk,
+});
+const withChanges = (...cs: Array<ReturnType<typeof chg>>): Partial<Status> => ({
+  hunks: cs.map((c) => c.hunk), store: { v: 3, path: "docs/report.md", suggestions: cs.map((c) => c.rec), comments: [passage] },
+});
+const MOVED_TEXT = "the comments for ~/notes-api/docs/report.md changed on disk since you opened the file — reload and retry";
+const settleOf = (p: Promise<unknown>) => { const box: { ok?: unknown; err?: unknown } = {}; p.then((v) => { box.ok = v; }, (e) => { box.err = e; }); return box; };
+
+test("a save through the panel: begin() hands the records and the refusal wording, the save frame carries the text, records, decisions and the three-part fence; a store-moved refusal re-reads status once and stands when the sidecar's records changed", async () => {
+  const h = await harness();
+  const c1 = chg("c1", 5, "old", "new"), c2 = chg("c2", 40, "was", "is");
+  await h.ok(withChanges(c1));
+  assert.equal(h.tracked.length, 1, "registered once, at mount");
+  const te = h.tracked[0]!;
+  const begun = te.begin()!;
+  assert.deepEqual(begun.records, [c1.rec], "the sidecar's records as the status holds them");
+  assert.equal(begun.authorColor("api"), null, "no colour map yet (the panel was never opened): a neutral mark");
+  assert.match(begun.refusal, /^1 change is pending in this file, so Edit is off here/);
+  assert.equal(te.routesSave(), true);
+  h.setEditing(true);
+  const decided = { accepted: [{ id: "c1", oldText: "old", newText: "new" }], rejected: [] };
+  const out = settleOf(te.save("the new text", [], decided));
+  await tick();
+  const m = h.last();
+  assert.equal(m.type, "fileComments"); assert.equal(m.verb, "save"); assert.equal(m.sid, SID); assert.equal(m.path, ABS);
+  assert.deepEqual(m.args, { content: "the new text", suggestions: [], accepted: decided.accepted, rejected: [] });
+  assert.deepEqual(m.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000003", fileMtimeNs: "1757145600000000001" },
+    "the sidecar and config the records came from, and the file as the viewer holds it");
+  await h.refuse("store-moved", MOVED_TEXT);
+  assert.equal(h.last().verb, "status", "one re-read before deciding");
+  assert.equal(out.ok, undefined); assert.equal(out.err, undefined, "still open");
+  await h.ok({ ...withChanges(c1, c2), storeMtimeNs: "1757145600000000020" });   // a session recorded a second change meanwhile
+  assert.deepEqual(out.err, { code: "store-moved", error: MOVED_TEXT }, "the records changed under the editor: the refusal stands, in the host's words");
+  assert.equal(h.last().verb, "status", "no retry");
+  assert.match(h.button.textContent, /2 changes$/, "the panel shows the re-read status meanwhile");
+  h.dispose();
+});
+
+test("a save through the panel: a moved config (or a sidecar whose records are unchanged) is retried once with the fresh fence; the success is applied as the status, and onSaved with its mtime re-reads nothing", async () => {
+  const h = await harness();
+  const c1 = chg("c1", 5, "old", "new");
+  await h.ok(withChanges(c1));
+  const te = h.tracked[0]!;
+  te.begin();
+  h.setEditing(true);
+  const out = settleOf(te.save("the new text", [c1.rec], { accepted: [], rejected: [] }));
+  await tick();
+  const first = h.last();
+  assert.equal(first.verb, "save");
+  await h.refuse("config-moved", "the tracking list for ~/notes-api changed on disk since you opened the file — reload and retry");
+  assert.equal(h.last().verb, "status");
+  await h.ok({ ...withChanges(c1), configMtimeNs: "1757145600000000033" });   // a toggle from another browser; the records are the same
+  const again = h.last();
+  assert.equal(again.verb, "save", "retried once");
+  assert.notEqual(again.reqId, first.reqId);
+  assert.deepEqual(again.args, first.args, "the same text and records");
+  assert.deepEqual(again.fence, { storeMtimeNs: "1757145600000000002", configMtimeNs: "1757145600000000033", fileMtimeNs: "1757145600000000001" }, "re-fenced on the config as it stands now");
+  const asks = h.posted.filter((m) => m.verb === "status").length;
+  await h.ok({ verb: "save", fileMtimeNs: "1757145600000000009", storeMtimeNs: "1757145600000000010", hunks: [],
+    store: { v: 3, path: "docs/report.md", suggestions: [], comments: [passage] }, logged: true } as unknown as Partial<Status>);
+  assert.deepEqual(out.ok, { mtimeNs: "1757145600000000009", logged: true }, "the saved fields the viewer fires onSaved with");
+  assert.equal(h.button.textContent, "Comments · 1", "the reply is the panel's status: no changes left");
+  // the viewer then fires onSaved with the same mtime: the panel has nothing to re-read
+  h.setEditing(false);
+  for (const cb of h.saved) cb({ mtimeNs: "1757145600000000009", logged: true });
+  await tick();
+  assert.equal(h.posted.filter((m) => m.verb === "status").length, asks, "no status re-ask for a save this panel applied");
+  // a saveFile's ack (any other mtime) re-reads the Log as before
+  for (const cb of h.saved) cb({ mtimeNs: "1757145600000000099", logged: true });
+  await tick();
+  assert.equal(h.posted.filter((m) => m.verb === "status").length, asks + 1);
+  h.dispose();
 });

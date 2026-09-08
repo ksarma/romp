@@ -68,7 +68,14 @@ Covered here, kernel-side:
   newest-first with the capped "…and N more" tail, marker hygiene, the deliberate absence of a
   liveness re-check (ContextBlock) — and its read-only, token-gated POST /usertodo/context leg
   (ContextRoute). The hook that carries it into a session is bats-covered
-  (romp-usertodo-context.bats); the words themselves are voice-scanned in test_injected_voice.py.
+  (romp-usertodo-context.bats); the words themselves are voice-scanned in test_injected_voice.py;
+- the todo-file follow-on (2026-09-07): a todo may name the FILE it is about — `file`, resolved at
+  filing against the session's cwd and stored absolute, kept as given with a `warning` on the
+  filing reply when it cannot resolve, never a refusal (FileNamedByATodo; the file tests in
+  Routes, incl. the remote forward) — and it rides every serialization: the open rows, the feed's
+  userTodoRows, the lifecycle log and its rebuild, the SessionStart block (in ContextBlock and
+  FeedSeamUserTodos). The comments panel's side, the status reply's `todos`, is pinned in
+  tests/test_file_comments.py.
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
@@ -116,8 +123,13 @@ class _StoreSandbox(unittest.TestCase):
         km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03);
         #                                              these suites pin the ON behavior — the OFF side
         #                                              lives in test_user_todos_switch.py
+        self.poisoned0 = jd.shared_store_stats()["poisoned"]
 
     def tearDown(self):
+        # the shared-cache landing gate (round-4 plan P1): the feed builds in these suites read their
+        # stores through the shared read-only cache and must never have written into one
+        self.assertEqual(jd.shared_store_stats()["poisoned"] - self.poisoned0, 0,
+                         "a feed build wrote into a shared goal store (see judge-errors frozen-store-write)")
         jd.STATE = self.saved
         self.td.cleanup()
         km._user_todos_cache.clear()
@@ -161,6 +173,95 @@ class StoreRoundTrip(_StoreSandbox):
             {"id": "ut-bbbbbbbb", "text": "second", "createdT": NOW + 60},
             {"id": "ut-aaaaaaaa", "text": "first", "createdT": NOW}]}))
         self.assertEqual([t["id"] for t in km._open_user_todos(SID)], ["ut-aaaaaaaa", "ut-bbbbbbbb"])
+
+
+# PRIVATE synthetic sids for the todo-file tests (the goal-store fixture rule, generalized: rows
+# minted under the shared placeholder can be reached by another module's fixtures).
+FSID = "7c7c7c7c-1111-4222-8333-944444444444"
+FSID2 = "7d7d7d7d-1111-4222-8333-944444444444"
+
+
+class FileNamedByATodo(_StoreSandbox):
+    """The todo-file follow-on (2026-09-07): a user todo may name the FILE it is about — `file`, an
+    absolute path on this kernel's disk, resolved at filing (_user_todo_file: ~ expanded, a relative
+    path against the session's recorded cwd) and carried by every serialization of the todo (the
+    store, the open rows every surface ships, the lifecycle log and its rebuild). A path that does
+    not resolve is kept as given with a warning for the filing reply — never a refusal."""
+
+    def setUp(self):
+        super().setUp()
+        self.root = os.path.join(self.td.name, "notes-api")
+        os.makedirs(os.path.join(self.root, "docs"))
+        self.fp = os.path.join(self.root, "docs", "report.md")
+        with open(self.fp, "w") as f:
+            f.write("# Findings\n")
+        self._cwd = km._cwd_of
+        km._cwd_of = lambda sid: self.root if sid == FSID else ""     # FSID2 has no recorded cwd
+
+    def tearDown(self):
+        km._cwd_of = self._cwd
+        super().tearDown()
+
+    def test_an_absolute_file_is_stored_and_rides_the_open_rows(self):
+        tid = km._add_user_todo(FSID, "Need a look at the findings report", file=self.fp)
+        rec = km._user_todos()[FSID][0]
+        self.assertEqual(rec["file"], self.fp)
+        rows = km._open_user_todos(FSID)
+        self.assertEqual((rows[0]["id"], rows[0]["file"]), (tid, self.fp), "the rows every surface ships carry it")
+
+    def test_a_todo_without_a_file_stores_no_file_key(self):
+        km._add_user_todo(FSID, "Need the staging port")
+        km._add_user_todo(FSID, "Need the fixture format pick", "either is fine", file="   ")
+        for rec in km._user_todos()[FSID] + km._open_user_todos(FSID):
+            self.assertNotIn("file", rec, "a file-less todo keeps the shape it had")
+
+    def test_a_relative_file_resolves_against_the_sessions_cwd_and_is_normalized(self):
+        km._add_user_todo(FSID, "Need a look at the findings report", file="docs/../docs/report.md")
+        self.assertEqual(km._user_todos()[FSID][0]["file"], self.fp)
+        self.assertEqual(km._user_todo_file("docs/report.md", FSID), (self.fp, None))
+
+    def test_a_tilde_path_expands(self):
+        with mock.patch.dict(os.environ, {"HOME": self.root}):
+            self.assertEqual(km._user_todo_file("~/docs/report.md", FSID), (self.fp, None))
+
+    def test_an_unresolvable_file_is_kept_as_given_with_a_warning_never_refused(self):
+        tid = km._add_user_todo(FSID2, "Need a look at the findings report", file="docs/report.md")
+        self.assertRegex(tid, r"^ut-[0-9a-f]{8}$", "filed all the same")
+        self.assertEqual(km._user_todos()[FSID2][0]["file"], "docs/report.md")
+        stored, warning = km._user_todo_file("docs/report.md", FSID2)
+        self.assertEqual(stored, "docs/report.md")
+        for words in ("docs/report.md", "did not resolve", "absolute path"):
+            self.assertIn(words, warning)
+
+    def test_no_file_means_no_warning(self):
+        self.assertEqual(km._user_todo_file(None, FSID), (None, None))
+        self.assertEqual(km._user_todo_file("", FSID), (None, None))
+
+    def test_the_spelling_is_stored_not_the_realpath(self):
+        # the store keeps the path as named (the chip shows what the agent said); matching by
+        # realpath is the comments panel's job at status time (_user_todos_naming_file)
+        alias = os.path.join(self.td.name, "alias.md")
+        os.symlink(self.fp, alias)
+        km._add_user_todo(FSID, "Need a look at the findings report", file=alias)
+        self.assertEqual(km._user_todos()[FSID][0]["file"], alias)
+
+    def test_the_lifecycle_log_carries_the_file_and_the_rebuild_restores_it(self):
+        tid = km._add_user_todo(FSID, "Need a look at the findings report", file=self.fp)
+        km._add_user_todo(FSID, "Need the staging port")
+        km._resolve_user_todo(FSID, tid, "answered", reply="Re: … — looks good")
+        lines = (jd.STATE / km.USER_TODOS_LOG_FILE).read_text().splitlines()
+        recs = [json.loads(ln) for ln in lines]
+        self.assertEqual([r.get("file") for r in recs], [self.fp, None, self.fp],
+                         "every line of a todo that names a file carries it; a file-less line does not")
+        self.assertNotIn("file", recs[1], "the documented shape for a file-less filing, nothing else")
+        rebuilt = km._user_todos_from_log(lines)
+        self.assertEqual(rebuilt[FSID][0]["file"], self.fp)
+        self.assertEqual(rebuilt[FSID][0]["resolved"]["kind"], "answered")
+        self.assertNotIn("file", rebuilt[FSID][1])
+        # a resolution whose filing was rotated away still knows its file
+        got = km._user_todos_from_log([{"t": 9, "sid": FSID, "id": "ut-9", "kind": "withdrawn",
+                                        "text": "Need the port", "detail": "", "file": self.fp}])
+        self.assertEqual(got[FSID][0]["file"], self.fp)
 
 
 class ResolutionStamps(_StoreSandbox):
@@ -446,6 +547,259 @@ class Routes(_StoreSandbox):
         self.assertTrue(out["ok"])
         self.assertEqual(len(self.pushed_soon), 2, "each route wakes the pusher instead")
 
+    # ── the todo-file follow-on (2026-09-07): `file` in, resolved; `warning` out when it did not ──
+
+    def test_register_takes_the_file_resolves_it_and_answers_no_warning(self):
+        root = os.path.join(self.td.name, "notes-api")
+        os.makedirs(os.path.join(root, "docs"))
+        fp = os.path.join(root, "docs", "report.md")
+        open(fp, "w").close()
+        with mock.patch.object(km, "_cwd_of", lambda sid: root if sid == FSID else ""):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look at the findings report",
+                                                 "file": "docs/report.md"})
+            code2, res2 = self._post("/usertodo", {"id": FSID, "text": "Need a look at the other note", "file": fp})
+        self.assertEqual((code, code2), (200, 200))
+        self.assertTrue(res["ok"] and res2["ok"])
+        self.assertNotIn("warning", res)
+        self.assertNotIn("warning", res2)
+        recs = km._user_todos()[FSID]
+        self.assertEqual(recs[0]["file"], fp, "resolved against the session's cwd, stored absolute")
+        self.assertEqual(recs[1]["file"], fp, "an absolute path passes through")
+        self.assertEqual(len(self.pushed_soon), 2)
+
+    def test_register_keeps_an_unresolvable_file_as_given_and_warns_without_refusing(self):
+        with mock.patch.object(km, "_cwd_of", lambda sid: ""):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look at the findings report",
+                                                 "file": "docs/report.md"})
+        self.assertEqual(code, 200)
+        self.assertTrue(res["ok"], "never refused for its file")
+        self.assertRegex(res["todoId"], r"^ut-[0-9a-f]{8}$")
+        self.assertIn("did not resolve", res["warning"])
+        self.assertIn("docs/report.md", res["warning"])
+        self.assertEqual(km._user_todos()[FSID][0]["file"], "docs/report.md", "kept as given")
+        self.assertEqual(len(self.pushed_soon), 1)
+
+    def test_register_without_a_file_answers_as_before(self):
+        code, res = self._post("/usertodo", {"id": FSID, "text": "Need the staging port"})
+        self.assertEqual(code, 200)
+        self.assertEqual(set(res), {"ok", "todoId"})
+        self.assertNotIn("file", km._user_todos()[FSID][0])
+
+    def test_the_remote_forward_passes_the_file_and_the_warning_back(self):
+        seen = []
+        remote = {"host": "TESTHOST", "local_port": 1, "token": "t"}
+        warn = "the file path docs/report.md did not resolve to an absolute path"
+
+        def fwd(r, path, body):
+            seen.append((path, body))
+            return {"ok": True, "todoId": "ut-9f2c1a34", "warning": warn}
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), mock.patch.object(km, "_remote_forward", fwd):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need a look at the findings report",
+                                                 "detail": "the morning report", "file": "docs/report.md"})
+        self.assertEqual(code, 200)
+        self.assertEqual(seen, [("/usertodo", {"id": FSID, "text": "Need a look at the findings report",
+                                               "detail": "the morning report", "file": "docs/report.md"})],
+                         "the file crosses as given: the remote kernel resolves it against ITS disk")
+        self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a34", "warning": warn})
+        self.assertEqual(km._user_todos(), {}, "nothing stored here: the remote owns that session's ledger")
+        # no file: the forward carries none, and a remote answer without a warning adds none
+        seen.clear()
+
+        def fwd2(r, path, body):
+            seen.append((path, body))
+            return {"ok": True, "todoId": "ut-9f2c1a35"}
+        with mock.patch.object(km, "_host_for_sid", lambda s: remote), mock.patch.object(km, "_remote_forward", fwd2):
+            code, res = self._post("/usertodo", {"id": FSID, "text": "Need the staging port"})
+        self.assertNotIn("file", seen[0][1])
+        self.assertEqual(res, {"ok": True, "todoId": "ut-9f2c1a35"})
+
+
+# A PRIVATE synthetic sid for the account tests below (the goal-store fixture rule, generalized:
+# rows minted under the shared placeholder can be reached by another module's fixtures).
+WSID = "7a7a7a7a-1111-4222-8333-944444444444"
+WSID2 = "7b7b7b7b-1111-4222-8333-944444444444"
+
+
+class WithdrawAccount(_StoreSandbox):
+    """POST /usertodo/withdraw ACCOUNTS for what it found (2026-09-07): `ok` keeps its meaning
+    (this call stamped the row), and `state` / `at` / `owner` say which kind of nothing-to-do an
+    ok:false was, so the postal tool can tell the agent "the person already answered it" apart from
+    "not your id". Two sessions had read the one-size ok:false as a failure. The route describes
+    the asker's own rows only: another session's id is `unknown`, never described."""
+
+    def setUp(self):
+        super().setUp()
+        self._push = (km._push_all, km._push_soon)
+        self.pushed_soon = []
+        km._push_all = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("synchronous _push_all on a postal-called route"))
+        km._push_soon = lambda: self.pushed_soon.append(True)
+
+    def tearDown(self):
+        km._push_all, km._push_soon = self._push
+        super().tearDown()
+
+    def _post(self, path, body):
+        code, out = _serve_post(path, body, {"X-Romp-Token": km.TOKEN})
+        self.assertEqual(code, 200)
+        return json.loads(out.decode() or "{}")
+
+    def _file(self, text="Need the auth-scheme decision", sid=WSID):
+        tid = self._post("/usertodo", {"id": sid, "text": text})["todoId"]
+        self.pushed_soon.clear()                     # the register's own wake; the counts below are the withdraw's
+        return tid
+
+    def _withdraw(self, tid, sid=WSID):
+        return self._post("/usertodo/withdraw", {"id": sid, "todoId": tid})
+
+    def test_a_fresh_withdraw_is_ok_and_accounts_the_stamp_it_made(self):
+        tid = self._file()
+        out = self._withdraw(tid)
+        row = km._user_todos()[WSID][0]
+        self.assertEqual(row["resolved"]["kind"], "withdrawn")
+        self.assertEqual(out, {"ok": True, "state": "withdrawn", "at": row["resolved"]["t"], "owner": True})
+        self.assertIsInstance(out["at"], int)
+        self.assertEqual(len(self.pushed_soon), 1, "the row leaves the split card")
+
+    def test_a_row_the_person_answered_is_accounted_answered_and_left_alone(self):
+        tid = self._file()
+        self.assertTrue(km._resolve_user_todo(WSID, tid, "answered", reply="OAuth."))
+        stamp = km._user_todos()[WSID][0]["resolved"]
+        out = self._withdraw(tid)
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["at"], out["owner"]), ("answered", stamp["t"], True))
+        self.assertTrue(out.get("error"), "the old contract's error text still rides along")
+        self.assertEqual(km._user_todos()[WSID][0]["resolved"], stamp, "a withdraw never overwrites a stamp")
+        self.assertEqual(self.pushed_soon, [], "nothing changed, nothing to push")
+
+    def test_a_row_the_person_dismissed_is_accounted_dismissed(self):
+        tid = self._file()
+        self.assertTrue(km._resolve_user_todo(WSID, tid, "dismissed"))
+        stamp = km._user_todos()[WSID][0]["resolved"]
+        out = self._withdraw(tid)
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["at"], out["owner"]), ("dismissed", stamp["t"], True))
+
+    def test_a_second_withdraw_accounts_the_first_ones_stamp(self):
+        tid = self._file()
+        first = self._withdraw(tid)
+        again = self._withdraw(tid)
+        self.assertFalse(again["ok"])
+        self.assertEqual((again["state"], again["at"], again["owner"]), ("withdrawn", first["at"], True))
+        self.assertEqual(len(self.pushed_soon), 1, "only the stamping call woke the pusher")
+
+    def test_an_unknown_id_is_unknown_and_not_owned(self):
+        out = self._withdraw("ut-deadbeef")
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["at"], out["owner"]), ("unknown", None, False))
+        self.assertTrue(out.get("error"))
+
+    def test_another_sessions_id_is_unknown_to_the_asker_and_stays_open(self):
+        tid = self._file(sid=WSID2)
+        out = self._withdraw(tid, sid=WSID)
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["state"], out["owner"]), ("unknown", False), "never described, never stamped")
+        self.assertNotIn("resolved", km._user_todos()[WSID2][0], "the other session's ask still stands")
+        self.assertEqual(self.pushed_soon, [])
+
+    def test_the_lookup_and_the_stamp_share_one_critical_section(self):
+        # a racing answer must not land between "found open" and the stamp: the stamp is made
+        # while the account's look-up still holds the store lock (re-entrant, so the nested
+        # _resolve_user_todo takes it again instead of deadlocking)
+        held = []
+        real = km._resolve_user_todo
+        km._resolve_user_todo = lambda *a, **k: (held.append(km._user_todos_lock._is_owned()) or real(*a, **k))
+        try:
+            tid = self._file()
+            self.assertTrue(self._withdraw(tid)["ok"])
+        finally:
+            km._resolve_user_todo = real
+        self.assertEqual(held, [True], "the stamp ran inside the look-up's lock")
+
+    def _seed_row(self, resolved, sid=WSID):
+        """A hand-edited store: one row of the asker's with the given closing stamp, as written."""
+        row = {"id": "ut-11111111", "text": "Need the auth-scheme decision", "createdT": NOW - 60,
+               "resolved": resolved}
+        (jd.STATE / "user-todos.json").write_text(json.dumps({sid: [row]}))
+        km._user_todos_cache.clear()
+        return row
+
+    def test_a_malformed_closing_stamp_is_unknown_and_named_never_open(self):
+        # review round 1 (2026-09-07): `resolved` truthy but not a {kind, t} stamp with one of the
+        # three kinds (no writer makes one: a hand-edited or damaged store) read as state 'open', a
+        # fifth value the contract does not have, which the tool worded as already closed. The row
+        # is not open (a truthy stamp blocks the stamp), so the account is unknown-shaped, names
+        # the stamp it could not read, and says the row is the asker's own; nothing is rewritten.
+        for stamp in (True, "withdrawn", 1781200000, {"t": 1781200000}, {"kind": "", "t": 1781200000},
+                      {"kind": "lost", "t": 1781200000}, {"kind": ["withdrawn"], "t": 1781200000}):
+            with self.subTest(stamp=stamp):
+                row = self._seed_row(stamp)
+                out = self._withdraw("ut-11111111")
+                self.assertFalse(out["ok"])
+                self.assertEqual((out["state"], out["at"], out["owner"]), ("unknown", None, True))
+                self.assertIn("malformed closing stamp on ut-11111111", out["error"])
+                self.assertIn(repr(stamp), out["error"], "names the stamp it could not read")
+                self.assertIn("answered | dismissed | withdrawn", out["error"], "and the shape it expected")
+                self.assertEqual(km._user_todos()[WSID][0], row, "the damage is reported, not papered over")
+                self.assertEqual(self.pushed_soon, [], "nothing changed, nothing to push")
+
+    def test_a_well_formed_stamp_of_each_kind_is_still_its_own_state(self):
+        # the validation above must not narrow the three real states
+        for kind in ("answered", "dismissed", "withdrawn"):
+            with self.subTest(kind=kind):
+                self._seed_row({"kind": kind, "t": 1781200000})
+                out = self._withdraw("ut-11111111")
+                self.assertEqual((out["ok"], out["state"], out["at"], out["owner"]),
+                                 (False, kind, 1781200000, True))
+                self.assertNotIn("malformed", out.get("error", ""))
+
+    def _forward(self, st, res, sid=WSID):
+        """Drive the route's remote branch: the sid maps to TESTHOST and its tunnel answers (st, res),
+        the (status, parsed body) pair _remote_forward_status returns."""
+        saved = (km._host_for_sid, km._remote_forward_status)
+        km._host_for_sid = lambda s: {"host": "TESTHOST", "local_port": 1, "token": "t"}
+        km._remote_forward_status = lambda r, path, body, method="POST": (st, res)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                code, out = _serve_post("/usertodo/withdraw", {"id": sid, "todoId": "ut-9f2c1a34"},
+                                        {"X-Romp-Token": km.TOKEN})
+        finally:
+            km._host_for_sid, km._remote_forward_status = saved
+        return code, json.loads(out.decode() or "{}")
+
+    def test_the_remote_forward_passes_the_account_through(self):
+        acct = {"ok": False, "state": "answered", "at": 1781200000, "owner": True}
+        self.assertEqual(self._forward(200, acct), (200, acct))
+        # a remote kernel that predates the account answers ok alone: nothing is invented
+        self.assertEqual(self._forward(200, {"ok": False}), (200, {"ok": False}))
+        # the remote's error rides along too (its malformed-stamp account names the stamp there)
+        bad = {"ok": False, "state": "unknown", "at": None, "owner": True,
+               "error": "malformed closing stamp on ut-9f2c1a34: resolved=True (a stamp is {kind: answered | dismissed | withdrawn, t})"}
+        self.assertEqual(self._forward(200, bad), (200, bad))
+        self.assertEqual(self.pushed_soon, [], "a forwarded withdraw changes nothing here")
+
+    def test_a_remote_that_gave_no_account_is_a_502_never_already_closed(self):
+        # review round 1 (2026-09-07): a dead tunnel answered 200 {"ok": false}, which the tool
+        # worded as "already answered, dismissed, or withdrawn" while the row still stood on the
+        # remote. A non-2xx makes the tool say the withdraw did not happen (_kernel_post reads a
+        # 502 as None), which is true; the body names the cause for a caller that reads it.
+        # Through the tool this branch is out of reach (a session's tool posts to its own host's
+        # kernel, whose GET /sessions lists local sessions only, so its sid maps to no remote
+        # there); the route is API for any token holder, so it answers honestly regardless.
+        for st, res, words in ((0, None, ("tunnel to TESTHOST", "not answering")),
+                               (404, None, ("kernel on TESTHOST", "predates /usertodo/withdraw")),
+                               (500, None, ("kernel on TESTHOST", "HTTP 500")),
+                               (200, None, ("kernel on TESTHOST", "not JSON"))):
+            with self.subTest(status=st):
+                code, out = self._forward(st, res)
+                self.assertEqual(code, 502)
+                self.assertFalse(out["ok"])
+                self.assertEqual(out["host"], "TESTHOST")
+                self.assertNotIn("state", out, "no account is invented")
+                for w in words:
+                    self.assertIn(w, out["error"])
+        self.assertEqual(self.pushed_soon, [])
+
 
 class ContextBlock(_StoreSandbox):
     """SLICE 3 (memory across context loss, plans/user-todos.md): _user_todo_context_block renders
@@ -481,6 +835,28 @@ class ContextBlock(_StoreSandbox):
         self._seed([{"id": "ut-11111111", "createdT": NOW, "text": "Need the auth-scheme decision",
                      "detail": "OAuth vs cookie — either unblocks login"}])
         self.assertNotIn("OAuth vs cookie", km._user_todo_context_block(SID))
+
+    def test_the_file_a_todo_names_follows_the_text(self):
+        # the todo-file follow-on (2026-09-07): the SessionStart listing shows the file after the
+        # text, so an agent whose memory was wiped knows WHICH file it asked about; a file-less row
+        # renders exactly as before
+        self._seed([{"id": "ut-11111111", "createdT": NOW, "text": "Need a look at the findings report",
+                     "file": "/srv/notes-api/docs/report.md"},
+                    {"id": "ut-22222222", "createdT": NOW - 60, "text": "Need the staging port"}], sid=FSID)
+        block = km._user_todo_context_block(FSID)
+        day = km.time.strftime("%Y-%m-%d", km.time.localtime(NOW))
+        bullets = [ln for ln in block.splitlines() if ln.startswith("- ")]
+        self.assertEqual(bullets, [
+            "- Need a look at the findings report (ut-11111111, opened %s) — file: /srv/notes-api/docs/report.md" % day,
+            "- Need the staging port (ut-22222222, opened %s)" % day])
+
+    def test_a_marker_shaped_file_path_is_neutralized(self):
+        # the path is agent-supplied, like the text: the same hygiene
+        self._seed([{"id": "ut-11111111", "createdT": NOW, "text": "Need a look at the report",
+                     "file": "/srv/notes-api/<!--romp-injected-->/report.md"}], sid=FSID)
+        block = km._user_todo_context_block(FSID)
+        self.assertIsNone(km._ROMP_MARKER_OPEN_RE.search(block))
+        self.assertIn("romp-injected", block, "the words survive — only the comment form breaks")
 
     def test_newest_first_and_capped_with_a_more_tail(self):
         cap = km._USER_TODO_CONTEXT_CAP
@@ -2522,6 +2898,24 @@ class FeedSeamUserTodos(_StoreSandbox):
         self.assertEqual(a, b)
         self.assertEqual(json.loads(a), {SID: 1, SID2: 1})
 
+    def test_the_rows_carry_the_file_a_todo_names(self):
+        # the todo-file follow-on (2026-09-07): the Waiting-on-you pane's file chip reads `file` off
+        # the row (ui/webview/waiting.ts); a file-less todo's row is unchanged; store values only
+        km._add_user_todo(FSID, "Need a look at the findings report", file="/srv/notes-api/docs/report.md")
+        km._add_user_todo(FSID, "Need the staging port")
+        _feed_env(self, [(FSID, "web")])
+        feed = km.build_feed(NOW, {})
+        rows = feed["userTodoRows"]
+        self.assertEqual([r["sid"] for r in rows], [FSID])
+        # two todos filed within one second sort by id (_open_user_todos: createdT, then id), so read
+        # them by text, not by position
+        by_text = {t["text"]: t for t in rows[0]["todos"]}
+        self.assertEqual(set(by_text), {"Need a look at the findings report", "Need the staging port"})
+        self.assertEqual(by_text["Need a look at the findings report"]["file"], "/srv/notes-api/docs/report.md")
+        self.assertNotIn("file", by_text["Need the staging port"])
+        self.assertEqual(json.dumps(rows), json.dumps(km.build_feed(NOW, {})["userTodoRows"]),
+                         "byte-stable across builds when nothing changed")
+
     def test_the_view_sig_watches_the_store(self):
         # the marker/badge/floor all read this store from build_feed, so a todo write must bust
         # the FEED cache the way it already busts the owning session's chat cache — without this
@@ -2785,7 +3179,9 @@ class OneInterruptStory(_StoreSandbox):
             mock.patch.object(km, "_warm_fleet_bg", lambda now: None),
             mock.patch.object(km, "_parse_cached", lambda path: {"turns": list(turns)}),
             mock.patch.object(km, "_merge_live_atoms", lambda ps, sid: ps),
-            mock.patch.object(km, "_feed_goals", lambda sid: dict(store)),
+            # build_feed reads the store with its identity key (_feed_goals_view, 2026-09-07); a synthetic
+            # store has no identity guarantee, so it rides a sentinel key (the memo bypasses it)
+            mock.patch.object(km, "_feed_goals_view", lambda sid: (dict(store), object())),
             # the predicate is pinned separately (EscalationFloorPredicate); force-arm it here
             # so these shapes exercise the GUARDS, not the arming gates — arity-proof on purpose
             mock.patch.object(km, "_user_todo_idle", lambda *a, **k: True),

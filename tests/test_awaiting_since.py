@@ -32,7 +32,7 @@ class SessionAwaitingSince(unittest.TestCase):
                         "_owned_yield_why", "_session_stamp_full", "_session_delegated_why")}
         # neutral defaults: a live CLI with nothing in flight, every deeper source empty
         km._tmux_sessions = lambda: {SID: {}}
-        km._bg_live_norm = lambda sid, path: []
+        km._bg_live_norm = lambda sid, path, live=None: []
         km._bg_pending = lambda sid, path, tasks: []
         km._states_awaiting_overlay = lambda sid: None
         km._owned_yield_why = lambda sid, path: None
@@ -53,11 +53,11 @@ class SessionAwaitingSince(unittest.TestCase):
     def test_pending_bg_tasks_use_the_oldest_dispatch(self):
         tasks = [{"tid": "1", "desc": "watching CI run", "t": 700, "type": "bash"},
                  {"tid": "2", "desc": "poll deploy", "t": 300, "type": "bash"}]
-        km._bg_live_norm = lambda sid, path: tasks
+        km._bg_live_norm = lambda sid, path, live=None: tasks
         km._bg_pending = lambda sid, path, ts: ts
         aw = km._session_awaiting(SID, "/tmp/x", True)
         self.assertEqual(aw["since"], 300)
-        self.assertIn("2 background tasks", aw["why"])
+        self.assertIn("2 background commands", aw["why"])   # "commands" since slice 2 (2026-09-05): shell launches are command rows
 
     def test_overlay_rides_its_own_rows_stamp(self):
         km._states_awaiting_overlay = lambda sid: {"awaiting": True, "why": "waiting on a build",

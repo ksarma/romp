@@ -56,8 +56,13 @@ class _FeedWorld(unittest.TestCase):
         for p in self.patches:
             p.start()
             self.addCleanup(p.stop)
+        self.poisoned0 = jd.shared_store_stats()["poisoned"]
 
     def tearDown(self):
+        # the shared-cache landing gate (round-4 plan P1): build_feed reads its stores through the shared
+        # read-only cache, so a build here must never have written into one
+        self.assertEqual(jd.shared_store_stats()["poisoned"] - self.poisoned0, 0,
+                         "a feed build wrote into a shared goal store (see judge-errors frozen-store-write)")
         jd.STATE, jd.GOALDIR, jd.GOALARCHDIR, jd.NAMES = self.saved
         self.td.cleanup()
 

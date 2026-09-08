@@ -265,7 +265,7 @@ test('a whole-file comment has addComment\'s shape minus the anchor: id `${now}-
   assert.equal(r.unsent.comments[0], c.id);
 });
 
-test('a passage comment deep-equals addComment\'s object for the same quote and note apart from id and ts; v stays 3 and the fingerprint matches', () => {
+test('a passage comment deep-equals addComment\'s object for the same quote and note apart from id, ts and the romp-only anchorAt; v stays 3 and the fingerprint matches', () => {
   const w = world();
   const quote = 'cut p95 latency by 40%';
   const { anchor, hintOffset, idx } = anchorAt(w.text, quote, 0);
@@ -276,10 +276,15 @@ test('a passage comment deep-equals addComment\'s object for the same quote and 
   const now = 1700000000000;
   assert.equal(addComment(seed, w.text, quote, 'Say which percentile window.', 'you', now, null).error, undefined);
   const want = seed.comments[0];
-  assert.deepEqual(Object.keys(got), Object.keys(want));
-  assert.deepEqual({ ...got, id: 'x', ts: 0 }, { ...want, id: 'x', ts: 0 });
+  // addComment's keys, plus the stored position after the anchor (the anchors follow-on, 2026-09-07:
+  // the second romp-only field, like `target`, which older readers ignore and every host writes back)
+  assert.deepEqual(Object.keys(got), ['id', 'author', 'ts', 'anchor', 'anchorAt', 'body', 'replies', 'resolved']);
+  assert.deepEqual(Object.keys(want), ['id', 'author', 'ts', 'anchor', 'body', 'replies', 'resolved']);
+  const { anchorAt: at, ...gotSans } = got;
+  assert.deepEqual({ ...gotSans, id: 'x', ts: 0 }, { ...want, id: 'x', ts: 0 });
+  assert.equal(at, idx, 'anchorAt is the offset the anchor located at');
   assert.equal(got.id, `${got.ts}-${idx}`);
-  assert.deepEqual(got.anchor, engine.makeAnchor(w.text, idx, idx + quote.length));
+  assert.deepEqual(got.anchor, engine.makeAnchor(w.text, idx, idx + quote.length), 'a passage unique at 24 characters keeps track-comment\'s context');
 
   const disk = readSidecar(r.storePath);
   assert.equal(disk.v, 3);
@@ -291,7 +296,7 @@ test('a passage comment deep-equals addComment\'s object for the same quote and 
   assert.equal(st.storeMtimeNs, r.storeMtimeNs);
 });
 
-test('a sidecar written by track-comment, replied to by the host script, read by track-reply keeps every field', () => {
+test('a sidecar written by track-comment, replied to by the host script, read by track-reply keeps every field (and gains the stored position)', () => {
   const w = world();
   cliOk(w, 'comment', ['--file', w.report, '--anchor', 'shipping the cache in v1.2', '--note', 'Which cache do you mean?']);
   const sp = storePathFor(w.root, w.report);
@@ -300,6 +305,10 @@ test('a sidecar written by track-comment, replied to by the host script, read by
   const agentComment = before.comments[0];
   assert.equal(agentComment.author, 'web');
   assert.equal(agentComment.authorId, SID);
+  assert.equal('anchorAt' in agentComment, false, 'the CLI writes the contract\'s shape alone');
+  // The host's write adds the one field it keeps on every anchored comment, romp-only and additive: the
+  // offset the anchor locates at (the anchors follow-on, 2026-09-07). Everything else is kept as written.
+  const placed = { ...agentComment, anchorAt: w.text.indexOf('shipping the cache in v1.2') };
 
   const st = status(w, w.report);
   assert.equal(st.store.comments[0].id, agentComment.id);
@@ -308,7 +317,7 @@ test('a sidecar written by track-comment, replied to by the host script, read by
   assert.equal(mid.v, 3);
   assert.equal(mid.id, before.id, 'the store id is kept');
   assert.deepEqual(mid.fingerprint, before.fingerprint);
-  assert.deepEqual({ ...mid.comments[0], replies: [] }, { ...agentComment, replies: [] });
+  assert.deepEqual({ ...mid.comments[0], replies: [] }, { ...placed, replies: [] });
   assert.equal(mid.comments[0].replies.length, 1);
   const you = mid.comments[0].replies[0];
   assert.deepEqual(Object.keys(you), ['author', 'ts', 'body']);
@@ -321,7 +330,7 @@ test('a sidecar written by track-comment, replied to by the host script, read by
   const after = readSidecar(sp);
   assert.equal(after.v, 3);
   assert.deepEqual(after.fingerprint, fingerprintOf(w.text));
-  assert.deepEqual({ ...after.comments[0], replies: [] }, { ...agentComment, replies: [] });
+  assert.deepEqual({ ...after.comments[0], replies: [] }, { ...placed, replies: [] }, 'track-reply writes the whole object back, anchorAt included');
   assert.deepEqual(after.comments[0].replies[0], you);
   assert.deepEqual(after.comments[0].replies[1], { author: 'web', authorId: SID, ts: after.comments[0].replies[1].ts, body: 'Done, and the table is updated.' });
   assert.deepEqual(after.suggestions, []);
@@ -343,7 +352,7 @@ test('a passage the host commented on is replied to by track-reply and its ancho
 test('a quote that occurs several times with different surroundings anchors to the selected one, even with a stale hint', () => {
   const w = world();
   const { anchor, hintOffset, idx } = anchorAt(w.text, 'retry on timeout', 2);
-  // Two lines land above the passage between the selection and Enter: the offset is stale, the
+  // Two lines land above the passage between the selection and the save: the offset is stale, the
   // context is not, and the third occurrence is still the one commented on.
   const inserted = 'Added line one.\nAdded line two.\n';
   fs.writeFileSync(w.report, inserted + w.text);
@@ -356,20 +365,28 @@ test('a quote that occurs several times with different surroundings anchors to t
   assert.equal(engine.locateAnchor(newText, c.anchor).from, idx + inserted.length, 'a hintless reader places it there too');
 });
 
-test('an ambiguous anchor (identical surroundings) refuses anchor-ambiguous and writes nothing', () => {
+test('a tie the hint settles is placed on the selected copy; a tie with no hint refuses anchor-ambiguous and writes nothing', () => {
   const w = world();
   const first = anchorAt(w.text, 'Ship it.', 0);
   const second = anchorAt(w.text, 'Ship it.', 1);
-  assert.deepEqual(first.anchor, second.anchor, 'the fixture\'s two occurrences share their context');
-  const r = refused(w, { verb: 'comment', path: w.report, args: { anchor: second.anchor, note: 'Not yet.', hintOffset: second.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
+  assert.deepEqual(first.anchor, second.anchor, 'the fixture\'s two occurrences share their 24 characters of context');
+  // No hint: nothing can pick a copy, so the comment is refused rather than saved on a guess.
+  const r = refused(w, { verb: 'comment', path: w.report, args: { anchor: second.anchor, note: 'Not yet.' }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
   assert.ok(r.error.includes('~/notes-api/docs/report.md'), r.error);
+  assert.ok(r.error.includes('position was not sent'), r.error);
   assert.equal(fs.existsSync(path.join(w.root, '.trackchanges')), false);
-  assert.deepEqual(locateExact(w.text, second.anchor, second.hintOffset), { error: 'anchor-ambiguous' });
-  // Selecting the FIRST occurrence is refused too: the hint would pick it now, but a later reader
-  // has no hint and would place the comment on whichever copy the engine picks then.
-  refused(w, { verb: 'comment', path: w.report, args: { anchor: first.anchor, note: 'Not yet.', hintOffset: first.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
-  assert.deepEqual(locateExact(w.text, first.anchor, first.hintOffset), { error: 'anchor-ambiguous' });
-  assert.deepEqual(locateExact(w.text, first.anchor, undefined), { error: 'anchor-ambiguous' });
+  assert.deepEqual(locateExact(w.text, second.anchor, undefined), { error: 'anchor-ambiguous' });
+  // The browser's hint settles it (the anchors follow-on, 2026-09-07): the comment lands on the
+  // selected copy, its stored anchor widened until a hintless reader places it there too, and its
+  // position stored beside it. tools/file-comments-host-anchors.test.mjs has the widening in detail.
+  assert.deepEqual(locateExact(w.text, second.anchor, second.hintOffset), { from: second.idx, to: second.idx + 'Ship it.'.length });
+  assert.deepEqual(locateExact(w.text, first.anchor, first.hintOffset), { from: first.idx, to: first.idx + 'Ship it.'.length });
+  const saved = comment(w, w.report, status(w, w.report), { anchor: second.anchor, note: 'Not yet.', hintOffset: second.hintOffset });
+  const c = readSidecar(saved.storePath).comments[0];
+  assert.equal(c.id, `${c.ts}-${second.idx}`);
+  assert.equal(c.anchorAt, second.idx);
+  assert.notDeepEqual(c.anchor, second.anchor, 'the stored anchor is wider than the 24 characters the browser sent');
+  assert.equal(engine.locateAnchor(w.text, c.anchor).from, second.idx, 'a hintless reader places it on the selected copy');
 });
 
 test('a passage that is gone refuses anchor-not-found, also when only its surroundings survive', () => {

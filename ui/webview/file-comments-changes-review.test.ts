@@ -1,7 +1,7 @@
 // The Comments panel's change cards and marks, driven AS A PANEL for what the Slice 2 review found untested or wrong
 // (plans/file-review.md, Slice 2; the contract's D4 and D5): the painters' newText check armed from the panel (a BOM
 // the fetch stripped paints nothing rather than marks one character off), the Rendered half of the paint pass (an
-// insertion painted and linked, a deletion card-only with Reveal to Raw), the file's own `data-act="fcchange"` markup
+// insertion painted and linked, a deletion a struck point since the inline-display follow-on), the file's own `data-act="fcchange"` markup
 // neither decorated nor owned, a bound comment's highlight opening its host change card, a painted change's reference
 // scrolling to its mark, the author's colour on a mark and the repaint when the colours arrive, no retry of the
 // id-less accept-all and reject-all after a moved fence, Send stating what the accept-all decided, the window between
@@ -121,7 +121,7 @@ class El {
     contains: (c: string) => this.classes.includes(c),
   };
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
     get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
@@ -332,7 +332,7 @@ function world(over: WorldOpts = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: an async GET in the real seam — held here until the test lands it (deferReload), else at once
@@ -412,7 +412,7 @@ test("hunks over the host's BOM-bearing text against a view without the BOM: not
 
 // ── the Rendered half of the paint pass ────────────────────────────────────────────────────────────
 
-test("Rendered: an insertion is painted and its card links to the mark; a deletion is card-only, tagged for the Rendered view, and its Reveal switches to Raw at the change's start", async (t: TestContext) => {
+test("Rendered: an insertion is painted and its card links to the mark; a deletion is a struck point at its place (the inline-display follow-on), its card plain, and its Reveal still switches to Raw at the change's start", async (t: TestContext) => {
   const w = world({ mode: "rendered" }); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ hunks: [h2, h3] }));
   const ins = marksOf(w, "h2");
@@ -423,20 +423,26 @@ test("Rendered: an insertion is painted and its card links to the mark; a deleti
   assert.ok(isLink(c2), "a painted change's reference is a link to its mark");
   assert.equal(tags(c2).includes("not shown"), false);
   assert.equal(act(c2, "fcreveal", "chg:h2"), null, "a painted insertion needs no Reveal");
-  assert.equal(marksOf(w, "h3").length, 0, "a deletion is never painted in Rendered");
+  // the deletion: the Raw view's zero-width point, in the paragraph before the word it preceded (file-comments-inline-toggle.test.ts
+  // reads its place and label); its card is as plain as the insertion's, and keeps the Reveal every deletion has
+  const del = marksOf(w, "h3");
+  assert.equal(del.length, 1, "a deletion is painted in Rendered too");
+  assert.equal(del[0].tagName, "SPAN"); assert.ok(del[0].classes.includes("fc-del"));
+  assert.equal(del[0].getAttribute("data-fc-text"), "quickly ");
+  assert.equal(del[0].getAttribute("role"), "button"); assert.equal(del[0].tabIndex, 0);
   const c3 = card(aside, "chg:h3")!;
-  const tag = c3.querySelectorAll(".fc-card-head .fc-tag").find((x) => x.textContent === "not shown")!;
-  assert.ok(tag, "the deletion's card says the view does not show it");
-  assert.equal(tag.title, "The Rendered view cannot show a deletion; Reveal opens it in Raw");
-  assert.equal(isLink(c3), false);
+  assert.equal(tags(c3).includes("not shown"), false, "the view shows it: no tag");
+  assert.ok(isLink(c3), "…and its reference is a link to the point");
   const rv = act(c3, "fcreveal", "chg:h3")!;
-  assert.ok(rv, "…and offers Reveal");
+  assert.ok(rv, "a deletion's Reveal is constant");
   rv.click();
   assert.deepEqual(w.modes, ["raw"]); assert.deepEqual(w.scrolls, [h3.curFrom]);
-  // the mark opens the card, as in Raw
+  // the marks open their cards, as in Raw
   ins[0].click();
   assert.ok(card(aside, "chg:h2")!.classes.includes("open"), "a click on the rendered mark opens its card");
   assert.ok(scrolledInto.includes(card(aside, "chg:h2")!));
+  del[0].click();
+  assert.ok(card(aside, "chg:h3")!.classes.includes("open"), "a click on the point opens the deletion's card");
 });
 
 test("Rendered: the file's own data-act=fcchange markup is neither decorated nor owned, and a card's link scrolls to the panel's mark, not the file's element", async (t: TestContext) => {

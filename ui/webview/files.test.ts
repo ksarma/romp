@@ -26,9 +26,11 @@ const row = (p: string, sid: string | null, name = "web", t = 1): RecentFile =>
 test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its own contract, not the feed's", () => {
   // initFileView's second argument replaces the default relay branch — the feed's viaRelay + ack —
   // for this document; the pane owes the shell no pane restore, it stays up
-  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);\n\}\);/);
-  assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/, "the browser opens here too");
-  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void\): void \{/);
+  assert.match(SRC, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\), \(m\) => \{\n\s*openHere\(m\.path, typeof m\.sid === "string" \? m\.sid : null, asIdentity\(m\.identity\), typeof m\.todoId === "string" \? m\.todoId : null\);\n\}, \{/);
+  // …and the third argument is the pane's opener for a link inside the shown file (file-view-links.test.ts pins its shape)
+  assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{\n\s*shellRestore: false,/,
+    "the browser opens here too, owing the shell no restore (browse-route.test.ts pins the contract)");
+  assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown; todoId\?: unknown \}\) => void,\n\s*host\?: \{ openFile\?: \(path: string, sid: string \| null, line: number \| null, frag: string \| null\) => void \}\): void \{/);
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
   const guard = "if (onRelay) { onRelay(m); return; }";
   // presence first: indexOf's -1 for an ABSENT guard is less than any index, so the ordering check alone
@@ -84,8 +86,8 @@ test("the relay guard, executed: onRelay takes the message and short-circuits th
 test("the session chip resolves from what the relay carried, cached per sid, else the kernel's stub", () => {
   assert.match(SRC, /setFileViewIdentity\(\(id\) => identities\.get\(id\) \?\? hostStub\(id\)\);/);
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId })") >= 0
-    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId })"),
+  assert.ok(openFn.indexOf("identities.set(sid, identity);") >= 0 && openFn.indexOf("openFileView(path, sid, { todoId, line, frag })") >= 0
+    && openFn.indexOf("identities.set(sid, identity);") < openFn.indexOf("openFileView(path, sid, { todoId, line, frag })"),
     "the cache is filled BEFORE the open, so the title bar's chip resolves on the first paint");
   assert.match(openFn, /if \(sid && identity\) identities\.set\(sid, identity\);/);
   assert.doesNotMatch(SRC, /sessionsMeta|tabMeta|sessions\.get/, "the pane has no session list of its own");
@@ -93,7 +95,7 @@ test("the session chip resolves from what the relay carried, cached per sid, els
 
 test("recent files: recorded only on a REAL open, painted as re-open rows in the viewer's own dress, click-safe", () => {
   const openFn = SRC.split("function openHere(")[1].split("\n}")[0];
-  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
+  assert.match(openFn, /if \(!openFileView\(path, sid, \{ todoId, line, frag \}\)\) return;\n\s*const known = /, "a dirty-edit veto records nothing");
   assert.match(openFn, /recent = rememberRecent\(recent, \{ path, sid, identity: known, t: Date\.now\(\) \}\);/);
   assert.match(SRC, /let recent: RecentFile\[\] = parseRecent\(readStore\(\)\);/, "persisted per browser");
   assert.match(SRC, /"No file open"/);
@@ -110,7 +112,9 @@ test("close returns to the empty state: the placeholder repaints on the viewer e
   // observer covers every open/close path (relay, recent row, browser rows and back, ✕, Esc, Reload)
   assert.match(SRC, /new MutationObserver\(onBodyChange\)\.observe\(document\.body, \{ childList: true \}\);/);
   assert.match(SRC, /function onBodyChange\(\): void \{\n\s*paint\(\);/, "the repaint still rides the observer");
-  assert.match(SRC, /const open = !!document\.getElementById\("romp-fileview"\);\n\s*empty\.hidden = open;\n\s*if \(open\) return;/);
+  // "open" is either surface: the viewer OR the browser (2026-09-06, the listing as a column), by element presence
+  assert.match(SRC, /const open = surfaceUp\(\);\n\s*empty\.hidden = open;\n\s*if \(open\) return;/);
+  assert.match(SRC, /function surfaceUp\(\): boolean \{\n\s*return !!\(document\.getElementById\("romp-fileview"\) \|\| document\.getElementById\("romp-filebrowse"\)\);\n\}/);
   assert.doesNotMatch(SRC, /setInterval|setTimeout/, "event-based, no polling");
 });
 
@@ -119,8 +123,9 @@ test("close returns to the empty state: the placeholder repaints on the viewer e
 // (the feed route resets to chat on viewFileClosed; this pane never posted anything). The shell restores
 // the tab the click came from, mobile only (kernel.py filesViewerClosed; tests/test_pane_state_broadcast.py).
 test("the viewer's close EDGE posts filesViewerClosed up to the shell — once, framed only, never on an open-over-open", () => {
-  assert.match(SRC, /let viewerUp = !!document\.getElementById\("romp-fileview"\);/);
-  assert.match(SRC, /const up = !!document\.getElementById\("romp-fileview"\);\n\s*if \(viewerUp && !up && window\.parent !== window\) window\.parent\.postMessage\(\{ romp: "filesViewerClosed" \}, "\*"\);\n\s*viewerUp = up;/);
+  // the edge is "nothing left up": a viewer closing back onto the listing beneath it is not a close (2026-09-06)
+  assert.match(SRC, /let viewerUp = surfaceUp\(\);/);
+  assert.match(SRC, /const up = surfaceUp\(\);\n\s*if \(viewerUp && !up && window\.parent !== window\) window\.parent\.postMessage\(\{ romp: "filesViewerClosed" \}, "\*"\);\n\s*viewerUp = up;/);
   assert.equal((SRC.match(/filesViewerClosed/g) || []).length, 2, "one post site (plus its comment)");
   // executed: the edge detector as the source spells it — a post only on up→down, framed
   const run = (states: boolean[], framed: boolean): number => {
@@ -159,7 +164,7 @@ test("wired and vocabulary-clean: esbuild entries, no federation import, no flee
 // flag-algebra idiom) and run against a shimmed window/document — a `pane:"pane"` click drives the
 // Files branch and never touches the feed's flags; the same click without `pane` still takes the feed route
 test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane forward and forwards identity; the feed route is untouched", () => {
-  const start = KERNEL.indexOf("if(m.romp==='browseFiles')");
+  const start = KERNEL.indexOf("if(m.romp==='browseFiles'&&m.pane==='pane'){");   // the first browse arm (2026-09-06)
   const stop = KERNEL.indexOf("// One id per dashboard", start);
   assert.ok(start >= 0 && stop > start, "arm anchors not found — re-anchor this extraction");
   let arms = KERNEL.slice(start, stop).trimEnd();

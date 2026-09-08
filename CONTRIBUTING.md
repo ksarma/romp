@@ -16,6 +16,13 @@ bats tests/*.bats          # the shell surfaces (hooks, postal, manager)
 cd vscode-extension && npm ci && npm test
 ```
 
+`npm test` caps `node --test` at 8 worker processes (`--test-concurrency=8`). Node's
+default is one worker per core minus one, so a 32-core machine would start 31 test
+processes at once, some driving a headless Chromium, and overlapping runs there ran the
+machine out of memory. To use another count, build the tests and start the runner
+yourself, from `vscode-extension/`: `node esbuild.js --tests && node --test
+--test-concurrency=N 'out-tests/**/*.test.js'`.
+
 `tests/gitleaks-config.bats` checks the secret-scanning rules against the real
 scanner and skips itself when `gitleaks` is not installed (`brew install
 gitleaks`, or the pinned binary CI uses). Installing it also arms the credential

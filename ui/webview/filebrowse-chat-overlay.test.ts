@@ -5,6 +5,9 @@
 // styles.css alone, so the browser mounted as UNSTYLED block flow at the document bottom. The
 // overlay family now mirrors in styles.css (the .romp-acted two-sheets precedent) and this test
 // pins the two byte-equal so they cannot drift.
+// Since 2026-09-06 (file-route.ts browseRoute) the chat shows this overlay only UNFRAMED, on standalone
+// /chat: framed, a browse goes to the Files pane or the feed pane through the shell. The mirror stays for
+// that host, and so do these pins.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -15,7 +18,7 @@ const CHAT = read("styles.css");
 const FEED = read("feed.css");
 
 const RULES = [
-  ".filebrowse {", "body.filebrowse-open {", ".fb-bar {", ".fb-crumbs {", ".fb-crumb {",
+  "#romp-filebrowse {", ".filebrowse {", "body.filebrowse-open {", ".fb-bar {", ".fb-crumbs {", ".fb-crumb {",
   ".fb-list {", ".fb-row {", ".fb-name {", ".fb-size {", ".fb-more {", "#fb-ctx {", ".fb-crumb-up {",
 ];
 
@@ -31,18 +34,16 @@ test("every browser overlay rule exists in BOTH sheets, byte-equal — the chat 
   }
 });
 
-test("the overlay geometry: pane-filling, viewer stays one layer above, scroll locked while open", () => {
-  assert.match(CHAT, /\.filebrowse \{ position: fixed; inset: 0; z-index: 890;/,
-    "GIANT — fixed inset-0 fills the pane, thread AND composer beneath");
+test("the browser is a centered CARD over a dimmed backdrop; viewer one layer above; scroll locked", () => {
+  // the 2026-08-24 pane takeover was superseded 2026-09-04 (the user found it odd once the listing
+  // was capped): the viewer's own treatment now — the id/dim on the backdrop, the card capped in
+  // px/% (never vh: in a pane iframe vh IS the pane, and the cap must lose to 95% on short panes)
+  assert.match(CHAT, /#romp-filebrowse \{ position: fixed; inset: 0; z-index: 890; background: var\(--overlay-dim\);/);
+  assert.match(CHAT, /\.filebrowse \{ width: min\(720px, 95%\); height: min\(760px, 95%\);/);
   assert.match(CHAT, /body\.filebrowse-open \{ overflow: hidden; \}/, "the thread cannot scroll behind it");
   // the viewer overlays the listing (the one-directional stack): 1200 > 890
   const vz = Number((CHAT.match(/#romp-fileview \{[^}]*z-index: (\d+)/s) || [])[1]);
   assert.ok(vz > 890, "the viewer's backdrop sits above the browser (got " + vz + ")");
-});
-
-test("the overlay stays GIANT; the LISTING reads at a centered measure on wide panes", () => {
-  // the 2026-08-24 ruling stands (fixed inset-0 over the whole chat area) — the 2026-09-02 fix caps
-  // only the rows' measure: full-width rows put a file's size ~800px from its name on desktop.
-  // min(720px, 100%) keeps narrow panes and phones pixel-identical.
-  assert.match(CHAT, /\.fb-list \{[^}]*width: min\(720px, 100%\); margin-inline: auto; \}/);
+  // the card bounds the rows itself — the interim .fb-list measure cap is gone with the takeover
+  assert.match(CHAT, /\.fb-list \{ flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; \}/);
 });

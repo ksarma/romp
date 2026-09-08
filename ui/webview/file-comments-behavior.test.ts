@@ -2,7 +2,7 @@
 // and selectors, so the anchor-map walkers, the one delegate root, the composer, the poll and the send all
 // run for real — what file-comments.test.ts pins at source is exercised as behavior here. Covered: a note
 // typed while the file changes underneath (the composer follows the passage, and Save anchors the
-// SELECTED passage); a refused mapping has no Save; one write per Enter; the poll's re-read; the todo
+// SELECTED passage); a refused mapping has no Save; one write per save chord; the poll's re-read; the todo
 // latch keyed on the stamp; the onSaved refresh; touch on the floating button; selections inside the
 // panel; the card toggle and keyboard reach; the status wait; a kernel warn leaving a request alone.
 // Synthetic fixtures only: the notes-api world, placeholder ids, TESTHOST.
@@ -10,8 +10,9 @@ import { test, type TestContext } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { FileViewActionCtx } from "./file-view";
+import type { FileViewActionCtx, TrackedEdit } from "./file-view";
 import type { Status, StoreComment } from "./file-comments-model";
+import { MOVED_UNDER_EDIT } from "./file-comments-model";
 
 const web = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const SRC = web("file-comments.ts");
@@ -24,7 +25,8 @@ class Ev {
   defaultPrevented = false;
   stopped = false;
   key: string;
-  constructor(public type: string, init: { key?: string } = {}) { this.key = init.key || ""; }
+  ctrlKey: boolean; metaKey: boolean;
+  constructor(public type: string, init: { key?: string; ctrlKey?: boolean; metaKey?: boolean } = {}) { this.key = init.key || ""; this.ctrlKey = !!init.ctrlKey; this.metaKey = !!init.metaKey; }
   preventDefault(): void { this.defaultPrevented = true; }
   stopPropagation(): void { this.stopped = true; }
 }
@@ -239,6 +241,8 @@ type World = {
   hooks: { rendered: Array<() => void>; selection: Array<(s: Selection) => void>; saved: Array<(i: { mtimeNs: string; logged: boolean }) => void>; close: Array<() => void> };
   disk: string; reloads: number; scrolls: number[]; modes: string[];
   mtimes: Record<string, string>; heads: string[];
+  editing: boolean; tracked: TrackedEdit | null;    // the viewer's edit mode, and the panel's half of editing over pending changes (Slice 5)
+  closeAsk: (() => { question: string; kept: string } | null) | null;   // the panel's draft ask, as it registered it through guardClose
   setText(src: string): void; close(): void;
 };
 let cur: World | null = null;
@@ -277,6 +281,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     posted: [] as any[], main, body, code, actions,
     hooks: { rendered: [] as Array<() => void>, selection: [] as Array<(s: Selection) => void>, saved: [] as Array<(i: { mtimeNs: string; logged: boolean }) => void>, close: [] as Array<() => void> },
     disk: text, reloads: 0, scrolls: [] as number[], modes: [] as string[], mtimes: {} as Record<string, string>, heads: [] as string[],
+    editing: false, tracked: null, closeAsk: null,
   } as World;
   rows(code, text);
   w.setText = (s) => { text = s; rows(code, s); for (const cb of w.hooks.rendered) cb(); };   // the viewer's renderBody + fireRendered
@@ -286,7 +291,7 @@ function world(over: { path?: string; sid?: string | null; todoId?: string | nul
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: (cb) => { w.hooks.selection.push(cb); },
     onSaved: (cb) => { w.hooks.saved.push(cb); }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => w.editing, setTrackedEdit: (t) => { w.tracked = t; }, guardClose: (ask) => { w.closeAsk = ask; },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     reload: () => { w.reloads++; w.setText(w.disk); },   // fetchFile: the bytes now on disk, repainted, the seam's onRendered fired
@@ -342,6 +347,8 @@ const theFloat = (): El => { const all = doc.body.querySelectorAll(".fc-float");
 const marksText = (root: El, sel: string) => root.querySelectorAll(sel).map((m) => m.textContent);
 const input = (aside: El): El => aside.querySelector(".fc-input")!;
 const press = (el: El, key: string) => dispatch(el, new Ev("keydown", { key }));
+/** The save chord (Ctrl+Enter; Cmd+Enter is the same key policy): a plain Enter is a newline in the box now. */
+const chord = (el: El) => dispatch(el, new Ev("keydown", { key: "Enter", ctrlKey: true }));
 /** Select `quote` in the body, let the seam fire, and press the floating Comment button. */
 function startComment(w: World, quote: string): El {
   const sel = selectIn(w.body, quote);
@@ -370,9 +377,9 @@ test("a note typed while the session inserts text above: the composer follows th
   assert.equal(aside.querySelector(".fc-composer-ref .fc-tag"), null, "re-found: no passage-changed tag");
   assert.deepEqual(marksText(w.code, ".fc-presel"), [QUOTE], "the presel moved with the passage");
   input(aside).value = "Which cache?";
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
-  assert.ok(post, "Enter saves");
+  assert.ok(post, "the chord saves");
   assert.equal(post.args.note, "Which cache?");
   assert.equal(post.args.anchor.quote, QUOTE, "the anchor is the SELECTED passage, not whatever now sits at the old offsets");
   assert.ok(post.args.anchor.prefix.endsWith("We recommend ") && post.args.anchor.prefix.length === 24, "the engine's 24 characters of context, from the text the range indexes");
@@ -390,7 +397,7 @@ test("the passage is gone after the reload: the chip says so, nothing is painted
   assert.equal(aside.querySelector(".fc-composer-ref .fc-tag")!.textContent, "passage changed");
   assert.deepEqual(marksText(w.code, ".fc-presel"), [], "no presel over text that is not the passage");
   input(aside).value = "Which cache?";
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   const post = lastOf(w, "fileComments", "comment");
   assert.equal(post.args.anchor.quote, QUOTE, "the anchor is still the selected passage: the host relocates or refuses, never a wrong passage");
   assert.ok(post.args.anchor.prefix.endsWith("We recommend ") && post.args.anchor.prefix.length === 24, "the engine's 24 characters of context, from the text the range indexes");
@@ -413,7 +420,7 @@ test("a view repaint over the SAME text leaves the composer where it was", async
 
 // ── a refused mapping has nothing to save to ───────────────────────────────────────────────────────
 
-test("a refused mapping shows no Save; Enter refuses in words and keeps the note — never a silent whole-file comment", async (t: TestContext) => {
+test("a refused mapping shows no Save; the save chord refuses in words and keeps the comment — never a silent whole-file comment", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   startComment(w, "Rendered · Raw");   // a selection in the action row, outside the file text: the mapper refuses
@@ -424,7 +431,7 @@ test("a refused mapping shows no Save; Enter refuses in words and keeps the note
   assert.equal(aside.querySelector('.fc-composer [data-act="fcsave"]'), null, "no Save under a refusal");
   assert.ok(aside.querySelector('.fc-composer [data-act="fccancel"]'), "Cancel stays");
   input(aside).value = "this cell is wrong";
-  press(input(aside), "Enter"); await flush();
+  chord(input(aside)); await flush();
   assert.equal(lastOf(w, "fileComments", "comment"), undefined, "nothing was posted");
   assert.match(aside.querySelector(".fc-composer .fileview-err")!.textContent, /^Nothing saved: /);
   assert.equal(input(aside).value, "this cell is wrong", "the note survives");
@@ -461,16 +468,36 @@ test("rawTarget: the refused block's own occurrence wins over an earlier copy; t
   assert.doesNotMatch(raw, /src\.indexOf\(r\.selText\)/, "no first-occurrence lookup of the DOM string");
 });
 
-// ── one write per Enter ────────────────────────────────────────────────────────────────────────────
+// ── the close ask: what the panel tells the viewer is at stake ──────────────────────────────────────
 
-test("a second Enter (or Save click) during the round trip is not a second write: Save disables and relabels, the input is read-only, one `comment` goes", async (t: TestContext) => {
+test("the panel's draft ask (guardClose) names the unsaved comment for the viewer to ask about, and nothing when the composer is empty, closed or a re-place; the viewer, not the panel, puts the question (a confirm on the web, the notice bar in the VS Code webview)", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  assert.ok(w.closeAsk, "registered at mount, through the seam");
+  assert.equal(w.closeAsk!(), null, "no composer: nothing to lose");
+  aside.querySelector('[data-act="fcfile"]')!.click();
+  assert.equal(w.closeAsk!(), null, "an empty composer: nothing to lose");
+  input(aside).value = "   ";
+  assert.equal(w.closeAsk!(), null, "whitespace is nothing typed");
+  input(aside).value = "Add a summary at the top.";
+  assert.deepEqual(w.closeAsk!(), {
+    question: "Discard the unsaved comment on report.md?",
+    kept: "This file stays open: the comment typed on report.md is not saved. Save it, or clear the box, then try again.",
+  }, "the question in the editor's words, and the notice for a host with no dialog");
+  const FC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
+  assert.doesNotMatch(FC, /window\.confirm\(/, "the panel asks nothing itself");
+});
+
+// ── one write per chord ────────────────────────────────────────────────────────────────────────────
+
+test("a second chord (or Save click) during the round trip is not a second write: Save disables and relabels, the input is read-only, one `comment` goes", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   aside.querySelector('[data-act="fcfile"]')!.click();
   assert.equal(aside.querySelector(".fc-composer-ref")!.textContent, "On this file");
   input(aside).value = "Add a summary at the top.";
-  press(input(aside), "Enter");
-  press(input(aside), "Enter");
+  chord(input(aside));
+  chord(input(aside));
   await flush();
   aside.querySelector('[data-act="fcsave"]')!.click();
   await flush();
@@ -674,7 +701,7 @@ test("an unrelated kernel `warn` leaves an outstanding request in flight; federa
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w);
   aside.querySelector('[data-act="fcfile"]')!.click();
-  input(aside).value = "Add a summary."; press(input(aside), "Enter"); await flush();
+  input(aside).value = "Add a summary."; chord(input(aside)); await flush();
   let post = lastOf(w, "fileComments", "comment");
   win.dispatchEvent(new MessageEvent("message", { data: { type: "warn", text: "session names use letters, digits, . _ - only." } }));
   await flush();
@@ -683,7 +710,7 @@ test("an unrelated kernel `warn` leaves an outstanding request in flight; federa
   answer(w, status(), post); await flush();
   assert.equal(aside.querySelector(".fc-composer")!.hidden, true, "the real reply still lands: the comment saved once");
   aside.querySelector('[data-act="fcfile"]')!.click();
-  input(aside).value = "And a date."; press(input(aside), "Enter"); await flush();
+  input(aside).value = "And a date."; chord(input(aside)); await flush();
   post = lastOf(w, "fileComments", "comment");
   const drop = "TESTHOST is unreachable (its kernel isn't answering) — “fileComments” was not delivered";
   win.dispatchEvent(new MessageEvent("message", { data: { type: "warn", text: drop } }));
@@ -735,7 +762,7 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /for \(const ev of \["mousedown", "touchstart"\]\) document\.addEventListener\(ev, this\.hideFloatOnDown, true\);/);
   assert.match(SRC, /if \(!body\.contains\(sel\.anchorNode\) \|\| !body\.contains\(sel\.focusNode\)\) return;/);
   assert.match(SRC, /const KEY_ACTS = new Set\(\["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"\]\);/, "a change mark is a keyboard control too (Slice 2)");
-  assert.match(SRC, /if \(answerTodo && reply\.todoStamped\) \{ this\.todoAnswered = true; answeredTodos\.add\(this\.ctx\.todoId!\); \}/);
+  assert.match(SRC, /if \(todoId && reply\.todoStamped\) answeredTodos\.add\(todoId\);/, "the latch is the stamp, for whichever todo the send named (the todo-file follow-on)");
   assert.match(SRC, /todoStamped: !str\(m\.warning\)/, "the kernel's `warning` on a sent reply is exclusively the nothing-stamped text");
   assert.match(SRC, /const src = c\.text === undefined \? null : c\.text;\n\s*if \(c\.range && src !== null\) \{ args\.anchor = makeAnchor\(src, c\.range\); args\.hintOffset = c\.range\.start; \}/,
     "the anchor is built over the text the range indexes");
@@ -743,4 +770,55 @@ test("source pins: the in-flight guard, the touch handlers, the selection gate, 
   assert.match(SRC, /ctx\.onRendered\(\(\) => \{ this\.float\.hidden = true; this\.retargetComposer\(\); this\.paintAll\(\); \}\);/);
   assert.match(SRC, /this\.errors\.set\("head", \{ text: e\.error, reload: true \}\);/, "a refused refresh offers Reload");
   assert.doesNotMatch(SRC, /Reading the file's comments/, "no line claims a read");
+});
+
+// ── editing over pending changes (Slice 5): the poll and the paint pass while the editor is up ─────
+
+test("while the editor is up (Slice 5): a moved file never reloads the view — the head says the bytes moved, with no Reload — the sidecar and config are still watched, and the first paint after the edit ends re-reads the bytes and drops the row", async (t: TestContext) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  const asks = countOf(w, "fileComments", "status");
+  w.editing = true;
+  w.mtimes[ABS] = "1757145600000000033";                  // the session wrote the file under the person's edit
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(w.reloads, 0, "no reload over the person's buffer");
+  assert.equal(countOf(w, "fileComments", "status"), asks + 1, "status is still re-read");
+  answer(w, status({ fileMtimeNs: "1757145600000000033" })); await flush();
+  const row = aside.querySelector(".fc-sec-head .fc-err")!;
+  assert.ok(row, "the head says so");
+  assert.equal(row.childNodes[0].textContent, MOVED_UNDER_EDIT);
+  assert.equal(row.querySelector('[data-act="fcreload"]'), null, "no Reload here: the viewer's own Save refusal offers it, and Cancel re-reads");
+  assert.equal(w.reloads, 0);
+  // the sidecar is still watched while the editor is up (a reply the session writes shows up in the cards)
+  w.mtimes[STORE_PATH] = "1757145600000000044";
+  t.mock.timers.tick(2500); await flush(); await flush(); await flush();
+  assert.equal(countOf(w, "fileComments", "status"), asks + 2, "a moved sidecar re-reads status in edit mode too");
+  answer(w, status({ fileMtimeNs: "1757145600000000033", storeMtimeNs: "1757145600000000044" })); await flush();
+  assert.equal(w.reloads, 0);
+  assert.ok(aside.querySelector(".fc-sec-head .fc-err"), "the row stays across the re-read");
+  // the edit ends (Cancel): the viewer repaints the OLD bytes and fires onRendered — the panel re-reads the bytes and drops the row
+  w.editing = false;
+  w.setText(w.disk);
+  await flush();
+  assert.equal(w.reloads, 1, "the first paint after the edit re-reads the file the session rewrote");
+  assert.equal(aside.querySelector(".fc-sec-head .fc-err"), null, "…and the row is gone");
+  // the same row after a reject from a card while editing: the second call site, pinned at source
+  assert.match(SRC, /this\.applyStatus\(r\);\n\s*this\.noteMovedUnderEdit\(\);\s*\/\/ a reject from a card while the editor is up/, "after the reply is applied (syncBytes stands down in edit mode, so the note is the one word about the moved bytes)");
+  assert.match(SRC, /await this\.refresh\(\);[^\n]*\n\s*this\.noteMovedUnderEdit\(\);/, "…and the poll's, after its refresh");
+  assert.match(SRC, /if \(!this\.ctx\.editing\(\) \|\| !s \|\| !laterNs\(s\.fileMtimeNs, this\.ctx\.mtimeNs\(\)\)\) return;/, "keyed on the clocks: the status read a later file than the editor loaded");
+});
+
+test("the paint pass stands down while the editor is up (Slice 5): a repaint marks nothing in the body and the panel still renders; the paint after the edit ends marks the passage again", async (t: TestContext) => {
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w);
+  assert.ok(w.body.querySelector(".fc-hl"), "read mode: the passage comment is marked in the rows");
+  w.editing = true;
+  w.setText(w.disk);                                     // the viewer's body swap on Edit: fresh rows, onRendered
+  assert.equal(w.body.querySelectorAll(".fc-hl").length, 0, "nothing painted over the editor's host");
+  assert.ok(aside.querySelector(".fc-card"), "the cards still render");
+  w.editing = false;
+  w.setText(w.disk);                                     // Cancel or Save: the read view is back
+  assert.ok(w.body.querySelector(".fc-hl"), "…and the marks with it");
+  assert.match(SRC, /paintAll\(\): void \{\n\s*if \(this\.ctx\.editing\(\)\) \{ this\.render\(\); return; \}/, "the first line of the pass");
 });

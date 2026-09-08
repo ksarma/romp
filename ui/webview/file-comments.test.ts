@@ -134,6 +134,20 @@ test("the message for ONE comment, tracked, text file — byte for byte", () => 
     "\n" + TAIL_TRACKED);
 });
 
+test("a body with a line break inside — the composer's Enter (2026-09-07) — travels verbatim, byte for byte; the kernel's TheMessage pins the same text", () => {
+  // tests/test_file_comments.py TheMessage::test_a_body_with_a_line_break_keeps_it holds the kernel's builder to this SAME
+  // text: a comment typed over two lines reaches the session as two lines, the break where the person put it
+  const msg = buildSendMessage({ absPath: ABS, comments: [{ id: "1757145600000-118", desc: 'on "shipping the cache in v1.2"', body: "Which cache?\nSay which." }],
+    accepted: 0, rejected: 0, tracked: true, media: false });
+  assert.equal(msg,
+    "[obsidian-diff] I left 1 comment on " + ABS + ".\n" +
+    "\n" +
+    "Comment 1757145600000-118 (on \"shipping the cache in v1.2\"):\n" +
+    "Which cache?\n" +
+    "Say which.\n" +
+    "\n" + TAIL_TRACKED);
+});
+
 test("the message for SEVERAL comments: one blank line between, the plural, no decisions line when nothing was decided", () => {
   const msg = buildSendMessage({ absPath: ABS, comments: [
     { id: "1757145540000-40", desc: 'on "The api session cut p95 latency by 40%"', body: "Thanks, and drop the chart too." },
@@ -333,6 +347,7 @@ test("cross-run: buildSendMessage and the kernel's _file_comments_message agree 
     { id: "", desc: "", body: "" },
     { id: "1757145600000-1", desc: "on the region at 0.12, 0.40, 0.35, 0.20 of page 2", body: "  leading and trailing blanks  \n" },
     { id: "1757145600000-2", desc: 'on "naïve — «quoted»"', body: "Ünïcödé, an em dash — and a tab\tinside\r\nand a CRLF." },
+    { id: "1757145600000-3", desc: 'on "shipping the cache in v1.2"', body: "Which cache?\nSay which.\nAnd say why." },   // the composer's Enter: lines, not paragraphs
   ];
   const cases: MessageOpts[] = [
     { absPath: ABS, comments: one, accepted: 0, rejected: 0, tracked: true },
@@ -470,7 +485,8 @@ test("the poll's HEAD targets: the file, the sidecar the kernel named, config.js
   assert.match(SRC, /if \(paneHidden\(\)\) \{ this\.tickSkipped = true; return; \}/);
   assert.match(SRC, /document\.addEventListener\("visibilitychange", this\.catchUp\);\n\s*window\.addEventListener\("resize", this\.catchUp\);/);
   assert.match(SRC, /this\.base = pollBaseline\(s\);/, "every fileCommentsResult re-baselines the poll — the person's own writes never fire it");
-  assert.match(SRC, /if \(fileNow !== null\) this\.askReload\(fileNow\);/, "the file moved: one fetch, keyed on the mtime the HEAD saw, so the status that follows asks no second");
+  assert.match(SRC, /if \(!this\.ctx\.editing\(\)\) \{\n\s*if \(fileNow !== null\) this\.askReload\(fileNow\);\n\s*else if \(figureMoved\) this\.askReload\(null\);\n\s*\}/,
+    "the file moved: one fetch, keyed on the mtime the HEAD saw, so the status that follows asks no second — never while the editor holds the body (Slice 5)");
   assert.match(SRC, /this\.stopped\.add\(target\);/);
 });
 
@@ -479,7 +495,12 @@ test("the Edit refusal while changes are pending (Slice 2 wording: accept or rej
   assert.equal(editBlockedReason([hunk]), "1 change is pending in this file, so Edit is off here: a direct edit would move it. Accept or reject the change first; the session's own track-edit still works.");
   assert.equal(editBlockedReason([hunk, { ...hunk, id: "h2" }, { ...hunk, id: "h3" }]), "3 changes are pending in this file, so Edit is off here: a direct edit would move them. Accept or reject the 3 changes first; the session's own track-edit still works.");
   assert.doesNotMatch(editBlockedReason([hunk])!, /next update|next slice/, "the Slice 1 wording is gone");
-  assert.match(SRC, /this\.ctx\.setEditBlocked\(editBlockedReason\(s\.hunks \|\| \[\]\)\);/, "set from every status reply");
+  // Slice 5: the panel no longer blocks Edit from a status; the wording rides in trackedEdit.begin() as the refusal the
+  // viewer raises when its editor bundle cannot carry the pending changes (an older bundle, a failed load). Edit is held
+  // only while a decision this panel sent is out (holdEdit, DECISION_IN_FLIGHT), never from applyStatus.
+  assert.doesNotMatch(SRC.split("applyStatus(s: Reply): boolean {")[1].split("\n  }\n")[0], /setEditBlocked/, "no status reply blocks Edit any more");
+  assert.equal((SRC.match(/this\.ctx\.setEditBlocked\(/g) || []).length, 1, "the one call is holdEdit's");
+  assert.match(SRC, /refusal: editBlockedReason\(hunks\) \|\| "",/, "the Slice 2 wording is what the editor's refusal says");
   assert.equal(lineStartOffset("ab\ncd\nef", 0), 0);
   assert.equal(lineStartOffset("ab\ncd\nef", 1), 3);
   assert.equal(lineStartOffset("ab\ncd\nef", 2), 6);
@@ -601,7 +622,7 @@ function stubCtx(posted: any[], over: Partial<FileViewActionCtx> = {}): FileView
     body: () => body, mode: () => "rendered", text: () => null, mtimeNs: () => "1757145600000000001", media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [],
     identity: () => ({ name: "api", color: null }),
     onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
-    post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
+    post: (m) => posted.push(m), ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop, aside: noop, setMode: noop,
     scrollToOffset: noop, reload: noop, ...over,
   };
 }
@@ -622,7 +643,7 @@ test("the Comments action mounts hidden, asks `status` with sid, and is revealed
   await tick();
   assert.equal(unit.hidden, false, "the answer reveals the action");
   assert.equal(b.textContent, "Comments · 3 · 1 change");
-  assert.deepEqual(blocked, [editBlockedReason([hunk])], "pending changes block Edit through the seam");
+  assert.deepEqual(blocked, [], "pending changes no longer block Edit through the seam: they ride into the editor as marks (Slice 5)");
 });
 
 test("a `no-node` refusal keeps the action away for good; a stale reqId lands nowhere", async () => {
@@ -669,11 +690,11 @@ test("rawTarget's fallbacks: a rawRange the source no longer holds gives way to 
 
 test("the registry entry: exported by file-comments.ts, registered in file-view.ts, with no runtime import cycle", () => {
   assert.match(SRC, /export const fileCommentsAction: FileViewAction = \{\n  id: "file-comments",/);
-  assert.match(VIEW, /import \{ fileCommentsAction \} from "\.\/file-comments";/);
+  assert.match(VIEW, /import \{ fileCommentsAction, panelMark \} from "\.\/file-comments";/);   // panelMark: the body's link delegate yields to a painted mark
   assert.match(VIEW, /registerFileViewAction\(githubLinkAction\);\n(?:\/\/[^\n]*\n)*registerFileViewAction\(fileCommentsAction\);/, "second entry, after the GitHub link");
   assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /registerFileViewAction/, "registered by the viewer, not at this module's top level");
   const fromView = SRC.match(/^import .* from "\.\/file-view";$/gm) || [];
-  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity } from "./file-view";'], "types only");
+  assert.deepEqual(fromView, ['import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";'], "types only");
   // contract C4: the anchor-map API, imported by name
   assert.match(SRC, /import \{ mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine \} from "\.\/anchor-map";/);
   assert.doesNotMatch(SRC, /vendor\/track-changents/, "the engine is reached through anchor-map, never twice");
@@ -684,8 +705,11 @@ test("both ops carry sid and a client-minted reqId; replies match by reqId; a wa
   assert.match(SRC, /this\.ctx\.post\(\{ \.\.\.msg, type: "fileCommentsSend", reqId \}\);/);
   assert.match(SRC, /sid: this\.ctx\.sid, path: this\.ctx\.path, tracked, comments: parts\.comments,\n\s*accepted: counts\.accepted, rejected: counts\.rejected, watermark: parts\.watermark,/,
     "the counts are sendCounts' — the log's unsent decisions plus the pending changes the confirm's checkbox accepts (Slice 2)");
-  assert.match(SRC, /if \(answerTodo\) msg\.todoId = this\.ctx\.todoId;/);
-  assert.match(SRC, /const answerTodo = !!this\.ctx\.todoId && this\.sendOpts\.todo && !this\.todoAnswered;/, "one send answers the todo; later sends carry none");
+  // the todo a send answers is the confirm's choice (the todo-file follow-on, 2026-09-07: the one the file was opened from,
+  // or one the status lists as naming this file; file-comments-todo-choices.test.ts drives the checkbox and the radio group)
+  assert.match(SRC, /const todoId = this\.chosenTodoId\(s\);/);
+  assert.match(SRC, /if \(todoId\) msg\.todoId = todoId;/);
+  assert.match(SRC, /if \(cands\.length === 1\) return this\.sendOpts\.todo \? cands\[0\]\.id : null;/, "one candidate: the checkbox decides; a send that stamped it leaves it out of later candidates (answeredTodos)");
   for (const t of ["fileCommentsResult", "fileCommentsFailed", "fileCommentsSent", "fileCommentsSendFailed"]) assert.ok(SRC.includes('m.type === "' + t + '"'), t);
   assert.match(SRC, /const p = this\.pending\.get\(Number\(m\.reqId\)\);\n\s*if \(!p\) return;/);
   assert.match(SRC, /else if \(m\.type === "warn"\) live\.failAll\(/, "a federation warn during an outstanding request is its failure");
@@ -707,7 +731,8 @@ test("the send sequence: build from the current status, set-tracked when asked, 
   assert.match(SRC, /const stale = !!this\.statusRefusal;\n\s*b\.disabled = !s \|\| !n \|\| this\.sending \|\| !this\.ctx\.sid \|\| stale;/,
     "Send stands down while a status refusal stands: the unsent list was derived from a disk the kernel can no longer read");
   assert.match(send, /if \(!s \|\| this\.statusRefusal \|\| this\.sending \|\| !this\.ctx\.sid\) return;/, "and doSend refuses the same way, a click never sends over a stale status");
-  assert.match(SRC, /if \(this\.ctx\.todoId && !this\.todoAnswered\) opts\.appendChild\(this\.opt\("todo", "answer the todo this file was opened from"\)\);/);
+  assert.match(SRC, /this\.todoOpts\(opts, s\);/, "the answer-a-todo control: the checkbox, or the radio group when several todos name the file (the todo-file follow-on)");
+  assert.match(SRC, /"answer " \+ TODO_OPENED_FROM/, "the generic wording stands for the opened-from todo the status does not list (decision 36)");
   assert.match(SRC, /if \(!s\.trackedBy\) opts\.appendChild\(this\.opt\("track", "turn on tracking so the session's edits come back as changes"\)\);/);
   assert.match(SRC, /sendOpts = \{ todo: true, track: true, accept: true \};/, "all three checked by default (decision 8; the third is Slice 2's accept-pending box)");
   assert.match(SRC, /const abs = this\.filePath\(\);\n\s*if \(abs === null\)[^\n]*\n\s*else cf\.appendChild\(el\("pre", "fc-msg", buildSendMessage\(\{ absPath: abs, comments: parts\.comments, accepted: counts\.accepted, rejected: counts\.rejected, tracked, media \}\)\)\);/,
@@ -748,8 +773,10 @@ test("click-safety: ONE delegate() root for every control (the body row, which a
   assert.match(SRC, /const row = ctx\.body\(\)\.parentElement \|\| ctx\.body\(\);\n\s*delegate\(row, \{/);
   assert.doesNotMatch(SRC.replace(/^\s*\/\/.*$/gm, ""), /\.onclick\s*=/, "no per-node handlers on rebuilt nodes");
   assert.match(SRC, /openCards = new Set<string>\(\);/);
-  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\);/);
-  assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(this\.openCards\.has\(id\)\) this\.openCards\.delete\(id\); else this\.openCards\.add\(id\); this\.render\(\); \}/);
+  // …or the card is open because its reply is being written in it (the reply follow-on, 2026-09-07: file-comments-reply-place.test.ts),
+  // and the head folds every card but that one
+  assert.match(SRC, /const isOpen = this\.openCards\.has\(c\.id\) \|\| this\.replyTo\(\) === c\.id;/);
+  assert.match(SRC, /fccard: \(x\) => \{ const id = x\.dataset\.id!; if \(!this\.openCards\.has\(id\)\) this\.openCards\.add\(id\); else if \(!this\.hostsReply\(id\)\) this\.openCards\.delete\(id\); this\.render\(\); \}/);
   assert.match(SRC, /flash\(this\.float\);/); assert.match(SRC, /flash\(this\.button\);/);
   // the composer's input is never rebuilt, and the aside's own children are placed once per open, so a
   // poll re-render swaps section CHILDREN only and cannot drop the input's focus mid-word
@@ -780,7 +807,7 @@ test("the floating Comment button rides the seam's selection hook — before the
   assert.match(raw, /this\.ctx\.scrollToOffset\(range\.start\);\n\s*this\.repaintPresel\(\);/);
   assert.doesNotMatch(raw, /\.indexOf\(/, "the switch does no lookup of its own — the search and its fallbacks live in rawTarget");
   assert.match(raw, /if \(typeof r\.blockStartLine === "number"\) this\.ctx\.scrollToOffset\(lineStartOffset\(src, r\.blockStartLine\)\);/, "else scrolled to the block's first line");
-  assert.match(SRC, /else if \(e\.key === "Escape"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, "Escape in the composer never closes the viewer");
+  assert.match(SRC, /else if \(act === "cancel"\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); this\.closeComposer\(\); \}/, "Escape in the composer never closes the viewer");
 });
 
 test("the seam in file-view.ts: every member exists, hooks fire where they should, and both exits drain the close hooks", () => {
@@ -790,8 +817,14 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
     "onSelection(cb: (sel: Selection) => void): void;", "onSaved(cb: (info: { mtimeNs: string; logged: boolean }) => void): void;",
     "onClose(cb: () => void): void;", "post(m: Record<string, unknown>): void;", "ensureEditingAllowed(refusal?: string): Promise<boolean>;",
     "setEditBlocked(reason: string | null): void;", "aside(el: HTMLElement | null): void;", 'setMode(mode: "raw" | "rendered"): void;',
-    "scrollToOffset(n: number): void;", "reload(): void;"]) {
+    "scrollToOffset(n: number): void;", "reload(): void;",
+    // Slice 5: the viewer says whether its editor is up, and the panel registers its half of editing over pending changes
+    "editing(): boolean;", "setTrackedEdit(t: TrackedEdit | null): void;"]) {
     assert.ok(VIEW.includes(m), "FileViewActionCtx has " + m);
+  }
+  for (const m of ["begin(): { records: unknown[]; authorColor: (author: string) => string | null; refusal: string } | null;",
+    "routesSave(): boolean;", "save(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean }>;"]) {
+    assert.ok(VIEW.includes(m), "TrackedEdit has " + m);
   }
   assert.match(VIEW, /export async function ensureEditingAllowed\(sid: string \| null \| undefined, refusal\?: string\): Promise<boolean> \{/);
   assert.match(VIEW, /ensureEditingAllowed: \(refusal\) => ensureEditingAllowed\(sid, refusal\),/);
@@ -805,11 +838,16 @@ test("the seam in file-view.ts: every member exists, hooks fire where they shoul
   // overlays paint after the picture loads) is a third, so the count is a floor and the two text sites are pinned by shape
   assert.ok((VIEW.match(/fireRendered\(\);/g) || []).length >= 2, "the SVG Source view and the text views both fire onRendered");
   assert.match(VIEW, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "the SVG Source view fires it");
-  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, path, sid\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/, "every text paint fires it");
+  assert.match(VIEW, /body\.replaceChildren\(rendered \? mdBlock\(text, \{ kind: "file", path, sid: sid \|\| null \}\) : codeBlock\(text, path, true\)\);[^\n]*\n\s*fireRendered\(\);/,
+    "every text paint fires it (mdBlock takes the document's location since the 2026-09-07 fold: MdDocLoc, md-url-view.test.ts)");
   assert.match(VIEW, /for \(const cb of savedHooks\) \{ try \{ cb\(\{ mtimeNs: mtNs, logged \}\); \}/);
-  assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 2, "closeFileView AND the replace path");
+  assert.equal((VIEW.match(/runCloseHooks\(\);/g) || []).length, 3,
+    "closeFileView, the replace path, and the URL viewer's replace path (openUrlView is a third way a viewer is replaced, upstream 2026-09-06, folded 2026-09-07; its teardown drains the hooks too)");
   const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
-  assert.match(closeFn, /dropMediaUrl\(\);[^\n]*\n\s*runCloseHooks\(\);[^\n]*\n\s*wrap\.remove\(\);/, "hooks drain before the element goes");
+  assert.match(closeFn, /dropUrlRead\(\);[^\n]*\n\s*runCloseHooks\(\);[^\n]*\n\s*wrap\.remove\(\);/,
+    "hooks drain before the element goes (the URL read's cancel sits between the media revoke and the hooks: md-url-view.test.ts pins that pair adjacent)");
+  const urlFn = VIEW.split("export function openUrlView")[1].split("// Kick the browser's downloader")[0];
+  assert.match(urlFn, /dropOnKey\(\);[^\n]*\n\s*runCloseHooks\(\);/, "the URL viewer's replace path drains the old viewer's hooks too");
   // Edit refuses in words while blocked — the button stays a button so the reason reaches touch users
   assert.match(VIEW, /if \(editBlocked\) \{ noteBar\(editBlocked\); return; \}/);
   assert.match(VIEW, /editBtn\.title = reason \|\| "Edit this file in place";/);

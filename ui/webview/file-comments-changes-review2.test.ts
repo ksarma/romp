@@ -126,7 +126,7 @@ class El {
     contains: (c: string) => this.classes.includes(c),
   };
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
     get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
@@ -306,7 +306,7 @@ function world(over: WorldOpts = {}): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: an async GET in the real seam — held here until the test lands it (deferReload), else at once

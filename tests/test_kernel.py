@@ -342,7 +342,7 @@ class ViewBuilder(unittest.TestCase):
                       {"id": "3", "subject": "c", "activeForm": None, "status": "pending"}]
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: [dict(t) for t in live_store]
-        km._fold_tasks = lambda session: [dict(t) for t in stale_fold]
+        km._fold_tasks = lambda session, sid=None: [dict(t) for t in stale_fold]
         try:
             todo = next(e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo")
         finally:
@@ -357,7 +357,7 @@ class ViewBuilder(unittest.TestCase):
         # ERROR — it does NOT quietly show the lossy fold (which could be wrong, the whole bug).
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None            # store unreadable
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
         try:
             todo = next(e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo")
         finally:
@@ -369,7 +369,7 @@ class ViewBuilder(unittest.TestCase):
         # a done/absent list is a non-event — an unreadable store there is not worth alarming on, so no card.
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "a", "activeForm": None, "status": "completed"}]
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "a", "activeForm": None, "status": "completed"}]
         try:
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
         finally:
@@ -381,51 +381,110 @@ class ViewBuilder(unittest.TestCase):
         # stale transcript fold — no card, and NO error (the store was read fine, it's just empty).
         saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: []              # authoritative-empty (cleared / none)
-        km._fold_tasks = lambda session: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
+        km._fold_tasks = lambda session, sid=None: [{"id": "1", "subject": "a", "activeForm": None, "status": "pending"}]
         try:
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
         finally:
             (km._read_task_store, km._fold_tasks) = saved
         self.assertNotIn("todo", kinds, "authoritative-empty store → no card (the fold does not override it)")
 
-    def test_fold_ignores_background_agent_taskcreate(self):
-        # A background-agent TaskCreate (the Task tool's {agent_hint, prompt} shape, no subject; its
-        # result is an agent id, not "Task #N") is NOT a to-do checklist item. Folding it as a pending
-        # task gave a background-agent-only session a phantom open task, which tripped the
-        # card's "can't read the task store" error whenever the store was unresolvable (the user
-        # 2026-09-03). Only a checklist create (a `subject`) folds.
-        def _tu(name, inp, rid=None):
-            return {"type": "tool_use", "id": rid or name, "name": name, "input": inp}
-        def _tr(rid, text):
-            return {"type": "user", "message": {"content": [
-                {"type": "tool_result", "tool_use_id": rid, "content": text}]}}
+    def test_fold_ignores_a_rejected_taskcreate(self):
+        # A TaskCreate the CLI REJECTED is not a checklist item. A malformed call — no `subject`
+        # ({agent_hint, prompt}), or a {tasks: [...]} batch — draws a paired tool_result with is_error set
+        # and an InputValidationError naming the missing field: nothing was created, nothing launched, and
+        # nothing renders it. Folded as a pending task it gave a session whose only TaskCreate was rejected
+        # a phantom open item, which tripped the card's "can't read the task store" error whenever the
+        # store was unresolvable. The skip keys on the result's is_error, not on the input's key names; the
+        # {tasks} batch (no prompt/agent_hint key) pins that — a guard re-keyed on input names lets it through.
+        def _tu(name, inp, rid):
+            return {"type": "tool_use", "id": rid, "name": name, "input": inp}
+        def _tr(rid, text, is_error=False):
+            b = {"type": "tool_result", "tool_use_id": rid, "content": text}
+            if is_error:
+                b["is_error"] = True
+            return {"type": "user", "message": {"content": [b]}}
         def _asst(*blocks):
             return {"type": "assistant", "message": {"content": list(blocks)}}
-        # a session that ONLY launched background agents → no checklist at all
+        rejected = ("InputValidationError: TaskCreate failed due to the following issue:\n"
+                    "The required parameter `subject` is missing")
+        # a session whose only TaskCreate carried {agent_hint, prompt} and was rejected → no checklist at all
         bg = {"turns": [{"atoms": [
-            _asst(_tu("TaskCreate", {"agent_hint": "overnight pipeline", "prompt": "run the thing"}, "a1")),
-            _tr("a1", "Started background task cafef00d1"),
-            _asst(_tu("TaskStop", {"taskId": "cafef00d1"})),
+            _asst(_tu("TaskCreate", {"agent_hint": "overnight pipeline", "prompt": "run the thing"}, "toolu_TEST0001")),
+            _tr("toolu_TEST0001", rejected, is_error=True),
         ]}]}
-        self.assertIsNone(km._fold_tasks(bg), "background-agent tasks are not a to-do checklist")
-        # a mixed session keeps the real checklist item and drops the background one
+        self.assertIsNone(km._fold_tasks(bg), "a rejected TaskCreate is not a checklist item")
+        # the {tasks: [...]} batch is rejected the same way, and carries neither prompt nor agent_hint
+        batch = {"turns": [{"atoms": [
+            _asst(_tu("TaskCreate", {"tasks": [{"subject": "vet the pairs"}, {"subject": "run the sweep"}]},
+                      "toolu_TEST0002")),
+            _tr("toolu_TEST0002", rejected, is_error=True),
+        ]}]}
+        self.assertIsNone(km._fold_tasks(batch), "a rejected {tasks} batch is not a checklist item either")
+        # a mixed session keeps the accepted create (its result carries "Task #N") and drops the rejected ones
         mixed = {"turns": [{"atoms": [
-            _asst(_tu("TaskCreate", {"subject": "vet the pairs"}, "c1")),
-            _tr("c1", "Task #1 created"),
-            _asst(_tu("TaskCreate", {"agent_hint": "bg", "prompt": "go"}, "c2")),
-            _tr("c2", "Started background task deadbeef"),
+            _asst(_tu("TaskCreate", {"subject": "vet the pairs"}, "toolu_TEST0003")),
+            _tr("toolu_TEST0003", "Task #1 created successfully. Use TaskUpdate to update it."),
+            _asst(_tu("TaskCreate", {"agent_hint": "bg", "prompt": "go"}, "toolu_TEST0004")),
+            _tr("toolu_TEST0004", rejected, is_error=True),
+            _asst(_tu("TaskCreate", {"tasks": [{"subject": "run the sweep"}]}, "toolu_TEST0005")),
+            _tr("toolu_TEST0005", rejected, is_error=True),
         ]}]}
         folded = km._fold_tasks(mixed)
-        self.assertEqual([t["subject"] for t in folded], ["vet the pairs"], "only the checklist create folds")
-        # and the card raises NO error for a background-only session with an unresolvable store
-        saved = (km._read_task_store, jd.parsed_session)
+        self.assertEqual([(t["id"], t["subject"]) for t in folded], [("1", "vet the pairs")],
+                         "only the accepted create folds")
+        # and the card raises NO error for a rejected-only session with an unresolvable store. The REAL fold
+        # runs over each synthetic transcript through build_session (the fixture transcript itself has no
+        # Task calls); the mixed transcript is the control that proves the path is live — its accepted
+        # create still trips the unreadable-store error.
+        real_fold = km._fold_tasks
+        saved = (km._read_task_store, km._fold_tasks)
         km._read_task_store = lambda fsid, fold=None: None            # store unresolvable, as in the repro
-        jd.parsed_session = lambda sid, paths, now: bg
         try:
+            km._fold_tasks = lambda session, sid=None: real_fold(bg)
             kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
+            km._fold_tasks = lambda session, sid=None: real_fold(batch)
+            kinds_batch = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
+            km._fold_tasks = lambda session, sid=None: real_fold(mixed)
+            todo = [e for e in km.build_session(SID, NOW)["events"] if e["kind"] == "todo"]
         finally:
-            (km._read_task_store, jd.parsed_session) = saved
-        self.assertNotIn("todo", kinds, "background-only session → no phantom to-do card, no error")
+            (km._read_task_store, km._fold_tasks) = saved
+        self.assertNotIn("todo", kinds, "rejected-only session → no phantom to-do card, no error")
+        self.assertNotIn("todo", kinds_batch, "rejected {tasks} batch → no phantom to-do card, no error")
+        self.assertTrue(todo and todo[0].get("error"), "control: an accepted create still surfaces the error")
+
+    def test_fold_ignores_a_rejected_taskupdate(self):
+        # The TaskCreate skip's twin (the #942 review): a TaskUpdate the CLI REJECTED — a status value
+        # outside its set, a transition it refused — answers with an is_error tool_result and writes nothing
+        # to the store, so it moves no checklist item. Before the skip the fold applied the refused status as
+        # if the store held it. Keyed on the result's is_error, exactly as the TaskCreate branch is, so this
+        # fold and event_model.declared_plan stay identical; an accepted update still applies, and so does
+        # one whose result has not landed yet (unchanged, pinned beside the skip).
+        def _tu(name, inp, rid):
+            return {"type": "tool_use", "id": rid, "name": name, "input": inp}
+        def _tr(rid, text, is_error=False):
+            b = {"type": "tool_result", "tool_use_id": rid, "content": text}
+            if is_error:
+                b["is_error"] = True
+            return {"type": "user", "message": {"content": [b]}}
+        def _asst(*blocks):
+            return {"type": "assistant", "message": {"content": list(blocks)}}
+        refused = ("InputValidationError: TaskUpdate failed due to the following issue:\n"
+                   "The value of `status` must be one of pending, in_progress, completed")
+        created = [_asst(_tu("TaskCreate", {"subject": "vet the pairs"}, "toolu_TEST0011")),
+                   _tr("toolu_TEST0011", "Task #1 created successfully. Use TaskUpdate to update it.")]
+        rejected = [_asst(_tu("TaskUpdate", {"taskId": "1", "status": "done"}, "toolu_TEST0012")),
+                    _tr("toolu_TEST0012", refused, is_error=True)]
+        s = {"turns": [{"atoms": created + rejected}]}
+        self.assertEqual(km._fold_tasks(s)[0]["status"], "pending", "a rejected update moves nothing")
+        # the skip is per call: an accepted update after the rejected one still applies
+        accepted = [_asst(_tu("TaskUpdate", {"taskId": "1", "status": "in_progress"}, "toolu_TEST0013")),
+                    _tr("toolu_TEST0013", "Task #1 updated.")]
+        s = {"turns": [{"atoms": created + rejected + accepted}]}
+        self.assertEqual(km._fold_tasks(s)[0]["status"], "in_progress")
+        # an update whose result has not landed (the turn is still open) applies as before
+        pending = [_asst(_tu("TaskUpdate", {"taskId": "1", "status": "completed"}, "toolu_TEST0014"))]
+        s = {"turns": [{"atoms": created + pending}]}
+        self.assertEqual(km._fold_tasks(s)[0]["status"], "completed", "no result yet is not a rejection")
 
     def test_fully_completed_store_drops_the_todo_card(self):
         # a done list is not a live to-do (the user 2026-06-10). At `track`'s screenshot time the store was
@@ -1294,20 +1353,25 @@ class ViewBuilder(unittest.TestCase):
 
     def test_a_working_session_still_lists_its_armed_kernel_watches(self):
         # The user (2026-08-30, paraphrased): even while working, anything the session awaits shows
-        # at the chat bottom in the green box. Kernel half: the status payload carries the awaited
-        # content mid-turn while the chip formula stays untouched — state reads working, the box
-        # renders from the fields.
+        # at the chat bottom in the box. Kernel half: the status payload carries the awaited content
+        # mid-turn while the chip formula stays untouched — state reads working, the box renders from
+        # the fields. Pin changed 2026-09-06: the content rides the ROWS (awaitingItems), the same
+        # turn-agnostic set every in-flight thing rides, and awaitingWhy stays None mid-turn. The
+        # 2026-08-30 cut re-ran _watch_awaiting alone into awaitingWhy while the turn was open, which
+        # made the box read "Awaiting" under a Working chip and left every other in-flight row to the
+        # legacy tasks list — two presentations of one set of facts, swapped at every turn boundary.
         with self.tpath.open("a") as f:                  # an OPEN turn → the session reads working
             f.write(json.dumps(uline(NOW, "keep working on the strip", "uOpen", parent="a2")) + "\n")
         km._parse_cache.clear()
-        km.add_watch("test -f /tmp/synthetic-sentinel", SID, note="the cluster job's sentinel file")
+        row, _err = km.add_watch("test -f /tmp/synthetic-sentinel", SID, note="the cluster job's sentinel file")
         try:
             st = km.build_session(SID, NOW)["status"]
             self.assertEqual(st["state"], "working", "the shared chip formula is untouched")
-            self.assertIn("the cluster job's sentinel file", st["awaitingWhy"] or "")
-            self.assertEqual(st["awaitingKind"], "job")
-            self.assertEqual(st["awaitingTasks"], ["the cluster job's sentinel file"],
-                             "the box's fold lists each watch in the registrant's own words")
+            self.assertIsNone(st["awaitingWhy"], "awaitingWhy means idle-and-waiting — the chip's Awaiting — on every surface")
+            self.assertIsNone(st["awaitingKind"])
+            self.assertEqual([(it["kind"], it["label"], it.get("watchId")) for it in st["awaitingItems"]],
+                             [("watches", "the cluster job's sentinel file", row["id"])],
+                             "the watch is a row in the registrant's own words, Cancel's handle riding, while the turn is open")
         finally:
             self._clear_watches()
 
@@ -1519,7 +1583,7 @@ class ViewBuilder(unittest.TestCase):
             "nodes": {top: gn(top, "research the API", None, why="user asked for the research")},
             "placements": {}, "status": {top: "working"}}))
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "Waiting on the 3 research agents it dispatched."}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "Waiting on the 3 research agents it dispatched."}
         try:
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
         finally:
@@ -1546,13 +1610,13 @@ class ViewBuilder(unittest.TestCase):
         saved = km._session_awaiting
         try:
             for n in (1, 3):
-                km._session_awaiting = lambda sid, path, idle, stamp=False, n=n: {
+                km._session_awaiting = lambda sid, path, idle, stamp=False, live=None, n=n: {
                     "kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
                     "since": T0, "count": n}
                 card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
                 self.assertEqual(card["awaiting"]["kind"], "agents")
                 self.assertEqual(card["awaiting"]["count"], n, "the card's count is the snapshot's own")
-            km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": None, "why": "waiting on dispatched work", "since": None}
+            km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": None, "why": "waiting on dispatched work", "since": None}
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
             self.assertIsNone(card["awaiting"]["count"], "a source that cannot count ships None, never a guess")
         finally:
@@ -1583,8 +1647,9 @@ class ViewBuilder(unittest.TestCase):
             "rompUuid": SID, "seq": 2, "lastNode": top, "nodes": nodes,
             "placements": placements, "status": status}))
         km._task_seg_cache.clear()
-        km._BG_TOPS_CACHE.clear()          # both classifier caches key on store/transcript file stats —
-        km._SESSION_STAMP_CACHE.clear()    # cleared so a same-stat rewrite can't serve a stale verdict
+        km._BG_TOPS_CACHE.clear()          # the launch-segment positives, the (parse, store)-keyed placement
+        km._SESSION_STAMP_CACHE.clear()    # memo and the stat-keyed stamp read: cleared so an earlier fixture's
+        #                                    answer under this sid, or a same-stat rewrite, serves nothing here
         saved = km._tmux_sessions
         km._tmux_sessions = lambda: {SID: {"state": "idle", "since": NOW - 100, "model": "", "effort": "",
                                            "context": None, "compactPct": None, "color": None,
@@ -1797,7 +1862,8 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(km._session_awaiting(SID, str(self.tpath), True),
                          {"kind": None, "since": 200,   # the overlay row's own stamp → the chips' elapsed readout (the user 2026-08-23)
                           "why": "Waiting on 2 background jobs it launched.",
-                          "count": None},   # a bare overlay row names no count — never parsed from the why (T225)
+                          "count": None,   # a bare overlay row names no count — never parsed from the why (T225)
+                          "items": []},    # …and names no rows (slice 2, 2026-09-05)
                          "the genuine awaiting badge still shows")
 
     def test_blocked_rolls_up_the_card_tree_so_a_buried_block_is_visible(self):
@@ -1853,7 +1919,7 @@ class ViewBuilder(unittest.TestCase):
         saved_w, saved_a = km._wait_for_graph, km._session_awaiting
         km._wait_for_graph = lambda now, alive: {SID: {"peerSid": "peerY", "name": "peerY",
                                                        "color": None, "inCycle": False, "since": NOW}}
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None      # isolate the POSTAL path
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None      # isolate the POSTAL path
         try:
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
         finally:
@@ -1887,26 +1953,42 @@ class ViewBuilder(unittest.TestCase):
             # source 0: real subagents in flight — the snapshot carries the live LIST (a {"type","since"}
             # per agent); the why counts via len() (the pre-fix code %d-formatted the list itself)
             km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}]}}
+            # …each agent its own ROW since slice 2 (2026-09-05); a hook-only agent with no agentId has an
+            # empty row id and its type (here none → "agent") as the label until a launch row names it.
+            # The snapshot carries an EMPTY lifecycle set on purpose: since the sources are COMBINED, a
+            # live snapshot with no bgTasks key at all would let source 0.75 add the transcript's launch
+            # above as a command row beside the agents (a mixed read) — an SDK snapshot's empty set is
+            # authoritative and keeps this an agents-only read.
+            agent_row = {"kind": "agents", "id": "", "label": "agent", "since": T0}
+            km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}], "bgTasks": []}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "agents", "why": "2 background agents still working",
                               "since": T0,   # the oldest live agent's start → the chips' elapsed readout (the user 2026-08-23)
-                              "count": 2},   # the live agent count — the chip's number agreement rides it (T225)
+                              "count": 2,    # the live agent count — the chip's number agreement rides it (T225)
+                              "items": [agent_row, agent_row], "tasks": ["agent", "agent"]},
                              "a live subagent DOES leave an idle session awaiting (a working flavor)")
-            # source 0.5: the live bg-task set — one task shows its description verbatim
+            # source 0.5: the live bg-task set — one task shows its description verbatim (a COMMAND row;
+            # the sentence says "command" since slice 2)
+            desc = "20-minute timer for campaign-start check"
+            cmd_row = {"kind": "commands", "id": "tu_bg", "label": desc, "since": T0 + 9}
             km._tmux_sessions = lambda: {SID: {"bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,   # the dispatch stamp (the user 2026-08-23)
-                              "why": "waiting on a background task: 20-minute timer for campaign-start check",
-                              "count": 1})
+                              "why": "waiting on a background command: " + desc,
+                              "count": 1, "items": [cmd_row], "tasks": [desc]})
             km._tmux_sessions = lambda: {SID: {"bgTasks": [timer, dict(timer, desc="power watcher")]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,
-                              "why": "waiting on 2 background tasks — 20-minute timer for campaign-start check, …",
-                              "count": 2})
-            # subagents outrank bg tasks when both run (they're the bigger dispatch)
+                              "why": "waiting on 2 background commands — " + desc + ", …",
+                              "count": 2, "items": [cmd_row, dict(cmd_row, label="power watcher")],
+                              "tasks": [desc, "power watcher"]})
+            # an agent AND a bg task at once: until 2026-09-05 the agents source short-circuited and the task
+            # vanished from the read; now both are rows of two kinds — kind "mixed", every row counted,
+            # the why naming each group (the user: they are different things, show them separately)
             km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}], "bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
-                             {"kind": "agents", "why": "1 background agent still working", "since": T0, "count": 1})
+                             {"kind": "mixed", "why": "waiting on 1 background agent and 1 background command",
+                              "since": T0, "count": 2, "items": [agent_row, cmd_row], "tasks": ["agent", desc]})
         finally:
             km._tmux_sessions = saved
 
@@ -1922,7 +2004,8 @@ class ViewBuilder(unittest.TestCase):
         ]) + "\n")
         self.assertEqual(km._session_awaiting(SID, "/nonexistent", True),
                          {"kind": None, "why": "3 agents in flight",
-                          "since": T0 + 1, "count": None},   # the overlay row's own stamp (the user 2026-08-23)
+                          "since": T0 + 1, "count": None,   # the overlay row's own stamp (the user 2026-08-23)
+                          "items": []},                     # an overlay row names no rows (slice 2)
                          "the latest awaiting overlay (interleaved with state records) drives the badge")
         self.assertIsNone(km._session_awaiting(SID, "/nonexistent", False),
                           "a WORKING session is not 'awaiting' (idle=False short-circuits)")
@@ -2860,12 +2943,18 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(chat_order, ["NEW", "C", "A"],
                          "the transcript-less session shares the active tier (stable within it)")
 
-    def test_push_caches_unchanged_background_tabs_but_always_rebuilds_active(self):
+    def test_push_caches_unchanged_tabs_and_rebuilds_each_on_its_own_change(self):
         # the user 2026-06-24 (sluggish UI): the 0.5s pusher rebuilt EVERY open tab — a full transcript reshape
         # into ChatEvent[] AND a json.dumps of the whole chat, per tab, even when nothing changed — which pegged
         # the kernel on multi-MB transcripts and starved the webview. A BACKGROUND tab whose transcript+states
-        # are unchanged now reuses its built payload (one stat() instead of a reshape+serialize); the ACTIVE
-        # tab always rebuilds so what the user is watching stays live (incl. SDK live-tail atoms).
+        # are unchanged reuses its built payload (one stat() instead of a reshape+serialize). The ACTIVE tab
+        # used to rebuild on every push "to stay live"; since 2026-09-03 (upstream) it too is served from its
+        # last build while its exact key is unchanged — so a watched 80 MB session no longer costs a reshape
+        # per 0.5 s cycle with nothing moving. Since round-4 plan P4 that key is the one complete per-session
+        # signature every tab shares (_chat_build_sig): every input that can move the payload is a component,
+        # the in-memory stamps included, so the tab rebuilds when an input moved and on nothing else — a bare
+        # _mark_views_dirty (upstream's watermark for stamps no file records) is not new information for the
+        # chat and rebuilds nothing; a live-tail echo, which the payload renders, is and does.
         import tempfile
         d = tempfile.mkdtemp()
         pa, pb = os.path.join(d, "A.jsonl"), os.path.join(d, "B.jsonl")
@@ -2874,8 +2963,9 @@ class ViewBuilder(unittest.TestCase):
                 f.write("{}\n")
         calls = []
         saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
-                 km.build_timeline, km._send_client)
+                 km.build_timeline, km._send_client, km._sdk)
         km._tmux_sessions = lambda: {}
+        km._sdk = lambda: None                                          # both tabs tmux-owned
         km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": pa}, {"sid": "B", "path": pb}]
         km.build_session = lambda sid, now, tmux: (calls.append(sid) or
                                                    {"id": sid, "name": sid, "color": None, "status": None, "ledger": None})
@@ -2886,19 +2976,35 @@ class ViewBuilder(unittest.TestCase):
         client = {"app": "chat", "active": "A", "alive": True}
         try:
             km._push([client])                       # 1st: builds A + B
-            km._push([client])                       # 2nd: A rebuilt (active); B reused (unchanged)
+            km._push([client])                       # 2nd: nothing moved → A and B both served
             after_two = list(calls)
             with open(pb, "a") as f:                 # B's transcript grows → its signature busts
                 f.write("{}\n")
             os.utime(pb, None)
-            km._push([client])                       # 3rd: A rebuilt; B rebuilt (changed)
+            km._push([client])                       # 3rd: B rebuilt (changed); A still served
+            after_three = list(calls)
+            with open(pa, "a") as f:                 # A's transcript grows → the ACTIVE key busts
+                f.write("{}\n")
+            os.utime(pa, None)
+            km._push([client])                       # 4th: A rebuilt
+            after_four = list(calls)
+            km._mark_views_dirty()                   # a dirty mark with no moved input
+            km._push([client])                       # 5th: A still served (the key names inputs, not marks)
+            after_five = list(calls)
+            km._tmux_echo_add("A", "and also fix the header")   # a kernel-side mutation no file records: the live tail
+            km._push([client])                       # 6th: A rebuilt (its live-tail revision moved)
         finally:
             (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
-             km.build_timeline, km._send_client) = saved
+             km.build_timeline, km._send_client, km._sdk) = saved
             km._built_chat.clear()
-        self.assertEqual(calls.count("A"), 3, "the ACTIVE tab rebuilds on every push (stays live)")
+            km._tmux_echo.pop("A", None); km._tmux_echo_rev.pop("A", None)
+        self.assertEqual(after_two.count("A"), 1, "an unchanged ACTIVE tab is served on the 2nd push")
         self.assertEqual(after_two.count("B"), 1, "an unchanged BACKGROUND tab is NOT rebuilt on the 2nd push")
-        self.assertEqual(calls.count("B"), 2, "the background tab rebuilds once its transcript actually changes")
+        self.assertEqual(after_three.count("B"), 2, "the background tab rebuilds once its transcript actually changes")
+        self.assertEqual(after_three.count("A"), 1, "…and that does not rebuild the active tab")
+        self.assertEqual(after_four.count("A"), 2, "the active tab rebuilds once ITS transcript changes")
+        self.assertEqual(after_five.count("A"), 2, "a dirty mark alone is no new information for the chat: still served")
+        self.assertEqual(calls.count("A"), 3, "a kernel-side mutation no file records (a live-tail echo) rebuilds the active tab")
 
     def _orphaned_goal(self, idle=True, closer_done=True, planned=True):
         # an idle (or still-open) session whose top goal still shows "working". closer_done puts the latest
@@ -3354,7 +3460,7 @@ class ViewBuilder(unittest.TestCase):
         km._write_auto_nudge({"enabled": True, "nudged": {}})
         seen = []
 
-        def boom(s, now, tmux, nudged, waitfor, alive_ids=None):
+        def boom(s, now, tmux, nudged, waitfor, alive_ids=None, **kw):   # kw: wake_only (2026-09-05)
             if s["sid"] == "bad-session":
                 raise TypeError("%d format: a real number is required, not list")
             seen.append(s["sid"])
@@ -3509,12 +3615,12 @@ class ViewBuilder(unittest.TestCase):
         self._orphaned_goal(idle=True)
         km._set_auto_nudge(True)
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "Waiting on its background agents."}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "Waiting on its background agents."}
         sent, restore = self._stub_nudge()
         try:
             km._auto_nudge_tick(NOW, km._tmux_sessions())
             self.assertEqual(sent, [], "an awaiting session is held, not nudged")
-            km._session_awaiting = lambda sid, path, idle, stamp=False: None   # no longer awaiting → the genuine stall is nudged
+            km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None   # no longer awaiting → the genuine stall is nudged
             km._auto_nudge_tick(NOW, km._tmux_sessions())
             self.assertEqual(len(sent), 1, "once the wait clears, the genuine stall is nudged")
         finally:
@@ -4794,10 +4900,13 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(comp[0]["tree"][0]["status"], "done")
         self.assertTrue(any(a["column"] == "needs_input" for a in d["asks"]), "the blocked goal is a BLOCKED card")
         # card tint is the recency colormap (age → hawaii ramp), not a flat session color. It rides FULL
-        # frames only (an older bundle destructures it); the delta path and the dedup signature strip it,
-        # because a colour that ticks with the clock is not a change (tests/test_feed_delta.py).
-        self.assertEqual(comp[0]["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
-        self.assertNotEqual(comp[0]["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
+        # frames only (an older bundle destructures it), stamped at serialization since 2026-09-07 (_feed_body);
+        # the built card carries none, and the delta path never does, because a colour that ticks with the
+        # clock is not a change (tests/test_feed_delta.py).
+        self.assertNotIn("trgb", comp[0])
+        wire = next(a for a in json.loads(km._feed_body(d))["asks"] if a["itemId"] == comp[0]["itemId"])
+        self.assertEqual(wire["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
+        self.assertNotEqual(wire["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
 
     def test_cards_for_segments_resolves_segment_to_owning_top_card(self):
         # reverse-hover: a hovered timeline bar's segment id → the TOP goal card that owns it (inverse
@@ -5275,8 +5384,9 @@ class ViewBuilder(unittest.TestCase):
         # unchanged, so the punch (the gesture's replay + rollup, both in place) must land on a copy:
         # otherwise the reopen would be baked into the object the NEXT pass serves for a file that does
         # not hold it. Contract: the memoized object always equals a fresh raw parse of its file
-        # version; the served copy carries the reopen; a second gesture in the same pass works the same
-        # copy; build_feed reads and never writes.
+        # version; the served copy carries the reopen; a second gesture in the same pass punches a FRESH
+        # copy (the served identity keys the feed's per-session memo, 2026-09-07); build_feed reads and
+        # never writes.
         g = self._settled_store()
         path = jd.GOALDIR / (SID + ".json")
         raw = json.loads(path.read_bytes())                # the version this pass memoizes
@@ -5297,7 +5407,9 @@ class ViewBuilder(unittest.TestCase):
             self.assertIs(km._feed_goals(SID), served, "later reads in the pass serve that one copy")
             self.assertTrue(jd.optimistic_followup(SID, g, text="and the null case", now=NOW + 1))
             km._note_user_goal_write(SID)
-            self.assertIs(km._feed_goals(SID), served, "a second gesture punches the copy already made")
+            served2 = km._feed_goals(SID)
+            self.assertIsNot(served2, served, "a second gesture punches a fresh copy, never the first one in place")
+            self.assertEqual(served2["status"].get(g), "working")
             self.assertEqual(memo_obj, raw)
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == g)
             self.assertEqual(card["column"], "working")
@@ -5812,6 +5924,24 @@ class ViewBuilder(unittest.TestCase):
         self.assertNotIn("task-notification", p3); self.assertNotIn("system-reminder", p3)
         self.assertIn("real ask", p3); self.assertIn("mid", p3); self.assertIn("end", p3)
         self.assertEqual(r3, ["x", "y"])
+
+    def test_split_reminders_keeps_the_prompts_newlines(self):
+        # A message typed with Shift+Enter line breaks must keep them when a harness block rides along
+        # (the user 2026-09-06: the old " ".join(split()) flattened the whole prompt to one line). The
+        # CLI appends the block as its own text block; build_session joins blocks with a space.
+        p, r = km._split_reminders("line one\nline two <system-reminder>ctx</system-reminder>")
+        self.assertEqual(p, "line one\nline two"); self.assertEqual(r, ["ctx"])
+        # …and leads with it on a session's first prompt
+        p, r = km._split_reminders("<system-reminder>ctx</system-reminder> line one\n\nline three")
+        self.assertEqual(p, "line one\n\nline three"); self.assertEqual(r, ["ctx"])
+        # indentation inside the prompt (a pasted snippet) survives too
+        p, _ = km._split_reminders("see:\n    x = 1\n    y = 2 <task-notification>t</task-notification>")
+        self.assertEqual(p, "see:\n    x = 1\n    y = 2")
+        # the SEAM a block sat in collapses to what it held: a space, a newline, or a paragraph break
+        self.assertEqual(km._split_reminders("a <system-reminder>x</system-reminder> b")[0], "a b")
+        self.assertEqual(km._split_reminders("a\n<system-reminder>x</system-reminder>\nb")[0], "a\nb")
+        self.assertEqual(km._split_reminders("a\n\n<system-reminder>x</system-reminder>\n\nb")[0], "a\n\nb")
+        self.assertEqual(km._split_reminders("a<system-reminder>x</system-reminder>b")[0], "ab")
 
     def test_img_hydration_and_dropped_file_host_handlers(self):
         # ported host handlers (the user 2026-06-16): a path-image hydrates to a data: URL, and a
@@ -6448,7 +6578,7 @@ class ViewBuilder(unittest.TestCase):
         # background work it dispatched is no longer folded into "working" — the shared _session_chip
         # emits `awaitingBg`, so the chat chip (straw "Awaiting") and the timeline lane split together.
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "bg agents"} if idle else None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "bg agents"} if idle else None
         try:
             chip = km.build_session(SID, NOW)["status"]["state"]
             lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)["state"]
@@ -6461,7 +6591,7 @@ class ViewBuilder(unittest.TestCase):
         # working beats the awaiting flavor: while the main thread is actually producing, the chip says
         # Working — awaitingBg only covers the idle-but-held stretch.
         saved_aw, saved_w = km._session_awaiting, km._session_working
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "bg agents"}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "bg agents"}
         km._session_working = lambda turns: True
         try:
             chip = km.build_session(SID, NOW)["status"]["state"]
@@ -6473,7 +6603,7 @@ class ViewBuilder(unittest.TestCase):
         # the straw dots (feed cards/headers + chat tabs) key on feed["awaiting"] exactly as the yellow
         # dots key on feed["working"] — same names, same federation prefixing (ARRAY_ID).
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "bg agents"} if idle else None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "bg agents"} if idle else None
         try:
             feed = km.build_feed(NOW)
         finally:

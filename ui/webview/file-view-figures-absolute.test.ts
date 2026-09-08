@@ -10,6 +10,8 @@
 // cannot drift apart again without this failing. Synthetic fixtures only: the notes-api world, placeholder ids.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 // ── a DOM stand-in: attributes and the one selector rewriteFigureSrcs uses ─────────────────────────
 class El {
@@ -136,4 +138,34 @@ test("the three readers of an embed's destination agree: the path the viewer loa
     assert.equal(fc.fileUrlPath(u), null);
     assert.equal(model.figurePath(FILE, u), null);
   }
+});
+
+// The `~/`-anchored src (the 2026-09-07 fold's one deliberate divergence in the viewer, reviewed the same day): upstream's
+// file mode passed a figure src through joinDocPath, which leaves `~…` alone for the kernel to expand, so `![](~/x.png)`
+// there named a file under the HOME folder; the fork joins it under the file's directory. Kept and pinned for two
+// reasons. Markdown has no home anchor: a `~/x.png` src is a relative URL whose first segment is a directory named `~`
+// to the browser and every markdown viewer, so the fork's reading is the ordinary one. And a figure has THREE readers
+// that must name one file (the picture shown, the poll's HEAD and the host's hash); the model and the host join `~`
+// under the directory already, so a home-expanding viewer alone would paint a picture the poll never watches. A LINK
+// in the same document is the opposite on purpose (joinDocPath, md-links.test.ts): a link has one reader, the kernel at
+// click time, whose _resolve_open_path expands `~`. docs/guide.md states both in one sentence, pinned here.
+test("a `~/`-anchored src is a relative path whose first segment is `~`: joined under the file's directory like any other, the three readers agreeing; a link's `~/` is left for the kernel to expand", async () => {
+  const fc = await import("./file-comments");
+  const model = await import("./file-comments-model");
+  const links = await import("./md-links");
+  const home = img("~/plots/a.png");
+  const bare = img("~");
+  await rewrite([home, bare]);
+  assert.equal(home.getAttribute("src"), q(DIR + "~/plots/a.png"), "under the file's directory, `~` a directory name, not the home folder");
+  assert.equal(home.getAttribute("data-fv-src"), "~/plots/a.png", "the authored spelling rides along");
+  assert.equal(bare.getAttribute("src"), q(DIR + "~"));
+  const loaded = fc.fileUrlPath(home.getAttribute("src")!)!;
+  assert.equal(loaded, model.figurePath(FILE, "~/plots/a.png"), "the poll HEADs the very path the viewer shows");
+  assert.equal(fc.normPath(loaded), fc.embedPath(FILE, "~/plots/a.png"), "and the panel names the same file the embed does");
+  assert.ok(fc.srcIsEmbed(home.getAttribute("src")!, "~/plots/a.png", FILE), "so the panel matches the loaded picture to its embed line");
+  // the same document's link: not joined, so the kernel expands it (joinDocPath's contract, pinned in md-links.test.ts)
+  assert.equal(links.joinDocPath(FILE, "~/notes/x.md"), "~/notes/x.md", "a link's `~/` reaches the kernel as written and opens under the home folder");
+  // the guide states the two readings in one sentence, in the user's terms
+  const guide = fs.readFileSync(path.resolve(process.cwd(), "..", "docs", "guide.md"), "utf8").replace(/\s+/g, " ");
+  assert.match(guide, /A figure path that starts with `~\/` is not expanded to your home folder: it names a folder called `~` next to the file, as other markdown viewers read it, while a link that starts with `~\/` does open under your home folder\./);
 });

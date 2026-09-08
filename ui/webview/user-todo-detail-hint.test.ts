@@ -83,12 +83,17 @@ test("the hint wears the row's chrome rung and the dim text color — the accent
 
 test("the Reply modal quotes the detail beneath the ask when there is one, in the fold's own dress", () => {
   // replying to an ask with detail should not require opening the row's fold first — the whole
-  // need is in view while the answer is typed; a bare ask adds nothing to the modal
+  // need is in view while the answer is typed; a bare ask adds nothing to the modal. The modal
+  // also takes the todo's file (the todo-file follow-on, 2026-09-07), a fifth argument the Reply
+  // button rides the same way the detail does; the chip itself is render-todo-file-chip.test.ts's
   assert.match(TODO, /\(reply as any\)\._utdetail = t\.detail \|\| "";/);
-  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = ""\): void/);
+  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = "", todoFile = ""\): void/);
   const modal = RENDER.slice(RENDER.indexOf("function showUserTodoReply"), RENDER.indexOf("\nfunction ", RENDER.indexOf("function showUserTodoReply") + 10));
   assert.match(modal, /const dd = todoDetail\.trim\(\) \? el\("div", "ut-detail open"\) : null;/);
   assert.match(modal, /box\.append\(h, d\); if \(dd\) box\.appendChild\(dd\); box\.append\(input, actions\);/, "between the quoted line and the answer box");
+  // the quoted line takes its file chip BEFORE the detail is built, so the detail sits beneath the
+  // ask AND the file it names: text, chip, detail — the row's order, the whole need in view
+  assert.ok(modal.indexOf("todoFileChip(todoFile, sid)") > -1 && modal.indexOf("todoFileChip(todoFile, sid)") < modal.indexOf("const dd = todoDetail.trim()"), "the chip joins the quoted line, the detail follows both");
   const handler = RENDER.slice(RENDER.indexOf("utreply: (elx) => {"), RENDER.indexOf("utdismiss: (elx) => {"));
-  assert.match(handler, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| ""\);/);
+  assert.match(handler, /showUserTodoReply\(sid, tid, \(\(elx as any\)\._uttext as string\) \|\| "", \(\(elx as any\)\._utdetail as string\) \|\| "", \(\(elx as any\)\._utfile as string\) \|\| ""\);/);
 });

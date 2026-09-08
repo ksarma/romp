@@ -1,4 +1,4 @@
-// File comments and tracked changes — the viewer's Comments panel (plans/file-review.md, Slices 1 and 2).
+// File comments and tracked changes — the viewer's Comments panel (plans/file-review.md, Slices 1 to 5).
 //
 // The person who directs the sessions reads their output as files, and until now a comment on a file
 // left romp: GitHub, a chat quote that scrolled away, or a note typed into the file itself. This panel
@@ -12,10 +12,12 @@
 //   • A session's pending changes (Slice 2) are cards too: one per change, grouped by the paragraph it
 //     falls in, with Accept, Reject, Reply (a comment bound to the change, so the session's answering
 //     track-edit revisions fold into it) and Reveal; the comments bound to a change sit ON its card. Past
-//     three groups the rest fold behind one row. The changes are also marked inline — insertions tinted,
-//     deletions struck at their point in Raw — through anchor-map's change painters (contract D4), and a
-//     click on a mark opens its card. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites
-//     the file, also fences on the file's mtime and then reloads the view, since the bytes changed under it.
+//     three groups the rest fold behind one row. The changes are also marked inline in both views — insertions
+//     tinted, deletions struck at their point (Rendered places it through the index map since the inline-display
+//     follow-on, 2026-09-07; a deletion the map cannot place is card-only) — through anchor-map's change painters
+//     (contract D4); a click on a mark opens its card, and Show changes inline in the panel's head turns every mark
+//     off in both views. Accept and Reject fence on the sidecar's mtime; Reject, which rewrites the file, also
+//     fences on the file's mtime and then reloads the view, since the bytes changed under it.
 //   • A region on an image (Slice 3) or on a PDF page (Slice 4) is a comment too: the overlays file-comments-regions.ts
 //     puts over the media body's picture, over every figure in rendered markdown, and over each page the PDF chunk
 //     draws (one per page, the region's `page` from the canvas's data-page; a far page with nothing to paint takes its
@@ -33,6 +35,18 @@
 //     the page in, which draws it and brings the crop.
 //     A figure in rendered markdown is wrapped by its overlay only while the panel is open or the figure has a
 //     rectangle to show (paintRegions): closed, with nothing to show, the author's own layout of the page stands.
+//   • Edit over pending changes (Slice 5): the viewer's editor carries the changes as marks of its own, so while it is
+//     up the paint pass stands down and the poll's file reload does too (a row in the head says the bytes moved). Save
+//     goes through this panel (`save`: the text, the records as the editor remapped them, the decisions taken in it),
+//     fenced on the sidecar the records came from (the status at Edit, or the last landed save's reply when the editor stayed
+//     up past it) and on the file the editor loaded; a refused save keeps the buffer.
+//     The change cards stay up meanwhile, but a decision from one is refused in place (DECIDE_IN_EDITOR): it would move
+//     the sidecar the editor's records came from, and the buffer could then never be saved. When a decision lands from
+//     elsewhere anyway (another browser, a session's CLI) the head says so from the status that shows it, before Save
+//     can refuse (CHANGES_MOVED_UNDER_EDIT); so does an Edit clicked before the first status answered, whose editor carries
+//     no marks for the changes that status then shows (CHANGES_UNREAD_UNDER_EDIT) — Save refuses rather than write an empty
+//     list over them. Reveal and the card links, which switch to Raw and scroll the read view, are not offered while the
+//     editor holds the body, and the cards group over the text the offsets index, not the buffer typing moves (editText).
 //   • The kernel does the disk work on the OWNING kernel (the `fileComments` op runs a node host
 //     script over the vendored track-changents store); this module renders JSON and never holds a
 //     sidecar it writes back. Both ops carry `sid`, so federation routes a remote session's file to
@@ -57,25 +71,42 @@
 //
 // This module imports only TYPES from file-view.ts and is registered there (registerFileViewAction
 // in file-view.ts), so the two never form a runtime import cycle.
-import type { FileViewAction, FileViewActionCtx, FileViewIdentity } from "./file-view";
+import type { FileViewAction, FileViewActionCtx, FileViewIdentity, TrackedEdit, CloseAsk } from "./file-view";
 import { delegate, flash, type ActionHandler } from "./actions";
 import { fileUrl } from "./preview";
 import { kernelUrl } from "./media";
 import { hostOf, bareId } from "./host-prefix";
+import { loadSettings, saveSettings, onExternalSettingsChange, type CommentsFilter } from "./settings";   // Show changes inline and the filter: the shared, persisted webview settings (the inline-display and filter follow-ons, 2026-09-07)
 import { mapRawSelection, mapRenderedSelection, makeAnchor, locateComment, paintRaw, paintRendered, rawOffsetToLine } from "./anchor-map";
 import { paintChangesRaw, paintChangesRendered, unpaintChanges } from "./anchor-map";   // the change painters (contract D4)
 import type { MapRefusal, SourceRange, Located, ChangePaint } from "./anchor-map";
 import {
   type Status, type Hunk, type Card, type CardTurn, type ChangeCard, type ChangeGroup, type SendParts, type Target, actionLabel, cardModel, changeCards, changeGroups,
-  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount,
+  foldGroups, moreChangesLabel, authorIdOf, GROUP_LIMIT, DETACHED_GROUP_KEY, sendParts, sendCounts, buildSendMessage, unsentCount, cardCounts, filterOffered, detachedChanges,
   logRowText, pollBaseline, pollTargets, headVerdict, mtimeMoved, editBlockedReason, lineStartOffset, folderOf,
   regionTarget, regionState, figureTargets, figuresMoved, figureBaseline, figureFenceHash, type PollBaseline, type FigureBaseline, type HeadVerdict,
+  pendingRecords, authorIdByLabel, saveArgs, sameRecords, MOVED_UNDER_EDIT, type EditDecisions,   // editing over pending changes (Slice 5)
+  todoChoices, todoChoiceLabel, TODO_OPENED_FROM, type TodoChoice,   // the todo a send answers (the todo-file follow-on, 2026-09-07)
 } from "./file-comments-model";
 import { RegionLayer, cropThumb, isCoarsePointer, isCanvas, type Pictured, type RegionMark } from "./file-comments-regions";   // the overlays (Slice 3, contract E5; Slice 4's pages)
 import { regionDesc, isRegion, type Region } from "./region-geometry";
+import { layoutCards, CARD_GAP, type LayoutItem, type PlacedItem } from "./card-layout";   // the margin layout's pure half (the 2026-09-07 follow-on)
 
 const POLL_MS = 2500;
 const MOVED = new Set(["store-moved", "file-moved", "config-moved"]);
+/** Whether a scroller stands at its end (within the pixel a fractional scrollTop can fall short of the integer heights). */
+const atEnd = (el: HTMLElement): boolean => el.scrollTop + el.clientHeight >= el.scrollHeight - 1;
+/** The comment a `comment` reply added, read off the reply's store (the host names no id in the reply): the one comment
+ *  the status before the write did not hold — the write's fence (storeMtimeNs) admits no other write between the two.
+ *  After a moved fence's re-read and retry the baseline `had` predates the retry's, so another client's comments may be
+ *  new too; then the one whose body is the note, and null when that does not name exactly one — nothing to scroll to,
+ *  and nothing in doubt about the save itself. */
+function savedCommentId(had: Set<string>, r: Status, note: string): string | null {
+  const fresh = r.store ? r.store.comments.filter((c) => !had.has(c.id)) : [];
+  if (fresh.length === 1) return fresh[0].id;
+  const mine = fresh.filter((c) => c.body === note);
+  return mine.length === 1 ? mine[0].id : null;
+}
 // The verbs that rewrite the FILE, not only the sidecar (reject applies the engine's reverse edits): they
 // fence on the file's mtime as the panel last saw it, so a `track-edit` landing mid-round refuses `file-moved`
 // instead of reverting over it, and after one succeeds the panel reloads the view — the bytes changed under
@@ -120,6 +151,72 @@ export function changedRowText(n: number): string {
   return "Nothing decided: the session edited " + (n === 1 ? "this change" : "these changes") + " after you clicked, and "
     + (n === 1 ? "it now reads" : "they now read") + " differently. Look it over and try again.";
 }
+// The verbs that decide changes, and what a click on one gets while the editor is up (Slice 5). The editor carries the
+// sidecar's records as marks and Save writes them back remapped, fenced on the sidecar they came from (editSeed); a
+// card's accept or reject meanwhile would drop a record from that sidecar (and, for reject, rewrite the file) while the
+// editor still holds it, so every later Save could only refuse `store-moved`, and the typed text would sit in a buffer
+// nothing can land, with Reload and Cancel, which both discard it, the only offers. The decision belongs in the editor
+// then: its click accepts, its modifier-click rejects, and Save carries both. A tap or a keyboard decides nothing in the
+// editor (the editor chunk's marks, departure 6), so the words also name the route that needs no mouse: Save or Cancel,
+// then these buttons, which are live again once the editor is closed — and on a device whose primary pointer is coarse (a
+// phone, a tablet: isCoarsePointer) that route LEADS, since telling a finger to click and Alt-click names gestures the
+// editor ignores from it (DECIDE_IN_EDITOR_TOUCH; the mouse gesture is still named, as one, for a tablet with a trackpad).
+// The cards keep real buttons rather than disabled ones so the reason reaches touch and keyboard users (the Edit button's
+// idiom, file-view.ts), and the foot says it once without a click — as a caption, or as the row a click gets, never both
+// at once (renderChangesFoot).
+const DECIDES = new Set(["accept", "reject", "accept-all", "reject-all"]);
+export const DECIDE_IN_EDITOR = "While you edit, decide in the editor: click a change to accept it, Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) to reject it. "
+  + "Save writes the decisions with your text. To use Accept and Reject instead, Save or Cancel first: they work again once the editor is closed.";
+export const DECIDE_IN_EDITOR_TOUCH = "While you edit, a tap on a change decides nothing: the changes stay pending. "
+  + "To accept or reject them, Save or Cancel first: Accept and Reject work again once the editor is closed. "
+  + "With a mouse, a click on a change accepts it and Alt-click (Cmd-click on a Mac, Ctrl-click elsewhere) rejects it; Save then writes the decisions with your text.";
+const DECIDE_TEXTS = new Set([DECIDE_IN_EDITOR, DECIDE_IN_EDITOR_TOUCH]);
+/** Why Edit is refused while a decision this panel sent is still out (mutate holds it at the send and lifts it when the
+ *  reply or the refusal lands: holdEdit). The other side of DECIDES: a decision drops a record from the sidecar (a reject
+ *  rewrites the file too), and an editor opened while the request is out takes the records as they stood at the click and
+ *  is fenced on that sidecar, so its every Save could only refuse `store-moved` — the typed text in a buffer nothing can
+ *  land, told only once the reply shows it (CHANGES_MOVED_UNDER_EDIT). Keyed on the request's life, never on a clock; the
+ *  viewer refuses in words, in place (its editBlocked idiom), so the reason reaches touch and keyboard users. */
+export const DECISION_IN_FLIGHT = "A change in this file is being accepted or rejected right now. Edit opens as soon as that lands.";
+/** The decide-in-editor words for this device, read at each use rather than once: the primary pointer can change (a tablet
+ *  docks to a keyboard and trackpad), and a row set under one is retired by text under the other (DECIDE_TEXTS). */
+function decideInEditor(): string { return isCoarsePointer() ? DECIDE_IN_EDITOR_TOUCH : DECIDE_IN_EDITOR; }
+/** What the editor's records are fenced on: the sidecar of the status they came from — at Edit (trackedEdit.begin) or, once
+ *  a save landed and the editor stayed up, that save's reply, which the host wrote them back to (saveThroughComments). Null
+ *  when nothing is pending: an editor with no marks has nothing to fence on, and Save then follows the status (routesSave). */
+type EditSeed = { records: unknown[]; storeMtimeNs: string; configMtimeNs: string };
+function seedOf(s: Status): EditSeed | null {
+  if (!(s.hunks || []).length) return null;
+  return { records: pendingRecords(s.store), storeMtimeNs: s.storeMtimeNs ?? "", configMtimeNs: s.configMtimeNs ?? "" };
+}
+/** The host's `logWarning` on a reply — its account of a comments-log append that failed, or a sidecar it could not read
+ *  back after writing — as text; "" when the reply carries none. */
+function warningOf(r: unknown): string {
+  const w = (r as { logWarning?: unknown }).logWarning;
+  return typeof w === "string" && w ? w : "";
+}
+// The head's row when the sidecar's pending changes stop being the ones the editor carries while it is up (Slice 5): a
+// decision landed since Edit — another browser's card, a session's CLI, or a card's own click that was still in flight
+// when Edit began (the gate above reads editing() at the click, and the editor can open during the round trip) — and
+// the file's bytes did not move (a reject moves them, and MOVED_UNDER_EDIT is that row). Said at once, from the status
+// that shows it (noteChangesMovedUnderEdit, in applyStatus), not at Save: Save can only refuse then, since its fence is
+// the sidecar the records came from and the retry stands down when the records changed, and the editor cannot take the
+// new list (its handle is read-only), so the row names what is left — copy, Cancel, Edit again. One row per edit
+// (changesMovedUnderEdit latches it, so a dismissed row does not return with every later status); retired when the edit
+// ends (paintAll).
+export const CHANGES_MOVED_UNDER_EDIT = "Pending changes in this file were accepted or rejected after you opened the editor, which still shows them as pending. "
+  + "Save will refuse; copy anything you typed, then Cancel and Edit again.";
+// The head's row when a status shows pending changes the editor does not carry and the file did not move: Edit was clicked
+// before the first status answered (the sidecar is read by a node process on the owning kernel, the file's bytes by a plain
+// GET, and the Edit button waits on the bytes only), so begin() had nothing to hand the editor, and the status lands while
+// it is up. The editor shows the text with no marks; its Save would write an empty record list back over the sidecar and
+// drop every change with no decision logged, and the trace would call it a plain edit. So Save refuses on the same condition
+// (saveThroughComments), whether or not the panel is open, and the row says what is left, as CHANGES_MOVED_UNDER_EDIT does:
+// copy, Cancel, Edit again — the second Edit carries the changes in. One row per edit (changesUnreadUnderEdit); retired
+// when the edit ends (paintAll). Edit is not refused while the status is out: the ask has no bound a plain file should
+// wait on (STATUS_DEADLINE_MS on a kernel from before this feature), and a plain file's Edit works as it always did.
+export const CHANGES_UNREAD_UNDER_EDIT = "This file has pending changes that were read only after you opened the editor, so it does not show them. "
+  + "Save will refuse; copy anything you typed, then Cancel and Edit again.";
 // How long a `status` ask may stay unanswered before the panel says so. A kernel that has the op answers
 // within its own bound: the host script is cut off at 10 s (contract C2, _FILE_COMMENTS_TIMEOUT) and the
 // refusal is sent then, so an ask still open past that plus the relay was never received by a kernel with
@@ -133,10 +230,23 @@ const STATUS_DEADLINE_MS = 15000;
 // One send answers a todo (decision 28): a todo naming several files is answered by the FIRST send, and
 // later sends for its other files show no checkbox. A viewer is built per open, so the memory of which
 // todos THIS page has sent for lives at module level — a second file opened from the same todo, a Reload
-// (which re-opens with the same todoId), or the Reply modal's other link all find it. Another device or
-// document has no view of this set; the kernel's own settled check (plan: the reply warns, nothing is
-// stamped) stays the backstop there.
+// (which re-opens with the same todoId), or the Reply modal's other link all find it. The todo-file follow-on
+// made the kernel list the open todos naming the file on every status, and stop once the todo is settled — so
+// for a LISTED todo this set covers the moment between the send and the next status only: a status ISSUED after
+// the send's reply landed that still lists the todo is the kernel's word that the todo is open (CLAUDE.md, the
+// authoritative source) — a parked send stamps only when it drains, not when it is accepted, and a recalled or
+// lost answer reopens the todo (kernel _reopen_user_todo) — and applyStatus releases the memory for it, so the
+// confirm offers it again as Waiting on you shows it. Before that release a todo the kernel had reopened stayed
+// hidden from every confirm on the page until a reload (the review, 2026-09-07). The release is keyed on the
+// request counter, not the clock: `answeredAt` holds reqSeq as it stood at the latch, and a status whose reqId
+// is past it was issued after the reply (markOverlapped has already flagged every status still out at that
+// moment, so an earlier ask that lands later is dropped or, when its clocks prove it newer, applied WITHOUT
+// releasing: it may have read the store before the stamp). What the set keeps for good is the todo the file
+// was opened from whose `file` is another file: no status of this viewer lists it, and decision 28 wants later
+// sends to show no box for it. Another device or document has no view of this set; the kernel's own settled
+// check (plan: the reply warns, nothing is stamped) stays the backstop there.
 const answeredTodos = new Set<string>();
+const answeredAt = new Map<string, number>();
 
 // ── image embeds: the source text behind a rendered <img> ─────────────────────────────────────────
 // A figure in a markdown file is commented on through its embed line (the plan's Images and PDFs): in
@@ -317,6 +427,15 @@ function btn(label: string, act: string, cls = "fileview-btn"): HTMLButtonElemen
   b.dataset.act = act;
   return b;
 }
+/** A comment id inside a selector's quoted attribute value. The ids are sidecar data — a session's tools mint them, a hand
+ *  can write them — and nothing on the read path constrains their grammar, so a `"` or `\` in one made querySelector throw,
+ *  and on the render path (placeComposer) that stopped every section after the cards from refreshing while the reply was
+ *  open; inside the margin pass (placeCards ownMarks), which every render runs, it left every card without a top and the
+ *  failure surfaced nowhere (both found in the 2026-09-07 reviews). CSS.escape where the platform has it (every browser
+ *  the panel runs in); for a stand-in without it, the two characters a quoted value cannot hold raw. */
+function cssId(s: string): string {
+  return typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
+}
 const clock = (t: number | string): string => {
   const d = new Date(t);
   if (isNaN(d.getTime())) return "";
@@ -389,17 +508,26 @@ function shrinkable(b: HTMLElement): void {
   b.style.flex = "0 1 auto"; b.style.minWidth = "0"; b.style.textAlign = "left";
 }
 // A passage comment's `range` indexes `text` — the source the selection was made over, or the reload the
-// passage was re-found in (retargetComposer) — so the anchor is always built over the text the offsets
+// passage was followed into (retargetComposer) — so the anchor is always built over the text the offsets
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
+// `tied` is set when the pair is stale because the current text holds the passage intact in more than one
+// place its anchor cannot tell apart (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save sends the anchor with NO offset, since the range's start indexes other text and would settle
+// the tie by coincidence; the host refuses a tie it cannot settle (anchor-ambiguous) and the note stays.
+// `elsewhere` is set when the pair is stale because the edit reached the passage and its text is now intact
+// only at a copy the edit never touched (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save is refused here — the host, given one hit, would place the note on that other copy.
 type Composer =
-  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
-  | { kind: "reply"; commentId: string; ref: string }
+  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: (MapRefusal & { selText: string }) | null }
+  // `resolved`: whether the comment was already resolved when the reply began — the slot's row tells a comment resolved
+  // since the reply began from one whose Resolved fold the person closed (replyAway)
+  | { kind: "reply"; commentId: string; ref: string; resolved: boolean }
   | { kind: "change"; changeId: string; ref: string }   // a comment bound to a change (comment {suggestionId, note})
   // a region drawn on a picture (Slice 3): `img` is the picture (re-found after a repaint), `src` and `range` the
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
   // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to);
   // `page` the 1-based page when the picture is a PDF page's canvas (Slice 4), null otherwise
-  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; refusal: string | null }
+  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: string | null }
   // Re-place: the next region drawn on the comment's picture becomes its target (retarget, E3); no words. `page`
   // is the comment's current page for a PDF region (the new place may be on any page)
   | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
@@ -408,6 +536,154 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
 /** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
+/** The composer's tag titles once the file changed under a pending passage and it now recurs where the anchor cannot tell
+ *  the copies apart (`tied`): the person picks the copy again; Save meanwhile carries no offset and the host refuses a tie. */
+const PASSAGE_TIED = "The file changed and this passage now occurs in it more than once with the same surroundings, so the copy you selected cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Select the passage again to pick the copy.";
+const EMBED_TIED = "The file changed and the line embedding this figure now occurs in it more than once with the same surroundings, so the one you drew on cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Draw the region again to pick the figure.";
+/** The composer's tag titles once the file changed where the pending passage was, and its text is now intact only at a copy
+ *  the edit never touched (`elsewhere`): the person picks the passage again; Save meanwhile is refused here (saveComposer). */
+const PASSAGE_ELSEWHERE = "The file changed where you selected this passage, and its text now occurs only elsewhere in the file, at a copy you did not select; Save is refused rather than put the note there. Select the passage again.";
+const EMBED_ELSEWHERE = "The file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file, at a copy you did not draw on; Save is refused rather than put the note there. Draw the region again.";
+/** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
+const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
+const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
+/** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
+ *  open card, since a tag's title never reaches touch. */
+function copyUnsureWords(c: Card): string {
+  return "This passage occurs in the file more than once with the same surroundings, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
+      : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
+    + " — not a confirmed one.";
+}
+/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
+ *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
+ *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none). */
+function unsureMarkTitle(c: Card): string {
+  return "Open the comment; this passage recurs, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so this is the first copy"
+      : "this copy is the nearest to the comment's stored position")
+    + ", not a confirmed one";
+}
+/** Where a passage composer's pair — `range` into `oldText` — stands once the view shows `newText` (retargetComposer).
+ *  The two texts' common prefix and suffix bound the span the edit changed: a passage wholly before that span keeps its
+ *  offsets and one wholly after it moves by the span's growth, both exact — the same characters, however many copies of
+ *  the passage the text holds, so a paragraph the session inserts above a recurring passage moves the note with ITS
+ *  copy. Only a passage the span reaches is re-found through its anchor (the engine's 24 characters of context, built
+ *  over the text the offsets index): `moved` when the quote sits intact at one best hit that lies where the edit put
+ *  its text; `elsewhere` when that one hit lies wholly outside the span the edit's text occupies now — text the edit
+ *  never touched, at the offsets it had before, so another copy of the passage and never the one the edit reached (the
+ *  review, 2026-09-07: a session rewrote the selected copy of a sentence that recurs, the anchor re-found the other
+ *  copy, and the note followed it there with no tag); `tied` when it sits intact at several the anchor cannot tell
+ *  apart — the engine's earliest and latest tied hits (hint 0, hint length) differ — a choice the old offset must not
+ *  make, since nearest-to-an-offset-into-other-text picks by coincidence (the re-find did exactly that until
+ *  2026-09-07: an insertion above longer than half the gap between two copies moved the note to the other copy, and
+ *  the host, now settling a hinted tie, saved it there); `gone` when the quote is intact nowhere. */
+export type Followed = { state: "moved"; range: SourceRange } | { state: "tied" } | { state: "gone" } | { state: "elsewhere" };
+export function followPassage(oldText: string, range: SourceRange, newText: string): Followed {
+  const oldLen = oldText.length, newLen = newText.length, min = Math.min(oldLen, newLen);
+  let p = 0;
+  while (p < min && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
+  let s = 0;
+  while (s < min - p && oldText.charCodeAt(oldLen - 1 - s) === newText.charCodeAt(newLen - 1 - s)) s++;
+  if (range.end <= p) return { state: "moved", range: { start: range.start, end: range.end } };
+  if (range.start >= oldLen - s) { const d = newLen - oldLen; return { state: "moved", range: { start: range.start + d, end: range.end + d } }; }
+  const anchor = makeAnchor(oldText, range);
+  const first = locateComment(newText, anchor, 0);
+  if (first.state !== "located" || !first.range) return { state: "gone" };
+  const last = locateComment(newText, anchor, newLen);
+  if (last.state === "located" && last.range && last.range.start === first.range.start) {
+    // one best hit: the passage only where the edit's text now sits, [p, newLen - s); wholly outside it is untouched text
+    if (first.range.end <= p || first.range.start >= newLen - s) return { state: "elsewhere" };
+    return { state: "moved", range: first.range };
+  }
+  return { state: "tied" };
+}
+/** Why the head of the card holding a reply does not fold it: the head's title, and on a coarse pointer the line under the head
+ *  (holdHead, heldNote) — one sentence for both, so the pointer and the touch read the same words. */
+const HOLD_WORDS = "The card stays open while its reply is written; Save or Cancel the reply first";
+// ── the composer's box (the follow-on of 2026-09-07: a comment is often several lines) ──────────────
+/** The box starts at this many rows (the sheets' min-height says the same in em) and grows with its content to the cap,
+ *  COMPOSER_MAX_ROWS rows, then scrolls. The cap is autosizeComposer's alone, not a max-height in the sheets: the person
+ *  may also drag the box's handle (resize: vertical), past the cap too, and a sheet clamp would take the drag with it. */
+export const COMPOSER_ROWS = 3;
+export const COMPOSER_MAX_ROWS = 12;
+/** Which modifier the save chord uses: Cmd on macOS, Ctrl elsewhere — the editor's modifier rule (the IS_MAC of its
+ *  marks module, the same test; that module stays in the lazy chunk, so the test is repeated here rather than imported),
+ *  detected once. Only the HINT reads it: either modifier saves on every platform. */
+const IS_MAC = typeof navigator !== "undefined" && /Mac|iP(?:hone|ad|od)/.test(navigator.platform || "");
+export type ComposerKey = "save" | "cancel" | null;
+/** What a keydown in the box means, pure: Escape cancels; Enter with Cmd or Ctrl saves — the chat composer's chord,
+ *  either modifier everywhere, so Ctrl+Enter on a Mac saves too; a plain or Shift+Enter is the browser's own newline
+ *  (null: not ours); a key pressed while an IME is composing is the IME's. */
+export function composerKeyAction(e: { key: string; metaKey?: boolean; ctrlKey?: boolean; isComposing?: boolean }): ComposerKey {
+  if (e.isComposing) return null;
+  if (e.key === "Escape") return "cancel";
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) return "save";
+  return null;
+}
+/** The chord the hint under the box names, in the platform's words. */
+export function saveChord(mac: boolean): string { return (mac ? "Cmd" : "Ctrl") + "+Enter"; }
+/** The hint on a coarse pointer (a phone, a tablet): a soft keyboard has no modifier to hold, so a chord would name a
+ *  key the device lacks, and the person who pressed Return for the old one-line box's save got a newline and no word on
+ *  what saves now. The hint names the button beside it instead — the chat composer's rule for its own placeholder
+ *  (render.ts composerRestingPlaceholder drops the key chart on a coarse pointer), and decideInEditor's for a tap. */
+export const COMPOSER_HINT_TOUCH = "Enter adds a line; tap Save when done";
+/** The hint under the box, in the device's words: the platform's chord with a keyboard, COMPOSER_HINT_TOUCH on a coarse
+ *  pointer. `touch` defaults to the device's answer (isCoarsePointer), read at each call — the hint is built per render,
+ *  and the primary pointer can change (a tablet docks to a keyboard and trackpad), as decideInEditor reads it too; a
+ *  test passes it. */
+export function composerHint(mac: boolean, touch: boolean = isCoarsePointer()): string {
+  return touch ? COMPOSER_HINT_TOUCH : saveChord(mac) + " saves; Enter adds a line";
+}
+/** Size the box to its content: height auto, then the scroll height — capped at COMPOSER_MAX_ROWS rows of the box's
+ *  computed line-height plus its padding (rowCap), past which the box scrolls — plus the border (box-sizing: border-box).
+ *  The sheet's min-height floors it at COMPOSER_ROWS. The cap is here and not a max-height in the sheet because the
+ *  person's resize drag and this function write the same inline height: a sheet clamp capped the drag too, so a drag at
+ *  the cap could not make the box taller yet read as a drag (Panel.autosize), and the box froze at the cap for the rest
+ *  of the comment (the 2026-09-07 review). Returns the inline height as the box holds it after the write — read back,
+ *  not the string written: Chromium serializes a written 199.82399999999998px as 199.824px, and Panel.autosize tells a
+ *  drag from this function's own last write by comparing the inline height to this return — or null when the box has no
+ *  layout to measure (hidden, or a document with no renderer), in which case the inline height it had is put back.
+ *
+ *  The measurement leaves the page's scroll where it found it. `height: auto` collapses a grown box to its rows for the
+ *  read, and the layout that read forces is up to nine rows shorter: a scrolled ancestor near its bottom — the panel's
+ *  aside, which is short on the phone and in a short pane — is clamped in it, and putting the height back does not put
+ *  the scroll back (with cards below the box the browser's anchoring over-corrects the other way instead). Every keystroke
+ *  in a grown box jumped the panel toward its top, the Save row and the cards the person had scrolled to leaving the
+ *  viewport. So the scrolled ancestors' positions are read first and written back last, on both paths. */
+export function autosizeComposer(ta: HTMLTextAreaElement): string | null {
+  const prev = ta.style.height;
+  const held = scrolledAncestors(ta);
+  ta.style.height = "auto";
+  const sh = ta.scrollHeight;
+  if (!(sh > 0)) { ta.style.height = prev; restoreScroll(held); return null; }
+  const border = Math.max(0, (ta.offsetHeight || 0) - (ta.clientHeight || 0));
+  ta.style.height = Math.min(sh, rowCap(ta)) + border + "px";
+  restoreScroll(held);
+  return ta.style.height;
+}
+/** The scroll height of a box at the cap: COMPOSER_MAX_ROWS rows of its computed line-height plus its vertical padding
+ *  (scrollHeight counts the padding, not the border). Infinity — no cap — where the row height cannot be read: a document
+ *  with no computed style (the panel tests' stand-in), or a box no sheet reaches, which has no floor either. */
+function rowCap(ta: HTMLTextAreaElement): number {
+  const win = typeof window !== "undefined" ? window : null;
+  if (!win || typeof win.getComputedStyle !== "function") return Infinity;
+  const cs = win.getComputedStyle(ta);
+  const lh = parseFloat(cs.lineHeight);
+  if (!(lh > 0)) return Infinity;
+  return COMPOSER_MAX_ROWS * lh + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+}
+/** The ancestors scrolled down from their top, with how far: the only ones a shorter layout can clamp. */
+function scrolledAncestors(el: Element): Array<[Element, number]> {
+  const out: Array<[Element, number]> = [];
+  for (let p = el.parentElement; p; p = p.parentElement) if (p.scrollTop > 0) out.push([p, p.scrollTop]);
+  return out;
+}
+function restoreScroll(held: Array<[Element, number]>): void {
+  for (const [p, top] of held) if (p.scrollTop !== top) p.scrollTop = top;
+}
 /** The PDF page an element is (Slice 4): the chunk stamps `data-page` (1-based) on each page's canvas and on the page's
  *  shell (div.fileview-pdf-page), and ONLY those two carry a page — an <img> never does, whatever its markup says. The
  *  sanitizer keeps a rendered figure's data-* attributes (owns() relies on that for data-act), so a raw
@@ -536,12 +812,53 @@ function ensureListener(): void {
     else if (m.type === "warn") live.failAll(droppedRequestText(m.text));
   });
   window.addEventListener("romp:wsdown", () => { if (live) live.failAll("the connection dropped; try again once it returns"); });
+  // Show changes inline is one preference for every viewer (settings.ts): a flip in another pane or tab — the
+  // `storage` event, or the gear's same-document signal — repaints this one's marks so its header and its body
+  // agree. Installed once here, with the message listener, and routed to the live panel: a listener per panel
+  // would outlive the panels (onExternalSettingsChange has no remove).
+  onExternalSettingsChange((s) => { if (live && live.inline !== s.changesInline) { live.inline = s.changesInline; live.paintAll(); } });
+  // the filter (All · Comments · Changes) is kept the same way and reaches the live panel the same way: its own call, since the
+  // toggle's line above is pinned word for word (file-comments-inline-toggle.test.ts) and a pick that changes nothing repaints nothing
+  onExternalSettingsChange((s) => { if (live && live.filter !== s.commentsFilter) { live.filter = s.commentsFilter; live.paintAll(); } });
 }
+/** The save chord, claimed at the WINDOW in the capture phase while the live panel's box is the key's target: the first
+ *  listener a keydown meets, by the DOM's phase order, not by who registered first. In the combined shell, palette-main.ts
+ *  runs every bound chord from a capture listener on this pane's document, wired when the pane loaded (so ahead of
+ *  anything the panel hangs on the document), and a chord with a real modifier dispatches while typing (keybindings.ts
+ *  dispatchable). Ctrl+Enter and Cmd+Enter are bindable there and conflict with no shell command, so a shell command the
+ *  person bound to one stopped the event before boxKey and ran instead: nothing saved, the hint under the box false. The
+ *  chord typed in the box is the box's, as a bare Enter is (the shell refuses to bind that): the claim stops the event
+ *  short of every other listener and hands it to boxKey, which saves. Nothing else is claimed: an Escape, a plain Enter,
+ *  a composing IME's Enter and a key anywhere but the box pass untouched.
+ *
+ *  ONE listener for the module, added when it loads and keyed on `live` — not one per panel, added when the panel is
+ *  built (the 2026-09-07 review). The chat pane runs its history keys, chat.navBack and chat.navForward, from a
+ *  window-capture listener of its own (render.ts, added when that module loads, reading the same overrides store as the
+ *  shell's dispatcher), and a rebind of either to Ctrl+Enter or Meta+Enter reached it: listeners on one target in one
+ *  phase run in the order they were added, and stopPropagation stops none of them, so a claim added when the panel was
+ *  built ran after the chat's listener had navigated — the comment saved and the session switched under the viewer.
+ *  Only an earlier listener can stop a same-target one, and only with stopImmediatePropagation. This module is a static
+ *  dependency of render.ts (file-view.ts imports fileCommentsAction from here; render.ts imports panelMark), so its body
+ *  runs before render.ts's and this listener is added before the chat's; the feed's window listeners leave every Ctrl and
+ *  Meta chord alone, and the shell's dispatcher sits on the document, behind the window in the capture phase whatever the
+ *  order. A panel adds and removes nothing: dispose clears `live`, and a chord in what was its box passes on as before.
+ *  The guard is for an import with no window at all (a node test of the pure helpers), where there is no keyboard. */
+function claimSaveChord(ev: KeyboardEvent): void {
+  const p = live;
+  if (!p || ev.target !== p.input || composerKeyAction(ev) !== "save") return;
+  ev.stopImmediatePropagation();
+  p.boxKey(ev);
+}
+if (typeof window !== "undefined") window.addEventListener("keydown", claimSaveChord, true);
 
 // The controls that are not <button>s — a card's head, its passage link, a Log row, a painted highlight —
 // and so take Enter and Space here, through the same root the clicks use: a collapsed card is otherwise a
 // dead end for the keyboard (ui/CLAUDE.md, never dead-end a compact view).
 const KEY_ACTS = new Set(["fccard", "fcgoto", "fcopen", "fcchange", "fclogrow"]);
+/** The filter's options in the header's order (the filter follow-on, 2026-09-07), and the keys that move along them: the
+ *  arrows step to the next or previous option and choose it, wrapping at the ends; Home and End go to the first and last. */
+const FILTERS: CommentsFilter[] = ["all", "comments", "changes"];
+const FILTER_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"]);
 
 /** Where a Rendered-view refusal's passage sits in the source, for the switch to Raw. The selection
  *  came from the REFUSED block, so the search starts at that block: a copy of the same words earlier in
@@ -562,6 +879,24 @@ export function rawTarget(src: string, r: MapRefusal & { selText: string }): Sou
 }
 
 let reqSeq = 0;
+
+// ── the landing cue (the inline-display follow-on's review, 2026-09-07) ─────────────────────────────
+// Reveal switches to Raw and centres the change's row. With Show changes inline off — or a batch the Raw painter refused
+// (D4) — that row wears no mark of ours, so the person landed among a screen of identical rows with nothing saying which
+// one held the change: the line number and the "marks are off" clause were in the button's title, which a finger never
+// sees (ui/CLAUDE.md: never dead-end a compact view). So a Reveal that lands where the view shows no mark for its subject
+// cues the LANDING ROW (landOn): the `.fv-cl` the scroll centred wears `fc-landing`, the accent wash and a 2px accent bar
+// at its left edge — the focus-cue colour (ui/CLAUDE.md), never a status colour, and never a change mark's dress (the
+// tint, the struck wash): the marks are off by the person's choice, and a row cue is not a change mark, so the toggle's
+// contract (no change mark in either view) holds. The dress rides inline, as a framed picture's outline does (styleFrame):
+// the row is the viewer's element, and the sheets dress no landing. The cue is transient by EVENT, never by clock: it
+// leaves on the next paint pass (a status landed, the body re-rendered, the marks flipped — each new information the row
+// may no longer fit), on the next Reveal (one landing at a time), and with the panel; a card opening or any other
+// re-render of the aside alone leaves it standing, and so does scrolling away — the row is where the change is until the
+// text moves. When the view DOES mark the subject there (the marks on: Raw paints every change; a comment's highlight),
+// the mark is the cue and the row wears none.
+const LANDING_BG = "var(--accent-wash)";
+const LANDING_BAR = "inset 2px 0 0 var(--accent)";
 
 // ── the panel's marks, for listeners that never see a panel ─────────────────────────────────────────
 // Every element a panel paints into the file's body — a highlight, a change mark, a picture frame, a rectangle, and
@@ -595,6 +930,20 @@ class Panel {
   moreChangesOpen = false;                  // the "… N more changes" fold past GROUP_LIMIT groups — the same rule
   rejectAllConfirm = false;                 // the Reject all confirm row is showing (pane-local, like the folder-off confirm)
   paintedChanges = new Set<string>();       // the change ids whose marks the current view shows; the rest get Reveal
+  landing: HTMLElement | null = null;       // the Raw row the last Reveal cued, when the view showed no mark of ours there (landOn)
+  // Show changes inline (the inline-display follow-on, 2026-09-07): whether the read view marks the session's changes
+  // in the text — insertions tinted, deletions struck — in both views. Off, the file reads as it is and every change
+  // is its card alone (no "not shown" tag: nothing is shown by choice). The shared settings store keeps it across
+  // opens and pages (settings.ts changesInline, ON by default); comment highlights are not governed by it.
+  inline = loadSettings().changesInline;
+  // Which cards the list shows and which marks the text wears (the filter follow-on, 2026-09-07): "all", "comments" or
+  // "changes", from the shared settings (settings.ts commentsFilter, "all" by default), chosen in the header (All · Comments ·
+  // Changes). The inline toggle applies on top: "changes" with the marks off shows the change cards and no mark. The control
+  // is offered only while the file has a card to filter (filterOffered), and the choice governs nothing until then (activeFilter).
+  filter: CommentsFilter = loadSettings().commentsFilter;
+  // The comment saved while the filter showed the changes alone (noteHiddenSave): its card and mark are hidden by that
+  // choice, so the list says so where the card would be (hiddenSavedRow) until the card shows or the person dismisses it.
+  hiddenSaved: string | null = null;
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
@@ -624,12 +973,54 @@ class Panel {
   sending = false;
   sendOpts = { todo: true, track: true, accept: true };   // all checked by default (decision 8); `accept` is the Slice 2 checkbox
   sentNote: string | null = null;
-  todoAnswered = false;                     // one send answers the todo; later sends show no checkbox (seeded from answeredTodos)
+  // the todo the send answers when SEVERAL are offered (todoOpts' radio group; the todo-file follow-on, 2026-09-07): the id
+  // picked, "" for none, null while nothing was picked — the first candidate then, and again when the pick left the list (a
+  // todo settled from elsewhere, or answered by the send before). With one candidate the checkbox (sendOpts.todo) decides.
+  // The two agree on "none": the change handler writes a declined answer to both (the box unchecked is the "" pick, a
+  // "none" pick unchecks the box), because the next status can swap one control for the other — a todo filed or settled
+  // elsewhere changes the count — and a decline held in one slot alone came back as the other's default (the 2026-09-07
+  // review). An answer written to either puts the other back to its default (checked; null, the first offered).
+  todoPick: string | null = null;
+  openTodoText = new Set<string>();         // confirm todo rows unfolded to the todo's whole text, keyed by todo id — the same rule (openLog)
   previewOpen = false;
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
   located = new Map<string, Located & { painted: boolean }>();
+  /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
+   *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
+  unsureCopies = new Set<string>();
   base: PollBaseline | null = null;
+  // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
+  // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
+  // change a session records mid-edit moves the sidecar, and a fence from the poll's later status would let the save write
+  // over it); null when nothing rode in (EditSeed). `lastSaveNs` is the fileMtimeNs of a save reply this panel applied as
+  // its status itself, so onSaved skips the re-read it does for saveFile.
+  editSeed: EditSeed | null = null;
+  lastSaveNs: string | null = null;
+  // Which editor: begin() counts one per Edit, and saveThroughComments captures the count at the send, so a reply that finds
+  // a LATER editor up (Cancel confirmed during Saving, then Edit again before the ack) leaves that editor's seed and text
+  // alone — they are its own, from the status as it stood — and says the file moved under it instead.
+  editGen = 0;
+  // decisions this panel sent whose reply has not landed (holdEdit): while any is out, the viewer refuses Edit
+  decisionsOut = 0;
+  // the file's bytes moved under an edit (noteMovedUnderEdit) and the view has not re-read them yet: the first paint after
+  // the edit ends re-reads (paintAll). A latch of its own, not the head row's presence: the row's ✕ dismisses the words,
+  // and the re-read must still happen, or Cancel would leave the pre-rewrite bytes showing for good (the poll's baseline
+  // already moved on to the new mtime when the status landed, so no later tick would notice). The same latch keeps the row
+  // to once per edit: every later status reads later than the editor's frozen mtime, and a dismissed row must not return
+  // with each of them (the shape the two latches below have)
+  movedUnderEdit = false;
+  // the sidecar's pending changes stopped being the editor's (noteChangesMovedUnderEdit): the row was set once for this
+  // edit; a later status re-sets nothing, and the edit's end clears both (paintAll)
+  changesMovedUnderEdit = false;
+  // the sidecar shows pending changes the editor never carried (noteChangesUnreadUnderEdit): the same latch shape
+  changesUnreadUnderEdit = false;
+  // the text the status's offsets index while the editor is up: the file as the editor loaded it (begin), or the content of
+  // the last landed save (saveThroughComments), whose reply's hunks index that. text() answers the BUFFER then, which typing
+  // moves under the offsets — grouping the cards over it retitled them with every keystroke's render (indexedText). Null
+  // outside an edit: the view's text is the one.
+  editText: string | null = null;
+  decideRows = new Set<string>();           // the slots whose row says to decide in the editor (refuseDecision): retired when the edit ends
   stopped = new Set<string>();              // poll targets a 413/415 retired
   timer: ReturnType<typeof setInterval> | null = null;
   polling = false;
@@ -644,14 +1035,37 @@ class Panel {
   // retry's reply) asks nothing.
   bytesWait: ReturnType<typeof setTimeout> | null = null;
   reloadFor: string | null = null;
+  // ── the margin layout (the build's reading, not a ruling, of the user's 2026-09-07 ask after walking the loop: that
+  // comments might move with the window when possible, each trying to stay centered near its place in the text; the
+  // build put each card level with its passage instead, and the plan's margin-layout note under Slice 2 records both,
+  // with the user's word still to come). Beside the body the aside is laid out as a document editor's margin:
+  // the head and the composer stay put at the top, Accept all · Reject all, Send and the Log at the bottom, and between
+  // them the cards section is a TRACK whose scroll is locked to the body's — the body's scrollTop is mirrored onto the
+  // track on its scroll event and the reverse on the track's (syncFrom guards the echo) — with every card absolutely
+  // positioned at its mark's height (placeCards, card-layout.ts). `margin` is whether that layout is on: off in the
+  // narrow fold (the sheet's container query stacks the aside under the body: the list layout as before, read off the
+  // row's computed flex-direction) and in edit mode (the editor's own marks; no read view to sit beside).
+  margin = false;
+  placed = new Map<string, PlacedItem>();    // the last pass's placement by card key, in placement order (centerOn and cardsInOrder read it)
+  cardsEnd = 0;                               // the last pass's bottom edge of the last card plus the gap: the track content the last card's end needs (followBody)
+  bodyPad = 0;                                // the end padding the pass gave the body, in px (padBody): the footer's height plus the last card's overhang
+  contentWatched = new Set<Element>();        // the body's element children the size observer holds (watchContent: the content's box, which grows when the body's does not)
+  layoutFrame: number | null = null;          // the pass scheduled for the next frame (scheduleLayout: one per frame, however many events ask)
+  syncFrom: "body" | "track" | null = null;   // the scroller whose write onto the other is still to echo (mirrorScroll)
+  sizer: ResizeObserver | null = null;        // the body, the row and the track (the aside's width and height reach it as the track's): a size change re-runs the pass
+  cardSizer: ResizeObserver | null = null;    // the cards of the current render: one growing (a crop, a box inside it) pushes the cards below
+  expandIntent: { key: string; wasOpen: boolean } | null = null;   // a card head clicked, as seen before the delegate toggles it (installLayout → afterRender)
   // persistent section wrappers: render() swaps each section's CHILDREN, never the aside's own children —
   // replaceChildren on the aside would remove and re-insert the composer box, and a removed element
   // loses focus, so a poll-triggered re-render would drop the input's focus mid-word
   sections = { head: el("div", "fc-sec-head"), cards: el("div", "fc-sec-cards"), send: el("div", "fc-sec-send"), log: el("div", "fc-sec-log") };
   // persistent composer parts, for the same reason
-  composerBox = el("div", "fc-composer");
+  composerBox = el("div", "fc-composer");   // in the panel's slot, or inside the card a reply answers (placeComposer)
   composerRef = el("div", "fc-composer-ref");
-  input = el("input", "fc-input") as HTMLInputElement;
+  input = el("textarea", "fc-input") as HTMLTextAreaElement;   // several lines (the 2026-09-07 follow-on): Enter is a newline, the chord saves
+  // the inline height autosize last set: an inline height that is not this one was dragged there by the person (the
+  // sheet's resize: vertical), and their height stands until the composer closes (closeComposer)
+  sizedTo: string | null = null;
   composerActs = el("div", "fc-actions");
   composerErr = el("div");
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
@@ -667,18 +1081,25 @@ class Panel {
     ev.preventDefault(); ev.stopPropagation();
     this.closeComposer();
   };
+  /** A key in the box. A plain Enter is the browser's own newline; the chord saves (composerKeyAction); Escape cancels.
+   *  An Escape under a composing IME is the IME's (composerKeyAction: null, and its default cancels the composition), but
+   *  it is still not the viewer's: the document-level Escape (file-view.ts onKey) reads no isComposing and closes the whole
+   *  viewer — the panel and the typed comment with it — or peels edit mode. So EVERY Escape stops at the box. */
+  boxKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") e.stopPropagation();
+    const act = composerKeyAction(e);
+    if (act === "save") { e.preventDefault(); void this.saveComposer(); }
+    else if (act === "cancel") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
+  };
 
   constructor(readonly ctx: FileViewActionCtx, readonly button: HTMLButtonElement, readonly unit: HTMLElement) {
     ensureListener();
     live = this;
-    this.todoAnswered = !!ctx.todoId && answeredTodos.has(ctx.todoId);
-    this.input.type = "text";
-    this.input.placeholder = "Your note (Enter saves, Esc cancels)";
+    this.input.rows = COMPOSER_ROWS;
+    this.input.placeholder = "Your comment";
     this.input.setAttribute("aria-label", "Comment text");
-    this.input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); void this.saveComposer(); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); this.closeComposer(); }   // never the viewer's Escape
-    });
+    this.input.addEventListener("keydown", this.boxKey);   // Escape here; the save chord arrives through the window's claim (claimSaveChord); a plain Enter is left to the textarea
+    this.input.addEventListener("input", () => this.autosize());
     (this.float as HTMLButtonElement).type = "button";
     this.float.hidden = true;
     this.float.title = "Comment on the selected passage";
@@ -705,9 +1126,12 @@ class Panel {
     ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
+      if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
       if (this.status) void this.refresh();            // the Log gained the edit entry before the reply
     });
     ctx.onClose(() => this.dispose());
+    ctx.guardClose(() => this.draftAsk());             // a typed, unsaved note is asked about before the viewer moves on
+    ctx.setTrackedEdit(this.trackedEdit());            // the editor's half of editing over pending changes (Slice 5)
     // every control the panel ever renders hangs off ONE stable root (ui/CLAUDE.md, click-safe): the
     // viewer's body row, which also holds the painted highlights — so a highlight click routes here too.
     // The same row holds the FILE's rendered markdown, and the sanitizer keeps data-* attributes (DOMPurify's
@@ -723,11 +1147,15 @@ class Panel {
         fctrackfolder: () => { this.trackChoice = false; void this.mutate("set-tracked", { on: true, scope: "folder" }, "track"); },
         fctrackcancel: () => { this.trackChoice = false; this.trackStop = false; this.render(); },
         fctrackstop: () => { this.trackStop = false; void this.mutate("set-tracked", { on: false, scope: "folder" }, "track"); },
+        fcinline: () => this.toggleInline(),
+        fcfilter: (x) => this.setFilter(x.dataset.key as CommentsFilter),   // All · Comments · Changes (the filter follow-on)
         fcfile: () => this.startFileComment(),
         fcsave: () => { void this.saveComposer(); },
         fccancel: () => this.closeComposer(),
         fcraw: () => this.switchToRaw(),
-        fccard: (x) => { const id = x.dataset.id!; if (this.openCards.has(id)) this.openCards.delete(id); else this.openCards.add(id); this.render(); },
+        // a card whose reply is being written stays open: its box stands in the card (placeComposer), and a fold would take the
+        // box and the words with it; Save or Cancel frees the head again
+        fccard: (x) => { const id = x.dataset.id!; if (!this.openCards.has(id)) this.openCards.add(id); else if (!this.hostsReply(id)) this.openCards.delete(id); this.render(); },
         fcgoto: (x, ev) => { ev.stopPropagation(); this.goTo(x.dataset.id!); },
         fcreveal: (x, ev) => { ev.stopPropagation(); this.reveal(x.dataset.id!); },
         fcreply: (x, ev) => { ev.stopPropagation(); this.startReply(x.dataset.id!); },
@@ -737,21 +1165,33 @@ class Panel {
         fcaccept: (x, ev) => { ev.stopPropagation(); void this.mutate("accept", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
         fcreject: (x, ev) => { ev.stopPropagation(); void this.mutate("reject", { ids: [x.dataset.id!] }, "change:" + x.dataset.id!); },
         fcacceptall: () => { this.rejectAllConfirm = false; void this.mutate("accept-all", {}, "changes"); },
-        fcrejectall: () => { this.rejectAllConfirm = !this.rejectAllConfirm; this.render(); },   // Reject all rewrites the file: one pane-local confirm
+        fcrejectall: () => {   // Reject all rewrites the file: one pane-local confirm — unless the editor is up, when the answer is where to decide (DECIDES)
+          if (this.ctx.editing()) { this.refuseDecision("changes"); return; }
+          this.rejectAllConfirm = !this.rejectAllConfirm; this.render();
+        },
         fcrejectallgo: () => { this.rejectAllConfirm = false; void this.mutate("reject-all", {}, "changes"); },
         fcrejectallcancel: () => { this.rejectAllConfirm = false; this.render(); },
         fcchangereply: (x, ev) => { ev.stopPropagation(); this.startChangeReply(x.dataset.id!); },
         fcmore: () => { this.moreChangesOpen = !this.moreChangesOpen; this.render(); },
-        fcchange: (x) => { this.openPanel(); this.showCard("chg:" + x.dataset.id!); },   // an inline change mark opens its card
+        // an inline change mark opens its card, and only that: like fcopen below, it cancels the click. A mark inside the
+        // author's link (a deletion point placed at the start of a link's label, a substitution's point and tint over it,
+        // an insertion's tint) stands inside the <a>, which mdBlock gives target=_blank, so the click that opened the card
+        // also opened a tab to the author's URL, the session's URL, on a file under review; painted over a URL the viewer
+        // linked (file-view-links.ts) it stands inside that anchor too, and the anchor's own open followed the card's on
+        // every click and Enter (the 2026-09-07 review, both finds). Cancelling the click ends the anchor's activation;
+        // the chat pane's link handler stands aside for a panel mark on the word that the delegate cancels.
+        fcchange: (x, ev) => { ev.preventDefault(); this.openPanel(); this.showCard("chg:" + x.dataset.id!); },
         fcsend: () => { if (this.statusRefusal) return; this.sendConfirm = true; this.sentNote = null; this.render(); },   // renderSend disables the button and says why; the guard holds if a click lands anyway
         fcsendcancel: () => { this.sendConfirm = false; this.previewOpen = false; this.render(); },
         fcsendgo: () => { void this.doSend(); },
         fcpreview: () => { this.previewOpen = !this.previewOpen; this.render(); },
+        fctodotext: (x) => { const id = x.dataset.id!; if (this.openTodoText.has(id)) this.openTodoText.delete(id); else this.openTodoText.add(id); this.render(); },   // a confirm todo row's fold (todoOpts)
         fclog: () => { this.logOpen = !this.logOpen; this.render(); },
         fclogrow: (x) => { const k = x.dataset.key!; if (this.openLog.has(k)) this.openLog.delete(k); else this.openLog.add(k); this.render(); },
         // Reload re-reads under the row that offered it: the slot wears the loader for the wait (refresh)
         fcreload: (x) => { const slot = x.dataset.slot || "head"; this.errors.delete(slot); this.stopped.clear(); void this.refresh(slot); this.ctx.reload(); },
         fcerrx: (x) => { this.errors.delete(x.dataset.slot || ""); this.render(); },
+        fchiddenx: () => { this.hiddenSaved = null; this.render(); },   // the line for a comment saved under Changes (hiddenSavedRow): read, dismissed
         // a mark in the file's own markup — a rectangle on a figure, a framed picture — is the panel's control, and its
         // click is the card's opening, not the activation of whatever the author wrapped the figure in: a linked figure
         // (`[![p95](figs/p95.png)](url)`, which mdBlock gives target=_blank) opened a new tab on every click, Enter and
@@ -764,8 +1204,18 @@ class Panel {
     row.addEventListener("change", (ev) => {
       const t = ev.target as HTMLInputElement | null;
       const k = t ? t.dataset.opt : undefined;
-      if (!t || k !== "todo" && k !== "track" && k !== "accept" || !this.owns(t)) return;   // a checkbox the file's markup carries flips nothing
-      this.sendOpts[k] = t.checked;
+      if (!t || !this.owns(t)) return;                 // a control the file's markup carries flips nothing
+      if (k === "todopick") this.todoPick = t.value;   // the radio group: the todo's id, or "" for none (todoOpts)
+      else if (k === "todo" || k === "track" || k === "accept") this.sendOpts[k] = t.checked;
+      else return;
+      // the answer-a-todo verdict has two controls — the box when one todo is offered, the radio group when several — and
+      // the next status can swap one for the other (a todo filed or settled elsewhere changes the count; applyStatus keeps
+      // the confirm open), so a verdict recorded in either is written to both: the box unchecked is the "" pick and a
+      // "none" pick unchecks the box; a todo picked or the box checked is an answer in both, the other slot back to its
+      // default. Before, a declined answer held in one slot came back as the other's default and the send stamped a todo
+      // the person had declined (the 2026-09-07 review; todoPick's comment).
+      if (k === "todopick") this.sendOpts.todo = t.value !== "";
+      else if (k === "todo") this.todoPick = t.checked ? null : "";
       this.render();                                   // the list's counts and the preview follow the boxes (refocus keeps the box focused)
     });
     // a click on a rendered picture offers Comment on its embed line (the plan's Images and PDFs) — the same
@@ -785,7 +1235,22 @@ class Panel {
       ev.preventDefault();
       x.click();
     });
+    // the filter's buttons are one group (a small radiogroup): an arrow on one of them moves to the next or previous option and
+    // chooses it, wrapping at the ends (Home and End: the first and the last) — for the panel's own buttons only, as above
+    row.addEventListener("keydown", (ev) => {
+      if (!FILTER_KEYS.has(ev.key)) return;
+      const t = ev.target as HTMLElement | null;
+      if (!t || !t.dataset || t.dataset.act !== "fcfilter" || !this.owns(t)) return;
+      const i = FILTERS.indexOf(t.dataset.key as CommentsFilter);
+      if (i < 0) return;
+      ev.preventDefault();
+      const next = ev.key === "Home" ? FILTERS[0] : ev.key === "End" ? FILTERS[FILTERS.length - 1]
+        : FILTERS[(i + (ev.key === "ArrowRight" || ev.key === "ArrowDown" ? 1 : FILTERS.length - 1)) % FILTERS.length];
+      this.setFilter(next);
+      (this.root?.querySelector('[data-act="fcfilter"][data-key="' + next + '"]') as HTMLElement | null)?.focus({ preventScroll: true });
+    });
     this.button.addEventListener("click", () => { flash(this.button); if (this.open) this.closePanel(); else this.openPanel(); });
+    this.installLayout(row);                           // the margin layout's scroll lock and its re-layout events
   }
 
   // ── provenance: which activations are the panel's ──────────────────────────────────────────────
@@ -897,6 +1362,7 @@ class Panel {
     if (this.status && suspect && !provablyNewer(s, this.status)) return false;
     this.appliedReq = Math.max(this.appliedReq, s.reqId);
     this.status = s;
+    this.releaseAnswered(s);                           // a todo this status lists, asked after a send stamped it, is open again (answeredTodos)
     this.statusRefusal = null;
     this.errors.delete("head");                        // a status refusal's row (probe, refresh) is answered by a status
     this.base = pollBaseline(s);
@@ -904,10 +1370,27 @@ class Panel {
     this.unit.hidden = false;
     this.button.textContent = actionLabel(s);
     this.button.title = s.store ? "Comments and changes kept beside this file" : "Comment on this file, or track a session's changes to it";
-    this.ctx.setEditBlocked(editBlockedReason(s.hunks || []));
-    this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to
+    // Edit is not refused for pending changes any more (Slice 5): they ride into the editor as marks (trackedEdit.begin),
+    // and the viewer raises the Slice 2 wording itself when its editor bundle cannot carry them
+    this.noteChangesMovedUnderEdit();                  // every status lands here: the one place that can see the editor's records leave the sidecar
+    this.noteChangesUnreadUnderEdit();                 // …or show changes the editor never carried (Edit before the first status)
+    this.syncBytes(s);                                 // the view shows the text these hunks index, or is asked to (stands down while the editor holds the body)
     this.paintAll();                                   // repaints the highlights and renders the panel
     return true;
+  }
+  /** The page's memory of the todos its sends stamped (answeredTodos) ends for every todo `s` lists whose latch
+   *  predates the ask: the status was issued after the send's reply landed, and the kernel stamps — or parks — before
+   *  it replies, so a todo it still lists is open (a parked send, stamped at its drain; a recalled answer, reopened).
+   *  A status issued before the reply (its reqId at or under the latch's) releases nothing: it may have read the
+   *  store before the stamp. Only an APPLIED status releases — a dropped one is not what the confirm is built from. */
+  private releaseAnswered(s: Reply): void {
+    if (!Array.isArray(s.todos)) return;
+    for (const t of s.todos) {
+      const id = t && typeof t === "object" ? t.id : undefined;
+      if (typeof id !== "string" || !id) continue;
+      const at = answeredAt.get(id);
+      if (at !== undefined && at < s.reqId) { answeredTodos.delete(id); answeredAt.delete(id); }
+    }
   }
   /** Bring the view's bytes to the text a status describes: its hunks and anchors are offsets into the file the
    *  host read, so when the file mtime the status carries is not the view's, the view is asked to re-fetch and the
@@ -917,8 +1400,12 @@ class Panel {
    *  refusal named only the sidecar, so a reload keyed on `file-moved` alone left the old bytes up with no marks on
    *  them — the review's finding); an accept's reply whose file mtime moved since the poll last looked; the poll's
    *  own re-read. Nothing else re-fetches: every reply re-baselines the poll to the mtime it carries, so the poll
-   *  never sees a move a status already reported. A view with no text yet (its first fetch out) is left alone. */
+   *  never sees a move a status already reported. A view with no text yet (its first fetch out) is left alone, and so
+   *  is a view whose body the editor holds (Slice 5): its buffer is the text and the viewer's reload() stands down, so
+   *  a fetch asked here would never start and the loader it armed could only run out; the head says the bytes moved
+   *  instead (noteMovedUnderEdit, at each status's call site), and the edit's end re-reads them (paintAll). */
   private syncBytes(s: Status): void {
+    if (this.ctx.editing()) return;
     const vm = this.ctx.mtimeNs();
     if (!vm || !s.fileMtimeNs || vm === s.fileMtimeNs) return;
     this.askReload(s.fileMtimeNs);
@@ -999,20 +1486,41 @@ class Panel {
     // are the person's, and its pending rectangle is a mark like any other.
     if (this.composer && this.composer.kind === "replace") this.closeComposer();
     this.paintRegions();                               // disarm: a closed panel leaves the pictures to the browser
+    if (this.margin) this.layoutOff();                 // the body's end padding and the placement go with the aside (a reopen's first pass brings them back)
+    this.clearLanding();                               // the Reveal that cued a row was this panel's gesture; the cards it led from are gone
+    this.hiddenSaved = null;                           // the line about a save this panel showed nothing for was read with the panel open (hiddenSavedRow)
     this.stopPoll();
   }
+  /** The viewer's close ask (ctx.guardClose): a composer holding typed words is a note the person has not saved, and a
+   *  close or a replace-open (a link followed inside the file, a Files-pane row, the shell's relay) used to drop it with
+   *  the panel, silently (the 2026-09-07 review). The panel names what is at stake; the VIEWER puts the ask, the way it
+   *  puts the editor's own (file-view.ts askDiscard: a confirm on the web, the notice bar in the VS Code webview, where
+   *  window.confirm shows nothing and answers false; the round-2 review). A re-place takes a drag, not words, and an
+   *  empty input has nothing to lose: null lets the close go. */
+  draftAsk(): CloseAsk | null {
+    const c = this.composer;
+    if (!c || c.kind === "replace" || !this.input.value.trim()) return null;
+    const p = this.ctx.path, name = p.slice(p.lastIndexOf("/") + 1);
+    return { question: "Discard the unsaved comment on " + name + "?", kept: "This file stays open: the comment typed on " + name + " is not saved. Save it, or clear the box, then try again." };
+  }
   dispose(): void {
+    this.clearLanding();
     this.stopPoll();
+    if (this.margin) this.layoutOff();
     for (const l of this.regionLayers.values()) l.dispose();
     this.regionLayers.clear();
     this.pageWatch?.disconnect(); this.pageWatch = null; this.pageWatched.clear();   // the shells it held go with the viewer
     this.crops.clear();
     if (this.bytesWait) { clearTimeout(this.bytesWait); this.bytesWait = null; }
+    this.sizer?.disconnect(); this.cardSizer?.disconnect(); this.contentWatched.clear();   // the margin layout's observers and its pending frame go with the viewer
+    if (this.layoutFrame !== null && typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.layoutFrame);
+    this.layoutFrame = null;
+    window.removeEventListener("resize", this.onWindowResize);
     this.float.remove();
     for (const ev of ["mousedown", "touchstart"]) document.removeEventListener(ev, this.hideFloatOnDown, true);
     document.removeEventListener("keydown", this.escapeReplace, true);
     this.failAll("the file viewer closed");
-    if (live === this) live = null;
+    if (live === this) live = null;   // …and the window's save-chord claim (claimSaveChord reads `live`) is no longer this box's
   }
 
   // ── the session color map: one GET /sessions per panel open, authorId → name + colour ──────────
@@ -1094,10 +1602,15 @@ class Panel {
         // the bytes changed under the view: repaint them — asked here, not left to the status, so a refused status
         // (a corrupt sidecar, say) still gets the file re-read; the status that follows knows the same mtime and asks nothing.
         // A figure that moved re-fetches the view too, so the new picture shows — unconditionally: the file's own mtime
-        // is unchanged, so no status will ask for it (syncBytes keys on the file's mtime alone)
-        if (fileNow !== null) this.askReload(fileNow);
-        else if (figureMoved) this.askReload(null);
+        // is unchanged, so no status will ask for it (syncBytes keys on the file's mtime alone). Never over an editor's
+        // buffer (Slice 5): the viewer's reload() stands down then, so nothing is asked and `reloadFor` is left as it was;
+        // the head says the bytes moved instead (noteMovedUnderEdit, below), and the edit's end re-reads them (paintAll)
+        if (!this.ctx.editing()) {
+          if (fileNow !== null) this.askReload(fileNow);
+          else if (figureMoved) this.askReload(null);
+        }
         await this.refresh();                        // fresh sidecar, log, and a new baseline
+        this.noteMovedUnderEdit();                   // reload() stands down in edit mode: the head says the bytes moved (Slice 5)
       }
     } finally { this.polling = false; }
   }
@@ -1129,11 +1642,17 @@ class Panel {
    *  verbatim, with Reload when the store, file, or config moved. Resolves the fresh status, or null
    *  when nothing was written. */
   async mutate(verb: string, args: Record<string, unknown>, slot: string): Promise<Status | null> {
+    // a decision while the editor is up is refused before anything is asked of the kernel (DECIDES: why, and where it goes)
+    if (DECIDES.has(verb) && this.ctx.editing()) { this.refuseDecision(slot); return null; }
     // one write in flight per control: a second Enter or click during the round trip is not a second
     // write (the host mints a fresh id per `comment`, so a repeat would land twice); Save disables and
     // relabels itself meanwhile (renderComposer), the slot's loader shows for every other control
     if (this.busy.has(slot)) return null;
     this.busy.add(slot); this.busyVerb.set(slot, verb); this.errors.delete(slot); this.render();
+    // a decision holds Edit from here until it settles — the consent's read, the status re-ask, the send, a moved fence's
+    // re-read and retry included (DECISION_IN_FLIGHT: why); the gate above and mutateOnce's are the same trap's other side
+    const decides = DECIDES.has(verb);
+    if (decides) this.holdEdit(1);
     try {
       if (!(await this.requireStatus(slot))) return null;
       // the changes as the card showed them: with a status held, requireStatus asked nothing, so this is the status the
@@ -1141,9 +1660,21 @@ class Panel {
       if (DECIDE_VERBS.has(verb)) this.seen.set(slot, seenChanges(this.status, args));
       if (!(await this.ctx.ensureEditingAllowed())) { this.errors.set(slot, { text: "Nothing written: comments need file editing on.", reload: false }); return null; }
       return await this.mutateOnce(verb, args, slot, false);
-    } finally { this.busy.delete(slot); this.busyVerb.delete(slot); this.seen.delete(slot); this.render(); }
+    } finally { if (decides) this.holdEdit(-1); this.busy.delete(slot); this.busyVerb.delete(slot); this.seen.delete(slot); this.render(); }
+  }
+  /** Edit is refused while a decision this panel sent is out (DECISION_IN_FLIGHT): the viewer hears the reason when the
+   *  first goes out and null when the last settles — one transition each way, however many are out at once (two cards
+   *  clicked in a row, the Send's accept-all beside a card's). A status reply never touches it (Slice 5: pending changes
+   *  ride into the editor; file-comments-changes.test.ts pins that applyStatus stays out of it). */
+  private holdEdit(delta: 1 | -1): void {
+    const was = this.decisionsOut;
+    this.decisionsOut = Math.max(0, was + delta);
+    if ((was === 0) !== (this.decisionsOut === 0)) this.ctx.setEditBlocked(this.decisionsOut ? DECISION_IN_FLIGHT : null);
   }
   private async mutateOnce(verb: string, args: Record<string, unknown>, slot: string, retried: boolean): Promise<Status | null> {
+    // the gate again, at the send: the editor can open during mutate's awaits (the consent's read, a status re-ask, a
+    // moved fence's refresh before the retry), and a decision sent then would move the sidecar under the records it just took
+    if (DECIDES.has(verb) && this.ctx.editing()) { this.refuseDecision(slot); return null; }
     const s = this.status;
     // a by-id decision stands only over the change the card showed (DECIDE_VERBS): one still pending under the clicked
     // id that reads differently now — grown by a track-edit coalesced into it, seen by the refresh a moved fence ran or
@@ -1156,7 +1687,7 @@ class Panel {
     if (FILE_VERBS.has(verb)) fence.fileMtimeNs = s ? s.fileMtimeNs : "";   // reject rewrites the file: the file's mtime as last seen (FILE_VERBS)
     // a write ABOUT a figure — `comment` with a target, `retarget` — is fenced on the figure's bytes too: the hash the
     // status holds for it (figureFenceHash), which the host compares with the bytes it stamps and refuses `figure-changed`
-    // when they differ. Without it a figure regenerated between the drag and Enter was stamped with the NEW bytes' hash,
+    // when they differ. Without it a figure regenerated between the drag and the save was stamped with the NEW bytes' hash,
     // which every reply then equalled, so a rectangle drawn on the old picture read as current on the new one — the one
     // write the hash exists to catch (the Slice 3 review, 2026-09-06; the host's fence stood unarmed until the panel sent this)
     const fh = FIGURE_VERBS.has(verb) && args.target ? figureFenceHash(s, args.target as Target) : null;
@@ -1167,6 +1698,7 @@ class Panel {
       // a reject's reply carries the mtime of the file the host rewrote: applyStatus (syncBytes) re-fetches the bytes
       // and holds the loader until they paint — the poll will not, the reply just re-baselined it
       this.applyStatus(r);
+      this.noteMovedUnderEdit();                       // a reject from a card while the editor is up is refused before this (DECIDES); a reply's clocks can still say a session moved the file (Slice 5): syncBytes stood down
       return r;
     } catch (err) {
       const e = err as { code: string; error: string };
@@ -1198,6 +1730,180 @@ class Panel {
       this.errors.set(slot, { text: e.error, reload: MOVED.has(e.code) || e.code === FIGURE_CHANGED });
       return null;
     }
+  }
+  /** A decision asked for while the editor is up (a card's Accept or Reject, the foot's Accept all or Reject all): the row
+   *  under the control that asked says where to decide instead (DECIDE_IN_EDITOR). Nothing is asked of the kernel. */
+  private refuseDecision(slot: string): void {
+    this.errors.set(slot, { text: decideInEditor(), reload: false });
+    this.decideRows.add(slot);
+    this.render();
+  }
+
+  // ── editing over pending changes (plans/file-review.md, Slice 5) ─────────────────────────────
+  /** The viewer's seam object: what rides into the editor at Edit, where Save goes, and the save itself. */
+  private trackedEdit(): TrackedEdit {
+    return {
+      begin: () => {
+        this.editGen++;                                // a new editor: a save reply from an earlier one leaves this one's seed alone (saveThroughComments)
+        const s = this.status;
+        const hunks = s ? s.hunks || [] : [];
+        // begin() runs at the click, before the viewer flips into edit mode (editing() still answers false here), so this
+        // render leaves the cards in read mode; the viewer fires the seam's onRendered once as the editor takes the body
+        // (enterEdit), and that paint gives the cards their edit-mode state: decisions answered in place, no Reveal or link
+        // into a read view that is gone (paintAll's editing branch renders the cards and paints nothing).
+        // A new edit, new latches (the records are the sidecar's own again, or none rode in); the Reject-all confirm is
+        // a question the person walked away from by clicking Edit — left set, it came back re-counted when the editor
+        // closed, one click from rewriting the file with no gesture behind it; and the cards group over the text the
+        // status's offsets index, which text() stops answering once the editor holds the buffer (editText).
+        this.changesMovedUnderEdit = false;
+        this.changesUnreadUnderEdit = false;
+        this.rejectAllConfirm = false;
+        this.editText = this.ctx.text();
+        // No status yet (the first ask is still out, or was refused) reads as nothing pending: the editor mounts plain, and
+        // a status that then shows changes raises the head's row and refuses Save (CHANGES_UNREAD_UNDER_EDIT: why Edit is
+        // not refused instead).
+        if (!s || !hunks.length) { this.editSeed = null; this.render(); return null; }
+        const seed = seedOf(s)!;                       // changes are pending: never null here
+        const records = seed.records;
+        this.editSeed = seed;
+        this.render();
+        return {
+          records,
+          // the mark's colour is the author's session colour from the Slice 1 map, as on the panel's own marks; neutral when
+          // the label maps to no session here (a remote kernel's author, a session the list no longer holds)
+          authorColor: (author) => { const aid = authorIdByLabel(s.store, author); const c = aid && this.colors ? this.colors.get(aid) : null; return c && c.color ? c.color.bg : null; },
+          refusal: editBlockedReason(hunks) || "",
+        };
+      },
+      // Read at Save. While records rode into the editor (editSeed), Save goes through the host whatever the poll's latest
+      // status says: the save is fenced on the sidecar those records came from, and a sidecar pruned meanwhile (a decision
+      // from another browser, a session's CLI) must meet that fence and refuse `store-moved` — never re-route to saveFile,
+      // which would land the text with the editor's accepts and rejects dropped and no store fence at all. With nothing
+      // in the editor, the status as it stands decides: the file is tracked or has a sidecar.
+      routesSave: () => { if (this.editSeed) return true; const s = this.status; return !!s && (!!s.trackedBy || !!s.store); },
+      save: (content, records, decided) => this.saveThroughComments(content, records, decided),
+    };
+  }
+  /** The editor's Save through the host: `save` with the text, the records as the editor holds them and its decisions,
+   *  fenced on the sidecar the records came from (editSeed; the latest status when none rode in), the config, and the
+   *  file as the viewer loaded it. One retry, as every mutating verb gets (mutateOnce), when the sidecar or config moved
+   *  but the records the editor carries are still the sidecar's own — a reply a session wrote mid-edit, a toggle from
+   *  another browser; never for a moved file (the editor's text is from the old bytes) or a sidecar whose records
+   *  changed. The reply is applied as the status (it is one), so onSaved has nothing left to re-read — and it re-seeds the
+   *  fence, since the editor may stay up past a landed save (the viewer keeps it over keystrokes typed during the round trip,
+   *  or a decision clicked then) and its next Save must meet the sidecar THIS save wrote, not the poll's latest: a decision
+   *  landed elsewhere between two saves would pass that fence and be written back as pending. The host's `logWarning`
+   *  (the comments log did not take the edit) rides the resolved value for the viewer's note bar and is said in the head. */
+  async saveThroughComments(content: string, records: unknown[], decided: EditDecisions): Promise<{ mtimeNs: string; logged: boolean; logWarning?: string }> {
+    const seed = this.editSeed;
+    const gen = this.editGen;                          // the editor this save came from (begin() counts them): see `mine` below
+    // The editor carries no records and the sidecar holds pending changes the file's clock does not account for: the status
+    // landed after Edit (noteChangesUnreadUnderEdit's row). The list the editor would write back is empty, and the host
+    // takes it as the sidecar's new contents — every change dropped, none decided, a plain-edit trace. Refused before
+    // anything is asked, in the row's words: the viewer's Save bar carries them whether or not the panel is open. A file
+    // that moved as well is left to the host's file fence (file-moved, with Reload — what MOVED_UNDER_EDIT promised).
+    const now = this.status;
+    if (!seed && now && (now.hunks || []).length && !laterNs(now.fileMtimeNs, this.ctx.mtimeNs())) throw { code: "changes-unread", error: CHANGES_UNREAD_UNDER_EDIT };
+    const fenceOf = (s: Status | null): Record<string, string> => ({
+      storeMtimeNs: s && s.storeMtimeNs !== null ? s.storeMtimeNs : "", configMtimeNs: s && s.configMtimeNs !== null ? s.configMtimeNs : "",
+    });
+    let fence: Record<string, string> = { ...(seed ? { storeMtimeNs: seed.storeMtimeNs, configMtimeNs: seed.configMtimeNs } : fenceOf(this.status)), fileMtimeNs: this.ctx.mtimeNs() };
+    const args = saveArgs(content, records, decided);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const r = await this.request("save", args, fence);
+        this.markOverlapped();                         // the status asks still out may have read the disk before this write
+        // Whose save this is. The editor that sent it may be gone (Cancel confirmed during Saving) and a LATER one up over the
+        // bytes and records from before it (Edit again, before this ack): that editor's begin() seeded editSeed and editText
+        // from the status as it stood, and re-seeding them from this reply fenced its next Save on a sidecar it never saw,
+        // grouped the cards over text it does not show, and left the records this save decided riding in it as pending with
+        // nothing said — the seed then matched the reply (the review's late-ack finding, panel half). So the re-seed is for
+        // the editor that saved; for a later one the reply is applied as the status alone. The person hears of it from the
+        // viewer, which resolves this same promise: its bar says the earlier save landed under the reopened editor, with
+        // Reload, and its exit re-reads the saved bytes (SAVE_LANDED_UNDER_NEW_EDITOR) — so the panel raises no row of its
+        // own here, and does not latch a second exit re-read (the moved-file latch would: one message, one read). No editor
+        // at all (the edit ended, no new Edit) counts as the same editor: the first paint after the edit clears the fields
+        // (paintAll).
+        const mine = gen === this.editGen;
+        if (mine) {
+          // the reply's sidecar is the one the editor's records now came from (the host wrote them back and read them again):
+          // the next Save, should the editor stay up, is fenced on it, and noteChangesMovedUnderEdit compares against it —
+          // nothing pending, no seed, as at begin(); the first paint after the edit ends clears it either way (paintAll)
+          this.editSeed = seedOf(r);
+          this.changesMovedUnderEdit = false;          // a new seed, a new latch (a latched row would have refused this save)
+          this.changesUnreadUnderEdit = false;
+          this.editText = content;                     // the reply's offsets index the text this save wrote (indexedText)
+          this.retargetComposer();                     // a passage composer follows its passage into that text, as after a reload
+        }
+        this.lastSaveNs = r.fileMtimeNs;
+        // the bytes the reply describes are the viewer's business at a save's ack: an editor still up holds them as its
+        // buffer, and a viewer whose editor is gone re-reads them itself (SAVE_LANDED_UNDER_NEW_EDITOR, the exit's re-read)
+        // — so the reply's mtime is the one already asked for, and syncBytes asks no second fetch (askReload's rule)
+        this.reloadFor = r.fileMtimeNs;
+        // the save landed, but the Log this panel shows lacks the entry the edit owed (or the host could not read the sidecar
+        // back): said in the head, in the host's words, where the Log lives — silence there would read as "nothing happened"
+        // (CLAUDE.md, never degrade silently). A clean save retires an earlier row; the ✕ dismisses it.
+        const logWarning = warningOf(r);
+        if (logWarning) this.errors.set("save", { text: logWarning, reload: false, warn: true }); else this.errors.delete("save");
+        if (!this.applyStatus(r)) this.render();
+        return { mtimeNs: r.fileMtimeNs, logged: (r as { logged?: unknown }).logged === true, ...(logWarning ? { logWarning } : {}) };
+      } catch (err) {
+        const e = err as { code: string; error: string };
+        if (attempt === 0 && (e.code === "store-moved" || e.code === "config-moved")) {
+          await this.refresh();
+          this.noteMovedUnderEdit();                   // the re-read can show the file moved too: the head says so, as the poll's would
+          const s = this.status;
+          if (s && sameRecords(seed ? seed.records : [], pendingRecords(s.store))) {
+            fence = { ...fenceOf(s), fileMtimeNs: this.ctx.mtimeNs() };
+            if (seed && gen === this.editGen) this.editSeed = { ...seed, storeMtimeNs: fence.storeMtimeNs, configMtimeNs: fence.configMtimeNs };   // the saving editor's seed follows; a later editor's is its own
+            continue;
+          }
+        }
+        throw e;
+      }
+    }
+  }
+  /** The file's bytes moved under an edit (the poll saw it; a verb's reply read a later file): the viewer's reload() stands
+   *  down in edit mode, so the head says so. Save will refuse on its file fence; the first paint after the edit ends
+   *  re-reads the bytes (paintAll, on the movedUnderEdit latch — the row's ✕ removes the words, not the re-read). Keyed
+   *  on the clocks: the status read a later file than the one the editor loaded. Once per edit, as the sibling rows are
+   *  (noteChangesMovedUnderEdit, noteChangesUnreadUnderEdit): the editor's mtime is frozen while it is up, so every later
+   *  status keeps reading later than it — a comment's or a resolve's reply, a poll that saw only the sidecar move — and
+   *  each would otherwise re-raise the row the person dismissed with its ✕ on nothing new about the file. A second
+   *  rewrite changes none of the words either (Save refuses, Cancel shows the file as it is now), so the latch, not the
+   *  clock's value, decides; the edit's end resets it (paintAll). */
+  private noteMovedUnderEdit(): void {
+    if (this.movedUnderEdit) return;                   // said once per edit: the row is up or was dismissed, and the re-read is owed either way
+    const s = this.status;
+    if (!this.ctx.editing() || !s || !laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return;
+    this.movedUnderEdit = true;
+    this.errors.set("edit", { text: MOVED_UNDER_EDIT, reload: false });
+    this.render();
+  }
+  /** The sidecar's pending changes are no longer the ones that rode into the editor (a decision landed since Edit) and the
+   *  file did not move: the head says so (CHANGES_MOVED_UNDER_EDIT), once per edit, in the render the status gets
+   *  (applyStatus calls this before paintAll). Keyed on the records, not the sidecar's clock: a comment or reply moves the
+   *  clock and leaves the records, and Save's own retry covers that. A file that moved as well has MOVED_UNDER_EDIT for its
+   *  row (noteMovedUnderEdit), which says the same about Save and adds what Cancel shows; this one yields to it. */
+  private noteChangesMovedUnderEdit(): void {
+    const seed = this.editSeed; const s = this.status;
+    if (!seed || !s || !this.ctx.editing() || this.changesMovedUnderEdit) return;
+    if (laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return;   // the bytes moved too: that row (noteMovedUnderEdit) is the one to show
+    if (sameRecords(seed.records, pendingRecords(s.store))) return;
+    this.changesMovedUnderEdit = true;
+    this.errors.set("edit", { text: CHANGES_MOVED_UNDER_EDIT, reload: false });
+  }
+  /** A status shows pending changes while the editor carries none and the file did not move: Edit was clicked before the
+   *  first status answered (begin had nothing to hand the editor), and the sidecar's changes have been read only now. The
+   *  head says so at once (CHANGES_UNREAD_UNDER_EDIT), once per edit, in the render the status gets; Save refuses on the
+   *  same condition (saveThroughComments). A file that moved as well has MOVED_UNDER_EDIT for its row and the host's file
+   *  fence for its refusal; this one yields to it, as the moved-records row does. */
+  private noteChangesUnreadUnderEdit(): void {
+    const s = this.status;
+    if (this.editSeed || !s || !this.ctx.editing() || this.changesUnreadUnderEdit) return;
+    if (!(s.hunks || []).length || laterNs(s.fileMtimeNs, this.ctx.mtimeNs())) return;
+    this.changesUnreadUnderEdit = true;
+    this.errors.set("edit", { text: CHANGES_UNREAD_UNDER_EDIT, reload: false });
   }
 
   /** After a moved fence: the fresh status, whose file mtime tells applyStatus (syncBytes) whether the file moved
@@ -1296,13 +2002,14 @@ class Panel {
   startImageComment(range: SourceRange | null): void {
     const src = this.ctx.text();
     if (src === null) return;
+    const was = this.composer;
     this.openPanel();
     this.composer = range
       ? { kind: "comment", range, quote: src.slice(range.start, range.end), text: src, refusal: null }
       : { kind: "comment", range: null, quote: null, refusal: { ok: false, rawHasQuote: false, selText: "", reason: EMBED_NOT_FOUND_SELECT } };
     this.errors.delete("composer");
     this.repaintPresel();
-    this.renderComposer();
+    this.renderFrom(was);
     this.input.focus();
   }
   private contentRoot(): Element | null {
@@ -1315,31 +2022,69 @@ class Panel {
     if (src === null || !root) return;
     const selText = sel.toString();
     const res = this.ctx.mode() === "rendered" ? mapRenderedSelection(sel, root, src) : mapRawSelection(sel, root, src);
+    const was = this.composer;
     this.openPanel();
     if (res.ok) this.composer = { kind: "comment", range: res.range, quote: res.quote, text: src, refusal: null };
     else this.composer = { kind: "comment", range: null, quote: null, refusal: { ...res, selText } };
     this.errors.delete("composer");
     this.repaintPresel();
-    this.renderComposer();
+    this.renderFrom(was);
     this.input.focus();
   }
   startFileComment(): void {
+    const was = this.composer;
     this.composer = { kind: "comment", range: null, quote: null, refusal: null };
     this.errors.delete("composer");
     this.repaintPresel();
-    this.renderComposer();
+    this.renderFrom(was);
     this.input.focus();
   }
+  /** Reply on a comment: the box opens INSIDE the card it answers — below the comment's turns, above its buttons
+   *  (placeComposer) — so the answer is written where the question is read (the user, 2026-09-07, after walking the
+   *  loop); the card opens for it and stays open while the reply is written (renderCard, the fccard handler). */
   startReply(id: string): void {
     const card = this.cards().find((c) => c.id === id);
     if (!card) return;
     this.openCards.add(this.cardKey(id));
-    this.composer = { kind: "reply", commentId: id, ref: card.ref };
+    this.composer = { kind: "reply", commentId: id, ref: card.ref, resolved: card.resolved };
     this.errors.delete("composer");
     this.repaintPresel();
     this.render();
+    this.showComposer();                               // the card's foot, where the box now stands, into view when it is not
     this.input.focus();
   }
+  /** The key of the card the reply being written stands in, latched into the keyed expand state. startReply latches the key
+   *  at click time, but a comment's card can change key under an open reply: its change accepted or rejected (the person's
+   *  Accept on the same card, Send's accept-all, a decision elsewhere) moves it from the change card ("chg:…") to its own
+   *  card (cardKey), which the list then showed open only by derivation from the composer — so the first render after the
+   *  composer closed, or changed kind, folded it with no gesture and no new information (CLAUDE.md), taking the Reply the
+   *  keyboard had just been handed to. Latched at every render, the card stays open by key once the box has left it. */
+  private latchReplyCard(): void {
+    const r = this.replyTo();
+    if (r !== null) this.openCards.add(this.cardKey(r));
+  }
+  /** The comment whose reply is being written, when the composer is one. */
+  private replyTo(): string | null { return this.composer && this.composer.kind === "reply" ? this.composer.commentId : null; }
+  /** The head of the card holding the reply being written. The fccard handler folds every card but this one (a fold would
+   *  take the box and the words with it), so a press here changes nothing — and a live, expanded button that answers a
+   *  press with nothing leaves the person guessing and tells assistive tech the card will collapse (ui/CLAUDE.md, the
+   *  click rule). The head says so instead: aria-disabled for the reader, a title for the pointer; it stays a Tab stop, so
+   *  the keyboard still reaches the card and the words in it. Save or Cancel frees it. On a coarse pointer the same words
+   *  stand under the head as a line (heldNote): a title never reaches touch, and a tap on the head that folds nothing and
+   *  says nothing is the pattern this panel's other captions exist to avoid (renderSend, renderChangesFoot; the Re-place
+   *  button's presence turns on the pointer the same way). A fine pointer reads the title, and the line stays off: the
+   *  card keeps its compact form (ui/CLAUDE.md). */
+  private holdHead(head: HTMLElement): void {
+    head.setAttribute("aria-disabled", "true");
+    head.title = HOLD_WORDS;
+  }
+  /** The line under a held head on a coarse pointer (holdHead); null on a fine one, where the title reaches. */
+  private heldNote(): HTMLElement | null {
+    return isCoarsePointer() ? el("div", "fc-note fc-held", HOLD_WORDS + ".") : null;
+  }
+  /** Whether the card with this expand key holds the reply being written: the comment's own card, or the change card
+   *  hosting the comment (cardKey). */
+  private hostsReply(key: string): boolean { const r = this.replyTo(); return r !== null && this.cardKey(r) === key; }
   /** Reply on a change card: a comment bound to the change (comment {suggestionId, note}), so the session's
    *  answering track-edit folds into it and the message names the change ("on your change …"). */
   startChangeReply(id: string): void {
@@ -1353,11 +2098,40 @@ class Panel {
     this.input.focus();
   }
   closeComposer(): void {
+    const was = this.composer;
+    const held = this.composerBox.contains(document.activeElement);   // the keyboard is in the box (the textarea, Save, Cancel)
     this.composer = null;
     this.input.value = "";
+    this.input.style.height = ""; this.sizedTo = null;   // the next comment starts at COMPOSER_ROWS, autosized again
     this.errors.delete("composer");
     this.repaintPresel();
-    this.renderComposer();
+    this.renderFrom(was);                              // …which puts the box back in the panel's slot (placeComposer); after a reply, the cards too
+    // a reply's box leaves its card hidden, and a hidden box drops the keyboard to the body: it goes back to the Reply that
+    // opened the box instead, so a person on the keyboard keeps their place on the card (Escape, Cancel and a save alike)
+    if (was && was.kind === "reply" && held) (this.root?.querySelector('[data-act="fcreply"][data-id="' + cssId(was.commentId) + '"]') as HTMLElement | null)?.focus({ preventScroll: true });
+    if (was && was.kind === "reply" && held) this.focusAway(was);   // …or, with no Reply rendered for the comment, to the row that brings its card back
+  }
+  /** The box after the composer changed from `was`: the composer alone, unless a reply was closed or replaced by another
+   *  kind (Cancel, a save, Comment on this file, a selection's or a picture's Comment, a region drawn) — then the cards
+   *  too, at once: the head of the card that held the reply is free again (holdHead), and the cards say so before the
+   *  next status, not after it. Before this, the kind changes rendered the composer alone, and the head kept its
+   *  aria-disabled and its title while a click on it already folded the card. */
+  private renderFrom(was: Composer | null): void {
+    if (was && was.kind === "reply") this.render(); else this.renderComposer();
+  }
+  /** The keyboard when a reply's box closed under it and the list shows no card for the comment — the box stood in the
+   *  slot (placeComposer), so no Reply of that comment is rendered for closeComposer to hand it to, and a hidden box
+   *  drops it to the body. It goes to the row that brings the card back — the Resolved fold, the "… N more changes" row
+   *  (replyAway names it) — and with no such row (the comment gone from the sidecar, a status not yet in) to the nearest
+   *  control below the slot (focusNear: the first card's head, the changes foot, Send, Comment on this file), so a person
+   *  on the keyboard keeps a place in the panel. Nothing while the Reply is rendered: closeComposer put the keyboard on it. */
+  private focusAway(was: { commentId: string; resolved: boolean }): void {
+    const root = this.root;
+    if (!root || root.querySelector('[data-act="fcreply"][data-id="' + cssId(was.commentId) + '"]')) return;
+    const back = this.replyAway(was).back;
+    const row = back ? root.querySelector('[data-act="' + back + '"]') as HTMLElement | null : null;
+    if (row) row.focus({ preventScroll: true });
+    else this.focusNear({ act: "fcreply", id: was.commentId, at: 0 });
   }
   /** The mapping refused in Rendered: switch to Raw, and when the selected text occurs in the source,
    *  target that passage — the one in the refused block, not an earlier copy of the same words
@@ -1394,7 +2168,7 @@ class Panel {
   }
   async saveComposer(): Promise<void> {
     const c = this.composer;
-    const note = this.input.value.trim();
+    const note = this.input.value.trim();              // the blank ends go, the line breaks inside stay; all blank saves nothing
     if (!c || c.kind === "replace" || !note) return;   // a re-place takes a drag, not words
     if (c.kind === "region" && c.refusal) {
       this.errors.set("composer", { text: "Nothing saved: " + c.refusal + ".", reload: false });
@@ -1408,6 +2182,19 @@ class Panel {
       this.renderComposer();
       return;
     }
+    if ((c.kind === "comment" || c.kind === "region") && c.elsewhere) {
+      // the edit reached the passage and its text is now intact only at a copy the edit never touched (followPassage):
+      // the host, handed the anchor, would find that one hit and place the note there — its exact-hint check runs on a
+      // tie alone — so the refusal is made here, the note stays, and the person selects or draws again
+      this.errors.set("composer", { text: c.kind === "region" ? EMBED_ELSEWHERE_SAVE : PASSAGE_ELSEWHERE_SAVE, reload: false });
+      this.renderComposer();
+      return;
+    }
+    // the comment ids before the write, for the two readers of the reply: the store's for savedCommentId (the scroll to the
+    // saved card), the model's cards' for noteHiddenSave (the line for a card the filter hides) — the same ids, cardModel
+    // building one card per store comment
+    const had = new Set((this.status && this.status.store ? this.status.store.comments : []).map((x) => x.id));   // the comments before the write (savedCommentId)
+    const before = new Set(this.cards().map((x) => x.id));   // the comments before the save, so the saved one can be told apart (noteHiddenSave)
     let r: Status | null;
     if (c.kind === "reply") r = await this.mutate("reply", { commentId: c.commentId, note }, "composer");
     else if (c.kind === "change") r = await this.mutate("comment", { suggestionId: c.changeId, note }, "composer");
@@ -1416,6 +2203,7 @@ class Panel {
       // also carries the embed line's anchor, built over the text its range indexes as for a passage comment
       const args: Record<string, unknown> = { note, target: regionTarget(c.region, c.src, c.page) };
       if (c.range && c.text !== undefined) { args.anchor = makeAnchor(c.text, c.range); args.hintOffset = c.range.start; }
+      if (c.tied) delete args.hintOffset;                // a tied pair (retargetComposer): the start indexes other text; the passage path below says why
       r = await this.mutate("comment", args, "composer");
     } else {
       const args: Record<string, unknown> = { note };
@@ -1424,9 +2212,45 @@ class Panel {
       // relocates by this anchor and hint, or refuses — a note aimed at one passage never lands on another
       const src = c.text === undefined ? null : c.text;
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
+      // a tied pair (retargetComposer): the start indexes other text, and the host would settle the tie by it — nearest
+      // wins, by coincidence — and save the note on a copy the person never selected. With no offset it refuses a tie
+      // still standing (anchor-ambiguous), the note stays, and the passage is selected again.
+      if (c.tied) delete args.hintOffset;
       r = await this.mutate("comment", args, "composer");
     }
+    const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
+    if (r) this.scrollToSaved(c, had, r, note);        // the card the save landed in, into view — before the composer closes (scrollToSaved says why); nothing for a card the filter hides (hid: the line says where it is)
     if (r) this.closeComposer();                       // a refusal keeps the note where it was typed
+    if (hid) this.render();                            // the cards were rendered with the reply before the saved comment was known: once more, with its line
+  }
+  /** After a comment is saved (not a reply): while the filter shows the changes alone, the fresh card and its mark are
+   *  hidden (renderCards, paintAll), and a save that shows nothing reads as a save that failed — the person may write the
+   *  comment again. The saved comment's id is kept (hiddenSaved) and the list says so where the card would be
+   *  (hiddenSavedRow); the kept choice is not changed for it, as it is not for a reply's box (replyAway). The fresh
+   *  comment is the one the list did not hold before the save — with several landed at once (another client's, a
+   *  session's), the one with the person's words. A comment on a change (the change card's Reply) rides that card under
+   *  Changes, so it is never hidden. Returns whether the line is due. */
+  private noteHiddenSave(before: Set<string>, note: string): boolean {
+    const fresh = this.cards().filter((x) => !before.has(x.id));
+    const mine = fresh.find((x) => x.author === "you" && x.body === note) || fresh[fresh.length - 1] || null;
+    if (!mine || mine.hunk !== null || this.activeFilter() !== "changes") return false;
+    this.hiddenSaved = mine.id;
+    return true;
+  }
+  /** The card a save landed in, brought into view, as the re-place gesture brings its card after the write. In the margin
+   *  layout a whole-file comment's card is loose at the top of the track, whose scroll is the body's: with the text
+   *  scrolled anywhere but its top, the composer closed and no card appeared, and the save read as having done nothing
+   *  (the 2026-09-07 review; ui/CLAUDE.md: always acknowledge). A passage comment's or a reply's card is level with its
+   *  mark, and the mark is centered the way a card's opening centers it. BEFORE the composer closes: the reply's render
+   *  placed the cards with the composer's box above the track, and centerOn measures the header live, so the two must
+   *  agree — the composer's closing shortens the header, and the pass that follows it (the track's observer) re-places
+   *  the cards with the header as it is then, at the same places on screen. `had`: the comment ids before the write
+   *  (savedCommentId names the new one off the reply). A comment saved while the filter shows the changes alone has no
+   *  card in the list and no mark in the text (renderCards, paintAll), so scrollCard finds nothing and nothing moves;
+   *  the line noteHiddenSave raises (hiddenSavedRow) says where the card is. */
+  private scrollToSaved(c: Composer, had: Set<string>, r: Status, note: string): void {
+    const saved = c.kind === "reply" ? c.commentId : savedCommentId(had, r, note);
+    if (saved !== null) this.scrollCard(this.cardKey(saved));
   }
 
   // ── highlights ─────────────────────────────────────────────────────────────────────────────────
@@ -1435,13 +2259,29 @@ class Panel {
   changeView(): { cards: ChangeCard[]; groups: ChangeGroup[]; shown: ChangeGroup[]; hidden: ChangeGroup[]; hiddenChanges: number } {
     const s = this.status;
     const cards = s ? changeCards(s.store, s.hunks || [], s.log || [], s.decided) : [];
-    const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.ctx.text());
+    const groups = changeGroups(cards, this.ctx.mode() === "media" ? null : this.indexedText());
     return { cards, groups, ...foldGroups(groups, this.moreChangesOpen) };
   }
-  /** The card a comment id opens: the change card hosting it while its change is pending, else its own. */
+  /** The card a comment id opens: the change card hosting it while its change is pending, else its own — and its own
+   *  while the filter shows the comments alone (activeFilter), when the list shows no change card to host it. */
   cardKey(commentId: string): string {
     const c = this.cards().find((x) => x.id === commentId);
-    return c && c.hunk ? "chg:" + c.hunk.id : commentId;
+    return c && c.hunk && this.activeFilter() !== "comments" ? "chg:" + c.hunk.id : commentId;
+  }
+  /** The filter the list and the marks obey: the kept choice while the file has a card to filter, else "all" — with
+   *  nothing in the list the control is not offered (renderHead), and a kept "changes" must not turn the empty state
+   *  into a line about changes. */
+  activeFilter(): CommentsFilter {
+    return filterOffered(this.status) ? this.filter : "all";
+  }
+  /** One of All · Comments · Changes chosen: the preference goes to the shared store (saveSettings) and the body is repainted
+   *  at once from the status already here — the marks the filter hides come off, the cards follow — with no request. The
+   *  option already chosen changes nothing (the delegate's flash has acknowledged the click). */
+  private setFilter(f: CommentsFilter): void {
+    if (f === this.filter || !FILTERS.includes(f)) return;
+    this.filter = f;
+    saveSettings({ commentsFilter: f });
+    this.paintAll();
   }
   /** Expand and scroll to a card by key — a change card inside the fold unfolds it first. */
   showCard(key: string): void {
@@ -1461,13 +2301,44 @@ class Panel {
     const vm = this.ctx.mtimeNs();
     return !vm || !s.fileMtimeNs || vm === s.fileMtimeNs;
   }
+  /** The text the status's offsets and a composer's range index: the view's, or while the editor is up — when text()
+   *  answers the buffer, which every keystroke moves under the offsets — the file as the editor loaded it or as the last
+   *  landed save wrote it (editText). The group titles and the composer's passage-changed tag read this, never the buffer. */
+  private indexedText(): string | null {
+    return this.ctx.editing() && this.editText !== null ? this.editText : this.ctx.text();
+  }
+  /** Show changes inline, flipped: the preference goes to the shared store (saveSettings; every other viewer reads
+   *  it on its next paint or through the settings signal) and the body is repainted at once from the status already
+   *  here — no status ask, the hunks have not changed — which also re-renders the header's button. */
+  private toggleInline(): void {
+    this.inline = !this.inline;
+    saveSettings({ changesInline: this.inline });
+    this.paintAll();
+  }
   /** Paint every open comment's anchor over the current view: located → the ring; quote gone but its
    *  context found → the text-changed ring; neither → card only, marked detached. Detached is a
    *  rendering state, never a stored flag. Then the changes (D4/D5): insertions and substitutions tinted
-   *  over the new text, deletions struck at their point in Raw and card-only in Rendered, each mark
-   *  carrying the change's id and the author's session colour. The composer's pending target is painted last. */
+   *  over the new text, deletions struck at their point in both views (Rendered through the index map; a
+   *  deletion the map cannot place is card-only), each mark carrying the change's id and the author's session
+   *  colour — or none of them, with Show changes inline off. The composer's pending target is painted last. */
   paintAll(): void {
+    if (this.ctx.editing()) { this.render(); return; }   // the editor shows the marks over its own buffer (Slice 5); the cards still render
+    this.clearLanding();                               // a paint pass over the read view is new information about its rows: the last Reveal's cue goes with it (landOn)
+    this.editSeed = null;                              // no editor is up: nothing rode into one (routesSave reads the status again)
+    // the rows that said to decide in the editor are about an editor that is gone: retired with it (a row another
+    // refusal has since replaced in the same slot is left alone)
+    for (const slot of this.decideRows) if (DECIDE_TEXTS.has(this.errors.get(slot)?.text ?? "")) this.errors.delete(slot);
+    this.decideRows.clear();
+    this.editText = null;                              // the read view is back: the cards group over its text again (indexedText)
+    // the edit ended over bytes that moved under it (Cancel — a Save would have refused): re-read them, whether or not
+    // the head's row was dismissed with its ✕ meanwhile (movedUnderEdit: the latch, not the row, keys the re-read)
+    if (this.movedUnderEdit) { this.movedUnderEdit = false; this.errors.delete("edit"); this.ctx.reload(); }
+    // the row that said the editor's changes left the sidecar is about an editor that is gone: retired with it, and the
+    // latch with it (nothing to re-read: the status that set the row is the one showing, and this paint marks its changes)
+    if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
+    if (this.changesUnreadUnderEdit) { this.changesUnreadUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_UNREAD_UNDER_EDIT) this.errors.delete("edit"); }
     this.located = new Map();
+    this.unsureCopies = new Set();
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
@@ -1479,9 +2350,19 @@ class Panel {
     if (this.status && this.textCurrent(this.status)) this.bytesLanded();   // the view shows the status's text: a reject's reload has landed
     if (src === null || !root) { this.paintRegions(); this.render(); return; }   // a media body: the overlay is its only paint (paintRegions keeps its own focus)
     const rendered = this.ctx.mode() === "rendered";
-    for (const card of this.cards()) {
+    // the comment highlights — unless the filter shows the changes alone (activeFilter), when the text wears the change
+    // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
+    for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
       if (card.resolved || !card.anchor) continue;
-      const loc = locateComment(src, card.anchor);
+      // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
+      // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
+      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file)
+      const at = this.viewAt(card);
+      const loc = locateComment(src, card.anchor, at);
+      // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
+      // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
+      const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
+      if (unsure) this.unsureCopies.add(card.id);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
@@ -1489,11 +2370,13 @@ class Panel {
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
-        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup
-        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.mark(m); }
+        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
+        // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
+        const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";
+        for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
-          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
+          if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
         }
       }
       this.located.set(card.id, { ...loc, painted });
@@ -1509,10 +2392,36 @@ class Panel {
   // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS —
   // the action, the id of its subject, and its place among the subject's marks — never by its node. paintAll and
   // paintRegions each mend the marks they rebuild (heldMark before the pass, refocusMark after it).
+  /** A card's stored position (`anchorAt`, the host's offset into the text IT read) in the view's coordinates. The host
+   *  reads the file with its BOM kept and the fetch hands the viewer the text with it stripped, so on a BOM-prefixed
+   *  file every stored position is the view's plus one; the status says which (`bom`, the host's own word on its text:
+   *  the panel has no other authoritative source for it, since the viewer never sees the byte). Compared unmapped, a
+   *  position naming the chosen copy missed it by one on every such file, and the copy was painted as a guess (the
+   *  review, 2026-09-08). undefined without a position; 0 is a position. */
+  private viewAt(card: Card): number | undefined {
+    if (card.anchorAt === null) return undefined;
+    return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;
+  }
+  /** Whether the copy the engine found a comment at (`at`, the pick with the stored position as the hint) is a guess:
+   *  the anchor has more than one best hit in the text — its earliest and latest (hint 0, hint length) differ, the
+   *  host's own test for a tie — and the stored position (`stored`, in the view's coordinates: viewAt) names none of
+   *  them. The pick is then nearest-wins from a position nothing vouches for, or the earliest with no position at all:
+   *  the host keeps a position that names no copy when the recorded changes carry it to none or to several, and every
+   *  position when the file changed unrecorded (refreshAnchorAts), and an edit inside the chosen copy's context leaves
+   *  the other copies whole to outscore it (the review, 2026-09-07: the highlight sat on a copy the person never
+   *  commented, painted as located). A position that names a tied copy is the choice recorded; one best hit is the
+   *  anchor's own answer and needs none. */
+  private copyUnsure(src: string, card: Card, stored: number | undefined, at: number): boolean {
+    if (!card.anchor || stored === at) return false;
+    const first = locateComment(src, card.anchor, 0);
+    if (first.state !== "located" || !first.range) return false;
+    const last = locateComment(src, card.anchor, src.length);
+    return last.state === "located" && !!last.range && last.range.start !== first.range.start;
+  }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
    *  substitution paints a deletion point and then its new text, all with the same action and id. */
   private ownMarks(act: string, id: string): HTMLElement[] {
-    return Array.from(this.ctx.body().querySelectorAll('[data-act="' + act + '"][data-id="' + id + '"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
+    return Array.from(this.ctx.body().querySelectorAll('[data-act="' + act + '"][data-id="' + cssId(id) + '"]')).filter((m) => this.marks.has(m)) as HTMLElement[];
   }
   /** The mark of ours that holds the keyboard, by what it is — its action, its id, and its place among the subject's
    *  marks — and the element, so a repaint can tell whether it was unwrapped. Null when the focus is anywhere else. */
@@ -1534,6 +2443,8 @@ class Panel {
    *  element is a control (it opens the card) and the panel's own (owns), like a comment highlight. */
   private paintChanges(root: Element, src: string, rendered: boolean): void {
     const s = this.status;
+    if (!this.inline) return;                          // Show changes inline is off: no mark in either view, the cards say everything
+    if (this.activeFilter() === "comments") return;    // the filter shows the comments alone: no change mark, the setting above untouched
     if (!s || !(s.hunks || []).length || !this.textCurrent(s)) return;
     const store = s.store;
     // newText rides along so the painters verify that each change's new text sits at its offsets before painting the
@@ -1592,16 +2503,27 @@ class Panel {
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
-   *  a refresh): a pending passage is re-found through the anchor of its own text, so the presel, the
-   *  chip and the hint follow the passage rather than its old offsets — a note typed while the session
-   *  inserts a paragraph above still lands where it was aimed. Not re-found (the passage changed or went):
-   *  the selection-time pair is kept, the chip says so, nothing is painted, and Save hands the host that
-   *  anchor to rule on — it relocates, or refuses and the note stays. */
+   *  a refresh; a save through the editor): a pending passage follows its passage into that text
+   *  (followPassage), so the presel, the chip and the hint move with it — a note typed while the session
+   *  inserts a paragraph above still lands where it was aimed, on the copy that was selected even where
+   *  the passage recurs, since an edit that does not reach the passage moves its offsets exactly. Not
+   *  followed, the selection-time pair is kept, nothing is painted, and the chip says which: the passage
+   *  changed or went (Save hands the host that anchor and offset to rule on — it relocates, or refuses
+   *  and the note stays), or it now recurs where the anchor cannot tell the copies apart (`tied`: Save
+   *  sends the anchor with no offset, so the host refuses a tie rather than settle it by an offset into
+   *  other text; selecting the passage again pins the copy), or the edit reached it and its text is now
+   *  intact only at a copy the edit never touched (`elsewhere`: Save is refused here, since the host
+   *  would place that one hit; selecting the passage again pins the copy). Text that is the pair's own
+   *  again — a repaint, a reverted edit — is exact, so a tie or an elsewhere noted meanwhile is dropped. */
   private retargetComposer(): void {
-    const c = this.composer; const src = this.ctx.text();
-    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null || src === c.text) return;
-    const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
-    if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
+    const c = this.composer; const src = this.indexedText();
+    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null) return;
+    c.elsewhere = false;
+    if (src === c.text) { c.tied = false; return; }
+    const f = followPassage(c.text, c.range, src);
+    if (f.state === "moved") { c.range = f.range; c.text = src; c.tied = false; }
+    else c.tied = f.state === "tied";
+    c.elsewhere = f.state === "elsewhere";
   }
   // ── region comments (Slice 3): the overlays ─────────────────────────────────────────────────────
   /** The pictures that take an overlay in the current view: the media body's <img>, or each page's canvas while the
@@ -1717,6 +2639,7 @@ class Panel {
       if (again) c.img = again;
     }
     const per = new Map<Pictured, RegionMark[]>();
+    const hideRegions = this.activeFilter() === "changes";
     for (const card of this.cards()) {
       // a malformed region (isRegion) paints nothing: the card says so (UNREADABLE_REGION), and Re-place redraws it
       if (!card.target || (card.target.kind !== "image" && card.target.kind !== "pdf") || !isRegion(card.target.region)) continue;
@@ -1729,6 +2652,7 @@ class Panel {
       // Only under a key: with no file hash nothing would be kept, and the cut would be wasted
       if (isCanvas(img) && this.cropKey(card)) this.cutCrop(img, card);
       if (card.resolved) continue;
+      if (hideRegions) continue;                       // a rectangle is a comment's mark: none while the filter shows the changes alone (the crop above is kept for when they return)
       const chip = this.chipFor(card.author, card.authorId);
       (per.get(img) || per.set(img, []).get(img)!).push({ id: card.id, region: card.target.region, label: chip.label, state: regionState(card.target, s), style: chip.style });
       const loc = this.located.get(card.id);
@@ -1828,8 +2752,12 @@ class Panel {
    *  where Save hands the drag-time anchor to the host). By src alone, two embeds of ONE destination — a figure shown
    *  twice — put the pending rectangle and the composer's thumbnail on the FIRST twin while `range` still named the second
    *  and Save anchored the region there: the preview stood on one picture and the saved rectangle landed on another (the
-   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. */
+   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. A pair
+   *  marked `tied` or `elsewhere` (retargetComposer) names NO picture: the chip says the figure drawn on cannot be told
+   *  apart, or that its embed line is now only elsewhere, and a rectangle on the first twin of the src would claim the
+   *  opposite (the review, 2026-09-07); the composer keeps the picture it was drawn on for its thumbnail. */
   private composerImage(c: Extract<Composer, { kind: "region" }>, imgs: Pictured[]): Pictured | undefined {
+    if (c.tied || c.elsewhere) return undefined;
     const root = this.contentRoot(); const src = this.ctx.text();
     if (root && src !== null && c.range && c.text === src) {
       const img = imgForRange(root, src, c.range, this.ctx.path) as Pictured | null;
@@ -1893,6 +2821,7 @@ class Panel {
       this.scrollCard(key);
       return;
     }
+    const was = this.composer;
     this.openPanel();
     let src: string | null = null, range: SourceRange | null = null, text: string | undefined, refusal: string | null = null;
     if (this.ctx.mode() === "rendered") {
@@ -1904,7 +2833,7 @@ class Panel {
     this.composer = { kind: "region", img, region, page, src, range, text, refusal };
     this.errors.delete("composer");
     this.repaintPresel();
-    this.renderComposer();
+    this.renderFrom(was);
     this.input.focus();
   }
   /** Re-place (a region card's button): the next region drawn on the comment's picture replaces its target (E3);
@@ -1977,20 +2906,23 @@ class Panel {
    *  document, and a body-wide first match would scroll to that. A region comment's mark is its rectangle (.fc-region,
    *  painted by paintRegions). No mark of ours in the view: Reveal. */
   goTo(key: string): void {
-    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + key.slice(4) + '"]' : '.fc-hl[data-id="' + key + '"], .fc-region[data-id="' + key + '"]';
+    if (this.margin && this.centerOn(key)) return;     // the margin layout: the mark to the body's center, the card beside it (the lock brings the track)
+    const sel = key.startsWith("chg:") ? '[data-act="fcchange"][data-id="' + cssId(key.slice(4)) + '"]' : '.fc-hl[data-id="' + cssId(key) + '"], .fc-region[data-id="' + cssId(key) + '"]';
     const mark = Array.from(this.ctx.body().querySelectorAll(sel)).find((m) => this.marks.has(m));
     if (mark) { mark.scrollIntoView({ block: "center" }); return; }
     this.reveal(key);
   }
   /** Reveal: switch to Raw and scroll to the passage — a comment's located range, or a change's start — for
-   *  a comment or change the Rendered view could not paint (a deletion never is), so the compact card never
-   *  dead-ends. */
+   *  a comment or change the view does not show (a Rendered deletion the map refused, any change with Show changes
+   *  inline off), so the compact card never dead-ends. Where Raw shows no mark of ours for the subject either, the row
+   *  the scroll centred is cued (landOn), so the landing is not a guess among identical rows. */
   reveal(key: string): void {
     if (key.startsWith("chg:")) {
       const c = this.changeView().cards.find((x) => x.key === key);
       if (!c || c.detached) return;                    // a detached change's offset points into a text that has moved on
       this.ctx.setMode("raw");
       this.ctx.scrollToOffset(c.curFrom);
+      this.landOn(c.curFrom, "fcchange", c.id);
       return;
     }
     const card = this.cards().find((c) => c.id === key);
@@ -2004,9 +2936,362 @@ class Panel {
     if (!loc || !loc.range) return;
     this.ctx.setMode("raw");
     this.ctx.scrollToOffset(loc.range.start);
+    this.landOn(loc.range.start, "fcopen", key);
+  }
+  /** The landing cue, after a Reveal's switch and scroll (the note above LANDING_BG): the Raw row holding `offset` —
+   *  the SAME row the viewer's scrollToOffset centred, by the same count of line ends before the offset, clamped to the
+   *  last row, so the cue and the scroll never disagree — wears the cue when the Raw body shows no mark of ours for the
+   *  subject (`act` + `id`: the change's marks, or the comment's highlight). setMode re-renders the body synchronously
+   *  and its onRendered pass has painted by now (paintAll), so what the body shows is what the person sees. One landing
+   *  at a time: the last cue is cleared first, whether or not a new one is painted. */
+  private landOn(offset: number, act: string, id: string): void {
+    this.clearLanding();
+    if (this.ownMarks(act, id).length) return;         // the view marks the subject itself: that mark is the cue
+    const src = this.ctx.text();
+    const code = this.ctx.body().querySelector("code.hljs");
+    if (src === null || !code) return;                 // no Raw rows to cue (a media body; the editor's)
+    const rows = code.querySelectorAll(".fv-cl");
+    if (!rows.length) return;
+    const row = rows[Math.min(rawOffsetToLine(src, offset), rows.length - 1)] as HTMLElement;
+    row.classList.add("fc-landing");
+    row.style.background = LANDING_BG; row.style.boxShadow = LANDING_BAR;
+    this.landing = row;
+  }
+  /** The cue comes off its row — on a paint pass, the next Reveal, the panel closing: each an event, never a timer. */
+  private clearLanding(): void {
+    const row = this.landing;
+    this.landing = null;
+    if (!row) return;
+    row.classList.remove("fc-landing");
+    row.style.background = ""; row.style.boxShadow = "";
   }
   scrollCard(id: string): void {
-    this.root?.querySelector('.fc-card[data-id="' + id + '"]')?.scrollIntoView({ block: "nearest" });
+    if (this.margin && (this.centerOn(id) || this.showLoose(id))) return;   // the margin layout: a marked card's mark to the center, the card level with it; a loose card into the track's box, the body along with it
+    this.root?.querySelector('.fc-card[data-id="' + cssId(id) + '"]')?.scrollIntoView({ block: "nearest" });
+  }
+
+  // ── the margin layout (the 2026-09-07 follow-on; card-layout.ts is the pure half) ─────────────────
+  /** Wire what the layout listens to, once per panel: the two scrollers' events (the lock); a picture loading in the
+   *  body (`load` does not bubble, so a capture listener on the body hears every figure's); the window's resize; the
+   *  sizes of the body, the row and the track (the aside joins at its first build, the body's content at each pass —
+   *  watchContent — and the cards at each render); and a click on a card's head — heard here, under the delegate root
+   *  and so BEFORE the delegate toggles the card, so that afterRender knows the card that just opened was opened by a
+   *  click and centers its mark. Never on scroll: the lock is the scroll's whole effect, and the pass moves nothing a
+   *  scroll changes. */
+  private installLayout(row: HTMLElement): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    body.addEventListener("scroll", () => this.mirrorScroll("body"));
+    track.addEventListener("scroll", () => this.mirrorScroll("track"));
+    body.addEventListener("load", () => this.scheduleLayout(), true);
+    track.addEventListener("click", (ev) => {
+      const t = ev.target as HTMLElement | null;
+      const x = t && typeof t.closest === "function" ? (t.closest("[data-act]") as HTMLElement | null) : null;   // what the delegate resolves
+      if (x && x.dataset.act === "fccard" && x.dataset.id) this.expandIntent = { key: x.dataset.id, wasOpen: this.openCards.has(x.dataset.id) };
+    });
+    window.addEventListener("resize", this.onWindowResize);
+    if (typeof ResizeObserver !== "undefined") {
+      this.sizer = new ResizeObserver(() => this.scheduleLayout());
+      this.sizer.observe(body); this.sizer.observe(row); this.sizer.observe(track);
+      this.cardSizer = new ResizeObserver(() => this.scheduleLayout());
+    }
+  }
+  onWindowResize = (): void => this.scheduleLayout();
+  /** Whether the aside is laid out as a margin now: beside the body — the row's computed flex-direction is the
+   *  sheet's own verdict on the fold, `column` being the narrow column, where the aside stands under the body and
+   *  the cards are the list — and in read mode. A document with no computed style (a stand-in) is the list. */
+  private marginMode(): boolean {
+    if (this.ctx.editing() || typeof getComputedStyle !== "function") return false;
+    const row = this.ctx.body().parentElement;
+    return !!row && getComputedStyle(row).flexDirection !== "column";
+  }
+  /** One pass per frame, however many events ask for it (a figure's load, a resize, a card's growth). */
+  private scheduleLayout(): void {
+    if (this.layoutFrame !== null || !this.open) return;
+    if (typeof requestAnimationFrame !== "function") { this.placeCards(false); return; }
+    this.layoutFrame = requestAnimationFrame(() => { this.layoutFrame = null; this.placeCards(false); });
+  }
+  /** After every render: the pass, then the centering a head click asked for — in that order, so the expanded card's
+   *  new height has pushed the cards below it before anything scrolls (no jump after the expand). Only a card the
+   *  click OPENED is centered: a fold is a dismissal, and the text should not move for it. */
+  private afterRender(): void {
+    this.placeCards(true);
+    const intent = this.expandIntent; this.expandIntent = null;
+    if (intent && this.margin && !intent.wasOpen && this.openCards.has(intent.key)) this.centerOn(intent.key);
+  }
+  /** The margin pass: card-layout.ts decides, this measures and applies. The mode first — a change toggles the
+   *  sheet's `fc-margin`, and the margin layout ending OUTSIDE a render re-renders, since the rows stand in the
+   *  footer and must return to the list (layoutOff). In the margin layout: the list's ROWS — the foot (Accept all ·
+   *  Reject all), a loader, a refusal, a fold, the empty note — leave the track for the footer, above Send
+   *  (moveRows); each card's desired top is its mark's top in the body's content less the header's height (the track
+   *  begins that far below the body's top, so a card level with its mark sits that much higher in the track's
+   *  content: a mark under the header itself is clamped, and level once the text has scrolled by the header's
+   *  height); the cards are placed (layoutCards) and their tops written, a pushed card carrying the leader's length;
+   *  the cards' DOM order is made the placement's (so the Tab order runs down the margin, top to bottom: a head is a
+   *  Tab stop, focusing one scrolls the track and the body with it, and an order by time scrolled the text up and
+   *  down with every Tab); the body's content is padded at its end by the footer's height plus the last card's overhang
+   *  (padBody), so the body itself can scroll every mark's card into the track's box; the list is made as tall as
+   *  puts the track's farthest position at the body's (one range: the body's content less the body's box plus the
+   *  track's), or as the last card, whichever is more; and the track is brought to the body's position. `fromRender`:
+   *  the sections were just rebuilt, so the rows are in the list again and the cards are new (the card observer takes
+   *  them, as it does the cards the list layout held when the margin layout comes on outside a render). */
+  placeCards(fromRender: boolean): void {
+    const root = this.root;
+    if (!root || !this.open) return;
+    const margin = this.marginMode();
+    const flipped = margin !== this.margin;
+    if (flipped) root.classList.toggle("fc-margin", margin);
+    if (!margin) { if (flipped) { this.layoutOff(); if (!fromRender) this.render(); } return; }
+    if (flipped) { this.margin = true; this.placed = new Map(); this.cardsEnd = 0; }
+    const watch = fromRender || flipped;               // new cards (a render), or cards the list layout held (the layout just came on): the card observer takes them
+    const body = this.ctx.body(), track = this.sections.cards;
+    const list = Array.from(track.childNodes).find((n) => n.nodeType === 1) as HTMLElement | undefined;
+    if (!list) return;
+    this.watchContent(body);
+    const kids = (): HTMLElement[] => Array.from(list.childNodes).filter((n) => n.nodeType === 1) as HTMLElement[];
+    this.moveRows(kids());
+    const bodyRect = body.getBoundingClientRect(), trackRect = track.getBoundingClientRect();
+    const offset = trackRect.top - bodyRect.top;
+    const scroll = body.scrollTop;
+    const items: LayoutItem[] = [];
+    const nodes = new Map<string, HTMLElement>();
+    const laid: HTMLElement[] = [];                    // the items' nodes in the DOM's order, as the pass found them
+    if (watch) this.cardSizer?.disconnect();
+    let n = 0;
+    for (const child of kids()) {
+      if (child.hidden || child.classList.contains("fc-group")) continue;   // the paragraph titles: the sheet hides them here, the card's place says the paragraph
+      const isCard = child.classList.contains("fc-card") && !!child.dataset.id;
+      const key = isCard ? child.dataset.id! : "#" + n++;
+      const mark = isCard ? this.markTop(key) : null;
+      items.push({ key, desired: mark === null ? null : mark - bodyRect.top + scroll - offset, height: child.getBoundingClientRect().height });
+      nodes.set(key, child); laid.push(child);
+      if (isCard && watch) this.cardSizer?.observe(child);
+    }
+    const out = layoutCards(items, CARD_GAP);
+    for (const p of out.placed) {
+      const node = nodes.get(p.key)!;
+      node.style.top = p.top + "px";
+      if (p.pushed >= 1) { node.dataset.pushed = "1"; node.style.setProperty("--fc-push", Math.min(p.pushed, p.top) + "px"); }
+      else { delete node.dataset.pushed; node.style.removeProperty("--fc-push"); }
+    }
+    const order = out.placed.map((p) => nodes.get(p.key)!);
+    if (order.some((node, i) => node !== laid[i])) this.moving(order, () => { for (const node of order) list.appendChild(node); });
+    // the body's end padding: the footer's height (the part of the body's box the track's box does not reach), plus how
+    // far the last card hangs past the content's end. The content's height is the body's scroll height less the padding
+    // it holds — known only while the body scrolls at all (scrollHeight floors at the box); a body that does not scroll
+    // is padded by the footer alone, and its track goes on past it for the rest (followBody). That padding is KEPT only
+    // where it lengthens the body. A box's padding comes out of its content box, and content sized to the box by a
+    // `min-height: 100%` — the standalone picture's box (.fileview-imgbox, which centers the picture in itself), the Raw
+    // view's — shrinks by the padding instead of scrolling: the body gained no range, and the picture rose by half the
+    // footer at every open of the panel and fell back at the close, on no new information about it (the 2026-09-07
+    // review, round 3). So the padding is written, then measured: where it bought the body no range it is taken back the
+    // same pass (the content box is whole again before the frame paints, so no observer sees a change). A picture nearly
+    // the box's height is the band where it does buy range — its own box outgrows the padded content box — and there it
+    // stays, as the padding that lets the body reach a card at the picture's foot.
+    const footer = Math.max(0, bodyRect.bottom - trackRect.bottom);
+    const scrolls = body.scrollHeight > body.clientHeight;
+    const content = scrolls ? body.scrollHeight - this.bodyPad : null;
+    const hang = content === null ? 0 : Math.max(0, out.bottom + CARD_GAP + offset - content);
+    this.padBody(body, Math.ceil(footer + hang));
+    if (!scrolls && body.scrollHeight <= body.clientHeight) this.padBody(body, 0);   // bought no range: taken back
+    list.style.height = Math.max(body.scrollHeight - body.clientHeight + track.clientHeight, out.bottom + CARD_GAP) + "px";
+    this.placed = new Map(out.placed.map((p) => [p.key, p]));
+    this.cardsEnd = out.bottom + CARD_GAP;
+    this.syncTrack();
+  }
+  /** The margin layout ends (the fold, edit mode, the panel closing): the sheet's class, the body's end padding, the
+   *  placement and the card observer go. The rows stand in the footer until the render that follows rebuilds the list. */
+  private layoutOff(): void {
+    this.margin = false;
+    this.root?.classList.remove("fc-margin");
+    this.padBody(this.ctx.body(), 0);
+    this.placed = new Map(); this.cardsEnd = 0;
+    this.cardSizer?.disconnect();
+  }
+  /** The body's end padding, written only when it changes (an integer, so the rounding of scrollHeight cannot make the
+   *  next pass read a different content height and write again). The track's box ends a footer's height above the
+   *  body's — Accept all · Reject all, Send and the Log stand under it — so a mark in the text's last lines had its card
+   *  under the footer with the body at its end, where no scroll reached it, and a card hanging below the content's end
+   *  could be scrolled to only on the track, which the next pass pulled back (the 2026-09-07 review). The padding lets
+   *  the body scroll that much further, so the two scrollers keep one range and the body reaches every card's end. */
+  private padBody(body: HTMLElement, px: number): void {
+    if (px === this.bodyPad) return;
+    this.bodyPad = px;
+    body.style.paddingBottom = px ? px + "px" : "";
+  }
+  /** In the margin layout the track holds cards alone. Every ROW the list held — the foot (Accept all · Reject all), a
+   *  wait's loader, a refusal's row, the "… N more changes" and Resolved folds, the empty note — stands in the footer
+   *  above Send: the foot first (so the footer begins with the changes' buttons; the sheet's rule stands on the section's
+   *  top edge, so the footer begins under a rule whichever row comes first), then the other rows in the list's order. The
+   *  track's scroll is the body's, so a row placed loose at the top of the track was out of view for a reader anywhere but the top of the text: the reload's loader and its
+   *  deadline row with Reload among them, and the fold that says why a painted change has no card beside it (the
+   *  2026-09-07 review; ui/CLAUDE.md: the loader first, an error where it can be acted on, no dead end). `kids`: the
+   *  list's element children. */
+  private moveRows(kids: HTMLElement[]): void {
+    const rows = kids.filter((k) => !k.classList.contains("fc-card") && !k.classList.contains("fc-group"));
+    if (!rows.length) return;
+    const send = this.sections.send;
+    const foot = rows.find((k) => k.classList.contains("fc-foot")) || null;
+    const box = (Array.from(send.childNodes).filter((k) => k.nodeType === 1) as HTMLElement[]).find((k) => k.classList.contains("fc-send")) || null;
+    this.moving(rows, () => {
+      if (foot) this.sections.send.insertBefore(foot, this.sections.send.firstChild);
+      for (const r of rows) if (r !== foot) send.insertBefore(r, box);
+    });
+  }
+  /** Move nodes with `move`, and give the keyboard back to the control it was on when the move detached it: a node
+   *  taken out of the document — an insertBefore or appendChild of a node already in it takes it out first — loses its
+   *  focus to the body (the browser's focus-fixup rule), and render's refocus ran BEFORE this pass, on the fresh Accept
+   *  all or Reject all in the list; moved to the footer, it had lost the keyboard again (the 2026-09-07 review). */
+  private moving(nodes: HTMLElement[], move: () => void): void {
+    const held = document.activeElement as HTMLElement | null;
+    const kept = held && nodes.some((k) => k.contains(held)) ? held : null;
+    move();
+    if (kept) kept.focus({ preventScroll: true });
+  }
+  /** The body's content — the rendered markdown's box, the Raw view's, a picture, the pages' host — joins the size
+   *  observer each pass, as the body's children stand then (a mode switch or a re-fetch replaces them). The body is a
+   *  flex-sized scroller: its own box does not change when its CONTENT grows, so a reflow inside it — a <details>
+   *  opened, an embed sized late — moved every mark below the change while the cards kept their tops until some
+   *  unrelated event re-ran the pass (the 2026-09-07 review). The content's box does change. */
+  private watchContent(body: HTMLElement): void {
+    if (!this.sizer) return;
+    const now = Array.from(body.childNodes).filter((k) => k.nodeType === 1) as Element[];
+    for (const k of this.contentWatched) if (!now.includes(k)) { this.sizer.unobserve(k); this.contentWatched.delete(k); }
+    for (const k of now) if (!this.contentWatched.has(k)) { this.sizer.observe(k); this.contentWatched.add(k); }
+  }
+  /** The track's cards in the order they are read: the DOM's, which the pass sorts into placement order — or, in the
+   *  margin layout between a render and its pass, the last pass's order, since the fresh list stands in the model's
+   *  order until placeCards re-sorts it, and a place kept by index (focusKey, focusNear) must name the same card before
+   *  the rebuild and after. Cards the last pass did not place (new ones) follow, in the DOM's order. */
+  private cardsInOrder(): HTMLElement[] {
+    const all = Array.from(this.sections.cards.querySelectorAll(".fc-card")) as HTMLElement[];
+    if (!this.margin || !this.placed.size) return all;
+    const rank = new Map<string, number>();
+    for (const k of this.placed.keys()) rank.set(k, rank.size);
+    const at = (c: HTMLElement): number => { const r = rank.get(c.dataset.id || ""); return r === undefined ? rank.size + all.indexOf(c) : r; };
+    return all.slice().sort((a, b) => at(a) - at(b));
+  }
+  /** The top of a card's mark in the viewport: the highest of its highlight rows, its framed figure, its region
+   *  rectangle or its change marks — whichever the view paints; null when it paints none, or the mark has no box
+   *  yet (a figure not loaded, a page not drawn): the loose group, until the load or the draw re-runs the pass. */
+  private markTop(key: string): number | null {
+    const [act, id] = key.startsWith("chg:") ? ["fcchange", key.slice(4)] : ["fcopen", key];
+    let top: number | null = null;
+    for (const m of this.ownMarks(act, id)) {
+      const r = m.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      if (top === null || r.top < top) top = r.top;
+    }
+    return top;
+  }
+  /** The lock: the scroller that moved writes its scrollTop onto the other, and the other's echo — the scroll
+   *  event a write raises, on the next frame — is let through without a write back. `syncFrom` names the echo's
+   *  source; a write that changed nothing raises no echo, so it is cleared at once then (writeScroll). An event
+   *  attributed to the wrong scroller costs one write and no more: a genuine event taken for the echo is let through
+   *  unmirrored, an echo taken for genuine writes the older position back once — and every write copies an absolute
+   *  scrollTop, so the next genuine event puts both scrollers at the same position again. */
+  private mirrorScroll(from: "body" | "track"): void {
+    if (!this.margin || !this.open) return;
+    if (this.syncFrom !== null && this.syncFrom !== from) { this.syncFrom = null; return; }
+    this.syncFrom = null;
+    if (from === "body") this.followBody();
+    else this.writeScroll(this.ctx.body(), this.sections.cards.scrollTop, "track");
+  }
+  private writeScroll(dst: HTMLElement, want: number, from: "body" | "track"): void {
+    const before = dst.scrollTop;
+    if (before === want) return;
+    this.syncFrom = from;
+    dst.scrollTop = want;
+    if (dst.scrollTop === before) this.syncFrom = null;   // clamped to where it was: no echo will come
+  }
+  /** The track to the body's position at once (the pass, centerOn), not on the body's event a frame later. */
+  private syncTrack(): void {
+    if (this.margin) this.followBody();
+  }
+  /** The body's position onto the track — except past the body's end. The body's end padding (padBody) gives the two
+   *  scrollers one range wherever the body scrolls at all; where it does not (a short file, a picture sized to the
+   *  box) the track's content still reaches the last card's end, and a card under the footer's band or hanging past
+   *  the content shows only when the track scrolls on alone (a wheel over the cards; centerOn). With the body at its
+   *  end the track is left where it stands, as far as the last card's end — beyond that it shows nothing, and is
+   *  brought back to it; before this, a pass or a status reply pulled the track back to the body and hid the card's
+   *  end the person had just scrolled to (the 2026-09-07 review). Below the end the track follows the body as
+   *  always, so the next scroll up puts every card level again. */
+  private followBody(): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    const at = body.scrollTop;
+    let want = at;
+    if (track.scrollTop > at && atEnd(body)) want = Math.min(track.scrollTop, Math.max(at, this.cardsEnd - track.clientHeight));
+    this.writeScroll(track, want, "body");
+  }
+  /** Scroll the body so the card's mark sits at the vertical center and the card, level with it, lands beside it;
+   *  a card whose bottom would fall past the track's box (an open one, a pushed one) is brought in as far as keeps
+   *  the mark's top in view. Where the body cannot scroll that far (its end, in a body the padding could not
+   *  lengthen: padBody) the track goes on alone, as far as the card's end (followBody keeps it there). False for a
+   *  card the pass did not place beside a mark (loose: showLoose, for a caller that scrolls to it; a head click on a
+   *  loose card moves nothing, afterRender).
+   *  Coordinates: `p.top` and `p.height` are the TRACK's content (placeCards wrote the card's top as its mark's top in
+   *  the body's content less the header's height), and the lock keeps the track's scrollTop the body's; so the scroll
+   *  that shows the card's bottom is the card's bottom plus the gap less the track's box, with no header term. One
+   *  added on top scrolled the header's height too far, and an opened card that fit the track landed with its head
+   *  — the fold control, the reference link — under the panel's header (the 2026-09-07 review). */
+  private centerOn(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired === null) return false;
+    const body = this.ctx.body(), track = this.sections.cards;
+    const offset = track.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    const markY = p.desired + offset;                  // the mark's top in the body's content
+    const view = body.clientHeight;
+    let want = markY - view / 2;
+    const showCard = p.top + p.height + CARD_GAP - track.clientHeight;   // the least scroll that shows the card's bottom (track content: no header term)
+    if (showCard > want) want = Math.min(showCard, markY - CARD_GAP);
+    this.scrollBoth(want);
+    return true;
+  }
+  /** A loose card (no mark: the group at the top of the track) into the track's box, by the least scroll that shows it
+   *  whole — what scrollIntoView's `nearest` scrolls the track by — written onto the body AND the track at once, as
+   *  centerOn writes them. scrollIntoView moved the track alone, and the lock carries a track scroll onto the body only
+   *  on the track's scroll EVENT: the browser delivers one per element per frame, so the render's own write onto the
+   *  track (the echo the lock lets through unmirrored) and the scroll to the card arrived as one event, the body never
+   *  followed, and the frame's pass brought the track back to the body — the card the save had scrolled to was out of
+   *  view again (the 2026-09-07 review, in a real engine). False for a card with a mark (centerOn's) or one the pass did
+   *  not place (the list layout; a card not yet rendered): the caller scrolls it into view as a list item. */
+  private showLoose(key: string): boolean {
+    const p = this.placed.get(key);
+    if (!p || p.desired !== null) return false;
+    const track = this.sections.cards;
+    const at = track.scrollTop, box = track.clientHeight;
+    let want = at;
+    if (p.top - CARD_GAP < at) want = p.top - CARD_GAP;
+    else if (p.top + p.height + CARD_GAP > at + box) want = p.top + p.height + CARD_GAP - box;
+    this.scrollBoth(want);
+    return true;
+  }
+  /** The composer's box into view where it stands (startReply; render, after a move while the person was typing). In the
+   *  margin layout a reply's box stands in its card in the track (placeComposer), whose scroll is the body's: a
+   *  scrollIntoView moved the track alone, the lock let the event through as the pass's echo, and the frame's pass brought
+   *  the track back to the body (showLoose says the same of a card), so the least scroll that shows the box whole is
+   *  written onto both scrollers (scrollBoth), as a loose card is shown. The box is read where the pass has just placed
+   *  its card — render runs this after afterRender — and the pass never moves the box itself: it is a descendant of its
+   *  card, not a child of the list, so the sheet's absolute positioning and moveRows leave it, and the card's observer
+   *  covers its growth. In the slot above the track, or in the list layout, scrollIntoView's nearest as before. */
+  private showComposer(): void {
+    const box = this.composerBox, track = this.sections.cards;
+    if (!this.margin || !track.contains(box)) { box.scrollIntoView({ block: "nearest" }); return; }
+    const r = box.getBoundingClientRect(), top = r.top - track.getBoundingClientRect().top + track.scrollTop;
+    const at = track.scrollTop, view = track.clientHeight;
+    let want = at;
+    if (top - CARD_GAP < at) want = top - CARD_GAP;
+    else if (top + r.height + CARD_GAP > at + view) want = top + r.height + CARD_GAP - view;
+    this.scrollBoth(want);
+  }
+  /** Both scrollers to `want`, a position in the one range the two share: the body as far as it can go, and the track to
+   *  the body's position — or on alone, as far past the body's end as `want` and no further than the last card's end,
+   *  where the body's padding could not lengthen it (padBody; followBody keeps it there). */
+  private scrollBoth(want: number): void {
+    const body = this.ctx.body(), track = this.sections.cards;
+    want = Math.max(0, want);
+    body.scrollTop = Math.min(want, body.scrollHeight - body.clientHeight);
+    const at = body.scrollTop;                         // where the body could go
+    this.writeScroll(track, want > at ? Math.min(want, Math.max(at, this.cardsEnd - track.clientHeight)) : at, "body");
   }
   /** The absolute path the kernel acts on, as far as the panel can know it. The kernel resolves the viewer's
    *  path (`~`, a relative chat or todo token against the session's cwd, then realpath) and builds the sent
@@ -2033,7 +3318,10 @@ class Panel {
     const s = this.status;
     if (!s || this.statusRefusal || this.sending || !this.ctx.sid) return;   // statusRefusal: renderSend says why
     const parts: SendParts = sendParts(s);
-    let pending = (s.hunks || []).length;              // the changes the confirm named; once the accept-all answers, the N it decided
+    // the changes the send may accept on the way: none while the editor is up, whose marks they are (DECIDES; renderSend
+    // shows no box for them then), so acceptAll is false and the counts carry only the log's own decisions. Once the
+    // accept-all answers, the N it decided (below)
+    let pending = this.ctx.editing() ? 0 : (s.hunks || []).length;
     const acceptAll = this.sendOpts.accept && pending > 0;
     let tracked = !!s.trackedBy;
     this.sending = true; this.errors.delete("send"); this.render();
@@ -2059,18 +3347,21 @@ class Panel {
         pending = decided.length;
       }
       const counts = sendCounts(parts, acceptAll, pending);
-      const answerTodo = !!this.ctx.todoId && this.sendOpts.todo && !this.todoAnswered;
+      // the todo this send answers (chosenTodoId): the one the confirm offered — the file was opened from it, or the
+      // status lists it as naming this file — as the checkbox or the radio group left it; one id, or none
+      const todoId = this.chosenTodoId(s);
       const msg: Record<string, unknown> = {
         sid: this.ctx.sid, path: this.ctx.path, tracked, comments: parts.comments,
         accepted: counts.accepted, rejected: counts.rejected, watermark: parts.watermark,
       };
-      if (answerTodo) msg.todoId = this.ctx.todoId;
+      if (todoId) msg.todoId = todoId;
       const reply = await this.sendOnce(msg, false);
       this.markOverlapped();                           // the send appended to the comments log: a status out meanwhile may predate it
       // the latch is the STAMP, not the attempt: a send the kernel warned it could not mark (user todos off,
       // the todo already settled) leaves the checkbox, so the todo is answerable from here once the switch
       // is back on; the settled case re-warns on a later send, honestly, until the kernel says which it was
-      if (answerTodo && reply.todoStamped) { this.todoAnswered = true; answeredTodos.add(this.ctx.todoId!); }
+      if (todoId && reply.todoStamped) answeredTodos.add(todoId);
+      if (todoId && reply.todoStamped) answeredAt.set(todoId, reqSeq);   // …as of this request: a status issued after this point that lists the todo releases it (applyStatus)
       const who = this.sessionName();
       this.sentNote = reply.queued ? "Queued for " + who : "Sent to " + who + " at " + clock(Date.now());
       if (reply.warning) this.errors.set("send", { text: reply.warning, reload: false, warn: true });
@@ -2100,17 +3391,91 @@ class Panel {
     if (!this.root || !this.open) return;
     const s = this.status;
     const { head, cards, send, log } = this.sections;
-    if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log);   // built once per open
+    if (!this.root.contains(head)) this.root.replaceChildren(head, this.composerBox, cards, send, log);   // built once per open; a reply's box leaves the slot for its card (placeComposer)
     const keep = this.focusKey();                      // the control holding focus, by identity: the rebuild detaches it
     // a control an earlier render rebuilt disabled is wanted back only while the keyboard is still where that render put it
     const want = this.wanted && document.activeElement === this.wanted.at ? this.wanted.key : null;
     this.wanted = null;
+    // the box holding the keyboard: a reply's box stands in its card, and when the fresh list shows no card for it, or shows
+    // its comment in another card, the rebuild below moves it — to the slot, or into that card (placeComposer) — and a moved
+    // node drops its focus to the body, so the keyboard is put back afterwards, and the words' scroll offset with it (a
+    // moved textarea scrolls back to its first line). `home` is the node the box stands in before the rebuild, for the
+    // scroll below: swapCards keeps that node whenever the box stays, so a different node afterwards is a move
+    const home = this.composerBox.parentElement;
+    const typing = document.activeElement === this.input;
+    const scroll = this.input.scrollTop;
+    this.latchReplyCard();                             // the reply's card stays open by key, whatever key the status gave it
     head.replaceChildren(this.renderHead(s));
-    this.renderComposer();
-    cards.replaceChildren(this.renderCards(s));
+    this.swapCards(this.renderCards(s));               // around the reply's box, when it stands in a card the fresh list keeps
+    this.renderComposer();                             // after the cards: the box stands in a card of the fresh list, or in the slot (placeComposer)
     send.replaceChildren(this.renderSend(s));
     log.replaceChildren(this.renderLog(s));
+    if (typing && document.activeElement !== this.input) this.input.focus({ preventScroll: true });
+    if (this.input.scrollTop !== scroll) this.input.scrollTop = scroll;
+    // the box moved while the person was typing in it: its card left the list and it went to the slot, above the cards and
+    // off-screen when the list is long; the card came back and it returned; or it went from one card to another, and the
+    // other card may be off-screen as well — its comment bound to a change under the reply (the session's track-edit
+    // answering it) moves it onto the change's card, among the change cards at the top of the list; that change accepted
+    // (Accept on the card, Send's accept-all, a decision elsewhere) moves it to the comment's own card, among the comment
+    // cards below. Every one of those puts the box in a node other than `home`, and a rebuild that keeps its card keeps that
+    // node (swapCards), so the one check covers them; the box is brought into view, the slot's row saying why with it, and a
+    // keyboard elsewhere leaves the view where the person put it. After the margin pass (afterRender): in the margin layout
+    // a card the fresh list built has no top until the pass places it, so a scroll before the pass went to a place the
+    // card would not stand, and the track's scroll is the body's (showComposer)
+    const moved = typing && this.composerBox.parentElement !== home;
     if (keep) this.refocus(keep, want);
+    this.afterRender();                                // the margin layout: place the fresh cards beside their marks, then any centering the click asked for
+    if (moved) this.showComposer();
+  }
+  /** The cards section takes the fresh list. While the reply's box stands in a card of the LIVE list and the fresh list has
+   *  that card too, the nodes between the section and the box — the list, the card, and for a hosted comment its box on
+   *  the change card — stay in the document and take their fresh counterparts' children instead (graft): a textarea that
+   *  leaves the document, even to come straight back, loses its undo history, its scroll offset, an IME composition in
+   *  flight and (until render puts it back) the keyboard; only the value, the caret and the height survive a detach. The
+   *  box leaves a card when the fresh list shows no card for its comment (placeComposer moves it to the slot), and when the
+   *  list shows the comment in ANOTHER card: a passage comment the session answers with a track-edit bound to it moves onto
+   *  the change's card, and a hosted comment whose change was accepted moves to its own card. That move costs the detach:
+   *  the chain from the section to the box changes depth, so no node of it can stand in for a counterpart, and a node
+   *  cannot change parents without leaving the document — the engines' state-preserving move (moveBefore) keeps the focus
+   *  and the scroll offset, both of which render restores anyway, and drops the undo history all the same (Chromium 151
+   *  and Firefox 153, measured 2026-09-07). placeComposer stands the box in the card the fresh list shows, and render
+   *  brings it into view there while the person is typing. */
+  private swapCards(fresh: HTMLElement): void {
+    const cards = this.sections.cards, box = this.composerBox;
+    if (!cards.contains(box) || !this.graft(cards, [fresh], box)) cards.replaceChildren(fresh);
+  }
+  /** Give `live` the children `fresh` would have, with `keep` (a descendant of `live`) never leaving the document. At each
+   *  level the live child on the way to `keep` stands in for its counterpart among the fresh children — the element with
+   *  the same tag and data-id — wearing the counterpart's class and action, and takes the counterpart's children the same
+   *  way; at `keep`'s own parent the fresh children go around `keep`, those from the `.fc-actions` on after it (where
+   *  placeComposer stands the box: before the card's buttons). False, and nothing changed, when a level has no
+   *  counterpart — the card is gone from the fresh list, or the comment stands in another card there (swapCards). */
+  private graft(live: HTMLElement, fresh: Node[], keep: HTMLElement): boolean {
+    const chain: HTMLElement[] = [];                   // the live nodes between `live` and `keep`, top down
+    for (let n = keep.parentElement; n && n !== live; n = n.parentElement) chain.unshift(n);
+    const twins: HTMLElement[] = [];                   // their fresh counterparts, level by level
+    let among = fresh;
+    for (const n of chain) {
+      const t = among.find((f): f is HTMLElement => f.nodeType === 1 && (f as HTMLElement).tagName === n.tagName && (f as HTMLElement).dataset.id === n.dataset.id);
+      if (!t) return false;
+      twins.push(t); among = Array.from(t.childNodes);
+    }
+    let parent = live, kids = fresh;
+    for (let i = 0; i <= chain.length; i++) {
+      const kept = i < chain.length ? chain[i] : keep, twin = i < chain.length ? twins[i] : null;
+      // where the kept node stands among the fresh children: its twin's place, or, for the box, before the card's buttons
+      const acts = kids.findIndex((k) => k.nodeType === 1 && (k as HTMLElement).classList.contains("fc-actions"));
+      const at = twin ? kids.indexOf(twin) : acts < 0 ? kids.length : acts;
+      for (const k of Array.from(parent.childNodes)) if (k !== kept) parent.removeChild(k);
+      kids.forEach((k, j) => { if (k !== twin) { if (j < at) parent.insertBefore(k, kept); else parent.appendChild(k); } });
+      if (!twin) break;
+      // the class (open, detached) and the action (a collapsed card is the control) are what a card's own node changes
+      // between renders; its id attributes are what matched it, and the rest is constant per id
+      kept.className = twin.className;
+      if (twin.dataset.act === undefined) delete kept.dataset.act; else kept.dataset.act = twin.dataset.act;
+      parent = kept; kids = Array.from(twin.childNodes);
+    }
+    return true;
   }
   // Every section's children are rebuilt per render, and a removed element loses its focus to the body — so
   // Enter on a card's head opened the card and left the keyboard nowhere: the second Enter did nothing (or
@@ -2128,16 +3493,20 @@ class Panel {
     const a = document.activeElement as HTMLElement | null;
     if (!a || !this.root || !this.root.contains(a) || !a.dataset) return null;
     const k: FocusKey | null = a.dataset.act ? { act: a.dataset.act, id: a.dataset.id, key: a.dataset.key, slot: a.dataset.slot }
-      : a.dataset.opt ? { act: "opt", key: a.dataset.opt } : null;   // a confirm checkbox, re-found by its option
+      // a confirm checkbox, re-found by its option; a radio of the todo group by its option AND its value (the todo id, "" for none)
+      : a.dataset.opt ? { act: "opt", key: a.dataset.opt, id: a.dataset.opt === "todopick" ? (a as HTMLInputElement).value : undefined } : null;
     if (!k) return null;
     const cards = this.sections.cards;
-    if (cards.contains(a) && typeof a.closest === "function") {
+    if (typeof a.closest === "function") {
       // where in the list it sat: its card and that card's place; for the foot (Accept all, Reject all, the confirm),
-      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes
-      const all = Array.from(cards.querySelectorAll(".fc-card"));
+      // the change card before it — the comment cards follow the foot, and Accept all's keyboard belongs with the changes.
+      // The foot follows the change cards in the list, and stands in the footer in the margin layout (placeCards): the
+      // last change card is the place before it either way — its index in the order the cards are read (cardsInOrder),
+      // which in the margin layout is the placement's, not the list's
+      const all = this.cardsInOrder();
       const card = a.closest(".fc-card"), foot = a.closest(".fc-foot");
-      if (card) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card); }
-      else if (foot) k.at = Math.max(0, Array.from(cards.querySelectorAll(".fc-card, .fc-foot")).indexOf(foot) - 1);
+      if (card && cards.contains(card)) { k.card = (card as HTMLElement).dataset.id; k.at = all.indexOf(card as HTMLElement); }
+      else if (foot) { const changes = all.filter((c) => c.classList.contains("fc-change")); k.at = changes.length ? all.indexOf(changes[changes.length - 1]) : 0; }
     }
     return k;
   }
@@ -2145,7 +3514,11 @@ class Panel {
    *  too, but no tabindex. */
   private findControl(k: FocusKey): HTMLElement | null {
     if (!this.root) return null;
-    if (k.act === "opt") return this.root.querySelector('[data-opt="' + k.key + '"]') as HTMLElement | null;
+    // the panel's own option names, never a sidecar's text; a todo radio is told by its value, compared, never in a selector
+    if (k.act === "opt") {
+      const all = Array.from(this.root.querySelectorAll('[data-opt="' + k.key + '"]')) as HTMLElement[];
+      return (k.id === undefined ? all[0] : all.find((n) => (n as HTMLInputElement).value === k.id)) || null;
+    }
     for (const n of Array.from(this.root.querySelectorAll("[data-act]")) as HTMLElement[]) {
       const d = n.dataset;
       if (d.act === k.act && d.id === k.id && d.key === k.key && d.slot === k.slot && (n.tabIndex >= 0 || n.tagName.toUpperCase() === "BUTTON")) return n;
@@ -2174,9 +3547,9 @@ class Panel {
     const cards = this.sections.cards;
     const head = (c: Element | null | undefined): HTMLElement | null => (c ? (c.querySelector(".fc-card-head") as HTMLElement | null) : null);
     const picks: Array<HTMLElement | null> = [];
-    if (k.card) picks.push(head(cards.querySelector('.fc-card[data-id="' + k.card + '"]')));
-    if (typeof k.at === "number") { const all = Array.from(cards.querySelectorAll(".fc-card")); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
-    picks.push(...(Array.from(cards.querySelectorAll(".fc-foot button")) as HTMLElement[]));
+    if (k.card) picks.push(head(cards.querySelector('.fc-card[data-id="' + cssId(k.card) + '"]')));   // a comment id may hold a quote (cssId)
+    if (typeof k.at === "number") { const all = this.cardsInOrder(); picks.push(head(all[Math.min(k.at, all.length - 1)])); }
+    picks.push(...(Array.from(this.root.querySelectorAll(".fc-foot button")) as HTMLElement[]));   // in the list, or in the margin layout's footer
     picks.push(this.root.querySelector('[data-act="fcsend"]') as HTMLElement | null, this.root.querySelector('[data-act="fcfile"]') as HTMLElement | null);
     for (const n of picks) {
       if (n && !(n as HTMLButtonElement).disabled) { n.focus({ preventScroll: true }); return n; }
@@ -2234,8 +3607,68 @@ class Panel {
     t.title = tb ? (tb.kind === "inherited" ? "Tracked through " + tb.entry + "; turn it off there" : "Tracked by the entry " + tb.entry + "; click to stop")
       : "Record this session's edits to the file as changes you accept or reject";
     row.appendChild(t);
+    // Show changes inline, beside Track changes, only while the file has changes to show (progressive disclosure: a
+    // control over marks that do not exist is noise) and the read view is up (the editor draws every change itself)
+    if (s && (s.hunks || []).length && !this.ctx.editing()) {
+      const i = btn("Show changes inline", "fcinline", "fileview-btn fc-toggle");
+      i.dataset.on = this.inline ? "1" : "0";
+      i.setAttribute("aria-pressed", this.inline ? "true" : "false");
+      // under Comments the read view paints no change mark whatever the setting (paintChanges), so the title says the filter
+      // hides them and that the setting governs All and Changes — an ON toggle over a body with no marks must not claim marks
+      // in the text (the review, 2026-09-07). The button stays: its setting is shared with the other views and other panels
+      const withheld = this.activeFilter() === "comments";
+      i.title = withheld
+        ? (this.inline ? "Comments above hides the change marks with the change cards; under All or Changes the session's changes are marked in the text. Click to read the file without the marks there too"
+          : "The marks are off, and Comments above hides them with the change cards; click to mark the session's changes in the text under All or Changes")
+        : this.inline ? "The session's changes are marked in the text, insertions tinted and deletions struck; click to read the file without the marks"
+        : "The marks are off and the file reads as it is; click to mark the session's changes in the text";
+      row.appendChild(i);
+    }
     row.appendChild(btn("Comment on this file", "fcfile"));
     head.appendChild(row);
+    // the filter (the filter follow-on, 2026-09-07): All · Comments N · Changes M, one group of the toggles' buttons on its own
+    // row under them, the chosen one filled — offered once the file has a card to filter (filterOffered), and never before:
+    // a control over an empty list is noise. Its counts are the action-row label's (cardCounts), so the glance and the
+    // control agree. The buttons take the arrow keys as one group (the constructor's keydown).
+    let filterRow: HTMLElement | null = null;          // the row the toggles' answers stand above (underToggles): the filter's, when offered; else the first of the head's other rows, set below
+    if (filterOffered(s)) {
+      const seg = el("div", "fc-row fc-filter");
+      seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Show");
+      const n = cardCounts(s);
+      // a detached change is neither pending nor counted (cardCounts), and the Changes list shows its card in the detached
+      // group: the option carries the action-row label's own detached clause ("Changes 0 · 1 detached"), so the count and
+      // the list it opens agree and a file holding detached changes alone does not read as one with nothing to show
+      const d = s && s.store ? detachedChanges(s.store).length : 0;
+      // the marks half of each title is the read view's (paintAll): the editor (Slice 5) draws every change itself, from the
+      // records it took at Edit, and no comment highlight, so while it is up the titles say what the list does and that the
+      // editor's marks stay — the row is offered there all the same, since finding a comment among the change cards is
+      // what the filter is for (Show changes inline, which governs marks alone, is not)
+      const editing = this.ctx.editing();
+      const commentsTitle = "Show only the comments, including comments on changes; " + (editing ? "the editor keeps every change marked in its text" : "the change marks in the text are hidden with the change cards");
+      const changesTitle = "Show only the changes, each with the comments made on it" + (editing ? "" : "; the comment highlights in the text are hidden with the comment cards")
+        + (d ? "; the " + (d === 1 ? "detached change is" : d + " detached changes are") + " listed too, in a group of " + (d === 1 ? "its" : "their") + " own" : "");
+      const options: Array<[CommentsFilter, string, string]> = [
+        ["all", "All", "Show every comment and change"],
+        ["comments", "Comments " + n.comments, commentsTitle],
+        ["changes", "Changes " + n.changes, changesTitle],
+      ];
+      for (const [key, label, title] of options) {
+        const b = btn(key === "changes" && d ? label + " · " + d + " detached" : label, "fcfilter", "fileview-btn fc-toggle");
+        b.dataset.key = key;
+        b.dataset.on = this.filter === key ? "1" : "0";
+        b.setAttribute("aria-pressed", this.filter === key ? "true" : "false");
+        b.title = title;
+        seg.appendChild(b);
+      }
+      head.appendChild(seg);
+      filterRow = seg;
+    }
+    // a row answering a click on the toggles' row — the Track scope choice, the Stop confirm, the track slot's loader and
+    // refusal — stands directly under that row, above the filter's, the way the foot's Reject-all confirm and Send's stand
+    // under their buttons (the plan: an error row under the control that asked); the filter's row is under the toggles
+    // again once the question is answered. The other head rows (the status refusal, the poll's, the editor's, the save's)
+    // are about the file and the panel as a whole and keep their place below the filter's row.
+    const underToggles = (n: HTMLElement): void => { head.insertBefore(n, filterRow); };
     if (this.trackChoice && s) {
       const pick = el("div", "fc-row fc-choice");
       pick.appendChild(el("span", "fc-note", "Track:"));
@@ -2248,7 +3681,7 @@ class Panel {
       f.title = "Everything under the folder, files not written yet included";
       pick.appendChild(f);
       pick.appendChild(btn("Cancel", "fctrackcancel"));
-      head.appendChild(pick);
+      underToggles(pick);
     }
     if (this.trackStop && s?.trackedBy) {
       const stop = el("div", "fc-row fc-choice");
@@ -2257,9 +3690,17 @@ class Panel {
       stop.appendChild(ask);
       stop.appendChild(btn("Stop", "fctrackstop"));
       stop.appendChild(btn("Cancel", "fctrackcancel"));
-      head.appendChild(stop);
+      underToggles(stop);
     }
-    for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll")]) if (n) head.appendChild(n);
+    for (const n of [this.loader("track"), this.errRow("track"), this.errRow("head"), this.errRow("poll"), this.errRow("edit")]) if (n) head.appendChild(n);
+    // the track slot's loader and refusal, built with the head's rows above: moved under the toggle that asked, like its confirms
+    // (the head's own children with the slot — the row's ✕ and Reload carry it too, and stay in their row). With no filter row
+    // (a file with nothing to filter, or no status) the move's anchor is the first of the head's other rows instead: an
+    // insertBefore with no anchor appends, and appended after the status refusal's row the answer to the Track click stood
+    // below a row about the file (the review, 2026-09-07)
+    if (!filterRow) filterRow = (Array.from(head.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && ["head", "poll", "edit"].includes(n.dataset.slot || "")) || null;
+    for (const n of Array.from(head.childNodes)) if (n.nodeType === 1 && (n as HTMLElement).dataset.slot === "track") underToggles(n as HTMLElement);
+    const sv = this.errRow("save"); if (sv) head.appendChild(sv);   // a landed save's logWarning (saveThroughComments): the Log below lacks the entry
     // a Reload from the head's or the poll's row: the slot wears the loader where the row was, until the answer (refresh)
     for (const n of [this.loader("head"), this.loader("poll")]) if (n) head.appendChild(n);
     if (s && s.agentTooling === "absent") {
@@ -2267,15 +3708,42 @@ class Panel {
     }
     return head;
   }
+  /** The box follows its content (autosizeComposer) on every input — unless the person dragged the handle, when their
+   *  height stands until the composer closes; a box with no layout to measure keeps the height it had. An inline
+   *  height that is not the one autosize last set was dragged there (the sheet's resize: vertical writes it, and
+   *  fires no input); sizedTo holds that write as the box serialized it, so the comparison is string to string of one
+   *  origin. Before the first keystroke autosize has set none — the box opens with no inline height, and
+   *  closeComposer clears the height with sizedTo — so an inline height while sizedTo is null is a drag too: the
+   *  first guard is that case, which the second cannot see (the 2026-09-07 review: a box dragged taller before a
+   *  word was typed snapped back to its content on the first keystroke). */
+  private autosize(): void {
+    const ta = this.input;
+    if (this.sizedTo === null && ta.style.height) return;                    // dragged before the first keystroke
+    if (this.sizedTo !== null && ta.style.height !== this.sizedTo) return;   // dragged since
+    const h = autosizeComposer(ta);
+    if (h !== null) this.sizedTo = h;
+  }
   private renderComposer(): void {
     const c = this.composer;
     const box = this.composerBox;
     box.hidden = !c;
+    const inCard = this.placeComposer();               // a reply's box into its card; every other box, and a closed one, into the slot
     if (!c) { this.input.hidden = false; return; }   // a re-place hid it; the next note needs it
     const ref = this.composerRef;
     ref.replaceChildren();
+    ref.hidden = inCard;                               // in the card the comment itself is the reference: no row repeats it (ui/CLAUDE.md, the compact form)
     this.input.hidden = c.kind === "replace";          // a re-place takes a drag on the picture, not words
-    if (c.kind === "reply") ref.appendChild(el("span", "fc-note", "Reply on " + c.ref));
+    this.input.placeholder = c.kind === "reply" ? "Your reply" : "Your comment";
+    this.input.setAttribute("aria-label", c.kind === "reply" ? "Reply text" : "Comment text");
+    if (c.kind === "reply") {
+      if (!inCard) {
+        // the list shows no card for the comment, so the box stands in the slot: the row names the comment and says why,
+        // and the words stay in the box — a reply is never dropped because its card left the list
+        ref.appendChild(el("span", "fc-note", "Reply on " + c.ref));
+        const away = this.replyAway(c);
+        ref.appendChild(el("span", "fc-note" + (away.gone ? " fc-refused" : ""), away.text));
+      }
+    }
     else if (c.kind === "change") ref.appendChild(el("span", "fc-note", "Reply on the change " + c.ref));
     else if (c.kind === "replace") {
       // a PDF region whose page the document no longer has (pageGone): no page wears the re-place cue, so the note says so
@@ -2295,9 +3763,9 @@ class Panel {
         ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region, c.page)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
-        if (c.range && c.text !== undefined && c.text !== this.ctx.text()) {   // the file changed and the embed line was not re-found (retargetComposer)
-          const t = el("span", "fc-tag", "passage changed");
-          t.title = "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not followed into it (retargetComposer)
+          const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+          t.title = c.tied ? EMBED_TIED : c.elsewhere ? EMBED_ELSEWHERE : "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
           ref.appendChild(t);
         }
       }
@@ -2312,9 +3780,9 @@ class Panel {
       q.title = c.quote;
       ref.appendChild(el("span", "fc-note", "On "));
       ref.appendChild(q);
-      if (c.range && c.text !== undefined && c.text !== this.ctx.text()) {   // the file changed and the passage was not re-found in it (retargetComposer)
-        const t = el("span", "fc-tag", "passage changed");
-        t.title = "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not followed into it (retargetComposer)
+        const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+        t.title = c.tied ? PASSAGE_TIED : c.elsewhere ? PASSAGE_ELSEWHERE : "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
         ref.appendChild(t);
       }
     } else ref.appendChild(el("span", "fc-note", "On this file"));
@@ -2326,16 +3794,104 @@ class Panel {
     // a refused mapping has nothing to save to — Raw or Cancel; Save would silently write a whole-file comment; a
     // refused region likewise, and a re-place saves nothing (the drawn region is the action)
     const noSave = c.kind === "replace" || ((c.kind === "comment" || c.kind === "region") && !!c.refusal);
-    acts.replaceChildren(...(noSave ? [] : [save]), btn("Cancel", "fccancel"));
+    // the hint names the chord in the platform's words and sits at the row's left (fc-hint), the buttons at its right
+    const hint = el("span", "fc-note fc-hint", composerHint(IS_MAC));
+    acts.replaceChildren(...(noSave ? [] : [hint, save]), btn("Cancel", "fccancel"));
     const err = this.composerErr;
     err.replaceChildren(...[this.loader("composer"), this.errRow("composer")].filter((n): n is HTMLElement => !!n));
     if (!box.contains(this.input)) box.replaceChildren(ref, this.input, acts, err);   // built once; the input keeps its focus across renders
   }
+  /** Where the box stands. A reply's box goes INSIDE the card the list shows for its comment — the comment's own card, or
+   *  the comment's box on the change card hosting it (.fc-hosted) — below the turns and above the buttons; every other
+   *  kind's box, a closed one, and a reply whose card the list does not show (the comment resolved into the closed fold,
+   *  gone from the sidecar, its change card behind the "… N more changes" row, a status not yet in) stand in the panel's
+   *  own slot between the head and the cards, the reply's row saying why (replyAway). One box, moved between the two: the
+   *  words, the caret and the height ride with the node. Moved only when it is not already where it belongs — moving a
+   *  focused node, even onto its own place, drops the keyboard to the body, and a rebuilt list makes it move only when the
+   *  list stops showing its card or shows its comment in another card: otherwise the card it stands in is kept around it
+   *  (swapCards). Returns whether the box is in a card. */
+  private placeComposer(): boolean {
+    const box = this.composerBox, root = this.root;
+    if (!root || !root.contains(this.sections.cards)) return false;   // the sections are the root's children from its first render
+    const r = this.replyTo();
+    const id = r === null ? null : cssId(r);           // escaped for the selector: a sidecar id may hold a quote (cssId)
+    const host = id === null ? null : this.sections.cards.querySelector('.fc-card[data-id="' + id + '"], .fc-hosted[data-id="' + id + '"]') as HTMLElement | null;
+    const before = (parent: HTMLElement, next: HTMLElement | null): void => {
+      const kids = Array.from(parent.childNodes);
+      const at = kids.indexOf(box), want = next ? kids.indexOf(next) : kids.length;
+      if (at < 0 || at !== want - 1) parent.insertBefore(box, next);
+    };
+    if (host) {
+      before(host, (Array.from(host.childNodes) as HTMLElement[]).find((n) => n.nodeType === 1 && n.classList.contains("fc-actions")) || null);
+      box.classList.add("fc-composer-in");
+      return true;
+    }
+    before(root, this.sections.cards);
+    box.classList.remove("fc-composer-in");
+    return false;
+  }
+  /** Why the list shows no card for the reply's comment, for the slot's row: the cause, and where a fold hides the card, the
+   *  row that brings it back (ui/CLAUDE.md: a compact view never dead-ends) — named in the text, and by its action in
+   *  `back`, for the keyboard when the box closes (focusAway). The comment gone from the sidecar (`gone`: the row wears
+   *  the refusal's colour); a comment on its own card resolved since the reply began, or resolved before it and its
+   *  Resolved fold closed since; its change card folded behind the "… N more changes" row, when a change the session made
+   *  in an earlier paragraph pushed the card's group past GROUP_LIMIT; else the one case left, a status not yet in. Where
+   *  a comment bound to a change stands follows the filter (renderCards): under All and Changes it is shown on the
+   *  change's card resolved or not (changeCards), never under the Resolved fold, so only the change fold can hide it;
+   *  under Comments it stands on its own card like any other, and resolved it is under the Resolved fold, while no
+   *  change card, group or fold row is rendered to name. */
+  private replyAway(c: { commentId: string; resolved: boolean }): { text: string; gone: boolean; back: "fcresolved" | "fcmore" | "fcfilter" | null } {
+    const found = this.cards().find((x) => x.id === c.commentId);
+    if (!found) return { text: "The comment is gone from the file's comments.", gone: true, back: null };
+    // under Comments a comment bound to a change stands on its own card, as one on no change does, and no change card or
+    // fold row is rendered (renderCards): it is read here as a comment on none, so the Resolved fold is the row that can hide it
+    const card = this.activeFilter() === "comments" ? { ...found, hunk: null } : found;
+    // the filter shows the changes alone, and the comment is on none: its card is behind All or Comments above (the row that
+    // brings it back is the group's first button, All)
+    if (this.activeFilter() === "changes" && card.hunk === null) return { gone: false, back: "fcfilter", text: "The comment's card is hidden while Changes is chosen above (All or Comments shows it); the reply still goes to it." };
+    if (card.resolved && card.hunk === null) return { gone: false, back: "fcresolved", text: c.resolved ? "The comment's card is under “Resolved” below; the reply still goes to it." : "The comment was resolved meanwhile, so its card is under “Resolved” below; the reply still goes to it." };
+    if (card.hunk === null) return { gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it." };   // its own card, open, and not shown: a status not yet in — never the change fold
+    const view = this.changeView();
+    if (view.hidden.some((g) => g.changes.some((ch) => ch.comments.some((cm) => cm.id === c.commentId)))) {
+      return { gone: false, back: "fcmore", text: "The comment's card is under “" + moreChangesLabel(view.hiddenChanges) + "” below; the reply still goes to it." };
+    }
+    return { gone: false, back: null, text: "The comment's card is not in the list; the reply still goes to it." };
+  }
+  /** The line under Changes for the comment just saved there (noteHiddenSave): its card and its mark are hidden by the
+   *  choice above, and the line names the options that show them, as the Changes empty state does — the card itself is
+   *  not shown, since the filter's own words exclude it. Rendered while the list still hides the card; once it shows
+   *  (another pick) or the comment is gone from the file's comments, the line is over and the id with it: a later return
+   *  to Changes must not bring it back, the card having been seen. The ✕ ends it early (fchiddenx). In the margin layout
+   *  the row is one the list held and stands in the footer above Send with the foot, the folds and the empty note
+   *  (moveRows): a row at the top of a track locked to the body's scroll is out of view for a reader anywhere but the
+   *  top of the text, and this line exists to be seen after a save made wherever the reader was. */
+  private hiddenSavedRow(filter: CommentsFilter): HTMLElement | null {
+    const id = this.hiddenSaved;
+    if (id === null) return null;
+    const card = this.cards().find((c) => c.id === id);
+    if (!card || filter !== "changes" || card.hunk !== null) { this.hiddenSaved = null; return null; }
+    const mark = card.target ? "rectangle" : card.anchor ? "highlight" : null;   // a whole-file comment has no mark in the file
+    // .fc-note (0.86em) goes on the words alone, never on the row: a .fileview-btn (0.82em) under it would compound to
+    // 0.705em, smaller than every other panel button and than the ✕ of an err row the same list can show a line below
+    // (ui/CLAUDE.md, font sizes: nested em compounds; prefer flat contexts) — the Track scope and Reject all confirms put
+    // the class on their span the same way
+    const row = el("div", "fc-row fc-saved-hidden");
+    row.dataset.id = card.id;
+    row.appendChild(el("span", "fc-note", "Your comment is saved; its card" + (mark ? " and " + mark + " are" : " is")
+      + " hidden while Changes is chosen above (All or Comments shows " + (mark ? "them" : "it") + ")."));
+    const x = btn("✕", "fchiddenx", "fileview-btn fc-x"); x.setAttribute("aria-label", "Dismiss"); row.appendChild(x);
+    return row;
+  }
   private renderCards(s: Status | null): HTMLElement {
     const list = el("div", "fc-cards");
-    // a comment bound to a pending change is shown on that change's card; the rest stand on their own
-    const cards = this.cards().filter((c) => c.hunk === null);
-    const view = this.changeView();
+    // the filter (activeFilter): "all" is the list as before — a comment bound to a pending change is shown on that change's
+    // card, the rest stand on their own; "comments" shows every comment card on its own, the bound ones with the change's
+    // words as their reference, and no change card; "changes" shows the change cards alone, each with the comments made on
+    // it (renderHosted). The keyed expand state is untouched by the choice: a card opened under one filter is open under
+    // the next that shows it.
+    const filter = this.activeFilter();
+    const cards = filter === "changes" ? [] : this.cards().filter((c) => filter === "comments" || c.hunk === null);
+    const view = filter === "comments" ? { cards: [], groups: [], shown: [], hidden: [], hiddenChanges: 0 } : this.changeView();
     if (!s) {
       // a wait wears the romp loader while a status ask is out (refresh); once the kernel refused, say what
       // follows — the reason and Reload are the head's row. Never a line claiming a read nothing is making.
@@ -2346,6 +3902,14 @@ class Panel {
     }
     // a reject's reload is out: the body shows the bytes it changed, unmarked, until the fetch lands (awaitBytes)
     for (const n of [this.loader("bytes"), this.errRow("bytes")]) if (n) list.appendChild(n);
+    const saved = this.hiddenSavedRow(filter);          // a comment saved under Changes: the line for its hidden card, where the card would be
+    if (saved) list.appendChild(saved);
+    if (!cards.length && !view.cards.length && filter === "changes") {
+      // the changes alone, and none: the line says where the comments are (ui/CLAUDE.md, never dead-end a compact view)
+      list.appendChild(el("div", "fc-empty", "No changes are pending. All or Comments above shows the comments."));
+      for (const n of this.strayRows(list, ["change:", "changes", "card:"])) list.appendChild(n);
+      return list;
+    }
     if (!cards.length && !view.cards.length) {
       // the gesture is named wherever an overlay in view takes it (drawsRegions): the media body's picture, or a figure in
       // rendered markdown — the panel's guidance is the one place the drag is discoverable from; the overlay's own label
@@ -2407,11 +3971,12 @@ class Panel {
     return "Resolve it, or re-place it from a computer: drawing a region needs a mouse.";
   }
   private renderCard(c: Card): HTMLElement {
-    const isOpen = this.openCards.has(c.id);
+    const isOpen = this.openCards.has(c.id) || this.replyTo() === c.id;   // open while its reply is written: the box stands in it (placeComposer)
     const loc = this.located.get(c.id);
     const picture = c.target ? this.regionImageFor(c) : null;   // the picture the region is on, in this view; null when it shows none
     const card = el("div", "fc-card" + (isOpen ? " open" : "") + (loc && loc.state === "detached" ? " fc-card-detached" : ""));
     card.dataset.id = c.id;
+    card.dataset.cue = "comment";                      // the left edge's colour: --accent for a comment (a region is one) — the sheets' [data-cue] rules
     // the expand/collapse target: the whole card while collapsed, the HEAD alone once open — the open body
     // is text to select and copy (the sheet gives it cursor: text), and a click there must not fold the card
     // away from under the selection. The head is a Tab stop and takes Enter/Space (KEY_ACTS).
@@ -2419,13 +3984,23 @@ class Panel {
     const head = el("div", "fc-card-head");
     head.dataset.id = c.id; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (this.replyTo() === c.id) this.holdHead(head);
+    // the kind cue (the filter follow-on, 2026-09-07): what the card is, in a word before the author's chip, so a comment
+    // and a change read apart at a glance in a long list; the title says what kind of comment
+    const kind = el("span", "fc-kind", c.kind === "region" ? "Region" : "Comment");
+    kind.title = c.kind === "region" ? "A comment on a region of the picture" : c.kind === "change" ? "A comment on a change"
+      : c.kind === "file" ? "A comment on the file as a whole" : "A comment on a passage";
+    head.appendChild(kind);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.kind === "passage" ? "“" + c.ref + "”" : c.ref);
     ref.title = c.kind === "passage" ? c.anchor?.quote || c.ref : c.ref;
+    // the link and Reveal scroll the read view or switch it to Raw; while the editor holds the body there is neither
+    // (the viewer's setMode and scrollToOffset are no-ops then), so neither control is offered (Slice 5)
+    const editing = this.ctx.editing();
     // a PDF region whose page is mounted but did not render (pageUnrendered) has no rectangle to reach, so its reference
     // reaches the page instead, where the chunk's notice says why (reveal): the compact card must not dead-end
     const unrendered = this.pageUnrendered(c);
-    if ((c.anchor || c.target) && loc && loc.painted) {
+    if ((c.anchor || c.target) && loc && loc.painted && !editing) {
       ref.dataset.act = "fcgoto"; ref.dataset.id = c.id; ref.classList.add("fc-link"); ref.title = c.target ? "Scroll to the region" : "Scroll to the passage";
       ref.tabIndex = 0; ref.setAttribute("role", "button");
     } else if (unrendered) {
@@ -2477,13 +4052,29 @@ class Panel {
       head.appendChild(t);
     }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
+    // a highlight on a copy the panel cannot vouch for (copyUnsure): the composer's chip for a pending passage in the same
+    // state wears the same words, and the title says which copy is painted and why it is a guess
+    if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
+    // a comment on a change the sidecar holds stands on its own card only while the filter shows the comments alone
+    // (renderCards): the tag says the change is there, behind All or Changes — and which it is, since `hunk` is set for a
+    // PENDING change and for a DETACHED one alike (cardModel), and only the pending one has a card that Accept or Reject
+    // decides; the detached one's card sits in the detached group (changeCards)
+    if (c.hunk) {
+      const pending = !!this.status && (this.status.hunks || []).some((h) => h.id === c.hunk!.id);
+      const t = el("span", "fc-tag", "on a change");
+      t.title = pending ? "This comment is on a pending change; All or Changes above shows the change's card"
+        : "This comment is on a detached change, whose text the file no longer holds; All or Changes above shows the change's card, under Detached changes";
+      head.appendChild(t);
+    }
     if (c.decision) { const d = el("span", "fc-tag", c.decision); d.title = "You " + c.decision + " the change this comment is on"; head.appendChild(d); }
     if (c.resolved) head.appendChild(el("span", "fc-tag", "resolved"));
     if (c.replies.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.replies.length)));
     head.appendChild(el("span", "fc-time", clock(c.ts)));
     card.appendChild(head);
     if (!isOpen) { card.appendChild(el("div", "fc-preview", c.body.replace(/\s+/g, " ").trim())); return card; }
+    const held = this.replyTo() === c.id ? this.heldNote() : null;   // why the held head does not fold, in words, where the title cannot reach
+    if (held) card.appendChild(held);
     const crop = c.target ? this.cropFor(picture, c) : null;   // the region cut from the picture (E5), or a page's kept crop
     if (crop) card.appendChild(crop);
     else if (c.target && this.pageUndrawn(c)) card.appendChild(this.cropWaitNote(c));   // no bitmap to cut: the slot says so and reaches the page
@@ -2492,6 +4083,7 @@ class Panel {
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
     // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
+    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
     if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));
@@ -2506,10 +4098,12 @@ class Panel {
       acts.appendChild(rp);
     }
     const src = this.ctx.text();
-    if (c.anchor && loc && loc.range && !loc.painted) {
-      const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;
-      rv.title = "Show the passage in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "");
-      acts.appendChild(rv);
+    if (!editing) {
+      if (c.anchor && loc && loc.range && !loc.painted) {
+        const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.id;
+        rv.title = "Show the passage in the Raw view" + (src !== null ? " (line " + (rawOffsetToLine(src, loc.range.start) + 1) + ")" : "");
+        acts.appendChild(rv);
+      }
     }
     card.appendChild(acts);
     for (const n of [this.loader("card:" + c.id), this.errRow("card:" + c.id)]) if (n) card.appendChild(n);
@@ -2545,14 +4139,19 @@ class Panel {
   /** One card per pending change. Collapsed: the author's chip, the one-line reference (a link to its mark
    *  when the view shows one), and the buttons — Accept and Reject are the card's reason to exist, so they
    *  never hide behind the expand. Open: the old and new text, and the comments bound to the change with
-   *  their turns and their own Reply and Resolve. Reveal on a deletion (never painted in Rendered; a point in
-   *  Raw) and on any change whose mark the view does not show, so the compact card never dead-ends.
+   *  their turns and their own Reply and Resolve. Reveal on a deletion (a point in both views, which a scroll can
+   *  miss) and on any change whose mark the view does not show — a refused block, or Show changes inline off — so
+   *  the compact card never dead-ends. While the
+   *  editor is up (Slice 5) the editor's own marks show every change, deletions included, and the read view Reveal
+   *  and the link would scroll is gone, so neither is offered; Accept and Reject stay, and answer with where to
+   *  decide (DECIDES).
    *  A DETACHED change (the load-time rebase could not place it; the sidecar keeps it, not pending) wears the
    *  comment cards' detached dress and a tag saying so, and offers no Accept, Reject, Reply or Reveal: the host
    *  decides pending changes only and refuses each of those `no-change`, and the change's last offset points
    *  into a text that no longer holds it. Its texts and the comments bound to it are one click down, as ever. */
   private renderChangeCard(c: ChangeCard): HTMLElement {
-    const isOpen = this.openCards.has(c.key);
+    const isOpen = this.openCards.has(c.key) || c.comments.some((cm) => cm.id === this.replyTo());   // open while a hosted comment's reply is written (placeComposer)
+    const editing = this.ctx.editing();
     const painted = this.paintedChanges.has(c.id);
     // the view's bytes are not the status's — a reject's reply landed and its reload has not, or the poll's reload landed
     // and its status has not — so nothing was painted, and nothing is known yet about what the view will show once the
@@ -2563,14 +4162,19 @@ class Panel {
     const slot = "change:" + c.id;
     const card = el("div", "fc-card fc-change" + (isOpen ? " open" : "") + (c.detached ? " fc-card-detached" : ""));
     card.dataset.id = c.key; card.dataset.change = c.id; card.dataset.kind = c.kind;
+    card.dataset.cue = "change";                       // the left edge's colour: --text-muted for a change — the sheets' [data-cue] rules
     if (!isOpen) card.dataset.act = "fccard";
     const head = el("div", "fc-card-head");
     head.dataset.id = c.key; head.dataset.act = "fccard";
     head.tabIndex = 0; head.setAttribute("role", "button"); head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    if (c.comments.some((cm) => cm.id === this.replyTo())) this.holdHead(head);
+    const kind = el("span", "fc-kind", "Change");      // the kind cue, as a comment card wears it (renderCard); no decision is offered on a detached change
+    kind.title = c.detached ? "A change the session made to the file, whose text the file no longer holds; nothing here accepts or rejects it" : "A change the session made to the file, for you to accept or reject";
+    head.appendChild(kind);
     head.appendChild(this.chip(c.author, c.authorId));
     const ref = el("span", "fc-ref", c.ref);
     ref.title = c.kind === "ins" ? "Added: " + c.newText : c.kind === "del" ? "Removed: " + c.oldText : c.oldText + " → " + c.newText;
-    if (painted) {
+    if (painted && !editing) {
       ref.dataset.act = "fcgoto"; ref.dataset.id = c.key; ref.classList.add("fc-link"); ref.title = "Scroll to the change";
       ref.tabIndex = 0; ref.setAttribute("role", "button");
     }
@@ -2580,34 +4184,46 @@ class Panel {
       const t = el("span", "fc-tag", "detached");
       t.title = "The file no longer holds this text, so the change cannot be accepted or rejected; its record stays with the file's comments";
       head.appendChild(t);
-    } else if (!painted && !inFlux && src !== null && this.ctx.mode() !== "media") {
+    } else if (!painted && this.inline && !editing && !inFlux && src !== null && this.ctx.mode() !== "media") {
+      // with the marks off (inline) the view shows no change by choice, and the tag would claim a failing that is none
       const t = el("span", "fc-tag", "not shown");
-      t.title = this.ctx.mode() === "rendered" && c.kind === "del" ? "The Rendered view cannot show a deletion; Reveal opens it in Raw" : "This view does not show the change; Reveal opens it in Raw";
+      t.title = "This view does not show the change; Reveal opens it in Raw";
       head.appendChild(t);
     }
     if (c.comments.length && !isOpen) head.appendChild(el("span", "fc-tag fc-count", String(c.comments.length)));
     head.appendChild(el("span", "fc-time", clock(c.ts)));
     card.appendChild(head);
     if (isOpen) {
+      const held = c.comments.some((cm) => cm.id === this.replyTo()) ? this.heldNote() : null;   // the held head's words, for a hosted comment's reply
+      if (held) card.appendChild(held);
       card.appendChild(this.diffBody(c.oldText, c.newText));
       for (const cm of c.comments) card.appendChild(this.renderHosted(cm));
     }
     if (!c.detached) {
       const acts = el("div", "fc-actions");
       const busy = this.busy.has(slot); const verb = this.busyVerb.get(slot);
+      const decide = editing ? decideInEditor() : "";
       const ok = btn(busy && verb === "accept" ? "Accepting…" : "Accept", "fcaccept"); ok.dataset.id = c.id; ok.disabled = busy;
-      ok.title = "Keep the text as it is and drop the change";
+      ok.title = editing ? decide : "Keep the text as it is and drop the change";
       const no = btn(busy && verb === "reject" ? "Rejecting…" : "Reject", "fcreject"); no.dataset.id = c.id; no.disabled = busy;
-      no.title = "Put the old text back in the file";
+      no.title = editing ? decide : "Put the old text back in the file";
+      if (editing) { ok.classList.add("fileview-btn-blocked"); no.classList.add("fileview-btn-blocked"); }   // real buttons, dimmed: the click answers in place (DECIDES)
       acts.appendChild(ok); acts.appendChild(no);
       if (!c.comments.length) {   // with a comment on the card, the comment's own Reply is the way to answer it
         const re = btn("Reply", "fcchangereply"); re.dataset.id = c.id; re.title = "Comment on this change; the session's answer comes back to it";
         acts.appendChild(re);
       }
-      if (c.kind === "del" || !painted) {
-        const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
-        rv.title = "Show the change in the Raw view" + (src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "");
-        if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
+      if (!editing) {   // Reveal switches to Raw and scrolls the read view: neither exists while the editor holds the body, which shows the change itself
+        if (c.kind === "del" || !painted) {
+          const rv = btn("Reveal", "fcreveal"); rv.dataset.id = c.key;
+          const line = src !== null && !inFlux ? " (line " + (rawOffsetToLine(src, c.curFrom) + 1) + ")" : "";
+          // with Show changes inline off, Raw paints no mark either (paintChanges), so the title promises the place and not
+          // a mark — the guide's "opens the Raw view at the change" — and the click cues the row it lands on (landOn), which
+          // is what reaches a finger; on, Raw shows every change, a deletion as its point
+          rv.title = this.inline ? "Show the change in the Raw view" + line
+            : "Open the Raw view at the change" + line + "; the marks are off, so the change is not marked there";
+          if (c.kind === "del" || !inFlux) acts.appendChild(rv);   // inFlux: an unpainted insertion's Reveal waits for the bytes
+        }
       }
       card.appendChild(acts);
     }
@@ -2636,19 +4252,27 @@ class Panel {
     return box;
   }
   /** Accept all · Reject all, while any change is pending. Reject all rewrites the file, so it asks once,
-   *  pane-locally (the folder-off confirm's idiom), naming the count. */
+   *  pane-locally (the folder-off confirm's idiom), naming the count. While the editor is up (Slice 5) both stay as
+   *  real buttons that answer in place (DECIDES), and a caption under them says where to decide without a click, the
+   *  way a disabled Send says why (renderSend): a tooltip never reaches touch. A click's row (refuseDecision) says the
+   *  same sentence under the same buttons, so the caption stands down while that row shows: the words once, as the row
+   *  with its ✕ or as the caption, never stacked; the ✕ hands back to the caption. */
   private renderChangesFoot(n: number): HTMLElement {
     const foot = el("div", "fc-foot");
     const row = el("div", "fc-actions");
+    const editing = this.ctx.editing();
+    const decide = editing ? decideInEditor() : "";
     const busy = this.busy.has("changes"); const verb = this.busyVerb.get("changes");
     const all = btn(busy && verb === "accept-all" ? "Accepting…" : "Accept all", "fcacceptall"); all.disabled = busy;
-    all.title = "Keep the text as it is and drop every change";
+    all.title = editing ? decide : "Keep the text as it is and drop every change";
     const none = btn(busy && verb === "reject-all" ? "Rejecting…" : "Reject all", "fcrejectall"); none.disabled = busy;
-    none.title = "Put the old text back for every change";
-    none.setAttribute("aria-expanded", this.rejectAllConfirm ? "true" : "false");
+    none.title = editing ? decide : "Put the old text back for every change";
+    none.setAttribute("aria-expanded", this.rejectAllConfirm && !editing ? "true" : "false");
+    if (editing) { all.classList.add("fileview-btn-blocked"); none.classList.add("fileview-btn-blocked"); }
     row.appendChild(all); row.appendChild(none);
     foot.appendChild(row);
-    if (this.rejectAllConfirm) {
+    if (editing && !DECIDE_TEXTS.has(this.errors.get("changes")?.text ?? "")) foot.appendChild(el("div", "fc-note fc-decide-edit", decide));
+    if (this.rejectAllConfirm && !editing) {
       const ask = el("div", "fc-row fc-choice");
       ask.appendChild(el("span", "fc-note", "Put the old text back for " + (n === 1 ? "the change" : "all " + n + " changes") + "?"));
       ask.appendChild(btn("Reject all", "fcrejectallgo"));
@@ -2680,7 +4304,9 @@ class Panel {
     else if (s && !n && !this.sending && this.cards().length) box.appendChild(el("div", "fc-note", "Nothing unsent: every comment, reply, and decision has gone."));
     if (this.sendConfirm && s && n && !this.sending) {
       const parts = sendParts(s);
-      const pending = (s.hunks || []).length;
+      // the changes the checkbox may accept on the way: none while the editor is up (doSend counts the same way) — the
+      // changes are the editor's then, and a decision from here would strand its buffer (DECIDES); so no box, no count
+      const pending = this.ctx.editing() ? 0 : (s.hunks || []).length;
       // the same A and R the send will carry (doSend): the log's unsent decisions plus the pending changes the
       // checkbox accepts on the way — so the list and the preview show the sent text
       const counts = sendCounts(parts, this.sendOpts.accept, pending);
@@ -2696,7 +4322,7 @@ class Panel {
       if (counts.accepted || counts.rejected) ul.appendChild(el("li", undefined, counts.accepted + " accepted, " + counts.rejected + " rejected"));
       cf.appendChild(ul);
       const opts = el("div", "fc-opts");
-      if (this.ctx.todoId && !this.todoAnswered) opts.appendChild(this.opt("todo", "answer the todo this file was opened from"));
+      this.todoOpts(opts, s);                          // answer a todo: the checkbox, or the radio group when several name this file
       if (!s.trackedBy) opts.appendChild(this.opt("track", "turn on tracking so the session's edits come back as changes"));
       if (pending) opts.appendChild(this.opt("accept", "accept the " + pending + " pending " + (pending === 1 ? "change" : "changes")));
       if (opts.childNodes.length) cf.appendChild(opts);
@@ -2727,6 +4353,85 @@ class Panel {
     cb.type = "checkbox"; cb.checked = this.sendOpts[key]; cb.dataset.opt = key;
     l.appendChild(cb); l.appendChild(el("span", undefined, label));
     return l;
+  }
+  /** The confirm's answer-a-todo control (the todo-file follow-on, 2026-09-07). The candidates are todoChoices': the todo
+   *  the file was opened from and every open todo of the session that names this file (the status's `todos`), minus those
+   *  a send from this page has answered. ONE candidate: the checkbox, checked by default (decision 8), labelled with the
+   *  todo's own text when the kernel listed it (decision 36's generic wording otherwise, since the viewer never receives the
+   *  opened-from todo's words). SEVERAL: one radio group — Answer: the first selected, the others, then none — so one send
+   *  answers one todo (decision 28). NONE: no control. The label is one line: cut to a line's worth, the whole text on hover
+   *  (an inline clip; the sheets have no rule for this control, the Slice 2 idiom) — and one click away, in full: a row
+   *  whose todo has words carries a fold (fctodotext, keyed by todo id in openTodoText so a re-render keeps it open) that
+   *  shows the whole text under the row, wrapped. The hover never reaches touch, and at the aside's width two todos that
+   *  begin alike clip to the same words, so the label alone could not say which todo the send would stamp (the 2026-09-07
+   *  review; ui/CLAUDE.md: never dead-end a compact view). */
+  private todoOpts(opts: HTMLElement, s: Status): void {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return;
+    // opt()'s row with the label clipped to ONE line (the text is already cut to a line's worth by todoChoiceLabel; the
+    // clip is inline since the sheets have no rule for this control, the Slice 2 idiom) and the whole text on hover. With
+    // words to show (title), the label shares its line with the fold's glyph (the Log rows' and the preview's ▸/▾, in
+    // the preview's dress) and the whole text stands under the line while the fold is open: the input's value is the
+    // todo's id (a radio's by construction; the checkbox's is set for this), which keys the fold. A label without words
+    // (none; the opened-from todo the status never listed) has nothing underneath, so it is the row.
+    const optRow = (input: HTMLInputElement, text: string, title: string | null): HTMLElement => {
+      const l = el("label", "fc-opt");
+      const t = el("span", undefined, text);
+      t.style.minWidth = "0"; t.style.overflow = "hidden"; t.style.textOverflow = "ellipsis"; t.style.whiteSpace = "nowrap";
+      if (title) l.title = title;
+      l.appendChild(input); l.appendChild(t);
+      if (!title) return l;
+      const id = input.value;
+      const open = this.openTodoText.has(id);
+      const row = el("div", "fc-todo-opt");
+      row.style.display = "flex"; row.style.flexDirection = "column"; row.style.gap = "3px"; row.style.minWidth = "0";
+      const line = el("div");
+      line.style.display = "flex"; line.style.alignItems = "center"; line.style.gap = "6px"; line.style.minWidth = "0";
+      l.style.flex = "0 1 auto"; l.style.minWidth = "0";   // the label shrinks (its span clips) so the glyph stays on the line
+      const fold = btn(open ? "▾" : "▸", "fctodotext", "fc-sec");
+      fold.dataset.id = id;
+      fold.style.flex = "0 0 auto"; fold.style.padding = "2px 6px";   // a wider target than the glyph alone (a finger)
+      fold.title = open ? "Hide the whole todo" : "Show the whole todo";
+      fold.setAttribute("aria-label", fold.title); fold.setAttribute("aria-expanded", open ? "true" : "false");
+      line.appendChild(l); line.appendChild(fold);
+      row.appendChild(line);
+      if (open) {
+        row.appendChild(el("div", "fc-body fc-todo-text", title));   // the card body's dress: the todo's own lines, wrapped
+      }
+      return row;
+    };
+    if (cands.length === 1) {
+      const c = cands[0];
+      const cb = el("input") as HTMLInputElement;
+      cb.value = c.id;   // the todo the box answers: keys its fold (optRow)
+      cb.type = "checkbox"; cb.checked = this.sendOpts.todo; cb.dataset.opt = "todo";
+      opts.appendChild(optRow(cb, c.text === null ? "answer " + TODO_OPENED_FROM : "answer the todo: " + todoChoiceLabel(c), c.text));
+      return;
+    }
+    const pick = this.chosenTodoId(s) || "";
+    const g = el("div", "fc-opts fc-todo-pick");
+    g.setAttribute("role", "radiogroup"); g.setAttribute("aria-label", "Answer a todo with this send");
+    g.appendChild(el("span", "fc-note", "Answer:"));
+    for (const c of [...cands.map((x) => ({ id: x.id, label: todoChoiceLabel(x), title: x.text })), { id: "", label: "none", title: null }]) {
+      const r = el("input") as HTMLInputElement;
+      r.type = "radio"; r.name = "fc-todo"; r.value = c.id; r.checked = c.id === pick; r.dataset.opt = "todopick";
+      g.appendChild(optRow(r, c.label, c.title));
+    }
+    opts.appendChild(g);
+  }
+  private todoCandidates(s: Status): TodoChoice[] { return todoChoices(this.ctx.todoId, s, (id) => answeredTodos.has(id)); }
+  /** The todo the next send answers, or null: for one candidate the checkbox's verdict; for several the radio's — the pick
+   *  while it is still offered, none when none was picked, else the first (nothing picked yet, or the pick left the list).
+   *  The two verdicts agree on none (the change handler writes a decline to both), so a count that changed between the
+   *  choice and the send — the box unchecked, then a second todo listed; none picked, then one todo left — still answers
+   *  nothing; a pick that left the list falls to the first offered, as a fresh confirm would. */
+  chosenTodoId(s: Status): string | null {
+    const cands = this.todoCandidates(s);
+    if (!cands.length) return null;
+    if (cands.length === 1) return this.sendOpts.todo ? cands[0].id : null;
+    if (this.todoPick === "") return null;
+    if (this.todoPick && cands.some((c) => c.id === this.todoPick)) return this.todoPick;
+    return cands[0].id;
   }
   private renderLog(s: Status | null): HTMLElement {
     const box = el("div", "fc-log");

@@ -17,9 +17,11 @@ export interface RompSettings {
   defaultDir: string;        // default working directory PREFILLED in the new-session field (the user 2026-06-22). A session starts there; the tab menu's "Move to folder…" can change it later. Empty → the kernel's serve dir. ~ / $VAR expanded server-side.
   showBranch: boolean;       // chat bottom-bar: show the session's git branch (if any) beside the dir (the user 2026-06-23). OFF by default (the user 2026-08-10, trimming the statusline for narrow panes; an explicit stored true keeps showing it).
   tabCtx: TabCtxMode;        // chat tabs: WHEN the context gauge shows beside each session name (the user 2026-08-08) — "over50" (default: only once half full, so quiet tabs stay clean), "always", or "never".
-  fileLinkPane: FileLinkPane; // where a chat file-link click opens on the WEB while the Files pane is CLOSED (the user 2026-08-20): "chat" (default, upstream's design — the viewer over the pane you clicked), "feed" (relay the open into the Feed pane so the transcript stays readable while the file is up) or "pane" (the Files pane, 2026-09-03 — the viewer as its own column, which stays up). An OPEN Files pane takes every file link regardless (the user 2026-09-04: the pane being open is the intent — render.ts fileLinkRoute, fed by the shell's pane-set broadcast). Read at click time (render.ts openPath); VS Code (host editor) and standalone /chat (no shell to relay to) are unaffected.
+  fileLinkPane: FileLinkPane; // where a chat file-link click opens on the WEB while the Files pane is CLOSED (the user 2026-08-20): "chat" (default, upstream's design — the viewer over the pane you clicked), "feed" (relay the open into the Feed pane so the transcript stays readable while the file is up) or "pane" (the Files pane, 2026-09-03 — the viewer as its own column, which stays up). An OPEN Files pane takes every file link regardless (the user 2026-09-04: the pane being open is the intent — render.ts fileLinkRoute, fed by the shell's pane-set broadcast). Read at click time (render.ts openPath; and openBrowse for a FOLDER click, the same ladder except that a framed chat never browses in place, 2026-09-06); VS Code (host editor) and standalone /chat (no shell to relay to) are unaffected.
   chatScheme: ChatScheme;    // chat TEXT scheme (the user 2026-08-24): raises body-text contrast without collapsing the tool-dimmer-than-prose hierarchy. A scheme = a text-tier variable set (styles.css body.scheme-*); "default" applies nothing — today's values exactly.
   chatTabTheme: ChatTabTheme;   // LEGACY, derived (2026-08-28): the chat TAB STRIP's appearance (T113). Now computed from `theme` on every load/save ("classic" -> classic strip, anything else -> the yatharth strip) so older panes/extension builds keep working; never set it directly.
+  changesInline: boolean;   // the file viewer's Comments panel: mark a session's pending changes IN the text (insertions tinted, deletions struck), both views (the inline-display follow-on to plans/file-review.md, 2026-09-07). Toggled from the panel's header ("Show changes inline"), like `subgoals` from the feed footer — the gear MODAL does not show it. ON by default; off, the file reads as it is and every change is its card alone. Read by file-comments.ts at paint time; a flip elsewhere reaches an open panel through onExternalSettingsChange.
+  commentsFilter: CommentsFilter;   // the same panel's filter (the filter follow-on, 2026-09-07): which cards the list shows and which marks the text wears — "all" (default), "comments" (comment cards of every kind; no change marks), or "changes" (change cards, each with the comments made on it; no comment highlights or region rectangles). Chosen from the panel's header (All · Comments · Changes), kept here like changesInline, which still applies on top of it; the gear MODAL does not show it. Read by file-comments.ts when a panel opens; a pick elsewhere reaches an open panel through onExternalSettingsChange.
   theme: Theme;   // the OVERALL dashboard theme (the user 2026-08-27, promoting the tab-strip setting): "classic" = the pre-720 dark look; "yatharth" = dark + the contributed strip aesthetic (what chatTabTheme:"yatharth" was); "yatharth-light" = the warm light theme (body.theme-light + the yatharth strip). Migration: a store written before `theme` existed seeds it from chatTabTheme.
 }
 // Solarized LIGHT is deliberately absent (the user allowed skipping it): its text tiers are designed
@@ -29,6 +31,12 @@ export type ChatScheme = "default" | "high-contrast" | "solarized-dark";
 export type ChatTabTheme = "classic" | "yatharth";
 export function chatTabTheme(v: unknown): ChatTabTheme {
   return v === "yatharth" ? "yatharth" : "classic";
+}
+// The Comments panel's filter (the filter follow-on, 2026-09-07). fileLinkPane's idiom: only the two literals are
+// opt-ins; anything else a store might hold reads as "all", so a corrupt entry costs the preference, never the list.
+export type CommentsFilter = "all" | "comments" | "changes";
+export function commentsFilter(v: unknown): CommentsFilter {
+  return v === "comments" || v === "changes" ? v : "all";
 }
 export type Theme = "classic" | "yatharth" | "yatharth-light";
 export function theme(v: unknown): Theme {
@@ -58,7 +66,7 @@ export function tabCtxMode(v: unknown): TabCtxMode {
 // hand-written "why" as their line; they show the distiller's summary instead (the why demotes to a hover).
 // compact defaults ON (the user 2026-07-14): a fresh install reads the tidy transcript
 // (thinking hidden, tool runs folded); the gear opts back into the full stream.
-export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", fileLinkPane: "chat", chatScheme: "default", chatTabTheme: "classic", theme: "classic" };
+export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", fileLinkPane: "chat", chatScheme: "default", chatTabTheme: "classic", theme: "classic", changesInline: true, commentsFilter: "all" };
 const KEY = "romp:settings";
 
 export function loadSettings(): RompSettings {
@@ -70,6 +78,7 @@ export function loadSettings(): RompSettings {
       s.tabCtx = tabCtxMode(s.tabCtx);   // a store written by the boolean-era gear holds true/false
       s.fileLinkPane = fileLinkPane(s.fileLinkPane);   // foreign values read as the default
       s.chatScheme = chatScheme(s.chatScheme);   // unknown/legacy values normalize to "default"
+      s.commentsFilter = commentsFilter(s.commentsFilter);   // foreign values read as "all"
       // theme migration (2026-08-28): a store from before `theme` existed seeds it from the old
       // tab-strip pick, so a yatharth strip stays a yatharth strip. chatTabTheme itself is DERIVED
       // from theme ever after (one axis of truth; older readers keep working off the alias).

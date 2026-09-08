@@ -1,10 +1,12 @@
-// The Outline pane on a LIVE clock (the 2026-09-05 review of its delta capability). fleet.ts read Date.now()
-// inside render(), and render() ran only on a frame, a settings event or a click. On the full-frame path the
-// kernel reposted the unchanged frame every 60 s, so the pane re-rendered at least that often; a delta client
-// hears NOTHING from a quiet board (test_feed_delta.py pins that an hour of clock movement sends it no frame),
-// so every "(Xm ago)", the current goal's elapsed time, the recency cutoff and the slider range froze as of the
-// last board change. The feed and Waiting on you panes run a 15 s refresh on the kernel's clock (feed-age.ts
-// liveNow: the frame's `now` plus the local time since its `nowAt` wire arrival); fleet.ts now does the same.
+// The Outline pane on a LIVE clock. fleet.ts read Date.now() inside render(), and render() ran only on a
+// frame, a settings event or a click — so every "(Xm ago)", the current goal's elapsed time, the recency
+// cutoff and the slider range were off by whatever skew sat between the browser's clock and the kernel's
+// (the timestamps are the kernel's), and moved only when a frame arrived: on the full-frame path the kernel
+// reposted the unchanged frame every 60 s, and a feedDelta client hears NOTHING from a quiet board
+// (test_feed_delta.py pins that an hour of clock movement sends it no frame), so its ages froze as of the
+// last board change. The pane now anchors on the kernel's clock (feed-age.ts liveNow: the frame's `now`
+// plus the local time since its `nowAt` wire arrival), as the feed and Waiting on you panes do, and
+// re-renders every 15 s while visible.
 //
 // Run for real, not pinned at source: fleet.ts renders through document.createElement and reads frames off a
 // window message, so the page is stood in for by a small tree of plain objects carrying the handful of DOM
@@ -12,8 +14,10 @@
 // clock's two anchors (a frame stamped `nowAt` by federation; one without, off the VS Code pipe, anchored at
 // its arrival), the refresh's visibility gate (a hidden document or a zero-size iframe skips the tick and the
 // pane catches up once on the way back — the second review round found it rebuilding a list nobody could
-// see), and the unapplied-delta guard: a raw {type:"feedDelta"} reaching the pane (federation.js absent, so
-// the shim dispatched the raw frame) is loud, asks for a full frame, and applies nothing.
+// see), and the two raw-delta guards, one per delta protocol the pane can be handed: a raw {type:"feedDelta"}
+// (federation.js absent, so the shim dispatched the raw frame) is loud, asks for a full frame, and applies
+// nothing; a raw {type:"delta"} (a host handed the pane a kernel frame the shim never reassembled) is loud,
+// asks for the whole slot, and applies nothing.
 import { test, mock } from "node:test";
 import * as assert from "node:assert/strict";
 
@@ -113,7 +117,7 @@ const frame = () => ({
 });
 const rows = () => Object.fromEntries(list.byClass("ledger-tnode").map((r) => [r.dataset.nid, r.byClass("ledger-ttime")[0]?.textContent ?? ""]));
 
-test("ages and the recency cutoff move on the kernel's live clock between frames — no timer, no frame, no movement was the bug", async () => {
+test("ages and the recency cutoff move on the kernel's live clock between frames — no frame, no movement, and a skewed browser clock were the bug", async () => {
   mock.timers.enable({ apis: ["Date", "setInterval", "setTimeout"], now: T0 * 1000 });
   store.set("romp:fleetShowDone", "1");   // the done top shows (fleet-roots gates it behind the toggle)
   // the slider at its midpoint: cutoff = 60 s × (maxAge/60)^0.5, and maxAge floors at 120 s while every top is
@@ -189,14 +193,32 @@ test("a pane the shell has hidden (a zero-size iframe, the shim's paneHidden tes
 
 test("a raw feedDelta reaching the pane is loud, asks for a full frame, and applies nothing", () => {
   const err = mock.method(console, "error", () => {});
-  const shown = rows();
+  const shown = rows(), mark = posted.length;   // the two guard tests share `posted`: each reads only what its own frame produced
   win.dispatchEvent(new MessageEvent("message", { data: { type: "feedDelta", buildId: 9, now: K0 + 500,
     asks: [], ledgers: [{ sid: SID, name: "web", ledger: { tree: [] } }] } }));
   assert.equal(err.mock.callCount(), 1);
   assert.match(String(err.mock.calls[0].arguments[0]), /feedDelta frame reached the pane unapplied/);
-  assert.deepEqual(posted.filter((m) => m.type === "clientDiag"),
+  const sent = posted.slice(mark);
+  assert.deepEqual(sent.filter((m) => m.type === "clientDiag"),
     [{ type: "clientDiag", surface: "outline", what: "feedDelta-unapplied", data: { buildId: 9 } }]);
-  assert.equal(posted.filter((m) => m.type === "needFullFeed").length, 1, "the re-base request the kernel answers with the cached full frame");
+  assert.equal(sent.filter((m) => m.type === "needFullFeed").length, 1, "the re-base request the kernel answers with the cached full frame");
+  assert.deepEqual(rows(), shown, "the rows are as the last full frame left them: this pane applies no delta itself");
+  err.mock.restore();
+  mock.timers.reset();
+});
+
+test("a raw delta frame reaching the pane is loud, asks for the whole slot, and applies nothing", () => {
+  const err = mock.method(console, "error", () => {});
+  const shown = rows(), mark = posted.length;
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "delta", slot: "feed", base: 3, rev: 4,
+    rest: { now: K0 + 500, buildId: 9 }, coll: { asks: { set: {} } } } }));
+  assert.equal(err.mock.callCount(), 1);
+  assert.match(String(err.mock.calls[0].arguments[0]), /delta frame reached the pane unreassembled/);
+  const sent = posted.slice(mark);
+  assert.deepEqual(sent.filter((m) => m.type === "clientDiag"),
+    [{ type: "clientDiag", surface: "outline", what: "delta-unapplied", data: { slot: "feed", rev: 4 } }]);
+  assert.deepEqual(sent.filter((m) => m.type === "needSlot"), [{ type: "needSlot", slot: "feed" }],
+    "the re-base request the kernel answers with the whole slot — the shim's own message for a delta it cannot apply");
   assert.deepEqual(rows(), shown, "the rows are as the last full frame left them: this pane applies no delta itself");
   err.mock.restore();
   mock.timers.reset();

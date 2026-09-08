@@ -209,6 +209,7 @@ win.getSelection = () => null;
 win.confirm = () => true;
 win.postMessage = () => { /* our own window: nothing listens here */ };
 (globalThis as any).window = win;
+(globalThis as any).location = { protocol: "http:" };   // the web dashboard: the viewer's discard ask is a confirm here (canPreview)
 (globalThis as any).document = doc;
 const store = new Map<string, string>();
 (globalThis as any).localStorage = {
@@ -510,5 +511,6 @@ test("source: the constant, exported and the one figure the notice names; armed 
   assert.match(VIEW, /const disarmBackstop = \(\) => \{ clearTimeout\(pdfBackstop\); pdfBackstop = undefined; \};/);
   assert.match(VIEW, /const dropPdf = \(\) => \{ pdfSeq\+\+; disarmBackstop\(\); abortPdfAttempt\(\); if \(pdfHandle\) \{ pdfHandle\.dispose\(\); pdfHandle = null; \} \};/,
     "retiring the attempt disarms it, and aborts it while unsettled (file-view-pdf-lifecycle.test.ts): the panel closing, a reload, both of the viewer's exits");
-  assert.equal((VIEW.match(/setTimeout\(/g) || []).length, 3, "the viewer's timers: the two label restores and this one deadline — a new timer here needs an event it approximates named, or this rule's failsafe carve-out");
+  assert.equal((VIEW.match(/setTimeout\(/g) || []).length, 4, "the viewer's timers: the three label restores (Copy path, the URL viewer's Copy URL since the 2026-09-07 fold, and the flash's) and this one deadline: a new timer here needs an event it approximates named, or this rule's failsafe carve-out");
+  assert.match(VIEW, /setTimeout\(\(\) => \{ copy\.textContent = "Copy URL"; \}, 1200\)/, "the fourth is a label restore like the other two, the same 1200 ms");
 });

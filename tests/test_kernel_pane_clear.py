@@ -263,6 +263,29 @@ class SendAbortsWhenTmuxAnswersNonzero(unittest.TestCase):
         self.assertEqual(err, "")
 
 
+class TmuxSettersTypeTheClisOwnCommand(unittest.TestCase):
+    """TmuxBackend has no control channel: set_model and set_effort type the CLI's own command into the pane
+    (SessionBackend documents the per-backend split). The one asymmetry is pinned here. `/model X` opens a
+    confirmation in the TUI, so set_model asks _tmux_send for the second Enter (model_cmd=True): the
+    dashboard cannot press it in the pane, and the next send's clear-guard would refuse to paste over the
+    open dialog. `/effort X` applies in place and gets no such Enter. A recorder stands in
+    for _tmux_send (the real one sleeps before the confirm Enter), so this pins the call shape, not the
+    keystrokes; `**kw` keeps the recorder valid if the signature grows."""
+
+    def test_set_model_asks_for_the_confirm_enter_and_set_effort_does_not(self):
+        rec = []
+        saved_send, saved_name = km._tmux_send, km._name_of
+        km._tmux_send = lambda name, text, model_cmd=False, **kw: rec.append((name, text, model_cmd))
+        km._name_of = lambda sid: SESSION
+        try:
+            be = km.TmuxBackend()
+            self.assertTrue(be.set_model("sid-tmux", "opus"))
+            self.assertTrue(be.set_effort("sid-tmux", "high"))
+        finally:
+            km._tmux_send, km._name_of = saved_send, saved_name
+        self.assertEqual(rec, [(SESSION, "/model opus", True), (SESSION, "/effort high", False)])
+
+
 class CheckedPrimitivesReadTheExitCode(unittest.TestCase):
     """The contract of TmuxBackend's checked variants, on the real class: True iff tmux itself answered 0.
     An exec failure or a timeout (`_run` → None), a missing tmux (the same None) and a nonzero exit all read

@@ -3,6 +3,7 @@
 # Resolve path to the romp script under test
 ROMP_SCRIPT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp"
 
+load free-port
 load tmux-private
 
 setup() {
@@ -38,6 +39,11 @@ case "$1" in
     ;;
   display-message)
     echo "${MOCK_TMUX_CURRENT:-mysession}"
+    exit 0
+    ;;
+  show-environment)
+    # the server's globals, one NAME=value per line, from the fixture (empty file = a clean server)
+    cat "${MOCK_TMUX_GLOBALS_FILE:-/dev/null}" 2>/dev/null
     exit 0
     ;;
   list-sessions)
@@ -117,22 +123,22 @@ MOCK
     # kernel start the fake one, which exports the port it bound.
     export ROMP_KERNEL_PORT=1
     export PATH="$MOCK_DIR:$PATH"
-    # Two tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`, and `romp
-    # new -t` runs `tmux new-session`: the mock above takes both, and the private socket directory keeps
-    # any call that reaches the real binary off the machine's tmux server (tests/tmux-private.bash has
-    # the 2026-09-06 incident).
+    # The romp-manager tests below start a REAL bin/romp-manager, whose startup runs `tmux start-server`,
+    # and `romp new -t` runs `tmux new-session`: the mock above takes both, and the private socket
+    # directory keeps any call that reaches the real binary off the machine's tmux server
+    # (tests/tmux-private.bash has the 2026-09-06 incident).
     tmux_private_socket_dir "$TEST_DIR"
     unset TMUX            # default: outside tmux → attach-session branch
     unset ROMP_SID        # default: outside a romp session — `romp new` names no parent (tests export it on purpose)
-    # bin/romp-manager starts its tmux server in a transient systemd scope under ROMP_SUPERVISED (which a
-    # romp session's tool shell inherits from the live service) — a test must never start a real scope
-    # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
-    export ROMP_CLI_SCOPE=0
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
     # names map under XDG_STATE_HOME (was polluting the REAL state dir).
     export HOME="$TEST_DIR/home"
     export XDG_STATE_HOME="$HOME/.local/state"
+    # ROMP_STATE_DIR outranks that floor and a session of a profiled kernel inherits it: the two real
+    # managers below write their SIGTERM notes to STATE_ROOT/restart-audit.jsonl on every stop, so an
+    # inherited value would send the suite's rows to a LIVE ledger (tests/bats-state-isolation.bats).
+    unset ROMP_STATE_DIR
     mkdir -p "$HOME"
     cd "$WORK_DIR"
 }
@@ -146,8 +152,9 @@ teardown() {
     [[ -n "${KERNEL_PID:-}" ]] && kill -9 "$KERNEL_PID" 2>/dev/null
     # a stand-in process a down test started to own a second pid (the /version-disagrees case)
     [[ -n "${OTHER_PID:-}" ]] && kill -9 "$OTHER_PID" 2>/dev/null
-    tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
-    rm -rf "$TEST_DIR"
+    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
+    # its failure is teardown's status: bats swallows a failing command mid-teardown.
+    tmux_private_kill && rm -rf "$TEST_DIR"
 }
 
 # Helper — runs romp with merged stdout+stderr so BATS captures errors
@@ -1171,6 +1178,60 @@ MOCK
     # external tools attribute authors env-first (ROMP_SESSION_NAME) instead of asking tmux.
     grep -qE 'tmux respawn-pane -k -t myproject exec ROMP_SID=[0-9a-f-]{36} ROMP_SESSION_NAME="myproject" claude --name "myproject" --session-id [0-9a-f-]{36}' "$MOCK_LOG"
     grep -q 'tmux attach-session -t myproject' "$MOCK_LOG"
+}
+
+# The tmux SERVER's globals are what a new pane inherits; when romp itself runs `op` (a reference is
+# configured) the launcher unsets op's credential names AND the manager's startup ANTHROPIC_API_KEY
+# there before `new-session` — a pane on a reference-governed box never bills a stale key (2026-09-06).
+_stale_server_globals() {
+    export MOCK_TMUX_GLOBALS_FILE="$TEST_DIR/mock_globals.txt"
+    printf '%s\n' "OP_SERVICE_ACCOUNT_TOKEN=synthetic-op-token" "OP_SESSION_acct=synthetic-session" \
+        "ANTHROPIC_API_KEY=synthetic-stale-key" "PATH=/usr/bin" "HOME=/nonexistent" > "$MOCK_TMUX_GLOBALS_FILE"
+}
+
+@test "new -t: a reference in the CLIENT env scrubs op's names and ANTHROPIC_API_KEY from the tmux server" {
+    _stale_server_globals
+    ROMP_API_KEY_REF="op://test-vault/test-item/credential" run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu OP_SESSION_acct' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
+    run grep -q 'tmux set-environment -gu PATH' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+    run grep -q 'tmux set-environment -gu HOME' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+    # the scrub comes BEFORE the pane exists
+    [ "$(grep -n 'set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG" | cut -d: -f1)" -lt \
+      "$(grep -n 'tmux new-session' "$MOCK_LOG" | cut -d: -f1)" ]
+}
+
+@test "new -t: a reference in the env FILE alone (a keyswap with no restart) scrubs the tmux server too" {
+    # Regression (2026-09-06): the guard read only the client's ROMP_API_KEY_REF, which a kernel-spawned
+    # `romp new` lacks when the reference was swapped into service.env after the manager started.
+    _stale_server_globals
+    unset ROMP_API_KEY_REF
+    # Name the file explicitly: CI runners export XDG_CONFIG_HOME, so "$HOME/.config" is not where the
+    # launcher would look (the keyswap tests pin the path the same way).
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "# the service env" "ROMP_PERF=1" "  ROMP_API_KEY_REF=op://test-vault/test-item/credential" \
+        > "$ROMP_SERVICE_ENV_FILE"
+    run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    grep -q 'tmux set-environment -gu OP_SERVICE_ACCOUNT_TOKEN' "$MOCK_LOG"
+    grep -q 'tmux set-environment -gu ANTHROPIC_API_KEY' "$MOCK_LOG"
+}
+
+@test "new -t: no reference anywhere leaves the tmux server's environment alone (static-key and helper boxes)" {
+    _stale_server_globals
+    unset ROMP_API_KEY_REF
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf '%s\n' "ANTHROPIC_API_KEY=synthetic-static-key" > "$ROMP_SERVICE_ENV_FILE"
+    run run_romp new -t myproject
+    [ "$status" -eq 0 ]
+    run grep -q 'set-environment -gu' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+    run grep -q 'show-environment' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "new -t on a 2.1.224+ claude: inbound-accept setting + @romp-inbound-accept tag" {
@@ -2529,7 +2590,8 @@ STUB
     command -v node >/dev/null 2>&1 || skip "node not available"
     local mgr; mgr="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
     # port nothing is listening on → the control client must fail fast with a clear message
-    run env ROMP_MANAGER_PORT=7531 node "$mgr" status
+    local port; free_port port
+    run env ROMP_MANAGER_PORT=$port node "$mgr" status
     [ "$status" -eq 1 ]
     [[ "$output" == *"not running"* ]]
 }
@@ -2545,7 +2607,7 @@ STUB
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport=7541 mport=7542 kport=7543
+    local cport mport kport; free_port cport mport kport
     # Launch the manager in the background; it auto-spawns 'main' on mport via the fake launcher.
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
@@ -2588,7 +2650,7 @@ STUB
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$fake"
     chmod +x "$fake"
 
-    local cport=7551 mport=7552 kport=7553
+    local cport mport kport; free_port cport mport kport
     ROMP_MANAGER_PORT=$cport ROMP_SERVE_PORT=$mport ROMP_SERVE_BIN="$fake" \
         node "$mgr" up >/dev/null 2>&1 &
     MGR_PID=$!

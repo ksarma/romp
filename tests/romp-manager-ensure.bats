@@ -4,15 +4,20 @@
 # `romp update <host>` and the dashboard's remote restart run it so the supervisor comes up there.
 # It must be idempotent (no second manager) and non-blocking (spawns detached).
 
+load free-port
 load tmux-private
 
 setup() {
     TEST_DIR="$(mktemp -d)"
     MGR="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-manager"
-    # bin/romp-manager starts its tmux server in a transient systemd scope under ROMP_SUPERVISED (which a
-    # romp session's tool shell inherits from the live service) — a test must never start a real scope
-    # on the live user manager, so the switch is floored off (the kernel and manager both honour it).
-    export ROMP_CLI_SCOPE=0
+    # A state root of the suite's own. The manager notes every SIGTERM it sends in
+    # STATE_ROOT/restart-audit.jsonl (auditSigterm), and every test here stops a real manager in
+    # teardown: with no root set, those rows landed in the LIVE ledger as requests on record for kills
+    # nobody made (seven rows, 2026-09-06). ROMP_STATE_DIR outranks the XDG floor and a session of a
+    # profiled kernel inherits it, so it is dropped, not shadowed. tests/bats-state-isolation.bats
+    # checks that both lines stay.
+    unset ROMP_STATE_DIR
+    export XDG_STATE_HOME="$TEST_DIR/state"; mkdir -p "$XDG_STATE_HOME"
     # Every test here starts a REAL manager, and startManager() runs `tmux start-server` before it does
     # anything else. Two layers keep that off the machine's tmux server (tests/tmux-private.bash has the
     # 2026-09-06 incident this file caused): a recording fake tmux on PATH for the WHOLE file (the
@@ -32,21 +37,22 @@ exit 0
 FAKE
     chmod +x "$BIN/tmux"
     export PATH="$BIN:$PATH"
-    tmux_private_socket_dir "$TEST_DIR"
+    tmux_private_socket_dir "$TEST_DIR"   # also floors ROMP_CLI_SCOPE=0: no real scope on the user manager
     # Fake kernel launcher: stay alive without binding a real port (we assert on the
     # manager's control endpoint, not a live kernel).
     FAKE="$TEST_DIR/fake-serve"
     printf '#!/usr/bin/env bash\nexec sleep 30\n' > "$FAKE"
     chmod +x "$FAKE"
-    CPORT=7561 MPORT=7562
+    free_port CPORT MPORT   # fresh per test, never a literal (tests/free-port.bash)
 }
 
 teardown() {
     # Graceful stop, then reap the detached manager (it is orphaned, not our child).
     curl -fsS -X POST "http://127.0.0.1:${CPORT:-0}/stop" >/dev/null 2>&1 || true
     [[ -n "${MGR_PID:-}" ]] && kill "$MGR_PID" 2>/dev/null || true
-    tmux_private_kill            # before the rm: a server the real tmux started must not outlive the test
-    rm -rf "$TEST_DIR"
+    # The kill before the rm (a server the real tmux started must not outlive the test), and last, so
+    # its failure is teardown's status: bats swallows a failing command mid-teardown.
+    tmux_private_kill && rm -rf "$TEST_DIR"
 }
 
 @test "ensure: idempotent, non-blocking auto-start of the supervisor" {
@@ -87,13 +93,12 @@ teardown() {
     # without touching a real tmux server. (The fix: a launchd-rooted server so new sessions don't
     # inherit a terminal's TCC identity → the "VS Code wants to access" prompt.)
     #
-    # Run `up` directly on a UNIQUE port (so it doesn't no-op against the other test's manager); the
-    # manager calls startTmuxServer() at startup, before it ever binds the control port. Unique
-    # across FILES too, not just this one: this test sat on 7571 — romp-manager-origin.bats's
-    # control port — and a manager SIGTERM'd there outlives the kill by ~800ms (shutdownAll's
-    # exit grace), so a combined bats run could find it still holding the port, and `up` then
-    # exited "already running" without ever calling tmux.
-    env ROMP_MANAGER_PORT=7573 ROMP_SERVE_PORT=7574 ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
+    # Run `up` directly on this test's own ports (setup picks fresh ones per test, so it cannot no-op
+    # against another test's manager); the manager calls startTmuxServer() at startup, before it ever
+    # binds the control port. A literal here once duplicated romp-manager-origin.bats's control port,
+    # and a manager SIGTERM'd there outlives the kill by shutdownAll's exit grace, so a combined run
+    # found `up` exiting "already running" without ever calling tmux.
+    env ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do [ -f "$FAKE_TMUX_CALLS" ] && break; sleep 0.1; done
@@ -113,8 +118,8 @@ teardown() {
     # `tmux start-server` ran on the machine's default socket. The manager inherits the test's
     # environment, so the fake tmux records the socket directory it was handed. It must be the test's
     # own, and it must EXIST at that moment: tmux 3.4 silently uses the default socket directory when
-    # TMUX_TMPDIR names a missing one, so an export without the mkdir isolates nothing.
-    CPORT=7593 MPORT=7594            # teardown's /stop reaps the detached manager on this port
+    # TMUX_TMPDIR names a missing one, so an export without the mkdir isolates nothing. The manager
+    # sits on setup's per-test CPORT, so teardown's /stop reaps it like every other.
     run env ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" node "$MGR" ensure
     [ "$status" -eq 0 ]
     # Wait for the control port, not the env file: startManager() runs tmux (which writes the file) a few
@@ -155,12 +160,12 @@ teardown() {
     # is still read; nothing short of -f avoids that.
     local home="$TEST_DIR/home"; mkdir -p "$home"
     env PATH="$path" HOME="$home" XDG_CONFIG_HOME="$home/.config" \
-        ROMP_MANAGER_PORT=7595 ROMP_SERVE_PORT=7596 ROMP_SERVE_BIN="$FAKE" \
+        ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" \
         node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     # startManager() runs tmux before it binds the control port, so a live port means the call is done.
     local i
-    for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:7595/status" >/dev/null 2>&1 && break; sleep 0.1; done
+    for i in $(seq 1 50); do curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && break; sleep 0.1; done
     kill "$MGR_PID" 2>/dev/null || true
 
     # tmux places the socket at $TMUX_TMPDIR/tmux-<uid>/default: under the test directory, nowhere else.
@@ -193,12 +198,12 @@ teardown() {
     printf '#!/usr/bin/env bash\nenv > "%s"\nexec sleep 30\n' "$envdump" > "$FAKE"
     chmod +x "$FAKE"
     env TMUX="/tmp/tmux-000/default,99999,7" TMUX_PANE="%7" \
-        ROMP_MANAGER_PORT=7581 ROMP_SERVE_PORT=7582 ROMP_SERVE_BIN="$FAKE" \
+        ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKE" \
         node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do [ -s "$envdump" ] && break; sleep 0.1; done
-    curl -fsS -X POST "http://127.0.0.1:7581/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
     [ -s "$envdump" ]
     # `run` + status, NOT a bare `! grep`: `!` is exempt from set -e, so mid-test it asserts nothing.
     run grep -q '^TMUX=' "$envdump"
@@ -236,20 +241,20 @@ PYEOF
     chmod +x "$FAKEK"
 
     env BUSY_FILE="$BUSY" SPAWN_LOG="$SPAWNS" ROMP_QUIET_POLL_MS=200 \
-        ROMP_MANAGER_PORT=7591 ROMP_SERVE_PORT=7592 ROMP_SERVE_BIN="$FAKEK" \
+        ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKEK" \
         node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do
-        curl -fsS "http://127.0.0.1:7591/status" >/dev/null 2>&1 && [ -s "$SPAWNS" ] && break
+        curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && [ -s "$SPAWNS" ] && break
         sleep 0.1
     done
     [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]
 
     # Two quiet-mode refreshes while turns are in flight: both defer, the second coalesces.
-    run curl -fsS -X POST "http://127.0.0.1:7591/restart-all?when=quiet"
+    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"deferred":true'* ]]
-    run curl -fsS -X POST "http://127.0.0.1:7591/restart-all?when=quiet"
+    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
     [[ "$output" == *'"coalesced":2'* ]]
 
     # Still busy after several poll cycles -> no bounce happened.
@@ -260,14 +265,74 @@ PYEOF
     echo 0 > "$BUSY"
     for i in $(seq 1 60); do [ "$(grep -c spawn "$SPAWNS")" -ge 2 ] && break; sleep 0.1; done
     [ "$(grep -c spawn "$SPAWNS")" -eq 2 ]
-    curl -fsS -X POST "http://127.0.0.1:7591/stop" >/dev/null 2>&1 || true
+    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
+}
+
+@test "quiet-mode refresh defers on background work too, and asks for the drain hold only while turns are in flight" {
+    # T240: a session running a Workflow has no turn in flight between its own turns, so a quiet
+    # deploy applied instantly over it. The kernel now reports {busy, inflight, background}; the
+    # manager defers on either kind of busyness, but asks for the box-wide hold on NEW turn starts
+    # (/busy?drain=1) only while a turn is actually in flight — background work must never freeze
+    # other sessions' queued prompts.
+    command -v node >/dev/null 2>&1 || skip "node not available"
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+
+    local INF="$TEST_DIR/inflight" BG="$TEST_DIR/background" SPAWNS="$TEST_DIR/spawns" REQS="$TEST_DIR/reqs" FAKEK="$TEST_DIR/fake-kernel"
+    echo 0 > "$INF"; echo 1 > "$BG"; : > "$REQS"
+    cat > "$FAKEK" <<'PYEOF'
+#!/usr/bin/env python3
+import http.server, json, os
+with open(os.environ["SPAWN_LOG"], "a") as f:
+    f.write("spawn\n")
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        with open(os.environ["REQ_LOG"], "a") as f:
+            f.write(self.path + "\n")
+        def rd(k):
+            try: return int(open(os.environ[k]).read().strip())
+            except Exception: return 0
+        i, g = rd("INF_FILE"), rd("BG_FILE")
+        b = json.dumps({"busy": i + g, "inflight": i, "background": g, "draining": False}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
+        self.wfile.write(b)
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(os.environ["ROMP_SERVE_PORT"])), H).serve_forever()
+PYEOF
+    chmod +x "$FAKEK"
+
+    # 500 ms polls: a local answer always lands before the NEXT poll is issued, so "the first poll
+    # asks, no later poll does" cannot race on a slow CI box (review find)
+    env INF_FILE="$INF" BG_FILE="$BG" REQ_LOG="$REQS" SPAWN_LOG="$SPAWNS" ROMP_QUIET_POLL_MS=500 \
+        ROMP_MANAGER_PORT=$CPORT ROMP_SERVE_PORT=$MPORT ROMP_SERVE_BIN="$FAKEK" \
+        node "$MGR" up >/dev/null 2>&1 &
+    MGR_PID=$!
+    local i
+    for i in $(seq 1 50); do
+        curl -fsS "http://127.0.0.1:$CPORT/status" >/dev/null 2>&1 && [ -s "$SPAWNS" ] && break
+        sleep 0.1
+    done
+    [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]
+
+    run curl -fsS -X POST "http://127.0.0.1:$CPORT/restart-all?when=quiet"
+    [[ "$output" == *'"deferred":true'* ]]
+    sleep 2.2
+    [ "$(grep -c spawn "$SPAWNS")" -eq 1 ]                    # background work alone DEFERS the restart
+    # the first poll asks for the hold (it knows nothing yet); every later poll, seeing 0 in flight,
+    # must not — the hold would freeze other sessions' queued prompts for nothing
+    [ "$(grep -c 'drain=1' "$REQS")" -le 1 ]
+    [ "$(grep -c '^/busy' "$REQS")" -ge 3 ]
+
+    echo 0 > "$BG"
+    for i in $(seq 1 60); do [ "$(grep -c spawn "$SPAWNS")" -ge 2 ] && break; sleep 0.1; done
+    [ "$(grep -c spawn "$SPAWNS")" -eq 2 ]                    # the work ended → the quiet event applies
+    curl -fsS -X POST "http://127.0.0.1:$CPORT/stop" >/dev/null 2>&1 || true
 }
 
 @test "ensure: a romp down marker holds the auto-start — no manager comes up, exit 0, the reason said" {
     command -v node >/dev/null 2>&1 || skip "node not available"
     command -v curl >/dev/null 2>&1 || skip "curl not available"
-    CPORT=7601 MPORT=7602                     # a pair no other suite binds: on 7571 (romp-manager-origin.bats's) a
-                                              # concurrent run's manager answered the probe and ensure said nothing
+    # setup's free_port pair, like every other test here: a literal pair once collided with another
+    # suite's control port, where a concurrent run's manager answered the probe and ensure said nothing
     local state="$TEST_DIR/state"
     mkdir -p "$state"
     printf '{"t": %s, "cmd": "romp down"}\n' "$(date +%s)" > "$state/down-by-romp"

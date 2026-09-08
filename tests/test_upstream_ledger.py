@@ -355,8 +355,11 @@ class EntryRules(unittest.TestCase):
         self.assertEqual(got, ["2026-09-06-alpha.md: pr must be blank or an integer, got '#199'"])
 
     def test_tier_is_one_of_the_fork_labels(self):
+        # `docs` is upstream's coming rename of tests-only, accepted ahead of the rename (2026-09-07 sync)
+        for tier in ("fix", "tests-only", "docs", "feature", "major-feature"):
+            self.assertEqual(_parse("2026-09-06-alpha.md", _entry(tier=tier))[1], [], tier)
         _, got = _parse("2026-09-06-alpha.md", _entry(tier="huge"))
-        self.assertEqual(got, ["2026-09-06-alpha.md: tier 'huge' is not one of fix, tests-only, feature, major-feature"])
+        self.assertEqual(got, ["2026-09-06-alpha.md: tier 'huge' is not one of fix, tests-only, docs, feature, major-feature"])
 
     def test_filename_shape(self):
         for bad in ("alpha.md", "2026-09-06-Alpha.md", "2026-09-06-ab.md", "2026-09-06-" + "a" * 61 + ".md", "2026-09-06-alpha.txt"):
@@ -947,6 +950,14 @@ class SetAndImport(unittest.TestCase):
         self.assertEqual(L.derive_status("resolved upstream"), ("resolved-upstream", "resolved-upstream"))
         self.assertEqual(L.derive_status("candidate (partial)"), ("candidate", "candidate"))
         self.assertEqual(L.derive_status("**keep as-is — deliberate**"), (None, None))
+
+    def test_a_tier_is_derived_from_the_label_form_so_docs_as_a_word_is_not_one(self):
+        # `docs` is both a tier (upstream's coming rename of tests-only) and an ordinary word in a status
+        # cell; only the `label \`docs\`` form names the tier, as for fix and feature.
+        header, _, _ = L.derive("t", "w", "**offered**, their PR #971, label `docs`", "")
+        self.assertEqual((header["status"], header["tier"]), ("offered", "docs"))
+        header, _, _ = L.derive("t", "w", "**candidate**: the docs have to land first", "")
+        self.assertEqual((header["status"], header["tier"]), ("candidate", ""))
 
     def test_a_row_with_no_status_keyword_leaves_status_blank_and_says_set_by_hand(self):
         row = "| Thing | `x.py` | **keep as-is — deliberate** | Notes. |"

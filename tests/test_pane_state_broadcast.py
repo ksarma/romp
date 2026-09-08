@@ -205,7 +205,8 @@ class Copy(unittest.TestCase):
     def test_gear_and_guide_say_the_open_pane_wins(self):
         ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
         gear = open(os.path.join(ui, "gear.js")).read()
-        self.assertIn("While the Files pane is open, file links open there. When it is closed:", gear)
+        # "both": a file and a folder, since the folder click joined the ladder (2026-09-07)
+        self.assertIn("While the Files pane is open, both open there. When it is closed, a file opens", gear)
         guide = open(os.path.join(os.path.dirname(HERE), "docs", "guide.md")).read()
         self.assertIn("While the pane is open, a file\nlink clicked in the chat opens here. When it is closed, the gear's **File\nlinks open in** setting decides where a link opens", guide)
         settings = open(os.path.join(ui, "settings.ts")).read()

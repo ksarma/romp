@@ -188,6 +188,32 @@ run_hook() {   # run_hook <source> — feed a SessionStart payload with that sou
     grep -q 'X-Romp-Token: tok-from-file' "$CURL_STDIN"
 }
 
+@test "a todo that names a file shows the path after its text, exactly as the kernel rendered it" {
+    # the todo-file follow-on (2026-09-07): the kernel's block lists each todo's `file` after its
+    # text when set (kernel _user_todo_context_block: "<text> (<id>, opened <date>) — file: <path>",
+    # the line this fixture copies); the hook hands the block on whole, so the path reaches the
+    # session intact and in place — never re-rendered, dropped, or mangled by the JSON round-trip
+    export ROMP_SID="$SID"
+    export CURL_RESPONSE='{"ok": true, "block": "Notes you still have open with the person you work for:\n- Need a look at the report (ut-11111111, opened 2026-09-07) \u2014 file: /TESTDIR/notes-api/docs/report.md\n- Need the auth-scheme decision (ut-22222222, opened 2026-09-06)\n\nIf one is met or moot now, withdraw it (withdraw_user_todo); otherwise leave it standing."}'
+    run_hook resume
+    [ "$status" -eq 0 ]
+    python3 - "$output" <<'PY'
+import json, sys
+d = json.loads(sys.argv[1])
+ctx = d["hookSpecificOutput"]["additionalContext"]
+lines = ctx.split("\n")
+with_file = [l for l in lines if l.startswith("- Need a look at the report")]
+assert len(with_file) == 1, lines
+line = with_file[0]
+assert line.index("(ut-11111111") < line.index("/TESTDIR/notes-api/docs/report.md"), "the path follows the text and id"
+assert line.endswith("/TESTDIR/notes-api/docs/report.md"), line
+# a todo with no file carries no path — nothing invented for it
+plain = [l for l in lines if l.startswith("- Need the auth-scheme decision")]
+assert plain == ["- Need the auth-scheme decision (ut-22222222, opened 2026-09-06)"], plain
+assert ctx.count("/TESTDIR/notes-api/docs/report.md") == 1, "one path, once"
+PY
+}
+
 @test "a multi-line block round-trips into valid hook JSON" {
     export ROMP_SID="$SID"
     export CURL_RESPONSE='{"ok": true, "block": "Notes you still have open:\n- Need the auth-scheme decision (ut-11111111, opened 2026-08-20)\n\nIf one is met or moot now, withdraw it (withdraw_user_todo); otherwise leave it standing."}'

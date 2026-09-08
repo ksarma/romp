@@ -23,7 +23,7 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   // the spend-only view arms on the legacy apiKey marker OR a login-less machine with recorded spend,
   // and keeps TOTAL sums (everything there bills the key; legacy files predate the split)
   assert.ok(KERNEL.includes('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):'));
-  assert.ok(KERNEL.includes('out = {"apiKey": True, "spend": _spend_windows(),'));
+  assert.ok(KERNEL.includes('out = {"apiKey": True, "spend": _spend_windows(doc=doc),'));
   // the hover's spend rows lead with the rolling hour (the user 2026-08-15); the collapsed cell keeps day+month
   // …'1 month' is ROLLING 30 days and 'this month' the calendar bill figure beneath it (T235, 2026-09-03)
   assert.ok(KERNEL.includes("var SPEND_WINS=[['hour','1 hour'],['day','1 day'],['week','1 week'],['month','1 month'],['monthToDate','this month']];"));
@@ -32,8 +32,8 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(KERNEL.includes('out["spendSeries"] = ss'));
   // the bars payload attaches the KEYED split only — a login turn's computed cost there would be
   // dollars nobody is billed — and only when key turns actually exist (the user 2026-08-08)
-  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False, now=None):"));
-  assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True)"));
+  assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False, now=None, doc=None):"));
+  assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True, doc=doc)"));
   assert.match(KERNEL, /if any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\):/);
   // no fragment of the key rides ANY payload (the user 2026-08-08, evening): the tail plumbing is
   // gone from the kernel wholesale, and the keyed-spend gate is a plain existence check
@@ -50,7 +50,18 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   assert.ok(KERNEL.includes("k.startswith(month)"));
   // the accumulator: cumulative-per-process DELTAS, and each bucket splits out the key's own turns
   assert.ok(BACKEND.includes("delta = total - self._last_cost_total if total >= self._last_cost_total else total"));
-  assert.ok(BACKEND.includes("turn_u[k] = v - last if v >= last else v"));
+  // the TOKEN watermarks diff the cumulative modelUsage map, never the flat `usage` dict — that one is
+  // the TURN's own total on the current CLI, and diffing it recorded a fraction of every turn (the user
+  // 2026-09-06). Each spend window also carries the by-KIND split of its tokens for the hover.
+  // …the settle calls the fold's two halves itself (result_token_totals picks the counter and says which
+  // kind it is; _fold_turn_tokens keeps the watermarks) so it can say when the per-turn fallback was taken;
+  // _turn_usage, upstream's name for the same fold, wraps the pair: the 2026-09-07 upstream fold kept the
+  // fork's fold under upstream's name, and the settle calls the halves rather than the wrapper
+  assert.ok(BACKEND.includes("totals, cumulative = result_token_totals(msg)"));
+  assert.ok(BACKEND.includes("turn_u = self._fold_turn_tokens(totals, cumulative)"));
+  assert.ok(BACKEND.includes('totals = model_usage_totals(getattr(msg, "model_usage", None))'));
+  assert.ok(BACKEND.includes("turn_u[k] = v - last if v >= last else v"), "a shrunken running total is a reset we missed → fold whole");
+  assert.ok(KERNEL.includes('KINDS = ("tokIn", "tokOut", "tokCacheR", "tokCacheW")'));
   assert.ok(BACKEND.includes("sid=self.thread_of or self.sid)   # the rail's spend"),
     "the settle threads the OWNING sid — a comment thread bills its owner (T144), a plain session itself (T100)");
   assert.ok(BACKEND.includes("if keyed or ke:   # carry an existing key split forward even on a login turn"));

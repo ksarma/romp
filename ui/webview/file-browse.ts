@@ -1,7 +1,11 @@
-// The file BROWSER that lives in the FEED pane (plans/file-browser.md, the user 2026-08-14): a
-// breadcrumb bar over one directory's entries — click a directory to descend, a file to open in the
-// existing viewer, an ancestor crumb to walk up. It exists because the viewer could only ever show a
-// path someone else surfaced; this is the "just look around the repo" half.
+// The file BROWSER (plans/file-browser.md, the user 2026-08-14): a breadcrumb bar over one directory's
+// entries — click a directory to descend, a file to open in the existing viewer, an ancestor crumb to
+// walk up. It exists because the viewer could only ever show a path someone else surfaced; this is the
+// "just look around the repo" half. Three documents host it, each through initFileBrowse with its own
+// contract (BrowseHost): the FEED pane, the shell's relay target for a browse while the Files pane is
+// closed; the FILES pane (files.ts), the listing as its own column when that pane is on screen or the
+// File-links setting names it (the user 2026-09-06); and the chat, for standalone /chat alone, where no
+// shell and no other pane exist (render.ts openBrowse decides among the three at the click).
 //
 // It is the viewer's SIBLING overlay and sits BENEATH it (z-index), and the stack is kept
 // ONE-DIRECTIONAL: opening a file from a listing overlays the viewer on top with the listing intact
@@ -20,7 +24,7 @@
 // disk needs zero relay code. Staleness is the dirComplete protocol — a client-minted reqId echoed
 // back, replies dropped on mismatch, one in-flight ask with newest-value coalescing (the pacing is the
 // round-trip itself — an event, not a timer). File BYTES stay on HTTP /file via the existing viewer.
-import { openFileView, closeFileView } from "./file-view";
+import { closeFileView, openFileClick } from "./file-view";
 import { fileUrl } from "./preview";
 
 type DirEntry = {
@@ -43,6 +47,29 @@ let curParent: string | null = null;   // the kernel's parent of the CURRENT bas
 let curSid: string | null = null;
 let onKeyRef: ((e: KeyboardEvent) => void) | null = null;   // the live keydown handler, so close can unbind it
 let showHidden = false;
+let shellRestore = true;               // this document's close owes the shell a browseClosed (the feed's contract)
+let openPick: ((path: string, sid: string | null) => void) | null = null;   // the host's own file open (BrowseHost.openFile), else openFileView here
+
+/** A browse ask that reached this window: the shell's relay, or a viewer's directory link posting to its own
+ *  window ({romp:"browseFiles", path, sid, identity}). */
+export type BrowseAsk = { path: string; sid?: unknown; identity?: unknown };
+/** How the hosting document takes part (initFileBrowse's second argument). */
+export type BrowseHost = {
+  /** Take the ask whole instead of opening here: the chat routes it through its file-link ladder (render.ts
+   *  openBrowse); the Files pane caches the identity it carries, then opens (files.ts). Default: open here. */
+  onRelay?: (m: BrowseAsk) => void;
+  /** Open a file picked from the listing (a row click, Enter on the active row) in place of the default
+   *  openFileView here. The Files pane routes a pick through its own open (files.ts openHere), so the file
+   *  enters its Recent list like every other file opened there (review 2026-09-07). */
+  openFile?: (path: string, sid: string | null) => void;
+  /** Whether a close here tells the shell browseClosed, and a real open browseOpened. TRUE only for the FEED,
+   *  the pane the shell lifts for a relayed browse and puts back on that message (and, on a phone, brings
+   *  forward on the ack and leaves on the close). The Files pane stays up and the chat never asks for a lift,
+   *  so their closes and opens say nothing: a browseClosed from either would consume a flag the feed's relay
+   *  armed and hide the feed under its own browser, and a browseOpened would switch a phone to the Feed tab
+   *  for a listing that lives elsewhere. Default true, the feed's contract. */
+  shellRestore?: boolean;
+};
 
 function el(tag: string, cls?: string): HTMLElement {
   const e = document.createElement(tag);
@@ -52,11 +79,26 @@ function el(tag: string, cls?: string): HTMLElement {
 
 // The browser's close ends the overlay chain, so browseClosed restores a pane the shell turned on
 // for us — or one a RELAY-opened viewer turned on and handed to us when openFileBrowse closed it
-// (the shell's browseClosed arm consumes either flag). Fires on EVERY close path.
+// (the shell's browseClosed arm consumes either flag). Fires on EVERY close path, in the document that
+// owes it (BrowseHost.shellRestore: the feed).
 function tellShellClosed(): void {
+  if (!shellRestore) return;
   try {
     if (window.parent !== window) window.parent.postMessage({ romp: "browseClosed" }, "*");
   } catch { /* no shell (standalone /feed) — nothing to restore */ }
+}
+
+// The feed's ack of a browse that OPENED: the box is up and its listing asked for. The shell arms a phone's way
+// back on this ack (the Feed tab comes forward, the tab the click came from is remembered for browseClosed) and
+// never at its relay, so a relay this document stands down (the viewer's veto in openFileBrowse: nothing opens,
+// and no ack follows) leaves nothing cocked for a later close to replay (review round 2, 2026-09-07). A listing
+// this document opens for itself (a viewer's directory link) acks too: the shell finds the Feed tab already
+// showing and arms nothing. Same gate as the close notice: the feed's contract only.
+function tellShellOpened(): void {
+  if (!shellRestore) return;
+  try {
+    if (window.parent !== window) window.parent.postMessage({ romp: "browseOpened" }, "*");
+  } catch { /* no shell (standalone /feed): nothing to bring forward */ }
 }
 
 export function closeFileBrowse(): void {
@@ -105,15 +147,21 @@ function dirnameOf(p: string): string {
 /** Open the browser at `path` (as the sid's kernel resolves it — "." means that session's cwd). */
 export function openFileBrowse(path: string, sid?: string | null): void {
   const had = document.getElementById("romp-filebrowse");
-  curSid = sid || null;
-  showHidden = false;
-  // A re-invoke while open must resync the persistent Hidden control with the state it claims to
-  // show — resetting the variable alone left the button lit over a dotfile-hidden listing (review).
-  const hb = document.getElementById("fb-hidden");
-  if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   if (!had) {
+    // the id rides the BACKDROP — every open/close/topmost check looks up #romp-filebrowse, and
+    // the outermost element is what closeFileBrowse removes. The card inside is the viewer's
+    // treatment (the user 2026-09-04, superseding the 2026-08-24 pane takeover): centered over
+    // the dim, backdrop click closes (the lightbox contract — content clicks never do).
+    const wrap = el("div", "");
+    wrap.id = "romp-filebrowse";
+    // Arm on pointerdown: a `click` is dispatched on the nearest common ancestor when the press and the
+    // release land on different elements, so a drag that STARTED inside the card and ended over the dim
+    // read as a backdrop click and closed the browser mid-gesture (review find on #924, 2026-09-07).
+    // Close only when both ends were on the dim.
+    let downOnDim = false;
+    wrap.addEventListener("pointerdown", (e) => { downOnDim = e.target === wrap; });
+    wrap.onclick = (ev) => { const close = downOnDim && ev.target === wrap; downOnDim = false; if (close) closeFileBrowse(); };
     const box = el("div", "filebrowse");
-    box.id = "romp-filebrowse";
     document.body.classList.add("filebrowse-open");
 
     const bar = el("div", "fb-bar");
@@ -140,7 +188,8 @@ export function openFileBrowse(path: string, sid?: string | null): void {
     const list = el("div", "fb-list");
     list.id = "fb-list";
     box.appendChild(bar); box.appendChild(list);
-    document.body.appendChild(box);
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
 
     // ONE click listener on the stable list root — rows are rebuilt per navigation, so per-row
     // listeners are exactly the destroyed-mid-click bug (ui/CLAUDE.md); the crumbs delegate the
@@ -148,7 +197,20 @@ export function openFileBrowse(path: string, sid?: string | null): void {
     list.addEventListener("click", (ev) => {
       const row = (ev.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
       if (!row || !list.contains(row)) return;
-      onAct(row);
+      onAct(row, ev);
+    });
+    const fileRowOf = (ev: MouseEvent) => {
+      const row = (ev.target as HTMLElement).closest("[data-act]") as HTMLElement | null;
+      return row && list.contains(row) && row.dataset.act === "file" ? row : null;   // a FILE row only: a middle-click
+    };                                                                                // never navigates or downloads
+    list.addEventListener("mousedown", (ev) => {         // the middle PRESS on a file row: no autoscroll, which
+      if (ev.button === 1 && fileRowOf(ev)) ev.preventDefault();   // starts on the press and would swallow the auxclick
+    });
+    list.addEventListener("auxclick", (ev) => {          // a middle-click: a PDF row in a browser tab of its own
+      if (ev.button !== 1) return;                        // (`click` never fires for the middle button)
+      const row = fileRowOf(ev);
+      if (!row) return;
+      onAct(row, ev);
     });
     crumbs.addEventListener("click", (ev) => {
       const c = (ev.target as HTMLElement).closest("[data-path]") as HTMLElement | null;
@@ -197,7 +259,7 @@ export function openFileBrowse(path: string, sid?: string | null): void {
       }
       if (e.key === "Enter") {
         const active = box2.querySelector<HTMLElement>(".fb-row.active");
-        if (active) { e.preventDefault(); onAct(active); }
+        if (active) { e.preventDefault(); onAct(active, e); }   // Cmd/Ctrl+Enter on a PDF row: its own tab, like the click
       }
     };
     document.addEventListener("keydown", onKey);
@@ -211,13 +273,40 @@ export function openFileBrowse(path: string, sid?: string | null): void {
   // belongs to the browser — the shell carries the restore on the browser's own flag and
   // browseClosed discharges it. The pane stays up for the listing either way.
   if (document.getElementById("romp-fileview")) closeFileView();
+  // The viewer's dirty-edit guard can keep it (the person answered the discard confirm with cancel): then
+  // the click stands down WHOLE. No listing is fetched to sit beneath a viewer that covers it (a dead click,
+  // and a listing the pane's next Escape would fall through to), the confirm the person just answered is
+  // the announcement, and a box built above for this click is unbuilt again. The listing beneath an
+  // existing box is left as it was, its sid included: nothing below changed. The chat had this stand-down
+  // at its own end; the Files pane's and the feed's relays land here (review 2026-09-07).
+  if (document.getElementById("romp-fileview")) { if (!had) unbuild(); return; }
+  curSid = sid || null;
+  showHidden = false;
+  // A re-invoke while open must resync the persistent Hidden control with the state it claims to
+  // show — resetting the variable alone left the button lit over a dotfile-hidden listing (review).
+  const hb = document.getElementById("fb-hidden");
+  if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   ask(path);
+  tellShellOpened();
 }
 
-function onAct(row: HTMLElement): void {
+// A box built for a click that then stood down (the viewer's veto above): gone again, outside the close
+// protocol. Nothing opened, so nothing is owed: no browseClosed (the shell may have lifted the feed for this
+// listing, and putting it back now would hide the kept viewer, which lives there; the pane parks forward,
+// the same named price a lost relay pays), no browseOpened (the shell arms a phone's way back on that ack, and
+// a listing that never opened has none to arm), and no latch to reset (no ask went out).
+function unbuild(): void {
+  document.getElementById("romp-filebrowse")?.remove();
+  document.body.classList.remove("filebrowse-open");
+  if (onKeyRef) { document.removeEventListener("keydown", onKeyRef); onKeyRef = null; }
+}
+
+function onAct(row: HTMLElement, ev?: MouseEvent | KeyboardEvent): void {
   const p = row.dataset.path || "";
   if (row.dataset.act === "dir") { ask(p); return; }
-  if (row.dataset.act === "file") { openFileView(p, curSid); return; }
+  // the gesture reader (file-view.ts openFileClick): a modified click on a PDF → its own tab; a plain click → the host's
+  // own open when it has one (BrowseHost.openFile, the Files pane's openHere), else the viewer here
+  if (row.dataset.act === "file") { openFileClick(ev, p, curSid, openPick || undefined); return; }
   if (row.dataset.act === "dl") startDownload(p);       // download-only rows download directly —
 }                                                       // a viewer that could only apologize helps nobody
 
@@ -354,7 +443,7 @@ function onListing(m: DirListing): void {
       if (dlOnly) row.classList.add("fb-dlonly");
       row.title = p + (en.isLink ? "  ·  symlink" : "")
         + "  ·  " + new Date(en.mtime * 1000).toLocaleString()
-        + (dlOnly ? "  ·  not viewable in the browser — click downloads it" : "");
+        + (dlOnly ? "  ·  opens as a download (not viewable in the browser, or too large to show)" : "");
       const sz = el("span", "fb-size");
       sz.textContent = (dlOnly ? "⤓ " : "") + human(en.size);
       row.appendChild(nm); row.appendChild(sz);
@@ -381,13 +470,17 @@ function onListing(m: DirListing): void {
 }
 
 /** Bind the kernel poster and listen for the shell's relay + the kernel's listing replies.
- *  Called once, from the feed's boot (beside initFileView). */
-export function initFileBrowse(poster: (m: Record<string, unknown>) => void): void {
+ *  Called once per hosting document (the feed's, the Files pane's and the chat's boot, beside initFileView);
+ *  `host` is that document's contract (BrowseHost), the feed's by default. */
+export function initFileBrowse(poster: (m: Record<string, unknown>) => void, host: BrowseHost = {}): void {
   post = poster;
+  shellRestore = host.shellRestore !== false;
+  openPick = host.openFile ?? null;
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
     if (m.romp === "browseFiles" && typeof m.path === "string") {
+      if (host.onRelay) { host.onRelay({ path: m.path, sid: m.sid, identity: m.identity }); return; }
       openFileBrowse(m.path || ".", typeof m.sid === "string" ? m.sid : null);
     } else if (m.type === "dirListing") {
       onListing(m as DirListing);

@@ -52,7 +52,9 @@ class Elm {
   get tabIndex(): number { return "tabindex" in this.attrs ? Number(this.attrs.tabindex) : -1; }
   set tabIndex(v: number) { this.attrs.tabindex = String(v); }
   hasAttribute(n: string): boolean { return n in this.attrs; }
-  getAttribute(n: string): string | null { return n in this.attrs ? this.attrs[n] : null; }
+  // the class and the title are attributes reflected to their properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
+  getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
+  setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
   removeAttribute(n: string): void { delete this.attrs[n]; }
   get focusable(): boolean { return this.hasAttribute("tabindex"); }
   focus(): void { if (this.focusable) doc.activeElement = this; }

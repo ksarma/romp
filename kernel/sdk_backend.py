@@ -54,7 +54,7 @@ _pal = load_source("romp_palette", _HERE / "palette.py")
 # The LIVE source of the manager's API key (keysource.py — stdlib only, loaded the same way so the
 # module works from bin/ symlinks too). `romp keyswap` loads the identical file, so the writer and
 # the reader can never disagree about which path holds the key or how its line is parsed.
-_keysrc = load_source("romp_keysource", _HERE / "keysource.py")
+_keysrc = sys.modules.get("romp_keysource") or load_source("romp_keysource", _HERE / "keysource.py")
 # The COMMAND source (envsource.py — stdlib only): a configured command prints a set of NAME=VALUE
 # lines that is merged into each child's environment at launch. Setting ROMP_CREDENTIAL_COMMAND
 # selects it; unset, every call here returns an empty set and the file source above is the whole
@@ -483,22 +483,30 @@ def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, lo
     plist sets ROMP_SUPERVISED too, and without this check every kernel start there logged
     "systemd-run is not on PATH" as if something were missing), only if `systemd-run` is on PATH, and
     only if a probe scope actually starts (a user manager that cannot start scopes would otherwise
-    fail every session start). `log`, when given, receives the one-line verdict either way."""
+    fail every session start).
+
+    `log`, when given, receives the one-line verdict either way, as `log(line, problem=<bool>)` —
+    SdkBackend._log's signature. `problem` is True only when the switch was WANTED on Linux and could
+    not be honoured (systemd-run missing, or the probe failing): every session this backend starts
+    then runs inside the service cgroup, which the error center should show the way the launch-time
+    fallbacks (_note_cli_scope_fallback, the missing-wrapper line in _options) already do; a log line
+    nobody tails is not a report (2026-09-06). The other off verdicts are ordinary — the environment
+    asked for off, or the platform has no systemd — and stay plain lines."""
     env = os.environ if environ is None else environ
     plat = sys.platform if platform is None else platform
     want = env.get("ROMP_CLI_SCOPE", "")
-    ok, reason = False, ""
+    ok, reason, problem = False, "", False
     if want == "1" or (env.get("ROMP_SUPERVISED") and want != "0"):
         if not plat.startswith("linux"):
             reason = "not Linux (transient scopes are a systemd feature)"
         elif not which("systemd-run"):
-            reason = "systemd-run is not on PATH"
+            reason, problem = "systemd-run is not on PATH", True
         else:
             try:
                 r = run(CLI_SCOPE_PROBE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                         timeout=CLI_SCOPE_PROBE_TIMEOUT)
             except Exception as e:      # timeout, missing binary raced away, anything else
-                reason = "the probe (%s) failed: %s" % (" ".join(CLI_SCOPE_PROBE), e)
+                reason, problem = "the probe (%s) failed: %s" % (" ".join(CLI_SCOPE_PROBE), e), True
             else:
                 if r.returncode == 0:
                     ok = True
@@ -507,6 +515,7 @@ def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, lo
                     err = err.decode("utf-8", "replace") if isinstance(err, bytes) else str(err)
                     reason = "the probe (%s) exited %s%s" % (" ".join(CLI_SCOPE_PROBE), r.returncode,
                                                              (": " + err.strip()) if err.strip() else "")
+                    problem = True
     elif want == "0":
         reason = "ROMP_CLI_SCOPE=0"
     else:
@@ -514,9 +523,12 @@ def cli_scope_supported(environ=None, which=shutil.which, run=subprocess.run, lo
     if log:
         if ok:
             log("cli scope: on — each session's CLI runs in its own transient systemd scope; a manager "
-                "restart leaves session-spawned tmux/setsid work alive")
+                "restart leaves session-spawned tmux/setsid work alive", problem=False)
+        elif problem:
+            log("cli scope: off — %s; sessions start with the CLI directly, inside the service cgroup, "
+                "and a service restart takes their background work down" % reason, problem=True)
         else:
-            log("cli scope: off — %s" % reason)
+            log("cli scope: off — %s" % reason, problem=False)
     return ok
 
 
@@ -1124,7 +1136,8 @@ def msg_to_atom(msg, sid, fsid, t, skill_tool_ids=()):
 # The toolUseResult keys a consumer actually reads — MIRRORS event_model.TUR_CONSUMED_KEYS (this
 # module loads standalone, so it cannot import the event model; a drift pin in test_sdk_backend.py
 # holds the two sets equal). Widen both together when a new consumer appears; never carry-all.
-TUR_CONSUMED_KEYS = frozenset(("answers", "structuredPatch"))
+TUR_CONSUMED_KEYS = frozenset(("answers", "structuredPatch", "agentId", "isAsync"))   # + the Agent tool's
+#   join/background flag (plans/subagent-transcripts.md, 2026-09-05) — widened in step with event_model
 
 TYPE_SOMETHING = "Type something"   # meta-option label the webview turns into the inline "add your own" field
 
@@ -1291,10 +1304,12 @@ def permission_to_live(tool_name: str, tool_input: dict, context=None) -> dict:
 _STATES = ("working", "waiting", "idle", "permission", "compacting", "picker")
 
 
-def append_state(state_dir: Path, sid: str, state: str, t: int | None = None) -> None:
+def append_state(state_dir: Path, sid: str, state: str, t: int | None = None, by: str = "") -> None:
     p = Path(state_dir) / "states" / (sid + ".jsonl")
     p.parent.mkdir(parents=True, exist_ok=True)
     rec = {"t": int(time.time()) if t is None else int(t), "state": state}
+    if by:
+        rec["by"] = by          # a romp-written settle (an interrupt), skipped by the turn-finished push (#937 fold)
     with open(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
@@ -2756,6 +2771,178 @@ SDK_MISSING_TEXT = (
     "then restart romp. tmux-backed sessions are unaffected.")
 
 
+def running_python_tag() -> str:
+    """This interpreter as a venv names its lib dir: `3.14`, or `3.14t` for a free-threaded build. venv
+    appends the abi tag to the directory (lib/python3.14t), so a comparison on major.minor alone made a
+    kernel on 3.14t refuse the venv that very interpreter built as a mismatch (review 2026-09-06). The
+    twin of kernel.py's _running_python_tag, which runs before this module loads."""
+    return "%d.%d%s" % (sys.version_info[0], sys.version_info[1],
+                        "t" if "t" in getattr(sys, "abiflags", "") else "")
+
+
+def sdk_venv_built_for(state_dir) -> list:
+    """The python tags (`3.12`, `3.14t`) the SDK venv under `state_dir` has site-packages for, [] with no
+    venv."""
+    try:
+        lib = Path(state_dir) / "sdkvenv" / "lib"
+        return sorted(p.name[len("python"):] for p in lib.glob("python3.*") if (p / "site-packages").is_dir())
+    except Exception:
+        return []
+
+
+def sdk_venv_has_sdk(state_dir, tag) -> bool:
+    """Whether the venv's site-packages for `tag` holds the claude_agent_sdk package itself."""
+    try:
+        return (Path(state_dir) / "sdkvenv" / "lib" / ("python" + tag) / "site-packages" / "claude_agent_sdk"
+                / "__init__.py").is_file()
+    except Exception:
+        return False
+
+
+def interpreter_runs(path, timeout=5.0) -> bool:
+    """Does the interpreter at `path` start and exit cleanly (`-c pass`)? The test bin/romp-serve's
+    pick_python applies before following the venv's recorded interpreter, applied here for the same
+    reason: an executable file is not a working python. A uv-managed install that lost its shared
+    library or stdlib passes os.access and fails to run, and the mismatch text used to prescribe a
+    ROMP_PYTHON pin to exactly that binary, which romp-serve then execs blindly into a respawn loop
+    (review 2026-09-06). A probe that hangs or errors reads as not running."""
+    if not path or not os.access(path, os.X_OK):
+        return False
+    try:
+        return subprocess.run([path, "-c", "pass"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=timeout).returncode == 0
+    except Exception:
+        return False
+
+
+def sdk_venv_interpreter(state_dir) -> str:
+    """The interpreter the venv's pyvenv.cfg records: `executable` (python >= 3.11), else `home` plus the
+    version line (`version` from venv, `version_info` from uv). "" when there is no cfg or it names none."""
+    try:
+        lines = (Path(state_dir) / "sdkvenv" / "pyvenv.cfg").read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return ""
+    kv = {}
+    for line in lines:
+        if "=" in line:
+            k, v = line.split("=", 1)
+            kv[k.strip()] = v.strip()
+    if kv.get("executable"):
+        return kv["executable"]
+    m = re.match(r"(\d+\.\d+)", kv.get("version") or kv.get("version_info") or "")
+    if kv.get("home") and m:
+        return os.path.join(kv["home"], "python" + m.group(1))
+    return ""
+
+
+def sdk_venv_fingerprint(state_dir) -> tuple:
+    """Everything sdk_venv_verdict reads, as one cheap tuple: the lib/python3.* dirs and whether each
+    holds the SDK, pyvenv.cfg's mtime, and the recorded interpreter's identity (path, mtime, size).
+    Equal fingerprints mean an equal verdict, so a caller on a hot path (every card render asks
+    launch_error) re-derives the verdict, and re-runs the interpreter probe, only when the disk changed."""
+    root = Path(state_dir) / "sdkvenv"
+    parts = []
+    try:
+        for p in sorted((root / "lib").glob("python3.*")):
+            if (p / "site-packages").is_dir():
+                parts.append((p.name, (p / "site-packages" / "claude_agent_sdk" / "__init__.py").is_file()))
+    except Exception:
+        pass
+    try:
+        parts.append(("cfg", (root / "pyvenv.cfg").stat().st_mtime_ns))
+    except Exception:
+        parts.append(("cfg", None))
+    interp = sdk_venv_interpreter(state_dir)
+    try:
+        st = os.stat(interp) if interp else None
+        parts.append(("interp", interp, st.st_mtime_ns if st else None, st.st_size if st else None))
+    except Exception:
+        parts.append(("interp", interp, None, None))
+    return tuple(parts)
+
+
+def sdk_venv_verdict(state_dir, runs=None) -> dict:
+    """What the disk says about the SDK venv against THIS interpreter, read now. `kind` is one of
+      none      no venv (or none with a lib/python3.*): the install remedy fits;
+      broken    a venv for this python with no claude_agent_sdk in it (a half-built install): same remedy;
+      present   a venv for this python WITH the SDK in it. A process that could not import the SDK has one
+                answer for this: the venv was built after it started (bin/romp-sdk-setup run while the
+                kernel ran, the 2026-09-06 recovery), and the remedy is the restart;
+      mismatch  venv(s) for other python(s) only. bin/romp-serve's pick_python follows the venv's
+                interpreter, so this means ROMP_PYTHON chose another python, or the venv's own is gone or
+                will not run (2026-09-06: two hours of "isn't installed" over a venv that was present,
+                intact and built for the previous python). `interp` is the recorded interpreter and
+                `interp_runs` whether it actually starts (interpreter_runs; `runs` is the test seam), which
+                decides between the two remedies: point romp back at it, or rebuild for the one romp runs.
+    ONE function, so every surface that refuses (the session card, the boot log, the creation refusal)
+    reads the same facts at the same moment."""
+    running = running_python_tag()
+    built = sdk_venv_built_for(state_dir)
+    v = {"kind": "none", "built": built, "running": running, "interp": "", "interp_runs": False}
+    if not built:
+        return v
+    if running in built:
+        v["kind"] = "present" if sdk_venv_has_sdk(state_dir, running) else "broken"
+        return v
+    v["kind"] = "mismatch"
+    v["interp"] = sdk_venv_interpreter(state_dir)
+    v["interp_runs"] = bool(v["interp"]) and bool((runs or interpreter_runs)(v["interp"]))
+    return v
+
+
+def _mismatch_remedy(v, then="then restart romp") -> str:
+    """The ONE remedy the disk supports for a mismatch verdict: the recorded interpreter still runs, so
+    point romp back at it; or it is gone or broken, so rebuild for the one romp runs. Never both, and
+    never a pin to an interpreter nothing has seen run."""
+    if v["interp_runs"]:
+        return "Set ROMP_PYTHON=%s in service.env, %s." % (v["interp"], then)
+    return "Re-run bin/romp-sdk-setup to rebuild it for Python %s, %s." % (v["running"], then)
+
+
+def sdk_unavailable_text(state_dir, verdict=None, started_missing=True) -> str:
+    """The session card's text when claude_agent_sdk will not import, from the venv verdict (read now
+    unless the caller passes one). SDK_MISSING_TEXT when nothing on disk says otherwise. A venv for
+    ANOTHER python makes the install claim false and the fix different, so the text says what happened
+    and gives the one remedy the disk supports. A venv for THIS python holding the SDK, in a process that
+    found none at construction (`started_missing`), was built after romp started: the restart is the
+    remedy, and "isn't installed" would send the user back to the command they just ran. In a process
+    that HAD the SDK at construction the same disk state means the import itself broke, and the install
+    text with its rebuild is right."""
+    v = verdict or sdk_venv_verdict(state_dir)
+    if v["kind"] == "present" and started_missing:
+        return ("romp's Agent SDK backend was set up for Python %s after romp started, so this session can't "
+                "run yet. Its messages are being kept, not sent. Restart romp to use it. tmux-backed sessions "
+                "are unaffected." % v["running"])
+    if v["kind"] != "mismatch":
+        return SDK_MISSING_TEXT
+    return ("romp's Agent SDK backend was set up for Python %s, but romp is running on Python %s, so this "
+            "session can't run. Its messages are being kept, not sent. %s tmux-backed sessions are unaffected."
+            % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v)))
+
+
+SDK_SETUP_REFUSAL = ("Session not created: romp's Agent SDK backend isn't installed. "
+                     "Run bin/romp-sdk-setup, then try again. (tmux sessions still work.)")
+
+
+def sdk_creation_refusal(verdict, default=SDK_SETUP_REFUSAL) -> str:
+    """The session-creation refusal (`romp new`, the browser's create) for a venv verdict: the same
+    facts as sdk_unavailable_text, in the voice of a session that does not exist yet. Built HERE, next
+    to the card's text and from the same verdict, so the two surfaces cannot tell different stories
+    (review 2026-09-06: after a rebuild while the kernel ran, `romp new` said "isn't installed" while
+    the card said mismatch, and the refusal offered a ROMP_PYTHON pin without checking the interpreter
+    existed). `default` is the plain install refusal (the kernel passes its own SDK_SETUP_HINT, the
+    same words) for the verdicts where the install remedy fits."""
+    v = verdict
+    if v["kind"] == "present":
+        return ("Session not created: romp's Agent SDK backend was set up for Python %s after romp started. "
+                "Restart romp, then try again. (tmux sessions still work.)" % v["running"])
+    if v["kind"] != "mismatch":
+        return default
+    return ("Session not created: romp's Agent SDK backend was set up for Python %s, but romp is running on "
+            "Python %s. %s (tmux sessions still work.)"
+            % (" and ".join(v["built"]), v["running"], _mismatch_remedy(v, then="restart romp and try again")))
+
+
 def sdk_importable() -> bool:
     """Is claude_agent_sdk actually importable RIGHT NOW? Checked at backend construction so the failure
     is reported ONCE, up front, for every session — rather than one session at a time as each one's
@@ -2854,16 +3041,20 @@ def task_death_notice(tasks: list, cause: str = "a restart or crash") -> str:
 
     It says "cut off", not "died" (2026-09-05): under the per-session scopes (cli_scope_supported) a
     task's tool shell can outlive the CLI — the process may well still be running, and the session
-    that relaunches it without checking runs two. So the ask is to check first. The voice is the person the
-    session works for; the only romp noun is the sanctioned [romp] prefix (test_injected_voice)."""
+    that relaunches it without checking runs two. So the ask is to check first. The voice is the person
+    the session works for, addressing it as "you" (so the sentence names the session once, not twice,
+    and "the claude process that started them" says whose process ended — review, 2026-09-06); the only
+    romp noun is the sanctioned [romp] prefix (test_injected_voice). `cause` is read after "ended" in
+    parentheses, so it must stand on its own there (_RECONNECT_CAUSE does)."""
     n = len(tasks)
     descs = "; ".join(d for d in ((t.get("desc") or "").strip() for t in tasks[:4]) if d)
     one = n == 1
-    return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s this session had "
-            "running %s cut off from the session when its claude process ended (%s)%s. "
+    return ("<!-- romp-injected --><!-- romp-system -->[romp] %d background task%s you had running %s "
+            "cut off when the claude process that started %s ended (%s)%s. "
             "%s completion notification%s will never arrive. Check whether %s still running before "
             "relaunching %s; if %s needed, carry on."
-            % (n, "" if one else "s", "was" if one else "were", cause, (": " + descs) if descs else "",
+            % (n, "" if one else "s", "was" if one else "were", "it" if one else "them", cause,
+               (": " + descs) if descs else "",
                "Its" if one else "Their", "" if one else "s", "it is" if one else "each is",
                "it", "it isn't" if one else "they aren't"))
 
@@ -2914,7 +3105,7 @@ def _is_kernel_cmd(cmd: str) -> bool:
     return False
 
 
-def find_orphan_clis(ps_lines: list[str], lastsids: list[str]) -> list[int]:
+def find_orphan_clis(ps_lines: list[str], lastsids: list[str], own_pid: int) -> list[int]:
     """PIDs of ORPHANED SDK-driven `claude` CLIs holding one of OUR sessions (--resume/--session-id
     in either flag spelling, + the stream-json mark — see _cli_carries_sid). Orphaned = its PARENT
     is not a live romp kernel (absent from the listing, or a process that is not a kernel): a live
@@ -2922,16 +3113,22 @@ def find_orphan_clis(ps_lines: list[str], lastsids: list[str]) -> list[int]:
     zombie writer that would fight the resume for the transcript — has any other parent. The parent
     check is load-bearing: matching on the command line alone let a duplicate backend's reconcile
     reap freshly-resumed LIVE sessions mid-turn (2026-07-06); and a CLI parented to a DIFFERENT live
-    kernel is that kernel's, never reaped here.
+    kernel is that kernel's, never reaped here. `own_pid` is the calling kernel's pid: a CLI whose
+    ppid is own_pid is this kernel's live child whatever `ps` calls the kernel. _is_kernel_cmd knows
+    the spellings romp-serve and a hand run produce (`…/bin/romp-kernel`, `kernel/kernel.py`); the pid
+    check keeps this kernel's own children out of the reap under any other (`python3 ./kernel.py`, a
+    `-c` runner, a renamed launcher) — the unconditional protection the old `ppid != 1` test gave them
+    (the 2026-09-06 review of the parent-is-a-kernel definition). The reconcile runs on a thread after
+    the backend is up, so a session started before its `ps` is exactly such a child.
 
     Until 2026-09-05 "orphaned" meant ppid 1 (macOS: an orphan re-parents to launchd). Under
-    `systemd --user` that never happens: the user manager sets PR_SET_CHILD_SUBREAPER, so an orphan
-    from the service cgroup or from a transient scope re-parents to the `systemd --user` pid (verified
-    on a Linux box that day: both cases, ppid = the user manager, never 1), and this reaper had
-    matched nothing on Linux under the service all along. KillMode=control-group killed those orphans
-    on service restarts anyway; the per-session scopes (cli_scope_supported) end that by design, so
-    the definition now names the property the ppid-1 check approximated. Pure (takes
-    PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
+    `systemd --user` that never happens: the user manager sets PR_SET_CHILD_SUBREAPER, so a CLI left
+    behind by a kernel that died without a drain (a crash respawn, a SIGKILL at the service's stop
+    timeout) re-parents to the `systemd --user` pid (verified on a Linux box that day: ppid = the user
+    manager, never 1), and this reaper had matched nothing on Linux under the service all along; only
+    a full service restart, which empties the unit's cgroup (systemd's default KillMode=control-group),
+    ever ended such a CLI. The definition now names the property the ppid-1 check approximated. Pure
+    (takes PS_ARGV's `ps -axwwo pid=,ppid=,command=` lines) so tests need no live processes."""
     procs: dict[int, tuple[int, str]] = {}    # pid -> (ppid, command), in listing order
     for ln in ps_lines:
         parts = ln.strip().split(None, 2)
@@ -2942,6 +3139,8 @@ def find_orphan_clis(ps_lines: list[str], lastsids: list[str]) -> list[int]:
     for pid, (ppid, cmd) in procs.items():
         if _SDK_CLI_MARK not in cmd or not _cli_carries_sid(cmd, lastsids):
             continue
+        if ppid == own_pid:
+            continue    # this kernel's own child, whatever ps calls this kernel (or with our line missing)
         parent = procs.get(ppid)
         if parent is not None and _is_kernel_cmd(parent[1]):
             continue    # a live kernel's child — ours or another kernel's, either way not an orphan
@@ -3232,9 +3431,26 @@ ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier a
 # flag-settings file), whose rank against options.env is unverified — so it would silently shadow
 # or be shadowed, and the break surfaces nowhere. Reserved at the door instead.
 ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
+AUTH_ENV_NAMES = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
-def env_request_error(env) -> str:
+def reserved_names_source():
+    """The descriptor keysource.runtime_reserved_names decides on at the env doors (env_request_error
+    here, the kernel's /new mirror), read the way a launch reads the source and WITHOUT selecting one.
+    COMMAND mode (fork): None. Nothing beyond the identity names is reserved there (envsource drops the
+    CLI's own auth names from the set itself, and a per-session token bills what the user chose: the
+    rule _work_key_source's environment descriptor already gives the launch), and work_api_key_source()
+    is not consulted, because selecting the env file's source discards the startup key and prints that
+    the file's reference governs, which is false while the command governs (review find, 2026-09-07: a
+    stale ROMP_API_KEY_REF line made the door refuse a token as reserved for a retrieval that never
+    runs, and the check itself discarded the startup claim). Otherwise the selected file/op descriptor,
+    upstream's rule."""
+    if _envsrc.configured():
+        return None
+    return work_api_key_source()
+
+
+def env_request_error(env, auth: str = "") -> str:
     """Why `env` is NOT a valid per-session env payload — "" when it is (an empty dict is a valid,
     vacuous one). A payload is a dict of NAME → string-value pairs, names in the shell-identifier
     alphabet and outside the reserved identity names (ENV_RESERVED_NAMES): it lands in the per-sid
@@ -3251,6 +3467,8 @@ def env_request_error(env) -> str:
         if k in ENV_RESERVED_NAMES:
             return ("env: %s is reserved — romp sets the session's identity env "
                     "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
+        if k in AUTH_ENV_NAMES and k in _keysrc.runtime_reserved_names(auth or "", reserved_names_source()):
+            return "env: %s is reserved while runtime API key retrieval is configured" % k
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
         if "\x00" in v:
@@ -3471,7 +3689,11 @@ def _cli_refusal(e: BaseException) -> bool:
 
 
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
+_STARTUP_KEY_DISCARD_SAID = False   # the one-line "your startup key is ignored" notice, once per process
 _KEY_FILE_CHECKED = False      # the startup-vs-file agreement check (one line, once per process)
+_FILE_KEY_SEEN_FP = ""         # fingerprint of the file's last CONFIGURED static key, "" once its loss was said
+_STARTUP_AUTH_ENV: dict | None = None
+_WORK_AUTH_LOCK = threading.RLock()
 
 
 def startup_api_key() -> str:
@@ -3490,42 +3712,104 @@ def startup_api_key() -> str:
     foreground `romp up` from a shell that exported one) has no file line to read, and there the
     startup claim is the whole answer, exactly as before."""
     global _WORK_KEY
-    if _WORK_KEY is None:
-        _WORK_KEY = os.environ.pop("ANTHROPIC_API_KEY", "") or ""
-    return _WORK_KEY
+    with _WORK_AUTH_LOCK:
+        if _WORK_KEY is None:
+            _WORK_KEY = os.environ.pop("ANTHROPIC_API_KEY", "") or ""
+        return _WORK_KEY
+
+
+def startup_auth_env() -> dict:
+    """Claim competing token credentials so key launches cannot inherit them.
+
+    Login launches may explicitly restore these credentials in their child environment.
+    Returning a copy keeps callers from changing the manager's startup credentials.
+    """
+    global _STARTUP_AUTH_ENV
+    with _WORK_AUTH_LOCK:
+        if _STARTUP_AUTH_ENV is None:
+            _STARTUP_AUTH_ENV = {name: os.environ.pop(name)
+                                 for name in AUTH_ENV_NAMES[1:] if name in os.environ}
+        _keysrc.claim_op_env()   # op's own credential: for the `op read` subprocess only, never a session's (2026-09-05)
+        return dict(_STARTUP_AUTH_ENV)
+
+
+def work_api_key_source():
+    """The selected credential descriptor, without invoking a secret provider.
+
+    Once a file or runtime source takes over, discard the startup key. Removing that
+    source must never restore a credential that the operator already replaced.
+    """
+    global _WORK_KEY, _STARTUP_KEY_DISCARD_SAID
+    with _WORK_AUTH_LOCK:
+        startup = startup_api_key()
+        source = _keysrc.select_source(startup)
+        if source.kind == "file":
+            _check_key_file_agrees(startup, source.value)
+            _note_key_file_gone(source.value)
+        if source.kind in ("file", "op"):
+            # A real selection retires the startup key for good. Said ONCE when that key was non-empty:
+            # an operator who delivers the key through a systemd drop-in or a launchd plist rather than
+            # service.env would otherwise watch every session bill the login with nothing in the log
+            # (review find, 2026-09-05) — the silent fallback this module exists to end.
+            # (the standard install exports the file's own key line into the manager environment, so the
+            # SAME key on both sides is nothing to say; a DIFFERENT file key is _check_key_file_agrees's line)
+            discarded = source.kind == "op" or (source.kind == "file" and not source.value)
+            if startup and discarded and not _STARTUP_KEY_DISCARD_SAID:
+                _STARTUP_KEY_DISCARD_SAID = True
+                why = ("supervised managers read %s only" % _keysrc.service_env_path()
+                       if source.kind == "file" and os.environ.get("ROMP_SUPERVISED") == "1"
+                       else "%s selects the 1Password source" % _keysrc.REF_VAR if source.kind == "op"
+                       else "the env file's key line is empty")
+                sys.stderr.write("work key: the startup key (sha256:%s) is IGNORED — %s. Sessions without an "
+                                 "explicit Billing pick %s.\n"
+                                 % (_keysrc.fingerprint(startup), why,
+                                    "launch on the login" if not source.configured else "use that source"))
+            _WORK_KEY = ""
+        # "error" (an unreadable or undecodable file) is not a selection: it fails the operation that asked
+        # while it lasts, and the startup key stays claimed so a transient permission blemish cannot
+        # quietly turn a keyed box into a login one once it clears (review find, 2026-09-05).
+        return source
 
 
 def work_api_key() -> str:
-    """The key a session started RIGHT NOW should bill: the live `ANTHROPIC_API_KEY=` line of the
-    manager's env file (`~/.config/romp/service.env`), falling back to what the process environment
-    carried at startup. "" when neither exists.
+    """Resolve the current key for an actual launch or API call; failures propagate.
 
-    Live, because the alternative was a restart (the user 2026-09-04): the key used to be popped
-    once at boot, so moving the sessions to another org key meant `systemctl --user restart
-    romp-manager` — which cuts every session's open turn and kills every subagent under it. Reading
-    the file instead makes the swap cost one reconnect per session (`romp keyswap <name> --cycle…`,
-    which resumes each conversation with its history intact) and nothing at all for a session that
-    is next launched or revived anyway.
+    Runtime providers are invoked per call. UI and billing decisions use the source
+    descriptor instead, and no resolved provider value is cached by this module.
 
-    The read is cheap and event-keyed: keysource caches on the file's own (inode, mtime_ns, size),
-    so a repeated call is a stat and a rewrite invalidates by construction. The value is never
-    written back into os.environ — the one-claimer property above is what keeps an ambient key from
-    billing every session, and a live source must not undo it.
-
-    COMMAND mode (ROMP_CREDENTIAL_COMMAND set, 2026-09-05): the key is the `ANTHROPIC_API_KEY` line
-    of the set the configured command prints — "" when it prints none, which on an installation
-    whose sessions bill through Claude Code's apiKeyHelper is the intended state. The mode wins
-    outright: a key line in the env file and the startup claim are IGNORED there (the boot verdict
-    says so once, naming the file or the variable), because a stray copy silently becoming the
-    injected key is the wrong-account failure the mode exists to prevent. The startup pop still
-    happens first, for the same one-claimer reason. The read is _noted_take's: a run that fails here
-    (a judge's key-billed call reads the key this way) is said once, like one on a connect."""
-    startup = startup_api_key()      # ALWAYS first: the pop must happen even when the file answers
+    COMMAND mode (ROMP_CREDENTIAL_COMMAND set, 2026-09-05; fork-only, the key-free install): the key
+    is the `ANTHROPIC_API_KEY` line of the set the configured command prints, "" when it prints none,
+    which on an installation whose sessions bill through Claude Code's apiKeyHelper is the intended
+    state. The mode wins outright: a key line in the env file, a 1Password reference and the startup
+    claim are IGNORED there (the boot verdict says so once, naming the file or the variable), because
+    a stray copy silently becoming the injected key is the wrong-account failure the mode exists to
+    prevent. The startup pop still happens first, for the same one-claimer reason. The read is
+    _noted_take's: a run that fails here (a judge's key-billed call reads the key this way) is said
+    once, like one on a connect. With the command unset this is upstream's read: the selected source
+    (work_api_key_source) resolved."""
+    startup_api_key()                # ALWAYS first: the pop must happen even when the command answers
     if _envsrc.configured():
         return _noted_take()[1].get(_envsrc.KEY_VAR, "")
-    live = _keysrc.read_key()
-    _check_key_file_agrees(startup, live)
-    return live or startup
+    return work_api_key_source().resolve()
+
+
+def _note_key_file_gone(live: str) -> None:
+    """Say ONCE, on stderr, when the env file's static key line is REMOVED while this process runs. The
+    file stays authoritative (select_source returns an empty file source, never the startup key), so
+    every session without an explicit Billing pick quietly starts launching on the login — a change of
+    who pays with nothing in the log to find it by (review find, 2026-09-06). Fingerprint and path only.
+    A line that comes back re-arms the notice, so a second removal is said too."""
+    global _FILE_KEY_SEEN_FP
+    if live:
+        _FILE_KEY_SEEN_FP = _keysrc.fingerprint(live)
+        return
+    if not _FILE_KEY_SEEN_FP:
+        return
+    sys.stderr.write("work key: the %s line (sha256:%s) is GONE from %s — the file stays authoritative, so "
+                     "sessions without an explicit Billing pick now launch on the login. Restore the line or "
+                     "select a source with `romp keyswap`.\n"
+                     % (_keysrc.KEY_VAR, _FILE_KEY_SEEN_FP, _keysrc.service_env_path()))
+    _FILE_KEY_SEEN_FP = ""
 
 
 def key_source_mode() -> str:
@@ -3906,7 +4190,12 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
     a startup ANTHROPIC_API_KEY (ignored: the command supplies the key); ExecStart routed through a
     shell (the variables it loads freeze until a manager restart, which the mode makes needless);
     ROMP_EXPECTED_AUTH=login while the command prints a key; ROMP_* names the command printed
-    (dropped). Other credential-shaped names in the kernel's own environment are informational.
+    (dropped). Other credential-shaped names in the kernel's own environment are listed, not flagged, with
+    what becomes of them: the SDK transport hands every session CLI the kernel's whole environment (the
+    options overlay merges over it), judge CLIs copy it, and tmux panes inherit the manager-started
+    server's globals; the kernel takes out only ANTHROPIC_API_KEY, the CLI's token names and, while it
+    is the 1Password consumer, op's OP_* names, so every name that line lists reaches every session,
+    judge call and pane the kernel launches (probe, 2026-09-07). Nothing here scrubs them.
     File mode says nothing the existing checks (_warn_credential_lines_in_env_file, _check_key_file_agrees)
     do not already say — an unset command leaves upstream's log byte for byte — except a unit
     credential under a declared auth. Command mode only: ROMP_EXPECTED_AUTH=key with nothing to
@@ -3984,8 +4273,20 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
                 "it sits in a process environment the command mode exists to keep clean.")
         others = [n for n in env_names if n != "ANTHROPIC_API_KEY"]
         if others:
-            say("key source: credential-shaped names in the kernel's own environment: %s — frozen copies the "
-                "sessions do not receive; the command's set is what a launch carries." % ", ".join(others),
+            # Not flagged, but stated plainly (probe, 2026-09-07): the SDK transport spawns each session CLI
+            # with this process's whole os.environ under the options overlay, judge CLIs copy os.environ
+            # (judge.py _judge_env) and tmux panes take the manager-started server's globals; the kernel
+            # takes out ANTHROPIC_API_KEY (startup_api_key), the CLI's token names (startup_auth_env, given
+            # back to login launches) and, while it is the op consumer, op's OP_* names (claim_op_env), all
+            # before this verdict runs, so every name listed here is one the sessions inherit. Whether to
+            # scrub them is the owner's ruling, filed separately.
+            say("key source: credential-shaped names in the kernel's own environment: %s. They are inherited: "
+                "every session CLI and judge CLI this kernel launches gets the kernel's environment with only "
+                "ANTHROPIC_API_KEY, the CLI's own token names and, while romp is the 1Password consumer, op's "
+                "OP_* names taken out, and "
+                "every tmux pane gets the manager-started server's globals, so each name listed reaches them "
+                "all unless it is removed from the manager's environment. The command's set is merged over that "
+                "inherited environment at each launch." % ", ".join(others),
                 problem=False)
         if unit_hits:
             say("key source: the service definition carries credential-shaped lines — %s — copies on disk "
@@ -4022,7 +4323,7 @@ def key_source_verdict(environ=None, *, service_env_text: str = "", unit_texts=(
 
 FAST_ORG_PATH = "/api/claude_code_penguin_mode"   # the CLI's own fast-mode availability endpoint
 
-_FAST_ORG_VERDICTS: dict[str, bool] = {}   # key -> the server's last definitive answer
+_FAST_ORG_VERDICTS: dict[str, bool] = {}   # key digest -> the server's last definitive answer
 
 
 def _fetch_key_fast_org(key: str) -> bool | None:
@@ -4060,10 +4361,11 @@ def key_fast_org_env(key: str, log) -> dict[str, str]:
     check is fresh exactly when it matters), capped at 3s so a black-holed network cannot hang a
     connect. Never injected for login sessions: there the CLI's probe already asks the account that
     pays."""
+    key_id = hashlib.sha256(key.encode("utf-8")).hexdigest()
     verdict = _fetch_key_fast_org(key)
     if verdict is None:
-        if key in _FAST_ORG_VERDICTS:
-            verdict = _FAST_ORG_VERDICTS[key]
+        if key_id in _FAST_ORG_VERDICTS:
+            verdict = _FAST_ORG_VERDICTS[key_id]
             log("fast-mode org check (key account): unreachable — standing on the last answer "
                 "(%s)" % ("enabled" if verdict else "disabled"))
         else:
@@ -4072,9 +4374,9 @@ def key_fast_org_env(key: str, log) -> dict[str, str]:
                 problem=True)
             return {}
     else:
-        if _FAST_ORG_VERDICTS.get(key) != verdict:
+        if _FAST_ORG_VERDICTS.get(key_id) != verdict:
             log("fast-mode org check (key account): %s" % ("enabled" if verdict else "disabled"))
-        _FAST_ORG_VERDICTS[key] = verdict
+        _FAST_ORG_VERDICTS[key_id] = verdict
     if verdict:
         return {"CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK": "1"}
     return {"CLAUDE_CODE_DISABLE_FAST_MODE": "1"}
@@ -4381,7 +4683,7 @@ class SdkSession:
         #   session-so-far cost every turn (the user 2026-08-08, whose spend line was fiction). Reset
         #   at each connect: a fresh CLI process starts its counter at zero.
         self._last_usage_totals = {}  # same for the TOKEN counts: per-field watermarks of the result
-        #   event's cumulative counters — `modelUsage` summed across models (see result_token_totals;
+        #   event's cumulative counters: `modelUsage` summed across models (see result_token_totals and _turn_usage;
         #   the `usage` dict is per-turn and main-loop-only on current CLIs, so diffing IT under-counted
         #   tokens by orders of magnitude, 2026-09-05), each field folding as a delta — raw folding
         #   compounded the token readout exactly like the dollars (the user 2026-08-08, round two: the
@@ -4933,11 +5235,21 @@ class SdkSession:
         self._ctx_refreshing = True
         try:
             cu = await self.client.get_context_usage()
-        except Exception:
+        except Exception as e:
             cu = None
+            # say so: a control channel that keeps refusing otherwise shows only as a stale battery number
+            # (review find on #924, 2026-09-07); one line, not the problems ring, since a lone hiccup heals
+            # on the rerun below
+            self.backend._log("context refresh (%s) failed: %s: %s" % (self.name, type(e).__name__, e))
         finally:
             self._ctx_refreshing = False
         if not isinstance(cu, dict):
+            # a queued ask survives THIS attempt's outcome: this early return used to sit before the
+            # rerun tail, so a failed/None payload dropped a switch-time ask on the floor and the old
+            # model's number stood until the next turn (PR #886 review) — same tail, both exits
+            if self._ctx_refresh_again:
+                self._ctx_refresh_again = False
+                await self._do_refresh_context()
             return
         changed = False
         pct = cu.get("percentage")
@@ -5069,20 +5381,18 @@ class SdkSession:
             self.backend._poke()
 
     def effective_auth(self, key=None) -> str:
-        """'key' or 'login' — what _options launches this session with. An explicit pick wins; unset
-        preserves the pre-selector world, where a manager environment that carried a key billed every
-        session to it (so absent a choice, the key still wins when one exists). 'key' with no key to
-        inject falls to login rather than launching with a var the CLI would refuse on — _options
-        logs that fall loudly (it is a misconfiguration, not a preference).
+        """Billing intent, without retrieving credentials for repeated UI snapshots.
 
-        `key` lets a caller supply the key it already read, so a connect decides and injects on ONE
-        read: the source is live now (a keyswap can land between two reads), and re-reading here
-        could have _options inject a key the decision was never made against. Absent, it reads the
-        backend's live key exactly as it always did."""
+        An explicit key pick stays keyed even when retrieval fails: launch must report
+        the missing credential instead of billing the login. `key` permits callers
+        holding an already-resolved credential to avoid a second source read.
+        """
         if self.auth == "login":
             return "login"
+        if self.auth == "key":
+            return "key"
         if key is None:
-            key = self.backend.work_key
+            key = self.backend.work_key_configured
         return "key" if key else "login"
 
     async def _do_refresh_usage(self):
@@ -5277,7 +5587,13 @@ class SdkSession:
             self._drop_live_work("reconnect")
             # settle + recover anything the abandoned client stranded — see _reconcile_stranded
             self._reconcile_stranded()
-            opts = self.backend._options(self, ClaudeAgentOptions)
+            try:
+                opts = self.backend._options(self, ClaudeAgentOptions)
+            except Exception as e:
+                # Credential retrieval precedes CLI construction. Surface its failure
+                # as a launch problem without treating it as a refused rewind.
+                self.backend._record_launch_error(self, e)
+                raise
             # Whether THIS connection carries the fastMode opt-in — snapshotted at the same moment
             # _options composes the flag-settings file, so the two can never disagree. The CLI only
             # interprets literal '/fast on|off' sends on a connection made with the flag; set_fast
@@ -5554,6 +5870,53 @@ class SdkSession:
         self._cli_working = (state == "working")
         append_state(self.backend.state_dir, self.sid, state)
 
+    def _fold_turn_tokens(self, totals: dict, cumulative: bool) -> dict:
+        """THIS turn's token counts from a result's counters (result_token_totals), the watermarks
+        updated. A CUMULATIVE map (modelUsage summed across models: per process, subagent-inclusive,
+        the same kind of counter as the dollars) folds as per-field DELTAS against the watermarks, a
+        field below its watermark folding whole (a reset we did not watch: a /clear, a new process).
+        A per-turn `usage` dict (no modelUsage on this result) lands WHOLE as the turn's figure, and is
+        ADDED to the watermarks so they keep meaning "tokens this process has accounted for": should
+        modelUsage appear later in the same process, its delta catches up the subagent tokens without
+        re-counting what landed here. Diffing the per-turn dict as a counter recorded turn-to-turn
+        growth (the 2.6M-token turn that landed as 6,346; the user 2026-09-06)."""
+        turn_u = {}
+        if cumulative:
+            for k, v in totals.items():
+                last = self._last_usage_totals.get(k, 0)
+                turn_u[k] = v - last if v >= last else v
+                self._last_usage_totals[k] = v
+        else:
+            for k, v in totals.items():
+                turn_u[k] = v
+                self._last_usage_totals[k] = self._last_usage_totals.get(k, 0) + v
+        return turn_u
+
+    def _turn_usage(self, msg):
+        """THIS turn's token counts for _record_spend, one dict in the API's snake_case names: the
+        result's modelUsage map diffed against the watermarks when the CLI emits it, else its per-turn
+        `usage` dict folded whole (result_token_totals decides which; _fold_turn_tokens keeps the
+        watermarks). The name upstream's spend ledger gave the same fold (their #956, 2026-09-06);
+        the settle calls the two halves itself so it can say when the fallback was taken
+        (usage_fallback_notice).
+
+        Why the two counters are not the same kind of number (upstream's measurement, 2026-09-06, on
+        CLI 2.1.263: a three-turn session read against its own transcript's per-call `usage` blocks):
+        `model_usage` (the CLI's modelUsage map) is a RUNNING TOTAL per model, process-wide, the same
+        lifecycle as total_cost_usd; the CLI documents it as cumulative (read the latest result rather
+        than summing across results) and a /clear zeroes it, so it folds as per-field deltas and a
+        field below its watermark is a reset we did not watch. The flat `usage` dict is the TURN's own
+        total, the main loop's per-query accumulator, equal to the sum of that turn's API calls (the
+        bundle emits it from a query-local beside `total_cost_usd` from a process-wide getter). It was
+        the process total when the delta logic was written (2026-08-08, `usage: this.totalUsage`); the
+        CLI has since moved it per-turn, and diffing a per-turn figure against the previous turn's
+        recorded a fraction of every turn (roughly half a day's tokens went missing, and five sessions'
+        recorded totals matched that subtraction to the token). Cache reads dominate either way, since
+        every API call of a turn re-reads the whole context, and the hover breaks the count down by
+        kind so the size of the number has its explanation."""
+        totals, cumulative = result_token_totals(msg)
+        return self._fold_turn_tokens(totals, cumulative)
+
     # ---- /api-health ingestion (ApiHealth) — every hook getattr-guards the session/backend fields so
     # a __new__-built test double, or a backend fake without the aggregator, passes through unharmed ----
 
@@ -5798,6 +6161,13 @@ class SdkSession:
                 # clearing bracket ends here (event-based; the ResultMessage below is only the backstop).
                 clearing = self._clearing
                 self._clearing = False
+                if clearing:
+                    # The CLI zeroed total_cost_usd and modelUsage at this instant (a /clear resets both,
+                    # same lifecycle); reset the spend watermarks on the EVENT rather than waiting for the
+                    # next result to read below them (review find on #956, 2026-09-07). The shrunken-counter
+                    # rule in _turn_usage / the cost delta stays as the backstop for a reset we did not see.
+                    self._last_cost_total = 0.0
+                    self._last_usage_totals = {}
                 # A RESUME landing on a NEW fsid = a fresh-headed fork: record the old->new lineage
                 # (see append_resume_fork for the full story — the parser stitches the chain from it,
                 # the user 2026-08-14). A /clear's flip and a born-as-a-fork copy record nothing.
@@ -6035,31 +6405,19 @@ class SdkSession:
                                       "would be wrong only if a CLI that restores cost history read a different "
                                       "transcript than the connect-time seed (last_cost_state)."
                                       % (self.name, delta, SANE_TURN_USD, total), problem=False)
+                    # the tokens: THIS turn's counts, from whichever result counter is a running total
+                    # (result_token_totals; the flat `usage` is per-turn now), folded against the watermarks
+                    # by _fold_turn_tokens (upstream's _turn_usage is the same two halves in one call)
                     totals, cumulative = result_token_totals(msg)
-                    turn_u = {}
-                    if cumulative:
-                        # modelUsage summed across models: the SAME kind of counter as the dollars — cumulative
-                        # per process, subagent-inclusive — so per-field deltas against the watermarks, a
-                        # shrunken field folding whole (see _last_usage_totals in __init__)
-                        for k, v in totals.items():
-                            last = self._last_usage_totals.get(k, 0)
-                            turn_u[k] = v - last if v >= last else v
-                            self._last_usage_totals[k] = v
-                    else:
-                        # No modelUsage on a paid result: the `usage` dict is THIS TURN's main-loop count
-                        # (per-turn in streaming-input sessions on every CLI build we can read), so it lands as
-                        # the turn's figure — diffing it as a counter recorded turn-to-turn growth (the 2.6M-token
-                        # turn that landed as 6,346). It is ADDED to the watermarks so they keep meaning "tokens
-                        # this process has accounted for": should modelUsage appear later in the same process,
-                        # its delta catches up the subagent tokens without re-counting what landed here. Said as
-                        # a problem the user can act on (usage_fallback_notice): the token columns are
-                        # main-loop-only from here on; the dollars are unaffected. ONCE PER KERNEL LIFE for the
-                        # SDK cause, which is the host's (the backend's flag: per session it was one card per
-                        # live session plus one per dormant revive, for a single remedy); once per session for
-                        # the CLI cause, which is this session's.
-                        for k, v in totals.items():
-                            turn_u[k] = v
-                            self._last_usage_totals[k] = self._last_usage_totals.get(k, 0) + v
+                    turn_u = self._fold_turn_tokens(totals, cumulative)
+                    if not cumulative:
+                        # No modelUsage on a paid result: the `usage` dict landed as the turn's own figure
+                        # (see _fold_turn_tokens). Said as a problem the user can act on
+                        # (usage_fallback_notice): the token columns are main-loop-only from here on; the
+                        # dollars are unaffected. ONCE PER KERNEL LIFE for the SDK cause, which is the host's
+                        # (the backend's flag: per session it was one card per live session plus one per
+                        # dormant revive, for a single remedy); once per session for the CLI cause, which is
+                        # this session's.
                         if usage_fallback_is_sdk(msg):
                             if not getattr(self.backend, "_usage_fallback_sdk_noted", False):   # getattr: test doubles
                                 self.backend._usage_fallback_sdk_noted = True
@@ -6843,10 +7201,12 @@ class SdkSession:
         return {}
 
     def _live_subagents(self) -> list:
-        """The Task subagents running RIGHT NOW: [{"type","since"}], oldest first. Copied under the lock (hooks
-        mutate on the loop thread; snapshot() reads on the kernel thread)."""
+        """The Task subagents running RIGHT NOW: [{"type","since","agentId"}], oldest first. Copied under the
+        lock (hooks mutate on the loop thread; snapshot() reads on the kernel thread). agentId is the hook's
+        agent_id — the same `a…` id the CLI names the agent's own transcript file after, so the kernel can
+        say WHICH launch is alive, not only how many (plans/subagent-transcripts.md, 2026-09-05)."""
         with self._sub_lock:
-            return sorted((dict(v) for v in self._subagents.values()), key=lambda d: d.get("since") or 0)
+            return sorted(({**v, "agentId": k} for k, v in self._subagents.items()), key=lambda d: d.get("since") or 0)
 
     def _drop_live_work(self, reason: str):
         """The CLI process is gone — a reconnect (an effort/fast/auth switch) abandons the old client — so
@@ -6880,7 +7240,7 @@ class SdkSession:
                                                             len(died), "" if len(died) == 1 else "s", reason))
             self.backend._poke()
 
-    _RECONNECT_CAUSE = "its process was restarted by a settings switch or a rewind"   # the death notice's cause on
+    _RECONNECT_CAUSE = "a settings switch or a rewind restarted it"   # the death notice's cause on
     #   a reconnect: every trigger of the reconnect loop (effort/fast/auth/mode switches, edit-message rewinds and
     #   rollbacks) is named truthfully — the loop cannot tell them apart here, so the notice names the family
 
@@ -7139,10 +7499,13 @@ class SdkSession:
         self.backend._poke()
 
     def _live_bg_tasks(self) -> list:
-        """The background tasks running RIGHT NOW: [{"desc","type","since","toolUseId","lastTool"}], oldest
-        first. Copied under the lock, like _live_subagents."""
+        """The background tasks running RIGHT NOW: [{"desc","type","since","toolUseId","lastTool","taskId"}],
+        oldest first. Copied under the lock, like _live_subagents. `taskId` is the CLI's own lifecycle key —
+        for an Agent task that IS the agent id (see _on_task_event), which is how the kernel joins this row
+        to the SubagentStart hook's: without it the same agent listed twice in the Awaiting box, once by
+        type and once as "Running <description>" (2026-09-06)."""
         with self._sub_lock:
-            return sorted((dict(v) for v in self._bg_tasks.values()), key=lambda d: d.get("since") or 0)
+            return sorted(({**v, "taskId": k} for k, v in self._bg_tasks.items()), key=lambda d: d.get("since") or 0)
 
     # ---- snapshot for live_sessions() ----
 
@@ -7469,6 +7832,7 @@ class SdkBackend:
         #                                    the catalog lives in the kernel; the backend never imports it
         self._notify = notify              # notify(app, msg) -> push to clients (kernel._send_to_app)
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
+        self._owns_memo: dict = {}         # sid -> ((reg mtime_ns, size), owns?) — see owns()
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
         self._push_session_cb = push_session   # targeted ONE-session push (kernel _push_session_now) for
         #   per-session chip events (the connect handshake): a wake alone leaves the flip riding the next
@@ -7508,11 +7872,17 @@ class SdkBackend:
         # so a locked site may call a helper that locks. The class attribute below is the default
         # for __new__-built test doubles.
         self._live_lock = threading.RLock()
+        self._live_rev: dict[str, int] = {}       # sid -> the tail's revision: advanced by _touch_live at every
+        #                                           change to the sid's tail (add/edit/drop/flag), read by live_rev
+        #                                           — the chat-build signature's live component (2026-09-03; the
+        #                                           complete per-session key since round-4 plan P4, 2026-09-07);
+        #                                           never read as a value beyond equality
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
         self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
         self._quiesce_until = 0.0                 # `romp down` going-down hold (quiesce): runtime-only for the same reason
         self._drain_hold_since = 0.0
         self._drain_hold_rang = False
+        self._drain_park = ""                     # the manager's park identity (?park=<since>) the episode is keyed on (T240c)
         self._drain_wake_timer = None
         self.login_ok = lambda: True              # the kernel wires its credential-store probe (T124); permissive unwired
         self._usage_all_keyed = False             # refresh_usage's one-shot: the last refresh found only
@@ -7522,6 +7892,9 @@ class SdkBackend:
         self._fork_children_memo = None           # (sdk/ dir mtime_ns, {parent sid: [child lineage]}) — fork_children()
         self._work_key_pin: str | None = None     # a test's explicit `be.work_key = …` (see the property)
         startup_api_key()                         # claim any ambient key OUT of os.environ, right here:
+        if not _envsrc.configured():              # (upstream) select the file/op source without resolving op;
+            work_api_key_source()                 #   in COMMAND mode (fork) the command wins and the verdict below reports
+        startup_auth_env()                        # claim the CLI's token names too; a login launch gets them back
         #   the transport merges options.env over this process's env, so an ambient key would bill
         #   EVERY session whatever its pick. The VALUE is read per launch off `work_key` below, live,
         #   so a keyswap needs no kernel restart (the user 2026-09-04).
@@ -7576,9 +7949,13 @@ class SdkBackend:
         # The dependency check, done ONCE here: absent → every session this backend owns reports the same
         # launch error (launch_error), instead of each one silently dying at its own lazy import.
         self._sdk_missing = not sdk_importable()
+        # The venv verdict every refusing surface reads (unavailable_verdict): re-derived from the disk
+        # at request time, cached on its fingerprint, so a venv built for another python is named as
+        # such rather than as a missing install, and a venv built AFTER this check names the restart.
+        self._venv_verdict_cache = None
         if self._sdk_missing and log:
             self._log("claude_agent_sdk is NOT importable — every SDK session will report itself unable to "
-                      "start (run bin/romp-sdk-setup). tmux sessions are unaffected.", problem=True)
+                      "start. %s" % self.unavailable_text(), problem=True)
         # Per-session transient scopes (see cli_scope_supported): ONE verdict per backend, cached here;
         # _options reads it at every connect. The probe runs here, never per session.
         self.cli_scope = cli_scope_supported(log=self._log)
@@ -7650,15 +8027,10 @@ class SdkBackend:
 
     @property
     def work_key(self) -> str:
-        """The manager's API key, READ LIVE per access (work_api_key: the env file's current line,
-        else the startup claim). A property rather than the frozen attribute it used to be, so
-        every existing reader becomes hot-swap-aware at once — _options' injection, effective_auth
-        and default_auth's key/login fallback, set_auth's refusal to pick a key that isn't there,
-        and the kernel's has-a-key bool for the picker. Cheap enough for all of them: the parse is
-        cached on the file's stat identity, so an access is a stat.
+        """Resolve the current key. UI readers must use work_key_configured instead.
 
-        Assignment PINS a value for this backend and stops the live read (`be.work_key = ""` — how
-        the tests stand up a keyless manager). A pin is deliberate and never set by romp itself."""
+        Assignment pins a synthetic key for tests; production never assigns here.
+        """
         if self._work_key_pin is not None:
             return self._work_key_pin
         return work_api_key()
@@ -7667,28 +8039,57 @@ class SdkBackend:
     def work_key(self, value) -> None:
         self._work_key_pin = str(value or "")
 
-    def _work_key_and_source(self, cred=None) -> tuple:
-        """(key, source) in ONE read — "command" (the configured command's ANTHROPIC_API_KEY line),
-        "file" (the env file's line), "startup" (the claim made at boot, because the file has no
-        usable line), "pin" (a test's explicit value), "" (no key anywhere). _options wants both,
-        and must not read the source twice per connect: a keyswap can land between two reads, and
-        the source named in the log must be the source injected. In command mode `cred` is the
-        (record, values) pair _options took from envsource.take() — ONE read of the set, so the key
-        decided on here and the role variables merged there come from the same run; the file and
-        the startup claim are not consulted (the mode wins; the boot verdict said so once)."""
+    def _work_key_source(self, cred=None):
+        """The selected key source as a descriptor (keysource.KeySource), read WITHOUT resolving a
+        provider: what work_key_configured, effective_auth, set_auth and the /keycycle route decide on.
+        A test's pin is an environment source holding the pin. In COMMAND mode (ROMP_CREDENTIAL_COMMAND,
+        fork-only) the descriptor is an environment source holding the set's ANTHROPIC_API_KEY line:
+        `configured` then reads "the set carries a key", `resolve()` hands back that same cached value
+        (envsource coalesces and caches the run; no second run), and the kind tells
+        keysource.runtime_reserved_names that nothing extra is reserved, since envsource drops the CLI's
+        own auth names from the set itself. `cred` is a (record, values) pair the caller already took
+        (_options takes ONE per connect), else the read happens here, noted through this backend."""
+        if self._work_key_pin is not None:
+            return _keysrc.KeySource("environment", self._work_key_pin)
+        if _envsrc.configured():
+            snap, vals = cred if cred is not None else self._cred_take()
+            return _keysrc.KeySource("environment", vals.get(_envsrc.KEY_VAR, ""))
+        return work_api_key_source()
+
+    def reserved_names_source(self):
+        """reserved_names_source (module) for a caller holding the backend: the kernel's /new door."""
+        return reserved_names_source()
+
+    @property
+    def work_key_configured(self) -> bool:
+        """Whether a key source is selected, without invoking a provider."""
+        return self._work_key_source().configured
+
+    def work_key_source_fp(self) -> str:
+        """Non-secret source identity; runtime references never resolve here."""
+        return self._work_key_source().fingerprint()
+
+    def _work_key_and_source(self, source=None, cred=None) -> tuple:
+        """(key, source kind) in ONE read: "command" (the configured command's ANTHROPIC_API_KEY line),
+        "file" (the env file's line), "op" (retrieved at runtime from 1Password), "startup" (the claim
+        made at boot, because the file has no usable line), "pin" (a test's explicit value), "" (no key
+        anywhere). _options wants both, and must not read the source twice per connect: a keyswap can
+        land between two reads, and the source named in the log must be the source injected. In command
+        mode `cred` is the (record, values) pair _options took from envsource.take(), ONE read of the set,
+        so the key decided on here and the role variables merged there come from the same run; the file,
+        the reference and the startup claim are not consulted (the mode wins; the boot verdict said so
+        once). Otherwise `source` is the descriptor the caller selected (work_api_key_source), resolved
+        here, which for an op reference is the one provider call of the launch."""
         if self._work_key_pin is not None:
             return self._work_key_pin, ("pin" if self._work_key_pin else "")
-        startup = startup_api_key()
         if _envsrc.configured():
             snap, vals = cred if cred is not None else _envsrc.take()
             self._note_credential_set(snap)
             key = vals.get(_envsrc.KEY_VAR, "")
             return key, ("command" if key else "")
-        live = _keysrc.read_key()
-        _check_key_file_agrees(startup, live)
-        if live:
-            return live, "file"
-        return startup, ("startup" if startup else "")
+        if source is None:
+            source = work_api_key_source()
+        return source.resolve(), ("startup" if source.kind == "environment" else source.kind)
 
     def key_source_mode(self) -> str:
         return key_source_mode()
@@ -7699,7 +8100,8 @@ class SdkBackend:
         run and hashed inside envsource, the bytes never seen here), else ("", "login") when no
         helper is configured at all (the machine login bills, and there is nothing to fingerprint —
         not a failure) or ("", "") when a configured helper could not be fingerprinted; in file mode
-        the file's or the startup key ("key"). The value cycle_key converges sessions on, and what
+        the file's or the startup key ("key"), or ("", "") for a 1Password reference, which is retrieved
+        per launch and never held. The value cycle_key converges sessions on, and what
         the kernel's /keycycle answer carries as keyFp and keyKind. `snap` is a record the caller
         already took and `values` the set beside it (_cred_take's pair), so one operation reads the
         set once and the helper runs in that set's environment rather than reading it again — which
@@ -7713,7 +8115,16 @@ class SdkBackend:
                 return "", "login"                # no key in the set, no helper: the machine login bills
             fp, _reason = self._helper_fingerprint(snap, values)
             return fp, ("helper" if fp else "")
-        fp = _keysrc.fingerprint(self.work_key)
+        # FILE mode: the selected source's own identity, never a provider call. A key line, the startup
+        # claim or a test's pin fingerprint as the key they hold (the value a launch stamps); a 1Password
+        # reference is retrieved per launch and never held, so a status read has nothing to fingerprint
+        # and answers ("", "") rather than running `op read` for a value it would only hash. Upstream's
+        # rule for /keycycle, kept here because the route reads this too: the fold's first cut resolved
+        # the reference twice per bare status read (review find, 2026-09-07).
+        source = self._work_key_source()
+        if source.kind == "op":
+            return "", ""
+        fp = source.fingerprint()
         return fp, ("key" if fp else "")
 
     def _cred_take(self) -> tuple:
@@ -7766,6 +8177,8 @@ class SdkBackend:
                        % (_keysrc.service_env_path(), _keysrc.KEY_VAR))
             elif source == "command":
                 src = "the ANTHROPIC_API_KEY line the credential command printed"
+            elif source == "op":
+                src = "retrieved at runtime from 1Password"
             else:
                 src = "read from %s" % _keysrc.service_env_path()
             self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
@@ -7875,7 +8288,9 @@ class SdkBackend:
             if snap is not None and self._work_key_pin is None:
                 work_key_present = bool(snap.get("hasKey"))
             else:
-                work_key_present = bool(self.work_key)
+                # the descriptor, not the key: a boot must not retrieve a 1Password reference (upstream's
+                # rule for UI readers, 2026-09-05), and a configured reference counts as a key present
+                work_key_present = self.work_key_configured
             v = key_source_verdict(service_env_text=env_text, unit_texts=_unit_texts(),
                                    helper_command=_envsrc.helper_command(), snapshot=snap,
                                    work_key_present=work_key_present,
@@ -7905,7 +8320,8 @@ class SdkBackend:
 
     def key_source_status(self) -> dict:
         """The value-free key-source facts the /keycycle route reports beside its rows: source
-        ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire), fpKind
+        ("file"|"command"), fp (the current credential fingerprint, keyFp on the wire in command
+        mode; "" for a 1Password reference, never resolved for a status), fpKind
         ("key"|"helper"|"login"|""; keyKind on the wire — "login" is a set with no key and no helper
         configured: the machine login bills, nothing to fingerprint, no error), err (why there is
         no fingerprint or the last run failed; "" when fine), setFp and selector (command mode),
@@ -7974,7 +8390,8 @@ class SdkBackend:
             self._log("credential command: %s completed a turn on the credential last refused (sha256:%s); a later "
                       "refusal re-runs the command again" % (getattr(sess, "name", "?"), fp))
 
-    def cycle_key(self, sid: str) -> str:
+    def cycle_key(self, sid: str, expected_source_fp: str | None = None, current_key_fp: str | None = None,
+                  probe: bool = False, resolve_error: str | None = None) -> str:
         """Re-present the CURRENT credential set to one LIVE session by reconnecting it — the apply half
         of `romp keyswap --cycle` (the user 2026-09-04).
 
@@ -8014,23 +8431,42 @@ class SdkBackend:
         launches after this check would die with it (second review pass, 2026-09-04). So "cycling" means
         exactly one thing — an immediate reconnect of a session with nothing in flight — and the operator
         re-runs --cycle on the sessions the report named as skipped for in-flight work once they are
-        quiet; sessions already moved read "current" on that re-run."""
+        quiet; sessions already moved read "current" on that re-run.
+
+        An optional source fingerprint binds the request to the CLI's preflight check. Check
+        metadata again after provider retrieval, which can take time, before scheduling a reconnect.
+        The actual launch still reads its source afresh; no credential is retained for that launch.
+        `current_key_fp` is the fingerprint of a key the CALLER resolved once for a whole request
+        (the /keycycle route, cycling many sessions): passed, this session is compared against it and
+        nothing is retrieved here — a dozen quiet sessions used to mean a dozen serial `op read`s on
+        one request thread (review find, 2026-09-05). `probe=True` classifies only — "unknown" /
+        "dormant" / "login" / "working", or "cycle" for a session that WOULD need the key — so the
+        caller can resolve once only when some session needs it; `resolve_error` is that request-level
+        failure, raised here at the point retrieval would have happened, so the rows that never needed
+        a key keep their own classification.
+        """
         if not self.owns(sid):
             return "unknown"
         s = self.sessions.get(sid)
         if s is None:
             return "dormant"
-        keyed = s.effective_auth() == "key"
         stamped_key = getattr(s, "_launched_key_fp", None) or ""
-        if not _envsrc.configured():
-            if not keyed:
-                return "login"
-            fp = self.work_key_fp()
-            if fp and stamped_key == fp:
-                return "current"
-            why = "to pick up the current work key (sha256:%s)" % fp
-        else:
+
+        def working() -> bool:
+            with s._sub_lock:
+                live_work = len(s._subagents) + len(s._bg_tasks)
+            return bool(live_work or s.inflight > 0 or s._pending)
+
+        if _envsrc.configured():
+            # COMMAND mode (fork-only). The compare reads the set, the helper's fingerprint and the role
+            # variables, none of which is a provider call (envsource caches the run), so it stays ahead
+            # of the working check as before; `probe` still classifies without reconnecting, and the
+            # request-level knobs of the op path (expected_source_fp, current_key_fp, resolve_error)
+            # have nothing to bind to here. Keyed = the session is not a login pick AND the set carries
+            # a key: the fork's effective_auth rule for this mode (a key pick with nothing to inject
+            # launched without a key, and stamped the helper's output).
             snap, vals = self._cred_take()            # ONE read of the set for the whole compare, noted
+            keyed = s.auth != "login" and bool(snap.get("hasKey"))
             cur_fp, kind = self.credential_fingerprint(snap, vals)
             cur_role = self.role_fingerprint(vals)
             stamped_role = getattr(s, "_launched_set_fp", None) or ""
@@ -8061,10 +8497,38 @@ class SdkBackend:
             if not reasons:
                 return "current"
             why = "; ".join(reasons)
-        with s._sub_lock:
-            live_work = len(s._subagents) + len(s._bg_tasks)
-        if live_work or s.inflight > 0 or s._pending:
-            return "working"
+            if working():
+                return "working"
+            if probe:
+                return "cycle"
+        else:
+            source = self._work_key_source()
+            if s.effective_auth(source.configured) != "key":
+                return "login"
+            if working():
+                return "working"
+            if probe:
+                return "cycle"
+            if resolve_error is not None:
+                raise _keysrc.KeySourceError(resolve_error)
+            source.validate()
+            source_fp = source.fingerprint()
+            if expected_source_fp is not None and source_fp != expected_source_fp:
+                raise _keysrc.KeySourceError("API key source changed; check it before cycling again")
+            if current_key_fp is not None:
+                fp = current_key_fp
+            else:
+                key, _source = self._work_key_and_source(source)
+                if not key:
+                    raise _keysrc.KeySourceError("API key billing selected but no API key source is configured")
+                current_source = self._work_key_source()
+                current_source.validate()
+                if current_source.fingerprint() != source_fp:
+                    raise _keysrc.KeySourceError("API key source changed during retrieval; check it before cycling again")
+                fp = _keysrc.fingerprint(key)
+            if stamped_key == fp:
+                return "current"
+            why = "to pick up the current work key (sha256:%s)" % fp
         s.request_reconnect(defer=False)
         self._log("keyswap (%s): reconnecting — %s" % (s.name, why))
         return "cycling"
@@ -8124,7 +8588,7 @@ class SdkBackend:
             if lastsids:
                 try:
                     ps = subprocess.run(PS_ARGV, capture_output=True, text=True, timeout=10).stdout
-                    for pid in find_orphan_clis(ps.splitlines(), lastsids):
+                    for pid in find_orphan_clis(ps.splitlines(), lastsids, os.getpid()):
                         if pid == os.getpid():
                             continue
                         try:
@@ -8525,15 +8989,56 @@ class SdkBackend:
         run (the user 2026-07-28)."""
         return not self._sdk_missing
 
-    def busy_count(self) -> int:
-        """How many SDK sessions have a turn IN FLIGHT right now — the manager's quiet-window gate
-        for deferred deploy restarts (the kernel's /busy route). Authoritative: the same per-session
-        inflight counter the drain uses to count the turns a restart would cut. Queued-but-unstarted
-        turns don't count — the persisted queue survives a bounce losslessly; only an in-flight turn
-        gets interrupted."""
+    def unavailable_verdict(self) -> dict:
+        """The disk's verdict on the SDK venv against this interpreter (sdk_venv_verdict), read at
+        REQUEST time. The one source every refusing surface consults: the session card (launch_error)
+        and the kernel's creation refusal (_sdk_setup_hint) read this function, so a rebuild while the
+        kernel runs moves both to "restart romp" together instead of one saying "isn't installed" while
+        the other says mismatch (review 2026-09-06). Cached on the venv's on-disk fingerprint, so a
+        card render costs a few stats and the interpreter probe runs once per disk state."""
+        fp = sdk_venv_fingerprint(self.state_dir)
+        cached = self._venv_verdict_cache
+        if cached is not None and cached[0] == fp:
+            return cached[1]
+        v = sdk_venv_verdict(self.state_dir)
+        self._venv_verdict_cache = (fp, v)
+        return v
+
+    def unavailable_text(self) -> str:
+        """The session card's text for a backend whose SDK did not import at construction, from the
+        verdict as it stands now (sdk_unavailable_text)."""
+        return sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(), started_missing=True)
+
+    def creation_refusal(self, default=SDK_SETUP_REFUSAL) -> str:
+        """The session-creation refusal from the same verdict the card reads (sdk_creation_refusal)."""
+        return sdk_creation_refusal(self.unavailable_verdict(), default=default)
+
+    def busy_breakdown(self):
+        """(in-flight, background): how many SDK sessions have a turn IN FLIGHT, and how many OTHERS
+        have live BACKGROUND WORK — a Workflow run, a background agent or shell (_bg_tasks / _subagents)
+        — with no turn in flight between their own turns. Each session is counted once, in-flight
+        first. Background work counted nowhere was how a quiet deploy applied instantly over live
+        Workflow runs and killed them (T240: eight review runs lost in one night). Queued-but-
+        unstarted turns still don't count — the persisted queue survives a bounce losslessly."""
         with self._lock:
             sessions = list(self.sessions.values())
-        return sum(1 for s in sessions if s.inflight and not s.ended)
+        inflight = background = 0
+        for s in sessions:
+            if s.ended:
+                continue
+            if s.inflight:
+                inflight += 1
+            elif s._bg_tasks or s._subagents:
+                background += 1
+        return inflight, background
+
+    def busy_count(self) -> int:
+        """How many SDK sessions a restart would DISRUPT right now — a turn in flight OR live
+        background work (see busy_breakdown) — the manager's quiet-window gate for deferred deploy
+        restarts (the kernel's /busy route). Authoritative: the same per-session counters the drain
+        and the task stream keep."""
+        inflight, background = self.busy_breakdown()
+        return inflight + background
 
     # ── deploy-drain hold (T121 part 1) ─────────────────────────────────────
     # While a quiet deploy restart is PARKED at the manager, this kernel holds NEW turn starts so
@@ -8549,15 +9054,69 @@ class SdkBackend:
     DRAIN_HOLD_TTL = 12.0     # seconds; ~4 manager polls — the lease outlives a missed poll, not a dead manager
     DRAIN_LOUD_S = 300.0      # a drain still holding after 5 min rings — visible, never mysterious
 
-    def refresh_drain_hold(self) -> None:
-        """Arm/extend the drain lease (the manager's parked quiet poll calls this each tick)."""
+    def note_parked_poll(self, park: str) -> None:
+        """A parked quiet poll carrying the manager's park identity (T240c). The EPISODE — the one
+        "deploy restart parked" line and the 5-minute "still parked" ring — keys on that identity, never
+        on a time window: the manager drops the hold for minutes at a time during background-only
+        stretches (T240), so the 2×TTL window mis-read the next in-flight re-arm as a new park, and a
+        park held ONLY by background work never reached refresh_drain_hold at all and stayed silent
+        after its first line. A plain parked poll now starts, continues and rings the episode too.
+        An empty identity is a no-op (nothing to key on), and one BELOW the current identity is a
+        stale probe from a park the manager has since replaced — ignored rather than flipping the
+        episode back and forth (review find: handler threads take the lock in no fixed order)."""
+        self._park_seen(str(park or ""), time.time())
+
+    @staticmethod
+    def _park_ord(park):
+        try:
+            return int(park)
+        except (TypeError, ValueError):
+            return None
+
+    def _park_seen(self, park: str, now: float) -> None:
+        if not park:
+            return
+        with self._lock:
+            new_episode = park != self._drain_park
+            if new_episode:
+                a, b = self._park_ord(park), self._park_ord(self._drain_park)
+                if a is not None and b is not None and a < b:
+                    return                            # a stale probe from a replaced park
+                self._drain_park = park
+                self._drain_hold_since = now
+                self._drain_hold_rang = False
+            ring = (not new_episode and self._drain_hold_since > 0.0
+                    and now - self._drain_hold_since > self.DRAIN_LOUD_S and not self._drain_hold_rang)
+            if ring:
+                self._drain_hold_rang = True
+        if new_episode:
+            self._log("deploy restart parked: draining — %d in-flight turn(s), %d session(s) with background "
+                      "work; new turn starts hold while a turn is in flight (queued prompts persist and "
+                      "start after the bounce)" % self.busy_breakdown())
+        elif ring:
+            self._log("deploy restart still parked after %d min — %d in-flight turn(s), %d session(s) with "
+                      "background work have not finished (the manager's backstop will apply the restart "
+                      "regardless)" % ((int((now - self._drain_hold_since) / 60),) + self.busy_breakdown()),
+                      problem=True)
+
+    def refresh_drain_hold(self, park: str | None = None) -> None:
+        """Arm/extend the drain lease (the manager's parked quiet poll calls this each tick). With a
+        park identity the episode bookkeeping is _park_seen's (no time window); without one — an
+        older manager — the 2×TTL flap window below stands in for it."""
         now = time.time()
+        if park:
+            self._park_seen(str(park), now)
         with self._lock:
             first = self._drain_hold_until <= now
+            # a NEW episode, not a flap (the legacy, no-park path): the manager drops the hold during
+            # background-only stretches and re-arms it when a turn starts (T240), so a lease that
+            # lapsed moments ago is the same park — its ring and its "parked" line must not restart
+            new_episode = (not park) and first and (self._drain_hold_since == 0.0
+                                                   or now - self._drain_hold_until > 2 * self.DRAIN_HOLD_TTL)
             # never SHORTEN a hold: `romp down`'s quiesce (quiesce below) arms a longer one, and a
             # deploy poll landing inside it must extend, not cut it back to one lease
             self._drain_hold_until = max(self._drain_hold_until, now + self.DRAIN_HOLD_TTL)
-            if first:
+            if new_episode:
                 self._drain_hold_since = now
                 self._drain_hold_rang = False
             t = self._drain_wake_timer
@@ -8571,17 +9130,17 @@ class SdkBackend:
         if t is not None:
             t.cancel()
         nt.start()
-        if first:
-            self._log("deploy restart parked: draining — %d in-flight turn(s); new turn starts held "
-                      "until this box quiets (queued prompts persist and start after the bounce)"
-                      % self.busy_count())
-        elif now - self._drain_hold_since > self.DRAIN_LOUD_S and not self._drain_hold_rang:
+        if new_episode:
+            self._log("deploy restart parked: draining — %d in-flight turn(s), %d session(s) with background "
+                      "work; new turn starts held until this box quiets (queued prompts persist and "
+                      "start after the bounce)" % self.busy_breakdown())
+        elif not park and now - self._drain_hold_since > self.DRAIN_LOUD_S and not self._drain_hold_rang:
             with self._lock:
                 self._drain_hold_rang = True
-            self._log("deploy restart still parked after %d min — %d in-flight turn(s) have not "
-                      "finished; new turn starts remain held (the manager's backstop will apply "
-                      "the restart regardless)" % (int((now - self._drain_hold_since) / 60),
-                                                   self.busy_count()), problem=True)
+            self._log("deploy restart still parked after %d min — %d in-flight turn(s), %d session(s) with "
+                      "background work have not finished; new turn starts remain held (the manager's "
+                      "backstop will apply the restart regardless)"
+                      % ((int((now - self._drain_hold_since) / 60),) + self.busy_breakdown()), problem=True)
 
     def drain_holding(self) -> bool:
         """Whether new turn starts are currently held for a parked deploy restart."""
@@ -8741,7 +9300,8 @@ class SdkBackend:
         rail's API readout must sum ONLY the key's turns — a login turn's computed cost there would be
         dollars nobody is billed (the user 2026-08-08). Token fields mirror the ResultMessage usage
         dict: input/output plus the two cache flavors, kept separately so the tooltip can break them
-        down. Pruned to the last 90 days; atomic.
+        down (on the bucket, and since 2026-09-06 on its `key` sub-count too). Pruned to the last
+        90 days; atomic.
         PER-SESSION ATTRIBUTION (T100, the nightly optimizer's accepted ask 2026-08-24: key-billed
         cost per session — 63%% of a day was untraceable): each bucket carries a `bySid` sub-map,
         {sid: {usd, turns, tok, key:{usd,turns,tok}}} — SID-keyed (rename-proof; names flap), the
@@ -8780,7 +9340,14 @@ class SdkBackend:
                 if keyed or ke:   # carry an existing key split forward even on a login turn
                     n["key"] = {"usd": round(float(ke.get("usd") or 0) + (float(cost) if keyed else 0), 6),
                                 "turns": int(ke.get("turns") or 0) + (1 if keyed else 0),
-                                "tok": int(ke.get("tok") or 0) + (tok_total if keyed else 0)}
+                                "tok": int(ke.get("tok") or 0) + (tok_total if keyed else 0),
+                                # the by-KIND split rides the keyed sub-count too (2026-09-06): the
+                                # hover breaks each window's tokens down, and a mixed host's API
+                                # readout sums ONLY these — the bucket totals would be the login's
+                                "tokIn": int(ke.get("tokIn") or 0) + (_tok("input_tokens") if keyed else 0),
+                                "tokOut": int(ke.get("tokOut") or 0) + (_tok("output_tokens") if keyed else 0),
+                                "tokCacheR": int(ke.get("tokCacheR") or 0) + (_tok("cache_read_input_tokens") if keyed else 0),
+                                "tokCacheW": int(ke.get("tokCacheW") or 0) + (_tok("cache_creation_input_tokens") if keyed else 0)}
                 by = e.get("bySid") if isinstance(e.get("bySid"), dict) else {}
                 if sid:
                     se = by.get(sid) if isinstance(by.get(sid), dict) else {}
@@ -9406,11 +9973,20 @@ class SdkBackend:
         # rest, launch the session — and say so (fail-loudly: the line lands on stderr via the
         # kernel's log wire and in the problem ring the dashboard's error center reads).
         env_vars = sess.env_vars
-        legacy = [k for k in ENV_RESERVED_NAMES if k in env_vars]
+        # ONE read of the command set per connect (fork, command mode): the record and the values under
+        # one envsource lock, shared by the reserved-names rule, the key decision and the role variables
+        # below, so a re-run cannot land between two reads. None in file/op mode.
+        cred = _envsrc.take() if _envsrc.configured() else None
+        key_source = self._work_key_source(cred)
+        # Under runtime retrieval a per-session API key is always a competing credential; a login
+        # session's own token override is not (review find, 2026-09-05) — keysource.runtime_reserved_names
+        # is the one rule the doors, this launch and the fork copy share.
+        reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(sess.auth, key_source)
+        legacy = [k for k in reserved if k in env_vars]
         if legacy:
-            env_vars = {k: v for k, v in env_vars.items() if k not in ENV_RESERVED_NAMES}
-            self._log("env (%s): ignoring reserved %s from the stored session env — romp sets the "
-                      "identity env itself (a reg from before the names were reserved)"
+            env_vars = {k: v for k, v in env_vars.items() if k not in reserved}
+            self._log("env (%s): ignoring reserved %s from the stored session env — romp manages "
+                      "identity and runtime authentication"
                       % (sess.name, ", ".join(legacy)), problem=True)
         fs = flag_settings_path(self.state_dir, sess.sid,
                                 ultracode=(sess.effort or "") == "ultracode", fast=sess.fast_opt,
@@ -9423,36 +9999,44 @@ class SdkBackend:
         # OVER the inherited env in the SDK's transport, which is exactly the one-way door we need —
         # inject or stay silent; never blank (an empty var reads as "API-key mode, no key" to the CLI).
         # The key is read ONCE here, per connect, and the value the auth decision was made on is the
-        # value injected: the source is live now (a keyswap can land between two reads). An empty read
-        # decides login — blanking the var would leave the CLI in key-mode-without-a-key.
+        # value injected: the source is live now (a keyswap can land between two reads).
         # In command mode the set is read ONCE per connect (envsource.take: the record and the values
-        # under one lock) and shared with the key decision, so the key injected and the role variables
-        # merged come from the same run — read twice, a re-run could land between them.
-        cred = _envsrc.take() if _envsrc.configured() else None
-        work_key, key_src = self._work_key_and_source(cred)
-        launch_keyed = sess.effective_auth(work_key) == "key"
+        # under one lock, `cred` above) and shared with the key decision, so the key injected and the
+        # role variables merged come from the same run; read twice, a re-run could land between them.
         # The command source's ROLE VARIABLES (its set minus ANTHROPIC_API_KEY — the key reaches a
         # child only through the decision below) ride UNDER romp's own entries: the CLI and every
-        # tool shell it runs see them, and a reconnect re-presents the current set. {} in file mode.
+        # tool shell it runs see them, and a reconnect re-presents the current set. {} otherwise.
         role_vars = dict(cred[1]) if cred is not None else {}
         role_vars.pop(_envsrc.KEY_VAR, None)
         if role_vars:
             kw["env"] = {**role_vars, **kw["env"]}
+        # Authentication is resolved only for a launch that selects API-key billing. For the file and
+        # 1Password sources, source presence is metadata and a provider failure cannot turn a keyed
+        # launch into a login one (upstream, 2026-09-05): a key pick with no key source raises, and
+        # _record_launch_error reports it on the session. In COMMAND mode (fork-only) the launch is never
+        # refused: the set is read once, a key pick with no key in the set launches without one (the
+        # apiKeyHelper or the login bills), said as a problem, and cycle_key converges on the helper's
+        # fingerprint instead (the key-free install's design, 2026-09-05).
+        work_key = ""
+        if _envsrc.configured():
+            work_key, key_src = self._work_key_and_source(key_source, cred)
+            launch_keyed = sess.auth != "login" and bool(work_key)
+            if sess.auth == "key" and not work_key:
+                self._log("auth (%s): session is set to the API key but the credential command printed no "
+                          "ANTHROPIC_API_KEY — launching without one (the apiKeyHelper or the login bills)"
+                          % sess.name, problem=True)
+        else:
+            launch_keyed = sess.auth == "key" or (sess.auth != "login" and key_source.configured)
+            if launch_keyed:
+                work_key, key_src = self._work_key_and_source(key_source)
+                if not work_key:
+                    raise _keysrc.KeySourceError("API key billing selected but no API key source is configured")
         if launch_keyed:
             self._note_work_key(work_key, key_src)
             kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=work_key,
                              **key_fast_org_env(work_key, self._log))
-        elif sess.auth == "key":
-            # picked "key", but there is none to inject — falling to login silently would bill the
-            # wrong account with nothing to see; say so where the Log panel shows it.
-            if _envsrc.configured():
-                self._log("auth (%s): session is set to the API key but the credential command printed no "
-                          "ANTHROPIC_API_KEY — launching without one (the apiKeyHelper or the login bills)"
-                          % sess.name, problem=True)
-            else:
-                self._log("auth (%s): session is set to the API key but the manager environment carries "
-                          "none (nor does service.env, where your installation allows a key in a file) — "
-                          "launching on the login instead" % sess.name, problem=True)
+        else:
+            kw["env"] = dict(kw["env"], **startup_auth_env())
         sess._launched_keyed = launch_keyed
         # The stamps cycle_key converges on: the credential (the injected key's fingerprint; in
         # command mode with nothing injected, the apiKeyHelper output's — envsource runs it and hashes
@@ -9483,7 +10067,7 @@ class SdkBackend:
             # refused OUTRIGHT rather than written into a reg every future connect would launch
             # with. The /new handler validates before calling; this raise is the backend's own
             # fail-loudly backstop for any other caller.
-            err = env_request_error(env)
+            err = env_request_error(env, auth or "")
             if err:
                 raise ValueError(err)
         sid = sid or str(uuid.uuid4())
@@ -9608,8 +10192,9 @@ class SdkBackend:
             # the reserved identity names never cross the copy: a parent reg from before
             # ENV_RESERVED_NAMES existed carries them (the _options apply seam skips them there),
             # and the copy is where that legacy poison stops propagating into fresh regs
-            env = {k: v for k, v in parent["env"].items() if k not in ENV_RESERVED_NAMES}
-            dropped = [k for k in parent["env"] if k in ENV_RESERVED_NAMES]
+            reserved = ENV_RESERVED_NAMES + _keysrc.runtime_reserved_names(reg.get("auth") or "", self._work_key_source())   # the launch rule, not a wider one (2026-09-05)
+            env = {k: v for k, v in parent["env"].items() if k not in reserved}
+            dropped = [k for k in parent["env"] if k in reserved]
             if dropped:
                 self._log("env (%s): dropping reserved %s from the inherited env — romp sets the "
                           "identity env itself (the parent reg predates the reserved names)"
@@ -9741,11 +10326,18 @@ class SdkBackend:
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     with self._reg_lock:                   # _lock → _reg_lock: the rider's order above
                         cur = read_reg(self.state_dir, sid) or dict(reg)
-                        rest = [t for t in (cur.get("queue") or [])
-                                if isinstance(t, str) and t and t not in notices]
+                        # Entries keep their PERSISTED shape: a user-todo ANSWER rides the queue as a
+                        # {"text","todo"} dict (_queue_wire), and the strings-only filter this replaces
+                        # erased it, so a thread woken by its dead life lost the very answer the user
+                        # had typed, with its ask already stamped answered (2026-09-07). The dict-aware
+                        # rule every other reg['queue'] rewrite follows (the 2026-08-22 sweep): decode
+                        # each entry for the junk test and the not-in-notices dedup, write it back as is.
+                        rest = [e for e in (cur.get("queue") or [])
+                                if (qt := _queue_text(e)) and qt not in notices]
                         # a resume nudge at the head stays there — continuation context first, then
                         # the notices, the sweep's order; the crash resume prepends one before it
-                        # calls here
+                        # calls here (a dict head is an answer, never a nudge: is_resume_nudge's own
+                        # str guard says so)
                         head = rest[:1] if rest and is_resume_nudge(rest[0]) else []
                         cur["queue"] = head + notices + rest[len(head):]
                         cur["bgTasks"] = []                # reported — never re-notify for the same deaths
@@ -9817,6 +10409,7 @@ class SdkBackend:
                 for k, a in list(live.items()):
                     if a.get("_echo_text") == text:
                         live.pop(k, None)                  # one echo per canceled message
+                        self._touch_live(sid)
                         break
                 if not live and self._live.get(sid) is live:
                     self._live.pop(sid, None)
@@ -10048,6 +10641,9 @@ class SdkBackend:
                 elif seen:
                     a["_landed"] = True                    # the verdict, for prune_live and the next boot
                     landed.add(a["_echo_text"])
+        if landed:
+            with self._live_lock:                          # the flag writes above changed stashed atoms
+                self._touch_live(sid)
         if redeliver:
             # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
             # own queue: there the in-memory _pending is authoritative and its very next
@@ -10113,6 +10709,9 @@ class SdkBackend:
                 # could tie it back). The kernel checks the transcript first: a landed-but-unpruned
                 # echo at kernel death is COMMON and means delivered, not lost.
                 self._todo_lost(sid, a["_todo"], a["_echo_text"])
+        if any(a.get("dropped") for a in newly):           # `newly` held no dropped echo before this loop
+            with self._live_lock:
+                self._touch_live(sid)
         self._persist_echoes(sid)
         self._wake_push()
 
@@ -10192,6 +10791,7 @@ class SdkBackend:
                     live.pop(k, None)
                     if not live and self._live.get(sid) is live:
                         self._live.pop(sid, None)
+                    self._touch_live(sid)
                     hit = a
                     break
         if hit is None:
@@ -10424,7 +11024,7 @@ class SdkBackend:
         if not s:
             return False
         s.interrupt()
-        append_state(self.state_dir, sid, "idle", int(time.time()) - 1)
+        append_state(self.state_dir, sid, "idle", int(time.time()) - 1, by="interrupt")
         self._poke()
         return True
 
@@ -10434,6 +11034,25 @@ class SdkBackend:
         an interrupt. So the kernel hands composer sends straight to send() even mid-turn instead of parking
         them; the reconciliation renders the still-waiting message as a queued bubble until it forwards."""
         return True
+
+    def model_switches_live(self) -> bool:
+        """False FOR NOW (see SessionBackend.model_switches_live), although set_model rides the SDK control
+        channel and the CLI does adopt a mid-turn switch at its next API call: on CLI 2.1.257 a switch
+        applied INSIDE a turn corrupts the transcript. The CLI pushes its three /model breadcrumb records
+        (caveat, <command-name>/model, <local-command-stdout>Set model to X) into the in-memory conversation
+        at switch time but persists them only at the NEXT prompt, parented on the record that was current at
+        the switch (the running tool_use, or the prompt itself while the first reply streams). The next prompt
+        chains off the breadcrumbs, so every record of the switched turn written after that point — the
+        tool_result, the later work, the final reply — leaves the leaf's ancestry: romp's file adapter reads
+        that tail as a rewound branch and drops all of it from the chat, the timeline and the judges, and the
+        CLI's own --resume (every romp reconnect) rebuilds the context without the later work and the final
+        reply (its salvage re-attaches only a tool_result whose tool_use is still on the chain). A second,
+        romp-side blocker:
+        _do_set_model refreshes the live model name at once, so an old-model response still streaming then
+        reads as a capacity fallback (a false 'Model changed automatically' card, a badge flap). Flip this to
+        True only once the CLI parents mid-turn breadcrumbs at the turn's tail AND that refresh waits out
+        inflight>0 (review of PR #923, 2026-09-04; verified against the installed binary, not the docs)."""
+        return False
 
     # send() can carry a user-todo ANSWER's id on the queue entry itself (send's user_todo →
     # _TodoText): the kernel's _backend_send probes this the way _forwards_sends probes its
@@ -11215,9 +11834,9 @@ class SdkBackend:
         default (write_sdk_default): a var one session needed is not a seed for the next. No pending
         badge or chat chip yet — that surface ships with the env UI slice; the Log records the
         change (spawn-time slice, the user 2026-08-17)."""
-        if env_request_error(env):
-            return False
         reg = read_reg(self.state_dir, sid)
+        if env_request_error(env, (reg or {}).get("auth") or ""):
+            return False
         if not reg:
             return False
         env = dict(env)
@@ -11241,7 +11860,7 @@ class SdkBackend:
         next init confirms via apiKeySource (_note_auth_source flags a landing on the wrong side)."""
         if value not in ("login", "key"):
             return False
-        if value == "key" and not self.work_key:
+        if value == "key" and not self.work_key_configured:
             return False   # nothing to inject — the UI never offers this; refuse rather than half-apply
         if value == "login" and not self.login_ok():
             # the SAME bar the key side always had (T124: set_auth accepted 'login' unconditionally,
@@ -11275,12 +11894,40 @@ class SdkBackend:
         """The auth a session with no live SdkSession object would launch with — the dormant twin of
         SdkSession.effective_auth(), reading the same registry field with the same fallback."""
         a = (reg or {}).get("auth")
-        if a == "login":
-            return "login"
-        return "key" if self.work_key else "login"
+        if a in ("login", "key"):
+            return a
+        return "key" if self.work_key_configured else "login"
 
     def owns(self, sid: str) -> bool:
-        return read_reg(self.state_dir, sid) is not None
+        """Whether this backend has a registry entry for `sid`. Memoized on the reg file's (mtime, size):
+        Sessions.backend_for asks this for every session in every pusher tick job — 130+ reg opens and
+        JSON decodes per cycle on a 17-session board with nothing changed (2026-09-03) — and the answer
+        can only change when the file does. A vanished file forgets its memo (the reg is gone)."""
+        p = _reg_path(self.state_dir, sid)
+        try:
+            st = p.stat()
+            key = (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            self._owns_memo.pop(sid, None)
+            return False
+        hit = self._owns_memo.get(sid)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        # read_reg returns None on ANY OSError from read_text (EMFILE, EIO, EACCES), not only a missing
+        # file — and the stat above already succeeded, so the file IS there. Memoizing that transient
+        # None as "not ours" latched a live session's backend to False until its reg was next rewritten,
+        # silently misrouting it (review find on #933, 2026-09-07). Distinguish the two: a dict is a
+        # positive answer worth caching; read_reg_for_rmw returns None only for a reg that EXISTS but
+        # would not read (the transient case) and {} for a genuinely absent one, so cache True/False on
+        # that and leave the memo untouched on a transient failure — the next call re-reads.
+        reg = read_reg_for_rmw(self.state_dir, sid)
+        if reg is None:
+            self._owns_memo.pop(sid, None)            # transient: do not latch; re-read next call
+            self._log("owns(%s): reg stat ok but read failed transiently — not cached" % sid, problem=True)
+            return bool(self.sessions.get(sid))       # a live thread is proof enough for this pass
+        ok = bool(reg)
+        self._owns_memo[sid] = (key, ok)
+        return ok
 
     def ensure_scheduled(self) -> int:
         """Keep a CLI process ALIVE for every session with ARMED SESSION TIMERS (reg sessionCrons, the
@@ -11556,6 +12203,7 @@ class SdkBackend:
         never land in a dict a sweep is popping from `_live` in the same instant."""
         with self._live_lock:
             self._live.setdefault(sid, {})[key] = atom
+            self._touch_live(sid)
 
     def _forward(self, sess: SdkSession, msg):
         # LIVE TAIL: translate the streamed message to an atom and stash it in memory, AHEAD of the
@@ -11570,6 +12218,7 @@ class SdkBackend:
             d = self._live.setdefault(sess.sid, {})
             d[atom["uuid"]] = atom
             vanished = _evict_live_overflow(d)   # safety cap if no client ever drains/prunes — never an echo
+            self._touch_live(sess.sid)           # the add and any eviction, one revision
         if vanished:
             self._note_live_tail_race("_evict_live_overflow")
         # The stream is the AUTHORITATIVE busy signal: a genuine WORK atom (streamed assistant/tool
@@ -11605,12 +12254,40 @@ class SdkBackend:
                 self._log("session push (%s) failed: %s" % (sid, e))
         threading.Thread(target=run, name="sdk-push-session", daemon=True).start()
 
+    def _touch_live(self, sid: str) -> None:
+        """Record that `sid`'s live tail changed: advance its revision (`_live_rev[sid]`), the integer the
+        kernel's chat-build signature folds for the tail (Sessions.live_rev; 2026-09-03, the complete
+        per-session key since round-4 plan P4, 2026-09-07): a tab whose in-memory tail changed rebuilds
+        because this moved, and one whose tail did not is served from its cache without anyone hashing
+        the atoms. Called with `_live_lock` HELD, AFTER the change it records: the write first, then the
+        revision, so a reader that took the revision before its read and stored it misses on its next
+        check (the _node_anchor_rev ordering); the other order could pair a new revision with the old
+        atoms and never heal. Every site that adds, replaces, pops or flags an atom in `_live` calls this
+        — _stash_live, _forward (its eviction included), unqueue, dismiss_echo, prune_live,
+        retire_live_work, and the two flag writes _mark_dropped_echoes makes outside the lock (it takes
+        the lock for the bump); tests/test_live_tail_rev.py pins the set. Only a CHANGE bumps, once per
+        call: a prune that retired nothing leaves the revision where it was, since the chat build itself
+        prunes on every merge and a bump per call would make every build's own signature move under it.
+        A bare __new__ backend (tests drive prune_live on one) has no counters yet: mint them rather
+        than raise."""
+        revs = getattr(self, "_live_rev", None)
+        if revs is None:
+            revs = self._live_rev = {}
+        revs[sid] = revs.get(sid, 0) + 1
+
     def live_atoms(self, sid: str) -> list:
         """The session's in-memory live-tail atoms (newest last), for build_session to merge ahead of disk."""
         with self._live_lock:                      # the pusher's read: copy under the lock, sort outside
             d = self._live.get(sid)
             vals = list(d.values()) if d else []
         return sorted(vals, key=lambda a: a.get("t", 0))
+
+    def live_rev(self, sid: str) -> int:
+        """The sid's live-tail revision (see _touch_live): 0 until the tail first changes, then one more
+        per change — equality means nothing moved. Read under the live-tail lock, like the atoms it
+        counts. The kernel's chat-build signature reads it (Sessions.live_rev)."""
+        with self._live_lock:
+            return (getattr(self, "_live_rev", None) or {}).get(sid, 0)
 
     def prune_live(self, sid: str, tx_uuids, tx_user_texts=(), human_floor: int = 0) -> None:
         """Drop live atoms the transcript has now caught up on — by uuid (assistant/tool/user from the
@@ -11668,6 +12345,7 @@ class SdkBackend:
             return key in text_t and float(text_t[key] or 0) >= float(a.get("t") or 0)
         echo_removed = False
         vanished = 0
+        popped = False
         with self._live_lock:
             d = self._live.get(sid)
             if not d:
@@ -11684,8 +12362,12 @@ class SdkBackend:
                     echo_removed = echo_removed or bool(et and not a.get("command"))
                     if d.pop(k, None) is None:
                         vanished += 1
+                    else:
+                        popped = True
             if not d and self._live.get(sid) is d:
                 self._live.pop(sid, None)
+            if popped:
+                self._touch_live(sid)      # a change only: a prune that retired nothing is not one
         if vanished:
             self._note_live_tail_race("prune_live")
         if echo_removed:
@@ -11740,10 +12422,14 @@ class SdkBackend:
                     except Exception:
                         self._log("orphan-reply persist failed: %s" % traceback.format_exc())
         with self._live_lock:
+            popped = False
             for k, _a in work:
-                d.pop(k, None)
+                if d.pop(k, None) is not None:
+                    popped = True
             if not d and self._live.get(sid) is d:
                 self._live.pop(sid, None)
+            if popped:
+                self._touch_live(sid)
 
     def _reply_on_disk(self, sid: str, uuid: str) -> bool:
         """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
@@ -11879,8 +12565,16 @@ class SdkBackend:
         # A missing dependency gets the REMEDY as its text, not the raw ModuleNotFoundError: "No module
         # named 'claude_agent_sdk'" tells a user nothing about what to run.
         dep = isinstance(exc, ImportError)
-        tail = "" if dep else sess.stderr_tail()   # what the CLI itself said before it exited
-        text = SDK_MISSING_TEXT if dep else launch_failure_text(exc, tail)
+        # A provider failure happened before a new CLI existed. The previous
+        # connection's stderr must not replace it or turn it into a quota hold.
+        tail = "" if dep or isinstance(exc, _keysrc.KeySourceError) else sess.stderr_tail()
+        # read the disk NOW, not a construction-time verdict: this path is the import that failed after
+        # the check passed, and the venv may have been rebuilt or the interpreter changed since. A venv
+        # for this python that is present is not "built after start" here (the SDK WAS importable at
+        # construction): the import itself broke, and the install text's rebuild is the remedy.
+        text = (sdk_unavailable_text(self.state_dir, verdict=self.unavailable_verdict(),
+                                     started_missing=self._sdk_missing)
+                if dep else launch_failure_text(exc, tail))
         rec = {"text": text, "at": int(time.time()), "limit": is_launch_limit(text), "dep": dep}
         try:
             self._update_reg(sess.sid, launchError=rec)
@@ -11923,7 +12617,7 @@ class SdkBackend:
         A MISSING SDK outranks any per-session record: it is true of every session immediately, needs no
         session to have died to be known, and it is the actionable one."""
         if self._sdk_missing:
-            return {"text": SDK_MISSING_TEXT, "at": 0, "limit": False, "dep": True}
+            return {"text": self.unavailable_text(), "at": 0, "limit": False, "dep": True}
         try:
             rec = (read_reg(self.state_dir, str(sid)) or {}).get("launchError")
         except Exception:

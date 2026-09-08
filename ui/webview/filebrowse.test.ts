@@ -1,6 +1,8 @@
-// The file BROWSER in the FEED pane (plans/file-browser.md, the user 2026-08-14): breadcrumb over one
-// directory's entries, riding the listDir WS op with the dirComplete staleness protocol, opening files
-// through the existing viewer. Source pins (no jsdom for these modules), the repo convention.
+// The file BROWSER (plans/file-browser.md, the user 2026-08-14): breadcrumb over one directory's entries,
+// riding the listDir WS op with the dirComplete staleness protocol, opening files through the existing
+// viewer. Hosted by the FEED pane (the shell's relay target), the FILES pane (files.ts) and, unframed only,
+// the chat; where a chat click lands is the ladder in file-route.ts (browse-route.test.ts holds its table).
+// Source pins (no jsdom for these modules), the repo convention.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -14,12 +16,21 @@ const FEED = web("feed.ts");
 const FEED_CSS = web("feed.css");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
-test("the browser is the viewer's sibling overlay, one z layer BENEATH it", () => {
+test("the browser is the viewer's sibling MODAL, one z layer BENEATH it", () => {
   // beneath by design: a file opened from a listing overlays the listing, and closing it returns
-  // there (the viewer is a MODAL since 2026-08-15 — its backdrop, not a pane fill, draws above)
-  assert.match(FEED_CSS, /\.filebrowse \{ position: fixed; inset: 0; z-index: 890;/);
+  // there (the viewer is a MODAL since 2026-08-15). The browser joined the same centered-card
+  // treatment 2026-09-04 (the user, superseding the 2026-08-24 pane takeover they came to find
+  // odd): backdrop wears the id + the dim, the card wears the modal vocabulary.
+  assert.match(FEED_CSS, /#romp-filebrowse \{ position: fixed; inset: 0; z-index: 890; background: var\(--overlay-dim\);/);
+  assert.match(FEED_CSS, /\.filebrowse \{ width: min\(720px, 95%\); height: min\(760px, 95%\);/);
   assert.match(FEED_CSS, /#romp-fileview \{ position: fixed; inset: 0; z-index: 1200;/);
-  assert.match(BROWSE, /box\.id = "romp-filebrowse";/);
+  assert.match(BROWSE, /wrap\.id = "romp-filebrowse";/);
+  // backdrop clicks close; content clicks never do (the lightbox contract) — and a drag that STARTED inside
+  // the card and ended over the dim is not a backdrop click: the close is armed on pointerdown and fires only
+  // when both ends were on the dim (review fold on #924, 2026-09-07)
+  assert.match(BROWSE, /wrap\.addEventListener\("pointerdown", \(e\) => \{ downOnDim = e\.target === wrap; \}\);/);
+  assert.match(BROWSE, /wrap\.onclick = \(ev\) => \{ const close = downOnDim && ev\.target === wrap; downOnDim = false; if \(close\) closeFileBrowse\(\); \};/,
+    "backdrop clicks close; content clicks and card-to-dim drags never do");
   assert.match(BROWSE, /document\.body\.classList\.add\("filebrowse-open"\);/);
 });
 
@@ -53,9 +64,11 @@ test("the close contract is ownership-aware: each restore fires exactly once, fo
   assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&\(window\.__rompFeedWasOff\|\|window\.__rompFeedWasOffView\)\)\{/);
 });
 
-test("the shell relays browseFiles: pane forward, remembered, phone tab", () => {
-  assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
-  const relay = KERNEL.split("if(m.romp==='browseFiles')")[1].split("if(m.romp==='browseClosed'")[0];
+test("the shell relays browseFiles to the feed: pane forward, remembered, phone tab", () => {
+  // the feed route is the ELSE branch since 2026-09-06: a browse naming pane:'pane' takes the Files-pane
+  // branch before it (browse-route.test.ts executes both); a browse naming 'feed' or nothing lands here
+  assert.match(KERNEL, /else if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
+  const relay = KERNEL.split("else if(m.romp==='browseFiles')")[1].split("if(m.romp==='browseClosed'")[0];
   assert.ok(relay.includes("window.__rompFeedWasOff=true;"), "a pane turned on for the browser is remembered");
   assert.ok(relay.includes("window.__rompMobileTab&&window.__rompMobileTab('feed')"), "phone: one pane at a time");
   assert.ok(relay.includes("postMessage({romp:'browseFiles',path:m.path,sid:m.sid}"), "forwarded into the feed iframe");
@@ -90,8 +103,10 @@ test("rows carry an honest verdict: download-only files are dimmed and download 
   assert.match(BROWSE, /row\.dataset\.act = dlOnly \? "dl" : "file";/);
   assert.match(BROWSE, /if \(row\.dataset\.act === "dl"\) startDownload\(p\);/);
   assert.match(FEED_CSS, /\.fb-dlonly \.fb-name \{ color: var\(--dim\); \}/);
-  // viewable files open through the EXISTING viewer — one leaf open action for the whole dashboard
-  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileView\(p, curSid\); return; \}/);
+  // viewable files open through the EXISTING viewer — one leaf open action for the whole dashboard, read
+  // through the gesture reader (a modified click on a PDF takes a browser tab); a host may route a plain
+  // pick through its own open (BrowseHost.openFile: the Files pane's Recent list, 2026-09-07)
+  assert.match(BROWSE, /if \(row\.dataset\.act === "file"\) \{ openFileClick\(ev, p, curSid, openPick \|\| undefined\); return; \}/);
 });
 
 test("clicks are delegated to stable roots and the cap is stated in-band", () => {
@@ -110,11 +125,16 @@ test("Escape closes the TOPMOST surface only, and Backspace walks up", () => {
 });
 
 test("every entry point is gated to where the click can land, and posts the one shell message", () => {
-  // chat: openBrowse is PANE-LOCAL (2026-08-24 — it used to relay to the shell and open over the
-  // FEED, the wrong pane): the browser opens over the chat that launched it, web-only, framed or not
-  assert.match(RENDER, /openFileBrowse\(path \|\| "\.", sid \|\| activeId \|\| null\);/);
-  assert.match(RENDER, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/, "the chat hosts its own browser instance");
-  assert.doesNotMatch(RENDER, /window\.parent\.postMessage\(\{ romp: "browseFiles"/, "no shell relay from the chat anymore");
+  // chat: openBrowse walks the file-link ladder (file-route.ts browseRoute; the user 2026-09-06): the Files
+  // pane or the feed pane through the shell's browseFiles relay, naming its target, and in place ONLY
+  // unframed (standalone /chat), the one host where neither surface exists. This replaces the 2026-08-24
+  // pane-local cut, which opened over the chat everywhere (itself the answer to a listing over the FEED
+  // CARDS while the person read the chat; the Files pane is the surface that complaint wanted)
+  assert.match(RENDER, /const route = browseRouteNow\(\);\n\s*if \(route === "editor"\) return;/);
+  assert.match(RENDER, /if \(route === "here"\) \{ openFileBrowse\(path \|\| "\.", to\); return; \}/);
+  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "browseFiles", path: path \|\| "\.", sid: to, pane: route,/);
+  assert.match(RENDER, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\), \{\n\s*shellRestore: false,/,
+    "the chat hosts its own browser instance for the unframed route, owing the shell no restore");
   // tab right-click menu row: bottom of the menu, behind a divider, icon + sub-description
   assert.match(RENDER, /l\.textContent = "Browse files"; bodyEl\.appendChild\(l\);/);
   // feed card menu row rides canPreview (web only — the VS Code webview can't reach the kernel
@@ -124,7 +144,7 @@ test("every entry point is gated to where the click can land, and posts the one 
 });
 
 test("the statusline folder link BROWSES on the web; OS-open lives on its right-click (the user 2026-08-14)", () => {
-  assert.match(RENDER, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);   // pane-local browse needs no shell (2026-08-24)
+  assert.match(RENDER, /elem\.dataset\.act = web \? "browseFiles" : "openFolder";/);   // the act names the intent; openBrowse routes it at the click
   assert.match(RENDER, /click to browse this folder/);
   // the demoted OS-open: one document-level contextmenu on folder links, posting the old openFolder
   assert.match(RENDER, /item\.textContent = "Open folder window";/);
@@ -150,7 +170,7 @@ test("the feed boots both overlays side by side", () => {
 test("opening the browser CLOSES an open viewer — the stack is one-directional", () => {
   // a browser painted under the opaque viewer was a dead click, and viewer-first registration made
   // one Escape close both overlays; closing the viewer at browse-open kills both failure modes
-  assert.match(BROWSE, /import \{ openFileView, closeFileView \} from "\.\/file-view";/);
+  assert.match(BROWSE, /import \{ closeFileView, openFileClick \} from "\.\/file-view";/);   // the row opens through the gesture reader only
   assert.match(BROWSE, /if \(document\.getElementById\("romp-fileview"\)\) closeFileView\(\);/);
 });
 
@@ -218,8 +238,8 @@ test("Browse files sits at the BOTTOM of the tab menu, behind a divider, wearing
             && menuBody.slice(0, browseAt).trimEnd().includes('menu.appendChild(el("div", "ctx-sep"));'),
     "a divider immediately precedes it — a different kind of thing");
   assert.match(menuBody.slice(browseAt - 400, browseAt), /ctxIcon\("folder", false\)/, "the folder icon");
-  assert.match(menuBody, /sb\.textContent = "the session's working tree, in a viewer over this chat";/,
-    "the standard sub-description line");
+  assert.match(menuBody, /sb\.textContent = "the session's working tree, " \+ \(where === "pane" \? "in the Files pane" : where === "feed" \? "in the feed pane" : "in a viewer over this chat"\);/,
+    "the standard sub-description line, naming where the listing will open (browseRouteNow, 2026-09-06)");
   // …and the Billing submenu (the previous last item) now sits ABOVE it
   assert.ok(menuBody.indexOf('l.textContent = "Billing"') < browseAt, "Browse is last");
 });

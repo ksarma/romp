@@ -372,18 +372,22 @@ toward nothing.
 
 A judge call bills **the account of the session it judges** — the same pick the
 session's own Billing selector holds, read from the same registry, with the same
-fallback (an explicit login pick → the login; anything else → the manager env's
-API key when one exists, else the login). The key itself has exactly one claimer:
-the SDK backend pops it out of the kernel's environment at first use so no
-session CLI inherits it ambiently, and judges read that same stash through a wire
-the kernel installs (`judge._WORK_KEY_FN`) — before the wire lands, or standalone
-(`romp-judge --once`), the key is still sitting in the environment and is read in
-place. Every judge child env is built with the ambient variable stripped and the
-key injected back only for a key-mode call: billing is an explicit choice per
-call, never inheritance. (Before this, judges inherited the post-claim
-environment: on a host with no login, every call refused "Not logged in" for 13
-hours — ~53k errors — while the board sat frozen in Working with nothing saying
-why.)
+selection (an explicit login pick → the login; otherwise the configured API
+key source when one exists, else the login). With `ROMP_API_KEY_REF` configured,
+each key-billed judge call resolves the reference through `op read --no-newline`; a
+retrieval that fails is not retried by later calls in the same judging pass, and the first
+call of a pass to reach the key gates the others until its retrieval returns. The next pass,
+or a changed source, retries.
+The resolved key is used for that call without a provider cache or a plaintext
+file. The same source selection applies to standalone `romp-judge --once`.
+Every judge child environment strips ambient Anthropic credentials and injects
+the selected key only for a key-mode call. A provider failure fails that call
+with a credential error; it cannot silently use the machine login or a stale
+key. An explicitly login-billed call does not run `op`.
+
+Legacy `ANTHROPIC_API_KEY` and Claude login remain supported when no runtime
+provider is selected. See [Service environment and credentials](reference.md#service-environment-and-credentials)
+for setup, service PATH and authentication requirements, and migration.
 
 With `ROMP_CREDENTIAL_COMMAND` set (see [Installing without keys on
 disk](reference.md#installing-without-keys-on-disk)), a judge child env also
@@ -438,7 +442,11 @@ permission/API-error floors: one interrupt at a time, the present event first.
   cross-host peers, legacy kindless stamps, hung-forever agents/tasks, and
   prose-declared timer check-backs; every observable ending (a notification
   pairing, the restart epoch, a tool's declared deadline, a peer's answer or
-  death) retires its wait as an event, with no clock at all.
+  death) retires its wait as an event, with no clock at all. A task/job stamp
+  whose launches the planner placed under another card lifts the same way once
+  the session's live registry is empty and the last in-harness item ended after
+  the stamp. The dead-man runs from the pusher whether or not auto-nudge is on;
+  with it off, a due wait files its lift (no injected check-in) instead.
 
 ## Where responsibilities overlap
 
@@ -463,7 +471,12 @@ permission/API-error floors: one interrupt at a time, the present event first.
   `STATE/judge-errors.jsonl` (the row contract above; kinds are parse,
   call, give-up, sweep-cut, cite-miss, rate-limited, task-store, history-unreadable,
   task-key-collision — a duplicated to-do mirror key, reconciled per node
-  and surfaced loudly),
+  and surfaced loudly — and the read-failure kinds the evidence gate's strict
+  readers write once per failure episode when a file exists and does not
+  read: store-unreadable, states-unreadable, cleared-unreadable,
+  stall-unreadable, captions-unreadable, session-archive-unreadable,
+  units-cache-unreadable, plus units-cache-write-failed for a unit-cache
+  publish that did not land),
   `STATE/judge-auth.json` (the per-session judge-auth-down latch — see
   "Billing" above).
 - Debugging: run the judge's own code against the live store

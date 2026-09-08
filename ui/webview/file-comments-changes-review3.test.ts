@@ -140,7 +140,7 @@ class El {
     contains: (c: string) => this.classes.includes(c),
   };
   /** As the browser has it: a tabindex attribute, else 0 for a button or input, else -1 (not focusable). */
-  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" ? 0 : -1); }
+  get tabIndex(): number { return this.attrs.has("tabindex") ? Number(this.attrs.get("tabindex")) : (this.tagName === "BUTTON" || this.tagName === "INPUT" || this.tagName === "TEXTAREA" ? 0 : -1); }
   set tabIndex(v: number) { this.attrs.set("tabindex", String(v)); }
   dataset: Record<string, string> = new Proxy({} as Record<string, string>, {
     get: (_, k) => this.attrs.get("data-" + kebab(String(k))) as string,
@@ -316,7 +316,7 @@ function world(): World {
     identity: () => ({ name: "api", color: null }),
     onRendered: (cb) => { w.hooks.rendered.push(cb); }, onSelection: () => { /* inert */ },
     onSaved: () => { /* inert */ }, onClose: (cb) => { w.hooks.close.push(cb); },
-    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ },
+    post: (m) => { w.posted.push(m); }, ensureEditingAllowed: async () => true, setEditBlocked: () => { /* inert */ }, editing: () => false, setTrackedEdit: () => { /* inert */ }, guardClose: () => { /* inert */ },
     aside: (node) => { main.querySelector(".fileview-aside")?.remove(); if (node) { const n = node as unknown as El; n.classList.add("fileview-aside"); main.appendChild(n); } },
     setMode: (m) => { w.modes.push(m); }, scrollToOffset: (n) => { w.scrolls.push(n); },
     // fetchFile: an async GET in the real seam — landed at once here, with the disk's bytes and mtime
@@ -498,7 +498,7 @@ test("source: the by-id verbs are named, the seen changes are kept from the stat
   const pos = (s: string) => { const i = mutate.indexOf(s); assert.ok(i >= 0, "mutate has: " + s); return i; };
   assert.ok(pos("await this.requireStatus(slot)") < pos("if (DECIDE_VERBS.has(verb)) this.seen.set(slot, seenChanges(this.status, args));"), "after the status, before the consent");
   assert.ok(pos("this.seen.set(slot") < pos("await this.ctx.ensureEditingAllowed()"));
-  assert.match(mutate, /finally \{ this\.busy\.delete\(slot\); this\.busyVerb\.delete\(slot\); this\.seen\.delete\(slot\); this\.render\(\); \}/, "cleared with the slot");
+  assert.match(mutate, /finally \{ if \(decides\) this\.holdEdit\(-1\); this\.busy\.delete\(slot\); this\.busyVerb\.delete\(slot\); this\.seen\.delete\(slot\); this\.render\(\); \}/, "cleared with the slot (after the Edit hold is lifted, Slice 5)");
   const once = SRC.split("private async mutateOnce(")[1].split("\n  }\n")[0];
   const at = (s: string) => { const i = once.indexOf(s); assert.ok(i >= 0, "mutateOnce has: " + s); return i; };
   assert.ok(at("const grown = seen && s ? changedSince(seen, s.hunks || []) : [];") < at("await this.request(verb, args, fence)"), "the check precedes the request, on the first attempt and the retry alike");
@@ -573,6 +573,8 @@ test("a Space on a confirm checkbox rebuilds the confirm and the rebuilt box tak
   act(a3, "fcsend")!.click();
   flipHoldsFocus(a3, "todo");
   // the mend at source: the checkbox's identity for focusKey and findControl
-  assert.match(SRC, /: a\.dataset\.opt \? \{ act: "opt", key: a\.dataset\.opt \} : null;/, "focusKey: a confirm checkbox, by its option");
-  assert.match(SRC, /if \(k\.act === "opt"\) return this\.root\.querySelector\('\[data-opt="' \+ k\.key \+ '"\]'\) as HTMLElement \| null;/, "findControl re-finds it");
+  assert.match(SRC, /: a\.dataset\.opt \? \{ act: "opt", key: a\.dataset\.opt, id: a\.dataset\.opt === "todopick" \? \(a as HTMLInputElement\)\.value : undefined \} : null;/,
+    "focusKey: a confirm checkbox, by its option (a radio of the todo group by its option and value too — the todo-file follow-on)");
+  assert.match(SRC, /if \(k\.act === "opt"\) \{\n\s*const all = Array\.from\(this\.root\.querySelectorAll\('\[data-opt="' \+ k\.key \+ '"\]'\)\) as HTMLElement\[\];\n\s*return \(k\.id === undefined \? all\[0\] : all\.find\(\(n\) => \(n as HTMLInputElement\)\.value === k\.id\)\) \|\| null;/,
+    "findControl re-finds it");
 });

@@ -293,11 +293,14 @@ PY
 # ── git pre-push identifier hook ──────────────────────────────────────
 # install.sh symlinks .githooks/pre-push into the shared git hooks dir. The hook
 # reads the banned strings from ~/.config/romp/private-strings.txt (so it arms
-# EVERY worktree, not just the one holding an untracked scanner) and greps each
-# PUSHED commit's tree — the working tree is not what gets published, and a leak
-# in an intermediate commit ships even when the tip is clean. No strings file →
-# a no-op, so a contributor's clone is unaffected. (ROMP_GITHOOK_DIR redirects
-# install.sh's symlink target below; the behaviour tests copy the hook directly.)
+# EVERY worktree, not just the one holding an untracked scanner) and reads the
+# PUSHED commits, not the working tree, which is not what gets published: each
+# pushed ref's TIP tree must be clean, and each commit new to every fetched remote
+# must ADD no banned line — so a leak in an intermediate commit is caught even when
+# the tip is clean, while a tree that only inherits an older one is not refused.
+# No strings file → a no-op, so a contributor's clone is unaffected.
+# (ROMP_GITHOOK_DIR redirects install.sh's symlink target below; the behaviour
+# tests copy the hook directly.)
 
 @test "install.sh: symlinks the pre-push hook into the git hooks dir" {
     run "$ROMP_DIR/install.sh"
@@ -458,9 +461,11 @@ EOF
 
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
-    # The hook hands gitleaks the same range the identifier scan walks: the pushed tip, minus the
-    # remote's old tip and every ref already on the remote (the 2026-09-06 rule; see rev_range).
-    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$new_sha --not $old_sha --remotes=origin"* ]]
+    # The hook hands gitleaks the same range the identifier scan walks: the pushed tip, minus every
+    # ref any fetched remote already has and the remote's old tip (see rev_range). The exclusion
+    # once stopped at the pushed-to remote's refs (`--remotes=origin`, fork PR #222); upstream's
+    # #968 review widened it to every remote, and the 2026-09-07 sync took that shape.
+    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$new_sha --not --remotes $old_sha"* ]]
 }
 
 @test "pre-push hook: the scan asks git to show merge-commit diffs" {

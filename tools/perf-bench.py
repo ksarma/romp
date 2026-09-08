@@ -65,7 +65,9 @@ calls, reported as ms min/median/max:
                          warm-up). Reports the full frames' bytes per slot.
   push_connect:APP       _push([fresh client], connect=True) per app after a warming cycle: the path
                          a page load pays (pusher-warmed feed served, no baseline move). A fresh
-                         client with empty dedup state for every sample.
+                         client with empty dedup state for every sample, on a thread with NO
+                         pusher-cycle scope, as _push_one runs it (a handler thread): every read the
+                         cycle scope would have made free is paid here.
   push_steady            the periodic _push over the same clients, repeated; no warm-up of its own
                          (it follows the rows above). Each sample records whether _cached_feed /
                          _cached_timeline rebuilt inside it (they do whenever the 5 s view signature
@@ -164,7 +166,9 @@ MIRROR_IGNORE = ("sdkvenv", "serve-token", "push-vapid.json")
 COLD_KERNEL_CACHES = ("_parse_cache", "_built_chat", "_prev_chat_events", "_prev_chat_ledger", "_arch_tops_cache",
                       "_PATH_LINK_CACHE", "_states_notes_cache", "_state_ev_cache", "_bgtasks_cache", "_bgall_cache",
                       "_queued_parse_cache", "_wake_tail_cache", "_session_meta_cache", "_session_tok_cache",
-                      "_machine_cut_cache")
+                      "_machine_cut_cache",
+                      "_caps_memo", "_thread_reg_memo", "_states_overlay_cache",   # the per-lane reader memos (perf round 4, item C)
+                      "_lanes_memo")                                                # the per-lane segment memo (item A)
 # (cache, its lock) in the event model: the parse layer under _parse. Missing names are skipped here too
 # (the trailing-record cache is newer than the assembly counters this tool requires); cold_caches in the
 # report says which of both lists were emptied, and the test pins that list at HEAD.
@@ -417,6 +421,9 @@ def make_backend(sbmod, state, dormant_rows, all_regs):
         "_push_cb": None, "_push_session_cb": None, "_todo_lost_cb": None, "_log_cb": None,
         "mcp_config": None, "append_prompt_path": None, "cli_scope": False, "thread_wake_model": None,
         "_bench_dormant": bool(dormant_rows), "_bench_all_regs": bool(all_regs),
+        "_owns_memo": {},  # the owns() memo sdk_backend sets in __init__; read on the liveness path since the 2026-09-07 fold
+        "_live_rev": {},   # the live-tail revision map __init__ sets (_touch_live / live_rev): every chat signature
+        #                    reads it (round-4 plan P4), and without it the guard above turned each into no signature
     })
     return be
 
@@ -930,13 +937,14 @@ def run(args, state, mirror_of, out, private):
 
                 def connect_before(_app=app):
                     holder["c"] = fake_client(km, _app, active if _app == "chat" else None)
-                    new_cycle()
+                    unscope()                          # a handler thread: no cycle scope (see the docstring)
 
                 def connect_push():
                     km._push([holder["c"]], connect=True, tmux=tmux)
                 st, _ = timed(connect_push, iters, before=connect_before)
                 st["bytes"] = client_bytes([holder["c"]])[app]
                 bench["push_connect:" + app] = st
+            scope(tmux)                                # back on the pusher's footing for the rows below
             reset_client_bytes(clients)
 
             # the periodic push, steady state; rebuild samples separated

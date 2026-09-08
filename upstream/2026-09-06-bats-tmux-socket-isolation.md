@@ -13,3 +13,5 @@ Upstream's suite has the same hole: `romp-manager-ensure.bats` and `romp-manager
 Status detail (migrated from the table): **offered** — their PR #951 (2026-09-06), label `tests-only`
 
 MERGED 2026-09-06T19:50Z as their PR #951 (merge `305171f6`), as offered; the body took the maintainer's corrections only (port band 20000-24999, five free-port cases, 402 tests). Its `tests/free-port.bash` helper also closed the fixed-ports entry (`bats-fixed-ports`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #951 is in the folded range).

@@ -86,6 +86,81 @@ def prose(body):
     return body.split("<!--")[0]
 
 
+# ── the widened passage desc (the anchors follow-on, 2026-09-07) ─────────────────────────────────
+# A passage comment whose anchor the host widened — the passage recurs, and the extra context is what tells
+# the copies apart — names its copy by its surroundings: `on "<quote>", the one after "…" and before "…"`,
+# each side JSON-quoted so a context holding a line break or a quotation mark keeps the message's
+# `Comment <id> (…):` line one line (file-comments-model.ts passageDesc). The sides print whole, up to
+# DESC_CTX_MAX characters each (five of the host's 24-character steps); past that on either side — at the
+# host's cap, ANCHOR_CTX_CAP a side, where the anchor may still tie and the first form put a kilobyte of
+# escaped text on the line (the review's round 2, 2026-09-07) — the desc keeps the plan's `on "<quote>"`
+# and adds RECURS_CLAUSE, a short clause saying the text recurs. Two specimens are the composer's own
+# test's literals, copied (file-comments-model-recurring.test.ts) and pinned to that file so a copy cannot
+# outlive its original; the rest — the widest whole form, and the short form — are built with
+# _widened_desc, a mirror of passageDesc's assembly (JSON.stringify and json.dumps(ensure_ascii=False)
+# write the same escapes for the text a sidecar holds), itself pinned to those literals and to the
+# composer's constants, which are read from the source so a moved or reworded one fails loudly.
+_MODEL_SRC = Path(os.path.dirname(HERE), "ui", "webview", "file-comments-model.ts").read_text(encoding="utf-8")
+_HOST_SRC = Path(os.path.dirname(HERE), "tools", "file-comments-host.mjs").read_text(encoding="utf-8")
+
+
+def _source_const(src, where, pattern):
+    """The one capture of `pattern` in a module's source: a constant the specimens must track."""
+    m = re.search(pattern, src, re.M)
+    assert m, ("%s no longer defines the constant %r at module level — re-pin the specimens here, do not drop them"
+               % (where, pattern))
+    return m.group(1)
+
+
+ANCHOR_CTX_CAP = int(_source_const(_HOST_SRC, "tools/file-comments-host.mjs", r"^export const ANCHOR_CTX_CAP = (\d+);"))
+ANCHOR_CTX = int(_source_const(_MODEL_SRC, "file-comments-model.ts", r"^export const ANCHOR_CTX = (\d+);"))
+DESC_CTX_MAX = ANCHOR_CTX * int(_source_const(_MODEL_SRC, "file-comments-model.ts",
+                                              r"^export const DESC_CTX_MAX = ANCHOR_CTX \* (\d+);"))
+# the composer's clause for a recurring passage whose copies the message cannot tell apart, COPIED (pinned below)
+RECURS_CLAUSE = ", which appears more than once with the same text around each copy"
+
+
+def _widened_desc(quote, prefix, suffix):
+    """passageDesc's assembly for a widened anchor: the quote's first 40 characters plain; then, with both sides
+    within DESC_CTX_MAX, each non-empty side JSON-quoted and the sides joined with " and " — else RECURS_CLAUSE."""
+    head = 'on "%s"' % quote[:40]
+    if len(prefix) > DESC_CTX_MAX or len(suffix) > DESC_CTX_MAX:
+        return head + RECURS_CLAUSE
+    sides = []
+    if prefix:
+        sides.append("after " + json.dumps(prefix, ensure_ascii=False))
+    if suffix:
+        sides.append("before " + json.dumps(suffix, ensure_ascii=False))
+    return head + ", the one " + " and ".join(sides)
+
+
+RECURRING_COMMENTS = [
+    # the second copy: its context holds a quotation mark, a tab and a line break, and the escapes carry them
+    {"id": "1781100000010-612",
+     "desc": r'on "Ship it.", the one after "He said \"ready\", then\ttyped: " and before "\nNo regressions were seen in the nightly run."',
+     "body": "Not yet."},
+    # the first copy, at the file's start: no prefix to name, so only the side the file has
+    {"id": "1781100000011-0",
+     "desc": r'on "Ship it.", the one before "\n\nThe tests pass on every supported platform."',
+     "body": "Say it once."},
+]
+# the widest whole form: both sides at exactly DESC_CTX_MAX, each holding quotation marks and line breaks — the
+# longest Comment line a send carries
+_PARA = 'The nightly run said "ready" on every supported platform.\n'
+_BOUND_TEXT = _PARA * (DESC_CTX_MAX // len(_PARA) + 1)
+BOUND_PREFIX, BOUND_SUFFIX = _BOUND_TEXT[-DESC_CTX_MAX:], _BOUND_TEXT[:DESC_CTX_MAX]
+WIDEST_COMMENT = {"id": "1781100000012-1740", "desc": _widened_desc("Ship it.", BOUND_PREFIX, BOUND_SUFFIX),
+                  "body": "Which of these is the one you mean?"}
+# past the bound: the host's anchor at its cap on copies of one paragraph the cap cannot tell apart, so the desc
+# reads the same on every copy (the composer's cap test's specimen, file-comments-model-cap.test.ts) — the first
+# through the mirror from a cap-width anchor, the second the literal a reader should expect
+RECURS_COMMENTS = [
+    {"id": "1781100002000-1213", "desc": _widened_desc("the marker phrase", "x" * ANCHOR_CTX_CAP, "y" * ANCHOR_CTX_CAP),
+     "body": "Say it once."},
+    {"id": "1781100003000-2423", "desc": 'on "the marker phrase"' + RECURS_CLAUSE, "body": "And here."},
+]
+
+
 # ── the desc composers' source scan ──────────────────────────────────────────────────────────────
 # The Send to session message's parenthetical (`desc`) is composed in the webview and the kernel prints
 # it verbatim, so its fixed phrases are scanned at the SOURCE (test_the_client_composed_desc_speaks_
@@ -266,6 +341,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         km._user_todos_cache.clear()
         self.td.cleanup()
 
+    def _file_warning(self):
+        """The warning POST /usertodo answers for a `file` that cannot become absolute, rendered for a session
+        with no recorded cwd (a PRIVATE synthetic sid no store knows, so nothing is minted under it)."""
+        stored, warning = km._user_todo_file("docs/report.md", "7b7b7b7b-1111-4222-8333-944444444444")
+        self.assertEqual(stored, "docs/report.md", "kept as given")
+        self.assertIsInstance(warning, str)
+        self.assertIn("did not resolve", warning)
+        return warning
+
     def _bodies(self):
         """Every message romp injects, by name, rendered from the same synthetic store."""
         nodes = _nodes()
@@ -318,6 +402,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # applies — it must read as the agent's own notes, never a tracking system's; naming
             # withdraw_user_todo is correct (the agent holds that tool)
             "user-todo context block": km._user_todo_context_block(SID),
+            # the filing reply's file WARNING (the todo-file follow-on, 2026-09-07): the kernel's words for a
+            # `file` that did not resolve (a relative path, no working directory recorded for the session),
+            # which the postal tool's add_user_todo relays verbatim into the agent's reply — so the same veil
+            "user-todo file warning": self._file_warning(),
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
@@ -328,6 +416,13 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             "reject trace (one change)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
             # the count-less form: the host wrote the file and died before saying which ids landed
             "reject trace (count unknown)": km._reject_trace_body("/TESTDIR/notes-api/docs/report.md", None),
+            # the save trace (plans/file-review.md, Slice 5; the review round, 2026-09-06): the editor's
+            # Save wrote the file AND its decisions rejected some of the session's tracked changes, so the
+            # session hears the direct edit and the count in one body — told as the edit trace alone it
+            # read as an overwrite. A save that rejected nothing sends the edit trace above. The same
+            # voice, tail and neutralized path as its two siblings, rendered for several and for one
+            "save trace": km._save_trace_body("/TESTDIR/notes-api/docs/report.md", 2),
+            "save trace (one change)": km._save_trace_body("/TESTDIR/notes-api/docs/report.md", 1),
             # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
             # suggests a /compact at a natural boundary; /compact is a CLI feature the session
             # already knows, and the thresholds behind the timing are never mentioned
@@ -343,9 +438,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # prints it verbatim, so the descs below are COPIES of what the client emits, one body per
             # form: a passage, this file, a change with the decision sentence, a region of a standalone
             # image, a region of a figure embedded in a text file (Slice 3, which names the figure by
-            # its src), a region of a PDF page (the plan's own specimen), and a region with a coordinate
+            # its src), a region of a PDF page (the plan's own specimen), a region with a coordinate
             # the sidecar holds as something other than a number, which prints as "?" in its slot (the
-            # UNREADABLE form the source scan below reaches through fmt2). A copy catches a drift only
+            # UNREADABLE form the source scan below reaches through fmt2), and a passage that RECURS,
+            # named by its widened surroundings (the anchors follow-on, 2026-09-07; passageDesc) — with
+            # the escapes a context needs, at the widest the sides print whole, and past that bound, where
+            # a short clause says only that the text recurs. A copy catches a drift only
             # when the editor propagates it, so the composers' string literals — and those of every
             # helper they reach, such as the "?" a coordinate that is not a number prints as — are
             # scanned at the source as well (test_the_client_composed_desc_speaks_plainly_at_its_source).
@@ -410,6 +508,23 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 [{"id": "1781100000009-0", "desc": "on the region at 0.10, ?, 0.30, 0.40",
                   "body": "Which run is this spike from?"}],
                 0, 0, False, False),
+            # the anchors follow-on (2026-09-07): a passage that RECURS is named by its widened
+            # surroundings — `on "<quote>", the one after "…" and before "…"`, both sides JSON-quoted
+            # (passageDesc) — so the session can build a `--old` that is unique; the quote alone is one the
+            # CLI refuses. Rendered as the two copies of one passage: one whose context holds a quotation
+            # mark, a tab and a line break (the escapes are what keep the Comment line one line), and one
+            # at the file's start with no prefix to name. The descs are the composer's own test's literals.
+            "file comments message (recurring passage)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", RECURRING_COMMENTS, 0, 0, True, True),
+            # …the WIDEST whole form: both sides at the bound the composer prints whole (DESC_CTX_MAX), the
+            # longest Comment line a send carries, rendered so the scan and a reader see the shape at its largest
+            "file comments message (recurring passage, widest)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", [WIDEST_COMMENT], 0, 0, True, True),
+            # …and PAST the bound (the review's round 2, 2026-09-07): an anchor at the host's cap may still tie,
+            # so its sides would name a span that sits on every copy — a kilobyte of it — and the desc says
+            # instead, in a short clause, that the text recurs (RECURS_CLAUSE); the same line on every copy
+            "file comments message (recurring passage, past the bound)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/repeat.md", RECURS_COMMENTS, 0, 0, True, True),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -444,7 +559,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # and scans them the way the rendered bodies are scanned. The reach matters: regionDesc prints
         # a coordinate that is not a number as UNREADABLE ("the region at 0.10, ?, 0.30, 0.40"), a
         # constant it gets through fmt2, and describeComment names an embedded figure through decodeSrc
-        # and the region through region-geometry's regionDesc — none of them in the composer's own span.
+        # and the region through region-geometry's regionDesc, and names a recurring passage by its surroundings
+        # or by the short RECURS_CLAUSE through passageDesc (the anchors follow-on, 2026-09-07) — none of them
+        # in the composer's own span.
         # Comments in the source are skipped (they are not emitted); a composer that moved or was
         # renamed, a helper import that no longer resolves, or a helper reached through a default
         # import (which the scan does not follow) fails loudly here — re-pin it, do not drop the scan.
@@ -453,8 +570,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
         composers = (
             ("file-comments-model.ts", "describeComment",
-             ("on this file", 'on "', "on your change", "the region at "),
-             (("region-geometry.ts", "regionDesc"), ("file-comments-model.ts", "decodeSrc"))),
+             ("on this file", 'on "', "on your change", "the region at ", ", the one ", "after ", "before ",
+              ", which appears more than once"),
+             (("region-geometry.ts", "regionDesc"), ("file-comments-model.ts", "decodeSrc"),
+              ("file-comments-model.ts", "passageDesc"), ("file-comments-model.ts", "RECURS_CLAUSE"))),
             ("region-geometry.ts", "regionDesc",
              ("the region at ", " of page ", "?"),
              (("region-geometry.ts", "fmt2"), ("region-geometry.ts", "UNREADABLE"))),
@@ -476,6 +595,103 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                          "%s.%s would print %r into the Send to session message, through %s.%s "
                                          "(%r: %s). The desc reaches the session verbatim — write it as the "
                                          "person would name the spot." % (fname, fn, lit, base, n, word, why))
+
+    @staticmethod
+    def _sides(clause):
+        """The surroundings a widened desc's clause names — the text after ", the one " — decoded the way a
+        session would read them: {"after": prefix, "before": suffix} for the sides present. A side is one
+        JSON string; the two are joined with " and "."""
+        dec, out, rest = json.JSONDecoder(), {}, clause
+        while rest:
+            side, rest = rest.split(" ", 1)
+            text, end = dec.raw_decode(rest)
+            out[side] = text
+            rest = rest[end:]
+            if rest.startswith(" and "):
+                rest = rest[len(" and "):]
+        return out
+
+    def test_the_widened_desc_rides_the_comment_line_whole(self):
+        # the anchors follow-on (2026-09-07): a passage comment whose anchor the host widened names its copy
+        # by its surroundings, or — past the bound the composer prints whole — says that the text recurs, and
+        # the kernel prints that desc verbatim on the `Comment <id> (…):` line, so the session reads it exactly
+        # as the client composed it. What a reader of the rendered bodies should be able to see, pinned: every
+        # form is ONE line — a context's line break rides as the JSON escape, never raw — the body follows on
+        # the next line; each quoted side decodes back to the context whole, the text a session puts beside the
+        # quote in `track-edit --old`, and never wider than the bound; at the bound the line is the longest a
+        # send carries; and past it the short clause stands alone, the same on every copy, carrying none of
+        # the surroundings. Before this the widened form was rendered nowhere the voice scan reads; only its
+        # fragments were scanned at the source (the review, 2026-09-07).
+        bodies = self._bodies()
+        whole = [("file comments message (recurring passage)", RECURRING_COMMENTS),
+                 ("file comments message (recurring passage, widest)", [WIDEST_COMMENT])]
+        short = ("file comments message (recurring passage, past the bound)", RECURS_COMMENTS)
+        for name, comments in whole + [short]:
+            lines = bodies[name].split("\n")
+            self.assertEqual(len([l for l in lines if l.startswith("Comment ")]), len(comments),
+                             "%r: one Comment line per comment — no desc broke its line" % name)
+            for c in comments:
+                with self.subTest(message=name, comment=c["id"]):
+                    line = "Comment %s (%s):" % (c["id"], c["desc"])
+                    self.assertNotIn("\n", line, "the escapes carry the context's line breaks")
+                    self.assertIn(line, lines, "the kernel prints the desc verbatim, whole, on one line")
+                    self.assertEqual(lines[lines.index(line) + 1], c["body"], "the body follows its own line")
+        for name, comments in whole:
+            for c in comments:
+                with self.subTest(message=name, comment=c["id"]):
+                    m = re.fullmatch(r'on "([^"]+)", the one (.+)', c["desc"])
+                    self.assertTrue(m, "the whole form: the quote plain, then the surroundings clause")
+                    self.assertEqual(m.group(1), "Ship it.")
+                    sides = self._sides(m.group(2))
+                    self.assertTrue(sides and set(sides) <= {"after", "before"}, sides)
+                    for side, text in sides.items():
+                        self.assertTrue(text, "an empty side is not named")
+                        self.assertLessEqual(len(text), DESC_CTX_MAX, "a side printed is printed whole, within the bound")
+                        self.assertNotEqual(json.dumps(text, ensure_ascii=False), '"%s"' % text,
+                                            "each specimen's %s side holds something only an escape can carry" % side)
+        widest = self._sides(re.fullmatch(r'on "[^"]+", the one (.+)', WIDEST_COMMENT["desc"]).group(1))
+        self.assertEqual({k: len(v) for k, v in widest.items()}, {"after": DESC_CTX_MAX, "before": DESC_CTX_MAX},
+                         "the bound's worth on both sides, whole")
+        self.assertEqual((widest["after"], widest["before"]), (BOUND_PREFIX, BOUND_SUFFIX))
+        self.assertGreater(len(WIDEST_COMMENT["desc"]), 2 * DESC_CTX_MAX, "the longest line a send carries is rendered")
+        # past the bound: the plan's form plus the clause, alike on every copy, none of the context, no false "the one"
+        self.assertGreater(ANCHOR_CTX_CAP, DESC_CTX_MAX,
+                           "an anchor at the host's cap is past the bound, so the cap renders the short form")
+        for c in RECURS_COMMENTS:
+            self.assertEqual(c["desc"], 'on "the marker phrase"' + RECURS_CLAUSE)
+            self.assertNotIn("the one ", c["desc"])
+            self.assertLess(len("Comment %s (%s):" % (c["id"], c["desc"])), 160)
+        self.assertNotIn("xxxx", bodies[short[0]], "none of the cap-width context reaches the message")
+
+    def test_the_widened_desc_copies_are_the_composers_own_specimens(self):
+        # the two RECURRING_COMMENTS descs are copied from the composer's own test (file-comments-model-
+        # recurring.test.ts asserts passageDesc produces each), RECURS_CLAUSE from the composer's constant, and
+        # _widened_desc, which builds the widest and the short specimens, must produce those same copies and
+        # the composer's own bound cases (file-comments-model-cap.test.ts) — so a change to passageDesc's form
+        # that the client's tests follow fails here until the copies and the mirror follow too, rather than
+        # leaving this index rendering a shape no session receives
+        ts = Path(os.path.dirname(HERE), "ui", "webview", "file-comments-model-recurring.test.ts").read_text(encoding="utf-8")
+        for c in RECURRING_COMMENTS:
+            with self.subTest(comment=c["id"]):
+                # the TypeScript literal is single-quoted and doubles each backslash the desc carries
+                self.assertIn("'" + c["desc"].replace("\\", "\\\\") + "'", ts,
+                              "the copy is no longer the literal the composer's test asserts — re-copy it")
+        self.assertIn('export const RECURS_CLAUSE = "%s";' % RECURS_CLAUSE, _MODEL_SRC,
+                      "the copy is no longer the composer's constant — re-copy it")
+        self.assertEqual(_widened_desc("Ship it.", 'He said "ready", then\ttyped: ',
+                                       "\nNo regressions were seen in the nightly run."), RECURRING_COMMENTS[0]["desc"])
+        self.assertEqual(_widened_desc("Ship it.", "", "\n\nThe tests pass on every supported platform."),
+                         RECURRING_COMMENTS[1]["desc"])
+        p, s = "p" * DESC_CTX_MAX, "s" * DESC_CTX_MAX
+        self.assertEqual(_widened_desc("Ship it.", p, s), 'on "Ship it.", the one after "%s" and before "%s"' % (p, s),
+                         "exactly the bound: whole")
+        for over in ((p + "p", s), (p, s + "s"), ("", "s" * ANCHOR_CTX_CAP), ("x" * ANCHOR_CTX_CAP, "y" * ANCHOR_CTX_CAP)):
+            self.assertEqual(_widened_desc("Ship it.", *over), 'on "Ship it."' + RECURS_CLAUSE,
+                             "one over on either side, or at the cap: the short form, never a side cut short")
+        self.assertEqual(_widened_desc("x" * 50, "p" * 30, ""), 'on "%s", the one after "%s"' % ("x" * 40, "p" * 30),
+                         "the quote keeps the plan's 40 characters; a side the file left empty is not named")
+        self.assertEqual(_widened_desc("q" * 50, p + "p", ""), 'on "%s"' % ("q" * 40) + RECURS_CLAUSE,
+                         "…in both forms")
 
     def test_the_index_renders_both_shapes_of_the_file_comments_message(self):
         # the send message has TWO shapes with different prose (kernel _file_comments_message): the
@@ -517,9 +733,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
 
     def test_the_lost_tasks_notice_asks_for_a_check_in_the_persons_voice(self):
         # the lost-background-tasks notice (task_death_notice) is the same [romp]-prefixed mechanics
-        # family; past the prefix it speaks plainly. Since 2026-09-05 it says the tasks were CUT OFF
-        # from the session, never that they died: under the per-session scopes a task's shell can
-        # outlive the CLI, so the ask is to check whether each still runs before relaunching it.
+        # family; past the prefix it speaks plainly, to "you". Since 2026-09-05 it says the tasks were
+        # CUT OFF, never that they died: under the per-session scopes a task's shell can outlive the
+        # CLI, so the ask is to check whether each still runs before relaunching it. Since 2026-09-06
+        # it names the session once (as "you") and says whose process ended (the one that started the
+        # tasks) — the earlier wording said "session" twice in one clause and left "its" dangling.
         import os as _os
         sb = load_source("romp_sdk_backend_voice", _os.path.join(BIN, "romp_sdk_backend.py"))
         for tasks in ([{"desc": "watching the CI run"}],
@@ -532,16 +750,25 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             for word, why in ROMP_WORDS:
                 self.assertNotIn(word, body, "the notice speaks plainly past its prefix (%r: %s)" % (word, why))
             self.assertIn("%d background task" % len(tasks), body)
-            self.assertIn("cut off from the session when its claude process ended", body)
+            self.assertIn("cut off when the claude process that started", body)
+            self.assertNotIn("session", body, "the recipient is \"you\"; the noun appears in neither clause")
+            self.assertNotIn(" its claude process", body, "the antecedent-free wording is gone")
             self.assertIn("will never arrive", body)
             self.assertIn("still running before relaunching", body)
             self.assertNotIn("died", body)
             self.assertIn("watching the ci run", body, "the descriptions name what was lost")
         # singular and plural agree throughout; an empty description is skipped, not printed
-        self.assertIn("1 background task this session had running was cut off", sb.task_death_notice([{}]))
+        self.assertIn("1 background task you had running was cut off when the claude process that started it "
+                      "ended (a restart or crash). Its completion notification will never arrive. Check whether it "
+                      "is still running before relaunching it; if it isn't needed, carry on.",
+                      sb.task_death_notice([{}]))
         three = sb.task_death_notice([{"desc": "a"}, {"desc": "b"}, {}])
-        self.assertIn("3 background tasks this session had running were cut off", three)
-        self.assertIn("(a restart or crash): a; b. Their completion notifications", three)
+        self.assertIn("3 background tasks you had running were cut off when the claude process that started them "
+                      "ended (a restart or crash): a; b. Their completion notifications will never arrive. Check "
+                      "whether each is still running before relaunching it; if they aren't needed, carry on.", three)
+        # the reconnect cause reads as the parenthesis after "ended", with "it" the process that ended
+        self.assertIn("ended (a settings switch or a rewind restarted it): a",
+                      sb.task_death_notice([{"desc": "a"}], cause=sb.SdkSession._RECONNECT_CAUSE))
 
     def test_the_untitled_fallback_names_no_romp_object(self):
         # a node with no text still renders SOMETHING; that placeholder must not smuggle in "goal"
@@ -563,6 +790,34 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                          "the note DESCRIBES the markers without naming the product — naming it would "
                          "explain nothing to a model that has never heard of it")
 
+    def test_the_index_renders_every_trace_body(self):
+        # the trace family — one `_<verb>_trace_body` per verb that changes a file's bytes under a
+        # session (edit, reject, save so far) — grows a builder per slice of plans/file-review.md,
+        # and the save trace shipped (2026-09-06) with its voice check in its own module only, so this
+        # index no longer rendered every injected body: the awaiting backstop's drift again, in
+        # miniature. Pin the shape rather than the list: every trace builder the kernel defines is
+        # rendered by _bodies(), so the next verb's trace cannot skip the index-wide checks, and every
+        # rendered trace wears the ONE shared tail (_TRACE_MARKER_TAIL) that keeps them from drifting
+        import inspect
+        builders = sorted(n for n in dir(km)
+                          if re.fullmatch(r"_[a-z]+_trace_body", n) and callable(getattr(km, n)))
+        self.assertLessEqual({"_edit_trace_body", "_reject_trace_body", "_save_trace_body"}, set(builders),
+                             "the enumeration finds the three known builders — otherwise the loop is vacuous")
+        index = inspect.getsource(InjectedBodiesSpeakAsTheUser._bodies)
+        for name in builders:
+            with self.subTest(builder=name):
+                self.assertTrue("km.%s(" % name in index,          # not assertIn: it would dump the source
+                                "%s is a message romp injects into a session, but this index never renders "
+                                "it — add a row to _bodies() (and, if it is an FYI, to the four-verdicts "
+                                "exemption list) so the index-wide checks reach it" % name)
+        traces = {n: b for n, b in self._bodies().items() if n.split(" (")[0].endswith(" trace")}
+        self.assertEqual(sorted(traces), ["edit trace", "reject trace", "reject trace (count unknown)", "reject trace (one change)",
+                                          "save trace", "save trace (one change)"])
+        for name, body in traces.items():
+            with self.subTest(message=name):
+                self.assertTrue(body.endswith(km._TRACE_MARKER_TAIL), "%r wears the shared trace tail" % name)
+                self.assertEqual(body.count("<!--"), 2, "%r carries the tail's two markers and no other" % name)
+
     def test_the_asks_still_elicit_the_planners_four_verdicts(self):
         # the rule is about VOCABULARY, not content: dropping the labeled reply slots must not drop the
         # question. Each nudge still asks for progress, for what is owed by the user, and permits "drop it".
@@ -576,17 +831,21 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # a memory aid with a withdraw invitation, not a status ask
             # …and the edit trace is an FYI about something the user already DID (a file changed under
             # the session) — telling, not asking; a status question bolted on would be noise; the reject
-            # trace is the same class (the person rejected the session's changes and the file changed)
+            # trace is the same class (the person rejected the session's changes and the file changed),
+            # and the save trace is both at once (the person edited the file AND rejected some changes)
             # …and the MERGE handoff is a record handed over with direction ("account for it"),
             # never a status ask — bolting a progress question onto it would be noise
             # …and the file-comments message is the person's own comments with instructions on how
             # to answer them — its ask is "address these and ask me for another look", not a status
+            # …and the user-todo file warning is a tool reply's clause about a path that did not resolve —
+            # it tells the agent what to pass next time, and asks for nothing
             if (name.startswith("file comments message")       # every form of the Send to session message
                     or name in ("typed follow-up on a summary",
                                 "debt reminder (question)", "debt reminder (handoff)",
                                 "debt reminder (several)", "comment thread opener", "user-todo answer",
-                                "user-todo context block", "edit trace", "reject trace",
+                                "user-todo context block", "user-todo file warning", "edit trace", "reject trace",
                                 "reject trace (one change)", "reject trace (count unknown)",
+                                "save trace", "save trace (one change)",
                                 "comment-thread merge", "compaction suggestion")):
                                 # ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
@@ -757,6 +1016,11 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results = {}
             canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
             results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            # the file the need is about (2026-09-07): the kernel's warning for an unresolved path
+            # rides the reply behind the tool's own lead-in, which is what is scanned here
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34", "warning": "that path did not resolve"}
+            results["add: noted, path unresolved"] = pm._mcp_call(
+                "add_user_todo", {"text": "Need a look at the report", "file": "docs/report.md"})[0]
             results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
             canned["res"] = None                    # unreachable kernel / non-2xx
             results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
@@ -766,6 +1030,12 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
             canned["res"] = {"ok": False}
             results["withdraw: no open note"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+            # the kernel's account (state / at / owner, 2026-09-07) words the ok:false four ways
+            for state in ("answered", "dismissed", "withdrawn"):
+                canned["res"] = {"ok": False, "state": state, "at": T0, "owner": True}
+                results["withdraw: already " + state] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "at": None, "owner": False}
+            results["withdraw: not yours"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
             pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 2}))
             results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
             results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
@@ -774,10 +1044,93 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])
+        self.assertIn("About the file: that path did not resolve", results["add: noted, path unresolved"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
+        self.assertIn("Already closed", results["withdraw: already answered"])
+        self.assertIn("Already closed", results["withdraw: already dismissed"])
+        self.assertIn("Already withdrawn", results["withdraw: already withdrawn"])
+        self.assertIn("of yours", results["withdraw: not yours"])
         self.assertIn("turned off on this machine", results["add: switch off"])
         self.assertIn("turned off on this machine", results["withdraw: switch off"])
+        for name, text in results.items():
+            for word, why in ROMP_WORDS:
+                with self.subTest(result=name, word=word):
+                    self.assertNotIn(word, text.lower(),
+                                     "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
+
+
+class PinnedNoteToolDescriptionsKeepTheVeil(unittest.TestCase):
+    """The two pinned-note postal tools (the user 2026-09-08) speak to the PERSON THE AGENT WORKS FOR
+    the way the user-todo pair does, so their descriptions and result texts ride the same veil: no romp
+    machinery named. Every branch of _mcp_call is rendered from stubs and scanned."""
+
+    NOTES = [{"id": "pn-9f2c1a34", "text": "Waiting on CI for the login fix", "createdT": T0},
+             {"id": "pn-0badcafe", "text": "Read docs/plan.md before replying", "createdT": T0 + 60}]
+
+    def test_the_descriptions_carry_no_romp_vocabulary(self):
+        pm = load_source("romp_postal_voice_pn", os.path.join(BIN, "romp-postal-service"))
+        tools = {t["name"]: t for t in pm.MCP_TOOLS}
+        for name in ("pin_note", "unpin_note"):
+            self.assertIn(name, tools, "the tool exists to be scanned")
+            desc = tools[name]["description"]
+            self.assertIn("person you work for", desc, "%s speaks as the person the agent works for" % name)
+            for word, why in ROMP_WORDS:
+                with self.subTest(tool=name, word=word):
+                    self.assertNotIn(word, desc.lower(),
+                                     "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
+            for prop in tools[name]["inputSchema"]["properties"].values():
+                for word, why in ROMP_WORDS:
+                    with self.subTest(tool=name, word=word, prop=prop["description"][:30]):
+                        self.assertNotIn(word, prop["description"].lower())
+
+    def test_the_result_texts_carry_no_romp_vocabulary(self):
+        pm = load_source("romp_postal_voice_pn_results", os.path.join(BIN, "romp-postal-service"))
+        saved = (pm._kernel_post, pm._self_identity, pm._heartbeat)
+        canned = {}
+        pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
+        pm._self_identity = lambda: (SID, "api")
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            results = {}
+            canned["res"] = {"ok": True, "noteId": "pn-0badcafe", "notes": self.NOTES}
+            results["pin: pinned"] = pm._mcp_call("pin_note", {"text": "Read docs/plan.md before replying"})[0]
+            results["pin: no text"] = pm._mcp_call("pin_note", {"text": "  "})[0]
+            results["pin: too long"] = pm._mcp_call("pin_note", {"text": "x" * 301})[0]
+            results["pin: detail too long"] = pm._mcp_call("pin_note", {"text": "x", "detail": "y" * 4001})[0]
+            canned["res"] = {"ok": True, "noteId": "pn-0badcafe", "notes": self.NOTES,
+                             "dropped": [{"id": "pn-00000000", "text": "the first note"}]}
+            results["pin: made room"] = pm._mcp_call("pin_note", {"text": "the ninth"})[0]
+            canned["res"] = None                    # unreachable kernel / non-2xx
+            results["pin: couldn't pin"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
+            results["pin: not a string"] = pm._mcp_call("pin_note", {"text": ["a"]})[0]
+            canned["res"] = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+            results["pin: unreadable"] = pm._mcp_call("pin_note", {"text": "Waiting on CI"})[0]
+            results["unpin: unreachable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            results["unpin: no id"] = pm._mcp_call("unpin_note", {})[0]
+            canned["res"] = {"ok": True, "state": "unpinned", "notes": []}
+            results["unpin: unpinned"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unknown", "error": "no pinned note of yours with that id", "notes": self.NOTES[:1]}
+            results["unpin: nothing changed"] = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})[0]
+            canned["res"] = {"ok": False, "state": "already", "at": T0, "dropped": False, "error": "already unpinned", "notes": []}
+            results["unpin: already"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "already", "at": T0, "dropped": True, "error": "already unpinned", "notes": []}
+            results["unpin: already, dropped"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "state": "unreadable", "notes": [], "error": "the pinned-notes store (x) is not readable; nothing changed"}
+            results["unpin: unreadable"] = pm._mcp_call("unpin_note", {"id": "pn-9f2c1a34"})[0]
+            canned["res"] = {"ok": False, "error": "no pinned note of yours with that id", "notes": []}
+            results["unpin: older kernel"] = pm._mcp_call("unpin_note", {"id": "pn-deadbeef"})[0]
+        finally:
+            pm._kernel_post, pm._self_identity, pm._heartbeat = saved
+        self.assertIn("Pinned (id pn-0badcafe)", results["pin: pinned"])
+        self.assertIn("Unpinned", results["unpin: unpinned"])
+        self.assertIn("Nothing changed", results["unpin: nothing changed"])
+        self.assertIn("Already unpinned", results["unpin: already"])
+        self.assertIn("came down", results["pin: made room"])
+        self.assertIn("not readable", results["unpin: unreadable"])
+        self.assertIn("NOT see it", results["pin: couldn't pin"])
+        self.assertIn("not readable", results["pin: unreadable"])
+        self.assertIn("Nothing was pinned", results["pin: not a string"])
         for name, text in results.items():
             for word, why in ROMP_WORDS:
                 with self.subTest(result=name, word=word):

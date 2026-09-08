@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+import shutil
 import urllib.request
 from contextlib import redirect_stderr
 from http.server import ThreadingHTTPServer
@@ -44,7 +45,12 @@ SID = "11111111-2222-3333-4444-555555555555"
 # and node ids collide across test modules under the shared placeholder (CLAUDE.md, goal-store fixtures).
 GOAL_SID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
 TOP_KEYS = {"now", "since", "uptime_s", "log", "process", "pusher", "stages_ms", "builds", "sends",
-            "goals", "judge", "http", "memos"}
+            "goals", "judge", "http", "memos", "caches"}
+PROCESS_KEYS = {"rss_kb", "threads", "cpu_s", "pid", "rss_anon_kb", "hwm_kb", "source", "allocated_blocks", "gc_gen2", "malloc"}
+# The caches the `caches` block gauges (perf round 4, M1-lite): exact occupancy, a len() or a sum of len()s,
+# nothing estimated. A cache added to the kernel, the judge or the event model is added here deliberately.
+CACHE_NAMES = {"jsonl", "asm", "asm_keylocks", "trailing", "judge_parse", "judge_recon", "judge_chain", "parse",
+               "built_chat", "judge_usage", "img", "path_links", "space_paths", "session_stamp", "task_seg", "session_tok"}
 
 
 def _burn_cpu(seconds):
@@ -106,27 +112,80 @@ class Collector(unittest.TestCase):
         self.assertEqual(p["ring_n"], 0)
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline"})
+        self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
+        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved"},
+                         "the chat builder carries the active/background split, the miss attribution (round-4 P3) "
+                         "and the builds left uncached because their signature moved (P4)")
+        self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
+        self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"),
+                         "one counter per labelled signature component, plus the two no-signature cases")
+        self.assertNotIn("judge_gen", km._PerfStats.CHAT_MISS)
+        self.assertEqual(snap["builds"]["chat"]["moved"], 0)
+        self.assertEqual(sum(snap["builds"]["chat"]["bg_miss"].values()), 0)
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")
         self.assertIn("cpu_ms_sum", snap["judge"])
         self.assertIn("cpu_ms_workers", snap["judge"])
+        self.assertEqual({k: snap["judge"][k] for k in ("wakes", "wakes_event", "wakes_backstop")},
+                         {"wakes": 0, "wakes_event": 0, "wakes_backstop": 0},
+                         "the producer's wake counters: present and zero on a fresh collector")
+        tiers = snap["judge"]["tiers"]
+        self.assertEqual(set(tiers), set(km.jd.GATED_TIERS) | {"stamps"},
+                         "read through jd.tier_stats: the evidence gate's per-tier counters plus the stamps held")
+        for t in km.jd.GATED_TIERS:
+            self.assertEqual(set(tiers[t]), {"ran", "skipped", "stamped", "bypassed", "incomplete", "due_clock"}, t)
+        self.assertIn("index", km.jd.GATED_TIERS,
+                      "the index tier (captioner and archiver) is counted beside the triage tiers; its incomplete "
+                      "counts sessions with work this pass or a voided read, and ran == stamped + bypassed + incomplete "
+                      "holds for it as for the others")
+        self.assertIsInstance(tiers["stamps"], int)
         self.assertEqual(set(snap["judge"]["chain_memo"]), {"hit", "miss", "populate", "bypass"},
                          "read through jd.chain_memo_stats: the write-moment chain memo's counters")
         self.assertEqual(set(snap["goals"]), {"loads", "loads_shared", "saves", "writes", "scans", "scan_hits", "scan_parses",
                                               "disk_hits", "disk_misses", "disk_seeds",
-                                              "absent_hits", "absent_misses"},
-                         "read through jd.goal_io_stats")
+                                              "absent_hits", "absent_misses", "noop_hash_ms", "unreadable_stores",
+                                              "lineage_reads"},
+                         "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
-                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope"},
+                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
+                          "captions", "states_overlay", "thread_reg", "bg_tops",
+                          "feed_segs", "lanes",
+                          "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
                          "one block per memo the kernel keeps (plan D4)")
+        self.assertEqual(set(snap["builds"]["feed"]), {"cached", "built", "ms", "dirty"},
+                         "the feed build also counts the rebuilds a kernel-side mutation forced past the view signature")
+        self.assertEqual(snap["builds"]["feed"]["dirty"], 0)
+        self.assertEqual(set(snap["memos"]["chat_ledger"]),
+                         {"hit", "miss", "bypass_live", "bypass_hold", "bypass_empty", "evict", "entries"},
+                         "the ledger memo (round-4 P3 a, interim): counters, its three bypasses, its occupancy")
+        for k, v in snap["memos"]["chat_ledger"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_fold_tasks"]), {"hit", "miss", "entries"},
+                         "the per-turn task fold memo (round-4 P3 b, interim)")
+        for k, v in snap["memos"]["chat_fold_tasks"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_merge_sets"]), {"hit", "miss", "entries"},
+                         "the live-merge sets memo (round-4 P3 d): counters plus its occupancy")
+        for k, v in snap["memos"]["chat_merge_sets"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["chat_postal"]), {"gate", "hit", "commit_new"},
+                         "the fold's sealed postal cards (round-4 P17/P3 c): gate re-hydrations, verified checks, new raw hydrated")
+        for k, v in snap["memos"]["chat_postal"].items():
+            self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["goals_snap"]),
-                         {"hit", "miss", "fail", "evict", "punch", "entries", "bytes"},
-                         "the judge pass's goal-store memo: counters plus its occupancy")
+                         {"hit", "miss", "fail", "evict", "punch", "live", "snap", "entries", "bytes"},
+                         "the judge pass's goal-store memo: counters plus its occupancy, and the feed's serve branches")
         for k, v in snap["memos"]["goals_snap"].items():
             self.assertIsInstance(v, int, k)
-        self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "entries"},
-                         "the awaiting-lift gate: session-cycles skipped vs loaded, plus its occupancy")
+        self.assertEqual(set(snap["memos"]["lift_gate"]), {"skip", "load", "shared", "writer", "noop", "entries"},
+                         "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
+                         "answered, the writer loads and the ones that filed nothing, plus its occupancy")
         for k, v in snap["memos"]["lift_gate"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["bg_tops"]),
+                         {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
+                         "the placed-launch memo (_bg_placed_tops): counters plus its occupancy")
+        for k, v in snap["memos"]["bg_tops"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["goals_shared"]),
                          {"hit", "miss", "compare_miss", "refuse", "dup", "absent", "corrupt", "unreadable_journal",
@@ -148,12 +207,129 @@ class Collector(unittest.TestCase):
                          "the pusher cycle's discover memo: _sessions reads and the wide walk")
         for k, v in snap["memos"]["sessions_scope"].items():
             self.assertIsInstance(v, int, k)
-        for k in ("rss_kb", "threads", "cpu_s", "pid"):
-            self.assertIn(k, snap["process"])
+        self.assertEqual(set(snap["memos"]["captions"]), {"hit", "miss", "fail", "evict", "entries"},
+                         "the captions store memo (perf round 4, item C): reads served against read, failed reads, "
+                         "entries dropped, and its occupancy")
+        self.assertEqual(set(snap["memos"]["states_overlay"]), {"hit", "append", "refold", "fail", "evict", "entries"},
+                         "the states-overlay fold: unchanged, appended rows only, every row, failed reads, entries dropped, occupancy")
+        self.assertEqual(set(snap["memos"]["thread_reg"]), {"hit", "miss", "fail", "evict", "entries"},
+                         "the SDK registry reader's memo: the captions memo's shape")
+        self.assertEqual(set(snap["memos"]["lanes"]),
+                         {"hit", "miss", "live_tail", "complain_skip", "unshared_skip", "evict", "entries",
+                          "segs_hit", "segs_miss"},
+                         "the per-lane segment memo (perf round 4, item A): one outcome per lane per bars build "
+                         "(served, derived, live tail, complained, unshared store), entries dropped, its "
+                         "occupancy, and the segments served against derived")
+        for blk in ("captions", "states_overlay", "thread_reg", "lanes"):
+            for k, v in snap["memos"][blk].items():
+                self.assertIsInstance(v, int, "%s.%s" % (blk, k))
+        self.assertEqual(set(snap["memos"]["feed_segs"]),
+                         {"hit", "miss", "bypass_live", "bypass_degraded", "bypass_unkeyed", "bypass_unscoped",
+                          "evict", "entries"},
+                         "build_feed's per-session memo (round-4 plan P2-A): counters plus its occupancy")
+        for k, v in snap["memos"]["feed_segs"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["process"]), PROCESS_KEYS)
         self.assertGreater(snap["process"]["threads"], 0)
         self.assertGreaterEqual(snap["process"]["rss_kb"], 0)
+        self.assertEqual(set(snap["caches"]), CACHE_NAMES, "one exact-occupancy block per declared cache (M1-lite)")
         self.assertGreaterEqual(snap["uptime_s"], 0)
         json.dumps(snap)                                     # the whole thing serializes as-is
+
+    def test_the_process_block_carries_the_memory_gauges(self):
+        # M1-lite (perf round 4): the three-way RSS question (allocator retention, an object graph, one cache
+        # growing) is answered from levels an hour apart, so the snapshot carries exact process gauges beside
+        # rss_kb: the anonymous and peak resident sizes from /proc, the interpreter's live allocation count,
+        # the gen-2 collection count, and glibc's malloc arena figures (the large-object half of the heap;
+        # pymalloc's arenas are mmap'd and invisible to it). Where a source is absent the field is null and
+        # `source` says so; a peak from ru_maxrss is never passed off as a current figure.
+        p = km._PERF_STATS.snapshot()["process"]
+        self.assertIn(p["source"], ("proc", "unavailable"))
+        if p["source"] == "proc":
+            self.assertGreater(p["rss_anon_kb"], 0)
+            self.assertGreaterEqual(p["hwm_kb"], p["rss_kb"], "the high-water mark is at or above the current size")
+        else:
+            self.assertIsNone(p["rss_anon_kb"]); self.assertIsNone(p["hwm_kb"])
+        self.assertGreater(p["allocated_blocks"], 0)
+        self.assertGreaterEqual(p["gc_gen2"], 0)
+        if p["malloc"] is not None:
+            self.assertEqual(set(p["malloc"]), {"arena", "hblkhd", "uordblks", "fordblks"})
+            for k, v in p["malloc"].items():
+                self.assertIsInstance(v, int, k)
+                self.assertGreaterEqual(v, 0, k)
+            self.assertLessEqual(p["malloc"]["uordblks"] + p["malloc"]["fordblks"], p["malloc"]["arena"] + 1,
+                                 "in-use plus free bytes account for the arena")
+        if km._MALLINFO2 is not None:
+            self.assertIsNotNone(p["malloc"], "glibc 2.33+ resolved mallinfo2 at import: the gauges must read")
+        # the ctypes binding sets the struct as the return type: without it the call returns an int and a
+        # field read segfaults the kernel on the first report (the refuted M1's crash)
+        if km._MALLINFO2 is not None:
+            self.assertIs(km._MALLINFO2.restype, km._MallInfo2)
+        json.dumps(p)
+
+    def test_the_caches_block_is_exact_occupancy(self):
+        snap = km._PERF_STATS.snapshot()
+        for name, blk in snap["caches"].items():
+            for k, v in blk.items():
+                self.assertIsInstance(v, int, "%s.%s" % (name, k))
+        # a known insert shows up as exactly its count and bytes, and leaves again
+        km._img_cache["x:1:2"] = "data:image/png;base64,QUJD"
+        km._img_cache["y:1:2"] = None
+        km._built_chat["11111111-2222-3333-4444-aaaaaaaaaaaa"] = ("sig", {}, "abcdef")
+        km._built_chat["11111111-2222-3333-4444-bbbbbbbbbbbb"] = ("sig", {}, None)
+        try:
+            c = km._PERF_STATS.snapshot()["caches"]
+            self.assertEqual(c["img"]["entries"], len(km._img_cache))
+            self.assertEqual(c["img"]["bytes"], sum(len(v) for v in km._img_cache.values() if isinstance(v, str)))
+            self.assertEqual(c["built_chat"]["entries"], len(km._built_chat))
+            self.assertEqual(c["built_chat"]["ms_bytes"], sum(len(v[2]) for v in km._built_chat.values() if isinstance(v[2], str)))
+        finally:
+            for k in ("x:1:2", "y:1:2"):
+                km._img_cache.pop(k, None)
+            for k in ("11111111-2222-3333-4444-aaaaaaaaaaaa", "11111111-2222-3333-4444-bbbbbbbbbbbb"):
+                km._built_chat.pop(k, None)
+        # the event model's reader: a file read through it adds exactly its size and record count
+        td = tempfile.mkdtemp()
+        try:
+            p = os.path.join(td, "rows.jsonl")
+            with open(p, "w") as fh:
+                for i in range(3):
+                    fh.write(json.dumps({"t": i, "state": "idle"}) + "\n")
+            before = km._PERF_STATS.snapshot()["caches"]["jsonl"]
+            self.assertEqual(len(km.em._read_jsonl_incremental(p)), 3)
+            after = km._PERF_STATS.snapshot()["caches"]["jsonl"]
+            self.assertEqual(after["entries"] - before["entries"], 1)
+            self.assertEqual(after["file_bytes"] - before["file_bytes"], os.path.getsize(p))
+            self.assertEqual(after["records"] - before["records"], 3)
+        finally:
+            with km.em._JSONL_CACHE_LOCK:
+                km.em._JSONL_CACHE.pop(p, None)
+            shutil.rmtree(td, ignore_errors=True)
+        self.assertEqual(set(km.jd.cache_gauges()), {"judge_parse", "judge_recon", "judge_chain"})
+        self.assertEqual(set(km.em.cache_gauges()), {"jsonl", "asm", "asm_keylocks", "trailing"})
+
+    def test_the_goals_block_carries_the_unreadable_stores_gauge(self):
+        # the read-failure episodes standing now (a gauge), read through jd.goal_io_stats: a goals file that
+        # exists and does not read counts from its first failed read to its next good one, however many loads
+        saved = km.jd.STATE
+        td = tempfile.mkdtemp()
+        km.jd._rebind_state(Path(td))
+        try:
+            km.jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+            km.jd.save_goals(GOAL_SID, km.jd.load_goals(GOAL_SID))          # a first mint: the file exists
+            gp = km.jd.GOALDIR / (GOAL_SID + ".json")
+            good = gp.read_text()
+            self.assertEqual(km._PERF_STATS.snapshot()["goals"]["unreadable_stores"], 0)
+            gp.write_text("{ not the store")
+            km.jd.load_goals(GOAL_SID)
+            km.jd.load_goals(GOAL_SID)
+            self.assertEqual(km._PERF_STATS.snapshot()["goals"]["unreadable_stores"], 1, "one episode, two loads")
+            gp.write_text(good)
+            km.jd.load_goals(GOAL_SID)
+            self.assertEqual(km._PERF_STATS.snapshot()["goals"]["unreadable_stores"], 0, "a good read ends it")
+        finally:
+            km.jd._rebind_state(saved)
+            shutil.rmtree(td, ignore_errors=True)
 
     def test_pusher_counters(self):
         self.st.wake(); self.st.wake(); self.st.wake()
@@ -188,7 +364,10 @@ class Collector(unittest.TestCase):
         snap = self.st.snapshot()
         self.assertAlmostEqual(snap["stages_ms"]["push.chat"], 750.0)
         self.assertAlmostEqual(snap["stages_ms"]["jobs"], 100.0)
-        self.assertEqual(snap["builds"]["chat"], {"cached": 1, "built": 1, "ms": 40.0})
+        chat = snap["builds"]["chat"]
+        self.assertEqual({k: chat[k] for k in ("cached", "built", "ms")}, {"cached": 1, "built": 1, "ms": 40.0})
+        self.assertEqual((chat["active_built"], chat["bg_built"], sum(chat["bg_miss"].values())), (0, 0, 0),
+                         "the plain writer records no split; build_chat does (test_chat_fixed_cost_memos)")
         self.assertEqual(snap["builds"]["feed"]["built"], 1)
         self.assertEqual(snap["builds"]["timeline"], {"cached": 0, "built": 0, "ms": 0.0})
         self.assertEqual(snap["judge"]["passes"], 2)
@@ -289,6 +468,47 @@ class WakeCounting(unittest.TestCase):
         self.assertTrue(km._pusher_wake.is_set())
         km._pusher_wake.clear()
 
+    def test_the_producer_wake_counts_sets_under_judge_and_classifies_the_wait(self):
+        # the producer's twin (P4 of the judge perf plan): every _producer_wake.set() lands in judge.wakes,
+        # and the loop's wait outcome lands in wakes_event / wakes_backstop through judge_wake_kind
+        self.assertIsInstance(km._producer_wake, km._CountedEvent)
+        was_set = km._producer_wake.is_set()
+        before = km._PERF_STATS.snapshot()["judge"]
+        km._producer_wake.set(); km._producer_wake.set(); km._producer_wake.set()
+        self.assertTrue(km._producer_wake.is_set())
+        km._PERF_STATS.judge_wake_kind(True); km._PERF_STATS.judge_wake_kind(False)
+        after = km._PERF_STATS.snapshot()["judge"]
+        self.assertEqual(after["wakes"] - before["wakes"], 3)
+        self.assertEqual((after["wakes_event"] - before["wakes_event"], after["wakes_backstop"] - before["wakes_backstop"]), (1, 1))
+        if not was_set:
+            km._producer_wake.clear()
+
+    def test_the_producer_wake_counts_at_call_time_and_sets_before_counting(self):
+        # the counter is resolved when set() runs, not captured at import: an instance patch on the
+        # collector sees every set; and the flag is set BEFORE the count, so a counter that raises never
+        # loses a wake
+        was_set = km._producer_wake.is_set()
+        km._producer_wake.clear()
+        seen = []
+        km._PERF_STATS.judge_wake = lambda: seen.append(1)
+        try:
+            km._producer_wake.set()
+            self.assertEqual(seen, [1], "the patched collector saw the set")
+            km._producer_wake.clear()
+
+            def boom():
+                raise RuntimeError("counter down")
+            km._PERF_STATS.judge_wake = boom
+            with self.assertRaises(RuntimeError):
+                km._producer_wake.set()
+            self.assertTrue(km._producer_wake.is_set(), "the wake landed before the counter raised")
+        finally:
+            del km._PERF_STATS.judge_wake
+            if was_set:
+                km._producer_wake.set()
+            else:
+                km._producer_wake.clear()
+
 
 class PerfLogToggle(unittest.TestCase):
     """_perf() writes only when the switch is on, and the switch flips at runtime."""
@@ -350,6 +570,8 @@ class GoalIoCounters(unittest.TestCase):
         after2 = self.jd.goal_io_stats()
         self.assertEqual(after2["saves"], after["saves"] + 1)
         self.assertEqual(after2["writes"], after["writes"], "the no-op republish skip is visible as saves without writes")
+        self.assertGreater(after2["noop_hash_ms"], after["noop_hash_ms"],
+                           "the no-op check's serialization is timed (the cost a conditional tail save would remove)")
         self.assertEqual(km._PERF_STATS.snapshot()["goals"], after2, "the kernel's snapshot carries the judge counters")
         # the no-op check's disk-side memo: the first publish seeded it from its own temp, so the check
         # above was a hit; a foreign rewrite of the file is a miss
@@ -408,11 +630,15 @@ class PusherRecords(unittest.TestCase):
     cycle jobs split into push and jobs, the cached and rebuilt feed/timeline paths count, and the
     send paths classify full / delta / deduped for whole-frame, delta-capable and chat-tail clients."""
 
-    JOBS = ("_refresh_parked_parses", "_apply_pending_ops", "_lift_spent_awaiting", "_death_sweep_tick",
+    # _refresh_parked_parses is not a cycle job since the 2026-09-07 upstream fold: the per-sid refresh runs
+    # in the locked drain, not in _pusher_cycle_jobs (upstream's removal adopted: the refresh belongs under the drain's lock).
+    JOBS = ("_apply_pending_ops", "_lift_spent_awaiting", "_death_sweep_tick",
             "_end_on_idle_sweep", "_deferral_sweep_tick", "_auto_nudge_tick", "_interrupt_block_tick",
             "_auto_pause_on_limit", "_usage_poll_tick", "_auto_pause_on_spend_limit", "_auto_resume_retry",
             "_auto_resume_session_retry", "_auto_retry_tick", "_idle_queue_drive_tick",
-            "_clear_done_working_notes", "_push_all", "_tab_list_tmux")
+            "_clear_done_working_notes", "_push_all", "_tab_list_tmux",
+            "_api_health_frame", "_api_health_push",   # the bottom bar's API cell (2026-09-07)
+            "_turn_notify_tick")                       # upstream's turn-end notification pass (fold 2026-09-07)
 
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()

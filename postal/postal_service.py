@@ -62,14 +62,17 @@ BASE = f"http://{HOST}:{PORT}"
 KERNEL_BASE = "http://127.0.0.1:%s" % os.environ.get("ROMP_KERNEL_PORT", "29855")  # the dashboard kernel — it owns the backend session query (tmux + SDK)
 
 STATE = Path(os.environ.get("ROMP_STATE_DIR")      # per-kernel state root override (plans/multi-kernel.md)
-             or Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "romp") / "postal"
+             or Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "romp") / "postal"
+# `or`, not a .get default: an EMPTY XDG_STATE_HOME is unset, as in the XDG spec and every bash reader's
+# ${XDG_STATE_HOME:-...}; a .get default kept it and put the mail under the RELATIVE path romp/postal
+# (kernel/event_model.py has the same line and the same note; tests/test_state_root_empty_xdg.py pins them).
 MAILROOT = STATE / "mail"
 MAILPENDING = STATE / "mail-pending"   # touch <sid> here IFF that session has unread mail in new/
 WARNED = STATE / "warned-undelivered"  # marker per msg-id we've already warned a sender is STILL UNDELIVERED (one-time)
 LOG = STATE / "server.log"
 PIDFILE = STATE / "server.pid"
 NAMES_DIR = Path(os.environ.get("ROMP_STATE_DIR")
-                 or Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "romp") / "names"
+                 or Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state")) / "romp") / "names"
 TLDIR = STATE.parent / "timeline"     # append-only logs for the timeline view (messages.jsonl)
 SESSION_FLAGS = STATE.parent / "session-flags.json"   # the kernel's per-session view flags {sid:{flag:true}}; we honour postalServiceOff (legacy: postalOff)
 USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's per-install user-todos switch {"enabled": bool, "gt": ms} (kernel USER_TODOS_SWITCH_FILE); NOT user-todos.json, which is the todo STORE
@@ -549,6 +552,30 @@ def format_agents(agents, me, me_id=""):
 def _hhmm_epoch(t):
     try: return datetime.fromtimestamp(int(t)).strftime("%H:%M")
     except Exception: return "?"
+
+
+def _when_words(t, now=None):
+    """An epoch as a phrase a reader can place without a date table: " at 14:05 today",
+    " at 14:05 yesterday", or " on 2026-09-05 at 14:05" (local time, leading space so it drops
+    into a sentence); "" for no time (None, 0, junk). `now` is the reference epoch (tests pin it).
+    Bare "at 14:05" was the first draft and is ambiguous the moment a day boundary passes."""
+    try:
+        t = int(t)
+    except (TypeError, ValueError):
+        return ""
+    if t <= 0:
+        return ""
+    try:
+        d = datetime.fromtimestamp(t)
+        ref = datetime.fromtimestamp(time.time() if now is None else now)
+    except (OverflowError, OSError, ValueError):     # an epoch no calendar holds: say nothing about the time
+        return ""
+    days = (ref.date() - d.date()).days
+    if days == 0:
+        return " at %s today" % d.strftime("%H:%M")
+    if days == 1:
+        return " at %s yesterday" % d.strftime("%H:%M")
+    return " on %s at %s" % (d.strftime("%Y-%m-%d"), d.strftime("%H:%M"))
 
 def format_receipts(recs):
     if not recs:
@@ -3144,15 +3171,32 @@ MCP_TOOLS = [
     # its parent session — the right behavior (the need belongs to the session the user talks to),
     # it just means "who filed this" is always the session, never an individual subagent.
     {"name": "add_user_todo",
-     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
+     "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. When the need is a look at a file, pass the file's absolute path as `file`. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
      "inputSchema": {"type": "object",
-                     "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why"},
-                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it (absolute, or relative to your working directory) becomes a link the person can open"}},
+                     "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why; a file path in it becomes a link the person can open (an absolute path, a ~/, ./ or ../ path, a relative path ending in a file extension, or a file:// URI)"},
+                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it becomes a link the same way"},
+                                    "file": {"type": "string", "description": "optional: the absolute path of the file this needs a look at; the person sees it as a link that opens the file, and their comments on that file can answer this todo"}},
                      "required": ["text"]}},
     {"name": "withdraw_user_todo",
-     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a stale request.",
+     "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a need that no longer stands.",
      "inputSchema": {"type": "object",
                      "properties": {"id": {"type": "string", "description": "the id add_user_todo returned"}},
+                     "required": ["id"]}},
+    # The two pinned-note tools (the user 2026-09-08) also speak to the PERSON THE AGENT WORKS FOR,
+    # so they ride the same veil as the user-todo pair: no tracking-system nouns (test_injected_voice.py
+    # scans them). The same caller-identity caveat applies: a subagent's pin lands on its parent
+    # session, which is where the person reads it. Not governed by the user-todos switch: a pinned
+    # note asks nothing of the person, it only tells them what to read first.
+    {"name": "pin_note",
+     "description": "Pin a short note above this conversation for the person you work for: what they should see first whenever they open it (where things stand, a warning, a summary). Give one short line (at most 300 characters); add detail (at most 4000) only if the line can't carry it. Returns an id and what is pinned now. Unpin it (unpin_note) when it no longer applies. At most eight stay pinned; past that the oldest goes, and the answer names it.",
+     "inputSchema": {"type": "object",
+                     "properties": {"text": {"type": "string", "description": "one short line, at most 300 characters; a file path or a pull-request number in it becomes a link the person can open"},
+                                    "detail": {"type": "string", "description": "optional longer text, at most 4000 characters, read when the person opens the note; paths and pull-request numbers link the same way"}},
+                     "required": ["text"]}},
+    {"name": "unpin_note",
+     "description": "Take down a note you pinned above this conversation (by id) once it no longer applies, so the person you work for is not reading a stale one.",
+     "inputSchema": {"type": "object",
+                     "properties": {"id": {"type": "string", "description": "the id pin_note returned"}},
                      "required": ["id"]}},
     {"name": "check_sent",
      "description": "See your recently sent messages and whether each was read/acted on by the recipient yet, or is still pending — instead of asking 'did you get it?'.",
@@ -3172,6 +3216,68 @@ USER_TODOS_OFF_ADD = ("User todos are turned off on this machine, so this was no
                       "work for will NOT see it. Say what you need in your next reply instead.")
 USER_TODOS_OFF_WITHDRAW = ("User todos are turned off on this machine, so there is nothing to withdraw. "
                            "Nothing changed.")
+
+
+# The kernel's bounds on one note (kernel PINNED_TEXT_MAX / PINNED_DETAIL_MAX; a test pins the two copies
+# equal): checked here first so an over-long pin gets a plain answer naming the bound, not the kernel's
+# 400 folded into "couldn't pin that" and a retry of the same text.
+PIN_TEXT_MAX = 300
+PIN_DETAIL_MAX = 4000
+# The cleaner the kernel and the postal tool share (the tool carries an identical copy, since the bus imports
+# nothing from the kernel; tests/test_pinned_notes.py pins the two sources equal): a pasted terminal line
+# arrives with escape sequences, and dropping only the control bytes left their parameters as the note
+# ('\x1b[0m' pinned as '[0m'; review round 2, 2026-09-08). So every escape sequence goes WHOLE first, then the
+# remaining control characters. The families (ECMA-48), each with its 8-bit C1 introducer: CSI (ESC [ or
+# U+009B; parameters, intermediates, one final byte: colours, cursor moves, erases); OSC (ESC ] or U+009D, to
+# BEL or ST: a hyperlink, a window title); DCS, SOS, PM and APC (ESC P, X, ^, _ or U+0090, 98, 9E, 9F, to ST:
+# sixel data, terminal replies); any other ESC with its intermediates and one final byte (ESC ( B, ESC =, ESC 7).
+# ST is ESC \ or U+009C. A string never crosses a line break: one with no terminator on its line is cut back to
+# its introducer, its body stays as text, and the next line is never swallowed. Review round 3, 2026-09-08: the
+# cleaner knew CSI only, so OSC, DCS and two-byte sequences left their bodies in the note (a hyperlink's URL
+# fused onto its path) and the 8-bit forms went untouched.
+_PINNED_ANSI_RE = re.compile(
+    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"                                  # CSI, whole
+    r"|(?:\x1b\]|\x9d)[^\x07\x1b\x9c\n]*(?:\x07|\x1b\\|\x9c)"             # OSC, to BEL or ST
+    r"|(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[^\x1b\x9c\n]*(?:\x1b\\|\x9c)"    # DCS, SOS, PM, APC, to ST
+    r"|\x1b[ -/]*[0-~]")                                                 # any other ESC sequence: intermediates, one final byte
+_PINNED_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")   # control characters (C0, DEL, the 8-bit C1 set), except newline and tab
+
+
+def _pinned_note_clean(s):
+    """A note's text or detail as stored: ANSI escape sequences dropped whole, then control characters
+    (a NUL, a stray ESC) except newline and tab, then the surrounding whitespace. A value that is nothing
+    but those cleans to "", which is refused as a blank is."""
+    return _PINNED_CTRL_RE.sub("", _PINNED_ANSI_RE.sub("", str(s or ""))).strip()
+
+
+def _pinned_notes_words(notes):
+    """The 'pinned now' account both pinned-note tools end with: the kernel's list after the change,
+    oldest first, one line per note with its id, so the agent can see what the person sees and unpin by
+    id without asking. A note's text keeps its newlines in the store; here each note is ONE line, so a
+    run of whitespace reads as one space. A kernel that sent no list (an older one) gets no account,
+    never an invented one."""
+    if not isinstance(notes, list):
+        return ""
+    if not notes:
+        return "Pinned now: nothing."
+    lines = ["Pinned now (%d):" % len(notes)]
+    for n in notes:
+        if isinstance(n, dict):
+            lines.append("- %s: %s" % (n.get("id") or "?", " ".join(str(n.get("text") or "").split())))
+    return "\n".join(lines)
+
+
+def _pinned_dropped_words(dropped):
+    """The notes a pin evicted (the kernel's `dropped`, usually empty): named, one line each, so the
+    agent hears which note the person no longer sees instead of diffing its own memory of ids. "" when
+    nothing was dropped or an older kernel sent no list."""
+    if not isinstance(dropped, list) or not dropped:
+        return ""
+    lines = ["To stay within eight, the oldest came down:"]
+    for n in dropped:
+        if isinstance(n, dict):
+            lines.append("- %s: %s" % (n.get("id") or "?", " ".join(str(n.get("text") or "").split())))
+    return "\n".join(lines)
 
 
 def _tools_offered():
@@ -3284,16 +3390,54 @@ def _mcp_call(name, args):
         text = str(args.get("text") or "").strip()
         if not text:
             return "Need 'text' — one short line: what you need from them and why.", True
-        res = _kernel_post("/usertodo", {"id": mid, "text": text,
-                                         "detail": str(args.get("detail") or "").strip()})
+        body = {"id": mid, "text": text, "detail": str(args.get("detail") or "").strip()}
+        # `file` (the todo-file follow-on, 2026-09-07): the file the need is about, sent only when
+        # given. The KERNEL resolves it (a relative path against the session's cwd) and stores
+        # the absolute path; it never refuses a todo for its file, and says in `warning` when
+        # the path did not resolve — surfaced below, never swallowed, so the agent can fix the
+        # path while the need already stands. A string is stripped; anything else (the schema
+        # says string, but nothing between the model and this call enforces it) rides the post
+        # AS GIVEN, never str()'d: the kernel keeps a non-string as its text with a warning that
+        # names the shape, whereas its repr — "['/x/y.md']" — is a relative spelling the kernel
+        # would join onto the cwd and store as an absolute path naming nothing, silently (the
+        # review's catch, 2026-09-07). None and a blank string are no file, as before.
+        file_ = args.get("file")
+        if isinstance(file_, str):
+            file_ = file_.strip()
+        if file_ is not None and file_ != "":
+            body["file"] = file_
+        res = _kernel_post("/usertodo", body)
         tid = res.get("todoId") if isinstance(res, dict) else None
         if not tid:
             # LOUD, never a silent drop: an unsaved need the agent believes is filed is exactly
             # the vanishing this tool exists to stop.
             return ("Couldn't save that — the person you work for will NOT see it. Say what you "
                     "need directly in your next reply instead, or try again shortly."), True
-        return ("Noted (id %s) — the person you work for will see it. Withdraw it "
-                "(withdraw_user_todo) the moment the need is met or moot." % tid), False
+        out = ("Noted (id %s) — the person you work for will see it. Withdraw it "
+               "(withdraw_user_todo) the moment the need is met or moot." % tid)
+        warning = str(res.get("warning") or "").strip()
+        if warning:
+            out += " About the file: " + warning
+        elif "file" in body and not res.get("file"):
+            # Version skew (the review, 2026-09-08): a kernel that predates a todo's file reads
+            # id/text/detail alone and answers {ok, todoId} — the file was neither stored nor warned
+            # about — while a kernel that takes it echoes `file` as the record keeps it, or warns
+            # (_user_todo_file answers one or the other for every value this tool posts: None and
+            # a blank never leave here). So a reply with neither is the older route, and it is
+            # named here rather than swallowed: the kernel's own forward to a remote makes the same
+            # inference and warns, but a session's tool posts to its OWN host's kernel, which that
+            # branch never sees — and this machine's kernel is exactly the one a checkout update
+            # leaves running until its restart, while every new or revived session spawns this tool
+            # from the checkout. Not an error flag: the todo is filed and stands (an error here
+            # reads as "not saved", and the retry files a duplicate); the loss is said, in the
+            # tool's own veiled words (test_injected_voice.py: no tracking-system nouns, and the
+            # kernel is "the session manager", as set_emoji's reply has it), with the remedy.
+            out += (" About the file: %s was not recorded — the session manager on this machine runs "
+                    "an older version that does not keep a todo's file (an update and a restart fix "
+                    "that), so this todo shows without a link to the file. If the link matters, "
+                    "withdraw this todo and file it again with the path in its text or detail."
+                    % body["file"])
+        return out, False
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain
         # answer — never a silent success (plans/user-todos.md).
@@ -3307,10 +3451,100 @@ def _mcp_call(name, args):
         res = _kernel_post("/usertodo/withdraw", {"id": mid, "todoId": tid})
         if not isinstance(res, dict):
             return "Couldn't withdraw '%s' — it still stands. Try again shortly." % tid, True
-        if not res.get("ok"):
-            return ("No open note '%s' of yours — it was already answered, dismissed, or "
-                    "withdrawn. Nothing changed." % tid), True
-        return "Withdrawn — '%s' no longer stands." % tid, False
+        if res.get("ok"):
+            return "Withdrawn — '%s' no longer stands." % tid, False
+        # ok:false: the kernel's ACCOUNT (state / at / owner, 2026-09-07) says which kind of
+        # nothing-to-do this was, and only one is the agent's error. A row the person already
+        # answered or dismissed, or one this session already withdrew, means the need no longer
+        # stands, which is what the caller wanted: a plain answer, said in full (never a silent
+        # success), but NOT flagged as an error. Two sessions read the old one-size error as a
+        # failure and folded a met need into an error path. An id that is not this session's own,
+        # or unknown, stays the error it always was.
+        state = str(res.get("state") or "")
+        if state == "unknown" and res.get("owner") is True:
+            # the asker's OWN row, in a shape the kernel could not read (a damaged or hand-edited
+            # record; review round 1, 2026-09-07): neither "not yours" nor closed. The kernel's
+            # error names the part it could not read; the agent's move is to say the need aloud.
+            return ("Couldn't read the record of '%s' (%s). Nothing changed; if the need still "
+                    "stands, say it directly in your next reply."
+                    % (tid, res.get("error") or "its closing record is unreadable")), True
+        if res.get("owner") is False or state == "unknown":
+            return "No note '%s' of yours. Nothing changed." % tid, True
+        when = _when_words(res.get("at"))
+        if state in ("answered", "dismissed"):
+            return ("Already closed: the person you work for %s '%s'%s. Nothing to withdraw."
+                    % (state, tid, when)), False
+        if state == "withdrawn":
+            return "Already withdrawn: '%s' was taken back%s. Nothing changed." % (tid, when), False
+        # a kernel that predates the account answers ok:false alone: the old one-size answer
+        return ("No open note '%s' of yours — it was already answered, dismissed, or "
+                "withdrawn. Nothing changed." % tid), True
+    if name == "pin_note":
+        # Pin a note above this session's transcript for the person the agent works for (the user
+        # 2026-09-08): the kernel owns the store (POST /pinnote, the add_user_todo shape) and mints
+        # the id. `mid` is the calling SESSION (a subagent's pin lands on its parent; see MCP_TOOLS).
+        if not mid:
+            return "Not inside a romp session.", True
+        for field in ("text", "detail"):
+            # a list, a dict or a number is refused, never pinned as its repr (review round 2, 2026-09-08)
+            if args.get(field) is not None and not isinstance(args.get(field), str):
+                return "Need '%s' as a plain string. Nothing was pinned." % field, True
+        # the kernel's own cleaner (one copy each side, pinned equal), so the tool refuses exactly what the
+        # kernel would: a text of whitespace, control characters or escape sequences alone is blank here too,
+        # and never reaches the kernel's 400 to come back as "try again shortly"
+        text = _pinned_note_clean(args.get("text"))
+        detail = _pinned_note_clean(args.get("detail"))
+        if not text:
+            return "Need 'text': one short line the person you work for should see first.", True
+        if len(text) > PIN_TEXT_MAX:
+            return ("Too long: the line takes at most %d characters and this one is %d. Shorten it; the rest "
+                    "can go in 'detail'. Nothing was pinned." % (PIN_TEXT_MAX, len(text))), True
+        if len(detail) > PIN_DETAIL_MAX:
+            return ("Too long: 'detail' takes at most %d characters and this one is %d. Shorten it. Nothing "
+                    "was pinned." % (PIN_DETAIL_MAX, len(detail))), True
+        res = _kernel_post("/pinnote", {"id": mid, "text": text, "detail": detail})
+        nid = res.get("noteId") if isinstance(res, dict) else None
+        if not nid:
+            # LOUD, never a silent drop: a note the agent believes is up, and is not, misleads twice
+            if isinstance(res, dict) and res.get("error"):
+                # the kernel's account of why (its notes could not be read): the fault by name, and no
+                # "try again", since a retry does nothing until it is fixed (review round 2, 2026-09-08)
+                return ("Couldn't pin that: %s. The person you work for will NOT see it. Say it in your "
+                        "next reply instead." % res["error"]), True
+            return ("Couldn't pin that. The person you work for will NOT see it. Say it in your next "
+                    "reply instead, or try again shortly."), True
+        words = ("Pinned (id %s). The person you work for sees it above this conversation. Unpin it "
+                 "(unpin_note) when it no longer applies.\n%s" % (nid, _pinned_notes_words(res.get("notes"))))
+        gone = _pinned_dropped_words(res.get("dropped"))
+        return (words + "\n" + gone if gone else words), False
+    if name == "unpin_note":
+        # Take a pinned note down, by id. The kernel's account (`state`, the withdraw shape) decides the
+        # words: a note of this session's that was already taken down (by the person, or by an earlier
+        # call) is a PLAIN answer, not an error (the #325 lesson: an error there sent agents retrying a
+        # met need); an id that was never this session's, and a store that cannot be read, are LOUD.
+        if not mid:
+            return "Not inside a romp session.", True
+        nid = str(args.get("id") or "").strip()
+        if not nid:
+            return "Need 'id': the one pin_note returned.", True
+        res = _kernel_post("/unpinnote", {"id": mid, "noteId": nid})
+        if not isinstance(res, dict):
+            return "Couldn't unpin '%s'; it is still up. Try again shortly." % nid, True
+        listed = _pinned_notes_words(res.get("notes"))
+        if res.get("ok"):
+            return "Unpinned '%s'.\n%s" % (nid, listed), False
+        state = res.get("state")
+        if state == "already":
+            how = ("it made room for a newer pin" if res.get("dropped") else "it was taken down") + _when_words(res.get("at"))
+            return "Already unpinned: '%s' %s. Nothing changed.\n%s" % (nid, how, listed), False
+        if state == "unreadable":
+            return ("Couldn't unpin '%s': %s. If it is up, it is still up."
+                    % (nid, res.get("error") or "the pinned notes could not be read")), True
+        if state == "unknown":
+            return "No note '%s' of yours is pinned. Nothing changed.\n%s" % (nid, listed), True
+        # a kernel that predates the account answers ok:false alone: the old one-size answer
+        return ("Nothing changed: no note of yours is pinned under the id '%s' (already unpinned, or "
+                "not this session's).\n%s" % (nid, listed)), True
     if name == "check_sent":
         if not mid:
             return "Not inside a romp session.", True

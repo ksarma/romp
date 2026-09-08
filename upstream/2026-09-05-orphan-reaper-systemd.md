@@ -13,3 +13,5 @@ OFFERED 2026-09-06 (branch `orphan-reaper`, `509c3f11` off tip `2b9db2be`, two c
 Status detail (migrated from the table): **offered** — their PR #941 (2026-09-06), label `fix`
 
 MERGED 2026-09-06T19:50Z as their PR #941 (merge `0f161e37`), as offered: head `509c3f11` is an ancestor of upstream/main. The maintainer's review left one follow-up, now its own entry (`find-orphan-clis-own-pid`).
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #941 is in the folded range).

@@ -66,6 +66,54 @@ The default run drives TWO phases, banner first (it spends no model turns):
 A lab run spends a handful of short turns on the configured model (default Haiku)
 against the machine's own key — the same key live sessions bill.
 
+## todos-lab.sh and todos-loop.mjs: the user-todos capture
+
+`todos-lab.sh` boots its own lab and runs `todos-loop.mjs`. It is a sibling of `lab.sh` rather than a
+`--todos-only` mode because the phase needs more than a flag: the user-todos switch turned on in the
+lab state before the kernel boots, a postal bus on its own port (both read the switch), a synthetic
+`notes-api` project with a file the session can name, video and asset directories, and a stricter
+environment scrub than the other phases run under (the calling session's `ROMP_SID`,
+`ROMP_MANAGER_PID` and `CLAUDE_*` are unset; `ROMP_SERVE_PORT` and `ROMP_POSTAL_PORT` point at the
+lab, so a lab session's hooks reach the lab kernel and never the live one; `ROMP_CLI_SCOPE=0` starts
+no systemd scope). Folding that into `lab.sh` would change the preamble every other phase runs.
+
+```sh
+tools/romp-lab/todos-lab.sh --keep --out=DIR     # keep the temp root; copy the finished assets to DIR (outside the repo)
+LAB_ROOT=$HOME/scratch tools/romp-lab/todos-lab.sh   # temp root somewhere other than $TMPDIR (else /tmp)
+```
+
+The loop records one browser context with three pages (the chat, the feed, and a second chat view
+for the tab strip) and asserts the user-todos contract in order:
+
+1. A real session on the lab model files an ask through the postal `add_user_todo` tool (`POST
+   /usertodo` is the recorded fallback); the card's Waiting-on-you section appears while the turn is
+   still open, then the tab glyph on `api` only and the feed marker.
+2. The idle session escalates to Needs input on the feed, and the gear shows the switch on.
+3. Reply from the card lands as the person's own message, the row leaves the card, and the session
+   answers. Dismiss is a two-step control; the section, the glyph and the marker clear together.
+4. A kernel kill and relaunch keep the open asks; the SessionStart hook
+   (`hooks/romp-usertodo-context.sh`, run the way the CLI runs it) returns them as the context block,
+   and `POST /usertodo/context` agrees with it.
+5. Reply revives the dormant session, whose transcript carries the block and whose answer names or
+   withdraws the open notes.
+
+It then cuts four GIFs from the recordings at the marks it took (`user-todos-filed.gif`, `-reply.gif`,
+`-escalates.gif`, `-resume.gif`) into `assets/`, beside the PNGs, `context-block.txt`, `marks.json` and
+`record.json`. A run spends about five short model turns, takes five to seven minutes, and needs
+`ffmpeg` and `ffprobe` on PATH (or named in `FFMPEG` and `FFPROBE`).
+
+Lessons from the first captures (2026-09-07):
+
+- Dismiss the tab hover card before any frame you keep. It shows the project's full path, and a tab
+  rebuild under the pointer can leave it stuck; `settleTabTip` re-enters and leaves the active tab and
+  hides a stuck card directly. One run's chat frames leaked the scratch path this way.
+- ffmpeg's `palettegen` and `paletteuse` at 10 fps and 1100 px keep most GIFs under 1.5 MB. The long
+  resume GIF needs 900 px at 6 fps; the loop steps down a width and frame-rate ladder until a GIF is
+  under 3 MB.
+- The model may file its own checklist through `add_user_todo`, and every count assertion then fails
+  (one run's card read "Waiting on you · 5", with three `Implement ...` rows). The prompt now says
+  which tool is for what; count failures with such rows on the card are the model, not the UI.
+
 ## rail-drift.mjs — the scroll-marks invariance assertion (T129)
 
 Under pure scrolling, the transcript rail's notches must never move relative to each other (the

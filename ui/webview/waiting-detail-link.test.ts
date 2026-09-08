@@ -38,6 +38,10 @@ class TextNode {
 class Frag { childNodes: (Elm | TextNode | string)[] = []; appendChild(c: Elm | TextNode | string) { this.childNodes.push(c); } }
 class Elm {
   className = ""; title = ""; dataset: Record<string, string> = {}; parentElement: Elm | null = null;
+  // the class and the title as attributes, reflected to the properties (markPathLink writes them as attributes, for an SVG <a>'s sake)
+  attrs: Record<string, string> = {};
+  setAttribute(n: string, v: string): void { if (n === "class") this.className = v; else if (n === "title") this.title = v; else this.attrs[n] = v; }
+  getAttribute(n: string): string | null { if (n === "class") return this.className || null; if (n === "title") return this.title || null; return n in this.attrs ? this.attrs[n] : null; }
   childNodes: (Elm | TextNode)[] = [];
   listeners: Record<string, Array<(ev: unknown) => void>> = {};
   classes = new Set<string>();
@@ -91,7 +95,7 @@ function listHandler(opened: Opened[]): Handler {
   return fn((p: string, sid: string, tid: string) => opened.push([p, sid, tid])) as Handler;
 }
 function modalHandler(opened: Opened[], sid: string, todoId: string): Handler {
-  const line = WAITING.split("\n").find((l) => l.includes("delegate(dd, { openpath: "));
+  const line = WAITING.split("\n").find((l) => l.includes("delegate(box, { openpath: "));
   assert.ok(line, "anchor not found — the Reply modal's delegate moved; re-anchor");
   const src = line!.slice(line!.indexOf("openpath: ") + "openpath: ".length, line!.lastIndexOf(" });"));
   const fn = new Function("openTodoPath", "sid", "todoId", transpile("const h = " + src + ";") + "\nreturn h;");

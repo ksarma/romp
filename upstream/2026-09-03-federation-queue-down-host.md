@@ -13,3 +13,5 @@ Three small hardening items on the merged queue-aware sender: queue-time breadcr
 Status detail (migrated from the table): **offered** — their PR #945 (2026-09-06), label `fix`; combined with the other #879 follow-up row into one PR
 
 MERGED 2026-09-06T19:51Z as their PR #945 (merge `ef789966`; head `a167c31b`), as offered, together with the gesture-clock entry.
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #945 is in the folded range).

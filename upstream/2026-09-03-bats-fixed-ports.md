@@ -13,3 +13,5 @@ Flake class, not a logic bug: bats files bind fixed ports, and two suites (or tw
 Status detail (migrated from the table): candidate
 
 MERGED 2026-09-06T19:50Z via their PR #951 (merge `305171f6`), the bats tmux-socket isolation offer: its `tests/free-port.bash` helper (with `tests/free-port.bats`) is the shared free-port helper this entry asked for, and the offer migrated the fixed binds (five free-port cases in the 20000-24999 band per the maintainer's body corrections). The fork's single-port move in `2b9c5e48` was the precedent.
+
+2026-09-07: came home in the upmerge0907 fold (upstream/main 1dae845d merged into the fork; their PR #951 is in the folded range).

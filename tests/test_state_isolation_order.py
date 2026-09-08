@@ -127,6 +127,17 @@ class StateIsolationOrder(unittest.TestCase):
             "module top level, above the first load_source line:\n\n%s\n\n%s"
             % (PREAMBLE, "\n".join(bad)))
 
+    def test_every_collected_module_is_named_for_the_ratchets(self):
+        """pytest's default python_files collects test_*.py AND *_test.py, but every ratchet over tests/
+        — this module's scan, test_postal_marker_form's fixture scan — filters on the test_ prefix, so a
+        module named *_test.py runs under pytest and is visited by none of them: a state-root or fixture
+        mistake there would fail nothing. The review of the todo-file follow-on found one (2026-09-07);
+        the repo's convention is test_<stem>.py, and this holds it."""
+        stray = sorted(fn for fn in os.listdir(HERE) if fn.endswith("_test.py"))
+        self.assertFalse(stray,
+            "These modules are collected by pytest but skipped by every ratchet over tests/ (their scans\n"
+            "take test_*.py only). Rename each to test_<stem>.py:\n%s" % "\n".join(stray))
+
     def test_no_test_module_uses_the_removed_loader(self):
         """Every test module loads by load_source (tests/romp_load.py): SourceFileLoader.load_module() is
         removed in Python 3.15 and warns before that. tools/loadsource-sweep.py converts a module

@@ -43,7 +43,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
     "renderSnapshot clears snapView when the section is not in the plan; the transcript comes back in the same render");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");
   assert.match(SHOW, /hideSnapshot\(\);\s*\n\s*const s = activeId \? sessions\.get\(activeId\) : null;/, "showActive's transcript path hides the host…");
-  assert.match(SHOW, /composer\.disabled = closed;\s*\n\s*composer\.placeholder = closed \? "Session closed — read-only" : composerRestingPlaceholder\(\);/, "…and re-enables the composer for a live session");
+  assert.match(SHOW, /composer\.disabled = closed \|\| viewer;\s*\n\s*composer\.placeholder = closed \? "Session closed — read-only" : composerRestingPlaceholder\(\);/, "…and re-enables the composer for a live session (upstream's subagent viewer, read-only by nature, stays disabled; 2026-09-07 fold)");
   // executed: the event on the real planner. The shown section's last visible member gone → no header of that name
   const unions = viewTagUnion(V);
   const st = parseTabGroups(null);
@@ -129,7 +129,8 @@ test("a remote row's host prefix is quiet metadata, not part of the bold name (r
 test("a pick that lands on a still-loading tab hands the composer to the loading state (review finding 12, second half)", () => {
   // showActive's loading branch never touched the composer, so a snapshot row's "opening…" session kept the
   // snapshot's disabled box and its "pick a session" placeholder, after the user had just picked one
-  const loading = SHOW.slice(SHOW.indexOf("if (activeId && tabMeta.has(activeId)) {"), SHOW.indexOf("} else if (!empty) {"));
+  // the branch also admits a federated id no local meta knows yet: its host prefix says a tab is coming (2026-09-06)
+  const loading = SHOW.slice(SHOW.indexOf("if (activeId && (tabMeta.has(activeId) || hostOf(activeId))) {"), SHOW.indexOf("} else if (!empty) {"));
   assert.match(loading, /content\.appendChild\(wait\);\s*\n\s*if \(empty\) empty\.style\.display = "none";/, "the loader in the transcript's place, as before");
   assert.match(loading, /const ta = document\.getElementById\("composer-input"\) as HTMLTextAreaElement \| null;\s*\n\s*if \(ta\) \{ ta\.disabled = false; ta\.placeholder = composerRestingPlaceholder\(\); \}\s*\n\s*const sendBtn = document\.getElementById\("composer-send"\) as HTMLButtonElement \| null;\s*\n\s*if \(sendBtn\) sendBtn\.disabled = false;/,
     "the box takes input for the picked session; the first frame's showActive sets its closed/live state");

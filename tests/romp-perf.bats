@@ -31,37 +31,71 @@ setup() {
     # A and B: the same kernel process ten seconds apart. Over the window: 20 cycles, 60 wakes, 6 s of
     # cycle time (4 s of it in push, 3 s of that in the chat block), 300 ms of pusher CPU and 50 ms of
     # judge CPU inside 500 ms of process CPU, 2 chat rebuilds against 18 cache hits, 1 MB sent as chat
-    # full frames, 100 goal loads and 50 shared loads, 2 judge passes totalling 2400 ms, 5 /tick requests and 3 WebSocket
+    # full frames, 100 goal loads and 50 shared loads, 2 judge passes totalling 2400 ms (so 25 ms of judge
+    # CPU per pass) woken by 6 producer sets of which 2 ended a wait (4 absorbed), the planner gate 2 ran /
+    # 60 skipped and the closer's 3 ran / 59 skipped with one incomplete run, 5 /tick requests and 3 WebSocket
     # connects. B's lifetime figures (cycle_ms_max 900, ms_mean 1012.5) differ from the window's
-    # (ring max 700, mean 1200) so a line printing the wrong one is caught.
+    # (ring max 700, mean 1200) so a line printing the wrong one is caught. The memory gauges (M1-lite): rss
+    # 400 -> 410 MB over the window, 1000 more allocated blocks, one more gen-2 collection, malloc's free
+    # bytes 20 -> 30 MB; B alone carries the `caches` occupancy block (A predates it, as an older kernel
+    # would), and the caches line prints B's levels.
     cat > "$SNAP_A" <<'JSON'
 {"now": 1000.0, "since": 900.0, "uptime_s": 100.0, "log": false,
- "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242},
+ "process": {"rss_kb": 409600, "threads": 40, "cpu_s": 60.0, "pid": 4242, "rss_anon_kb": 380000, "hwm_kb": 420000, "source": "proc",
+             "allocated_blocks": 1000000, "gc_gen2": 10, "malloc": {"arena": 104857600, "hblkhd": 209715200, "uordblks": 83886080, "fordblks": 20971520}},
  "pusher": {"cycles": 100, "wakes": 300, "wakes_event": 250, "wakes_backstop": 50, "cycle_ms_sum": 30000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 200.0, "cycle_cpu_ms_sum": 10000.0,
             "cycle_ms_p50": 180.0, "cycle_ms_p90": 400.0, "cycle_ms_ring_max": 900.0, "ring_n": 100},
  "stages_ms": {"jobs": 5000.0, "push": 20000.0, "push.chat": 15000.0, "push.feed": 3000.0, "push.timeline": 1000.0, "push.send": 500.0},
- "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0}, "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0}},
+ "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0, "active_built": 12, "bg_built": 8,
+                     "bg_miss": {"store": 5, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
+            "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0}},
  "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}, "delta": {"chat": {"count": 100, "bytes": 50000}}, "deduped": {"feed": {"count": 90, "bytes": 9000000}}},
  "goals": {"loads": 1000, "loads_shared": 500, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
-           "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10, "absent_hits": 100, "absent_misses": 10},
+           "disk_hits": 100, "disk_misses": 20, "disk_seeds": 10, "absent_hits": 100, "absent_misses": 10, "noop_hash_ms": 100.0,
+           "unreadable_stores": 0, "lineage_reads": 40},
  "judge": {"passes": 30, "ms_sum": 30000.0, "ms_last": 1000.0, "ms_mean": 1000.0, "cpu_ms_sum": 2000.0, "cpu_ms_workers": 1500.0,
-           "chain_memo": {"hit": 400, "miss": 40, "populate": 40, "bypass": 0}},
+           "wakes": 100, "wakes_event": 28, "wakes_backstop": 2,
+           "chain_memo": {"hit": 400, "miss": 40, "populate": 40, "bypass": 0},
+           "tiers": {"plan": {"ran": 10, "skipped": 100, "stamped": 10, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "close": {"ran": 12, "skipped": 98, "stamped": 11, "bypassed": 0, "incomplete": 1, "due_clock": 0},
+                     "unblock": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "group": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "consolidate": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "distill": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "stamps": 60}},
  "http": {"GET /tick": {"count": 50, "ms": 25.0}, "GET /sessions": {"count": 5, "ms": 10.0}}}
 JSON
     cat > "$SNAP_B" <<'JSON'
 {"now": 1010.0, "since": 900.0, "uptime_s": 110.0, "log": false,
- "process": {"rss_kb": 419840, "threads": 41, "cpu_s": 60.5, "pid": 4242},
+ "process": {"rss_kb": 419840, "threads": 41, "cpu_s": 60.5, "pid": 4242, "rss_anon_kb": 390000, "hwm_kb": 425000, "source": "proc",
+             "allocated_blocks": 1001000, "gc_gen2": 11, "malloc": {"arena": 104857600, "hblkhd": 209715200, "uordblks": 83886080, "fordblks": 31457280}},
+ "caches": {"jsonl": {"entries": 120, "file_bytes": 62914560, "records": 35000}, "asm": {"entries": 31}, "asm_keylocks": {"entries": 40},
+            "trailing": {"entries": 5}, "judge_parse": {"entries": 75}, "judge_recon": {"entries": 60}, "judge_chain": {"entries": 70},
+            "parse": {"entries": 31}, "built_chat": {"entries": 31, "ms_bytes": 7340032}, "judge_usage": {"rows": 43000},
+            "img": {"entries": 3, "bytes": 629145}, "path_links": {"entries": 1200}, "space_paths": {"entries": 300},
+            "session_stamp": {"entries": 31}, "task_seg": {"entries": 200}, "session_tok": {"entries": 31}},
  "pusher": {"cycles": 120, "wakes": 360, "wakes_event": 300, "wakes_backstop": 60, "cycle_ms_sum": 36000.0,
             "cycle_ms_max": 900.0, "cycle_ms_last": 250.0, "cycle_cpu_ms_sum": 10300.0,
             "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120},
  "stages_ms": {"jobs": 6000.0, "push": 24000.0, "push.chat": 18000.0, "push.feed": 3600.0, "push.timeline": 1200.0, "push.send": 600.0},
- "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0}, "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0}},
+ "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0, "active_built": 13, "bg_built": 9,
+                     "bg_miss": {"store": 6, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
+            "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0}},
  "sends": {"full": {"chat": {"count": 12, "bytes": 2048576}}, "delta": {"chat": {"count": 120, "bytes": 60000}}, "deduped": {"feed": {"count": 108, "bytes": 10800000}}},
  "goals": {"loads": 1100, "loads_shared": 550, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
-           "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15, "absent_hits": 190, "absent_misses": 15},
+           "disk_hits": 119, "disk_misses": 21, "disk_seeds": 15, "absent_hits": 190, "absent_misses": 15, "noop_hash_ms": 150.0,
+           "unreadable_stores": 1, "lineage_reads": 70},
  "judge": {"passes": 32, "ms_sum": 32400.0, "ms_last": 1200.0, "ms_mean": 1012.5, "cpu_ms_sum": 2050.0, "cpu_ms_workers": 1540.0,
-           "chain_memo": {"hit": 490, "miss": 43, "populate": 43, "bypass": 0}},
+           "wakes": 106, "wakes_event": 30, "wakes_backstop": 2,
+           "chain_memo": {"hit": 490, "miss": 43, "populate": 43, "bypass": 0},
+           "tiers": {"plan": {"ran": 12, "skipped": 160, "stamped": 12, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "close": {"ran": 15, "skipped": 157, "stamped": 13, "bypassed": 0, "incomplete": 2, "due_clock": 0},
+                     "unblock": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "group": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "consolidate": {"ran": 0, "skipped": 0, "stamped": 0, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "distill": {"ran": 1, "skipped": 30, "stamped": 1, "bypassed": 0, "incomplete": 0, "due_clock": 0},
+                     "stamps": 62}},
  "http": {"GET /tick": {"count": 55, "ms": 27.5}, "GET /sessions": {"count": 5, "ms": 10.0}, "GET /ws": {"count": 3, "ms": 0.0}}}
 JSON
     # C: a kernel that restarted five seconds into the window — new pid, new `since`, counters reset
@@ -109,6 +143,30 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *"cpu 5.0% of one core (pusher 3.0%, judge 0.5%, other 1.5%)"* ]]
 }
 
+@test "romp perf: the memory line carries the window's deltas beside the levels, and the caches line the levels" {
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"memory    rss 410 MB (+10 MB)   anon 380 MB   hwm 415 MB   blocks 1001000 (+1000)   gc2 11 (+1)   malloc arena 100 MB, in use 80 MB, free 30 MB (+10 MB), mmap 200 MB"* ]]
+    [[ "$output" == *"caches    jsonl 120 files / 60.0 MB / 35000 records   asm 31   judge parse 75, recon 60, chain 70   parse 31   chat 31 (7.0 MB)   usage 43000 rows   img 3 (0.6 MB)   links 1200 + 300   stamps 31   task segs 200   tok 31"* ]]
+}
+
+@test "romp perf: a kernel without the memory gauges prints neither line and nothing else changes" {
+    # an older kernel's snapshot: no allocated_blocks, no caches block
+    python3 - "$SNAP_A" "$SNAP_B" <<'PY'
+import json, sys
+for p in sys.argv[1:]:
+    d = json.load(open(p))
+    d["process"] = {k: d["process"][k] for k in ("rss_kb", "threads", "cpu_s", "pid")}
+    d.pop("caches", None)
+    json.dump(d, open(p, "w"))
+PY
+    run "$ROMP_SCRIPT" perf --interval 0
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"memory    "* ]]
+    [[ "$output" != *"caches    "* ]]
+    [[ "$output" == *"rss 410 MB"* ]]
+}
+
 @test "romp perf: the cycle line's max is the ring's, and the parenthetical names the ring" {
     run "$ROMP_SCRIPT" perf --interval 0
     [ "$status" -eq 0 ]
@@ -129,14 +187,19 @@ teardown() { rm -rf "$TEST_DIR"; }
 @test "romp perf: builds, sends, goals, judge and http lines carry the window's deltas" {
     run "$ROMP_SCRIPT" perf --interval 0
     [ "$status" -eq 0 ]
-    [[ "$output" == *"chat 2 built / 18 cached (40 ms avg)"* ]]
+    # the chat split (round-4 plan P3): 1 active and 1 background rebuild in the window, the background one
+    # caused by a goal-store publish; the zero-count causes stay off the line
+    [[ "$output" == *"chat 2 built / 18 cached (40 ms avg; 1 active, 1 bg: store 1)"* ]]
+    [[ "$output" == *"feed 2 built / 18 cached (500 ms avg)"* ]]
+    [[ "$output" != *"transcript 0"* ]]
     [[ "$output" == *"full 102 KB/s (chat 2 frames 102 KB/s)"* ]]        # 1048576 bytes over 10 s, bytes beside the count
     [[ "$output" == *"deduped 176 KB/s (feed 18 frames 176 KB/s)"* ]]
     [[ "$output" == *"10.0 loads/s   5.0 shared loads/s   2.0 saves/s   0.5 writes/s   scan 1.0 parses/s (90% memo hits)"* ]]   # 90 hits, 10 parses
     [[ "$output" == *"save memo 95% hits (19 hits, 1 misses, 5 seeds)"* ]]                                 # 19 hits, 1 miss, 5 seeds
-    [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)"* ]]                                        # the absent-store predicate memo's window deltas
-    [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   chain memo 90 hits / 3 misses"* ]]   # the WINDOW mean: 2400 ms over 2 passes; the chain memo's window deltas
+    [[ "$output" == *"absent memo 95% hits (90 hits, 5 misses)   no-op hash 5.0 ms/s   3.0 lineage reads/s   1 unreadable store"* ]]   # the absent-store predicate memo's window deltas; 50 ms of no-op hashing over 10 s; 30 whole states-file reads by the episode-boundary check over 10 s; the gauge is the newer snapshot's level, printed only when non-zero
+    [[ "$output" == *"2 passes (0.20/s)   last 1200 ms   mean 1200 ms   cpu/pass 25 ms   chain memo 90 hits / 3 misses   wakes 6 (event 2, backstop 0, 4 sets absorbed)"* ]]   # the WINDOW mean: 2400 ms over 2 passes; 50 ms of judge CPU over them; the chain memo's window deltas; the producer's sets against the waits they ended
     [[ "$output" != *"1012"* ]]                          # not the lifetime ms_mean
+    [[ "$output" == *"tiers     plan 2 ran / 60 skipped (97% skipped)   close 3 ran / 59 skipped (95% skipped, 1 incomplete)   distill 1 ran / 30 skipped (97% skipped)   stamps 62"* ]]   # the gate's window deltas per tier, store tiers included; zero-count extras and idle tiers stay off the line
     [[ "$output" == *"GET /tick 5 (0.5 ms avg)"* ]]
     [[ "$output" == *"GET /ws 3"* ]]                     # a WebSocket row: count only …
     [[ "$output" != *"GET /ws 3 ("* ]]                   # … never a fabricated 0.0 ms avg

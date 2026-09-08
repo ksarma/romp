@@ -7,6 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import hljs from "highlight.js/lib/core";
 import python from "highlight.js/lib/languages/python";
 import xml from "highlight.js/lib/languages/xml";
@@ -24,6 +25,15 @@ import engine from "../../vendor/track-changents/engine.js";
 const FIX = (f: string) => path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map-fixtures", f);
 const fixture = (f: string) => fs.readFileSync(FIX(f), "utf8");
 const VIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-view.ts"), "utf8");
+// The host script that places every passage comment (tools/file-comments-host.mjs), loaded as the real ESM module at
+// run time for the tie tests below — bundling it would copy its vendored engine; its main runs only when invoked directly.
+const HOST = path.resolve(process.cwd(), "..", "tools", "file-comments-host.mjs");
+type HostAnchor = { quote: string; prefix: string; suffix: string };
+type HostModule = {
+  locateExact(text: string, anchor: HostAnchor, hint: number | undefined, opts?: { exact?: boolean }): { from: number; to: number } | { error: string };
+  buildComment(text: string, args: { note: string; anchor?: HostAnchor; hintOffset?: number }, now: number, suggestions: unknown[]):
+    { comment: { anchorAt?: number }; range?: { from: number; to: number } } | { error: string };
+};
 
 // ── the viewer's marked configuration (file-view.ts) ──────────────────────────────────────────────
 marked.setOptions({ gfm: true, breaks: false });
@@ -246,7 +256,9 @@ test("pins: the viewer's Raw rows, marked configuration, and lexer identity", ()
   assert.match(VIEW, /const lines = html\.split\("\\n"\);\n\s+if \(lines\.length && lines\[lines\.length - 1\] === ""\) lines\.pop\(\);/);
   assert.match(VIEW, /marked\.setOptions\(\{ gfm: true, breaks: false \}\);/);
   assert.match(VIEW, /const m = \/\^~~\(\?=\\S\)\(\[\\s\\S\]\*\?\\S\)~~\/\.exec\(src\);/);
-  assert.match(VIEW, /const dirty = marked\.parse\(text\) as string;/);
+  // the viewer's parse carries its link-target hook (file-view-links.ts viewerWalkTokens) as a PER-CALL option: the tokens are
+  // marked's own, so the shapes replicated here are unchanged; only a link token's href is rewritten before the render
+  assert.match(VIEW, /const dirty = marked\.parse\(text, doc && doc\.kind === "file"\n\s*\? \{ walkTokens: \(t\) => \{ viewerWalkTokens\(t\); if \(base\) void base\.call\(marked, t\); \} \}\n\s*: undefined\) as string;/);   // the file kind's alone since the 2026-09-07 fold: a URL document takes marked's defaults
   const MAP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "anchor-map.ts"), "utf8");
   assert.match(MAP, /Lexer\.lex\(N\)/, "the walk lexes with the viewer's configured singleton (no private options)");
   assert.doesNotMatch(MAP, /marked\.(setOptions|use)\(/, "anchor-map never reconfigures marked");
@@ -459,7 +471,12 @@ test("makeAnchor equals the engine's own anchor; locateComment reports located /
   assert.deepEqual(locateComment(removed, a, start), { state: "detached" });
 });
 
-test("Raw: a quote that occurs twice anchors to the selected occurrence, also after two lines are inserted above", () => {
+test("Raw: a quote that occurs twice anchors to the selected occurrence, also after two lines are inserted above — the panel's follow moves the pair with its copy and the host places it there; a stale offset is refused, never guessed", async () => {
+  // The acceptance criterion (plans/file-review.md, Commenting from either view) as the system meets it: the HOST
+  // places every passage comment (the host paragraph), so the criterion is pinned against the real host module's
+  // locateExact, driven the way the comment verb drives it (`exact`), and against the panel's followPassage, the
+  // one thing that moves the composer's offset; the engine's own nearest-wins from the pre-edit offset is
+  // production's path nowhere, and the pin until 2026-09-07 asserted only that.
   const source = fs.readFileSync(FIX("handlers-crlf.py"), "utf8");
   const needle = 'return respond(404, "missing")';
   const first = source.indexOf(needle), second = source.indexOf(needle, first + 1);
@@ -474,13 +491,74 @@ test("Raw: a quote that occurs twice anchors to the selected occurrence, also af
   const anchor = makeAnchor(source, r.range);
   assert.deepEqual(locateComment(source, anchor, r.range.start), { state: "located", range: r.range });
   assert.deepEqual(locateComment(source, anchor), { state: "located", range: { start: first, end: first + needle.length } }, "without the hint the engine takes the earliest tie");
-  // the session inserted two lines above the passage between the selection and Enter
+  // A save with no edit in between: Save sends the anchor and the pair's start (saveComposer), and the host settles the
+  // tie by that hint because it sits on a tied copy in the text the host read — the selected one. No offset: refused.
+  const host = (await import(pathToFileURL(HOST).href)) as HostModule;
+  const span = (at: number) => ({ from: at, to: at + needle.length });
+  assert.deepEqual(host.locateExact(source, anchor, r.range.start, { exact: true }), span(second));
+  assert.deepEqual(host.locateExact(source, anchor, undefined, { exact: true }), { error: "anchor-ambiguous" }, "a tie the request cannot settle");
+  // The session inserts two lines above the passage between the selection and the save. The pair the composer holds
+  // indexes the text the selection was made over; two paths reach the host from here.
+  const at = source.indexOf("def put_note");
+  assert.ok(first < at && at < second, "the insertion lands between the copies");
   const inserted = "# reviewed\r\n# twice\r\n";
-  const edited = source.slice(0, source.indexOf("def put_note")) + inserted + source.slice(source.indexOf("def put_note"));
-  const loc = locateComment(edited, anchor, r.range.start);
-  assert.equal(loc.state, "located");
-  assert.equal(loc.range!.start, second + inserted.length);
-  assert.equal(edited.slice(loc.range!.start, loc.range!.end), needle);
+  const edited = source.slice(0, at) + inserted + source.slice(at);
+  const moved = second + inserted.length;
+  // (a) The panel saw the edit before the save — the poll or Reload repainted over the new text: retargetComposer follows
+  // the pair with its copy, exactly, by the edit's common prefix and suffix rather than by the anchor, and Save builds
+  // the anchor over the edited text at the followed range and sends its start. The host places it on the selected copy,
+  // and the panel paints the saved comment there with its stored anchorAt as the hint.
+  const { followPassage } = await import("./file-comments");
+  const f = followPassage(source, r.range, edited);
+  if (f.state !== "moved") assert.fail("the passage sits after the edit's span: followed exactly");
+  assert.deepEqual(f.range, { start: moved, end: moved + needle.length });
+  const followed = makeAnchor(edited, f.range);
+  assert.deepEqual(host.locateExact(edited, followed, f.range.start, { exact: true }), span(moved));
+  assert.equal(edited.slice(moved, moved + needle.length), needle);
+  assert.deepEqual(locateComment(edited, followed, moved), { state: "located", range: f.range });
+  // (b) The save fired before the panel saw the edit: the hint is the pre-edit offset, which sits on no copy now. The
+  // engine's nearest-wins from it happens to pick the selected copy here (the insertion is shorter than the gap between
+  // the copies), a coincidence the host does not take: the request refuses (`anchor-moved`, surfaced by the comment
+  // verb as `anchor-ambiguous` naming the moved text), nothing is written, and the note stays in the composer to be
+  // placed by a reselect. A stored position keeps nearest-wins: it indexes this very text.
+  assert.deepEqual(locateComment(edited, anchor, r.range.start), { state: "located", range: f.range }, "the engine's guess, right by luck");
+  assert.deepEqual(host.locateExact(edited, anchor, r.range.start, { exact: true }), { error: "anchor-moved" });
+  assert.deepEqual(host.locateExact(edited, anchor, r.range.start), span(moved), "the same offset as a stored anchorAt: nearest wins");
+  // the same stale request when the insertion sits above BOTH copies and is longer than half the gap between them: the
+  // guess is the copy that was not selected, and the refusal is the same — the reason the host refuses rather than guesses
+  const above = "# " + "reviewed ".repeat(9) + "\r\n";
+  assert.ok(above.length > (second - first) / 2 && above.length < second - first);
+  const shifted = above + source;
+  assert.deepEqual(locateComment(shifted, anchor, r.range.start), { state: "located", range: { start: first + above.length, end: first + above.length + needle.length } }, "nearest-wins picks the other copy");
+  assert.deepEqual(host.locateExact(shifted, anchor, r.range.start, { exact: true }), { error: "anchor-moved" });
+  assert.deepEqual(followPassage(source, r.range, shifted), { state: "moved", range: { start: second + above.length, end: second + above.length + needle.length } }, "the panel's follow is exact whatever the length");
+  // The comment verb itself (buildComment), driven with the browser's offset: the offset indexes the text the fetch
+  // handed the viewer, which strips a leading UTF-8 BOM, while the host's text keeps it, so on a BOM-prefixed file the
+  // host maps the offset past the BOM (browserHint) before the exact check — without that, a tie on a BOM file was
+  // refused `anchor-moved` for the correct selection, and no reload cleared it (the review, 2026-09-08). Placed on the
+  // selected copy either way; the stored position is the host's offset.
+  const now = 1_700_000_000_000;
+  const placed = host.buildComment(source, { note: "n", anchor, hintOffset: r.range.start }, now, []);
+  if ("error" in placed) assert.fail(`the plain file places: ${placed.error}`);
+  assert.equal(placed.comment.anchorAt, second, "no BOM: the browser's offset is the host's offset");
+  assert.deepEqual(placed.range, span(second));
+  const bom = "\uFEFF" + source;
+  assert.deepEqual(host.locateExact(bom, anchor, r.range.start, { exact: true }), { error: "anchor-moved" }, "unmapped, the browser's offset sits one short of every copy");
+  const placedBom = host.buildComment(bom, { note: "n", anchor, hintOffset: r.range.start }, now, []);
+  if ("error" in placedBom) assert.fail(`the BOM file places: ${placedBom.error}`);
+  assert.equal(placedBom.comment.anchorAt, second + 1, "BOM: placed on the selected copy, the offset mapped past the BOM");
+  assert.deepEqual(placedBom.range, span(second + 1));
+  assert.deepEqual(host.buildComment(bom, { note: "n", anchor }, now, []), { error: "anchor-ambiguous" }, "no offset passes through unmapped: still a tie the request cannot settle");
+  // the verb and the panel, pinned to their sources: the comment verb is the exact caller, its hint the browser's offset
+  // mapped into the host's text, and its anchor-moved is the anchor-ambiguous refusal that names the moved text; Save's
+  // hint is the pair's start, which retargetComposer alone moves
+  const hostSrc = fs.readFileSync(HOST, "utf8");
+  assert.ok(hostSrc.includes("const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });"), "buildComment places with exact, the hint mapped past a BOM");
+  assert.ok(/if \(built\.error === 'anchor-moved'\) \{\s*\n\s*throw new Refusal\('anchor-ambiguous', `\$\{what\} occurs more than once in \$\{ctx\.shown\}[^`]*\$\{moved\} no longer says which copy was meant — \$\{again\}`\);/.test(hostSrc), "the refusal names the moved text, in the words of the gesture");
+  assert.ok(hostSrc.includes(`"the text moved after it was selected, so the selection's position"`) && hostSrc.includes(`'reload and select it again'`), "a passage: selected, so select it again");
+  const panel = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "file-comments.ts"), "utf8");
+  assert.ok(panel.includes("if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }"), "saveComposer sends the pair's start");
+  assert.ok(/const f = followPassage\(c\.text, c\.range, src\);\s*\n\s*if \(f\.state === "moved"\) \{ c\.range = f\.range; c\.text = src; c\.tied = false; \}/.test(panel), "retargetComposer moves the pair with its copy");
 });
 
 test("rawOffsetToLine counts the Raw view's rows", () => {
@@ -1171,7 +1249,22 @@ test("paintRawPoint: offset 0, a line ending, a lone CR, an empty row, the end o
   assert.deepEqual(paintChangesRaw(El(empty.code), "", [{ id: "z", kind: "del", curFrom: 0, curTo: 0, oldText: "gone", author: "web" }], () => ({})), []);
 });
 
-test("Rendered change marks: ins and sub paint their new text with the author's styles, a del is reported unpainted, unpaint restores the DOM", () => {
+/** The text of `block` before `point` and after it, in document order (the point itself holds none). */
+function around(block: FakeNode, point: FakeNode): [string, string] {
+  let pre = "", post = "", seen = false;
+  const visit = (n: FakeNode) => {
+    if (n === point) { seen = true; return; }
+    if (n.nodeType === 3) { if (seen) post += (n as FakeText).data; else pre += (n as FakeText).data; return; }
+    for (const c of n.childNodes) visit(c);
+  };
+  visit(block);
+  return [pre, post];
+}
+const nextSibling = (n: FakeNode): FakeNode | null => { const p = n.parentNode!; return p.childNodes[p.childNodes.indexOf(n) + 1] || null; };
+/** The nearest top-level block (a child of the .fileview-md box) holding `n`. */
+const blockOf = (box: FakeNode, n: FakeNode): FakeElement => { let x = n; while (x.parentNode && x.parentNode !== box) x = x.parentNode; return x as FakeElement; };
+
+test("Rendered change marks: ins and sub paint their new text with the author's styles, a del is a point at its place and a sub's point sits right before its tint, unpaint restores the DOM", () => {
   const source = fixture("report.md");
   const { box } = buildRendered(source);
   const before = serialize(box);
@@ -1191,13 +1284,17 @@ test("Rendered change marks: ins and sub paint their new text with the author's 
   const k0 = stripWs(p.textContent).indexOf("cutp95");
   const preSel = ok(mapRenderedSelection(sel({ node: pp[k0].t, offset: pp[k0].off }, { node: pp[k0 + 12].t, offset: pp[k0 + 12].off + 1 }), El(box), source));
   assert.equal(preSel.quote, insNew);
+  // …and one over the heading the deletion's point will sit in front of
+  const h2 = box.childNodes.filter((n) => n.nodeType === 1 && (n as FakeElement).tagName === "H2")[0] as FakeElement;
+  const hp = nonWsPositions(h2);
+  const preHead = ok(mapRenderedSelection(sel({ node: hp[0].t, offset: hp[0].off }, { node: hp[hp.length - 1].t, offset: hp[hp.length - 1].off + 1 }), El(box), source));
+  assert.equal(preHead.quote, "Second heading");
 
   const res = paintChangesRendered(El(box), source, changes, stylesFor);
-  assert.deepEqual(res, { painted: ["r-ins", "r-sub"], unpainted: ["r-del"] });
+  assert.deepEqual(res, { painted: ["r-ins", "r-del", "r-sub"], unpainted: [] }, "the deletion is painted too (the inline-display follow-on); ids in the hunks' order");
   assert.equal(stripWs(domText(box, null)), textBefore, "painting keeps the rendered text");
   const marks = withClass(box, "fc-ins");
   assert.ok(marks.length >= 2);
-  assert.equal(withClass(box, "fc-del").length, 0, "no deletion point in Rendered");
   const byId = Object.fromEntries(changes.map((c) => [c.id, c]));
   for (const m of marks) {
     assert.equal(m.tagName, "MARK");
@@ -1210,13 +1307,142 @@ test("Rendered change marks: ins and sub paint their new text with the author's 
   const textOfId = (id: string) => stripWs(marks.filter((m) => m.getAttribute("data-id") === id).map((m) => m.textContent).join(""));
   assert.equal(textOfId("r-ins"), stripWs(insNew));
   assert.equal(textOfId("r-sub"), "therenderednotesforfiveminutes", "the emphasis marks the renderer consumed are not text");
-  // the selection maps the same over the painted DOM, from inside the mark
+  // the points: the Raw view's element, byte for byte — a span, the change's data, the capped label in data-fc-text,
+  // the author's styles, no text node, no chip (the plan gives the chip to Raw)
+  const points = withClass(box, "fc-del");
+  assert.deepEqual(points.map((x) => x.getAttribute("data-id")), ["r-del", "r-sub"], "one point per deletion and substitution, in document order");
+  for (const x of points) {
+    const c = byId[x.getAttribute("data-id") as string];
+    assert.equal(x.tagName, "SPAN");
+    assert.equal(x.getAttribute("class"), "fc-del");
+    assert.equal(x.getAttribute("data-act"), "fcchange");
+    assert.equal(x.getAttribute("data-author"), c.author);
+    assert.equal(x.getAttribute("data-fc-text"), deletionLabel(c.oldText));
+    assert.equal(x.getAttribute("style"), "--fc-author: " + COLORS[c.author] + ";");
+    assert.equal(x.getAttribute("data-fc-chip"), null, "Rendered marks carry no chip");
+    assert.equal(x.childNodes.length, 0, "a point adds no text node");
+  }
+  // the deletion's point sits in the setext heading, before its first character: the old heading struck, then the new
+  const del = points[0];
+  assert.equal(blockOf(box, del), h2);
+  assert.deepEqual(around(h2, del), ["", "Second heading"]);
+  assert.equal(del.getAttribute("data-fc-text"), "An old heading\n\n", "the label keeps its line endings (the sheet folds them in prose)");
+  // the substitution's point is the node right before the first of its marks, in the same parent
+  const sub = points[1];
+  const subMarks = marks.filter((m) => m.getAttribute("data-id") === "r-sub");
+  assert.equal(nextSibling(sub), subMarks[0], "struck old text, then the tinted new text");
+  assert.equal(sub.getAttribute("data-fc-text"), "the notes for ten minutes");
+  // the selection maps the same over the painted DOM: from inside the mark, and over the heading with the point in it
   const insMark = marks.find((m) => m.getAttribute("data-id") === "r-ins")!;
   const inner = insMark.childNodes[0] as FakeText;
   const post = ok(mapRenderedSelection(sel({ node: inner, offset: 0 }, { node: inner, offset: inner.data.length }), El(box), source));
   assert.deepEqual(post, preSel);
+  const hp2 = nonWsPositions(h2);
+  const postHead = ok(mapRenderedSelection(sel({ node: hp2[0].t, offset: hp2[0].off }, { node: hp2[hp2.length - 1].t, offset: hp2[hp2.length - 1].off + 1 }), El(box), source));
+  assert.deepEqual(postHead, preHead, "the point adds no text, so the walk over the heading is unchanged");
+  // a selection that begins at the element boundary the point occupies (the browser reports a spot two ways)
+  const atPoint = ok(mapRenderedSelection(sel({ node: h2, offset: h2.childNodes.indexOf(del) + 1 }, { node: hp2[hp2.length - 1].t, offset: hp2[hp2.length - 1].off + 1 }), El(box), source));
+  assert.deepEqual(atPoint, preHead);
   unpaintChanges(El(box));
   assert.equal(serialize(box), before);
+});
+
+test("Rendered deletion points: before the word the offset is on, against the word a deletion followed, at a paragraph's end, at the end of the file, in a list item and a blockquote, with the label capped; a selection across a point maps as before; unpaint restores the DOM", () => {
+  const source = fixture("report.md");
+  const { box } = buildRendered(source);
+  const before = serialize(box);
+  const at = (s: string) => { const i = source.indexOf(s); assert.ok(i >= 0, s); return i; };
+  const longOld = "the p50 and the p75 and the p90 and the p95 and the p99 and every other percentile we once reported here";
+  assert.ok(longOld.length > DEL_LABEL_MAX);
+  const del = (id: string, curFrom: number, oldText: string, author = "web"): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText, author });
+  const changes = [
+    del("d-on", at("p95 latency"), "median "),                                   // on a word: before it
+    del("d-after", at("endpoint.") + "endpoint".length, " today"),               // right after a word, before its period: against the word
+    del("d-space", at(" on the notes endpoint"), longOld),                        // right after "40%", on the space: against "40%", not past the space
+    del("d-end", at("Key points:") + "Key points:".length, " Three of them."),   // a paragraph's end
+    del("d-item", at("legacy~~ v1 route.") + "legacy~~ v1 route.".length, " Keep v2.", "api"),   // a list item's end
+    del("d-quote", at("Quoted second line."), "Quoted first line.\n> ", "api"),  // inside a blockquote, on a word
+    del("d-defs", source.length, "\nOne more line.\n"),                           // after the reference definitions, which render nothing
+  ];
+  const res = paintChangesRendered(El(box), source, changes, stylesFor);
+  assert.deepEqual(res, { painted: changes.slice(0, -1).map((c) => c.id), unpainted: ["d-defs"] }, "no rendered text stands where the definitions are: card-only");
+  const point = (id: string) => { const x = withClass(box, "fc-del").find((m) => m.getAttribute("data-id") === id); assert.ok(x, id + " painted"); return x!; };
+  const where = (id: string) => { const x = point(id); return around(blockOf(box, x), x); };
+  let [pre, post] = where("d-on");
+  assert.ok(pre.endsWith("session cut ") && post.startsWith("p95 latency"), "before the word: " + JSON.stringify([pre.slice(-12), post.slice(0, 12)]));
+  [pre, post] = where("d-after");
+  assert.ok(pre.endsWith("notes endpoint") && post.startsWith(". See the"), "against the word, before the period: " + JSON.stringify([pre.slice(-14), post.slice(0, 10)]));
+  [pre, post] = where("d-space");
+  assert.ok(pre.endsWith("by 40%") && post.startsWith(" on the notes"), "a deletion that followed a word directly sits against it, the space after: " + JSON.stringify([pre.slice(-6), post.slice(0, 13)]));
+  assert.equal(point("d-space").getAttribute("data-fc-text"), deletionLabel(longOld));
+  assert.equal(point("d-space").getAttribute("data-fc-text")!.length, DEL_LABEL_MAX, "capped like Raw's, with the ellipsis");
+  [pre, post] = where("d-end");
+  assert.equal(pre, "Key points:"); assert.equal(post, "");
+  [pre, post] = where("d-item");
+  assert.ok(pre.endsWith("v1 route.") && post.trimStart().startsWith("Nested: keep"), "at the item's own text's end, before its nested list: " + JSON.stringify([pre.slice(-9), post.slice(0, 12)]));
+  assert.equal(blockOf(box, point("d-item")).tagName, "UL");
+  [pre, post] = where("d-quote");
+  assert.ok(pre.endsWith("more week.\n") && post.startsWith("Quoted second line."), JSON.stringify([pre.slice(-11), post.slice(0, 19)]));
+  assert.equal(blockOf(box, point("d-quote")).tagName, "BLOCKQUOTE");
+  // the walks are unaffected: a selection from before a point to after it maps to the same source range as with no point
+  const para = blockOf(box, point("d-on"));
+  const pp = nonWsPositions(para);
+  const i0 = stripWs(para.textContent).indexOf("cutp95latency");
+  const selNow = ok(mapRenderedSelection(sel({ node: pp[i0].t, offset: pp[i0].off }, { node: pp[i0 + 12].t, offset: pp[i0 + 12].off + 1 }), El(box), source));
+  assert.equal(selNow.quote, "cut p95 latency");
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  const fresh = buildRendered(source);
+  const fp = nonWsPositions(fresh.box.childNodes.filter((n) => n.nodeType === 1)[1] as FakeElement);
+  const selClean = ok(mapRenderedSelection(sel({ node: fp[i0].t, offset: fp[i0].off }, { node: fp[i0 + 12].t, offset: fp[i0 + 12].off + 1 }), El(fresh.box), source));
+  assert.deepEqual(selNow, selClean);
+  // the end of a file whose last block ends it: after the last character; with a trailing blank line, nothing stands there
+  for (const [src, tail] of [["Alpha.\n\nOmega.\n", ""], ["Alpha.\n\nOmega.", ""], ["Alpha.\n\nOmega.\n\n", null]] as const) {
+    const small = buildRendered(src);
+    const r = paintChangesRendered(El(small.box), src, [del("e", src.length, "\nOne more line.")], stylesFor);
+    if (tail === null) { assert.deepEqual(r, { painted: [], unpainted: ["e"] }, JSON.stringify(src) + ": a blank line ends the file"); continue; }
+    assert.deepEqual(r, { painted: ["e"], unpainted: [] }, JSON.stringify(src));
+    const x = withClass(small.box, "fc-del")[0];
+    assert.deepEqual(around(blockOf(small.box, x), x), ["Omega.", tail], JSON.stringify(src));
+  }
+});
+
+test("Rendered deletion points that cannot be placed stay unpainted, never beside the wrong words: a code fence, a table, an HTML block, a blank line between blocks, a nested code block's inside; either side of a nested block is placed", () => {
+  const source = fixture("refusals.md");
+  const { box } = buildRendered(source);
+  const before = serialize(box);
+  const at = (s: string) => { const i = source.indexOf(s); assert.ok(i >= 0, s); return i; };
+  const del = (id: string, curFrom: number): ChangePaint => ({ id, kind: "del", curFrom, curTo: curFrom, oldText: "gone", author: "web" });
+  const res = paintChangesRendered(El(box), source, [
+    del("u-code", at("respond(request)")),
+    del("u-table", at("120 ms")),
+    del("u-html", at("An HTML block")),
+    del("u-blank", at("\n\n```python") + 1),                       // the blank line between the paragraph and the fence
+    del("p-prose", at("An aligned paragraph after everything.")),   // the control: a mapped paragraph
+  ], stylesFor);
+  assert.deepEqual(res, { painted: ["p-prose"], unpainted: ["u-code", "u-table", "u-html", "u-blank"] });
+  assert.equal(withClass(box, "fc-del").length, 1);
+  unpaintChanges(El(box));
+  assert.equal(serialize(box), before);
+  // a list item holding a nested code block: the block is a HOLE the item's own text surrounds. A deletion inside the
+  // hole is unpainted; one at the end of the text before it sits against that text; one at the start of the text
+  // after it sits before that text
+  const nested = "- Item one\n\n  ```\n  code line\n  ```\n\n  after code\n";
+  const { box: nb } = buildRendered(nested);
+  const nbefore = serialize(nb);
+  const r2 = paintChangesRendered(El(nb), nested, [
+    del("n-in", nested.indexOf("code line")),
+    del("n-before", nested.indexOf("Item one") + "Item one".length),
+    del("n-after", nested.indexOf("after code")),
+  ], stylesFor);
+  assert.deepEqual(r2, { painted: ["n-before", "n-after"], unpainted: ["n-in"] });
+  const pt = (id: string) => withClass(nb, "fc-del").find((m) => m.getAttribute("data-id") === id)!;
+  let [pre, post] = around(blockOf(nb, pt("n-before")), pt("n-before"));
+  assert.ok(pre.endsWith("Item one") && !post.startsWith("Item"), JSON.stringify([pre, post.slice(0, 10)]));
+  [pre, post] = around(blockOf(nb, pt("n-after")), pt("n-after"));
+  assert.ok(post.startsWith("after code") && pre.includes("code line"), JSON.stringify([pre.slice(-10), post]));
+  unpaintChanges(El(nb));
+  assert.equal(serialize(nb), nbefore);
 });
 
 test("Rendered change marks: an insertion inside a code fence paints through the text-match fallback; one whose text is not on the page does not", () => {

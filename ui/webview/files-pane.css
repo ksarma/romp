@@ -12,6 +12,27 @@ font-size:13px;display:flex;flex-direction:column;overflow:hidden}
    opened from a file-browser row still paints above the browser's fixed overlay (the "‹ Files" back path). */
 body.fileview-pane #romp-fileview{position:relative;inset:auto;flex:1 1 auto;min-height:0;background:none}
 body.fileview-pane .fileview{width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
+/* The file BROWSER fills the pane the same way: the listing is its own column here (files.ts). The chat sheet has
+   dressed it as the viewer's centered card since 2026-09-04 (styles.css: #romp-filebrowse is the fixed inset-0
+   backdrop, dimmed; .filebrowse the min(720px,95%) by min(760px,95%) card with the modal border, radius and shadow),
+   and in a column that card floated in a dim pane. The backdrop stays fixed and goes clear; the card takes the whole
+   box. The backdrop keeps its z layer beneath the viewer (890 < 1200), so a file opened from a row still paints over
+   the listing (the "‹ Files" back path), and a card that fills its backdrop leaves no dim to click, so the
+   backdrop-click close cannot fire here. Measured in browse-route.test.ts's browser legs. */
+body.fileview-pane #romp-filebrowse{background:none}
+body.fileview-pane .filebrowse{width:100%;height:100%;border:0;border-radius:0;box-shadow:none}
+/* A narrow column: the title bar WRAPS, the action row dropping to a second line (right-aligned, so the close
+   button keeps its edge), and the path keeps at least 12em. The wrap began here as the pane's own rule: without
+   it the row of buttons alone outgrew a 480px pane, the path's box shrank to nothing, and the directory half of
+   the title, the click back into the listing (.fileview-dir-link), measured 0px wide (review 2026-09-07); the
+   row itself shrinks and wraps too, since a markdown file's six buttons ran 368px as one rigid line and a
+   phone-wide pane (320-375px) clipped Copy path and the close button off the pane (.fileview is
+   overflow:hidden), with no backdrop to tap and no Escape on a phone (review round 2, 2026-09-07). The
+   text-size control then pushed the MODAL's row off its card below about 600px the same way, so the wrap moved
+   into the base sheets (.fileview-bar and its two .fileview-bar .fileview-name / .fileview-acts rules in
+   styles.css / feed.css, the parity pair; scoped to the bar, since the Recent rows below and the file browser's
+   action row wear the same classes outside one) and every surface has it; this sheet adds nothing to the bar. Measured at 320px and 360px in
+   browse-route.test.ts's browser legs, and at 380-600px in file-view-text-size.test.ts's. */
 /* the empty state: what the pane is for, and the files most recently open here as re-open links. The rows
    wear the viewer's own title-bar classes (.fileview-name / -dir / -base / -sess), so a path and its session
    chip read exactly as they do in the bar above an open file. */

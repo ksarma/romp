@@ -6,8 +6,9 @@
 //   stdin   {"verb", "path", "args": {...}, "fence": {...}|null}
 //   stdout  {"ok": true, "verb", "root", "storePath", "trackedBy", "agentTooling", "fileMtimeNs",
 //            "storeMtimeNs", "configMtimeNs", "store", "hunks", "unsent", "log", "logTruncated",
-//            "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons" + "derivedSrcs" +
-//            "derivedSrcReasons", "baseline"?, "logged"?, "accepted"?, "rejected"?}
+//            "decided", "fileHash" + "fileHashReason" | "embeddedHashes" + "embeddedHashReasons" +
+//            "embeddedMtimes" + "derivedSrcs" + "derivedSrcReasons", "baseline"?, "logged"?,
+//            "logWarning"?, "accepted"?, "rejected"?}
 //        or {"ok": false, "code", "error"}          — a refusal; exit status 0
 //   crash   a non-zero exit with the reason on stderr  — a malformed request or a program error
 //
@@ -33,6 +34,31 @@
 //     later track-edit) refuses `no-change` by id, so the caller reloads instead of deciding a
 //     different change under the same name; and accept never drops a comment bound to the change
 //     (`suggestionId`), it marks it resolved, so the ids in a sent message stay addressable;
+//   * the same for the decisions a `save` carries from the editor: every accepted or rejected id must
+//     be rooted in a change the sidecar holds or the comments log already records as decided — the id
+//     itself or a fragment of it (`<id>~n`, the engine's split scheme) — else `no-change` by id and
+//     nothing written; an id the sidecar never held would otherwise stand in the append-only log as a
+//     decision nobody took and be counted to the session (decisionRoots, doSave). And the same for the
+//     change RECORDS a `save` carries: every record's id must be rooted the same way, else `desync` by
+//     id and nothing written (recordsNeverPending). The records are written into the sidecar under the
+//     author and session id they name, so an unrooted one would stand there as a change the session
+//     made and never did — and the next save or the panel's Reject would then find it rooted, log a
+//     decision on it and count it to the session. A real editor never submits such an id: its field is
+//     seeded from the sidecar's records, the engine splits mint `<id>~n` (mapOpsThroughChange), and the
+//     chunk's re-mint keeps the parent (editor-chunk's freshIds). And a record rooted in a change the
+//     sidecar holds must name that change's author and session id (recordsMisattributed), else
+//     `desync` by id and nothing written: the editor's remap copies both onto every fragment it splits
+//     off (mapOpsThroughChange) and keeps the earlier record's on a merge (coalesceOps), so a record
+//     that differs is not the editor's — written, it would put the session's change under another
+//     author and session id in the sidecar, the record every change card shows and every later verb
+//     reads as who changed what. The texts and `ts` stay the client's word: no equality against the
+//     sidecar holds for them (a split shortens newText, a merge concatenates the texts and takes the
+//     earlier ts), a record the log alone roots (the undo of a landed accept) has no author on record
+//     to compare, and the decisions' texts come from a remap this script never saw (requireDecisions
+//     checks the shape, decisionRoots the id). The sidecar is itself a file the viewer edits (the
+//     plan: a sidecar hand-edited in the viewer traces like any other file), so none of this closes a
+//     door that stands open beside it; it keeps the records this verb writes consistent with the
+//     changes they claim to be;
 //   * a region comment's stored target is `{kind, region, page?, hash, src?}` (validateTarget, then
 //     stampTarget, in that key order): `page` on a PDF only, and `src` only on a figure embedded in a
 //     markdown file — the embed's destination as written, which keys the reply's `embeddedHashes`
@@ -47,7 +73,7 @@
 //     the request says which bytes the person saw (`fence.figureHash`: the hash the last reply
 //     carried for that figure — `fileHash` on a media file, `embeddedHashes[src]` on a text file),
 //     the bytes hashed must be those, else `figure-changed` (figureFence, stampTarget): a figure
-//     regenerated between the drag and Enter would otherwise be stamped with a hash the person never
+//     regenerated between the drag and the save would otherwise be stamped with a hash the person never
 //     saw, which the panel reads as current — the one write the hash exists to catch, missed at the
 //     moment it is made. That fence says what the caller saw and is checked when it says anything;
 //     a request without one is taken as before, since a caller has no hash for a figure no reply
@@ -69,6 +95,25 @@
 //     with its src; a passage that cannot tell refuses (`no-figure`, or the anchor's own code),
 //     since that is the disk's state and not a caller bug. A stored src must still be named by the
 //     request, as before: the panel holds it, and a re-place keeps the figure;
+//   * a passage comment's anchor is widened until it locates uniquely (uniqueAnchor: 24 characters
+//     of context, then 24 more at a time, up to ANCHOR_CTX_CAP), and the comment carries the second
+//     romp-only field, `anchorAt`, the offset the anchor located at, refreshed on every sidecar write
+//     this script makes (refreshAnchorAts, in stageSidecar and again before the reply is measured, so
+//     the bytes it adds are counted) and read as the hint whenever a stored comment's anchor is
+//     located (hintOf). The client's offset settles a tie only when it points at one of the tied
+//     copies in the text this script read: an offset into text that has since moved refuses
+//     `anchor-ambiguous` rather than placing the note on the nearest copy, as does a tie with no
+//     offset (the anchors follow-on, 2026-09-07, and its review). The refresh is exact and bounded: a
+//     stored position moves to the one place the whole anchor sits when nothing else can be the
+//     passage (the comment had no position, or the quote occurs nowhere else), and otherwise only to
+//     the one place the recorded changes (the pending ops, the ops this write settles — accept's and
+//     save's alike — the edits this write applies) can have carried it to, never to the nearest one and
+//     never to the other copy of a passage whose own surroundings were edited; a comment whose whole
+//     anchor still sits at its position costs no scan at all, and every scan the rest need — the
+//     classification scan (fullMatches, charged as the native pass and the hits it is), the quote's
+//     occurrences (quoteHits) and the engine's scoring a nowhere anchor costs — is charged to one
+//     budget per write (REFRESH_SCAN_BUDGET), so no count of comments can hold a write past the
+//     kernel's deadline, and a write that moved no passage costs nothing however many there are;
 //   * nothing under `.trackchanges/` is read or written through a symbolic link. The sidecar, the
 //     comments log and config.json are named from the file's path and never shown to the person,
 //     and a checked-out repository can commit anything under those names (the plan leaves committing
@@ -82,13 +127,51 @@
 //     `<sidecar>.tmp` and follows a link planted there), so no temp can be planted. The commented
 //     file is the one path written through its link, on purpose: the person chose it, and its
 //     realpath is where the text lives (prepareFileWrite).
+//   * once a verb's primary write has landed — the file (reject, save), the sidecar (accept), the
+//     config (set-tracked) — nothing after it fails the verb: a sidecar or a log that cannot be read
+//     back for the reply, or set-tracked's log append (the one append still made after its write: a
+//     toggle is no decision), is reported in the reply (`logged: false`, `logWarning` with the OS
+//     text), the rule the kernel's saveFile path keeps for log-edit (a failed append is reported in
+//     the reply and never fails the save). A non-zero exit there would report a write that landed as
+//     one that did not: the kernel sends no trace for a failed verb, so the session whose file
+//     changed is never told, and the client keeps a buffer it believes unsaved behind a fence the
+//     write has already moved (settleLanded, appendLanded, reply's `landed`);
+//   * `save` refuses what the kernel's saveFile refuses, before any write, so the second door widens
+//     nothing: a name outside the viewer's text scope (TEXT_EXT and TEXT_NAMES — the kernel's
+//     _is_text_path, pinned against its source by test; the kernel refuses the name before this script
+//     runs, and this script refuses it again so the answer does not depend on the route) and a file
+//     past the 2 MB cap on disk, refused on the stat before its bytes are read, as _save_file refuses
+//     (checkTextPath, readFile's `cannot`, checkDiskSize). The NAME rule is save's alone: save writes
+//     the client's content, and the allowlist is what bounds the text the dashboard may write under a
+//     name. reject and reject-all write back only the text the sidecar recorded — the engine's reverse
+//     edits over the file as it is, chosen by id — so they keep Slice 2's scope, every tracked file
+//     that is UTF-8 text whatever its name, the scope the CLIs record changes in: a session's
+//     track-edit in a .tex or .hs file makes a change card the panel shows, and the card's Reject must
+//     be honored from the dashboard as it was before Slice 5 (the review, 2026-09-06, round 3). The
+//     SIZE cap they share, a rule about bytes rather than names;
+//   * nothing is written on a client's word that the kernel cannot carry back: the reply a verb would
+//     send is built and measured before the write (checkReplyFits, REPLY_MAX_BYTES — the kernel's
+//     _FILE_COMMENTS_REPLY_MAX) and refuses `too-large` past it. Over that cap the kernel kills this
+//     process and discards its stdout AFTER the write landed, then does the same to every later
+//     `status` on the file, so one oversized record or note would lock the file's comments until the
+//     sidecar was fixed by hand;
+//   * a path inside .trackchanges/ — the sidecar, the config, the log — is never logged (the log
+//     would record itself), the kernel's _under_trackchanges rule for saveFile; and `save` logs an
+//     edit only for a file that already has a sidecar, a comments log, or a tracked flag, the rule
+//     log-edit follows (a save that created the log would make every later plain save of a file
+//     nobody tracked logged too).
 // The file's text is read only when a verb needs it: to rebase an existing sidecar, to place an
 // anchor, to stamp a fingerprint. `status` runs on every viewer open, a file the viewer refuses
 // above 2 MB included, so on a file with no sidecar it stats the file and reads nothing (statFile).
-// The verbs that change the FILE (reject, reject-all) fence on its mtime too, refuse a file that is
-// not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, land the
+// The verbs that change the FILE (reject, reject-all, save) fence on its mtime too, refuse a file that
+// is not UTF-8 text (`not-text`) or would exceed the 2 MB cap (`too-large`) before any write, land the
 // sidecar before the file (the order track-edit uses, so a reader never finds a file whose changes
 // its sidecar does not describe), and put the prior sidecar back if the file write fails.
+// `save` (Slice 5) is the editor's Save over a file with pending changes: the new text and the
+// change records the editor remapped as the person typed arrive together, every record is checked
+// against the text (`desync` names the first that does not fit), and the sidecar, the file and the
+// comments log (an `edit` entry plus an accept and a reject entry for what was decided in the
+// editor) are written in this one process, in reject's order.
 //
 // A decision is recorded before it lands, never after. Accept and reject each end in one rename
 // that makes them true, and the comments-log entry is appended BEFORE that rename, with every other
@@ -97,9 +180,10 @@
 // writes left a landed decision with no record when the append failed (the log holds the only state
 // for what is unsent, so the next send omitted it), and for a reject it inverted track-edit's safety
 // property: a record without its text detaches loudly on the next load, but a rejected change whose
-// text is still in the file, with no op and no log entry, reads as accepted. What remains: a kill
-// between the sidecar's rename and the append (no fsync between them) still reads that way, and a
-// kill after the last rename lands the decision while the kernel hears no reply.
+// text is still in the file, with no op and no log entry, reads as accepted. `save` keeps the same
+// order for the decisions taken in the editor and for its `edit` entry beside them. What remains: a
+// kill between the sidecar's rename and the append (no fsync between them) still reads that way, and
+// a kill after the last rename lands the decision while the kernel hears no reply.
 //
 // Vendored code: vendor/track-changents (MIT, LICENSE beside it).
 
@@ -112,7 +196,7 @@ import { fileURLToPath } from 'node:url';
 import engine from '../vendor/track-changents/engine.js';
 import {
   findVaultRoot, storePathFor, relPathFor, configPathFor, trackedPaths, untrackedPaths,
-  trackedClosure, isTrackedFile, loadStoreStatus, saveStore, pruneIfClean, STORE_VERSION,
+  trackedClosure, isTrackedFile, loadStoreStatus, saveStore, pruneIfClean, STORE_VERSION, fingerprintOf,
 } from '../vendor/track-changents/store-io.mjs';
 import { addReply } from '../vendor/track-changents/cli/track-reply.mjs';
 import { decodeTextOrNull } from '../vendor/track-changents/cli/track-edit.mjs';
@@ -121,11 +205,91 @@ import { decodeTextOrNull } from '../vendor/track-changents/cli/track-edit.mjs';
 
 // The kernel's _TEXT_MAX_BYTES: the cap on any text this script writes back to a file.
 export const TEXT_MAX_BYTES = 2 * 1024 * 1024;
+// The kernel's _FILE_COMMENTS_REPLY_MAX: the most stdout it holds for one reply before it kills this
+// process and discards what it read. checkReplyFits measures the reply a verb would send before a
+// write that carries a client's text into the sidecar or the log, with REPLY_SLACK left for the
+// stand-ins the estimate uses: the mtimes the write will set, the reloaded sidecar's normalization,
+// the tracking verdict, and the figure fields it leaves empty — on a media file `fileHash` and
+// `fileHashReason`; on a text file `embeddedHashes`, `embeddedMtimes` and `embeddedHashReasons`,
+// one entry per src the comments name, a hash, an mtime string and a reason apiece — each a few
+// dozen bytes, and a file's comments name a handful of figures at most.
+export const REPLY_MAX_BYTES = 16 * 1024 * 1024;
+const REPLY_SLACK = 64 * 1024;
+// The kernel's _TEXT_EXT and _TEXT_NAMES (_is_text_path): the files GET /file serves as text and
+// saveFile writes. `save` keeps to the same names, so the dashboard writes no text of its own through
+// this script under a name it would not write through saveFile; reject, which writes back only what
+// the sidecar recorded, is not bound by them (checkTextPath). Mirrored, not imported; the scope test
+// pins both sets against the kernel's source.
+export const TEXT_EXT = new Set((
+  'txt md markdown rst adoc org text log err out diff patch csv tsv'
+  + ' py pyi rb rs go java kt kts swift c h cc cpp hpp cs m mm scala clj lua pl php r jl dart'
+  + ' js jsx mjs cjs ts tsx json jsonc json5 yaml yml toml ini cfg conf properties'
+  + ' html htm xml svg css scss sass less vue svelte astro'
+  + ' sh bash zsh fish ps1 bat cmd nix tf hcl proto graphql gql sql prisma'
+  + ' lock mod sum gradle cmake mk make bazel bzl gemspec podspec bats'
+).split(' ').filter(Boolean));
+export const TEXT_NAMES = new Set([
+  'makefile', 'dockerfile', 'jenkinsfile', 'procfile', 'rakefile', 'gemfile', 'brewfile',
+  'vagrantfile', 'caddyfile', 'justfile', 'license', 'licence', 'notice', 'authors',
+  'changelog', 'readme', 'todo', 'codeowners', '.gitignore', '.gitattributes',
+  '.dockerignore', '.editorconfig', '.env', '.bashrc', '.zshrc', '.profile',
+]);
+// The sidecar directory, the kernel's _TRACKCHANGES_DIR: a path inside one is the tracking
+// machinery itself, and an edit to it is never logged.
+export const TRACKCHANGES_DIR = '.trackchanges';
 // The Log the panel shows: the newest LOG_TAIL entries of the comments log, oldest first.
 export const LOG_TAIL = 200;
 // Every human action and log entry is authored `you`, with no authorId (decision 6).
 export const AUTHOR = 'you';
 export const LOG_SUFFIX = '.comments-log.jsonl';
+// A passage comment's anchor: the engine's makeAnchor at the located position, with the SMALLEST
+// context (ANCHOR_CTX characters either side — the engine's default and what track-comment writes —
+// then ANCHOR_CTX_STEP more at a time, up to ANCHOR_CTX_CAP or the file's bounds) at which the anchor
+// locates uniquely in the whole text. A passage that recurs with the same 24 characters around each
+// copy is told from the others by more of its surroundings, in the three fields every host reads, so
+// the other hosts place it the same way. Past the cap (identical regions wider than the cap on both
+// sides of every copy) the anchor is saved at the cap and the stored position, `anchorAt`, tells the
+// copies apart (the anchors follow-on, 2026-09-07; plans/file-review.md, The contract).
+export const ANCHOR_CTX = 24;
+export const ANCHOR_CTX_STEP = 24;
+export const ANCHOR_CTX_CAP = 480;
+// The refresh's bound on the scanning one write may do, in units of the engine's per-character rate
+// (one unit: one character the engine's scoring compares). Everything the refresh scans is charged to
+// it, at what each scan costs: a native pass of indexOf over the whole text (fullMatches' classification
+// scan, quoteHits' count of a quote's occurrences, each pass the engine's locate makes) costs the text's
+// length over REFRESH_PASS_DIVISOR, since indexOf runs that many times faster per character than the
+// engine's scoring (measured about 40 to 1; 32 leaves headroom); every whole-anchor hit fullMatches
+// enumerates costs the needle's length, the characters indexOf compares to confirm it (a whole anchor
+// that sits at nearly every offset of a text of one repeated character made one scan 65,536 hits of a
+// 961-character needle, sixty million comparisons charged as one pass, and 400 such comments held a
+// write to 13 s, the review, 2026-09-08); and the engine's scoring for an anchor that sits in whole
+// nowhere costs its two locates, each every occurrence of the quote times the anchor's prefix and
+// suffix plus its passes (affordable). The budget is one per write: the process is one verb, and the
+// measure's refresh (checkReplyFits) and the stage's (stageSidecar) draw on the same figure, so the
+// second pass adds no positions the first did not (the memos make what the first scanned free) and
+// the reply is measured with exactly the positions the sidecar gets. Past the budget a comment keeps
+// the position it has, and stderr says how many and why, once per write. A comment whose whole anchor
+// still sits at its stored position is never scanned (sitsAt, a compare of the anchor's own length),
+// so a sidecar of any size costs nothing on a write that moved none of its passages, and the budget
+// bounds the comments whose passages moved, which the next write takes up where this one stopped.
+// About half a second of scanning on the machine the figure was taken on, at the engine's rate.
+export const REFRESH_SCAN_BUDGET = 48_000_000;
+export const REFRESH_PASS_DIVISOR = 32;
+// The most copies of a whole anchor (and the most occurrences of a quote) the refresh enumerates for
+// one comment; past it the tie is left as it is (a one-character quote with no context can sit at
+// every other offset of a large file).
+const REFRESH_COPIES_MAX = 65_536;
+// What a write knows about how the text moved, for the refresh of a tied anchor's position (shiftBounds,
+// movedCopy), set on the store object by the verbs whose write drops change records (accept) or changes
+// the text (reject, save), under a symbol key so saveStore's JSON never carries it. `settled`: ops this
+// write drops from the sidecar while their text stands (accepted), as toHunks rows; `applied`: this
+// write's own edits to the text, as {end, delta} in the coordinates of the text being saved.
+const WRITE_SHIFTS = Symbol('romp.writeShifts');
+// Whether the text a store was loaded against is the text its last writer saved it for (the sidecar's
+// fingerprint, store-io's fingerprintOf, matches), stamped on the store object at load (loadOrRefuse).
+// False means the file changed under the sidecar by an edit nobody recorded — a direct write, an
+// editor without the sidecar — and the recorded changes cannot vouch for where a tied passage went.
+const TEXT_AS_WRITTEN = Symbol('romp.textAsWritten');
 // The files the viewer shows as an image or a PDF: the kernel's _PREVIEW_MIME extensions (the media
 // half of GET /file), mirrored here because a region comment can exist only on a file the viewer
 // renders as media. `status` on such a file answers the hash of its bytes (fileHash); on any other
@@ -147,16 +311,16 @@ export const EMBEDDED_HASH_CAP = 200_000_000;
 // and the vendored CLIs read and write.
 const CONFIG_VERSION = 2;
 
-// The verbs through Slice 3 (retarget is Slice 3's re-place gesture); Slice 5 adds save. The verbs
-// that write the FILE (not only the sidecar) — reject, reject-all, and later save — also fence on
-// fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large) before any
-// write; no other verb does. The verbs that stamp a figure's hash (comment with a target, retarget)
-// fence on the figure's BYTES instead, through fence.figureHash when the request carries it
-// (figureFence, then stampTarget with 'figure-changed'): a markdown file's mtime cannot fence a
-// figure embedded in it, and a hash is checked against the very bytes stamped.
+// The verbs through Slice 5 (retarget is Slice 3's re-place gesture, save is Slice 5's editor
+// save). The verbs that write the FILE (not only the sidecar) — reject, reject-all, save — also
+// fence on fileMtimeNs (requireFence with 'file-moved') and check the text (not-text, too-large)
+// before any write; no other verb does. The verbs that stamp a figure's hash (comment with a
+// target, retarget) fence on the figure's BYTES instead, through fence.figureHash when the request
+// carries it (figureFence, then stampTarget with 'figure-changed'): a markdown file's mtime cannot
+// fence a figure embedded in it, and a hash is checked against the very bytes stamped.
 const VERBS = new Set([
   'status', 'set-tracked', 'comment', 'reply', 'resolve', 'log-edit', 'log-send',
-  'accept', 'accept-all', 'reject', 'reject-all', 'retarget',
+  'accept', 'accept-all', 'reject', 'reject-all', 'retarget', 'save',
 ]);
 
 // ── outcome classes ─────────────────────────────────────────────────
@@ -198,6 +362,11 @@ function tildeText(s) {
   const home = homeDir();
   if (!home) return s;
   return String(s).split(home + path.sep).join('~' + path.sep);
+}
+
+// An error's text for the person: its message, tilde-collapsed.
+function errText(e) {
+  return tildeText(e && e.message ? e.message : String(e));
 }
 
 // Nanosecond mtime as a decimal string, the kernel's X-Romp-Mtime-Ns; null when the path is
@@ -351,6 +520,13 @@ export function readLog(logPath) {
     } catch { bad++; }
   }
   return { entries, bad };
+}
+
+// The refusal for a comments log that exists but cannot be read, before any write: the log is the
+// only state for what is unsent and for what was decided, so a verb that cannot read it neither
+// answers from a guess nor writes past it.
+function logUnreadable(ctx, paths, e) {
+  return new Refusal('unreadable', `cannot read the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${errText(e)}; nothing was changed`);
 }
 
 // One line per entry, appended; the directory must already exist (the caller makes sure). Opened
@@ -587,9 +763,22 @@ function openRegular(ctx) {
 // stamp over text the caller never saw. `isText` says whether the bytes ARE UTF-8 text (no NUL
 // byte, no invalid sequence — track-edit's decodeTextOrNull, the same judgement the CLI makes):
 // when they are not, `text` is the lossy decode the fingerprint needs, and the verbs that write
-// the file refuse (`not-text`) rather than write that decode back over the bytes.
-function readFile(ctx) {
+// the file refuse (`not-text`) rather than write that decode back over the bytes. `bytes` is the
+// size on disk, the "before" half of the edit entry a save logs. `cannot` is set by the verbs
+// that WRITE the file (reject, reject-all, save; their clause, "cannot save" / "cannot write"):
+// the same fstat that takes the mtime then refuses `too-large` past the text cap BEFORE the bytes
+// are read — the kernel's _save_file discipline (refusing on the stat keeps the file out of
+// memory). Read first and checked after, a save aimed at a 96 MB file under a .trackchanges/ tree
+// loaded it whole into this process to refuse it, a file past V8's string limit crashed the host
+// (ERR_STRING_TOO_LONG, the kernel's `host-error`) and one past Node's 2 GiB read limit answered
+// `unreadable` — three answers for one fact the stat already held (the review, 2026-09-06). The
+// viewer never loads a file past the cap (a 413), so nothing legitimate reaches the read.
+function readFile(ctx, cannot) {
   const { fd, st } = openRegular(ctx);
+  if (cannot && st.size > BigInt(TEXT_MAX_BYTES)) {
+    try { fs.closeSync(fd); } catch { /* ignore */ }
+    throw tooLargeOnDisk(ctx, Number(st.size), cannot);
+  }
   let buf;
   try {
     buf = fs.readFileSync(fd);
@@ -599,7 +788,7 @@ function readFile(ctx) {
     try { fs.closeSync(fd); } catch { /* ignore */ }
   }
   const strict = decodeTextOrNull(buf);
-  return { text: strict != null ? strict : buf.toString('utf8'), isText: strict != null, fileMtimeNs: st.mtimeNs.toString() };
+  return { text: strict != null ? strict : buf.toString('utf8'), isText: strict != null, fileMtimeNs: st.mtimeNs.toString(), bytes: buf.length };
 }
 
 // The file opened and stat'ed, not read: for the verbs that need no text when no sidecar exists
@@ -636,7 +825,8 @@ export function mediaKind(p) {
 export function isMediaPath(p) { return mediaKind(p) !== null; }
 
 // A byte count as the kernel's _human_bytes prints it (the 413's own phrasing), so a size this
-// script names beside a cap reads the same as the viewer's refusal for the same file.
+// script names beside a cap — a figure's, a file's on disk, a reply's — reads the same as the
+// viewer's refusal for the same file. The one formatter in this script.
 export function humanBytes(n) {
   for (const [unit, step] of [['GB', 1 << 30], ['MB', 1 << 20], ['KB', 1 << 10]]) {
     if (n >= step) return `${(n / step).toFixed(1)} ${unit}`;
@@ -755,8 +945,6 @@ export function resolveSrc(ctx, rootDir, src) {
   }
   return real;
 }
-
-const errText = (e) => tildeText(e && e.message ? e.message : String(e));
 
 // The figure's fence: `fence.figureHash`, the sha256 the caller last saw for the figure the region is
 // on — the reply's `fileHash` on a media file, `embeddedHashes[src]` on a text file — or null when
@@ -1036,7 +1224,7 @@ export function imageEmbeds(text) {
 // (a reference-style embed's destination sits in a definition elsewhere in the file) and the
 // passage's embeds are the ones overlapping the located range; the embed's exact range, which the
 // panel sends, and a whole line around it both qualify. A refusal, not a caller bug: a reference
-// definition can change on disk between the drag and Enter.
+// definition can change on disk between the drag and the save.
 function checkEmbedNamesSrc(ctx, text, from, to, src) {
   const dests = imageEmbeds(text).filter((e) => e.start < to && e.end > from).map((e) => e.dest);
   if (dests.includes(src)) return;
@@ -1062,7 +1250,7 @@ function passageFigure(ctx, text, c, embeds) {
   } catch (e) {
     return { src: null, code: 'anchor-not-found', reason: `the anchor of comment ${id} in ${ctx.shown} cannot be read (${e.message}), so which figure it is on cannot be told` };
   }
-  const loc = locateExact(text, anchor, undefined);
+  const loc = locateExact(text, anchor, hintOf(c));
   if (loc.error) return { src: null, code: loc.error, reason: `the passage of comment ${id} could not be placed in ${ctx.shown} (${loc.error}), so which figure it is on cannot be told` };
   const dests = [...new Set(embeds.filter((e) => e.start < loc.to && e.end > loc.from).map((e) => e.dest))];
   if (dests.length === 1) return { src: dests[0] };
@@ -1113,13 +1301,57 @@ export function checkTooLarge(shown, text) {
   }
 }
 
+// The kernel's _is_text_path: the extension allowlist plus the extensionless names that are text
+// by convention, on the basename lower-cased. The extension is Python's os.path.splitext's: the
+// text after the last dot, unless every character before that dot is a dot (`.gitignore` has
+// none). Name-based only; the bytes are checkIsText's.
+export function isTextPath(p) {
+  const base = path.basename(String(p == null ? '' : p)).toLowerCase();
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 && /[^.]/.test(base.slice(0, dot)) ? base.slice(dot + 1) : '';
+  return (ext !== '' && TEXT_EXT.has(ext)) || TEXT_NAMES.has(base);
+}
+
+// The kernel's _under_trackchanges: is the path inside a .trackchanges/ directory (a directory
+// segment, not the basename)? The sidecar, the config and the log are files the viewer can open
+// and edit; an edit to them is never logged, since the log would record itself.
+export function underTrackchanges(abs) {
+  return path.normalize(abs).split(path.sep).slice(0, -1).includes(TRACKCHANGES_DIR);
+}
+
+// Two refusals the kernel's _save_file makes that this script makes too, before any write. The name
+// rule is `save`'s alone: save writes the client's content, and a name outside the viewer's text
+// scope is one saveFile would not write that content under, so neither does this door. reject and
+// reject-all do NOT check the name: they write back only the text the sidecar recorded for the ids
+// the client chose, on every tracked file that is UTF-8 text — the scope the CLIs record changes in
+// and the scope Slice 2 shipped (a session's change in a .tex or .hs file is a card the panel
+// shows, and its Reject must land). The size rule is every file-writing verb's: a file past the text
+// cap on disk is one the viewer never loaded (a 413), so no text a client sends about it is text the
+// person saw, and reading it whole to refuse it is what the stat is for. The size is refused on the
+// stat, before the bytes are read (readFile's `cannot`); checkDiskSize is the backstop over the
+// bytes actually read, for a file that grew between the fstat and the read. `cannot` is the verb's
+// clause: "cannot save", "cannot write".
+function checkTextPath(ctx, cannot) {
+  if (!isTextPath(ctx.abs)) {
+    throw new Refusal('not-text', `${cannot} ${ctx.shown}: not a text file the viewer edits; nothing was changed`);
+  }
+}
+function tooLargeOnDisk(ctx, bytes, cannot) {
+  return new Refusal('too-large', `${cannot} ${ctx.shown}: the file on disk is ${humanBytes(bytes)}, past the ${humanBytes(TEXT_MAX_BYTES)} text cap the viewer loads; nothing was changed`);
+}
+function checkDiskSize(ctx, file, cannot) {
+  if (file.bytes > TEXT_MAX_BYTES) throw tooLargeOnDisk(ctx, file.bytes, cannot);
+}
+
 // `not-text`: the verbs that write the file refuse a file whose bytes are not UTF-8 text, before
 // any write. Writing back the lossy decode would replace every invalid sequence with U+FFFD and
 // destroy the file; the sidecar-only verbs never write the file, so they take such a file as the
-// CLIs do.
-function checkIsText(shown, file) {
+// CLIs do. `consequence` is the clause after "so": what the verb cannot do and why (reject's by
+// default; save names its own).
+function checkIsText(shown, file, consequence) {
   if (!file.isText) {
-    throw new Refusal('not-text', `${shown} is not UTF-8 text, so a change in it cannot be rejected from the dashboard: writing the file back would rewrite it from a lossy decode and destroy it; nothing was changed`);
+    const what = consequence || 'a change in it cannot be rejected from the dashboard: writing the file back would rewrite it from a lossy decode and destroy it';
+    throw new Refusal('not-text', `${shown} is not UTF-8 text, so ${what}; nothing was changed`);
   }
 }
 
@@ -1152,7 +1384,8 @@ export function applyEdits(text, edits) {
 // .json (so the other hosts' sidecar scans skip it), the bytes, fsync, the mode preserved — and
 // nothing under the file's own name changes until `commitFileWrite` renames the temp into place
 // and returns the new mtime string; `discardFileWrite` removes a temp that will not land.
-// writeFileAtomic is the two in one call; Slice 5's save will write through it.
+// writeFileAtomic is the two in one call, kept for a caller with nothing to interleave; doReject and
+// doSave take the halves.
 function prepareFileWrite(absPath, text) {
   const real = fs.realpathSync(absPath);
   const st = fs.statSync(real);
@@ -1203,7 +1436,11 @@ function loadOrRefuse(ctx, paths, text) {
   const { store, status } = loadStoreStatus(paths.storePath, text);
   const sp = tilde(paths.storePath);
   switch (status) {
-    case 'ok': return store;
+    case 'ok': {
+      const fp = typeof text === 'string' ? fingerprintOf(text) : null;
+      store[TEXT_AS_WRITTEN] = !!(fp && store.fingerprint && store.fingerprint.hash === fp.hash && store.fingerprint.size === fp.size);
+      return store;
+    }
     case 'absent': return null;
     case 'corrupt':
       throw new Refusal('corrupt', `the comments for ${ctx.shown} could not be read: ${sp} is not valid JSON in the expected shape; nothing was changed`);
@@ -1284,22 +1521,429 @@ function requireCommentId(args) {
   return id;
 }
 
-// Locate the browser's anchor in the file as it is now. The engine picks the best-scoring hit
-// and breaks ties by the hint; a stored comment carries no hint, so a passage that occurs twice
-// with the same 24 characters on both sides cannot be re-placed by any later reader and is
-// refused `anchor-ambiguous` rather than saved on a guess. Locating with the hint pinned to the
-// start and to the end of the text asks the engine for the earliest and the latest tied hit;
-// when they differ, a tie exists. The located text must equal the quote: the engine's fallback
-// to the surviving context is a relocation, not a match, and refuses `anchor-not-found`.
-export function locateExact(text, anchor, hint) {
+// The comment verb's hintOffset in this text's coordinates. The browser measures the offset against
+// the text the fetch handed the viewer, which strips a leading UTF-8 BOM (the fetch spec's decode);
+// this script reads the file through decodeTextOrNull (TextDecoder ignoreBOM: true), which KEEPS the
+// one U+FEFF at offset 0, so on a BOM-prefixed file every browser offset is this text's minus one.
+// Mapping it back (add the BOM) is what lets locateExact's `exact` check see the browser's offset land
+// on the tied copy it named; without it, on a BOM file a tie was refused `anchor-moved` for the correct
+// selection, and reloading never cleared it, since the browser's offset was always one short (the review,
+// 2026-09-08). A non-numeric hint (a tie with no offset) passes through untouched, and a non-BOM file is
+// unchanged; the stored `anchorAt` is already in this text's coordinates and never goes through here.
+function browserHint(text, hintOffset) {
+  if (typeof hintOffset !== 'number' || !Number.isFinite(hintOffset)) return hintOffset;
+  return text.charCodeAt(0) === 0xFEFF ? hintOffset + 1 : hintOffset;
+}
+
+// Locate an anchor in the file as it is now. The engine picks the best-scoring hit and breaks
+// ties by the hint, nearest wins. Locating with the hint pinned to the start and to the end of the
+// text asks the engine for the earliest and the latest tied hit; when they agree the anchor has one
+// best hit and that is the passage, whatever the hint. When they differ a tie exists, and the hint
+// decides: the browser's is the selection's start offset, a stored comment's is its `anchorAt`; with
+// no hint at all nothing can pick a copy, and the caller refuses `anchor-ambiguous` rather than
+// saving on a guess. With `opts.exact` (the comment verb, whose hint is an offset into the text the
+// browser DISPLAYED) the hint settles a tie only when it points at a tied copy itself, and answers
+// `anchor-moved` otherwise: a tie broken by nearness to an offset into other text picks a copy by
+// coincidence — an insertion above longer than half the gap between two copies put the note on the
+// other copy, and the widened anchor then fixed it there for every reader (the review, 2026-09-07). A
+// stored position keeps nearest-wins: it is an offset into this very file, which the refresh
+// (refreshAnchorAts) moves only where the recorded changes vouch for the copy. Before the anchors
+// follow-on (2026-09-07) every tie was refused, since a stored comment carried no position and a later
+// reader could not tell the copies apart; the widened anchor (uniqueAnchor) and the stored position are
+// what make a tie placeable now. The located text must equal the quote: the engine's fallback to the
+// surviving context is a relocation, not a match, and refuses `anchor-not-found`.
+export function locateExact(text, anchor, hint, opts) {
   const quote = anchor.quote;
-  const first = engine.locateAnchor(text, anchor, 0);
+  const { first, last } = boundaryHits(text, anchor);
   if (!first || text.slice(first.from, first.to) !== quote) return { error: 'anchor-not-found' };
-  const last = engine.locateAnchor(text, anchor, text.length);
-  if (!last || last.from !== first.from) return { error: 'anchor-ambiguous' };
-  const loc = engine.locateAnchor(text, anchor, typeof hint === 'number' ? hint : undefined);
-  if (!loc || loc.from !== first.from) return { error: 'anchor-ambiguous' };
+  if (last && last.from === first.from) return { from: first.from, to: first.to };
+  if (typeof hint !== 'number' || !Number.isFinite(hint)) return { error: 'anchor-ambiguous' };
+  const loc = engine.locateAnchor(text, anchor, hint);
+  if (opts && opts.exact && loc.from !== hint) return { error: 'anchor-moved' };
   return { from: loc.from, to: loc.to };
+}
+
+// The engine's earliest and latest best hits for an anchor (hint 0 and, when the earliest is the quote,
+// hint text.length), memoized per anchor and text for this one-verb process: the reply's measure and
+// the sidecar's stage both refresh the positions (refreshAnchorAts), and the second pass must not pay
+// the engine's scan twice.
+const boundaryMemo = new Map();
+function anchorKey(anchor) {
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
+  return JSON.stringify([prefix, anchor.quote, suffix]);
+}
+function boundaryHits(text, anchor) {
+  const key = anchorKey(anchor);
+  const m = boundaryMemo.get(key);
+  if (m && m.text === text) return m;
+  const first = engine.locateAnchor(text, anchor, 0);
+  const last = first && text.slice(first.from, first.to) === anchor.quote ? engine.locateAnchor(text, anchor, text.length) : null;
+  const out = { text, first, last };
+  boundaryMemo.set(key, out);
+  return out;
+}
+
+// The anchor stored for the passage at from..to: makeAnchor at that position with the smallest
+// context, from ANCHOR_CTX in steps of ANCHOR_CTX_STEP, at which it locates uniquely; a passage unique
+// at 24 keeps the 24 characters track-comment would write. The widening stops at ANCHOR_CTX_CAP, or
+// sooner when both sides already reach the file's bounds (wider is the same anchor); an anchor still
+// tied there is returned at the cap with `unique: false`, for the caller to keep with its stored
+// position.
+//
+// Uniqueness is tested with fullMatches, not the engine: makeAnchor's own prefix and suffix sit whole
+// around the passage at `from`, so the whole anchor always matches there, and where the whole anchor
+// matches the engine's best-scoring hits ARE its whole matches (fullMatches' own note), so one whole
+// match is the one best hit and two or more are the tie. fullMatches is one native indexOf for the
+// concatenated prefix+quote+suffix (asked for at most two hits), where locatesUniquelyAt ran two whole
+// engine scans per step, each slicing the anchor's context at EVERY occurrence of the quote. On a file
+// where a short quote recurs 10^5+ times (a 2 MB log of identical lines) that unbounded widening ran
+// tens of seconds and the kernel killed the host past its 10 s deadline, saving nothing (the review,
+// 2026-09-08); the whole-anchor test is a single linear scan that stops at the second hit.
+export function uniqueAnchor(text, from, to) {
+  let anchor = null;
+  for (let ctx = ANCHOR_CTX; ctx <= ANCHOR_CTX_CAP; ctx += ANCHOR_CTX_STEP) {
+    anchor = engine.makeAnchor(text, from, to, ctx);
+    if (fullMatches(text, anchor, 2).hits.length === 1) return { anchor, unique: true };
+    if (from - ctx <= 0 && to + ctx >= text.length) break;
+  }
+  return { anchor, unique: false };
+}
+
+// A stored comment's hint for locateExact: its `anchorAt`, when it has one.
+function hintOf(c) {
+  return c && typeof c.anchorAt === 'number' && Number.isFinite(c.anchorAt) ? c.anchorAt : undefined;
+}
+
+// What one native pass of indexOf over `text` costs the refresh's budget (REFRESH_SCAN_BUDGET's note).
+function passCost(text) {
+  return Math.ceil(text.length / REFRESH_PASS_DIVISOR);
+}
+
+// Whether the WHOLE anchor sits at `at`: prefix immediately before, quote at, suffix immediately after.
+// A compare of the anchor's own length, no scan. Where it does, the refresh has nothing to do: at one
+// whole match the position already names it, and among several it names a copy, which stands.
+function sitsAt(text, anchor, at) {
+  if (typeof at !== 'number' || !Number.isInteger(at) || at < 0 || at > text.length) return false;
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
+  return at >= prefix.length && text.startsWith(anchor.quote, at) && text.startsWith(suffix, at + anchor.quote.length) && text.startsWith(prefix, at - prefix.length);
+}
+
+// Every offset at which the WHOLE anchor sits in `text` — prefix immediately before, quote at, suffix
+// immediately after — in order, at most `max` of them (past that the list is cut and `more` is set).
+// Where there is at least one, these are exactly the engine's best-scoring hits: locateAnchor scores
+// an occurrence of the quote by whether the prefix ends right before it and the suffix starts right
+// after it, and only a whole match earns both, so one whole match is the one best hit and several are
+// the tie. Not a second scorer, then: one native search for one string, which tells the refresh
+// cheaply which comments need the engine's scan at all (none of these) and, in a tie, which copies a
+// stored position can be moved to (movedCopy). An anchor that sits in whole nowhere — its context
+// edited — is the engine's to place. Memoized per anchor, text and `max` like boundaryHits, and for the
+// same reason; comments on the copies of one repeated passage share one anchor, and so one scan.
+// With a `budget` (the refresh's) the scan is charged as it runs — one pass over the text, then the
+// needle's length per hit, what indexOf compares to confirm each — and stops with `more` and `cut` set
+// when the budget is spent, so a whole anchor that sits at nearly every offset costs what it costs and
+// no more (REFRESH_SCAN_BUDGET's note). Without one (uniqueAnchor, the tests) nothing is charged.
+const matchMemo = new Map();
+export function fullMatches(text, anchor, max, budget) {
+  const key = `${max} ${anchorKey(anchor)}`;
+  const m = matchMemo.get(key);
+  if (m && m.text === text) return m.result;
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix : '';
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix : '';
+  const needle = prefix + anchor.quote + suffix;
+  const hits = [];
+  let more = false;
+  let cut = false;
+  let spent = budget ? passCost(text) : 0;
+  for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) {
+    if (hits.length >= max) { more = true; break; }
+    if (budget) {
+      spent += needle.length;
+      if (spent > budget.left) { more = true; cut = true; break; }
+    }
+    hits.push(i + prefix.length);
+  }
+  if (budget) budget.left = Math.max(0, budget.left - spent);
+  const result = cut ? { hits, more, cut } : { hits, more };
+  matchMemo.set(key, { text, result });
+  return result;
+}
+
+// Every occurrence of a quote in `text` — `positions`, in order, at most REFRESH_COPIES_MAX of them —
+// and how many there are in all (`count`, for the engine's cost in affordable). Memoized per quote and
+// text for this process: comments on the copies of one repeated passage share a quote, so one scan
+// serves them all, and a sidecar of thousands of such comments does not re-scan the whole file once per
+// comment (the review, 2026-09-08). Charged to the budget as fullMatches is (one pass, then the quote's
+// length per occurrence), and cut with `more` when the budget is spent, so the count is then a floor.
+const quoteMemo = new Map();
+function quoteHits(text, quote, budget) {
+  const m = quoteMemo.get(quote);
+  if (m && m.text === text) return m.result;
+  const positions = [];
+  let count = 0;
+  let more = false;
+  let spent = budget ? passCost(text) : 0;
+  for (let i = text.indexOf(quote); i !== -1; i = text.indexOf(quote, i + 1)) {
+    if (budget) {
+      spent += quote.length;
+      if (spent > budget.left) { more = true; break; }
+    }
+    count++;
+    if (positions.length < REFRESH_COPIES_MAX) positions.push(i); else more = true;
+  }
+  if (budget) budget.left = Math.max(0, budget.left - spent);
+  const result = { positions, count, more };
+  quoteMemo.set(quote, { text, result });
+  return result;
+}
+
+// How far the text between its start and a position is known to have moved since a stored position
+// was last exact, for movedCopy: every recorded change that ends at or before the position, as the
+// bounds of what it can have shifted the text after it. A pending op's record is a whole it may have
+// grown into since the position was set — a same-author edit beside it coalesces into it (engine.js,
+// coalesceOps), so a later insertion at the same place leaves one longer op, and a deletion beside an
+// insertion leaves a substitution — so the record bounds the shift without fixing it: anywhere from
+// minus its old text's length (the whole deletion is new) to plus its new text's (the whole insertion
+// is). The ops this write settles (accept drops the records of insertions whose text stands, so their
+// shift is read here before it is forgotten; save does the same for the changes the editor accepted,
+// settledBySave) are bounded the same way; the edits this write itself applies (reject's reversals,
+// save's text) happened entirely since, and shift by exactly their delta. Every bound is in the
+// coordinates of the text being saved; nothing depends on the ops' order or time.
+function shiftBounds(store) {
+  const extra = (store && store[WRITE_SHIFTS]) || {};
+  const out = [];
+  for (const op of (store && store.suggestions) || []) {
+    if (!op || typeof op.from !== 'number') continue;
+    out.push({ end: engine.span(op).b, lo: -(op.oldText || '').length, hi: (op.newText || '').length });
+  }
+  for (const h of extra.settled || []) out.push({ end: h.curTo, lo: -h.oldText.length, hi: h.newText.length });
+  for (const e of extra.applied || []) out.push({ end: e.end, lo: e.delta, hi: e.delta });
+  return out;
+}
+
+// The places among `cands` that the recorded changes (shiftBounds) can have carried the stored
+// position `at` to: each one's distance from `at` lies within the summed bounds of the changes ending
+// at or before it.
+function reachable(cands, at, bounds) {
+  const out = [];
+  for (const p of cands) {
+    let lo = 0;
+    let hi = 0;
+    for (const b of bounds) if (b.end <= p) { lo += b.lo; hi += b.hi; }
+    const d = p - at;
+    if (d < lo || d > hi) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+// The one place the recorded changes (shiftBounds) can have carried the stored position `at` to, among
+// the copies `hits` (fullMatches: the whole anchor's matches) — or, when they can have carried it to
+// none of those, among the quote's other occurrences `occurrences` (quoteHits), one of which is the
+// chosen passage when a recorded change edited its context and not its text: the copies still whole
+// are then the OTHER copies, and the quote sits where the change left it, and only there within the
+// bounds. Exactly one such place is the passage, and the position moves there. None, or several (the
+// changes above span at least the gap between two copies), leaves the position as it is: nearest-to-a-
+// stale-offset picks by coincidence (an insertion above longer than half the gap between two copies
+// puts it on the other copy), and a position the changes cannot vouch for is not written. Several
+// whole copies within the bounds are not told apart by the quote's other occurrences either, so those
+// are asked only when no whole copy is reachable. The caller asks only when every change to the text
+// is on record (TEXT_AS_WRITTEN): a bound is a bound on what the recorded changes did, and an
+// unrecorded edit beside a wide one could carry the position past its copy onto another.
+function movedCopy(hits, at, bounds, occurrences) {
+  let found = null;
+  for (const p of reachable(hits, at, bounds)) {
+    if (found !== null) return null;
+    found = p;
+  }
+  if (found !== null || !occurrences) return found;
+  const whole = new Set(hits);
+  for (const p of reachable(occurrences.filter((q) => !whole.has(q)), at, bounds)) {
+    if (found !== null) return null;
+    found = p;
+  }
+  return found;
+}
+
+// The refresh's budget for this write (REFRESH_SCAN_BUDGET's note): one process is one verb, and the two
+// refresh passes a write makes (checkReplyFits, then stageSidecar) draw on this one figure. `kept`
+// remembers what stderr was last told, so the note goes out once per write and only when it changes.
+const refreshBudget = { left: REFRESH_SCAN_BUDGET, kept: { skipped: 0, unscanned: 0 } };
+
+// Whether one classification scan (fullMatches, a pass of indexOf over the whole text) fits what is
+// left of the refresh's budget. A result already memoized for this text and anchor is free (a shared
+// anchor pays once); otherwise the pass must fit, and fullMatches charges it and its hits as it runs.
+// This bounds the number of DISTINCT anchors whose passages moved that the refresh scans in one write:
+// for every anchored comment refreshAnchorAts asked fullMatches over the whole text, so a sidecar of
+// thousands of passage comments with distinct anchors held the write past the kernel's 10 s deadline,
+// after which no verb could write the file's comments (the review, 2026-09-08). Charged at the pass's
+// own cost, not the engine's: charged as an engine pass it admitted 25 anchors on a 2 MB file, and the
+// rest of a sidecar's positions stayed stale on every write (the review, 2026-09-08).
+function affordableScan(budget, text, anchor) {
+  const key = `${REFRESH_COPIES_MAX} ${anchorKey(anchor)}`;
+  const m = matchMemo.get(key);
+  if (m && m.text === text) return true;
+  return budget.left >= passCost(text);
+}
+
+// Whether the engine's scan for `anchor` fits what is left of the refresh's budget: the two whole-text
+// locates locateExact makes, each a pass for the quote (and, when the quote is gone, one for each side
+// of the context) and the anchor's context compared at every occurrence of the quote. A scan already
+// memoized for this text (boundaryHits) is free, and the occurrence count comes from quoteHits (memoized
+// per quote, charged once). Past the budget the comment is counted and skipped; a count the budget cut
+// short is a floor, and the scan it stands for is not affordable either.
+function affordable(budget, text, anchor) {
+  const m = boundaryMemo.get(anchorKey(anchor));
+  if (m && m.text === text) return true;
+  if (budget.left <= 0) { budget.skipped++; return false; }
+  const q = quoteHits(text, anchor.quote, budget);
+  const prefix = typeof anchor.prefix === 'string' ? anchor.prefix.length : 0;
+  const suffix = typeof anchor.suffix === 'string' ? anchor.suffix.length : 0;
+  const cost = 2 * (3 * passCost(text) + q.count * (prefix + suffix + 1));
+  if (q.more || cost > budget.left) { budget.skipped++; return false; }
+  budget.left -= cost;
+  return true;
+}
+
+// `anchorAt`, the romp-only stored position beside a passage comment's anchor (plans/file-review.md,
+// The contract): the from-offset the anchor located at, set when the comment is made and refreshed on
+// EVERY sidecar write this script performs — first thing in stageSidecar, the one function every sidecar
+// write goes through, and once more before the reply is measured (checkReplyFits), so the bytes the
+// refresh adds are counted — against the text the sidecar is saved for: an edit above the passage moves
+// it, and the next write recomputes it. A comment whose whole anchor still sits at its position needs
+// nothing (sitsAt) and costs no scan. The rest are told apart by where the whole anchor sits in the text
+// (fullMatches). At one place, and the comment has no position, or its quote occurs nowhere else: that
+// place is the position, since nothing else can be the passage. At one place while the quote recurs:
+// the one whole copy may be the passage moved, or the OTHER copy of a passage whose own context was
+// edited (two copies tied past the cap; an edit inside the chosen copy's surroundings leaves the other
+// whole), and the two look the same to every scorer, so the position moves only where the recorded
+// changes vouch (movedCopy): to the whole copy when they can have carried it there, else to the one
+// occurrence of the quote they can have, and otherwise stands — never to the whole copy for being the
+// only one (the review, 2026-09-08: the highlight jumped to the copy the person never chose, with no
+// cue, and the next write made it permanent). At several: the copies tie, and the position moves to the
+// one copy the recorded changes can have carried it to (movedCopy, the same rule), and only while the
+// text is as the sidecar's last writer left it (TEXT_AS_WRITTEN: a file that changed under the sidecar
+// moved by an edit nobody recorded, and the changes vouch for nothing); a tied anchor with no position,
+// or one the changes can have carried to no place or to several, keeps what it has. Nowhere: the engine
+// places it by its scoring (locateExact, a whole-text scan per occurrence of the quote), and a gone
+// passage keeps its last known position. Every scan is charged to the write's budget
+// (REFRESH_SCAN_BUDGET), past which a comment keeps its position and stderr says how many, once per
+// write. The anchor's own fields are never touched here, and a comment without an anchor (a whole-file,
+// change or standalone region comment) never gains the field. The other hosts and the CLIs write the
+// whole object back, so the field survives them.
+function refreshAnchorAts(store, text) {
+  if (typeof text !== 'string') return;
+  let bounds = null;
+  const budget = refreshBudget;
+  budget.skipped = 0;
+  budget.unscanned = 0;
+  const recorded = !!store && store[TEXT_AS_WRITTEN] === true;
+  for (const c of (store && store.comments) || []) {
+    if (!c || !c.anchor || typeof c.anchor !== 'object' || typeof c.anchor.quote !== 'string' || !c.anchor.quote) continue;
+    const at = hintOf(c);
+    if (at !== undefined && sitsAt(text, c.anchor, at)) continue;
+    if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }
+    const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);
+    if (cut) { budget.unscanned++; continue; }
+    if (more) continue;
+    if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; continue; }
+    if (hits.length >= 1) {
+      if (at === undefined) continue;
+      if (recorded) {
+        if (!bounds) bounds = shiftBounds(store);
+        const whole = movedCopy(hits, at, bounds);
+        if (whole !== null) { c.anchorAt = whole; continue; }
+      } else if (hits.length > 1) {
+        continue;   // a tie after an edit nobody recorded: the changes vouch for nothing, and the quote's other occurrences add nothing
+      }
+      const q = quoteHits(text, c.anchor.quote, budget);
+      if (q.more) { budget.unscanned++; continue; }
+      if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; continue; }
+      if (!recorded) continue;
+      const moved = movedCopy(hits, at, bounds, q.positions);
+      if (moved !== null) c.anchorAt = moved;
+      continue;
+    }
+    if (!affordable(budget, text, c.anchor)) continue;
+    const loc = locateExact(text, c.anchor, undefined);
+    if (!loc.error) c.anchorAt = loc.from;
+  }
+  if (budget.skipped !== budget.kept.skipped || budget.unscanned !== budget.kept.unscanned) {
+    budget.kept = { skipped: budget.skipped, unscanned: budget.unscanned };
+    if (budget.skipped) {
+      process.stderr.write(`file-comments-host: ${budget.skipped} comment(s) whose anchor sits in whole nowhere in the text kept their stored position: placing them would scan past the refresh's budget for one write\n`);
+    }
+    if (budget.unscanned) {
+      process.stderr.write(`file-comments-host: ${budget.unscanned} comment(s) kept their stored position: locating them would scan past the refresh's budget for one write\n`);
+    }
+  }
+}
+
+// The edits a reject applies (the engine's {from, to, insert}, in the coordinates of the text before
+// them), as the shifts they leave in the text after them: `end`, where each edit's inserted text ends in
+// the new text, and `delta`, how far what follows moved. Ascending, so each end carries the shift of the
+// edits before it.
+function appliedShifts(edits) {
+  const out = [];
+  let shift = 0;
+  for (const e of [...edits].sort((x, y) => x.from - y.from)) {
+    const delta = e.insert.length - (e.to - e.from);
+    out.push({ end: e.from + e.insert.length + shift, delta });
+    shift += delta;
+  }
+  return out;
+}
+
+// The one shift a save's new text leaves, from the two texts' common prefix and suffix: the span
+// between them is what changed, and everything after it moved by the difference in length. A copy
+// after the span is exactly this far from where it was; one inside it is reached by no shift. `start`
+// is where the span begins (the same offset in both texts), `end` where it ends in the new text: what
+// settledBySave needs to carry an offset of the old text into the new one.
+function editShift(oldText, newText) {
+  if (oldText === newText) return [];
+  const min = Math.min(oldText.length, newText.length);
+  let p = 0;
+  while (p < min && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
+  let sfx = 0;
+  while (sfx < min - p && oldText.charCodeAt(oldText.length - 1 - sfx) === newText.charCodeAt(newText.length - 1 - sfx)) sfx++;
+  return [{ start: p, end: newText.length - sfx, delta: newText.length - oldText.length }];
+}
+
+// An offset of the text a save replaces, carried into the text it saves, through the save's one edit
+// (editShift): before the edited span it is unmoved, after the span it moves by the delta, and inside
+// the span — the person typed over or around it — it becomes the span's end in the new text, the
+// nearest offset the new text still vouches for.
+function throughEdit(pos, applied) {
+  let out = pos;
+  for (const e of applied) {
+    if (out <= e.start) continue;
+    if (out >= e.end - e.delta) { out += e.delta; continue; }
+    out = e.end;
+  }
+  return out;
+}
+
+// The ops a save settles, as the rows shiftBounds reads for `settled`: for each change the editor
+// accepted, its end in the text being saved (`curTo`) and the texts the decision names. A change the
+// editor accepted has left the records the save carries (the editor drops a decided record from its
+// field), so its position is read from the sidecar's own records as loaded — the change it is, or for a
+// fragment (`<id>~n`, the engine's split scheme) the change it descends from, whose end bounds the
+// fragment's — and carried through the save's own edit (throughEdit) into the coordinates the bounds
+// are summed in. The bounds are the decision's own old and new text, the fragment's where the person
+// decided one half. A decision rooted in the log alone (an undo re-deciding a landed accept) has no
+// record to read a position from and contributes nothing. Without this the accepted insertion's shift
+// was forgotten on the save (only `applied` was stamped) and, once the fingerprint was restamped, on
+// every later write, so a tied position it had carried past its copy never followed (the review,
+// 2026-09-08); the same insertion accepted through the accept verb was followed (doAccept's `settled`).
+function settledBySave(loaded, accepted, applied) {
+  const rows = [];
+  for (const d of accepted) {
+    const root = sidecarRootOf({ suggestions: loaded }, String(d.id));
+    if (!root || typeof root.from !== 'number') continue;
+    rows.push({ curTo: throughEdit(engine.span(root).b, applied), oldText: d.oldText, newText: d.newText });
+  }
+  return rows;
 }
 
 function validateAnchor(anchor) {
@@ -1313,8 +1957,10 @@ function validateAnchor(anchor) {
 }
 
 // The comment object in addComment's exact shape (cli/track-comment.mjs): id `${now}-${idx}`,
-// author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false. A
-// whole-file comment has no anchor and the id `${now}-0`. `target` (a region on an image or a
+// author `you`, no authorId, ts, anchor (a passage only), body, replies [], resolved false — plus,
+// on a passage comment, the romp-only `anchorAt` after the anchor (the located from-offset; the
+// anchor itself is widened until unique, uniqueAnchor). A whole-file comment has no anchor and the
+// id `${now}-0`. `target` (a region on an image or a
 // PDF page) is not attached here: doComment validates it and stamps the hash (stampTarget) once
 // the anchor, if any, is placed. A CHANGE comment (`args.suggestionId`, the
 // Reply on a change's card) has no anchor and no target, carries `suggestionId`, and takes its id
@@ -1340,13 +1986,14 @@ export function buildComment(text, args, now, suggestions) {
     c = { id: `${now}-0`, author: AUTHOR, ts: now, body: note, replies: [], resolved: false };
   } else {
     const anchor = validateAnchor(args.anchor);
-    const loc = locateExact(text, anchor, args.hintOffset);
+    const loc = locateExact(text, anchor, browserHint(text, args.hintOffset), { exact: true });
     if (loc.error) return { error: loc.error };
     c = {
       id: `${now}-${loc.from}`,
       author: AUTHOR,
       ts: now,
-      anchor: engine.makeAnchor(text, loc.from, loc.to),
+      anchor: uniqueAnchor(text, loc.from, loc.to).anchor,
+      anchorAt: loc.from,
       body: note,
       replies: [],
       resolved: false,
@@ -1392,14 +2039,30 @@ export function decidedFor(store, entries) {
   return out;
 }
 
-function reply(ctx, state, extra) {
+// A comments log that exists but cannot be read is a disk state, not a program error: before a
+// write it refuses `unreadable` naming the log (nothing was changed — `status`, and every verb's
+// pre-write estimate); after one — `opts.landed`, the landedState of a verb whose primary write has
+// landed — it leaves `log` empty and is reported in `logWarning`, never failing the verb.
+// `opts.estimate` builds
+// the reply a verb WOULD send, for checkReplyFits to measure before the write: `opts.pending` are
+// the log entries the verb is about to append, and the fields whose size is fixed but whose cost is
+// not — the tracking verdict (a vault walk) and the hashes (the figures' bytes) — are stood in for.
+function reply(ctx, state, extra, opts) {
+  const o = opts || {};
   const { root, paths, store: loaded, text, fileMtimeNs } = state;
   let log = [];
   let logTruncated = false;
   let entries = [];
   if (paths) {
-    const read = readLog(paths.logPath);
-    entries = read.entries;
+    let read;
+    try {
+      read = readLog(paths.logPath);
+    } catch (e) {
+      if (!o.landed) throw logUnreadable(ctx, paths, e);
+      read = { entries: [], bad: 0 };
+      landedProblem(o.landed, `the comments log for ${ctx.shown} could not be read back: ${errText(e)}`);
+    }
+    entries = o.pending && o.pending.length ? [...read.entries, ...o.pending] : read.entries;
     if (read.bad) process.stderr.write(`file-comments-host: ${read.bad} unreadable line(s) in ${tilde(paths.logPath)} skipped\n`);
     logTruncated = entries.length > LOG_TAIL;
     log = logTruncated ? entries.slice(entries.length - LOG_TAIL) : entries;
@@ -1415,9 +2078,15 @@ function reply(ctx, state, extra) {
     verb: ctx.verb,
     root,
     storePath: paths ? paths.storePath : null,
-    trackedBy: root ? trackedByFor(root, ctx.abs) : null,
+    trackedBy: root && !o.estimate ? trackedByFor(root, ctx.abs) : null,
     agentTooling: agentTooling(),
     fileMtimeNs,
+    // whether this script's text keeps a leading U+FEFF: the fetch strips it from the text the viewer shows, so a
+    // stored anchorAt, an offset into THIS text, runs one ahead of the view's on such a file, and the panel maps it
+    // by this bit before it paints or judges a copy (viewAt; browserHint's note is the same fact the other way).
+    // The panel has no other authoritative source for it, since the viewer never sees the byte (the review,
+    // 2026-09-08). A media file (no text) carries false.
+    bom: typeof text === 'string' && text.charCodeAt(0) === 0xFEFF,
     storeMtimeNs: paths ? statNs(paths.storePath) : null,
     configMtimeNs: paths ? statNs(paths.configPath) : null,
     store,
@@ -1433,8 +2102,12 @@ function reply(ctx, state, extra) {
   // null src), so the panel can say which figure could not be checked and what stopped it. On a
   // text file, beside them, which comments name their figure by their passage (derivedSrcs) and
   // why the rest of that shape could not (derivedSrcReasons), per comment id. The same reasons go
-  // to stderr, which the kernel keeps when a call fails.
-  if (media) {
+  // to stderr, which the kernel puts in the error when a call fails and logs when it answers. The estimate stands the hashes in (no figure's
+  // bytes are read to measure a reply) and keeps the derived srcs, which come from the text already read.
+  if (o.estimate) {
+    if (media) { out.fileHash = null; out.fileHashReason = null; }
+    else { out.embeddedHashes = {}; out.embeddedHashReasons = {}; out.embeddedMtimes = {}; out.derivedSrcs = derived.srcs; out.derivedSrcReasons = derived.reasons; }
+  } else if (media) {
     const fh = fileHashFor(ctx);
     out.fileHash = fh.hash;
     out.fileHashReason = fh.reason || null;
@@ -1449,7 +2122,9 @@ function reply(ctx, state, extra) {
     for (const reason of [...Object.values(eh.reasons), ...Object.values(derived.reasons)]) process.stderr.write(`file-comments-host: ${reason}\n`);
   }
   if (ctx.args.baseline === true) out.baseline = engine.baselineOf(text, store ? store.suggestions : []);
-  return Object.assign(out, extra || {});
+  Object.assign(out, extra || {});
+  if (o.landed && o.landed.problems.length) out.logWarning = `${o.landed.did}, but ${o.landed.problems.join('; and ')}`;
+  return out;
 }
 
 // Re-read what was just written so the reply carries the sidecar as every later load sees it.
@@ -1457,6 +2132,76 @@ function reloadSaved(ctx, paths, text) {
   const store = loadOrRefuse(ctx, paths, text);
   if (!store) throw new Error(`the sidecar ${tilde(paths.storePath)} vanished after its write`);
   return store;
+}
+
+// ── after a write has landed ────────────────────────────────────────
+
+// The state of a verb whose primary write has landed: `did` names it for the person ("saved",
+// "the changes were rejected"), `problems` collects what went wrong after it. Nothing after the
+// landed write may fail the verb: the kernel reads a non-zero exit as a verb that did nothing — it
+// sends no trace to the session whose file just changed (never-lose-the-thread), and the client
+// keeps a buffer it believes unsaved behind a fence the write has already moved, so its next try
+// refuses store-moved or file-moved against its own write. So the log append, the sidecar's
+// read-back and the log's read-back are reported instead, in `logged` and `logWarning`
+// (plans/file-review.md, The comments log: a failed append is reported in the reply and never
+// fails the save — the kernel's rule for log-edit after saveFile, kept here for the verbs that
+// write in one process). Each problem also goes to stderr, for the kernel's tail.
+function landedState(did) { return { did, problems: [] }; }
+function landedProblem(landed, clause) {
+  landed.problems.push(clause);
+  process.stderr.write(`file-comments-host: ${landed.did}, but ${clause}\n`);
+}
+
+// Append a verb's log entries after its write landed: true when every entry landed; else false,
+// with the entries that did not named in the warning (an append that fails midway leaves the
+// earlier ones on disk, and the log is never rewritten).
+function appendLanded(ctx, paths, entries, landed) {
+  let n = 0;
+  try {
+    fs.mkdirSync(path.dirname(paths.logPath), { recursive: true });
+    for (const e of entries) { appendLog(paths.logPath, e); n++; }
+    return true;
+  } catch (e) {
+    const missing = entries.slice(n).map((x) => x.kind);
+    const which = n
+      ? `the ${missing.join(' and ')} ${missing.length > 1 ? 'entries were' : 'entry was'} not written to`
+      : 'not written to';
+    landedProblem(landed, `${which} the comments log for ${ctx.shown}: ${errText(e)}`);
+    return false;
+  }
+}
+
+// The sidecar after a landed write, re-read as every later load sees it (afterDecision: pruned
+// when emptied); when it cannot be — a writer that replaced it in the same instant, a disk that
+// stopped answering — the records this process wrote stand in and the reply says so.
+function settleLanded(ctx, paths, store, text, landed) {
+  try {
+    return afterDecision(ctx, paths, store, text);
+  } catch (e) {
+    landedProblem(landed, `the comments for ${ctx.shown} could not be read back after the write: ${errText(e).replace(/; nothing was changed$/, '')} — reload`);
+    return store;
+  }
+}
+
+// Measure the reply a verb would send, before it writes: the sidecar it is about to save (carried
+// as `store` and again as `hunks`), the log with the entries it is about to append, the baseline
+// when asked — and refuse `too-large` when the kernel would not carry it. Past REPLY_MAX_BYTES the
+// kernel kills this process and discards its stdout AFTER the write landed, then does the same to
+// every later `status` on the file, so a record or a note a client sends at that size would lock
+// the file's comments until the sidecar was fixed by hand. The records and notes the editor and
+// the panel produce describe text the viewer showed, a file under the 2 MB cap, so nothing they
+// send comes near it. The stored positions are refreshed before the measure: the refresh adds
+// `anchorAt` to every comment the CLIs wrote whose anchor locates, and a store within the slack of the
+// line, measured without those bytes, landed a reply the kernel then discarded (the review, 2026-09-07).
+// `what` names the addition for the person ("this comment", "the change records and the decisions
+// taken in the editor").
+function checkReplyFits(ctx, state, extra, pending, what) {
+  refreshAnchorAts(state.store, state.text);   // the positions the write will carry, so their bytes are measured (stageSidecar refreshes again, at no cost for what sits in place)
+  const est = reply(ctx, state, extra, { estimate: true, pending });
+  const bytes = Buffer.byteLength(JSON.stringify(est), 'utf8') + 1;
+  if (bytes > REPLY_MAX_BYTES - REPLY_SLACK) {
+    throw new Refusal('too-large', `cannot write the comments for ${ctx.shown}: with ${what} they come to ${humanBytes(bytes)} in one reply, past the ${humanBytes(REPLY_MAX_BYTES)} the dashboard can carry back; nothing was changed`);
+  }
 }
 
 // ── verbs ───────────────────────────────────────────────────────────
@@ -1475,7 +2220,7 @@ function doStatus(ctx) {
 // change comment binds to) and returns the
 // step that changes the store; it runs BEFORE the landmark, so a refused verb leaves the disk as
 // it found it. Ordered the other way, a passage comment whose passage was edited away between the
-// selection and Enter left an empty `.trackchanges/` beside a loose file — a root for every later
+// selection and the save left an empty `.trackchanges/` beside a loose file — a root for every later
 // verb and for the CLIs — under a refusal that named no such thing. `store` is null in `plan` when
 // no sidecar exists yet (a first comment); the seed is minted after the landmark, whose root
 // gives the seed its relative path. `root` is null in `plan` for the same loose file; a check that
@@ -1494,13 +2239,18 @@ function withSidecar(ctx, create, plan) {
     throw new Refusal('no-comment', `comment ${String(ctx.args.commentId)} is not among the comments for ${ctx.shown} — reload and retry`);
   }
   const apply = plan(store, file.text, root);
+  // The root the write will have: for a loose file, the landmark's — its own directory, created
+  // below, after the last check that can refuse (the reply's size).
+  const rootToBe = root || path.dirname(ctx.abs);
+  const pathsToBe = paths || pathsFor(rootToBe, ctx.abs);
+  if (!store) store = seedStore(pathsToBe.rel);
+  apply(store);
+  checkReplyFits(ctx, { root: rootToBe, paths: pathsToBe, store, ...file }, null, [], `this ${ctx.verb}`);
   if (!root) {
     root = createLandmark(ctx);
     paths = pathsFor(root, ctx.abs);
     checkTrackDir(ctx, paths);
   }
-  if (!store) store = seedStore(paths.rel);
-  apply(store);
   landSidecar(root, paths.storePath, store, file.text);
   return reply(ctx, { root, paths, store: reloadSaved(ctx, paths, file.text), ...file });
 }
@@ -1525,11 +2275,22 @@ function doComment(ctx) {
   return withSidecar(ctx, true, (store, text, root) => {
     const target = ctx.args.target == null ? null : validateTarget(ctx.args.target, ctx.args.anchor != null);
     const built = buildComment(text, ctx.args, Date.now(), store ? store.suggestions : []);
+    // The words a refusal uses. A region on an embedded figure was drawn on the figure, not selected as text: its
+    // anchor is the embed line, and the remedy is to draw again, so the refusal names the line and that gesture
+    // (the review, 2026-09-08: every refusal said to select the passage again). A passage keeps the words it had.
+    const region = target !== null;
+    const what = region ? 'the line embedding the figure drawn on' : 'the selected passage';
+    const unsent = region ? "the region's position" : "the selection's position";
+    const moved = region ? "the text moved after the region was drawn, so the region's position" : "the text moved after it was selected, so the selection's position";
+    const again = region ? 'reload and draw the region again' : 'reload and select it again';
     if (built.error === 'anchor-not-found') {
-      throw new Refusal('anchor-not-found', `the selected passage is no longer in ${ctx.shown} — reload and select it again`);
+      throw new Refusal('anchor-not-found', `${what} is no longer in ${ctx.shown} — ${again}`);
     }
     if (built.error === 'anchor-ambiguous') {
-      throw new Refusal('anchor-ambiguous', `the selected passage occurs more than once in ${ctx.shown} with the same surroundings, so a comment on it could not be placed again later — select more of the text around it`);
+      throw new Refusal('anchor-ambiguous', `${what} occurs more than once in ${ctx.shown} with the same surroundings, and ${unsent} was not sent to tell the copies apart — ${again}`);
+    }
+    if (built.error === 'anchor-moved') {
+      throw new Refusal('anchor-ambiguous', `${what} occurs more than once in ${ctx.shown} with the same surroundings, and ${moved} no longer says which copy was meant — ${again}`);
     }
     if (built.error === 'no-change') throw noChange(ctx, [ctx.args.suggestionId]);
     if (target) {
@@ -1583,7 +2344,7 @@ function doRetarget(ctx) {
       if (stored != null) {
         if (validated.src !== stored) throw new BadRequest(`retarget keeps the figure: comment ${String(id)} is on ${tilde(stored)}, and target.src names ${tilde(validated.src)}`);
       } else {
-        const loc = locateExact(text, validateAnchor(c.anchor), undefined);
+        const loc = locateExact(text, validateAnchor(c.anchor), hintOf(c));
         if (loc.error) throw new Refusal(loc.error, `the passage of comment ${String(id)} could not be placed in ${ctx.shown} (${loc.error}), so which figure it embeds cannot be told — reload and retry`);
         checkEmbedNamesSrc(ctx, text, loc.from, loc.to, validated.src);
       }
@@ -1631,12 +2392,15 @@ function requireIds(ctx) {
 // request's shape (a missing fence key is a caller bug whatever the disk says), the file, the
 // names under .trackchanges/ (a fence stat'ed through a link would compare the link's target), the
 // sidecar fence, for the file-writing verbs the file fence too, the config, then the load. `store`
-// is null when there is no sidecar, which for a decision means nothing is pending.
+// is null when there is no sidecar, which for a decision means nothing is pending. `writesFile`
+// is false for the sidecar-only verbs and the verb's clause ("cannot write", "cannot save") for
+// the ones that write the file: those fence on the file too, and their read refuses `too-large`
+// on the stat, before the bytes (readFile).
 function loadForDecision(ctx, writesFile) {
   for (const k of writesFile ? ['storeMtimeNs', 'fileMtimeNs'] : ['storeMtimeNs']) {
     if (typeof ctx.fence[k] !== 'string') throw new BadRequest(`fence.${k} is required for ${ctx.verb}`);
   }
-  const file = readFile(ctx);
+  const file = readFile(ctx, writesFile);
   const root = findVaultRoot(ctx.abs);
   const paths = root ? pathsFor(root, ctx.abs) : null;
   if (paths) checkTrackDir(ctx, paths);
@@ -1691,6 +2455,7 @@ function afterDecision(ctx, paths, store, text) {
 // replaces the link's target with the sidecar's bytes. The staged name carries a random token
 // nobody can plant a link under, and both names saveStore will use are confirmed empty first.
 function stageSidecar(root, storePath, store, text) {
+  refreshAnchorAts(store, text);
   const tmp = `${storePath}.romp-fc-${tempToken()}.tmp`;
   for (const p of [tmp, `${tmp}.tmp`]) {
     if (lstatOrNull(p)) throw new Error(`${p} already exists; the sidecar is never written over an existing entry`);
@@ -1724,8 +2489,8 @@ function landSidecar(root, storePath, store, text) {
 function cannotWriteSidecar(ctx, paths, e) {
   return new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; nothing was changed`);
 }
-function cannotRecord(ctx, paths, e, then) {
-  return new Refusal('unreadable', `cannot record the decision in the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${whyOf(e)}; ${then}`);
+function cannotRecord(ctx, paths, e, then, what) {
+  return new Refusal('unreadable', `cannot record ${what || 'the decision'} in the comments log for ${ctx.shown} (${tilde(paths.logPath)}): ${whyOf(e)}; ${then}`);
 }
 
 // accept / accept-all: the engine drops the records and the file is untouched (a change's effect
@@ -1737,7 +2502,9 @@ function cannotRecord(ctx, paths, e, then) {
 // the sidecar. A failed stage or append refuses with nothing changed (the change is still pending,
 // the log says nothing); the rename is the one step after the append, and its failure — a
 // destination made immutable, a race on the directory — refuses saying the log already holds the
-// decision (`logged: true`), so the person knows the entry counts a decision that did not land.
+// decision (`logged: true`), so the person knows the entry counts a decision that did not land. An ok
+// reply says `logged: true` too, as save's, set-tracked's, log-edit's and log-send's do: the entry landed
+// before the rename did.
 function doAccept(ctx, all) {
   const { file, root, paths, store } = loadForDecision(ctx, false);
   const decided = decidedChanges(ctx, store, all);
@@ -1747,6 +2514,7 @@ function doAccept(ctx, all) {
   for (const c of store.comments) {
     if (c && c.suggestionId != null && set.has(String(c.suggestionId))) c.resolved = true;
   }
+  store[WRITE_SHIFTS] = { settled: decided };   // the accepted insertions stand in the text; the refresh reads their shift before the records go
   let staged;
   try {
     staged = stageSidecar(root, paths.storePath, store, file.text);
@@ -1765,7 +2533,7 @@ function doAccept(ctx, all) {
     discardSidecar(staged);
     throw new Refusal('unreadable', `cannot write the comments for ${ctx.shown} (${tilde(paths.storePath)}): ${whyOf(e)}; the decision was recorded in the comments log but did not land — reload and retry`, { logged: true });
   }
-  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids });
+  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, file.text), ...file }, { accepted: ids, logged: true });
 }
 
 // Put the sidecar back as it was before a reject that landed it and then could not finish: the
@@ -1816,9 +2584,10 @@ function putBack(storePath, prior, then) {
 // text. The survivors come back from the engine remapped into post-reject coordinates; reloading
 // the saved sidecar against the new text re-verifies them the way every later load will.
 function doReject(ctx, all) {
-  const { file, root, paths, store } = loadForDecision(ctx, true);
+  const { file, root, paths, store } = loadForDecision(ctx, 'cannot write');
   const decided = decidedChanges(ctx, store, all);
   const ids = decided.map((h) => h.id);
+  checkDiskSize(ctx, file, 'cannot write');
   checkIsText(ctx.shown, file);
   for (const h of decided) {
     // The load-time rebase placed every kept op where its text is; a row that disagrees with the
@@ -1839,6 +2608,7 @@ function doReject(ctx, all) {
     throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
   }
   store.suggestions = res.suggestions;
+  store[WRITE_SHIFTS] = { applied: appliedShifts(res.edits) };   // the reversals moved what follows them; the refresh follows a tied passage through them
   try {
     landSidecar(root, paths.storePath, store, newText);
   } catch (e) {
@@ -1859,7 +2629,466 @@ function doReject(ctx, all) {
     const back = putBack(paths.storePath, prior, 'but the decision had already been recorded in the comments log — reload and retry');
     throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, { logged: true });
   }
-  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids });
+  return reply(ctx, { root, paths, store: afterDecision(ctx, paths, store, newText), text: newText, fileMtimeNs }, { rejected: ids, logged: true });
+}
+
+// ── save (Slice 5) ──────────────────────────────────────────────────
+
+// `content` must be text the file can hold as UTF-8 and the tracking tools will read as text: a
+// lone surrogate (a JSON string can carry one) encodes as U+FFFD, so the file would not hold what
+// the person typed — the kernel's saveFile refuses the same — and a NUL character makes the file
+// one decodeTextOrNull (this script, track-edit) reads as binary from then on.
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+function checkContentText(shown, content) {
+  if (content.includes('\0')) {
+    throw new Refusal('not-text', `cannot save ${shown}: the text contains a NUL character, which would make the file one the tracking tools refuse as not text; nothing was changed`);
+  }
+  if (LONE_SURROGATE_RE.test(content)) {
+    throw new Refusal('not-text', `cannot save ${shown}: the text contains a character UTF-8 cannot encode (a lone surrogate); nothing was changed`);
+  }
+}
+
+// The decisions taken in the editor, `[{id, oldText, newText}]`, in the shape the accept and reject
+// log entries keep (changesOf). Malformed is a caller bug; so is an id decided twice, or decided
+// AND still among the records being saved (a decision drops its record from the editor's field,
+// and undo takes the decision back with it, so the two never name one id together). `taken`
+// collects the decided ids across both lists, for the membership check against the sidecar and
+// the log once they are loaded (decisionRoots, in doSave) and for the comment resolve pass. The
+// shape is all this checks: whether an id names a change that was pending needs the disk.
+function requireDecisions(list, name, submitted, taken) {
+  if (!Array.isArray(list)) throw new BadRequest(`save needs ${name}: an array of {id, oldText, newText}`);
+  const out = [];
+  for (const d of list) {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) throw new BadRequest(`every ${name} entry must be {id, oldText, newText}`);
+    if ((typeof d.id !== 'string' && typeof d.id !== 'number') || d.id === '') throw new BadRequest(`every ${name} entry needs a non-empty id`);
+    if (typeof d.oldText !== 'string' || typeof d.newText !== 'string') throw new BadRequest(`${name} entry ${String(d.id)} needs oldText and newText as strings`);
+    const key = String(d.id);
+    if (taken.has(key)) throw new BadRequest(`change ${key} is decided twice`);
+    if (submitted.has(key)) throw new BadRequest(`change ${key} is ${name} and still among the suggestions being saved`);
+    taken.add(key);
+    out.push({ id: d.id, oldText: d.oldText, newText: d.newText });
+  }
+  return out;
+}
+
+// The ids a save's decisions and records may be rooted in: every change the sidecar holds, and every
+// change the comments log records as accepted or rejected (the log outlives the sidecar's memory of
+// a decided change — The comments log — and an editor kept alive past a landed save may decide one
+// of those again after an undo, or hold its record again: undo of a landed accept puts the record
+// back in the field, and the next save carries it as pending once more). The log is read the way
+// reply() reads it; unreadable refuses before any write, as it would there.
+function sidecarRoots(store) {
+  const roots = new Set();
+  for (const s of (store && store.suggestions) || []) if (s && s.id != null && s.id !== '') roots.add(String(s.id));
+  return roots;
+}
+function decisionRoots(ctx, store, paths) {
+  const roots = sidecarRoots(store);
+  if (paths) {
+    let read;
+    try { read = readLog(paths.logPath); } catch (e) { throw logUnreadable(ctx, paths, e); }
+    for (const e of read.entries) {
+      if (!e || (e.kind !== 'accept' && e.kind !== 'reject') || !Array.isArray(e.changes)) continue;
+      for (const c of e.changes) if (c && c.id != null && c.id !== '') roots.add(String(c.id));
+    }
+  }
+  return roots;
+}
+
+// A decided id is rooted when it IS a root or descends from one by the engine's split scheme —
+// `<id>~n`, nested for a fragment split again (`<id>~1~1`), and the editor's re-mint of a decided
+// fragment's suffix keeps the parent (`<id>~2`) — the prefix rule the engine itself uses to tell a
+// change's fragments from strangers (supersededOps).
+function rootedIn(roots, id) {
+  if (roots.has(id)) return true;
+  for (const r of roots) if (id.startsWith(r + '~')) return true;
+  return false;
+}
+
+// A save's change record whose id is rooted nowhere — not in the sidecar, not in the log, not a
+// fragment of either: a record the editor cannot have been given, since its field is seeded from
+// the sidecar and every id it mints descends from one (the header's rule on records). `desync`,
+// the code for records that disagree with what the save claims they came from (fitRecords names a
+// record that does not fit the text the same way), so the viewer shows the reason and keeps the
+// buffer; the ids are named as noChange names ghosts, so the person and the log-derived state
+// agree on what was refused.
+function recordsNeverPending(ctx, ids) {
+  const list = ids.map(String);
+  const one = list.length === 1;
+  const what = one ? `change ${list[0]} was` : `changes ${list.join(', ')} were`;
+  const them = one ? 'it' : 'them';
+  return new Refusal('desync', `${what} never pending in ${ctx.shown}: neither the comments file holds ${them} nor the comments log remembers ${them}, so the records being saved are not that file's; nothing was changed — reload and retry`);
+}
+
+// A record's author and session id as the sidecar holds them (fitRecords's normalization: a missing
+// or empty author is 'unknown', a missing or empty authorId is none), so a submitted record and the
+// stored change it claims to be compare on the same terms.
+function authorOf(s) {
+  return {
+    author: typeof s.author === 'string' && s.author ? s.author : 'unknown',
+    authorId: typeof s.authorId === 'string' && s.authorId ? s.authorId : null,
+  };
+}
+
+// The sidecar's change a record descends from — the record's own id, else the nearest ancestor by
+// the split scheme (`<id>~n`, the rule rootedIn applies) — or null when the sidecar holds none: a
+// record the log alone roots, or a stranger recordsNeverPending refuses first.
+function sidecarRootOf(store, id) {
+  let best = null;
+  for (const s of (store && store.suggestions) || []) {
+    if (!s || s.id == null || s.id === '') continue;
+    const r = String(s.id);
+    if (id === r) return s;
+    if (id.startsWith(r + '~') && (!best || r.length > String(best.id).length)) best = s;
+  }
+  return best;
+}
+
+// A save's change record that names another author or session id than the sidecar's change it is
+// rooted in: not a record the editor derived from the seeded ones (the header's rule on records),
+// refused `desync` as a record that does not fit the text is, so the viewer shows the reason and
+// keeps the buffer, and a reload seeds the field from the sidecar again. Named as noChange names
+// ghosts.
+function recordsMisattributed(ctx, ids) {
+  const list = ids.map(String);
+  const one = list.length === 1;
+  const what = one ? `change ${list[0]} is not the change ${ctx.shown} holds under that id (its author or session differs)`
+    : `changes ${list.join(', ')} are not the changes ${ctx.shown} holds under those ids (their author or session differs)`;
+  return new Refusal('desync', `${what}, so the records being saved are not that file's; nothing was changed — reload and retry`);
+}
+
+// Every change record the editor holds, checked against `content` the way the engine's load checks
+// a sidecar's records against the file (rebaseSuggestions: the record's newText sits at its offset,
+// and two placed spans never overlap) — but refusing where the engine would detach or relocate: the
+// editor remapped these records through the person's own keystrokes, so one that does not fit is a
+// desync between the editor's text and its field, and saving it would write a sidecar that
+// describes another file. The first record that does not fit is named (`misfit`, in the caller's
+// order; an overlap names the later span in document order); a record that is not even a record,
+// or an id used twice, is a caller bug. The records written are rebuilt from the known fields in
+// recordAgentEdit's shape and key order: `kind` from the texts (the engine's own rule, so a stale
+// kind never disagrees with them), the anchor over `content` at the record's span, as
+// recordAgentEdit builds it — byte-identical for a record the edit did not move, and current for
+// one it split or shifted, which otherwise keeps an anchor describing text no longer around it —
+// and unknown fields dropped. Returned in coalesceOps's order: by offset, the narrower span first.
+export function fitRecords(content, suggestions) {
+  const len = content.length;
+  const seen = new Set();
+  const records = [];
+  for (const s of suggestions) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) throw new BadRequest('every suggestion must be a change record {id, author, ts, from, newText, oldText, ...}');
+    if ((typeof s.id !== 'string' && typeof s.id !== 'number') || s.id === '') throw new BadRequest('every suggestion needs a non-empty id');
+    const key = String(s.id);
+    if (seen.has(key)) throw new BadRequest(`suggestion id ${key} appears twice`);
+    seen.add(key);
+    const newText = s.newText == null ? '' : s.newText;
+    const oldText = s.oldText == null ? '' : s.oldText;
+    if (typeof newText !== 'string' || typeof oldText !== 'string') return { records: null, misfit: { id: key, why: 'its texts are not strings' } };
+    if (!newText && !oldText) return { records: null, misfit: { id: key, why: 'it neither adds nor removes text' } };
+    if (!Number.isInteger(s.from) || s.from < 0 || s.from > len) {
+      return { records: null, misfit: { id: key, why: `its offset ${JSON.stringify(s.from)} is outside the text (${len} characters)` } };
+    }
+    const to = s.from + newText.length;
+    if (newText && content.slice(s.from, to) !== newText) {
+      return { records: null, misfit: { id: key, why: `the text at ${s.from}..${to} is not the change's text` } };
+    }
+    const who = authorOf(s);
+    const rec = { id: s.id, author: who.author };
+    if (who.authorId) rec.authorId = who.authorId;
+    rec.ts = typeof s.ts === 'number' && Number.isFinite(s.ts) ? s.ts : 0;
+    rec.kind = engine.kindOf(oldText, newText);
+    rec.from = s.from;
+    rec.newText = newText;
+    rec.oldText = oldText;
+    rec.anchor = engine.makeAnchor(content, s.from, to);
+    records.push(rec);
+  }
+  records.sort((x, y) => x.from - y.from || x.newText.length - y.newText.length);
+  // A zero-width deletion point never overlaps (the engine's rule: it may sit inside another
+  // change's span); two spans do when the later starts before the earlier ends. Without an
+  // overlap so far the spans end in increasing order, so the previous span's end is the furthest.
+  let prev = null;
+  for (const r of records) {
+    if (!r.newText) continue;
+    if (prev && r.from < prev.from + prev.newText.length) {
+      return { records: null, misfit: { id: String(r.id), why: `it overlaps change ${String(prev.id)}` } };
+    }
+    prev = r;
+  }
+  return { records, misfit: null };
+}
+
+// The diff a save logs, in the shape the kernel's saveFile path logs for a direct edit
+// (_edit_log_diff, Python's difflib): `--- a/<name>` and `+++ b/<name>`, then zero-context hunks
+// `@@ -<range> +<range> @@` with the removed lines and then the added ones, every line
+// newline-terminated, capped at EDIT_DIFF_MAX_LINES lines or EDIT_DIFF_MAX_BYTES bytes with
+// `truncated: true` when cut — so the panel's Log reads a save's entry and a direct edit's the
+// same way. Lines are split on '\n' (a CR stays with its line). The common head and tail are
+// trimmed first and the engine's line LCS (lcsOps, the one diff this script has) aligns the rest;
+// past DIFF_CELLS cells the middle is written as one replacement hunk, which the cap cuts anyway
+// — an exact alignment of a wholesale paste is not worth the memory. An identical text yields ''
+// (difflib writes no header when there is no hunk).
+export const EDIT_DIFF_MAX_LINES = 200;
+export const EDIT_DIFF_MAX_BYTES = 16 * 1024;
+const DIFF_CELLS = 4_000_000;
+
+// difflib's _format_range_unified: 1-based; a single line has no count; an empty range names the
+// line before it.
+function rangeUnified(start, length) {
+  let beginning = start + 1;
+  if (length === 1) return String(beginning);
+  if (!length) beginning -= 1;
+  return `${beginning},${length}`;
+}
+
+export function editDiff(oldText, newText, name) {
+  const a = engine.splitLinesKeep(oldText);
+  const b = engine.splitLinesKeep(newText);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const am = a.slice(head, a.length - tail);
+  const bm = b.slice(head, b.length - tail);
+  const hunks = [];
+  if (am.length || bm.length) {
+    if (am.length * bm.length > DIFF_CELLS) {
+      hunks.push({ aStart: head, del: am, bStart: head, ins: bm });
+    } else {
+      let ai = head;
+      let bj = head;
+      let cur = null;
+      for (const op of engine.lcsOps(am, bm, (x, y) => x === y)) {
+        if (op.type === 'eq') { cur = null; ai++; bj++; continue; }
+        if (!cur) { cur = { aStart: ai, del: [], bStart: bj, ins: [] }; hunks.push(cur); }
+        if (op.type === 'del') { cur.del.push(am[op.ai]); ai++; } else { cur.ins.push(bm[op.bj]); bj++; }
+      }
+    }
+  }
+  if (!hunks.length) return { diff: '', truncated: false };
+  const lines = [`--- a/${name}\n`, `+++ b/${name}\n`];
+  for (const h of hunks) {
+    lines.push(`@@ -${rangeUnified(h.aStart, h.del.length)} +${rangeUnified(h.bStart, h.ins.length)} @@\n`);
+    for (const l of h.del) lines.push(`-${l}`);
+    for (const l of h.ins) lines.push(`+${l}`);
+  }
+  const out = [];
+  let size = 0;
+  let truncated = false;
+  for (let ln of lines) {
+    if (!ln.endsWith('\n')) ln += '\n';
+    const bytes = Buffer.byteLength(ln, 'utf8');
+    if (out.length >= EDIT_DIFF_MAX_LINES || size + bytes > EDIT_DIFF_MAX_BYTES) { truncated = true; break; }
+    out.push(ln);
+    size += bytes;
+  }
+  return { diff: out.join(''), truncated };
+}
+
+// save {content, suggestions, accepted, rejected}: the editor's Save over a file with pending
+// changes (Slice 5). `content` is the whole new text; `suggestions` the change records as the
+// editor's field holds them after the person's typing remapped them (the sidecar's v3 record
+// shape); `accepted` and `rejected` the decisions taken in the editor, each
+// `{id, oldText, newText}`, whose records the field has already dropped (and, for a reject, whose
+// old text the buffer already holds). Fenced on the sidecar AND the file: "" for storeMtimeNs means
+// no sidecar exists, so the editor had nothing to remap and nothing to decide (a non-empty list is
+// then a caller bug), and no sidecar is created — the file (and, for a file the log has business
+// with, the log) is written. Otherwise, in order and with nothing written until every check has
+// passed: the file's name must be one the viewer edits and the file on disk under the cap (what
+// saveFile refuses, `not-text` and `too-large`), every decided id must be rooted in the sidecar or
+// the log (`no-change`), the file must be UTF-8 text on disk and `content` text the file can hold
+// (`not-text`), under the cap (`too-large`), every record must fit `content` (`desync`, naming the
+// first that does not), be rooted the way a decision must (`desync` by id, recordsNeverPending: a
+// record the sidecar never held would be written into it as a change the session made) and name the
+// author and session id of its root in the sidecar (`desync` by id, recordsMisattributed), and the
+// reply this save would send — the records as `store` and `hunks`, the log entries it appends —
+// must be one the kernel carries (`too-large`, checkReplyFits). Then reject's order (doReject), the
+// log's entries between the sidecar and the file: the file's new bytes staged beside it
+// (prepareFileWrite), the sidecar landed against the new text (the records, every comment bound by
+// `suggestionId` to a decided change marked resolved and KEPT, the detached ops as they were, the
+// fingerprint over `content`), the log's entries appended — one `edit` in the kernel's direct-edit
+// shape (built before the writes from the old and new text; the mtime after is the staged file's,
+// which the rename keeps), then an `accept` and a `reject` entry for each non-empty list — and the
+// rename that lands the file. The entries go only for a file that already has a sidecar, a comments
+// log, or a tracked flag, the rule log-edit follows, and never for a path inside .trackchanges/. A
+// failure before the append refuses with nothing changed (the prior sidecar bytes put back); the
+// rename's failure after it says the log already holds the entries (`logged: true`) — the rule the
+// decisions from a card follow (a decision is recorded before it lands, never after), kept for the
+// edit entry beside them. Once the file has landed nothing fails the verb: pruneIfClean runs when
+// nothing is pending and no comment or detached op remains (the reply then carries storeMtimeNs null
+// and store null), and a sidecar or a log that cannot be read back is reported in `logWarning`
+// (settleLanded). The reply is the standard status with the new fileMtimeNs and `logged`.
+// A save whose content equals the file and whose records equal the sidecar is still a write: the
+// person pressed Save, so the file is replaced (a new inode, a new mtime), the sidecar is rewritten,
+// and the log gets an edit entry with an empty diff — never a short-circuit, since the kernel sends
+// the same trace saveFile sends and the person expects a saved file.
+// With no root above the file the file is written and nothing is created — no landmark, no log —
+// and the reply says `logged: false`; so does a save of a file under a root that has neither a
+// sidecar, a log, nor a tracked flag (the request a browser sends when its status predates a peer's
+// toggle-off; the host does not take its word for the route).
+function doSave(ctx) {
+  const a = ctx.args;
+  if (typeof a.content !== 'string') throw new BadRequest('save needs content: the whole new text as a string');
+  if (!Array.isArray(a.suggestions)) throw new BadRequest('save needs suggestions: the change records as the editor holds them (an array)');
+  const submitted = new Set();
+  for (const s of a.suggestions) if (s && typeof s === 'object' && s.id != null) submitted.add(String(s.id));
+  const taken = new Set();
+  const accepted = requireDecisions(a.accepted, 'accepted', submitted, taken);
+  const rejected = requireDecisions(a.rejected, 'rejected', submitted, taken);
+  checkTextPath(ctx, 'cannot save');
+  // Fenced on the sidecar the records came from and on the file the editor loaded — the two things
+  // this verb writes. Not on config.json: save only READS it, to decide below whether the edit is
+  // logged, and reads the disk as it is at the save, so a config that moved since Edit changes
+  // nothing written on a client's word; set-tracked, which writes it, is the verb that fences on
+  // it (plans/file-review.md, the wire section). A `configMtimeNs` a client sends is not read.
+  const { file, root, paths, store } = loadForDecision(ctx, 'cannot save');
+  if (!store && a.suggestions.length) throw new BadRequest('save with no sidecar takes no suggestions: there was nothing to remap');
+  // The ids this save may name, read once for the decisions and the records alike (decisionRoots
+  // reads the log; unreadable refuses before any write).
+  let roots = null;
+  if (taken.size) {
+    // Every decided id must name a change that WAS pending: one the sidecar holds, one the comments
+    // log already records as decided (an editor kept alive past a landed save re-decides an id that
+    // save carried — undo, then the other gesture — and the log then reads accept, reject: what
+    // happened), or a fragment of either (`<id>~n`, the engine's split scheme: the person typed inside
+    // the change and decided one half). Anything else is a decision nobody took: logged, it would
+    // stand in the append-only log as fact and be counted to the session (the kernel tells it how many
+    // changes the save rejected, from these decisions), so it refuses `no-change` by id, as accept and
+    // reject do (decidedChanges), and nothing is written.
+    roots = decisionRoots(ctx, store, paths);
+    if (!store && !roots.size) throw new BadRequest('save with no sidecar takes no accepted or rejected changes: nothing was pending');
+    const ghosts = [...taken].filter((id) => !rootedIn(roots, id));
+    if (ghosts.length) throw noChange(ctx, ghosts);
+  }
+  checkDiskSize(ctx, file, 'cannot save');
+  checkIsText(ctx.shown, file, 'it cannot be saved from the dashboard: the text the editor holds is a lossy decode of its bytes, and writing that back would destroy them');
+  checkContentText(ctx.shown, a.content);
+  checkTooLarge(ctx.shown, a.content);
+  const fit = fitRecords(a.content, a.suggestions);
+  if (fit.misfit) {
+    throw new Refusal('desync', `change ${fit.misfit.id} does not fit the text being saved to ${ctx.shown}: ${fit.misfit.why}; nothing was changed — reload and retry`);
+  }
+  if (fit.records.length) {
+    // Every record must be rooted the way a decision must: the sidecar holds it, the log remembers it
+    // decided (undo of a landed accept puts its record back in the field, and this save carries it as
+    // pending again), or it is a fragment of either. fitRecords checked each against `content` only,
+    // and rebuilds the record from the id, author, authorId, ts and oldText the client sent: a record
+    // rooted nowhere would be written into the sidecar as a change by the session it names, with an
+    // old text the session never replaced — the state the decisions check above refuses to LOG, reached
+    // through the sidecar instead, since the next save or the panel's Reject would find it pending.
+    // After fitRecords, so a malformed record is still the caller bug it crashes as and a misfit is
+    // still named first; before the reply is measured and anything written. The sidecar's own ids
+    // root the records of every ordinary save (the seeded records and the engine's splits of them),
+    // so the log is read only for an id the sidecar does not root — the undo of a landed accept, or a
+    // stranger — and a save that names none reads the log exactly as it did (the estimate, then the
+    // reply). Named in the caller's order, as noChange names ghosts.
+    let strangers = [...submitted].filter((id) => !rootedIn(sidecarRoots(store), id));
+    if (strangers.length) {
+      if (!roots) roots = decisionRoots(ctx, store, paths);
+      strangers = strangers.filter((id) => !rootedIn(roots, id));
+      if (strangers.length) throw recordsNeverPending(ctx, strangers);
+    }
+    // Every record the sidecar roots must name its root's author and session id: the editor's remap
+    // copies both onto each fragment it splits off (mapOpsThroughChange's `...s`) and keeps the earlier
+    // record's on a merge (coalesceOps), so the pair holds for every record a real editor derives from
+    // the seeded ones, and a record that differs is not the editor's — written, it would put the
+    // session's change under another author or session id in the sidecar, which the panel's change
+    // cards then show and every later verb reads as who changed what (the review, 2026-09-06).
+    // Compared against the loaded store, the one the editor was seeded from (fenced on storeMtimeNs
+    // and fileMtimeNs, so the load-time rebase produced the same records). A record the log alone
+    // roots has no author on record to compare, and the texts and ts are the client's (the header's
+    // rule on records). Named in the caller's order.
+    const misnamed = [];
+    for (const s of a.suggestions) {
+      const rootRec = sidecarRootOf(store, String(s.id));
+      if (!rootRec) continue;
+      const got = authorOf(s);
+      const want = authorOf(rootRec);
+      if (got.author !== want.author || got.authorId !== want.authorId) misnamed.push(String(s.id));
+    }
+    if (misnamed.length) throw recordsMisattributed(ctx, misnamed);
+  }
+  // Whether the log has business with this file, decided before the writes from the disk as it is:
+  // a sidecar, a log, or the tracked flag (read from a config checkConfig passed in loadForDecision),
+  // and never a path inside .trackchanges/. The entries are built here too (editDiff is pure), so
+  // nothing after the writes has anything left to compute but the append itself.
+  const logs = !!paths && !underTrackchanges(ctx.abs)
+    && (!!store || exists(paths.logPath) || isTrackedFile(root, ctx.abs));
+  const entries = [];
+  if (logs) {
+    const { diff, truncated } = editDiff(file.text, a.content, path.basename(ctx.abs));
+    entries.push(logEntry('edit', {
+      mtimeBeforeNs: file.fileMtimeNs,
+      mtimeAfterNs: file.fileMtimeNs, // a stand-in of the same width; the write's own mtime replaces it below
+      bytesBefore: file.bytes,
+      bytesAfter: Buffer.byteLength(a.content, 'utf8'),
+      diff,
+      truncated,
+    }));
+    if (accepted.length) entries.push(logEntry('accept', { changes: accepted }));
+    if (rejected.length) entries.push(logEntry('reject', { changes: rejected }));
+  }
+  let prior = null;
+  if (store) {
+    try { prior = fs.readFileSync(paths.storePath); } catch (e) { if (!e || e.code !== 'ENOENT') throw e; }
+    const loaded = store.suggestions;   // the sidecar's records as loaded: where an accepted change sat, before the editor's records replace them
+    store.suggestions = fit.records;
+    if (taken.size) {
+      for (const c of store.comments) {
+        if (c && c.suggestionId != null && taken.has(String(c.suggestionId))) c.resolved = true;
+      }
+    }
+    // the person's edit moved what follows it, and the changes the editor accepted stand in the text
+    // while their records leave the sidecar in this write: the refresh follows a tied passage through
+    // both (shiftBounds' `applied` and `settled`, the latter as doAccept stamps it)
+    const applied = editShift(file.text, a.content);
+    store[WRITE_SHIFTS] = { settled: settledBySave(loaded, accepted, applied), applied };
+  }
+  checkReplyFits(ctx, { root, paths, store, text: a.content, fileMtimeNs: file.fileMtimeNs }, { logged: logs }, entries,
+    'the change records and the decisions taken in the editor');
+  // The writes, in reject's order (doReject): the file's new bytes staged beside it, the sidecar
+  // landed against the new text, the log's entries, then the rename that lands the file. A failure
+  // before the append refuses with nothing changed (the staged file discarded, the prior sidecar put
+  // back); the rename is the one step after the append, and its failure says the log already holds
+  // the entries (`logged: true`). The edit entry's mtimeAfterNs is the staged file's own: a rename
+  // keeps the inode's mtime, so the value is the one the landed file shows.
+  let prepared;
+  try {
+    prepared = prepareFileWrite(ctx.abs, a.content);
+  } catch (e) {
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; nothing was changed: the comments file was not touched, so there was nothing to put back`);
+  }
+  if (store) {
+    try {
+      landSidecar(root, paths.storePath, store, a.content);
+    } catch (e) {
+      discardFileWrite(prepared);
+      throw cannotWriteSidecar(ctx, paths, e);
+    }
+  }
+  if (logs) {
+    entries[0].mtimeAfterNs = statNs(prepared.tmp);
+    let n = 0;
+    try {
+      for (const e of entries) { appendLog(paths.logPath, e); n++; }
+    } catch (e) {
+      discardFileWrite(prepared);
+      const back = store ? putBack(paths.storePath, prior) : 'nothing was changed';
+      const partial = n ? `; the comments log already holds the ${entries.slice(0, n).map((x) => x.kind).join(' and ')} ${n > 1 ? 'entries' : 'entry'} for this save` : '';
+      throw cannotRecord(ctx, paths, e, back + partial, 'the edit');
+    }
+  }
+  let fileMtimeNs;
+  try {
+    fileMtimeNs = commitFileWrite(prepared);
+  } catch (e) {
+    discardFileWrite(prepared);
+    const then = logs ? 'but the edit had already been recorded in the comments log — reload and retry' : '';
+    const back = store ? putBack(paths.storePath, prior, then) : `nothing was changed${then ? `, ${then}` : ''}`;
+    throw new Refusal('unreadable', `cannot write ${ctx.shown}: ${whyOf(e)}; ${back}`, logs ? { logged: true } : null);
+  }
+  const landed = landedState('saved');
+  const after = store ? settleLanded(ctx, paths, store, a.content, landed) : null;
+  return reply(ctx, { root, paths, store: after, text: a.content, fileMtimeNs }, { logged: logs }, { landed });
 }
 
 // The folder entry that tracks a file's directory: `<dir>/` relative to the root. A file at the
@@ -1956,15 +3185,18 @@ function doSetTracked(ctx) {
   }
   if (loose) root = createLandmark(ctx); // asserts the root it finds is newRoot, the file's directory
   writeConfigAtomic(root, entry, on);
-  appendLog(paths.logPath, logEntry('set-tracked', { on, scope: kind, entry }));
-  return reply(ctx, { root, paths, ...file });
+  const landed = landedState('the tracking setting was written');
+  const logged = appendLanded(ctx, paths, [logEntry('set-tracked', { on, scope: kind, entry })], landed);
+  return reply(ctx, { root, paths, ...file }, { logged }, { landed });
 }
 
 const EDIT_SUMMARY_KEYS = ['mtimeBeforeNs', 'mtimeAfterNs', 'bytesBefore', 'bytesAfter', 'diff', 'truncated'];
 
 // A direct edit from the viewer (decision 33), logged by the kernel's saveFile path after the
 // save: only for a file that already has a sidecar, a comments log, or a tracked flag; never
-// creates a sidecar, a log, or a landmark. The append comes first so the record never depends on
+// creates a sidecar, a log, or a landmark; never for a path inside .trackchanges/ (the kernel does
+// not call it for one — _under_trackchanges — and this script keeps the rule itself, as `save`
+// does: the log would record itself). The append comes first so the record never depends on
 // the sidecar being readable — nor on the config: a sidecar or a log makes the file the log's
 // business whatever config.json says, and only the tracked flag needs a readable config.
 function doLogEdit(ctx) {
@@ -1977,7 +3209,8 @@ function doLogEdit(ctx) {
     if (paths) {
       checkTrackDir(ctx, paths);
       const cfg = configStatus(paths);
-      if (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs))) {
+      const own = !underTrackchanges(ctx.abs);
+      if (own && (exists(paths.storePath) || exists(paths.logPath) || (cfg === 'ok' && isTrackedFile(root, ctx.abs)))) {
         const fields = {};
         for (const k of EDIT_SUMMARY_KEYS) if (summary[k] !== undefined) fields[k] = summary[k];
         appendLog(paths.logPath, logEntry('edit', fields));
@@ -2048,6 +3281,7 @@ const HANDLERS = {
   reject: (ctx) => doReject(ctx, false),
   'reject-all': (ctx) => doReject(ctx, true),
   retarget: doRetarget,
+  save: doSave,
 };
 
 // One request in, one result object out; throws Refusal or BadRequest (or a program error).

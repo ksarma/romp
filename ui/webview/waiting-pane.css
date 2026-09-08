@@ -25,8 +25,13 @@ color:var(--vscode-descriptionForeground,#9a9a9a)}
 /* one row per open todo, oldest (longest waiting) first */
 .wt-item{padding:6px 12px 5px;border-bottom:1px solid var(--overlay-05, rgba(255,255,255,0.05))}
 .wt-item .ut-line{flex-wrap:wrap;row-gap:3px}
-/* the session chip: the session's identity colour, host-prefixed for a remote one; click opens the chat */
-.wt-sess{flex:0 0 auto;display:inline-flex;align-items:center;max-width:38%;padding:1px 8px;
+/* the session chip: the session's identity colour, host-prefixed for a remote one; click opens the chat.
+   A BLOCK container, not inline-flex — here and on .wt-file below: text-overflow acts on block containers only. On
+   a flex container the text sits in an anonymous flex item the property never reaches, and a long name was cut
+   mid-word at max-width with nothing to say it was cut (styles.css .fileview-sess, the review of #970; found again
+   on the file chip, which had copied this rule, 2026-09-07). Both chips are flex items of a flex parent (.ut-line,
+   the Reply modal's .confirm-box), so the parent places them; the one nowrap line sits in the pill on its line-height. */
+.wt-sess{flex:0 0 auto;display:block;max-width:38%;padding:1px 8px;
 border-radius:var(--radius-pill,999px);font-size:11px;font-weight:600;line-height:1.5;cursor:pointer;
 overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
 background:var(--overlay-10, rgba(255,255,255,0.10));color:var(--vscode-foreground,#cccccc)}
@@ -34,3 +39,19 @@ background:var(--overlay-10, rgba(255,255,255,0.10));color:var(--vscode-foregrou
 .wt-sess .host-prefix{font-weight:400;opacity:.75;font-style:italic}
 .wt-age{flex:0 0 auto;font-size:11px;color:var(--vscode-descriptionForeground,#9a9a9a);white-space:nowrap}
 .wt-item .ut-detail{margin-left:2px}
+/* the file a todo names (its record's own `file`; waiting.ts fileChip): a chip with the basename, the full path on
+   hover, on the row and in the Reply modal. It is a path link (.file-uri-link) so the openpath delegate opens it
+   like a path in the text; the chip dress replaces the link's underline. Plain when the pane is not framed. A block
+   container like .wt-sess (see above): a long basename ends in an ellipsis, not a hard cut — the full path is in
+   the title alone, which a touch cannot reach, so the label has to show that it is short. */
+.wt-file{flex:0 0 auto;display:block;max-width:32%;padding:1px 8px;
+border-radius:var(--radius-pill,999px);font-size:11px;line-height:1.5;
+overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+background:var(--overlay-10, rgba(255,255,255,0.10));color:var(--accent,#9cd2ff);text-decoration:none}
+.wt-file.file-uri-link:hover{filter:brightness(1.12);text-decoration:none}
+/* In the Reply modal the chip is ALONE on its line (a flex item of .confirm-box's column), so the row's 32% share —
+   sized for a line shared with the session chip, the age and two buttons — does not apply: the cap is the line. The
+   chip shrink-wraps its label (align-self) up to the whole line, and only a basename longer than the line ends in the
+   ellipsis. Under the row's cap it was ~110px on a phone, and two sibling drafts (…_v2_final.md, …_v3_final.md)
+   opened to the same chip with the file's name in the title alone (the 2026-09-07 review). */
+#ut-reply-prompt .wt-file{align-self:flex-start;max-width:100%;margin:2px 0 4px}

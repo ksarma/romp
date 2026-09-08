@@ -196,6 +196,133 @@ class Conformance(unittest.TestCase):
             error_type("CodexRpcError", -32001, "temporary backend failure")))
 
 
+class ApprovalModes(unittest.TestCase):
+    def test_auto_mode_persists_and_is_sent_on_resume_and_every_turn(self):
+        be, fake, tmp = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertEqual(be.live_sessions()[sid]["mode"], "sandboxed")
+        self.assertTrue(be.set_mode(sid, "auto"))
+        restored = cb.CodexBackend(tmp, client_factory=lambda: fake)
+        self.assertEqual(restored.live_sessions()[sid]["mode"], "auto")
+        for text in ("first synthetic turn", "second synthetic turn"):
+            self.assertTrue(restored.send(sid, text))
+            self.assertTrue(until(lambda: not restored.busy(sid)))
+        requests = [c[2] for c in fake.called("thread_resume")]
+        requests += [c[3] for c in fake.called("turn_start")]
+        self.assertEqual(len(requests), 3)
+        for params in requests:
+            self.assertEqual(params["approvalPolicy"], "on-request")
+            self.assertEqual(params["approvalsReviewer"], "auto_review")
+            self.assertEqual(params["permissions"], cb.WORKSPACE_PERMISSION)
+            self.assertEqual(params["runtimeWorkspaceRoots"], ["/TESTDIR"])
+            self.assertNotIn("sandboxPolicy", params)
+        restored.kill(sid)
+
+    def test_switch_back_resets_reviewer_and_legacy_rows_stay_sandboxed(self):
+        be, fake, tmp = build()
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.set_mode(sid, "auto"))
+        self.assertTrue(be.set_mode(sid, "sandboxed"))
+        self.assertTrue(be.send(sid, "synthetic turn"))
+        self.assertTrue(until(lambda: not be.busy(sid)))
+        params = fake.called("turn_start")[-1][3]
+        self.assertEqual(params["approvalPolicy"], "never")
+        self.assertEqual(params["approvalsReviewer"], "user")
+        be.kill(sid)
+        rows = json.loads(be._reg_path().read_text())
+        rows[sid].pop("mode")
+        be._reg_path().write_text(json.dumps(rows))
+        restored = cb.CodexBackend(tmp, client_factory=lambda: fake)
+        self.assertEqual(restored._sessions[sid].mode, "sandboxed")
+
+    def test_pending_session_recovery_uses_selected_mode(self):
+        def unavailable():
+            raise RuntimeError("synthetic unavailable client")
+        be, _, tmp = build(factory=unavailable)
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.set_mode(sid, "auto"))
+        fake = FakeClient()
+        restored = cb.CodexBackend(tmp, client_factory=lambda: fake)
+        self.assertTrue(restored.send(sid, "synthetic recovery"))
+        self.assertTrue(until(lambda: not restored.busy(sid)))
+        params = fake.called("thread_start")[-1][1]
+        self.assertEqual(params["approvalPolicy"], "on-request")
+        self.assertEqual(params["approvalsReviewer"], "auto_review")
+        restored.kill(sid)
+
+    def test_mode_change_refuses_inflight_turn_and_rolls_back_failed_save(self):
+        be, fake, _ = build()
+        sid = be.spawn("web", "/TESTDIR")
+        s = be._sessions[sid]
+        with s.mode_lock:
+            self.assertFalse(be.set_mode(sid, "auto"))
+        self.assertFalse(be.set_mode(sid, "bypassPermissions"))
+        with mock.patch.object(be, "_save_registry", side_effect=OSError("synthetic save failure")):
+            with self.assertRaises(OSError):
+                be.set_mode(sid, "auto")
+        self.assertEqual(s.mode, "sandboxed")
+        be.kill(sid)
+        self.assertFalse(be.set_mode(sid, "auto"))
+
+    def test_inflight_turn_keeps_its_mode_and_interrupt_still_works(self):
+        be, fake, _ = build()
+        fake.hold_open = True
+        fake.scripts = [[]]
+        sid = be.spawn("web", "/TESTDIR")
+        self.assertTrue(be.set_mode(sid, "auto"))
+        self.assertTrue(be.send(sid, "synthetic held turn"))
+        try:
+            self.assertTrue(until(lambda: be._sessions[sid].turn_id is not None))
+            self.assertFalse(be.set_mode(sid, "sandboxed"))
+            self.assertEqual(be.live_sessions()[sid]["mode"], "auto")
+            self.assertTrue(be.interrupt(sid))
+            self.assertTrue(until(lambda: not be.busy(sid)))
+            self.assertTrue(be.set_mode(sid, "sandboxed"))
+        finally:
+            be.kill(sid)
+
+    def test_invalid_saved_mode_defaults_to_sandboxed(self):
+        be, _, tmp = build()
+        sid = be.spawn("web", "/TESTDIR")
+        rows = json.loads(be._reg_path().read_text())
+        rows[sid]["mode"] = "bypassPermissions"
+        be._reg_path().write_text(json.dumps(rows))
+        logs = []
+        restored = cb.CodexBackend(tmp, client_factory=FakeClient, log=logs.append)
+        self.assertEqual(restored.live_sessions()[sid]["mode"], "sandboxed")
+        self.assertTrue(logs)
+        restored.kill(sid)
+
+    def test_manual_approval_fallback_never_accepts_or_blocks_the_reader(self):
+        be, _, _ = build()
+        notices = []
+        be.notify = lambda app, msg: notices.append(msg)
+        for method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
+            self.assertEqual(be._handle_approval(method, {}), {"decision": "decline"})
+        self.assertEqual(be._handle_approval("item/permissions/requestApproval", {}),
+                         {"permissions": {}, "scope": "turn"})
+        # an UNKNOWN request answers the SDK's own default, `{}` — never a raise: the handler runs inline on
+        # the SDK's single reader thread, and a raise there ends the reader and fails every Codex session's
+        # in-flight turn at once (review find on #930, 2026-09-07); the app-server reads an empty approval
+        # answer as a denial, scoped to that one request
+        self.assertEqual(be._handle_approval("unknown/requestApproval", {}), {})
+        self.assertTrue(notices)
+        self.assertTrue(all(msg["type"] == "warn" for msg in notices))
+
+    def test_real_client_is_constructed_with_fail_closed_handler(self):
+        be, _, _ = build()
+        be._client_factory = None
+        be.codex_bin = "/TESTBIN/codex"
+        fake = FakeClient()
+        fake.start = lambda: None
+        module = SimpleNamespace(CodexClient=mock.Mock(return_value=fake),
+                                 CodexConfig=lambda **kwargs: kwargs)
+        with mock.patch.object(cb, "ensure_codex_sdk", return_value=True), \
+             mock.patch.dict(sys.modules, {"openai_codex.client": module}):
+            self.assertIs(be._get_client(), fake)
+        self.assertEqual(module.CodexClient.call_args.kwargs["approval_handler"], be._handle_approval)
+
+
 class Lifecycle(unittest.TestCase):
     def test_spawn_send_turn_materializes_transcript(self):
         be, fake, _ = build()
@@ -942,8 +1069,9 @@ for i in range(20):
         self.assertEqual(captured[0]["codex_bin"], "/opt/codex")
         self.assertEqual(captured[0]["client_name"], "romp")
         overrides = captured[0]["config_overrides"]
-        self.assertEqual(overrides, cb.CODEX_CONFIG_OVERRIDES)
         profile = overrides[0]
+        self.assertIn('"/opt/codex" = "read"', profile)
+        self.assertNotIn('"/opt" = "read"', profile)
         self.assertIn('":minimal" = "read"', profile)
         self.assertIn('"." = "write"', profile)
         for metadata in (".git", ".agents", ".codex"):
@@ -1333,6 +1461,94 @@ class RaisingRegistryTransactions(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 be.spawn("webby", "/tmp")
             self.assertEqual(len(be._sessions), 0)
+
+
+class EnsureCodexSdk(unittest.TestCase):
+    """ensure_codex_sdk adds the codexvenv's site-packages only when they were built for the interpreter
+    this process runs (the twin of the SDK venv's rule, tests/test_sdk_venv_abi.py). Every
+    codexvenv/lib/python3.* used to join sys.path[0] whatever the interpreter, so a codexvenv built with a
+    newer python failed deep inside the import under the kernel's python and shadowed shared
+    dependencies for every later import (review round 2). find_spec is stubbed so the outcome does not
+    depend on whether this machine has openai_codex installed."""
+
+    def setUp(self):
+        import io
+        import tempfile
+        self.state = tempfile.mkdtemp()
+        self.venv = Path(self.state) / "codexvenv"
+        self.path_before = list(sys.path)
+        self.err = io.StringIO()
+        cb._CODEX_VENV_BUILT_FOR = []
+
+    def tearDown(self):
+        import shutil
+        sys.path[:] = self.path_before
+        shutil.rmtree(self.state, ignore_errors=True)
+
+    def _site(self, pyname):
+        sp = self.venv / "lib" / pyname / "site-packages"
+        sp.mkdir(parents=True)
+        return str(sp)
+
+    def _run(self, importable_from=None):
+        import importlib.util
+
+        def fake_find_spec(name, *a, **k):
+            if name != "openai_codex":
+                return fake_find_spec.__wrapped__(name, *a, **k)
+            if importable_from and any(p.startswith(importable_from) for p in sys.path):
+                return SimpleNamespace(name=name)
+            return None
+        fake_find_spec.__wrapped__ = importlib.util.find_spec
+        with mock.patch.object(importlib.util, "find_spec", fake_find_spec), \
+             mock.patch.object(sys, "stderr", self.err):
+            return cb.ensure_codex_sdk(self.state)
+
+    def test_a_venv_for_another_python_is_not_added_and_is_named(self):
+        sp = self._site("python3.99")
+        self.assertFalse(self._run(importable_from=sp))
+        self.assertNotIn(sp, sys.path, "a 3.99 venv must never join a %s process" % cb._running_python_tag())
+        line = self.err.getvalue()
+        self.assertIn("built for python 3.99", line)
+        self.assertIn("runs " + cb._running_python_tag(), line)
+        self.assertIn("romp-codex-setup", line, "the remedy, named")
+        self.assertEqual(cb._CODEX_VENV_BUILT_FOR, ["3.99"])
+        self.assertFalse(self._run(importable_from=sp))
+        self.assertEqual(self.err.getvalue(), line, "one line per verdict, not one per launch")
+
+    def test_a_matching_venv_is_added_and_the_sdk_imports(self):
+        sp = self._site("python" + cb._running_python_tag())
+        self.assertTrue(self._run(importable_from=sp))
+        self.assertIn(sp, sys.path)
+        self.assertEqual(self.err.getvalue(), "", "nothing to say when the venv matches")
+
+    def test_only_the_matching_directory_joins_when_both_exist(self):
+        old = self._site("python3.99")
+        new = self._site("python" + cb._running_python_tag())
+        self.assertTrue(self._run(importable_from=new))
+        self.assertIn(new, sys.path)
+        self.assertNotIn(old, sys.path)
+
+    def test_a_free_threaded_build_is_its_own_tag(self):
+        # venv names a 3.99t build's lib directory python3.99t: that venv is the 3.99t process's own, and a
+        # python3.99 venv in a 3.99t process is a mismatch, whatever the shared minor says
+        own = self._site("python3.99t")
+        with mock.patch.multiple(sys, abiflags="t", version_info=(3, 99, 0, "final", 0), create=True):
+            self.assertEqual(cb._running_python_tag(), "3.99t")
+            self.assertTrue(self._run(importable_from=own))
+            self.assertIn(own, sys.path)
+            sys.path[:] = self.path_before
+            import shutil
+            shutil.rmtree(self.venv)
+            other = self._site("python3.99")
+            self.assertFalse(self._run(importable_from=other))
+            self.assertNotIn(other, sys.path)
+        self.assertIn("built for python 3.99 but the kernel runs 3.99t", self.err.getvalue())
+
+    def test_no_venv_is_the_plain_not_importable_path(self):
+        self.assertFalse(self._run())
+        self.assertEqual(self.err.getvalue(), "", "no venv: nothing about versions to say")
+        self.assertEqual(sys.path, self.path_before)
 
 
 if __name__ == "__main__":

@@ -121,14 +121,15 @@ test('a refused comment on a loose file creates no landmark: anchor-not-found, a
   const r1 = refused(w, { verb: 'comment', path: w.loose, args: { anchor: missing, note: 'x' }, fence: { storeMtimeNs: '' } }, 'anchor-not-found');
   assert.ok(r1.error.includes('~/loose/report.md'), r1.error);
   assertUntouched(w);
-  // The passage edited away between the selection and Enter, its surroundings intact.
+  // The passage edited away between the selection and the save, its surroundings intact.
   const gone = anchorAt(w.text, 'cut p95 latency by 40%', 0);
   fs.writeFileSync(w.loose, w.text.replace('cut p95 latency by 40%', 'cut p95 latency by 35%'));
   refused(w, { verb: 'comment', path: w.loose, args: { anchor: gone.anchor, note: 'x', hintOffset: gone.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-not-found');
   assertUntouched(w);
   fs.writeFileSync(w.loose, w.text);
+  // A tie with no hint (a hint settles a tie since the anchors follow-on, 2026-09-07).
   const twice = anchorAt(w.text, 'Ship it.', 1);
-  refused(w, { verb: 'comment', path: w.loose, args: { anchor: twice.anchor, note: 'x', hintOffset: twice.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
+  refused(w, { verb: 'comment', path: w.loose, args: { anchor: twice.anchor, note: 'x' }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
   assertUntouched(w);
   // A caller bug (a malformed anchor, an empty note) crashes before the landmark too.
   const bad = host(w, { verb: 'comment', path: w.loose, args: { anchor: { quote: 7 }, note: 'x' }, fence: { storeMtimeNs: '' } });
@@ -150,8 +151,8 @@ test('a refused comment under an existing root leaves .trackchanges/ exactly as 
   const w = world();
   writeTrackedPaths(w.root, ['index.md']);
   const before = fs.readdirSync(path.join(w.root, '.trackchanges')).sort();
-  const twice = anchorAt(w.text, 'Ship it.', 1);
-  refused(w, { verb: 'comment', path: w.report, args: { anchor: twice.anchor, note: 'x', hintOffset: twice.hintOffset }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
+  const twice = anchorAt(w.text, 'Ship it.', 1);   // a tie, and no hint to settle it
+  refused(w, { verb: 'comment', path: w.report, args: { anchor: twice.anchor, note: 'x' }, fence: { storeMtimeNs: '' } }, 'anchor-ambiguous');
   assert.deepEqual(fs.readdirSync(path.join(w.root, '.trackchanges')).sort(), before);
   assert.equal(fs.existsSync(storePathFor(w.root, w.report)), false);
 });

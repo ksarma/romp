@@ -15,12 +15,18 @@ const FEED = read("feed.css");
 
 const RULES = [
   "#romp-fileview {", ".fileview {", "body.fileview-open {", ".fileview-bar {", ".fileview-name {",
-  ".fileview-dir {", ".fileview-base {", ".fileview-sess {", ".fileview-sess .host-prefix {", ".fileview-acts {", ".fileview-btn {", ".fileview-btn:hover {",
-  "a.fileview-btn {", ".fileview-gh {", ".fileview-gh[hidden] {", ".fileview-gh-why {",
-  ".fileview-gh .fileview-btn:disabled {", ".fileview-gh .fileview-btn:disabled:hover {",
-  ".fileview-gh .fileview-btn:disabled:active {", "a.fileview-gh-note {", ".fileview-body {",
+  ".fileview-dir {", ".fileview-base {", ".fileview-sess {", ".fileview-sess .host-prefix {", ".fileview-acts {",
+  ".fileview-bar .fileview-name {", ".fileview-bar .fileview-acts {",   // the bar's own wrap (scoped: the browser's row and the pane's Recent rows wear the classes too)
+  ".fileview-btn {", ".fileview-btn:hover {",
+  "a.fileview-btn {", ".fileview-gh {", ".fileview-gh-why {", ".fileview-gh-dots {",
+  '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
+  '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
+  "a.fileview-gh-note {", ".fileview-body {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
+  // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file
+  ".fileview-body .file-uri-link, .fileview-body .fv-url {", ".fileview-body .file-uri-link:hover, .fileview-body .fv-url:hover {",
+  ".fileview-md a.file-uri-link {", ".fileview-md a.file-uri-link:hover {", ".fileview-md a.fv-dead {",
   ".fileview-imgbox {", ".fileview-img {", ".fileview-frame {",
   // the PDF pages (Slice 4): the chunk's host, root, page and canvas, and the frame fallback's column
   ".fileview-pdfhost {", ".fileview-pdf {", ".fileview-pdf-page {", ".fileview-pdf-canvas {", ".fileview-pdffall {", ".fileview-pdffall .fileview-frame {",
@@ -31,6 +37,11 @@ const RULES = [
   // pinned byte-equal end to end by file-comments.test.ts; these heads keep it in the same list
   ".fileview-main {", ".fileview-aside {", ".fileview-fc {", ".fileview-fc[hidden] {", ".fc-panel {", ".fc-card {",
   ".fc-chip {", ".fc-input {", ".fc-hl {", ".fc-presel {", ".fc-float {",
+  // the editor's marks over pending changes (Slice 5; track-decorations.ts CLS): the chat and feed pages both host the editor
+  ".tc-diff-ins {", ".tc-diff-del {", ".tc-diff-sub {", ".tc-diff-del.tc-diff-sub {", ".tc-diff-del-block {", ".tc-diff-del-line {", ".tc-diff-hover {",
+  // the embed token a struck block row still holds (track-decorations.ts, departure 4) and its tag; the pixel legs are
+  // styles-kept-embed.test.ts and feed-css-kept-embed.test.ts
+  ".tc-diff-del-kept-embed {", ".tc-diff-del-kept-embed::after {",
 ];
 
 function ruleOf(css: string, head: string): string {

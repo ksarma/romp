@@ -73,7 +73,10 @@ class MergeCarriesBgTasks(unittest.TestCase):
         finally:
             km._tmux_sessions = saved_sessions
         self.assertEqual(why, {"kind": "task", "since": 1,   # the dispatch stamp → the chips' elapsed readout (the user 2026-08-23)
-                               "why": "waiting on a background task: 20-minute timer for campaign-start check", "count": 1})
+                               "why": "waiting on a background command: 20-minute timer for campaign-start check",   # "command" since slice 2 (2026-09-05)
+                               "count": 1,
+                               "items": [{"kind": "commands", "id": "tu1", "label": "20-minute timer for campaign-start check", "since": 1}],   # the one awaited row
+                               "tasks": ["20-minute timer for campaign-start check"]})
 
 
 class NudgeFailedRespectsAwaiting(unittest.TestCase):
@@ -103,7 +106,7 @@ class NudgeFailedRespectsAwaiting(unittest.TestCase):
         self.td.cleanup()
 
     def test_awaiting_session_never_gets_the_failure_block(self):
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "task", "why": "waiting on a background task: the experiment watcher"}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "task", "why": "waiting on a background task: the experiment watcher"}
         km._mark_nudge_failed(self.gid)
         store = km.jd.load_goals(SID)
         self.assertFalse(store["nodes"][self.gid]["blocked"],
@@ -112,7 +115,7 @@ class NudgeFailedRespectsAwaiting(unittest.TestCase):
         self.assertFalse(rec.get("failed"), "the episode isn't failed either — it re-arms cleanly")
 
     def test_a_genuinely_stalled_session_still_gets_the_block(self):
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None
         km._mark_nudge_failed(self.gid)
         store = km.jd.load_goals(SID)
         self.assertTrue(store["nodes"][self.gid]["blocked"], "the existing stall→block behavior stands")

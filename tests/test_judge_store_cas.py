@@ -100,13 +100,14 @@ class StoreCas(unittest.TestCase):
         gp = jd.GOALDIR / (SID + ".json")
         with self._reads_raise(gp):
             s = jd.load_goals(SID)
-        self.assertTrue(s.get("_unread"), "the file exists and was not read: a fallback, marked")
+        self.assertEqual(s.get("_unread"), "store", "the file exists and was not read: a fallback, marked with why")
         self.assertEqual(s["nodes"], {})
         self.assertNotIn("_unread", json.loads(jd._store_content(s)), "not store content")
-        jd.save_goals(SID, s)                       # base 0 vs disk 1: rebases onto the file, then publishes
-        raw = json.loads(gp.read_text())
-        self.assertNotIn("_unread", raw, "the mark is never written to disk")
-        self.assertIn(self._nid(1), raw["nodes"], "…and the rebase kept the file's node")
+        with self.assertRaises(jd.UnreadStoreError):
+            jd.save_goals(SID, s)                   # a fallback is never published, readable file or not: the
+        raw = json.loads(gp.read_text())            # decisions in it were made over an empty view of the
+        self.assertNotIn("_unread", raw)            # session (tests/test_unread_store_save.py)
+        self.assertIn(self._nid(1), raw["nodes"], "the file is left as it was")
 
     def test_an_unreadable_journal_marks_the_store_unread(self):
         self._seed()
@@ -114,8 +115,11 @@ class StoreCas(unittest.TestCase):
         with self._reads_raise(jd._overrides_dir() / (SID + ".jsonl")):
             s = jd.load_goals(SID)
         self.assertIn(self._nid(1), s["nodes"], "the store itself was read")
-        self.assertTrue(s.get("_unread"), "…but the journal was not: the store is not what its files say")
+        self.assertEqual(s.get("_unread"), "journal", "…but the journal was not: the store is not what its files say")
         self.assertEqual(s["_baseRev"], jd._disk_rev(SID), "the CAS base is the parsed store's, as before")
+        s["nodes"][self._nid(1)]["text"] = "A goal, retitled"
+        jd.save_goals(SID, s)                       # the journal's rows replay on every load: publishing loses nothing
+        self.assertNotIn("_unread", json.loads((jd.GOALDIR / (SID + ".json")).read_text()), "the mark is never written to disk")
 
     def test_a_stale_pass_no_longer_erases_a_concurrent_block(self):
         # THE BUG: pass A loads, goes off to its model call; the nudge tick blocks the card and publishes;

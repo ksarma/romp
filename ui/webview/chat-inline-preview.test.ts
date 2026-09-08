@@ -27,7 +27,9 @@ test("previewFull renders the image itself; a PDF is a click-to-view CARD, never
   const pf = PREVIEW.slice(PREVIEW.indexOf("export function previewFull"));
   assert.doesNotMatch(pf, /createElement\("iframe"\)/, "no auto-loading PDF frame in the chat strip");
   assert.match(pf, /box\.classList\.add\("path-full-pdfcard"\);/);
-  assert.match(pf, /box\.onclick = \(ev\) => \{ ev\.stopPropagation\(\); openLightbox\(path, sid\); \};/);
+  // a plain click opens the PDF in the lightbox, like an image; a Cmd/Ctrl- or middle-click opens it in
+  // its OWN browser tab (openPdf → openPdfTab, the user 2026-09-07) — pdf-new-tab.test.ts runs the opener
+  assert.match(pf, /box\.onclick = \(ev\) => \{ ev\.stopPropagation\(\); openPdf\(path, sid, ev\); \};/);   // the gesture rides along: a modified click → its own tab (pdf-new-tab.test.ts)
   // the HEAD probe (headers only — never a download) HIDES a failed UNVERIFIED card and keeps it
   // registered for the heal events (2026-08-24 — self-removal erased the spot until a send); a
   // kernel-verified card skips the probe — the kernel already stat'd the file
@@ -150,7 +152,7 @@ test("a verified relative path is previewable exactly like an absolute one — t
   // AND a bare filename both ride), previewKind is extension-only (relativity-blind), and both the
   // eager and the expanded render hand previewFull the SAME entry previewable carries — pin lookup
   // included, so a relative embed rides its own pin key ((pathPins || {})[p]).
-  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);   // the walk is path-links.ts's; its hits' `open` is what render.ts previews
+  assert.match(LINKS, /const open = isUri \? fileUriToPath\(tok\) : \(opts && opts\.resolve \? opts\.resolve\(fixed \?\? tok\) : \(fixed \?\? tok\)\);/);   // the walk is path-links.ts's; its hits' `open` is what render.ts previews (the chat passes no resolve)
   assert.match(RENDER, /previewable\.push\(open\);/);
   assert.match(PREVIEW, /const ext = path\.slice\(path\.lastIndexOf\("\."\) \+ 1\)\.toLowerCase\(\);/);
   assert.match(RENDER, /previewFull\(p, renderingOwnerSid \?\? activeId, kernelVerified\.has\(p\), \(pathPins \|\| \{\}\)\[p\]\)/);

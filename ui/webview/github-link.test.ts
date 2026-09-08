@@ -1,9 +1,11 @@
 // The viewer's GitHub link (the user 2026-08-15): a lazy fileGitLink ask per open, answered by the
-// file-OWNING kernel (git on ITS disk is the authority). The action shows on EVERY answer (the user
-// 2026-09-05): a real URL is an anchor; no URL is a real disabled button with the kernel's reason as
-// a caption beside it and in its tooltip; a URL whose branch is not on origin is a dashed anchor
-// with the note as its caption. The three states run FOR REAL against a small DOM stand-in (the
-// Outline pane's live-clock test is the precedent): the module mounts through document.createElement
+// file-OWNING kernel (git on ITS disk is the authority). While the ask is out the unit holds a
+// placeholder — a disabled button and the loader's dots — so a slow check (the kernel's ls-remote can
+// take 3 s) reads as a wait, not as the old no-button state (found in review). The action shows on
+// EVERY answer (the user 2026-09-05): a real URL is an anchor; no URL is a real disabled button with
+// the kernel's reason as a caption beside it and in its tooltip; a URL whose branch is not on origin
+// is a dashed anchor with the note as its caption. The states run FOR REAL against a small DOM stand-in
+// (the Outline pane's live-clock test is the precedent): the module mounts through document.createElement
 // and hears the reply off a window message, so plain objects carrying the handful of DOM members it
 // touches stand in for the page. What the DOM cannot show (the CSS, the kernel's side) stays pinned
 // at source.
@@ -37,7 +39,9 @@ class El {
   get textContent(): string { return this.childNodes.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
   set textContent(v: string) { this.childNodes = v === "" ? [] : [v]; }
   appendChild<T extends El>(c: T): T { this.childNodes.push(c); return c; }
+  replaceChildren(...cs: El[]): void { this.childNodes = [...cs]; }
   setAttribute(k: string, v: string): void { this.attrs.set(k, v); }
+  removeAttribute(k: string): void { this.attrs.delete(k); }
   getAttribute(k: string): string | null { return this.attrs.get(k) ?? null; }
   hasAttribute(k: string): boolean { return this.attrs.has(k); }
   addEventListener(): void {}
@@ -69,26 +73,52 @@ const stubCtx = (): FileViewActionCtx => ({
   path: "/tmp/notes-api/src/app.py", sid: null,
   body: () => new El("div") as unknown as HTMLElement, mode: () => "raw", text: () => null, mtimeNs: () => "",
   media: () => null, mediaElement: () => null, renderedImages: () => [], pdfPages: () => [], identity: () => null, onRendered: noop, onSelection: noop, onSaved: noop, onClose: noop,
-  post: noop, ensureEditingAllowed: async () => true, setEditBlocked: noop, aside: noop, setMode: noop,
+  post: noop, ensureEditingAllowed: async () => true, setEditBlocked: noop, editing: () => false, setTrackedEdit: noop, guardClose: noop, aside: noop, setMode: noop,
   scrollToOffset: noop, reload: noop,
 });
-async function mountAndAnswer(url: string, reason: string): Promise<El> {
-  const fv = await import("./file-view");
-  fv.initFileView((m) => posted.push(m));
-  const unit = fv.githubLinkAction.mount(stubCtx()) as unknown as El;
+const parts = (unit: El) => ({
+  cap: unit.childNodes.find((c) => c instanceof El && c.className === "fileview-gh-why") as El | undefined,
+  dots: unit.childNodes.find((c) => c instanceof El && c.className === "fileview-gh-dots") as El | undefined,
+  ctl: unit.childNodes.find((c) => c instanceof El && c.classList.contains("fileview-btn")) as El,
+});
+/** The unit as mounted, before any reply: the placeholder the states below all start from. */
+function assertPending(unit: El): void {
   assert.equal(unit.className, "fileview-gh");
-  assert.equal(unit.hidden, true, "hidden until the kernel answers");
-  assert.equal(unit.childNodes.length, 0, "no control exists before the answer — never an hrefless flash");
+  assert.equal(unit.hidden, false, "shown from the mount: the wait itself is visible");
+  assert.equal(unit.getAttribute("aria-busy"), "true", "and named as a wait for assistive tech");
+  const { cap, dots, ctl } = parts(unit);
+  assert.equal(ctl.tagName, "button", "a real disabled button holds the slot — never an hrefless anchor flash");
+  assert.equal(ctl.disabled, true); assert.equal(ctl.href, "");
+  assert.equal(ctl.textContent, "GitHub ↗");
+  assert.equal(ctl.title, "Checking GitHub…"); assert.equal(ctl.getAttribute("aria-label"), ctl.title);
+  assert.equal(cap, undefined, "no verdict yet, so no caption to mistake for one");
+  assert.ok(dots, "the loader's dots stand where the caption will go: a slow check reads as a wait");
+  assert.equal(dots!.childNodes.length, 3);
+  assert.ok(dots!.childNodes.every((c) => c instanceof El && c.tagName === "i" && c.className === "fileview-dot"));
+  assert.ok(unit.childNodes.indexOf(dots!) < unit.childNodes.indexOf(ctl), "dots before the button, as the caption will be");
+}
+// The module with its poster bound ONCE for this file: every initFileView call adds another romp:wsup
+// (and message) listener on the shared window, so binding per test would make the re-ask count below
+// equal the number of tests run so far — which is why it could only be asserted as "at least one".
+let bound: Promise<typeof import("./file-view")> | null = null;
+function view(): Promise<typeof import("./file-view")> {
+  if (!bound) bound = import("./file-view").then((fv) => { fv.initFileView((m) => posted.push(m)); return fv; });
+  return bound;
+}
+async function mountAndAnswer(url: string, reason: string): Promise<El> {
+  const fv = await view();
+  const unit = fv.githubLinkAction.mount(stubCtx()) as unknown as El;
+  assertPending(unit);
   const ask = posted[posted.length - 1];
   assert.deepEqual(ask, { type: "fileGitLink", path: "/tmp/notes-api/src/app.py", sid: undefined, reqId: ask.reqId });
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileGitLink", reqId: ask.reqId, url, reason } }));
   assert.equal(unit.hidden, false, "the answer always shows the action");
+  assert.equal(unit.hasAttribute("aria-busy"), false, "the answer ends the wait");
+  assert.equal(parts(unit).dots, undefined, "the placeholder leaves with it");
+  assert.equal(unit.childNodes.filter((c) => c instanceof El && c.classList.contains("fileview-btn")).length, 1,
+    "one control: the placeholder button is replaced, not joined");
   return unit;
 }
-const parts = (unit: El) => ({
-  cap: unit.childNodes.find((c) => c instanceof El && c.className === "fileview-gh-why") as El | undefined,
-  ctl: unit.childNodes.find((c) => c instanceof El && c.classList.contains("fileview-btn")) as El,
-});
 
 test("state 1 — a real URL: an anchor that opens a new tab, no caption, the URL as tooltip", async () => {
   const url = "https://github.com/TESTORG/notes-api/blob/main/src/app.py";
@@ -102,9 +132,9 @@ test("state 1 — a real URL: an anchor that opens a new tab, no caption, the UR
 });
 
 test("state 2 — no URL: a real disabled button, the reason visible beside it and in the tooltip", async () => {
-  // the user 2026-09-05 could not tell "not committed yet" from "the feature is broken" when the
-  // button was simply absent; and a reason only a mouse could reach (the tooltip) left touch and
-  // keyboard users with the same question
+  // the user 2026-09-05 could not tell an uncommitted file from a broken feature when the button
+  // was simply absent; and a reason only a mouse could reach (the tooltip) left touch and keyboard
+  // users with the same question
   const unit = await mountAndAnswer("", "the file is not committed");
   const { cap, ctl } = parts(unit);
   assert.equal(ctl.tagName, "button", "a real button: assistive tech exposes disabled and the label");
@@ -116,7 +146,8 @@ test("state 2 — no URL: a real disabled button, the reason visible beside it a
   assert.equal(ctl.getAttribute("aria-label"), ctl.title);
   assert.ok(cap, "the caption is the reason itself, without hover");
   assert.equal(cap!.textContent, "the file is not committed");
-  assert.equal(cap!.title, "the file is not committed", "truncated by the sheet, whole in its tooltip");
+  assert.equal(cap!.title, "", "nothing waits behind a hover: the caption IS the whole reason (it wraps; a truncated "
+    + "sentence had no tap, click or focus to finish it — found in review)");
   assert.ok(unit.childNodes.indexOf(cap!) < unit.childNodes.indexOf(ctl), "the caption annotates the control after it");
 });
 
@@ -138,25 +169,48 @@ test("state 3 — a URL whose branch is not on origin: a dashed anchor with the 
 });
 
 test("a reply for an older open lands nowhere — the newer open keeps waiting for its own", async () => {
-  const fv = await import("./file-view");
-  fv.initFileView((m) => posted.push(m));
+  const fv = await view();
   const ctx = stubCtx();
   const first = fv.githubLinkAction.mount(ctx) as unknown as El;
   const firstReq = posted[posted.length - 1].reqId;
   const second = fv.githubLinkAction.mount(ctx) as unknown as El;   // a replace-open: its hooks supersede
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileGitLink", reqId: firstReq,
     url: "https://github.com/TESTORG/notes-api/blob/main/src/app.py", reason: "" } }));
-  assert.equal(first.hidden, true); assert.equal(first.childNodes.length, 0, "the superseded open hears nothing");
-  assert.equal(second.hidden, true); assert.equal(second.childNodes.length, 0, "a stale reply is not the newer open's answer");
+  assertPending(first);    // the superseded open hears nothing: still the placeholder it mounted with
+  assertPending(second);   // a stale reply is not the newer open's answer
   win.dispatchEvent(new MessageEvent("message", { data: { type: "fileGitLink", reqId: posted[posted.length - 1].reqId,
     url: "", reason: "the file is not committed" } }));
-  assert.equal(second.hidden, false); assert.equal(parts(second).ctl.disabled, true);
+  assert.equal(second.hasAttribute("aria-busy"), false); assert.equal(parts(second).ctl.disabled, true);
+  assert.equal(parts(second).cap!.textContent, "the file is not committed");
+});
+
+test("a socket drop while the ask is out: the reconnect re-asks with the same reqId, so the wait ends", async () => {
+  // the frame went and nothing re-sends it, so the reply is lost and the placeholder would pulse for
+  // the rest of the open. The shim's romp:wsup (its RECONNECT event; the first connect fires none) is
+  // the re-ask's trigger — an event, not a timer, as the browse overlay does.
+  const fv = await view();
+  const unit = fv.githubLinkAction.mount(stubCtx()) as unknown as El;
+  const reqId = posted[posted.length - 1].reqId;
+  const before = posted.length;
+  win.dispatchEvent(new Event("romp:wsdown"));
+  assertPending(unit);     // the drop alone changes nothing: the answer may still come
+  win.dispatchEvent(new Event("romp:wsup"));
+  const again = posted.slice(before);
+  assert.equal(again.length, 1, "exactly one re-ask per reconnect: one listener, one pending ask");
+  assert.ok(again.every((m) => m.type === "fileGitLink" && m.reqId === reqId && m.path === "/tmp/notes-api/src/app.py"),
+    "the same question, same reqId: a late first reply and the second are one answer");
+  win.dispatchEvent(new MessageEvent("message", { data: { type: "fileGitLink", reqId, url: "", reason: "not committed (staged only)" } }));
+  assert.equal(unit.hasAttribute("aria-busy"), false);
+  assert.equal(parts(unit).cap!.textContent, "not committed (staged only)");
+  const settled = posted.length;
+  win.dispatchEvent(new Event("romp:wsup"));
+  assert.equal(posted.length, settled, "an answered open asks nothing more");
 });
 
 // ── what the DOM cannot show, pinned at source ─────────────────────────────────────────────────────
 
 test("the ask is lazy, per open, and sid-routed — never on the /file byte path", () => {
-  assert.match(VIEW, /post\(\{ type: "fileGitLink", path, sid: sid \|\| undefined, reqId: gitSeq \}\);/);
+  assert.match(VIEW, /const ask = \(\) => post\(\{ type: "fileGitLink", path, sid: sid \|\| undefined, reqId \}\);/);
   // thumbnails must not pay three git subprocesses each: /file itself is untouched
   assert.doesNotMatch(KERNEL, /_file_github_url\(fp/);
 });
@@ -170,15 +224,23 @@ test("the sheets dress the unit: the caption at button size, the disabled button
   for (const css of [CHAT_CSS, FEED_CSS]) {
     assert.match(css, /a\.fileview-btn \{ text-decoration: none;/);
     assert.match(css, /\.fileview-gh \{ display: inline-flex; align-items: center; gap: 5px; min-width: 0; \}/);
-    assert.match(css, /\.fileview-gh\[hidden\] \{ display: none; \}/, "an author display must not beat [hidden]");
-    // same size as the buttons it annotates (labels match labels), truncated with the tooltip whole
-    assert.match(css, /\.fileview-gh-why \{ font-size: 0\.82em; color: var\(--dim\); max-width: 18em; overflow: hidden;\n\s+text-overflow: ellipsis; white-space: nowrap; \}/);
+    assert.doesNotMatch(css, /\.fileview-gh\[hidden\]/, "nothing hides the unit any more: the wait is shown, not skipped");
+    // the pending placeholder's dots are the pane's own loader dots (accent, pulsing), laid out inline
+    assert.match(css, /\.fileview-gh-dots \{ display: inline-flex; align-items: center; gap: 4px; \}/);
+    assert.match(css, /\.fileview-dot \{ width: 4px; height: 4px; border-radius: 50%; background: var\(--accent\);\n  animation: fileview-pulse/);
+    // same size as the buttons it annotates (labels match labels), bounded in width and WRAPPING: the
+    // unit takes no tap, click or focus, so a truncated caption was a sentence nobody could finish
+    assert.match(css, /\.fileview-gh-why \{ font-size: 0\.82em; line-height: 1\.25; color: var\(--dim\); max-width: 18em; text-align: right; \}/);
+    const why = css.slice(css.indexOf(".fileview-gh-why {"), css.indexOf("}", css.indexOf(".fileview-gh-why {")));
+    assert.doesNotMatch(why, /nowrap|ellipsis|overflow: hidden/, "the caption wraps; it is never cut");
     assert.match(css, /\.fileview-btn \{ font: inherit; font-size: 0\.82em;/);
-    assert.match(css, /\.fileview-gh \.fileview-btn:disabled \{ opacity: 0\.55; cursor: default; \}/);
-    assert.match(css, /\.fileview-gh \.fileview-btn:disabled:hover \{ border-color: var\(--card-border\); color: var\(--fg\); background: transparent; \}/);
-    assert.match(css, /\.fileview-gh \.fileview-btn:disabled:active \{ transform: none; \}/);
+    // the disabled dress is every bar button's since the text-size control's ends took it too (review 2026-09-07); the
+    // unit's no-link button is a real disabled button under it
+    assert.match(css, /\.fileview-btn:disabled, \.fileview-btn\[aria-disabled="true"\] \{ opacity: 0\.55; cursor: default; \}/);
+    assert.match(css, /\.fileview-btn:disabled:hover, \.fileview-btn\[aria-disabled="true"\]:hover \{ border-color: var\(--card-border\); color: var\(--fg\); background: transparent; \}/);
+    assert.match(css, /\.fileview-btn:disabled:active, \.fileview-btn\[aria-disabled="true"\]:active \{ transform: none; \}/);
     assert.match(css, /a\.fileview-gh-note \{ border-style: dashed; \}/);
-    assert.doesNotMatch(css, /aria-disabled="true"\]/, "the disabled state is the button's own, not an aria bit on an anchor");
+    assert.doesNotMatch(css, /\.fileview-gh[^{\n]*aria-disabled|a\.fileview-btn[^{\n]*aria-disabled/, "the unit's disabled state is the button's own, not an aria bit on an anchor (the text-size control's ends carry aria-disabled to keep the keyboard focus, and the shared rule dresses both)");
   }
 });
 
@@ -195,6 +257,8 @@ test("the kernel's answer is a verdict from git itself, threaded off the recv lo
   // whatever string arrives
   assert.match(KERNEL, /def _file_github_url\(raw, sid\):/);
   assert.match(KERNEL, /def _file_github_link\(raw, sid, check_origin=True\):/, "the (url, reason) sibling the op uses");
+  // ls-files reads the index; a staged-only file is checked against HEAD's tree before a URL is built
+  assert.match(KERNEL, /"cat-file", "-e", "HEAD:" \+ rel\.replace\(os\.sep, "\/"\)/, "no live button at a path GitHub has on no ref");
   assert.match(KERNEL, /"url": url, "reason": reason\}\)/, "the reason rides the reply");
   // the local tracking ref answers first; ls-remote is the fallback, short-timed, never a prompt
   assert.match(KERNEL, /"refs\/remotes\/origin\/" \+ ref/);
