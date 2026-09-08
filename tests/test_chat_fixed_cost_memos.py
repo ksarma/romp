@@ -42,26 +42,34 @@ SID_B = "66666666-7777-8888-9999-aaaaaaaaaaa2"
 
 # ── (f) the attribution counters ─────────────────────────────────────────────────────────────────
 class SigLabels(unittest.TestCase):
-    """_chat_build_sig stays a flat tuple; its labels are derived from the tuple's shape, so the source
-    and the label tuple are pinned against each other."""
+    """_chat_build_sig is a flat tuple with one position per _CHAT_SIG_LABELS entry (round-4 plan P4), so a
+    miss is attributed by position; the labels are pinned against the appends in source order, and a
+    real signature has exactly one value per label."""
 
-    def test_the_tail_labels_follow_the_appends_in_source_order(self):
+    def test_the_labels_follow_the_appends_in_source_order(self):
         src = inspect.getsource(km._chat_build_sig)
-        self.assertEqual(len(re.findall(r"^\s*sig\.append\(", src, re.M)), len(km._CHAT_SIG_TAIL),
-                         "one label per sig.append in _chat_build_sig; a new component needs a new label")
-        markers = {"judge_gen": "_judge_gen[0]", "tasks": "_task_store_fp(", "todos": "_user_todo_fp(",
-                   "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of(",
-                   "tmux": 't.get("authLive")'}
-        pos = [src.index(markers[lab]) for lab in km._CHAT_SIG_TAIL]
+        markers = {"transcript": "sig.append((st.st_mtime, st.st_size))", "states": "sig.append(tuple(states))",
+                   "store": "jd._store_identity(sid)[1:]", "hold": "_rewind_hold_get(sid)", "archive": "jd.ARCHDIR",
+                   "episodes": "jd.EPIDIR", "reg": 'jd.STATE / "sdk"', "gone": "jd.GONEDIR", "tasks": "_task_store_fp(",
+                   "todos": "_user_todo_fp(", "cut": "pending_cut(", "note": "working_note(", "needs": "_feed_needs_input_of(",
+                   "live": "Sessions.live_rev(sid, be)", "row": '"snapT", "interrupting"', "clock": "_idle_faded(",
+                   "backend": "_queue_recallable(", "ops": "_pending_ops.get(sid)", "limit": "_limit_hold(sid, usage=",
+                   "retry": "_retry_gate_state(sid)", "bg": "_bg_live_norm(sid, path, live=tm)", "watch": "_watch_awaiting(sid)",
+                   "stamp": "_session_stamp_read(sid)", "anchors": "_node_anchor_rev.get(sid, 0)", "downtime": '"downtime", "names", "flags"',
+                   "cwd": "_github_repo_of(scwd)", "claudemd": "_claudemd_key(scwd)", "fork": "fork_children()",
+                   "taskout": "_chat_sig_deps(sid, deps)"}
+        pos = [src.index(markers[lab]) for lab in km._CHAT_SIG_LABELS if lab in markers]
         self.assertEqual(pos, sorted(pos), "the labels are in the appends' order")
-        self.assertIn("sig = [st.st_mtime, st.st_size]", src, "the head: the transcript's two values")
-        self.assertIn("sig += [ss.st_mtime, ss.st_size]", src, "the middle: two values per states file")
+        shared = ("downtime", "names", "flags", "ncards", "colormap", "acct", "cleared", "host")
+        i = km._CHAT_SIG_LABELS.index("downtime")
+        self.assertEqual(km._CHAT_SIG_LABELS[i:i + len(shared)], shared, "the shared components ride in the loop's order")
+        self.assertEqual(km._CHAT_SIG_LABELS[-3:], km._CHAT_SIG_DEPS, "the three dependency components close the tuple")
+        self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"))
+        self.assertNotIn("_judge_gen[0]", src, "the judge-pass counter is no chat input (the docstring may name its removal)")
 
     def test_each_single_component_change_is_attributed_to_its_label(self):
-        base = (1.0, 10, 2.0, 20, 7, ("tf",), ("uf",), "", "note", False, None)   # one states file; no push row
-        labels = km._chat_sig_labels(base)
-        self.assertEqual(labels, ("transcript", "transcript", "states", "states") + km._CHAT_SIG_TAIL)
-        for i, lab in enumerate(labels):
+        base = tuple(range(len(km._CHAT_SIG_LABELS)))
+        for i, lab in enumerate(km._CHAT_SIG_LABELS):
             new = list(base)
             new[i] = "changed"
             self.assertEqual(km._chat_sig_miss(base, tuple(new)), (lab,), lab)
@@ -69,18 +77,32 @@ class SigLabels(unittest.TestCase):
         self.assertEqual(km._chat_sig_miss(None, base), ("cold",))
         self.assertEqual(km._chat_sig_miss(base, None), ("nosig",))
         two = list(base)
-        two[0], two[4] = "x", 8
-        self.assertEqual(km._chat_sig_miss(base, tuple(two)), ("judge_gen", "transcript"),
-                         "several moved components are each attributed")
-        # a second states file appeared (the anchor became known): the lengths differ, so `states` is set
-        # and the fixed head and tail are compared from their own ends
-        longer = base[:4] + (3.0, 30) + base[4:]
-        self.assertEqual(km._chat_sig_labels(longer), ("transcript", "transcript") + ("states",) * 4 + km._CHAT_SIG_TAIL)
-        self.assertEqual(km._chat_sig_miss(base, longer), ("states",))
-        longer2 = list(longer)
-        longer2[-2] = True                                 # `needs`, the component before the push row's
-        self.assertEqual(km._chat_sig_miss(base, tuple(longer2)), ("needs", "states"))
-        self.assertEqual(km._chat_sig_miss(longer, base), ("states",), "and the other way round")
+        two[0], two[2] = "x", "y"
+        self.assertEqual(km._chat_sig_miss(base, tuple(two)), ("store", "transcript"),
+                         "several moved components are each attributed, sorted")
+        self.assertEqual(km._chat_sig_miss(base[:-1], base), ("cold",),
+                         "a signature of another shape (an older kernel's entry) is a cold miss, never a crash")
+
+    def test_a_real_signature_has_one_value_per_label_and_holds_between_calls(self):
+        tmp = tempfile.mkdtemp()
+        tx = Path(tmp) / (SID_A + ".jsonl")
+        tx.write_text('{"type": "user"}\n')
+        sess = {"sid": SID_A, "path": str(tx), "anchor": SID_A}
+        saved = km._sdk
+        km._sdk = lambda: None
+        try:
+            sig = km._chat_build_sig(sess)
+            self.assertEqual(len(sig), len(km._CHAT_SIG_LABELS))
+            self.assertEqual(km._chat_build_sig(sess), sig, "byte-stable while nothing moved")
+            self.assertEqual(sig[km._CHAT_SIG_LABELS.index("transcript")], (tx.stat().st_mtime, tx.stat().st_size))
+            self.assertEqual(sig[-3:], ((), (), None), "a tab with no cached build records no dependencies yet")
+            self.assertIsNone(km._chat_build_sig({"sid": SID_A, "path": ""}), "no path at all: no signature")
+            gone = dict(sess, path=str(Path(tmp) / "not-yet.jsonl"))
+            sig2 = km._chat_build_sig(gone)
+            self.assertIsNone(sig2[0], "a transcript that does not exist yet is a component, so the tab still caches")
+            self.assertEqual(len(sig2), len(km._CHAT_SIG_LABELS))
+        finally:
+            km._sdk = saved
 
 
 class Collector(unittest.TestCase):
@@ -88,14 +110,14 @@ class Collector(unittest.TestCase):
         st = km._PerfStats()
         st.build_chat(True)
         st.build_chat(False, 0.010, active=True)
-        st.build_chat(False, 0.020, active=False, miss=("judge_gen",))
+        st.build_chat(False, 0.020, active=False, miss=("store",))
         st.build_chat(False, 0.030, active=False, miss=("states", "transcript"))
         st.build_chat(False, 0.005, active=False, miss=("cold",))
         c = st.snapshot()["builds"]["chat"]
         self.assertEqual((c["cached"], c["built"], c["active_built"], c["bg_built"]), (1, 4, 1, 3))
         self.assertAlmostEqual(c["ms"], 65.0)
         self.assertEqual({k: v for k, v in c["bg_miss"].items() if v},
-                         {"judge_gen": 1, "states": 1, "transcript": 1, "cold": 1},
+                         {"store": 1, "states": 1, "transcript": 1, "cold": 1},
                          "one count per moved component: the two-component miss counts under both")
         self.assertEqual(set(c["bg_miss"]), set(km._PerfStats.CHAT_MISS))
         st.build_chat(False, 0.001, miss=("cold",))
@@ -111,8 +133,9 @@ class Collector(unittest.TestCase):
 
 
 class TwoTabAttribution(unittest.TestCase):
-    """The real _push over two tabs, one watched: the watched tab counts under active_built every cycle,
-    the background tab under bg_built only when its signature moves, with the moved component named."""
+    """The real _push over two tabs, one watched: each tab is served while its complete signature holds
+    (the watched one too — upstream's 2026-09-03 rule, on the one key since round-4 plan P4) and counts
+    under active_built or bg_built when it moved, the background tab with the moved component named."""
 
     STUBS = ("NAMES", "_tmux_sessions", "_live_names", "_tab_list_tmux", "_chat_tab_sessions", "build_session",
              "_cached_feed", "_cached_timeline", "build_timeline", "_fleet_view_sig", "_comments_frame",
@@ -160,6 +183,11 @@ class TwoTabAttribution(unittest.TestCase):
         km._prev_chat_ledger.clear(); km._prev_chat_ledger.update(pl)
         km._last_tab_order[:] = lo
         km._judge_gen[0] = jg
+        for p in (km.jd.GOALDIR / (SID_B + ".json"), km.jd.STATESDIR / (SID_B + ".jsonl")):
+            try:
+                p.unlink()
+            except OSError:
+                pass
 
     def _build_session(self, sid, now, tmux):
         self.built.append(sid)
@@ -196,14 +224,39 @@ class TwoTabAttribution(unittest.TestCase):
         km._judge_gen[0] += 1
         km._push([self.chat, self.tl])
         c4 = self._chat()
-        self.assertEqual(self._delta(c3, c4), {"cached": 0, "built": 2, "active_built": 1, "bg_built": 1,
-                                               "bg_miss": {"judge_gen": 1}}, "a judge pass busts the background tab")
+        self.assertEqual(self._delta(c3, c4), {"cached": 2, "built": 0, "active_built": 0, "bg_built": 0, "bg_miss": {}},
+                         "a judge pass ALONE no longer rebuilds any tab (round-4 plan P4): the signature "
+                         "names the judge's outputs per session instead of the pass counter")
+        km.jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        (km.jd.GOALDIR / (SID_B + ".json")).write_text(json.dumps({"rompUuid": SID_B, "nodes": {}, "status": {}}))
+        km._push([self.chat, self.tl])
+        c5 = self._chat()
+        self.assertEqual(self._delta(c4, c5), {"cached": 1, "built": 1, "active_built": 0, "bg_built": 1,
+                                               "bg_miss": {"store": 1}}, "the background tab's goal store was published; the watched tab is served")
+        km.jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        with open(km.jd.STATESDIR / (SID_B + ".jsonl"), "a") as f:
+            f.write('{"t": 1, "state": "idle"}\n')
+        km._push([self.chat, self.tl])
+        c6 = self._chat()
+        self.assertEqual(self._delta(c5, c6), {"cached": 1, "built": 1, "active_built": 0, "bg_built": 1,
+                                               "bg_miss": {"states": 1}}, "the background tab's states file grew")
+        km._push([self.chat, self.tl])
+        c7 = self._chat()
+        self.assertEqual(self._delta(c6, c7), {"cached": 2, "built": 0, "active_built": 0, "bg_built": 0, "bg_miss": {}},
+                         "and both are served again once nothing moves")
+        with open(self.tx[SID_A], "a") as f:
+            f.write('{"type": "assistant"}\n')
+        km._push([self.chat, self.tl])
+        c8 = self._chat()
+        self.assertEqual(self._delta(c7, c8), {"cached": 1, "built": 1, "active_built": 1, "bg_built": 0, "bg_miss": {}},
+                         "the watched tab's own transcript grew: it rebuilds, under active_built")
 
     def test_the_push_loop_attributes_through_the_chat_writer(self):
         src = inspect.getsource(km._push)
         self.assertIn("_PERF_STATS.build_chat(True)", src)
         self.assertIn("_PERF_STATS.build_chat(False, _dt, active=is_active, miss=_miss)", src)
-        self.assertIn('_miss = () if is_active else _chat_sig_miss(hit[0] if hit is not None else None, sig)', src)
+        self.assertIn('_miss = _chat_sig_miss(hit[0] if hit is not None else None, sig)', src,
+                      "attributed for every tab, the watched one included (it is keyed too)")
         self.assertNotIn('_PERF_STATS.build("chat"', src, "no unattributed chat record left in the loop")
 
     def test_the_sweep_drops_the_merge_sets_of_a_sid_neither_shown_nor_alive(self):

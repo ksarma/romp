@@ -1583,7 +1583,7 @@ class ViewBuilder(unittest.TestCase):
             "nodes": {top: gn(top, "research the API", None, why="user asked for the research")},
             "placements": {}, "status": {top: "working"}}))
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "Waiting on the 3 research agents it dispatched."}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "Waiting on the 3 research agents it dispatched."}
         try:
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
         finally:
@@ -1610,13 +1610,13 @@ class ViewBuilder(unittest.TestCase):
         saved = km._session_awaiting
         try:
             for n in (1, 3):
-                km._session_awaiting = lambda sid, path, idle, stamp=False, n=n: {
+                km._session_awaiting = lambda sid, path, idle, stamp=False, live=None, n=n: {
                     "kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
                     "since": T0, "count": n}
                 card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
                 self.assertEqual(card["awaiting"]["kind"], "agents")
                 self.assertEqual(card["awaiting"]["count"], n, "the card's count is the snapshot's own")
-            km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": None, "why": "waiting on dispatched work", "since": None}
+            km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": None, "why": "waiting on dispatched work", "since": None}
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
             self.assertIsNone(card["awaiting"]["count"], "a source that cannot count ships None, never a guess")
         finally:
@@ -1919,7 +1919,7 @@ class ViewBuilder(unittest.TestCase):
         saved_w, saved_a = km._wait_for_graph, km._session_awaiting
         km._wait_for_graph = lambda now, alive: {SID: {"peerSid": "peerY", "name": "peerY",
                                                        "color": None, "inCycle": False, "since": NOW}}
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None      # isolate the POSTAL path
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None      # isolate the POSTAL path
         try:
             card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
         finally:
@@ -2948,11 +2948,13 @@ class ViewBuilder(unittest.TestCase):
         # into ChatEvent[] AND a json.dumps of the whole chat, per tab, even when nothing changed — which pegged
         # the kernel on multi-MB transcripts and starved the webview. A BACKGROUND tab whose transcript+states
         # are unchanged reuses its built payload (one stat() instead of a reshape+serialize). The ACTIVE tab
-        # used to rebuild on every push "to stay live"; since 2026-09-03 it too is served from its last build
-        # while its EXACT key (_active_chat_sig: file stats + live tail + snapshot + clock predicates) is
-        # unchanged and no kernel-side mutation postdates the build — so a watched 80 MB session no longer
-        # costs a reshape per 0.5 s cycle with nothing moving. Liveness is unchanged: any input that can
-        # move the payload is in the key, and _mark_views_dirty busts it for in-memory stamps.
+        # used to rebuild on every push "to stay live"; since 2026-09-03 (upstream) it too is served from its
+        # last build while its exact key is unchanged — so a watched 80 MB session no longer costs a reshape
+        # per 0.5 s cycle with nothing moving. Since round-4 plan P4 that key is the one complete per-session
+        # signature every tab shares (_chat_build_sig): every input that can move the payload is a component,
+        # the in-memory stamps included, so the tab rebuilds when an input moved and on nothing else — a bare
+        # _mark_views_dirty (upstream's watermark for stamps no file records) is not new information for the
+        # chat and rebuilds nothing; a live-tail echo, which the payload renders, is and does.
         import tempfile
         d = tempfile.mkdtemp()
         pa, pb = os.path.join(d, "A.jsonl"), os.path.join(d, "B.jsonl")
@@ -2961,8 +2963,9 @@ class ViewBuilder(unittest.TestCase):
                 f.write("{}\n")
         calls = []
         saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
-                 km.build_timeline, km._send_client)
+                 km.build_timeline, km._send_client, km._sdk)
         km._tmux_sessions = lambda: {}
+        km._sdk = lambda: None                                          # both tabs tmux-owned
         km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": pa}, {"sid": "B", "path": pb}]
         km.build_session = lambda sid, now, tmux: (calls.append(sid) or
                                                    {"id": sid, "name": sid, "color": None, "status": None, "ledger": None})
@@ -2985,18 +2988,23 @@ class ViewBuilder(unittest.TestCase):
             os.utime(pa, None)
             km._push([client])                       # 4th: A rebuilt
             after_four = list(calls)
-            km._mark_views_dirty()                   # a kernel-side mutation no file records
-            km._push([client])                       # 5th: A rebuilt (dirty postdates its build)
+            km._mark_views_dirty()                   # a dirty mark with no moved input
+            km._push([client])                       # 5th: A still served (the key names inputs, not marks)
+            after_five = list(calls)
+            km._tmux_echo_add("A", "and also fix the header")   # a kernel-side mutation no file records: the live tail
+            km._push([client])                       # 6th: A rebuilt (its live-tail revision moved)
         finally:
             (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
-             km.build_timeline, km._send_client) = saved
+             km.build_timeline, km._send_client, km._sdk) = saved
             km._built_chat.clear()
+            km._tmux_echo.pop("A", None); km._tmux_echo_rev.pop("A", None)
         self.assertEqual(after_two.count("A"), 1, "an unchanged ACTIVE tab is served on the 2nd push")
         self.assertEqual(after_two.count("B"), 1, "an unchanged BACKGROUND tab is NOT rebuilt on the 2nd push")
         self.assertEqual(after_three.count("B"), 2, "the background tab rebuilds once its transcript actually changes")
         self.assertEqual(after_three.count("A"), 1, "…and that does not rebuild the active tab")
         self.assertEqual(after_four.count("A"), 2, "the active tab rebuilds once ITS transcript changes")
-        self.assertEqual(calls.count("A"), 3, "a kernel-side mutation (views dirty) rebuilds the active tab")
+        self.assertEqual(after_five.count("A"), 2, "a dirty mark alone is no new information for the chat: still served")
+        self.assertEqual(calls.count("A"), 3, "a kernel-side mutation no file records (a live-tail echo) rebuilds the active tab")
 
     def _orphaned_goal(self, idle=True, closer_done=True, planned=True):
         # an idle (or still-open) session whose top goal still shows "working". closer_done puts the latest
@@ -3607,12 +3615,12 @@ class ViewBuilder(unittest.TestCase):
         self._orphaned_goal(idle=True)
         km._set_auto_nudge(True)
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "Waiting on its background agents."}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "Waiting on its background agents."}
         sent, restore = self._stub_nudge()
         try:
             km._auto_nudge_tick(NOW, km._tmux_sessions())
             self.assertEqual(sent, [], "an awaiting session is held, not nudged")
-            km._session_awaiting = lambda sid, path, idle, stamp=False: None   # no longer awaiting → the genuine stall is nudged
+            km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None   # no longer awaiting → the genuine stall is nudged
             km._auto_nudge_tick(NOW, km._tmux_sessions())
             self.assertEqual(len(sent), 1, "once the wait clears, the genuine stall is nudged")
         finally:
@@ -6570,7 +6578,7 @@ class ViewBuilder(unittest.TestCase):
         # background work it dispatched is no longer folded into "working" — the shared _session_chip
         # emits `awaitingBg`, so the chat chip (straw "Awaiting") and the timeline lane split together.
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "bg agents"} if idle else None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "bg agents"} if idle else None
         try:
             chip = km.build_session(SID, NOW)["status"]["state"]
             lane = next(s for s in km.build_timeline(NOW)["sessions"] if s["id"] == SID)["state"]
@@ -6583,7 +6591,7 @@ class ViewBuilder(unittest.TestCase):
         # working beats the awaiting flavor: while the main thread is actually producing, the chip says
         # Working — awaitingBg only covers the idle-but-held stretch.
         saved_aw, saved_w = km._session_awaiting, km._session_working
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "bg agents"}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "bg agents"}
         km._session_working = lambda turns: True
         try:
             chip = km.build_session(SID, NOW)["status"]["state"]
@@ -6595,7 +6603,7 @@ class ViewBuilder(unittest.TestCase):
         # the straw dots (feed cards/headers + chat tabs) key on feed["awaiting"] exactly as the yellow
         # dots key on feed["working"] — same names, same federation prefixing (ARRAY_ID).
         saved = km._session_awaiting
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "agents", "why": "bg agents"} if idle else None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "agents", "why": "bg agents"} if idle else None
         try:
             feed = km.build_feed(NOW)
         finally:

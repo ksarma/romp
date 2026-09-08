@@ -106,7 +106,7 @@ class NudgeFailedRespectsAwaiting(unittest.TestCase):
         self.td.cleanup()
 
     def test_awaiting_session_never_gets_the_failure_block(self):
-        km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": "task", "why": "waiting on a background task: the experiment watcher"}
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: {"kind": "task", "why": "waiting on a background task: the experiment watcher"}
         km._mark_nudge_failed(self.gid)
         store = km.jd.load_goals(SID)
         self.assertFalse(store["nodes"][self.gid]["blocked"],
@@ -115,7 +115,7 @@ class NudgeFailedRespectsAwaiting(unittest.TestCase):
         self.assertFalse(rec.get("failed"), "the episode isn't failed either — it re-arms cleanly")
 
     def test_a_genuinely_stalled_session_still_gets_the_block(self):
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None
         km._mark_nudge_failed(self.gid)
         store = km.jd.load_goals(SID)
         self.assertTrue(store["nodes"][self.gid]["blocked"], "the existing stall→block behavior stands")
