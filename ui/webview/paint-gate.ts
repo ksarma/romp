@@ -11,9 +11,13 @@
 // The FIRST content always paints through: an empty list is the pane loader's "still loading" state (the
 // loader retires on the list's first child — kernel _pane_spin's MutationObserver), so withholding it would
 // reveal a pane with the loader fading over nothing (the 2026-09-04 board-pane bug, now the shared rule).
-export function paintHeld(docHidden: boolean, intersecting: boolean, hasContent: boolean): boolean {
+//
+// `intersecting` is the observer's LAST WORD, and null until it has spoken (the callback has not fired yet,
+// or the page has no IntersectionObserver). For the paint that measure then holds nothing, exactly what the
+// panes' earlier `true` default did; the shim's word below is where null makes a difference.
+export function paintHeld(docHidden: boolean, intersecting: boolean | null, hasContent: boolean): boolean {
   if (!hasContent) return false;
-  return docHidden || !intersecting;
+  return docHidden || intersecting === false;
 }
 
 // The release events' shared decision: a paint is owed (dirty) AND both measures now say the pane can be
@@ -22,7 +26,7 @@ export function paintHeld(docHidden: boolean, intersecting: boolean, hasContent:
 // a true: on a tab switch the compositor shows the cached frame until the page paints, so a paint inside
 // the event handler is the earliest fresh frame — a requestAnimationFrame hop would be one frame later at
 // best, and held indefinitely in a display:none frame.
-export function paintReleased(dirty: boolean, docHidden: boolean, intersecting: boolean): boolean {
+export function paintReleased(dirty: boolean, docHidden: boolean, intersecting: boolean | null): boolean {
   return dirty && !paintHeld(docHidden, intersecting, true);
 }
 
@@ -34,11 +38,22 @@ export function paintReleased(dirty: boolean, docHidden: boolean, intersecting: 
 // shown and hidden again), so the probe misses every pane the shell hides after the user has looked at it,
 // the phone shell's every tab switch. The gate already holds the two measures that do not miss it, so each
 // pane that gates publishes their union as window.__rompPaneHidden on the gate's own events (the observer's
-// callback, visibilitychange, the release) and never on a timer. The shim reads the flag when it is a boolean
-// and keeps the probe as the boot fallback: until the first event the flag is unset, and the probe is right
-// then. `w` is the page's window (globalThis in a page); the tests hand in a stand-in.
+// callback, visibilitychange, the release) and never on a timer. The shim says hidden when EITHER its probe or
+// a published word of true says so: Firefox is Chromium's mirror image (a display:none iframe's viewport reads
+// 0 there, and its IntersectionObserver does not run, so the word goes stale while the probe is right), and the
+// union is right in both. Until the first event the flag is unset, and the probe alone decides. `w` is the
+// page's window (globalThis in a page); the tests hand in a stand-in.
+//
+// NOTHING is published until the observer has spoken (round 3 of the same fold). A page loaded in a
+// background tab gets no observer callback until the tab's first rendering step after its return, so the
+// return's visibilitychange arrived first and published the visible verdict for a pane that was
+// display:none, one rendering step before the observer's first entry corrected it, and the shim preferred
+// that boolean over its probe, which read innerWidth 0 and was right. While the word is null the probe
+// decides on both arms: a pane hidden since load reads 0, a shown pane reads its size, and a page with no
+// IntersectionObserver keeps the probe for good rather than reading hidden forever after its first tab hide.
 export interface PaneHiddenHost { __rompPaneHidden?: boolean; }
-export function publishPaneHidden(docHidden: boolean, intersecting: boolean, w: PaneHiddenHost = globalThis as PaneHiddenHost): boolean {
+export function publishPaneHidden(docHidden: boolean, intersecting: boolean | null, w: PaneHiddenHost = globalThis as PaneHiddenHost): boolean | null {
+  if (intersecting === null) return null;   // the observer has not spoken: nothing published, the probe decides
   const hidden = docHidden || !intersecting;
   w.__rompPaneHidden = hidden;
   return hidden;

@@ -367,7 +367,7 @@ function releaseList(): void {
 // gate), and only the REBUILD waits while nobody can see the list. Two measures, because each is blind to
 // the other's case: the IntersectionObserver sees a display:none pane but never fires while the TAB is
 // hidden, and document.hidden sees the tab but never a display:none pane. Both gate, both events release.
-let paneVisible = true;
+let paneVisible: boolean | null = null;   // the observer's last word; null until it speaks (the gate reads null as on screen; the shim's word waits for it: paint-gate.ts)
 let paneDirty = false;
 function watchPaneVisibility(list: HTMLElement): void {
   if (typeof IntersectionObserver === "undefined") return;   // no observer: the tab's visibility alone gates

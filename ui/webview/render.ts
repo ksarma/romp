@@ -83,6 +83,7 @@ import { dragSlotIndex } from "./dragslot";
 import { linkifyPrRefs, senderPrRepo, postalSenderHost } from "./pr-links";
 import { perfFrameHandler } from "./perf-telemetry";
 import { listenForFrames } from "./frame-listener";
+import { watchChatVisibility, browserChatVisibilityDeps } from "./chat-visibility";   // the shim's hidden word for the chat page (no paint gate here)
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -17417,6 +17418,16 @@ setupSettings();
 })();
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
+// The chat page's word for the kernel's pane shim (chat-visibility.ts): the shim gates its stale banner on
+// its zero-viewport probe OR the word a pane publishes (paint-gate.ts publishPaneHidden), and in Chromium the
+// probe misses a pane the shell hides AFTER the user has looked at it (the iframe keeps its size), the phone
+// shell's every tab switch away from the chat. The chat gates no paint, so it has none of paint-gate.ts's
+// wiring; this is the same two measures (the tab's visibility, an IntersectionObserver over the page's body)
+// published on their own events, never on a timer and never from the shell's panes message (panesOn above is
+// a routing cache; the fork's earlier hold read the shell's word and steer 2 of the 2026-09-08 fold replaced
+// that with each frame's own visibility). Standalone /chat and the VS Code webview publish too; nothing reads
+// it there.
+watchChatVisibility(document.body, browserChatVisibilityDeps());
 // The chat document hosts the viewer itself (openPath), so it boots the viewer's listener with the
 // same WS poster the feed hands it: Edit/Save round-trips and the GitHub-link ask ride post(), and
 // the kernel's replies come back as window MessageEvents via the pane shim — either document, one

@@ -1815,12 +1815,16 @@ class TimelinePanel {
   // or the reverse) → that criterion's own event releases later. A shown tip or a pressed pointer keeps its
   // own hold and its own release repaints; the tick re-arm is safe under both (it self-gates).
   // The shim's word (the 2026-09-08 fold's round-2 ruling; ui/webview/paint-gate.ts publishPaneHidden is the panes'
-  // copy of this): the kernel's pane shim gates its stale banner on window.__rompPaneHidden when it is a boolean and
-  // on its zero-viewport probe otherwise, and the probe misses a pane hidden after a first show (the iframe keeps
-  // its size). Published on the hold's own events (visibilitychange, the observer's callback), never on a timer;
-  // unset until the first one, when the probe is right.
+  // copy of this): the kernel's pane shim gates its stale banner on its zero-viewport probe OR a published
+  // window.__rompPaneHidden of true, and in Chromium the probe misses a pane hidden after a first show (the iframe
+  // keeps its size). Published on the hold's own events (visibilitychange, the observer's callback), never on a timer;
+  // and NOT until the observer has spoken (round 3): a page loaded in a background tab gets no observer callback
+  // before the tab's first rendering step after its return, so the return's visibilitychange would publish the
+  // visible verdict for a display:none pane one step early, and the shim would prefer it over its probe, which
+  // reads innerWidth 0 and is right. While _paneIntersecting is null (unspoken, or no observer) the probe decides.
   _publishPaneHidden() {
     if (typeof window === 'undefined') return;
+    if (this._paneIntersecting === null) return;
     const docHidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     window.__rompPaneHidden = docHidden || this._paneIntersecting === false;
   }

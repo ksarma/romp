@@ -804,6 +804,21 @@ class HelpAndDocsAgree(unittest.TestCase):
             self.assertIn("Input/output error", ref[bootout - 1500:m.start()], "the reason for the wait")
         self.assertNotIn("launchctl bootstrap gui/", " ".join(src.split()))
 
+    def test_the_drop_in_key_paragraph_ends_on_the_fork_s_key_free_guidance(self):
+        # upstream's paragraph on a key that reaches a supervised manager through a systemd drop-in or a plist
+        # entry closed by telling the operator to move it into service.env, which this fork's own file-mode
+        # section forbids (API keys never go in it) and whose kernel reports such a line as a problem under
+        # ROMP_EXPECTED_AUTH=key (sdk_backend._warn_credential_lines_in_env_file). The 2026-09-08 fold's round 3
+        # re-ended it on the fork's guidance: remove the key from the drop-in; sessions then use Claude Code's
+        # own credential, or a provider. The anchor it points at is the file-mode heading.
+        ref = self._read("docs/reference.md")
+        flat = " ".join(ref.split())
+        self.assertNotIn("Move such a key into `service.env`", flat)
+        self.assertIn("Remove such a key from the drop-in rather than moving it into `service.env`, which stays key-free "
+                      "(see [the file mode](#api-keys-on-disk-the-file-mode)); sessions then use Claude Code's own "
+                      "credential, or a provider named there.", flat)
+        self.assertIn("\n### API keys on disk: the file mode\n", ref, "the heading the anchor resolves to")
+
     def test_the_docs_show_the_command_mode_report_with_placeholder_fingerprints(self):
         ref = self._read("docs/reference.md")
         for line in ("key source  command (ROMP_CREDENTIAL_COMMAND is set)", "candidates  hp <- selected, lp",

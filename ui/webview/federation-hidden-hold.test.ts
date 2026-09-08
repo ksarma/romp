@@ -23,7 +23,13 @@
 //   - the gate PUBLISHES its word for the kernel's pane shim (window.__rompPaneHidden, paint-gate.ts
 //     publishPaneHidden; the round-2 ruling of the 2026-09-08 fold): the shim's stale-banner gate had only the
 //     zero-viewport probe, which misses a pane hidden after a first show, so every pane that gates publishes
-//     document.hidden OR the observer's word on the gate's own events, and the shim keeps the probe for boot.
+//     document.hidden OR the observer's word on the gate's own events, and the shim says hidden when EITHER its
+//     probe or the word says so (round 3: Firefox zeroes a hidden iframe's viewport and does not run its observer,
+//     Chromium keeps the size and runs it; the union is right in both, a word-first read is not);
+//   - nothing is published before the observer's first word (round 3): a return's visibilitychange must not say
+//     visible for a display:none pane one rendering step before the observer's first entry, so the word starts
+//     null and the probe decides until it speaks. The chat page (render.ts, no paint gate) publishes the same
+//     word through chat-visibility.ts (chat-visibility.test.ts runs it, in Chromium too).
 // The federation half runs against a bare FederationManager over a window stand-in (as the other executed
 // federation tests do); the pane half runs the gate's pure decision through a harness of fleet.ts's render()
 // and releasePaint() lines, which outline-visibility.test.ts and feed-hidden-paint.test.ts pin at source; the
@@ -81,11 +87,11 @@ const bars = (n: number, now: number) => ({ type: "bars", now, turns: { [SID]: A
 const askIds = (f: any) => (f.asks || []).map((a: any) => a.itemId);
 
 /** A pane's gate: fleet.ts's render() and releasePaint() line for line over the pure decision (the source pins
- *  at the end hold fleet.ts and feed.ts to these lines). `visible` is the observer's last word, true until it
- *  speaks (`let paneVisible = true;`); `hidden` is document.hidden; `painted` the list's child count; `host` the
- *  window stand-in the shim's word is published on (releasePaint's first line and the hidden arm of visibilitychange). */
+ *  at the end hold fleet.ts and feed.ts to these lines). `visible` is the observer's last word, null until it
+ *  speaks (`let paneVisible: boolean | null = null;`); `hidden` is document.hidden; `painted` the list's child count;
+ *  `host` the window stand-in the shim's word is published on (releasePaint's first line and the hidden arm of visibilitychange). */
 function paneHarness() {
-  const st = { hidden: false, visible: true, painted: 0, dirty: false, frames: 0, paints: 0, lastPainted: null as any, host: {} as PaneHiddenHost };
+  const st = { hidden: false, visible: null as boolean | null, painted: 0, dirty: false, frames: 0, paints: 0, lastPainted: null as any, host: {} as PaneHiddenHost };
   let model: any = null;
   function render() {
     if (paintHeld(st.hidden, st.visible, st.painted > 0)) { st.dirty = true; return; }
@@ -145,8 +151,9 @@ test("hide after show: the iframe keeps its size and no resize comes; the observ
 });
 
 test("boot default: a pane hidden since load paints its first content through, then holds until the observer reports it on screen", () => {
-  // steer 2: no zero-viewport probe; the pane is visible until the observer speaks (`let paneVisible = true;`) and
-  // the first content is never withheld (paint-gate.ts), so the loader retires on it whatever the visibility
+  // steer 2: no zero-viewport probe; the observer's word is null until it speaks (`let paneVisible: boolean | null =
+  // null;`, which the gate reads as on screen) and the first content is never withheld (paint-gate.ts), so the
+  // loader retires on it whatever the visibility
   const p = paneHarness();
   p.frame(feed(["a1"], 1000));
   assert.equal(p.st.paints, 1, "the first content paints before the observer's first callback");
@@ -183,6 +190,39 @@ test("the shim's word: unset until the gate's first event, then the observer's w
   p.tab("visible");
   assert.equal(p.st.host.__rompPaneHidden, false, "the tab's return publishes on visibilitychange");
   assert.equal(typeof p.st.host.__rompPaneHidden, "boolean", "a boolean, the type the shim tests for");
+});
+
+test("before the observer's first word a visibilitychange publishes nothing, on either arm; after it, both arms publish (round 3)", () => {
+  // A page loaded in a background tab gets no IntersectionObserver callback until the tab's first rendering step
+  // after its return. The return's visibilitychange therefore ran with the observer's word still at its `true`
+  // default and published false for a pane that was display:none, one rendering step before the observer's first
+  // entry said otherwise; the shim preferred that boolean over its probe, which read innerWidth 0 and was right.
+  // The word starts null now and nothing is published until the observer has spoken: the probe decides at boot.
+  const p = paneHarness();
+  p.frame(feed(["a1"], 1000));
+  p.tab("visible");
+  assert.equal(typeof p.st.host.__rompPaneHidden, "undefined", "the return before the observer's first entry publishes nothing");
+  p.tab("hidden");
+  assert.equal(typeof p.st.host.__rompPaneHidden, "undefined", "nor does the hidden arm");
+  p.tab("visible");
+  assert.equal(p.st.paints, 1, "the paint side is as before: the first content painted through and nothing is owed");
+  p.observer(false);                                   // the observer's first entry: display:none
+  assert.equal(p.st.host.__rompPaneHidden, true, "the first entry publishes");
+  p.tab("hidden"); assert.equal(p.st.host.__rompPaneHidden, true);
+  p.tab("visible"); assert.equal(p.st.host.__rompPaneHidden, true, "both arms publish now, and the return of a display:none pane still reads hidden");
+  p.observer(true); assert.equal(p.st.host.__rompPaneHidden, false);
+  p.tab("hidden"); assert.equal(p.st.host.__rompPaneHidden, true, "the hidden arm");
+  p.tab("visible"); assert.equal(p.st.host.__rompPaneHidden, false, "the visible arm");
+  // the pure publisher: null is "not yet", never a verdict
+  const w: PaneHiddenHost = {};
+  assert.equal(publishPaneHidden(false, null, w), null);
+  assert.equal(publishPaneHidden(true, null, w), null);
+  assert.equal(typeof w.__rompPaneHidden, "undefined");
+  // a page with no IntersectionObserver never publishes: the probe stands, as before the publisher existed
+  const bare = paneHarness();
+  bare.frame(feed(["a1"], 1000)); bare.tab("hidden"); bare.tab("visible");
+  assert.equal(typeof bare.st.host.__rompPaneHidden, "undefined", "no observer, no word");
+  assert.equal(bare.st.paints, 1, "...and its paint is gated by the tab alone, as before");
 });
 
 test("a standalone page (no iframe) is never held while its tab is visible; its tab's own hiding holds it", () => {
@@ -263,7 +303,8 @@ test("the timeline's lanes and bars reach the pane in wire order, unheld; the pa
 test("the chat is never held; the feed pane holds its PAINT like the Outline and applies its payload whatever the visibility", () => {
   // steer 2 changed the feed's half: the federation hold exempted the feed pane's frames, #1016 gates its paint
   // (feed-hidden-paint.test.ts runs that gate) while applyFeedPayload never looks at the visibility
-  assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paint-gate"), "render.ts (the chat) has no paint gate: every frame paints");
+  assert.ok(!RENDER.includes("paintHeld(") && !RENDER.includes("paintReleased(") && !/from "\.\/paint-gate"/.test(RENDER),
+    "render.ts (the chat) has no paint gate: every frame paints (its shim word comes through chat-visibility.ts: the publisher pins below)");
   assert.equal(FEED.split("paintHeld(").length - 1, 1, "the feed gates once, in render()");
   assert.equal(FLEET.split("paintHeld(").length - 1, 1, "so does the Outline");
   const apply = /^function applyFeedPayload\([\s\S]*?\n\}/m.exec(FEED)![0];
@@ -290,11 +331,10 @@ test("source pins: the release events are the observer's callback and visibility
   }
   // feed.ts's third site: a bell jump settles the owed paint on the shell's word (feed-hidden-paint.test.ts pins the line)
   assert.match(FEED, /if \(paintDirty\) \{ feedIntersecting = true; releasePaint\(\); \}/);
-  // perf-telemetry's hidden_pane row is still the zero-viewport probe (steer 2 took its read of the federation hold's
-  // word): it under-reports a pane hidden after a first show, and does not read the gate's word the shim now does
-  // (a follow-up for its owner, not this fold's)
-  assert.match(PERF, /hiddenPane: \(\) => \{ try \{ return w\.parent !== w && \(w\.innerWidth === 0 \|\| w\.innerHeight === 0\); \} catch \(e\) \{ return false; \} \},/);
-  assert.ok(!PERF.includes("__rompPaneHidden"));
+  // perf-telemetry's hidden_pane row is the shim's union: the zero-viewport probe OR the pane's published word
+  // (round 3; steer 2 had left it on the probe alone, which under-reports a pane hidden after a first show in
+  // Chromium). perf-telemetry.test.ts executes the read.
+  assert.match(PERF, /hiddenPane: \(\) => \{ try \{ return \(w\.parent !== w && \(w\.innerWidth === 0 \|\| w\.innerHeight === 0\)\) \|\| w\.__rompPaneHidden === true; \} catch \(e\) \{ return false; \} \},/);
 });
 
 test("the Waiting pane (fork-only, hidden by default on desktop) gates its paint like the Outline: the payload applied, the rebuild owed until shown", () => {
@@ -320,31 +360,60 @@ test("source pins: every pane that gates publishes the shim's word from the gate
     assert.equal(src.split("publishPaneHidden(").length - 1, 2, name + ": two publish sites, the release and the hidden arm; the observer's callback and the revealCard settle go through the release");
     assert.ok(!/set(Interval|Timeout)\([^\n]*publishPaneHidden/.test(src), name + ": never on a timer");
     assert.ok(!src.includes("__rompPaneHidden"), name + ": the flag's name is paint-gate.ts's, not the pane's");
+    assert.match(src, new RegExp("^let " + vis + ": boolean \\| null = null;", "m"), name + ": the observer's word starts null (round 3), so nothing is published before it speaks");
   }
-  assert.match(GATE, /export function publishPaneHidden\(docHidden: boolean, intersecting: boolean, w: PaneHiddenHost = globalThis as PaneHiddenHost\): boolean \{\s*\n\s*const hidden = docHidden \|\| !intersecting;\s*\n\s*w\.__rompPaneHidden = hidden;/,
-    "the word is the union of both measures, written on the page's window as a boolean");
+  assert.match(GATE, /export function publishPaneHidden\(docHidden: boolean, intersecting: boolean \| null, w: PaneHiddenHost = globalThis as PaneHiddenHost\): boolean \| null \{\s*\n\s*if \(intersecting === null\) return null;[^\n]*\n\s*const hidden = docHidden \|\| !intersecting;\s*\n\s*w\.__rompPaneHidden = hidden;/,
+    "the word is the union of both measures, written on the page's window as a boolean, and only once the observer has spoken");
   assert.equal(GATE.split("__rompPaneHidden").length - 1, 3, "the name: the interface, the write, the comment's mention of the shim's read");
   assert.ok(!FED.includes("__rompPaneHidden"), "federation.ts publishes nothing (steer 2): the gate does");
+  // the chat page (round 3): no gate, the same word, from chat-visibility.ts, installed once on the page's body
+  const CHATVIS = read("ui", "webview", "chat-visibility.ts");
+  assert.match(RENDER, /^import \{ watchChatVisibility, browserChatVisibilityDeps \} from "\.\/chat-visibility";/m, "render.ts imports the chat's publisher");
+  assert.match(RENDER, /^watchChatVisibility\(document\.body, browserChatVisibilityDeps\(\)\);/m, "installed at top level, over the page's body (the element the shell's display:none takes the box from)");
+  assert.equal(RENDER.split("watchChatVisibility(").length - 1, 1, "once");
+  assert.ok(!RENDER.includes("__rompPaneHidden") && !CHATVIS.includes("__rompPaneHidden"), "the flag's name stays paint-gate.ts's");
+  assert.match(CHATVIS, /import \{ publishPaneHidden, type PaneHiddenHost \} from "\.\/paint-gate";/, "through the shared publisher");
+  assert.ok(!/set(Interval|Timeout)/.test(CHATVIS), "never on a timer");
+  assert.ok(!CHATVIS.includes('"panes"') && !CHATVIS.includes("romp:") && !CHATVIS.includes("panesOn"), "from the frame's own visibility, never the shell's panes message");
+  assert.match(KERNEL, /_shim\("chat", v, caps=READY_GATE_CAP\)/, "the chat page carries the shim that reads the word");
 });
 
-test("both ends: the kernel's pane shim reads the published word when it is a boolean and keeps the zero-viewport probe as the boot fallback (the kernel fixer's half of the round-2 ruling)", () => {
+test("both ends: the kernel's pane shim says hidden when its zero-viewport probe OR the published word says so (round 2's read, made the union in round 3)", () => {
   // tests/test_kernel_disconnect_banner.py pins the shim's text; this cross-pin holds the two halves together: a
-  // publisher nobody reads, or a read nobody publishes, fails here whichever side changes.
+  // publisher nobody reads, or a read nobody publishes, fails here whichever side changes. The union, not the word
+  // first: Firefox zeroes a display:none iframe's viewport and does not run its IntersectionObserver, so there the
+  // word goes stale while the probe is right; Chromium is the reverse (chat-visibility.test.ts measures both).
   const shim = /function paneHidden\(\)\{[^\n]*/.exec(KERNEL)?.[0] ?? "";
   assert.ok(shim, "kernel.py has the shim's paneHidden");
-  assert.match(shim, /__rompPaneHidden/, "the shim reads the flag the gate publishes");
-  assert.match(shim, /window\.innerWidth===0\|\|window\.innerHeight===0/, "and keeps upstream's probe for the boot fallback (unset flag)");
+  assert.match(shim, /\(window\.parent!==window&&\(window\.innerWidth===0\|\|window\.innerHeight===0\)\)\|\|window\.__rompPaneHidden===true/, "the probe OR a published word of true");
+  assert.doesNotMatch(shim, /typeof window\.__rompPaneHidden==="boolean"\)return/, "never the word first");
   assert.match(KERNEL, /function raiseStale\(why\)\{if\(paneHidden\(\)\)\{staleDiag\("stale-suppressed-hidden",why\);return;\}/, "the gate is at raise time, as before");
 });
 
-test("the timeline pane publishes the word too, from its own hold's events (CODE REQUEST ui -> coordinator: ui/romp-timeline-view.js is not this fixer's file; red until it lands)", () => {
+test("the timeline pane publishes the word too, from its own hold's events, and not before its observer has spoken", () => {
   // The timeline's paint hold (upstream #1016) is its own: _releasePaintHold on visibilitychange and the observer's
   // intersecting entries, keyed on _hiddenForPaint. Its shim has the same probe and the same blind spot, so the same
-  // union (document hidden OR the observer's last word) is published from the constructor's two handlers.
+  // union (document hidden OR the observer's last word) is published from the constructor's two handlers, and (round
+  // 3) skipped while _paneIntersecting is still null, the same rule as the panes': the probe decides at boot.
   const ctor = TL.slice(TL.indexOf("this._onVis = "), TL.indexOf("// controls row BELOW the time axis"));
   assert.ok(ctor.length > 0, "the constructor's hold wiring");
+  assert.match(TL, /this\._paneIntersecting = null;/, "the observer's word starts null");
   assert.match(ctor, /this\._onVis = \(\) => \{[^\n]*_publishPaneHidden\(\)/, "visibilitychange publishes, then releases");
   assert.match(ctor, /new IntersectionObserver\(\(entries\) => \{[\s\S]*?_publishPaneHidden\(\)[\s\S]*?\}\);/, "the observer's callback publishes its word, intersecting or not, before the release");
   assert.match(TL, /window\.__rompPaneHidden = /, "written on the page's window, the name the shim reads");
-  assert.match(TL, /_publishPaneHidden\(\) \{/, "one method, the union of both measures");
+  assert.match(TL, /_publishPaneHidden\(\) \{\n\s*if \(typeof window === 'undefined'\) return;\n\s*if \(this\._paneIntersecting === null\) return;/, "one method, the union of both measures, silent until the observer speaks");
+  // executed on the method itself, over a window stand-in
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { TimelinePanel } = require(path.join(ROOT, "ui", "romp-timeline-view.js"));
+  const v: any = Object.create(TimelinePanel.prototype);
+  v._paneIntersecting = null;
+  const { win } = makeWindow({ framed: true, innerWidth: 1200, innerHeight: 800 });
+  withWindow(win, () => {
+    v._publishPaneHidden();
+    assert.equal(typeof win.__rompPaneHidden, "undefined", "a visibilitychange before the observer's first entry publishes nothing");
+    v._paneIntersecting = false; v._publishPaneHidden();
+    assert.equal(win.__rompPaneHidden, true, "the first entry publishes: display:none after a show");
+    v._paneIntersecting = true; v._publishPaneHidden();
+    assert.equal(win.__rompPaneHidden, false, "shown");
+  });
 });

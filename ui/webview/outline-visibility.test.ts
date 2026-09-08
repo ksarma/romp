@@ -23,7 +23,9 @@ test("render() defers while the list is off screen, lets the first content throu
   assert.match(SRC, /function render\(\) \{[\s\S]*?if \(!paneWatching\) \{ paneWatching = true; watchPaneVisibility\(list\); \}/);
   assert.match(SRC, /if \(paintHeld\(document\.hidden, paneVisible, list\.childElementCount > 0\)\) \{ paneDirty = true; return; \}/);
   assert.match(SRC, /if \(typeof IntersectionObserver === "undefined"\) return;/, "no observer → the tab's visibility alone gates");
-  assert.match(SRC, /let paneVisible = true;/, "visible until told otherwise: the first paint is never withheld");
+  // the fork's line (2026-09-08 fold, round 3): the observer's word starts null so the shim's word is not published
+  // before it speaks (federation-hidden-hold.test.ts); the gate reads null as upstream's `let paneVisible = true;`
+  assert.match(SRC, /let paneVisible: boolean \| null = null;/, "on screen until told otherwise: the first paint is never withheld");
 });
 
 test("the gate includes the TAB's visibility: an on-screen pane in a hidden tab holds (the observer-only gate did not)", () => {

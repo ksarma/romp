@@ -65,3 +65,24 @@ test("the shim's word: the union of both measures, published as a boolean on the
     assert.equal(typeof w.__rompPaneHidden, "boolean");
   }
 });
+
+test("the observer's word is null until it speaks: the paint gate reads null as on screen; the publisher publishes NOTHING for it (round 3)", () => {
+  // A page loaded in a background tab gets no IntersectionObserver callback until the tab's first rendering step
+  // after its return, so the return's visibilitychange ran before the observer's first word. With the word at a
+  // `true` default it published false for a pane that was display:none, one rendering step before the observer's
+  // entry corrected it, and the shim preferred that boolean over its probe (innerWidth 0, right). The word starts
+  // null now: for the paint that measure holds nothing (the first content painted through anyway), and the
+  // publisher stays silent, so the probe decides at boot, on both arms of visibilitychange.
+  assert.equal(paintHeld(false, null, true), false, "unspoken observer, visible tab: the paint proceeds, as with the old true default");
+  assert.equal(paintHeld(true, null, true), true, "...the tab's hiding still holds it");
+  assert.equal(paintHeld(false, null, false), false);
+  assert.equal(paintReleased(true, false, null), true, "a return with the observer unspoken releases the owed paint");
+  assert.equal(paintReleased(true, true, null), false);
+  const w: PaneHiddenHost = {};
+  assert.equal(publishPaneHidden(false, null, w), null, "the visible arm before the observer's word: nothing");
+  assert.equal(publishPaneHidden(true, null, w), null, "the hidden arm before it: nothing either (a page with no observer would otherwise read hidden for good)");
+  assert.equal(typeof w.__rompPaneHidden, "undefined", "unset: the shim's probe decides");
+  assert.equal(publishPaneHidden(false, false, w), true, "the observer's first word publishes");
+  assert.equal(publishPaneHidden(false, true, w), false);
+  assert.equal(publishPaneHidden(true, true, w), true, "and the tab's arms publish once it has spoken");
+});

@@ -141,7 +141,9 @@ test("render() is gated first, on the shared pure decision, and nothing else in 
   assert.match(SRC, /function render\(\) \{\n  const list = document\.getElementById\("feed-list"\)!;\n  if \(!feedWatching\) \{ feedWatching = true; watchFeedVisibility\(list\); \}\n  if \(paintHeld\(document\.hidden, feedIntersecting, list\.childElementCount > 0\)\) \{ paintDirty = true; return; \}\n  pruneTip\(\);/,
     "the gate precedes every paint-side step (pruneTip, applyFollowMove, the footer, the columns)");
   assert.equal(SRC.split("paintHeld(").length - 1, 1, "one gate, in render(): no other path is withheld");
-  assert.match(SRC, /let feedIntersecting = true;/, "visible until the observer says otherwise: no observer → the tab alone gates");
+  // the fork's line (2026-09-08 fold, round 3): the observer's word starts null so the shim's word is not published
+  // before it speaks (federation-hidden-hold.test.ts); the gate reads null as upstream's `let feedIntersecting = true;`
+  assert.match(SRC, /let feedIntersecting: boolean \| null = null;/, "on screen until the observer says otherwise: no observer → the tab alone gates");
 });
 
 test("the flip is skipped exactly once after a release, and the painted key sequences are still the next baseline", () => {

@@ -90,14 +90,19 @@ class DisconnectBanner(unittest.TestCase):
         # hides after the user has looked at it, the phone shell's every tab switch. The pane's paint gate
         # (ui/webview/paint-gate.ts, upstream #1016's hold, steer 2 of the 2026-09-08 fold) holds the two
         # measures that do not miss it and publishes their union as window.__rompPaneHidden on its own events
-        # (publishPaneHidden: the observer callback, visibilitychange, the release; never a timer). The shim
-        # reads that word when it is a boolean and keeps the probe as the boot fallback (the fold's round 2:
-        # the fork's 2026-09-06 read, given a publisher again; the fold's first cut had dropped the read and
-        # pinned the probe alone, which re-opened the flap for every re-hidden pane).
+        # (publishPaneHidden: the observer callback, visibilitychange, the release; never a timer; the chat page
+        # through ui/webview/chat-visibility.ts). Firefox is the mirror image: a display:none iframe's viewport
+        # reads 0 there (the probe is right) but its IntersectionObserver does not run (the word goes stale), so
+        # the shim says hidden when EITHER says so at raise time (the fold's round 2 gave the fork's 2026-09-06
+        # read a publisher again; round 3 made the read the union after a Firefox probe showed a boolean-first
+        # read raising from a hidden pane there; the fold's first cut had pinned the probe alone, which
+        # re-opened the flap for every re-hidden pane in Chromium).
         js = km._shim("feed")
-        self.assertIn('function paneHidden(){try{if(typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden;'
-                      "return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}", js,
-                      "the published word first, the zero-viewport probe as the boot fallback")
+        self.assertIn("function paneHidden(){try{return (window.parent!==window&&(window.innerWidth===0||window.innerHeight===0))"
+                      "||window.__rompPaneHidden===true;}catch(e){return false;}}", js,
+                      "hidden when either says so: the zero-viewport probe, or a published word of true")
+        self.assertNotIn('typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden', js,
+                         "a stale word must never override a probe that says zero viewport (Firefox)")
         gate = open(os.path.join(os.path.dirname(HERE), "ui", "webview", "paint-gate.ts"), encoding="utf-8").read()
         self.assertIn("export function publishPaneHidden(", gate, "the publisher, by name, in the pane's paint gate")
         self.assertRegex(gate, r"\.__rompPaneHidden = ", "publishing the flag the shim reads, under that exact name")

@@ -4721,7 +4721,7 @@ function ensureHostLoad(list: HTMLElement): void {
 // double rAF per moved card onto the return frame — and the hidden-tab pile-up was the freeze. NOT the
 // hover-freeze queue below: that holder withholds the payload itself, and a confirming payload held back
 // lets the follow-move backstop revert a move the kernel had already confirmed.
-let feedIntersecting = true;   // #feed-list on screen by the observer's measure; true where there is no observer
+let feedIntersecting: boolean | null = null;   // the observer's last word on #feed-list; null until it speaks (the gate reads null as on screen; the shim's word waits for it: paint-gate.ts)
 let paintDirty = false;        // a render was withheld while the pane could not be seen
 let skipFlipOnce = false;      // the release paint snaps: cards that moved while away have no old spot to glide from
 let feedWatching = false;

@@ -46713,15 +46713,18 @@ try{window.dispatchEvent(new Event("romp:wsfresh"));}catch(e){}}   // the pane's
 // checked at RAISE time (there is no event for a CSS display flip). The hidden pane still reconnects in
 // the background; if it is shown again while genuinely stale, its watchdog re-raises within one tick,
 // now visible, and the resync retires it exactly as before.
-// The probe is right for a pane hidden SINCE LOAD only: a display:none iframe keeps the size of its last
-// show (Chromium: innerWidth 0 while never shown, 600 once shown and hidden again), so it misses every pane
+// In Chromium the probe is right for a pane hidden SINCE LOAD only: a display:none iframe keeps the size of
+// its last show (innerWidth 0 while never shown, 600 once shown and hidden again), so it misses every pane
 // the shell hides after the user has looked at it, which is the phone shell's every tab switch. The pane's
-// paint gate holds the two measures that do not miss it (document.hidden, its IntersectionObserver) and
+// paint gate holds the two measures that do not miss it there (document.hidden, its IntersectionObserver) and
 // publishes their union as window.__rompPaneHidden on its own events (ui/webview/paint-gate.ts
-// publishPaneHidden: the observer callback, visibilitychange, the release; never a timer). The shim reads
-// that word when it is a boolean and falls back to the probe until the first event publishes one (the
-// 2026-09-08 fold, round 2: the fork's 2026-09-06 read given a publisher again).
-function paneHidden(){try{if(typeof window.__rompPaneHidden==="boolean")return window.__rompPaneHidden;return window.parent!==window&&(window.innerWidth===0||window.innerHeight===0);}catch(e){return false;}}
+// publishPaneHidden, ui/webview/chat-visibility.ts for the chat: the observer callback, visibilitychange, the
+// release; never a timer; nothing until the observer has spoken). Firefox is the mirror image: a display:none
+// iframe's viewport reads 0 (the probe is right) but its IntersectionObserver does not run, so the word goes
+// stale at its last verdict. So the shim says hidden when EITHER says so, at raise time: the probe, or a
+// published word of true (the 2026-09-08 fold, rounds 2 and 3: the fork's 2026-09-06 read given a publisher
+// again, then the union once the Firefox probe showed a boolean-first read would raise from a hidden pane there).
+function paneHidden(){try{return (window.parent!==window&&(window.innerWidth===0||window.innerHeight===0))||window.__rompPaneHidden===true;}catch(e){return false;}}
 // every raise (and every hidden-pane suppression) leaves a clientDiag breadcrumb naming the pane, the
 // PATH that raised (reconnect/foreground), the socket state and the quiet gap — so the next "the banner
 // keeps flapping" report is diagnosable from client-diag.jsonl instead of re-hypothesized (the user
