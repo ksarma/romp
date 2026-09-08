@@ -82,7 +82,7 @@ function bundle(): string {
 /** The sheet's rules the layout lives under: the viewer's card, body and prose, the buttons, and the whole file-comments block. */
 function sheet(): string {
   const r = (sel: string): string => rule(FEED, sel, "feed.css");
-  return [r(".fileview"), r(".fileview-body"), r(".fileview-md"), r(".fileview-md p"), r(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4"), r(".fileview-btn"), fcBlock(FEED, "feed.css")].join("\n");
+  return [r(".fileview"), r(".fileview-body"), r(".fileview-md"), r(".fileview-md p"), r(".fileview-md h1, .fileview-md h2, .fileview-md h3, .fileview-md h4, .fileview-md h5, .fileview-md h6"), r(".fileview-btn"), fcBlock(FEED, "feed.css")].join("\n");
 }
 // the viewer's own ancestry: `.fileview` (the card) > `.fileview-main` (the row) > `.fileview-body` + the aside the panel mounts
 const PAGE = `<!DOCTYPE html><html><head><meta charset=utf-8><style>

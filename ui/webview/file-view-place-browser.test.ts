@@ -75,10 +75,11 @@ test("in a browser, the real module: Rendered to Raw to Rendered returns to the 
       assert.equal(back.view, "rendered", cell + ": the Rendered view is back");
       assert.equal(back.text, P40, cell + ": and paragraph 40 is the top block again (before the slice: paragraph 53 at 900px, 45 at 380px)");
       near(back.top, start.top, cell + ": at the same height");
-      // the plan's text asked for the same scrollTop across the round trip; the passage is what the reader keeps, and the Raw
-      // view is the taller of the two (monospace rows, a row per blank line), so its scrollTop is larger by design; the
-      // Rendered layout is the same on the way back, so there the number returns with the passage
-      assert.ok(inRaw.scrollTop > start.scrollTop, cell + `: the Raw view's scrollTop is larger (rendered ${start.scrollTop}, raw ${inRaw.scrollTop})`);
+      // the plan's text asked for the same scrollTop across the round trip; the passage is what the reader keeps, and the two
+      // views are not the same height (the Raw view was the taller until Slice 3 of plans/markdown-viewer.md gave the prose
+      // 15px in an 80ch column, which is taller than the 12px rows at the pane's width at 900), so the Raw scrollTop differs
+      // by design; the Rendered layout is the same on the way back, so there the number returns with the passage
+      assert.notEqual(inRaw.scrollTop, start.scrollTop, cell + `: the Raw view's scrollTop differs (rendered ${start.scrollTop}, raw ${inRaw.scrollTop})`);
       near(back.scrollTop, start.scrollTop, cell + ": back in Rendered the scrollTop is back too", 2);
       assert.deepEqual(errors, [], cell + ": no script error");
       await page.close();
@@ -216,8 +217,10 @@ test("in a browser, the real module: a reader partway into the top block keeps t
       keepsFraction(opened, start.frac, `open ${i} (before the fix: the pixel depth held, the fraction halved: 0.48 after the first open, 0.24 after the second)`);
       near(opened.top, start.top, `open ${i}: paragraph 44's top edge is back where the scene started (before the fix: 40px lower after the first toggle, 60 after the second)`, 2);
     }
-    // a pane drag (the viewport, here) with the aside closed, 30px into paragraph 44: the fraction both ways; at 900px the
+    // a pane drag (the viewport, here) with the aside closed, 30px into paragraph 44: the fraction both ways; at 600px the
     // block is shorter than the pixel depth, so a pixel hold would leave it wholly above the edge with paragraph 45 on top
+    // (the paragraph is three lines at 900px since Slice 3 of plans/markdown-viewer.md, two before, so the fraction there
+    // is below a half now)
     paints = await page.evaluate(() => (window as any).__paints);
     await closePanel(page);
     await paintsReach(page, paints + 1);
@@ -225,7 +228,7 @@ test("in a browser, the real module: a reader partway into the top block keeps t
     await page.evaluate(() => { document.querySelector(".fileview-body")!.scrollTop += 30; });
     await frames(page, 3);
     const wide = await depthInto(page, { text: "Paragraph 44:" });
-    assert.ok(wide.isTop && wide.frac > 0.5 && wide.frac < 1, `the drag starts 30px into paragraph 44 at 900px (top ${wide.top}, height ${wide.height})`);
+    assert.ok(wide.isTop && wide.frac > 0.3 && wide.frac < 1, `the drag starts 30px into paragraph 44 at 900px (top ${wide.top}, height ${wide.height})`);
     for (const width of [600, 900, 600, 900]) {
       paints = await page.evaluate(() => (window as any).__paints);
       await page.setViewportSize({ width, height: 600 });

@@ -674,41 +674,54 @@ test("both sheets: the step table maps every TEXT_SIZES entry to --fv-scale on t
     }
     const steps = css.match(/\.fileview\[data-fv-text="\d+"\]/g) || [];
     assert.equal(steps.length, TEXT_SIZES.length, name + ": no step the table does not hold");
-    // the readers: the prose (em of its parent, so the page's size times the scale), its code, the Raw view's rows and gutter
-    assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("font-size: calc(1em * var(--fv-scale, 1))"), name + ": the prose reads it");
-    assert.ok(!decls(ruleOf(css, ".fileview-md {")).some((d) => d.startsWith("max-width")), name + ": the root is fluid to the pane (the measure moved to the prose blocks)");
+    // the readers: the prose (1.15 times the page's size, times the scale: 15px at the 13px default, Slice 3 of
+    // plans/markdown-viewer.md), its code, the Raw view's rows and gutter
+    assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("font-size: calc(var(--fs) * 1.15 * var(--fv-scale, 1))"), name + ": the prose reads it, at the document size over the page's");
+    assert.ok(!decls(ruleOf(css, ".fileview-md {")).some((d) => d.startsWith("max-width")), name + ": the root is fluid to the pane (the measure is its inline padding)");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": fenced code reads it");
     assert.ok(decls(ruleOf(css, ".fileview-pre {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": the Raw rows read it");
     assert.ok(decls(ruleOf(css, ".fileview-gutter {")).includes("font-size: calc(12px * var(--fv-scale, 1))"), name + ": the gutter reads it, in lockstep with the rows");
-    assert.ok(decls(ruleOf(css, ".fileview-md h1 {")).includes("font-size: 1.3em"), name + ": headings stay em of the prose, so they scale with it");
+    assert.ok(decls(ruleOf(css, ".fileview-md h1 {")).includes("font-size: 2em"), name + ": headings stay em of the prose, so they scale with it (GitHub's 2em h1 since Slice 3 of plans/markdown-viewer.md)");
     assert.ok(decls(ruleOf(css, ".fileview-md :not(pre) > code {")).includes("font-size: 0.92em"), name + ": inline code stays em of the prose");
     assert.ok(decls(ruleOf(css, ".fileview-md .fc-overlay {")).includes("font-size: var(--fs)"), name + ": a figure's region chip keeps the page's size, not the text's");
     // no other rule reads the property: the bar, the aside, the editor keep the page's size
     const readers = (css.match(/^[^\n{]*\{[^}]*var\(--fv-scale[^}]*\}/gm) || []).map((r) => r.slice(0, r.indexOf("{")).trim());
-    assert.deepEqual(readers.sort(), [".fileview-gutter", ".fileview-md", ".fileview-md > :where(:not(table))", ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap", ".fileview-md pre code", ".fileview-pre"].sort(), name + ": the readers, exactly");
+    assert.deepEqual(readers.sort(), [".fileview-gutter", ".fileview-md", ".fileview-md pre code", ".fileview-pre"].sort(), name + ": the readers, exactly (the 860px measure rule and the direct-child media cap that scaled it went with Slice 3 of plans/markdown-viewer.md: the measure is 80ch of the root's own font, which the scale moves)");
   }
 });
 
-test("both sheets: the measure sits on the prose blocks at zero specificity and scales with the text; a table takes the pane and scrolls in its own box with whole words; a picture always fits its column; the new rules are byte-equal across the sheets", () => {
+test("both sheets: the measure is the root's inline padding, a centred column of 80ch that scales with the text; a table may leave the column up to the body's inset and scrolls in its own box with whole words; a picture always fits its column; the new rules are byte-equal across the sheets", () => {
   for (const [name, css] of SHEETS) {
-    assert.deepEqual(decls(ruleOf(css, ".fileview-md > :where(:not(table)) {")), ["max-width: calc(860px * var(--fv-scale, 1))"], name + ": the measure, a max that grows with the size (860px today, the same characters per line at every size)");
-    // :where carries no specificity, so `.fileview-md img { max-width: 100% }` below outranks it for a bare <img> line (a
-    // direct child of the root): the plain :not() chain was (0,1,2) and laid a 1600px banner out at the measure in a 380px
-    // pane (review 2026-09-07); code blocks are inside the measure too (a two-line snippet needs no 1400px box)
-    assert.doesNotMatch(css, /\.fileview-md > :not\(/, name + ": the measure rule carries no specificity of its own");
+    // Slice 3 of plans/markdown-viewer.md (decision 4): the 860px cap on every block became the root's own inline padding,
+    // at least 18px a side and half of what the body is wider than 80ch beyond that; ch is the root's own zero glyph, so
+    // the column is eighty characters at every --fv-scale and in either face, and every child sits in it
+    const root = decls(ruleOf(css, ".fileview-md {"));
+    assert.ok(root.includes("padding-inline: max(18px, round(down, calc((100% - 80ch) / 2), 1px))"), name + ": the measure, the root's inline padding, in whole pixels (a fractional edge met a Chromium drag-selection quirk)");
+    assert.ok(root.indexOf("padding: 14px 18px") >= 0 && root.indexOf("padding: 14px 18px") < root.findIndex((d) => d.startsWith("padding-inline")), name + ": the plain 18px stands first, the fallback for a browser without round()");
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(bare, /\.fileview-md > :where\(:not\(table\)\)|860px/, name + ": no per-block cap and no 860px constant in any rule (the comments may tell the history)");
+    assert.doesNotMatch(css, /\.fileview-md > :not\(/, name + ": no block-cap rule at any specificity");
     assert.deepEqual(decls(ruleOf(css, ".fileview-md img {")), ["max-width: 100%"], name + ": a picture shrinks to its column");
-    assert.deepEqual(decls(ruleOf(css, ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {")), ["max-width: min(100%, calc(860px * var(--fv-scale, 1)))"], name + ": a picture that is a block of the page, wrapped by the figure layer or not, takes the measure AND the column, like an image paragraph; so does a standalone svg, canvas or video block (an uncapped one is clipped under the md box's contain: layout)");
+    assert.doesNotMatch(css, /\.fileview-md > img, \.fileview-md > svg/, name + ": the direct-child media cap went with the constant (100% of the column is the measure for a direct child too)");
     assert.deepEqual(decls(ruleOf(css, ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {")), ["max-width: 100%"], name + ": media a note draws itself shrinks to its column like a picture, at zero class specificity so KaTeX's own svg rule wins (md-sanitize-wide-media-browser.test.ts lays it out)");
     assert.deepEqual(decls(ruleOf(css, ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {')), ["height: auto"], name + ": a pixel-sized one keeps its ratio as it shrinks (a sized <img> too, since Slice 2 of plans/markdown-viewer.md); a percentage-width one keeps the author's height (the cap never shrinks it), and the whole selector sits inside :where so its two attribute tests add no specificity over KaTeX's svg rule");
+    // the table's cap is the BODY's width less the root's 18px inset (100cqi: .fileview-body is the size container), and a
+    // table wider than the column is moved left by half the excess (a percentage in translate is of the table's own width;
+    // 50cqi less the padding is half the column), so it grows out of the column evenly, into both gutters, and a table no
+    // wider than the column is not moved at all (the min); file-view-typescale-browser.test.ts lays the three widths out
     assert.deepEqual(decls(ruleOf(css, ".fileview-md table {")),
       ["border-collapse: collapse", "margin: 0.6em 0", "display: block", "width: max-content", "max-width: 100%", "overflow-x: auto", "overflow-wrap: normal"],
-      name + ": a table is a block as wide as its content up to the column, scrolling inside beyond it, whole words kept");
+      name + ": a table is a block as wide as its content up to its container, scrolling inside beyond it, whole words kept (a table in a quote or a list item stays in it)");
+    assert.deepEqual(decls(ruleOf(css, ".fileview-md > table {")),
+      ["max-width: calc(100cqi - 36px)", "translate: min(0px, round(calc(50cqi - max(18px, round(down, (100cqi - 80ch) / 2, 1px)) - 50%), 1px))"],
+      name + ": a table of the page's own is capped at the body's inset and centred on the column once wider than it (the fallback for a browser without cqi is the 100% above)");
+    assert.ok(decls(ruleOf(css, ".fileview-body {")).includes("container-type: inline-size"), name + ": the body is the container the table's cqi reads (the aside open or closed, it is the body, not the card)");
     assert.ok(decls(ruleOf(css, ".fileview-md {")).includes("overflow-wrap: anywhere"), name + ": prose still breaks an unbreakable string");
     assert.ok(decls(ruleOf(css, ".fileview-md pre {")).includes("overflow-x: auto"), name + ": a code block scrolls in its own box");
     assert.ok(decls(ruleOf(css, ".fileview-md pre code {")).includes("white-space: pre-wrap"), name + ": …and wraps first");
   }
   const [chat, feed] = SHEETS.map(([, css]) => css);
-  for (const head of [".fileview-md {", ".fileview-md > :where(:not(table)) {", ".fileview-md table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {"]) {
+  for (const head of [".fileview-md {", ".fileview-md table {", ".fileview-md > table {", ".fileview-md pre code {", ".fileview-pre {", ".fileview-gutter {", ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {", ':where(.fileview-md :is(img, svg, canvas, video)[width]:not([width$="%"])) {', ".fileview-body {"]) {
     assert.equal(ruleOf(chat, head), ruleOf(feed, head), head + " mirrors exactly (the viewer mounts in both documents)");
   }
   const block = (css: string) => css.slice(css.indexOf("/* ── text size and measure"), css.indexOf("/* Rendered markdown ("));
@@ -798,7 +811,17 @@ const fits = (l: Lay, cell: string) => {
   assert.ok(l.preScroll <= l.preClient + 1, cell + ": the long code line wraps inside its block");
 };
 
-test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, in both sheets; the prose and the code blocks keep the measure and the table takes the pane; at 150% the measure and every text size grow together; narrow, the table scrolls in its own box", async (t) => {
+/** The column's width in the root's own ch, and where it sits: the root's content box (its padding is the measure). */
+const column = (page: any) => page.evaluate(() => {
+  const md = document.getElementById("md")!; const cs = getComputedStyle(md); const r = md.getBoundingClientRect();
+  const sp = document.createElement("span"); sp.style.whiteSpace = "nowrap"; sp.textContent = "0".repeat(40); md.appendChild(sp);
+  const ch = sp.getBoundingClientRect().width / 40; sp.remove();
+  const body = document.getElementById("body")!.getBoundingClientRect();
+  const p = document.getElementById("p")!.getBoundingClientRect();
+  return { ch, chars: p.width / ch, leftGap: p.left - body.left, rightGap: body.right - p.right - (document.getElementById("body")!.offsetWidth - document.getElementById("body")!.clientWidth), padL: parseFloat(cs.paddingLeft), padR: parseFloat(cs.paddingRight), fontDoc: cs.fontFamily };
+});
+
+test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, in both sheets; the prose and the code blocks keep the measure, an 80ch column centred in the body, and a wide table leaves it evenly up to the body's inset; at 150% the measure and every text size grow together; narrow, the table scrolls in its own box", async (t) => {
   await inBrowser(t, async (browser) => {
     for (const mode of ["pane", "feed"] as const) {
       const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
@@ -811,19 +834,28 @@ test("in a browser: the page never widens at 1000 and 420px, at 100% and 150%, i
       let l = await layout(page);
       near(l.bodyClient, 1000 - inset, mode + " @1000: the body is the pane, less the modal's inset");
       fits(l, mode + " @1000/100");
-      assert.equal(l.mdFont, "13px", mode + ": the page's size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "16.9px");
-      near(l.p, 860, mode + " @1000: the prose measure is 860px at 100%");
-      near(l.pre, 860, mode + " @1000: a code block keeps the measure"); near(l.pre2, 860, mode + " @1000: ...a two-line snippet too, no pane-wide box");
-      assert.ok(l.t > 860 && l.t <= l.bodyClient - 36 + 0.5, mode + " @1000: the table takes the pane (" + l.t + "), past the prose measure, inside the padding");
-      assert.equal(l.tScroll, l.tClient, mode + " @1000: room enough, so the table does not scroll");
+      // the document size: 1.15 times the page's 13px, GitHub's 2em h1 of it, fenced code at 12px (Slice 3 of plans/markdown-viewer.md)
+      assert.equal(l.mdFont, "14.95px", mode + ": the document size at 100%, byte for byte"); assert.equal(l.preFont, "12px"); assert.equal(l.h1Font, "29.9px");
+      let c = await column(page);
+      assert.ok(Math.abs(c.chars - 80) < 0.5, mode + " @1000: the prose measure is 80ch of the root's own font at 100% (" + c.chars.toFixed(1) + "ch of " + c.ch.toFixed(2) + "px)");
+      assert.ok(l.p >= 80 * c.ch - 0.5 && l.p < 80 * c.ch + 2, mode + " @1000: ...in pixels, eighty zero glyphs, at most the two pixels the padding's rounding down leaves (" + l.p + " vs " + (80 * c.ch).toFixed(1) + ")");
+      assert.ok(Math.abs(c.leftGap - c.rightGap) < 1, mode + " @1000: the column is centred in the body (gaps " + c.leftGap.toFixed(1) + " / " + c.rightGap.toFixed(1) + ")");
+      near(c.padL, c.padR, mode + " @1000: the root's inline padding is the measure, both sides alike");
+      near(l.pre, l.p, mode + " @1000: a code block keeps the measure"); near(l.pre2, l.p, mode + " @1000: ...a two-line snippet too, no pane-wide box");
+      assert.ok(l.t > l.p + 20 && l.t <= l.bodyClient - 36 + 0.5, mode + " @1000: the table leaves the column (" + l.t + " vs " + l.p + "), inside the body's 18px inset");
+      // a max-content table is as wide as its content to the layout unit; scrollWidth and clientWidth snap a fractional width
+      // two ways (913 vs 912 at the document size), so the pixel of slack the code block's check has applies here too
+      assert.ok(l.tScroll <= l.tClient + 1, mode + " @1000: room enough, so the table does not scroll (" + l.tScroll + " in " + l.tClient + ")");
       near(l.md, l.bodyClient, mode + " @1000: the root is the body's width");
-      assert.ok(l.img <= 860 + 0.5 && l.lw <= 860 + 0.5 && l.img2 <= 860 + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
+      assert.ok(l.img <= l.p + 0.5 && l.lw <= l.p + 0.5 && l.img2 <= l.p + 0.5, mode + ": both pictures and an unbreakable string stay in the measure");
       // 150%: the one property, read by every text size and the measure
       await step(150);
       l = await layout(page);
       fits(l, mode + " @1000/150");
-      assert.equal(l.mdFont, "19.5px", mode + " @150%: the prose"); assert.equal(l.h1Font, "25.35px", mode + " @150%: the heading, 1.3em of it"); assert.equal(l.preFont, "18px", mode + " @150%: fenced code");
-      near(l.p, Math.min(1290, l.bodyClient - 36), mode + " @150%: the measure is 860 × 1.5, capped by the pane");
+      assert.equal(l.mdFont, "22.425px", mode + " @150%: the prose"); assert.equal(l.h1Font, "44.85px", mode + " @150%: the heading, 2em of it"); assert.equal(l.preFont, "18px", mode + " @150%: fenced code");
+      c = await column(page);
+      assert.ok(l.p >= Math.min(80 * c.ch, l.bodyClient - 36) - 0.5 && l.p < Math.min(80 * c.ch, l.bodyClient - 36) + 2, mode + " @150%: the measure is 80ch of the grown glyph, capped by the pane (" + l.p + ")");
+      assert.ok(Math.abs(c.leftGap - c.rightGap) < 1, mode + " @150%: still centred");
       near(l.pre, l.p, mode + " @150%: the code block's measure grows with the prose's");
       // 420px, a phone-wide pane, at BOTH sizes (the leg once shrank the pane at 150% only)
       await page.setViewportSize({ width: 420, height: 900 });
@@ -1041,10 +1073,11 @@ test("in a browser, the real module: a bare <img> line, an image paragraph and a
         imgs: Array.from(document.querySelectorAll(".fileview-md img")).map(w), md: w(document.querySelector(".fileview-md")!) };
     });
     assert.ok(c.md > 1300, "the root is fluid to the pane: " + c.md);
-    near(c.p, 860, "the prose measure at 1400px");
+    const ch = await page.evaluate(() => { const md = document.querySelector(".fileview-md") as HTMLElement; const sp = document.createElement("span"); sp.style.whiteSpace = "nowrap"; sp.textContent = "0".repeat(40); md.appendChild(sp); const w = sp.getBoundingClientRect().width / 40; sp.remove(); return w; });
+    assert.ok(c.p >= 80 * ch - 0.5 && c.p < 80 * ch + 2, "the prose measure at 1400px: 80ch of the root's own font, at most two pixels over from the rounding (" + (c.p / ch).toFixed(1) + "ch, " + c.p + "px)");
     assert.equal(c.pres.length, 2);
-    for (const pre of c.pres) { near(pre.w, 860, "a code block keeps the measure: no 1364px box for a two-line snippet"); assert.ok(pre.scroll <= pre.client + 1, "...and a long line wraps inside it"); }
-    for (const i of c.imgs) assert.ok(i <= 860 + 0.5 && i > 800, "a picture takes the measure at most, in every form the markdown used: " + i);
+    for (const pre of c.pres) { near(pre.w, c.p, "a code block keeps the measure: no 1364px box for a two-line snippet"); assert.ok(pre.scroll <= pre.client + 1, "...and a long line wraps inside it"); }
+    for (const i of c.imgs) assert.ok(i <= c.p + 0.5 && i > c.p - 60, "a picture takes the measure at most, in every form the markdown used: " + i);
     assert.deepEqual(errors, []);
     await page.close();
   });
@@ -1133,9 +1166,13 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       assert.equal(f.focused, true, mode + ": the focus stays on A− at the end (a disabled button would have dropped it to " + f.active + ")");
       await page.keyboard.press("Enter");
       assert.equal(await sizeOf(page), "70", mode + ": a fourth Enter does nothing, under a ring on a dimmed button");
-      // a passage selected by a real drag, then a press on A+: the size steps, the hooks stay quiet
+      // a passage selected by a real drag, then a press on A+: the size steps, the hooks stay quiet. The drag starts 2px into
+      // the paragraph: at certain sub-pixel offsets from a fractional left edge (4px into the first glyph at 70% here, 5 and 12px
+      // at 100%) headless Chromium leaves the drag's selection collapsed, a hit-test rounding quirk of the harness's mouse
+      // events, not the viewer's (measured 2026-09-08, Slice 3 of plans/markdown-viewer.md, when the centred column moved the
+      // edge to 183.97px); 2px selects at every size and surface measured
       const pBox = await rectOf(page, ".fileview-md > p");
-      await page.mouse.move(pBox.left + 4, pBox.top + 8); await page.mouse.down(); await page.mouse.move(pBox.left + 220, pBox.top + 8, { steps: 5 }); await page.mouse.up();
+      await page.mouse.move(pBox.left + 2, pBox.top + 8); await page.mouse.down(); await page.mouse.move(pBox.left + 220, pBox.top + 8, { steps: 5 }); await page.mouse.up();
       const s1 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length }));
       assert.ok(s1.chars > 0, mode + ": a passage is selected (" + s1.chars + " chars)"); assert.equal(s1.sels, 1, mode + ": the lift over the body ran the selection hooks once");
       const up = await rectOf(page, SEL.up);
@@ -1148,7 +1185,7 @@ test("in a browser, the real module: A− and A+ never move when the readout app
       // the standing selection goes first: a mousedown on selected text starts a text drag-and-drop, not a selection
       await page.evaluate(() => { getSelection()!.removeAllRanges(); document.addEventListener("mouseup", (e) => { (window as any).__lastUp = (e.target as Element).className; }, true); });
       const p2 = await rectOf(page, ".fileview-md > p"); const nameBox = await rectOf(page, ".fileview-name");
-      await page.mouse.move(p2.left + 4, p2.top + 8); await page.mouse.down(); await page.mouse.move(nameBox.left + 30, (nameBox.top + nameBox.bottom) / 2, { steps: 6 }); await page.mouse.up();
+      await page.mouse.move(p2.left + 2, p2.top + 8); await page.mouse.down(); await page.mouse.move(nameBox.left + 30, (nameBox.top + nameBox.bottom) / 2, { steps: 6 }); await page.mouse.up();
       const s3 = await page.evaluate(() => ({ sels: (window as any).__sels, chars: getSelection()!.toString().length, lastUp: (window as any).__lastUp as string, anchorInBody: !!document.querySelector(".fileview-body")!.contains(getSelection()!.anchorNode) }));
       assert.match(s3.lastUp, /fileview-(dir|base|name)/, mode + ": the lift landed on the bar's path: " + s3.lastUp);
       assert.ok(s3.chars > 0 && s3.anchorInBody, mode + ": a passage anchored in the body is selected (" + s3.chars + " chars)");

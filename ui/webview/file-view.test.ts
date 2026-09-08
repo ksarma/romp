@@ -401,14 +401,20 @@ test("langFor maps known extensions and returns null rather than guessing", () =
     yaml: "yaml", yml: "yaml", sh: "bash", bash: "bash", zsh: "bash", bats: "bash",
     html: "xml", htm: "xml", xml: "xml", svg: "xml", vue: "xml", css: "css", scss: "css",
     md: "markdown", markdown: "markdown", diff: "diff", patch: "diff",
+    rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",   // decision 5's six (viewer-grammars.ts)
   };
   const langFor = (p: string): string | null => LANG[p.slice(p.lastIndexOf(".") + 1).toLowerCase()] || null;
   assert.equal(langFor("kernel/kernel.py"), "python");
   assert.equal(langFor("ui/webview/render.TS"), "typescript");   // case-insensitive
   assert.equal(langFor("notes.md"), "markdown");
-  for (const p of ["server.log", "Makefile", "a.conf", "data.csv", "x.rs"]) {
+  assert.equal(langFor("src/main.rs"), "rust", "a grammar the viewer registers since Slice 3 of plans/markdown-viewer.md");
+  assert.equal(langFor("Cargo.toml"), "ini", "toml is hljs's ini grammar (its own alias)");
+  for (const p of ["server.log", "Makefile", "a.conf", "data.csv", "x.cfg", "x.zig"]) {
     assert.equal(langFor(p), null, p + " has no registered grammar → plain, not a guess");
   }
+  // the module's map holds the same row: the copy above is the executed shape, this the source
+  assert.match(VIEW, /rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",/);
+  assert.match(VIEW, /^import "\.\/viewer-grammars";/m, "the six grammars register through the viewer's own module");
   assert.doesNotMatch(VIEW, /hljs\.highlightAuto\(/, "auto-detection is what this map exists to avoid");
 });
 
@@ -437,7 +443,7 @@ test("the hljs token palette lives in feed.css too, identical to the chat's", ()
     /\.hljs-addition \{ color: var\(--hl-str\); \}/,
     /\.hljs-deletion \{ color: var\(--err\); \}/,
     /--hl-fg: #d8c6a8; --hl-kw: #c98a6a; --hl-str: #9fb878; --hl-num: #d4a36a;/,
-    /--hl-cmt: #6f6a5f; --hl-title: #e1c08d; --hl-meta: #9a8f7a; --hl-attr: #cdaf7e;/,
+    /--hl-cmt: #978f81; --hl-title: #e1c08d; --hl-meta: #9a8f7a; --hl-attr: #cdaf7e;/,   // --hl-cmt lifted to 4.79:1 on a code block (Slice 3 of plans/markdown-viewer.md; theme-parity.test.ts holds the floor)
   ];
   for (const r of rules) {
     assert.match(FEED_CSS, r, "feed.css is missing a palette rule: " + r.source);
@@ -502,8 +508,10 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
   const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
   assert.match(linkFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "…and the module stamps a web link the same way");
-  // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor
-  assert.match(VIEW, /if \(!lang \|\| !hljs\.getLanguage\(lang\)\) return;/);
+  // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor; then EVERY fence, named or
+  // not, gets the chat's rows and Copy button (code-block.ts; Slice 3 of plans/markdown-viewer.md), the raw text captured first
+  assert.match(VIEW, /if \(lang && hljs\.getLanguage\(lang\)\) \{/);
+  assert.match(VIEW, /const raw = codeEl\.textContent \|\| "";[\s\S]{0,400}codeEl\.innerHTML = hljs\.highlight\(raw, \{ language: lang \}\)\.value;[\s\S]{0,200}wrapCodeLines\(codeEl\);\s*\n\s*if \(host\) addCopyBtn\(host, raw\);/);
   // the prose typography exists on BOTH sheets (the chat's .md block is the reference aesthetic)
   assert.match(FEED_CSS, /\.fileview-md \{/);
   assert.match(FEED_CSS, /\.fileview-md pre code \{/);

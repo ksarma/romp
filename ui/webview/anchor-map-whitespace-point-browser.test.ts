@@ -25,7 +25,9 @@ const SHEETS: Record<string, string> = { "styles.css": fs.readFileSync(path.join
 marked.setOptions({ gfm: true, breaks: false });   // the viewer's configuration (pinned by anchor-map.test.ts)
 
 // the notes-api report: a heading and one paragraph a copy-editing session tidied
-const SOURCE = "# Report\n\nWe recommend shipping the cache. Risks remain in the fallback path, and the runbook covers them.\n";
+// one line of prose with room beside it for the struck labels: the 80ch column of Slice 3 of plans/markdown-viewer.md holds
+// about 95 characters of this prose at 15px, and a sentence that long wrapped onto a second line once the labels were added
+const SOURCE = "# Report\n\nWe recommend shipping the cache. Risks remain in the fallback path.\n";
 const at = (s: string): number => { const i = SOURCE.indexOf(s); assert.ok(i >= 0, s); return i; };
 const CHANGES = [
   { id: "w-space", kind: "del", curFrom: at("Risks"), curTo: at("Risks"), oldText: " ", author: "api" },        // the second of a doubled space; the first stays

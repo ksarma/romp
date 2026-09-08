@@ -65,9 +65,11 @@ export const SELF_TARGET_TITLE = "Not a link the viewer can follow: the target i
 export const emptyTargetTitle = (filePath: string): string => (filePath.includes("/") ? EMPTY_TARGET_TITLE : SELF_TARGET_TITLE);
 export const noSectionTitle = (id: string): string => "No heading or anchor named \u201c" + id + "\u201d in this document";
 
-/** The elements whose text is one unit to the pass: a code view's row, a rendered block (a paragraph, a list item,
- *  a cell, a heading, a fenced block, a quote). Text under none of these is a unit of its own. */
-export const LINE_UNITS = ".fv-cl, p, li, td, th, dt, dd, h1, h2, h3, h4, h5, h6, pre, blockquote, caption, figcaption, summary";
+/** The elements whose text is one unit to the pass: a code view's row (`.fv-cl`), a rendered fence's row (`.cl`, since
+ *  Slice 3 of plans/markdown-viewer.md cut every fence into per-line rows and the wrap drops the newlines, so the `pre`
+ *  alone read as one line and `data/x.json` at a line's end ran into the path that began the next), a rendered block (a
+ *  paragraph, a list item, a cell, a heading, a fenced block, a quote). Text under none of these is a unit of its own. */
+export const LINE_UNITS = ".fv-cl, .cl, p, li, td, th, dt, dd, h1, h2, h3, h4, h5, h6, pre, blockquote, caption, figcaption, summary";
 
 // An http(s) URL in running text: the scheme, then everything up to whitespace or a character no URL carries
 // unescaped in prose or code (a quote, an angle bracket, a backtick).

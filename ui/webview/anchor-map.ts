@@ -109,6 +109,98 @@ function textNodes(root: DNode): DText[] {
 const textOf = (root: DNode): string => textNodes(root).map((t) => t.data).join("");
 const stripWs = (s: string): string => s.replace(/\s+/g, "");
 
+// ── code lines under a wrap ────────────────────────────────────────────────────────────────────────
+//
+// The viewer's fenced code is wrapped in per-line rows (code-block.ts wrapCodeLines: `<span class="cl"><span
+// class="ct">…</span></span>` per line; the Raw view's `.fv-cl` rows are built the same way), and the wrap DROPS the
+// newline each row stands for, so a wrapped code element's textContent runs its lines together. Everything that reads a
+// code block's LINES reads them through here, and sees the source's line structure whether the code was wrapped or not:
+// paintRendered's fallback below (a comment across two code lines matched its quote, which holds a newline, against a
+// hay reading "commentdef" and painted nothing; Slice 3 of plans/markdown-viewer.md), reader-place.ts (the code line at
+// the body's top edge, kept across a paint), and Slice 8's exact mapping of code lines. One reading, so the three agree.
+
+const isCodeRow = (n: DNode): boolean => hasClass(n, "cl") || hasClass(n, "fv-cl");
+
+/** One run of a code element's text: a text node with its data, or the newline (no node) between two adjacent rows,
+ *  which `row` is the second of. */
+export type CodeRun = { node: DText | null; text: string; row?: DElement };
+
+/** The text runs of `code` in document order: its text nodes, with a "\n" run put back between two adjacent rows. A
+ *  text node itself is its one run. */
+export function codeRuns(code: DNode): CodeRun[] {
+  const out: CodeRun[] = [];
+  const visit = (n: DNode) => {
+    if (isText(n)) { out.push({ node: n, text: n.data }); return; }
+    let prevRow = false;
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      const row = isElement(c) && isCodeRow(c);
+      if (row && prevRow) out.push({ node: null, text: "\n", row: c as DElement });
+      visit(c);
+      prevRow = row;
+    }
+  };
+  visit(code);
+  return out;
+}
+
+/** The text of `code` as its source shows it: the text nodes' data with the newline between rows put back. */
+export const codeText = (code: DNode): string => codeRuns(code).map((r) => r.text).join("");
+
+/** The 0-based line of the DOM position (`node`, `offset`) in `code`: a text node and an index into it, or an element
+ *  and an index among its children (a caret between two of them, or at its end, the shapes caretRangeFromPoint gives);
+ *  -1 for a position not under `code`. The newlines before the position count, real and between rows. The position is
+ *  taken as a DOM position, not a character offset, on purpose: once the wrap has dropped the newline, the end of one
+ *  row's text and the start of the next are the same character offset and different lines, and the row that holds the
+ *  position tells them apart. */
+export function codeLineAt(code: DNode, node: DNode, offset: number): number {
+  const target: DNode | null = isText(node) ? node : node.childNodes[offset] || null;
+  const atEnd = !isText(node) && !target;   // the end of an element: after its last content
+  let lines = 0;
+  const nl = (s: string, end: number): number => { let n = 0; for (let i = 0; i < end; i++) if (s.charCodeAt(i) === 10) n++; return n; };
+  const visit = (n: DNode): boolean => {   // true once the position is reached
+    if (target && n === target) { if (isText(n)) lines += nl(n.data, Math.min(offset, n.data.length)); return true; }
+    if (isText(n)) { lines += nl(n.data, n.data.length); return false; }
+    let prevRow = false;
+    for (let i = 0; i < n.childNodes.length; i++) {
+      const c = n.childNodes[i];
+      const row = isElement(c) && isCodeRow(c);
+      if (row && prevRow) lines++;   // the boundary before this row, whether the position is in it or past it
+      if (visit(c)) return true;
+      prevRow = row;
+    }
+    if (atEnd && n === node) return true;
+    return false;
+  };
+  return visit(code) ? lines : -1;
+}
+
+/** The text position where line `k` (0-based) of `code` starts: the character after the k-th newline (the start of the
+ *  next text node when the newline ends one, or the row after it when the newline is a row boundary; the row element
+ *  itself, at offset 0, when that row holds no text); null past the last line. */
+export function codeLineStart(code: DNode, k: number): { node: DNode; offset: number } | null {
+  const runs = codeRuns(code);
+  const firstTextFrom = (i: number): DText | null => { for (let j = i; j < runs.length; j++) if (runs[j].node) return runs[j].node; return null; };
+  if (k === 0) { const t = firstTextFrom(0); return t ? { node: t, offset: 0 } : null; }
+  let seen = 0;
+  for (let i = 0; i < runs.length; i++) {
+    const r = runs[i];
+    if (!r.node) {
+      if (++seen < k) continue;
+      const rowText = textNodes(r.row as DNode)[0];
+      return rowText ? { node: rowText, offset: 0 } : { node: r.row as DNode, offset: 0 };
+    }
+    const d = r.text;
+    for (let j = 0; j < d.length; j++) {
+      if (d.charCodeAt(j) !== 10 || ++seen < k) continue;
+      if (j + 1 < d.length) return { node: r.node, offset: j + 1 };
+      const next = firstTextFrom(i + 1);
+      return next ? { node: next, offset: 0 } : { node: r.node, offset: d.length };
+    }
+  }
+  return null;
+}
+
 /** Sum of the lengths of the text nodes under `n` that a `counts` predicate admits (null = all). */
 function textLenUnder(n: DNode, inCounted: boolean, counts: ((el: DElement) => boolean) | null): number {
   if (isText(n)) return inCounted || !counts ? n.data.length : 0;
@@ -1167,9 +1259,13 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
     }
   }
   if (!scope.length) { scope = idx.topNodes.slice(); scopeStart = 0; scopeEnd = source.length; }
+  // the hay is the scope's text with the newline between a wrapped code block's rows put back (codeRuns, above): a
+  // quote across two code lines holds one, and the rows' text nodes alone do not
   const nodes: DText[] = [];
-  for (const n of scope) { if (isText(n)) nodes.push(n); else nodes.push(...textNodes(n)); }
-  const hay = nodes.map((t) => t.data).join("");
+  const gaps: number[] = [];   // where in the hay the row newlines sit; they are no text node's characters
+  let hay = "";
+  for (const n of scope) for (const r of codeRuns(n)) { if (r.node) { nodes.push(r.node); hay += r.text; } else { gaps.push(hay.length); hay += r.text; } }
+  const inNodes = (i: number): number => { let g = 0; for (const p of gaps) { if (p < i) g++; else break; } return i - g; };
   const hits = occurrences(hay, quote);
   if (!hits.length) return null;
   // Which occurrence: the range's ORDINAL among the scope's own occurrences of the quote, in the scope's
@@ -1187,7 +1283,7 @@ export function paintRendered(renderedRoot: Element, source: string, range: Sour
   const k = srcHits.findIndex((h) => scopeStart + scopeSrc.map[h.start] >= range.start && scopeStart + scopeSrc.map[h.end - 1] < range.end);
   if (k < 0) return null;
   const hit = hits[k];
-  const marks = wrapSlices(nodes, hit.start, hit.end, className, data, skipBlockWs);
+  const marks = wrapSlices(nodes, inNodes(hit.start), inNodes(hit.end), className, data, skipBlockWs);
   return marks.length ? (marks as unknown as Element[]) : null;
 }
 

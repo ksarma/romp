@@ -7,7 +7,7 @@
 //    container, so a swipe that started on a rectangle found `none` on the overlay and never panned `.fileview-body`.
 //    The disarmed layer now gives the pan back; a rectangle cannot do it on its own (a touch-action there is dead).
 // 2. The author chip compounded with the rendered markdown's heading sizes: 0.72em of a layer sitting inside an h1
-//    (1.3em) rendered at 0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or
+//    (1.3em then; 2em since Slice 3 of plans/markdown-viewer.md) rendered at 0.94em — the same chip a third larger than on a paragraph figure, on the standalone image, or
 //    in the aside (the README banner pattern, <h1><img></h1>; ui/CLAUDE.md, font sizes: nested em compounds). In the
 //    light theme it also wore the prose face (mono) where every other chip wears the body's. The layer in rendered
 //    markdown now wears the body's own size and face (--fs, --sans), so the chip lands where the aside's does.
@@ -98,8 +98,8 @@ for (const [name, css] of SHEETS) {
     assert.ok(base && declares(base[1], "font-size: var(--fs)") && declares(base[1], "font-family: var(--sans)"),
       "--fs and --sans are the body's own size and face, so the reset lands the chip where the aside's is");
     const headings = rulesOf(css).filter(([sel]) => /^\.fileview-md h[123]$/.test(sel) || sel === ".fileview-md");
-    assert.ok(headings.some(([, body]) => /font-size: 1\.3em/.test(body)), "the compounding source is still there (h1 at 1.3em); drop the reset only with it");
-    assert.ok(headings.some(([, body]) => /font-family: var\(--font-prose\)/.test(body)), "the prose face the reset stops");
+    assert.ok(headings.some(([, body]) => /font-size: 2em/.test(body)), "the compounding source is still there (h1 at 2em since Slice 3 of plans/markdown-viewer.md); drop the reset only with it");
+    assert.ok(headings.some(([, body]) => /font-family: var\(--font-doc\)/.test(body)), "the note's face the reset stops (sans in both themes since decision 3, so the face half stops nothing today; the size half is the reason)");
   });
 }
 
@@ -253,7 +253,9 @@ for (const [name, css] of SHEETS) {
         assert.ok(near(z.pchip, z.aside), "the chip on the paragraph figure is the aside chip's size" + theme + " (" + z.pchip + "px)");
         assert.equal(z.h1face, z.bodyface, "the chip wears the body's face" + theme);
         assert.equal(z.asideface, z.bodyface, "as the aside chip does" + theme);
-        if (light) assert.notEqual(z.proseface, z.bodyface, "the light theme's prose face differs from the body's — the divergence the reset stops");
+        // the note wore --font-prose (mono in light) until Slice 3 of plans/markdown-viewer.md gave it --font-doc, sans in both themes
+        // (decision 3): the face divergence the reset once stopped is gone, and the reset stands for the size
+        assert.equal(z.proseface, z.bodyface, "the note's face is the body's in both themes" + theme);
       }
       const media = await open(css, "media");
       const m = await media.evaluate(() => {
@@ -264,15 +266,15 @@ for (const [name, css] of SHEETS) {
       assert.ok(near(m.chip, m.aside) && near(m.chip, 0.72 * 13), "the standalone image's chip is the same size (" + m.chip + "px)");
       assert.equal(m.face, m.bodyface, "and the same face");
       await media.close();
-      // the control: without the reset the h1 chip compounds to 1.3x, and in light wears the prose face
+      // the control: without the reset the h1 chip compounds by the h1's 2em of a note at 1.15 times the page (2.3x; it was
+      // 1.3x before Slice 3 of plans/markdown-viewer.md), and wears the note's face, which is the body's in both themes now
       const ctl2 = await open(withoutReset(css), "md");
       assert.notEqual(withoutReset(css), css, "the control strip finds the rule");
       await ctl2.evaluate(() => { document.body.classList.add("theme-light"); });
       const c = await sizes(ctl2);
-      assert.ok(near(c.h1chip, 1.3 * c.aside), "the control sheet reproduces the compounding (" + c.h1chip + "px vs " + c.aside + "px), so this leg sees the defect");
-      assert.ok(near(c.pchip, c.aside), "and the paragraph figure's chip was never the problem");
-      assert.equal(c.h1face, c.proseface, "the control chip wears the prose face in light");
-      assert.notEqual(c.h1face, c.bodyface);
+      assert.ok(near(c.h1chip, 2 * 1.15 * c.aside), "the control sheet reproduces the compounding (" + c.h1chip + "px vs " + c.aside + "px), so this leg sees the defect");
+      assert.ok(near(c.pchip, 1.15 * c.aside), "the paragraph figure's chip compounds by the note's own 1.15 without the reset (it did not before Slice 3, when the note was the page's size)");
+      assert.equal(c.h1face, c.proseface, "the control chip wears the note's face");
       await ctl2.close();
       await page.close();
       assert.deepEqual(errors, [], "no script error in any page");

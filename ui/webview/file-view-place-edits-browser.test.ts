@@ -62,7 +62,18 @@ const rowToEdge = (page: any, text: string) => page.evaluate((t: string) => {
 const lineAtEdge = (page: any) => page.evaluate(() => {
   const body = document.querySelector(".fileview-body")!; const br = body.getBoundingClientRect();
   const pre = document.querySelector(".fileview-md > pre")!; const code = pre.querySelector("code")!; const cr = code.getBoundingClientRect();
-  const r = (document as any).caretRangeFromPoint(cr.left + 2, br.top + 1);
+  // the fence is cut into per-line rows since Slice 3 of plans/markdown-viewer.md (code-block.ts): the first column is the
+  // line-number gutter, so the hit test lands on the first text column, and the line is the row under the caret
+  const ct = code.querySelector(".ct"); const x = (ct ? ct.getBoundingClientRect().left : cr.left) + 2;
+  const r = (document as any).caretRangeFromPoint(x, br.top + 1);
+  const rows = Array.from(code.querySelectorAll(":scope > .cl"));
+  if (rows.length) {
+    const n: Node = r.startContainer;
+    let row: Element | null = n.nodeType === 3 ? (n.parentElement as Element).closest(".cl") : (n as Element).closest(".cl");
+    if (!row && n === code) row = (code.childNodes[r.startOffset] as Element | undefined) || null;
+    const line = row ? rows.indexOf(row) : -1;
+    return { line: line + 1, text: (row ? row.textContent || "" : "").trim(), preTop: Math.round((pre.getBoundingClientRect().top - br.top) * 10) / 10, scrollTop: body.scrollTop };
+  }
   let acc = 0, off = -1;
   const walk = (n: Node): boolean => { if (n === r.startContainer) { off = acc + (n.nodeType === 3 ? r.startOffset : 0); return true; } if (n.nodeType === 3) { acc += (n as Text).data.length; return false; } for (const c of Array.from(n.childNodes)) if (walk(c)) return true; return false; };
   walk(code);

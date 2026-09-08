@@ -69,7 +69,7 @@
 // nothing, and the node tests over the viewer run unchanged; the browser legs (file-view-place-browser.test.ts,
 // file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts) measure the real thing.
 import { followPassage } from "./file-comments";
-import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
+import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowForOffset, rawRowSpan, codeLineAt, codeLineStart, type SourceRange } from "./anchor-map";
 
 export type View = "rendered" | "raw";
 /** A line of the kept block at the body's top edge: the span of its text in the file (before its line ending) and its
@@ -229,43 +229,6 @@ function caretAt(doc: CaretDoc, x: number, y: number): { node: Node; offset: num
   if (typeof doc.caretPositionFromPoint === "function") { const c = doc.caretPositionFromPoint(x, y); return c ? { node: c.offsetNode, offset: c.offset } : null; }
   return null;
 }
-function textNodesOf(root: Node, out: Text[] = []): Text[] {
-  for (let i = 0; i < root.childNodes.length; i++) { const c = root.childNodes[i]; if (c.nodeType === 3) out.push(c as Text); else textNodesOf(c, out); }
-  return out;
-}
-/** The offset, into `root`'s text, of the position (`node`, `offset`): a text node and an index into it, or an
- *  element and an index among its children (the caret between two of them, or at its end); -1 for a position not
- *  under `root`. */
-function textOffsetAt(root: Node, node: Node, offset: number): number {
-  const target: Node | null = node.nodeType === 3 ? node : node.childNodes[offset] || null;
-  const atEnd = node.nodeType !== 3 && !target;
-  let acc = 0, out = -1;
-  const walk = (n: Node): boolean => {
-    if (target && n === target) { out = acc + (n.nodeType === 3 ? offset : 0); return true; }
-    if (n.nodeType === 3) { acc += (n as Text).data.length; return false; }
-    for (let i = 0; i < n.childNodes.length; i++) if (walk(n.childNodes[i])) return true;
-    if (atEnd && n === node) { out = acc; return true; }
-    return false;
-  };
-  walk(root);
-  return out;
-}
-/** The text position where line `k` (0-based) of the code element's text starts: the character after the k-th line
- *  feed (the start of the next text node when the feed ends one); null past its last line. */
-function codeLineStart(code: Element, k: number): { node: Node; offset: number } | null {
-  const texts = textNodesOf(code);
-  if (!texts.length) return null;
-  if (k === 0) return { node: texts[0], offset: 0 };
-  let seen = 0;
-  for (let i = 0; i < texts.length; i++) {
-    const d = texts[i].data;
-    for (let j = 0; j < d.length; j++) {
-      if (d.charCodeAt(j) !== 10 || ++seen < k) continue;
-      return j + 1 < d.length ? { node: texts[i], offset: j + 1 } : i + 1 < texts.length ? { node: texts[i + 1], offset: 0 } : { node: texts[i], offset: d.length };
-    }
-  }
-  return null;
-}
 /** The top edge of the character at a text position (a one-character Range's first rect), null without a Range or a rect. */
 function charTop(doc: CaretDoc, node: Node, offset: number): number | null {
   if (typeof doc.createRange !== "function") return null;
@@ -278,18 +241,22 @@ function charTop(doc: CaretDoc, node: Node, offset: number): number | null {
   return r.height > 0 || r.width > 0 ? r.top : null;
 }
 /** The code line under the body's top edge in a Rendered code block, when the code's text starts above the edge: the
- *  hit test on the code element's first column a pixel below the edge, read to its line and the line's source span. */
+ *  hit test on the code's first text column a pixel below the edge (the first `.ct`'s left edge when the block is
+ *  wrapped in rows, code-block.ts, since the column before it is the line-number gutter; else the code element's),
+ *  read to its line and the line's source span. The line is counted through anchor-map's codeLineAt, which puts the
+ *  newline back between rows: the wrap drops it from the text. */
 function renderedLineAt(source: string, span: SourceRange, els: Element[], edge: number): Line | null {
   const code = codeOf(els);
   if (!code) return null;
   const doc = code.ownerDocument as unknown as CaretDoc;
   const r = code.getBoundingClientRect();
   if (!(r.top < edge)) return null;
-  const hit = caretAt(doc, r.left + 2, edge + 1);
+  const ct = typeof code.querySelector === "function" ? code.querySelector(".ct") : null;
+  const x = (ct ? ct.getBoundingClientRect().left : r.left) + 2;
+  const hit = caretAt(doc, x, edge + 1);
   if (!hit || typeof code.contains !== "function" || !code.contains(hit.node)) return null;
-  const off = textOffsetAt(code, hit.node, hit.offset);
-  if (off < 0) return null;
-  const k = countNL(code.textContent || "", 0, off);
+  const k = codeLineAt(code as unknown as Parameters<typeof codeLineAt>[0], hit.node as unknown as Parameters<typeof codeLineAt>[1], hit.offset);
+  if (k < 0) return null;
   const ls = lineSpanIn(source, span, k + (fenced(source, span) ? 1 : 0));
   const top = ls ? charTop(doc, hit.node, hit.offset) : null;
   return ls && top !== null ? { start: ls.start, end: ls.end, top: top - edge } : null;
@@ -300,8 +267,8 @@ function renderedLineTop(source: string, span: SourceRange, els: Element[], line
   const code = codeOf(els);
   if (!code) return null;
   const k = countNL(source, span.start, lineStart) - (fenced(source, span) ? 1 : 0);
-  const pos = k < 0 ? null : codeLineStart(code, k);
-  return pos ? charTop(code.ownerDocument as unknown as CaretDoc, pos.node, pos.offset) : null;
+  const pos = k < 0 ? null : codeLineStart(code as unknown as Parameters<typeof codeLineStart>[0], k);
+  return pos ? charTop(code.ownerDocument as unknown as CaretDoc, pos.node as unknown as Node, pos.offset) : null;
 }
 /** Where a source line of block `span` starts in the Raw view: its row's top; null when the row is not the block's. */
 function rawLineTop(code: Element, source: string, span: SourceRange, lineStart: number): number | null {

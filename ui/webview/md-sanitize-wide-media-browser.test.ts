@@ -7,7 +7,8 @@
 // never shrinks keeps the author's explicit height: the first cut's unconditional height: auto grew a full-width
 // `<svg width="100%" height="30" viewBox>` to 258px and an unloaded `<video height="120">` to Chromium's default 150;
 // review round 1), and a direct child carries the prose measure like a direct-child
-// <img> (at 380px the bare 860px cap would itself overflow). Both rules sit at zero class specificity (:where) so
+// <img> (at 380px the bare 860px cap of the time would itself overflow; since Slice 3 of plans/markdown-viewer.md the
+// root's padding is the measure and 100% of the column is the cap). Both rules sit at zero class specificity (:where) so
 // KaTeX's own `.katex svg { height: inherit }` still wins over its stretchy glyphs once math renders here (Slice 4);
 // the last step holds that cascade with the KaTeX sheet inlined where the built styles.css carries it. A <video> is
 // the one of the three whose natural ratio can differ from its attributes: the browser maps `width="640"
@@ -333,7 +334,7 @@ test("wide inline media in a rendered note fits the column instead of vanishing 
   await inBrowser(t, async (page, errors) => {
     // 1. a 900px pane: the nested svg, canvas and video used to lay out at 1500px behind a body that could not scroll
     check(await page.evaluate(measure), "900px");
-    // 2. a 380px pane (the Files column is often that narrow): the standalone block's 860px prose cap alone would overflow too
+    // 2. a 380px pane (the Files column is often that narrow): a standalone block's cap must be the column's, never a constant
     await page.setViewportSize({ width: 380, height: 600 });
     check(await page.evaluate(measure), "380px");
     // 3. the cascade KaTeX needs: `.katex svg { height: inherit; position: absolute; width: 100% }` (katex.min.css,

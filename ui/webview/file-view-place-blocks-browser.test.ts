@@ -156,11 +156,15 @@ test("in a browser, the real module: a blank Raw row at the top seats the paragr
       assert.deepEqual(errors, [], mode + ": no script error");
       await page.close();
     }
-    // the bottom of the document in the chat modal, where the last paragraph is cut by the clamp
-    const { page, errors } = await openViewer(browser, "chat", 900, 600);
+    // the bottom of the document in the chat modal, where the last paragraph is cut by the clamp. The round trip starts in
+    // the SHORTER view: the taller one can seat the block wherever the shorter one showed it, where the shorter one, at its
+    // end, cannot follow the taller one down. The Raw view was the taller until Slice 3 of plans/markdown-viewer.md (15px prose
+    // in an 80ch column is taller than 12px rows at the pane's width), so the scene opens in Raw now and round-trips through
+    // Rendered.
+    const { page, errors } = await openViewer(browser, "chat", 900, 600, { raw: true });
     await page.evaluate(() => { const b = document.querySelector(".fileview-body")!; b.scrollTop = b.scrollHeight; }); await frames(page, 3);
     const before = (await topBlock(page))!;
-    await click(page, "Raw"); await click(page, "Rendered");
+    await click(page, "Rendered"); await click(page, "Raw");
     const after = (await topBlock(page))!;
     assert.equal(after.text, before.text, "bottom: the same top block");
     near(after.top, before.top, "bottom: at the same height (the first cut moved it 54px)");
@@ -268,7 +272,10 @@ test("in a browser, the real module: a replacement shorter than the reader's dep
     await reload(page, report({ 40: REWRITE(40) }));
     const rw = (await box(page, ".fileview-md > p", "Rewritten 40:"))!;
     assert.ok(rw.height < 25, `the replacement is one line (${rw.height})`);
-    near(rw.bottom, p40.bottom, "the replacement's bottom where paragraph 40's was: as much of it shows as showed of paragraph 40 (the first cut: wholly above the edge, unseen)", 2);
+    // as much of the replacement shows below the edge as showed of paragraph 40, and no further down than the edge: a
+    // one-line replacement shorter than what showed sits at the edge, whole (three lines showed 42px at 900px since Slice 3 of
+    // plans/markdown-viewer.md made the paragraph three lines; two lines showed 12px before, which the replacement matched)
+    near(rw.bottom, Math.min(p40.bottom, rw.height), "the replacement's bottom where paragraph 40's was, or at the edge when it is shorter than what showed (the first cut: wholly above the edge, unseen)", 2);
     assert.equal((await topBlock(page))!.text, "Rewritten 40:", "the replacement is the top block");
     assert.deepEqual(errors, [], "shorter: no script error");
     await page.close();

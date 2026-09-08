@@ -34,6 +34,8 @@ const gclock = require("./gesture-clock.js");   // the gesture clock every setti
 import { delegate } from "./actions";
 import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
+import { wrapCodeLines, addCopyBtn } from "./code-block";   // a fence's per-line rows and Copy button, the chat's own (code-block.ts; Slice 3 of plans/markdown-viewer.md)
+import "./viewer-grammars";   // decision 5's six grammars, registered on the bundle's hljs core (rust, go, c, java, sql, toml)
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
 // the browser's frame with a line saying so — ui/CLAUDE.md's loading-state rule: the loader fades on the event, with a
@@ -68,13 +70,15 @@ for (const [name, lang] of Object.entries({
 
 // Extension → the hljs language to force. Anything absent is shown unhighlighted rather than guessed:
 // highlightAuto on a config file or a log picks a language at random and paints it misleadingly, and a
-// wrong highlight reads as information the file does not contain.
+// wrong highlight reads as information the file does not contain. The last row is decision 5's six grammars
+// (viewer-grammars.ts): a `.rs` file's code view reads as a rust fence in a note does.
 const LANG: Record<string, string> = {
   py: "python", pyi: "python", js: "javascript", jsx: "javascript", mjs: "javascript",
   cjs: "javascript", ts: "typescript", tsx: "typescript", json: "json", jsonc: "json",
   yaml: "yaml", yml: "yaml", sh: "bash", bash: "bash", zsh: "bash", bats: "bash",
   html: "xml", htm: "xml", xml: "xml", svg: "xml", vue: "xml", css: "css", scss: "css",
   md: "markdown", markdown: "markdown", diff: "diff", patch: "diff",
+  rs: "rust", go: "go", c: "c", h: "c", java: "java", sql: "sql", toml: "ini", ini: "ini",
 };
 
 function langFor(path: string): string | null {
@@ -2475,6 +2479,15 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
   // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
   keepVideoShape(box);
+  // A task item wears GitHub's class (Slice 3 of plans/markdown-viewer.md): marked emits the checkbox as the li's first
+  // child with no hook on the li (inside its first paragraph in a loose list), and the sheets' `li.task-list-item` rule
+  // drops the bullet that sat beside the box and pulls the box into the gutter. After the sanitize, and only for the
+  // disabled checkbox the sanitizer's post-pass leaves (every other input is removed there); an author who writes the
+  // class on an li of their own gets the same bullet-less item GitHub would give them.
+  box.querySelectorAll('li > input[type="checkbox"]:first-child:disabled, li > p:first-child > input[type="checkbox"]:first-child:disabled').forEach((input) => {
+    const li = input.closest("li");
+    if (li) li.classList.add("task-list-item");
+  });
   // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
   // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
   // document the browser knows nothing about). getAttribute, never the .src/.href property: the
@@ -2548,15 +2561,27 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     });
   }
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
-  // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random.
+  // no-guessing rule as langFor; an unnamed block stays plain rather than being painted at random. Then, for EVERY
+  // fence, named or not, the chat's own dress (code-block.ts; Slice 3 of plans/markdown-viewer.md): the per-line rows
+  // that number the lines and make a soft-wrap read distinctly from a real newline, and the Copy button, which copies
+  // the raw text captured here, BEFORE the rewrite, since the rows drop the newlines. The math fill's source fallback
+  // (a code element wearing md-math-src, math.ts; spelled, not imported, since this module carries no KaTeX) is not
+  // code: it keeps the Copy button and nothing else, as in the chat's highlight().
   box.querySelectorAll("pre code").forEach((node) => {
     const codeEl = node as HTMLElement;
+    const raw = codeEl.textContent || "";
+    const pre = codeEl.parentElement;
+    const host = pre && pre.tagName === "PRE" ? pre : null;
+    if (codeEl.classList.contains("md-math-src")) { if (host) addCopyBtn(host, raw); return; }
     const lang = (codeEl.className.match(/language-([\w-]+)/) || [])[1];
-    if (!lang || !hljs.getLanguage(lang)) return;
-    try {
-      codeEl.innerHTML = hljs.highlight(codeEl.textContent || "", { language: lang }).value;
-      codeEl.classList.add("hljs");
-    } catch { /* leave plain */ }
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        codeEl.innerHTML = hljs.highlight(raw, { language: lang }).value;
+        codeEl.classList.add("hljs");
+      } catch { /* leave plain */ }
+    }
+    wrapCodeLines(codeEl);
+    if (host) addCopyBtn(host, raw);
   });
   // URLs and paths written in the prose and the code blocks, after the highlight rewrote the blocks' markup
   // (a pass before it would be undone). marked already made the prose's URLs anchors; text inside one is skipped.

@@ -882,7 +882,7 @@ test("the sheets: the panel block is byte-equal in styles.css and feed.css, toke
   assert.match(body, /\.fc-hl \{ background: color-mix\(in srgb, var\(--warn\) 14%, transparent\); box-shadow: inset 0 0 0 1\.5px/, "a ring, not a fill a diff colour would occlude");
   assert.match(body, /\.fc-toggle\[data-on="1"\] \{ background: var\(--accent\); color: var\(--accent-fg\); border-color: var\(--accent\); \}/);
   // the body stays the plain overflow block the editor's height: 100% relies on
-  assert.match(CHAT_CSS, /\.fileview-body \{ flex: 1 1 auto; min-height: 0; overflow: auto; \}/);
+  assert.match(CHAT_CSS, /\.fileview-body \{ flex: 1 1 auto; min-height: 0; overflow: auto; container-type: inline-size; \}/);   // the container a table's 100cqi reads (Slice 3 of plans/markdown-viewer.md)
 });
 
 test("the gear's File comments row reads /defaults.fileComments: the reason for no-node, the install.sh sentence for absent tooling, no invented op", () => {
