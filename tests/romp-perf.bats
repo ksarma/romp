@@ -48,7 +48,7 @@ setup() {
             "cycle_ms_p50": 180.0, "cycle_ms_p90": 400.0, "cycle_ms_ring_max": 900.0, "ring_n": 100},
  "stages_ms": {"jobs": 5000.0, "push": 20000.0, "push.chat": 15000.0, "push.feed": 3000.0, "push.timeline": 1000.0, "push.send": 500.0},
  "builds": {"chat": {"cached": 80, "built": 20, "ms": 800.0, "active_built": 12, "bg_built": 8,
-                     "bg_miss": {"judge_gen": 5, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
+                     "bg_miss": {"store": 5, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
             "feed": {"cached": 90, "built": 10, "ms": 5000.0}, "timeline": {"cached": 95, "built": 5, "ms": 4000.0}},
  "sends": {"full": {"chat": {"count": 10, "bytes": 1000000}}, "delta": {"chat": {"count": 100, "bytes": 50000}}, "deduped": {"feed": {"count": 90, "bytes": 9000000}}},
  "goals": {"loads": 1000, "loads_shared": 500, "saves": 200, "writes": 50, "scans": 10, "scan_hits": 100, "scan_parses": 20,
@@ -80,7 +80,7 @@ JSON
             "cycle_ms_p50": 190.0, "cycle_ms_p90": 420.0, "cycle_ms_ring_max": 700.0, "ring_n": 120},
  "stages_ms": {"jobs": 6000.0, "push": 24000.0, "push.chat": 18000.0, "push.feed": 3600.0, "push.timeline": 1200.0, "push.send": 600.0},
  "builds": {"chat": {"cached": 98, "built": 22, "ms": 880.0, "active_built": 13, "bg_built": 9,
-                     "bg_miss": {"judge_gen": 6, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
+                     "bg_miss": {"store": 6, "transcript": 3, "states": 0, "tasks": 0, "todos": 0, "cut": 0, "note": 0, "needs": 0, "cold": 0, "nosig": 0}},
             "feed": {"cached": 108, "built": 12, "ms": 6000.0}, "timeline": {"cached": 114, "built": 6, "ms": 4800.0}},
  "sends": {"full": {"chat": {"count": 12, "bytes": 2048576}}, "delta": {"chat": {"count": 120, "bytes": 60000}}, "deduped": {"feed": {"count": 108, "bytes": 10800000}}},
  "goals": {"loads": 1100, "loads_shared": 550, "saves": 220, "writes": 55, "scans": 20, "scan_hits": 190, "scan_parses": 30,
@@ -188,8 +188,8 @@ PY
     run "$ROMP_SCRIPT" perf --interval 0
     [ "$status" -eq 0 ]
     # the chat split (round-4 plan P3): 1 active and 1 background rebuild in the window, the background one
-    # caused by a judge pass; the zero-count causes stay off the line
-    [[ "$output" == *"chat 2 built / 18 cached (40 ms avg; 1 active, 1 bg: judge_gen 1)"* ]]
+    # caused by a goal-store publish; the zero-count causes stay off the line
+    [[ "$output" == *"chat 2 built / 18 cached (40 ms avg; 1 active, 1 bg: store 1)"* ]]
     [[ "$output" == *"feed 2 built / 18 cached (500 ms avg)"* ]]
     [[ "$output" != *"transcript 0"* ]]
     [[ "$output" == *"full 102 KB/s (chat 2 frames 102 KB/s)"* ]]        # 1048576 bytes over 10 s, bytes beside the count
