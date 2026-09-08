@@ -113,11 +113,14 @@ class Collector(unittest.TestCase):
         self.assertEqual(set(snap["stages_ms"]), set(km._PerfStats.STAGES))
         self.assertEqual(set(snap["builds"]), {"chat", "feed", "timeline"})
         self.assertEqual(set(snap["builds"]["timeline"]), {"cached", "built", "ms"})
-        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss"},
-                         "the chat builder carries the active/background split and the miss attribution (round-4 P3)")
+        self.assertEqual(set(snap["builds"]["chat"]), {"cached", "built", "ms", "active_built", "bg_built", "bg_miss", "moved"},
+                         "the chat builder carries the active/background split, the miss attribution (round-4 P3) "
+                         "and the builds left uncached because their signature moved (P4)")
         self.assertEqual(set(snap["builds"]["chat"]["bg_miss"]), set(km._PerfStats.CHAT_MISS))
-        self.assertEqual(set(km._PerfStats.CHAT_MISS),
-                         {"judge_gen", "transcript", "states", "tasks", "todos", "pins", "cut", "note", "needs", "tmux", "cold", "nosig"})
+        self.assertEqual(km._PerfStats.CHAT_MISS, km._CHAT_SIG_LABELS + ("cold", "nosig"),
+                         "one counter per labelled signature component, plus the two no-signature cases")
+        self.assertNotIn("judge_gen", km._PerfStats.CHAT_MISS)
+        self.assertEqual(snap["builds"]["chat"]["moved"], 0)
         self.assertEqual(sum(snap["builds"]["chat"]["bg_miss"].values()), 0)
         self.assertEqual(set(snap["sends"]), {"full", "delta", "deduped"})
         self.assertEqual(snap["judge"]["ms_mean"], 0.0, "no passes: the mean is 0, not a division error")

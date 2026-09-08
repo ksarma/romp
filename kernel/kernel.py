@@ -298,6 +298,22 @@ def _judge_usage_rows_held():
         return {"rows": len(_JUDGE_USAGE_CACHE["rows"])}
 
 
+# The chat-build signature's components, in the order _chat_build_sig appends them (round-4 plan P4,
+# 2026-09-07). One label per position: the signature is a flat tuple of exactly this length, so a miss
+# is attributed by comparing positions (_chat_sig_miss) and /perf's builds.chat.bg_miss carries one
+# counter per label. The last three (_CHAT_SIG_DEPS) are the build-time dependencies a cached build
+# recorded (_chat_build_deps), re-evaluated per cycle over that record. _chat_build_sig's docstring
+# says what each component is; tests/test_chat_build_sig_inputs.py maps every read build_session
+# makes to one of them.
+_CHAT_SIG_LABELS = ("transcript", "states", "store", "hold", "archive", "episodes", "reg", "gone",
+                    "tasks", "todos", "pins", "cut", "note", "needs",
+                    "live", "row", "clock", "backend", "ops", "limit", "retry", "bg", "watch", "stamp", "anchors",
+                    "downtime", "names", "flags", "ncards", "colormap", "acct", "cleared", "host",
+                    "cwd", "claudemd", "fork",
+                    "taskout", "pathlink", "postal")
+_CHAT_SIG_DEPS = ("taskout", "pathlink", "postal")
+
+
 class _PerfStats:
     """Always-on counters behind GET /perf (`romp perf`): where the kernel's threads spend their time,
     kept cheap enough to leave running. Every writer takes the lock and does a few dict operations;
@@ -349,13 +365,18 @@ class _PerfStats:
                                    build cache vs rebuilt, and the rebuild time. feed also carries
                                    dirty, the rebuilds a kernel-side mutation forced past the view
                                    signature (_mark_views_dirty); chat also carries active_built /
-                                   bg_built (rebuilds of the watched tab, served since
-                                   2026-09-03 while its exact key is unchanged, against rebuilds of
-                                   a background tab whose signature moved) and bg_miss {judge_gen, transcript, states, tasks, todos,
-                                   cut, note, needs, tmux, cold, nosig}: per labelled _chat_build_sig
-                                   component, the background rebuilds it caused (one count per
-                                   differing component, so the sum can exceed bg_built; cold = no
-                                   cached build, nosig = no signature could be taken)
+                                   bg_built (rebuilds of the watched tab against rebuilds of a
+                                   background tab; every tab, the watched one included, is served
+                                   while its complete per-session signature is unchanged — the
+                                   2026-09-03 upstream rule for the watched tab, on the one key
+                                   every tab shares since round-4 plan P4) and bg_miss {one key per
+                                   _CHAT_SIG_LABELS component, plus cold, nosig}: per labelled
+                                   _chat_build_sig component, the background rebuilds it caused
+                                   (one count per differing component, so the sum can exceed
+                                   bg_built; cold = no cached build, nosig = no signature could be
+                                   taken); moved: builds not cached because the signature moved
+                                   while the build ran (a transcript write, a live-tail prune, a
+                                   warm anchor learned; the next cycle rebuilds and caches)
       sends                        full / delta / deduped -> {slot: {count, bytes}} per dedup-slot
                                    name (chat, feed, bars, taborder, ...; at most SLOTS names, the rest
                                    under "other"). A deduped frame was built and compared, not sent
@@ -517,9 +538,9 @@ class _PerfStats:
     SLOTS = 32
     STAGES = ("jobs", "push", "push.chat", "push.feed", "push.timeline", "push.send")
     BUILDS = ("chat", "feed", "timeline")
-    # builds.chat's bg_miss labels: _chat_build_sig's components (_CHAT_SIG_TAIL plus the transcript and
-    # states sections), a tab with no cached build, and a tab whose signature could not be taken
-    CHAT_MISS = ("judge_gen", "transcript", "states", "tasks", "todos", "pins", "cut", "note", "needs", "tmux", "cold", "nosig")
+    # builds.chat's bg_miss labels: _chat_build_sig's components (_CHAT_SIG_LABELS), a tab with no cached
+    # build, and a tab whose signature could not be taken
+    CHAT_MISS = _CHAT_SIG_LABELS + ("cold", "nosig")
     SEND_KINDS = ("full", "delta", "deduped")
 
     def __init__(self):
@@ -536,7 +557,7 @@ class _PerfStats:
             self.stages = {k: 0.0 for k in self.STAGES}
             self.builds = {k: {"cached": 0, "built": 0, "ms": 0.0} for k in self.BUILDS}
             self.builds["feed"]["dirty"] = 0       # rebuilds a kernel-side mutation forced past the view signature
-            self.builds["chat"].update({"active_built": 0, "bg_built": 0,
+            self.builds["chat"].update({"active_built": 0, "bg_built": 0, "moved": 0,
                                         "bg_miss": {k: 0 for k in self.CHAT_MISS}})
             self.sends = {k: {} for k in self.SEND_KINDS}
             self.judge = {"passes": 0, "ms_sum": 0.0, "ms_last": 0.0, "cpu_ms_sum": 0.0,
@@ -603,6 +624,15 @@ class _PerfStats:
             bm = b["bg_miss"]
             for lab in miss:
                 bm[lab] = bm.get(lab, 0) + 1
+
+    def build_chat_moved(self):
+        """A chat build whose signature moved while it ran (taken before and after the build, over the
+        same dependency record): its payload is not cached, since it may not reflect the inputs the
+        signature now names, and the next cycle rebuilds and caches. Counted so the acceptance read
+        can see how often a build's own writes (a live-tail prune, a warm anchor) or a concurrent
+        writer cost a cache store."""
+        with self.lock:
+            self.builds["chat"]["moved"] += 1
 
     def send(self, key, kind, nbytes):
         slot = key[0] if isinstance(key, tuple) else key
@@ -8369,7 +8399,7 @@ def _set_retry_paused(paused, reason="", bills="", lifted_at=None):
     # upstream's writer-side _mark_views_dirty of review 2026-09-05): every caller publishes the flip
     # itself. The auto paths (_auto_pause_on_limit, _auto_pause_on_spend_limit, _lift_retry_pause) wake
     # the pusher with _push_soon, the setGlobalRetryPaused gesture marks the views dirty, and the active
-    # tab's key stats this file (_active_chat_sig), so the queued bubble follows on that push. Neither
+    # tab's key stats this file (_chat_build_sig's limit component), so the queued bubble follows on that push. Neither
     # build_feed nor build_timeline reads the flag, so a dirty mark here rebuilt both for nothing; and a
     # bare write (a Resume landing on an already-unpaused file) delivers nothing, as the idempotent
     # engage does (tests/test_kernel_usage_limit.py, tests/test_retry_pause_autoresume.py).
@@ -8631,7 +8661,7 @@ def _auto_resume_retry(now, tmux):
     queued-hold reason on the ACTIVE tab, which rebuilds every push — so the next cycle delivers the
     flip with no view rebuild, one cycle start after the write (sub-second). A dirty mark here would
     force a full feed and timeline rebuild for a change the views do not display. A BACKGROUND chat
-    tab's queued-hold reason still waits for the next _judge_gen bump (its _chat_build_sig folds no
+    tab's queued-hold reason follows at the next push (its _chat_build_sig folds the hold; before P4 it waited for the next _judge_gen bump, folding no
     dirty input): pre-existing, unchanged. The re-arm below is the one write the feed DOES show (a
     given-up card's summary sentinel goes back to None), so that branch marks the views dirty — the
     store write is the new information, the flag flip is not."""
@@ -10906,12 +10936,14 @@ def _awaiting_wake_outcomes(now, walked=None):
     return fired
 
 
-def _launch_error(sid):
+def _launch_error(sid, be=None):
     """Why this session's CLI could not start, or None — {text, at, limit}, straight from the backend that
     tried to start it (SessionBackend.launch_error). Guarded the same way as _backend_queued: a backend
-    hiccup reads as 'no known failure' rather than crashing the chat build."""
+    hiccup reads as 'no known failure' rather than crashing the chat build. `be`: the owning backend when
+    the caller already resolved it (the chat-build signature)."""
     try:
-        be = Sessions.backend_for(str(sid))
+        if be is None:
+            be = Sessions.backend_for(str(sid))
         return be.launch_error(str(sid)) if be else None
     except Exception:
         return None
@@ -16565,10 +16597,16 @@ class TmuxBackend(sb.SessionBackend):
                     continue
                 if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
                     d.pop(k, None)
+                    _tmux_echo_bump(str(sid))
                     if not d:
                         _tmux_echo.pop(str(sid), None)
                     return a.get("_echo_text")
             return None
+
+    def live_rev(self, sid):
+        """The sid's echo-store revision (_tmux_echo_rev): the tmux half of Sessions.live_rev."""
+        with _tmux_echo_lock:
+            return _tmux_echo_rev.get(str(sid), 0)
 
     # ask picker — translate a webview action into pane keystrokes (AskDriver); current_ask SCRAPES the pane
     # (the SDK answers its own callback / reads its stored ask instead).
@@ -16896,6 +16934,24 @@ class Sessions:
     # coordination — the working-note ("what I'm working on" ownership claim list_agents shows) lives in ONE
     # backend-agnostic kernel store (working/<sid> files), so both backends publish it and the postal bus
     # reads/writes it through the kernel, never tmux. (the user 2026-06-26.)
+    @staticmethod
+    def live_rev(sid, be=None):
+        """The revision of the sid's live tail — the atoms live_atoms merges ahead of the transcript —
+        as a value that changes on every change to the tail (an add, a prune, a settle mark, a
+        dismiss, a flag write) and only then, so the chat-build signature can key a background tab
+        on its tail without hashing the atoms per cycle (round-4 plan P4, 2026-09-07). The SDK and tmux
+        backends count (SdkBackend.live_rev via _touch_live; _tmux_echo_rev via _tmux_echo_bump). A
+        backend with no counter (the Codex backend, whose live_atoms builds fresh dicts from a short
+        per-session list; a test fake) answers with the tail's serialized value instead: exact, and
+        small for the list-shaped tails those keep. `be`: the owning backend when the caller already
+        resolved it (the chat-build signature)."""
+        if be is None:
+            be = Sessions.backend_for(sid)
+        fn = getattr(be, "live_rev", None)
+        if fn is not None:
+            return fn(str(sid))
+        return json.dumps(be.live_atoms(str(sid)), sort_keys=True, default=str)
+
     @staticmethod
     def working_note(sid):
         p = _working_note_path(sid)
@@ -22766,6 +22822,10 @@ def _session_delegated_identities(sid):
     return sorted((_peer_identity(p) for p in peers), key=lambda d: d["name"])
 
 
+_LIVE_UNSET = object()   # "no row handed": _session_awaiting, _bg_live_norm and the awaited-task readers take
+#                          the liveness snapshot themselves
+
+
 # ── awaited ROWS (plans/subagent-transcripts.md slice 2, the user 2026-09-05) ─────────────────────────
 # _session_awaiting used to answer with ONE kind chosen by source precedence: live subagents, else the
 # pending background launches (kind agents only if EVERY pending row was an agent, else the generic
@@ -22891,7 +22951,7 @@ def _awaiting_live_rows(sid, path, live):
         if aid:
             seen_agent[str(aid)] = it
         agents.append(it)
-    tasks = _bg_live_norm(sid, path)
+    tasks = _bg_live_norm(sid, path, live=live)     # the caller's row, never a second snapshot read
     pending = _bg_pending(sid, path, tasks) if tasks else []
     pending_tids = {t.get("tid") for t in pending}
     meta = None   # the subagents sidecar map, read once and only if an agent launch lacks its agentId
@@ -22936,13 +22996,15 @@ def _awaiting_live_rows(sid, path, live):
     return agents, commands, _watch_awaiting(sid)
 
 
-def _session_background_items(sid, path):
+def _session_background_items(sid, path, live=_LIVE_UNSET):
     """Every row a session has in flight in the background — the SAME rows _session_awaiting groups for
     the idle Awaiting read (agents, commands, watches; _awaiting_join_items order), whether or not the turn
     is open. [] when nothing runs. This is what the session-scoped surfaces ship as awaitingItems while
     the session works (2026-09-06; see _awaiting_items_payload); peer waits and timers exist only through
-    the idle-gated arms, so they simply do not appear mid-turn."""
-    live = _tmux_sessions().get(str(sid))
+    the idle-gated arms, so they simply do not appear mid-turn. `live` is the session's row when the
+    caller holds one (the chat build's handed row — see _session_awaiting); else the snapshot is read."""
+    if live is _LIVE_UNSET:
+        live = _tmux_sessions().get(str(sid))
     agents, commands, watch = _awaiting_live_rows(sid, path, live)
     return _awaiting_join_items(agents, commands, watch)
 
@@ -22982,10 +23044,13 @@ def _awaiting_items_payload(aw, sid, path, tmux=None):
     if aw:
         return list(aw.get("items") or [])
     with _serve_live(tmux):
-        return _session_background_items(sid, path)
+        # the handed map's row, not a raw read (the review's should-fix 2, see _session_awaiting): the map
+        # _push hands the chat build carries the previous rows through a tmux collapse, and the signature
+        # keys the tab on that row, so the rows must derive from it too
+        return _session_background_items(sid, path, live=(tmux.get(str(sid)) if tmux is not None else _LIVE_UNSET))
 
 
-def _session_awaiting(sid, path, idle, stamp=False):
+def _session_awaiting(sid, path, idle, stamp=False, live=_LIVE_UNSET):
     """A session AWAITING dispatched/delegated background work (a WORKING flavor, the user 2026-06-22) →
     {"kind", "why", "since", "count", "items"}: the one-line 'why' for the ⏳ awaiting badge plus WHAT the wait is on
     (jd.AWAIT_KINDS, the user 2026-08-15 — kind rides as DATA so surfaces can word it and rules can scope
@@ -23044,10 +23109,18 @@ def _session_awaiting(sid, path, idle, stamp=False):
     The one remaining feed-only flavor is the blocked-card peer-wait flip (col blocked + _peer_wait in
     build_feed): it corrects a needs-you verdict against the wait-for graph, which requires the card's
     block context — a session-scoped mirror would light this badge for ANY unanswered peer ask, saying
-    MORE than the feed does. Postal peer-waits otherwise stay build_feed's."""
+    MORE than the feed does. Postal peer-waits otherwise stay build_feed's.
+
+    `live`: the session's liveness row when the caller holds one (None for a dormant session). The
+    chat build passes the row _push handed it — the GUARDED map, which carries the previous rows
+    through a tmux collapse — so the chip and the awaiting fields it caches under that row's key are
+    derived from that row, not from a raw read that may have collapsed to nothing in the same cycle
+    (the review's should-fix 2: a tab built during a collapse cached 'ready' under a key a recovered
+    read never busts). Every other caller takes the snapshot here, as before."""
     if not idle:
         return None
-    live = _tmux_sessions().get(str(sid))    # None = not a live CLI (dormant); {}-like = live snapshot
+    if live is _LIVE_UNSET:
+        live = _tmux_sessions().get(str(sid))    # None = not a live CLI (dormant); {}-like = live snapshot
     # Sources 0, 0.5/0.75 and 0.9 are COMBINED into rows (2026-09-05; see _awaiting_from_items): each
     # contributes what it knows, and the one answer is derived from all of them — the old first-source-
     # wins short-circuit is what made one situation read "agents" or "tasks" by accident of ordering.
@@ -23131,7 +23204,7 @@ def _agent_task_label(desc, kind):
     return d
 
 
-def _bg_live_norm(sid, path):
+def _bg_live_norm(sid, path, live=_LIVE_UNSET):
     """A session's LIVE background tasks, normalized to {tid, desc, t, type} (+ agentId on agent rows)
     across BOTH sources: the backend snapshot's lifecycle set (source 0.5 — toolUseId/desc/since; a
     present-but-empty set is authoritative, never overridden) or, for a live CLI carrying no lifecycle set
@@ -23142,8 +23215,12 @@ def _bg_live_norm(sid, path):
     lifecycle stream keys an Agent task by its agent id (`taskId`, probe-verified on 2.1.257), and the
     transcript ack names it (`agentId`). Both are designed fields; the sidecar meta map is only the
     fallback (its key is the ORIGINAL launch's toolUseId, which a resumed agent's task no longer carries —
-    the 2026-09-06 duplicate rows were exactly the agents that fallback could not resolve)."""
-    live = _tmux_sessions().get(str(sid))
+    the 2026-09-06 duplicate rows were exactly the agents that fallback could not resolve). `live` is
+    the session's liveness row when the caller holds one (None for a dormant session): the chat-build
+    signature passes the row it keys on, so a signature taken outside a pusher cycle does not take a
+    liveness snapshot per tab."""
+    if live is _LIVE_UNSET:
+        live = _tmux_sessions().get(str(sid))
     if live is None:
         return []
     if "bgTasks" in live:
@@ -23221,21 +23298,21 @@ def _bg_split(sid, path, tasks):
     return awaited, services
 
 
-def _awaiting_task_descs(sid, path):
+def _awaiting_task_descs(sid, path, live=_LIVE_UNSET):
     """The AWAITED live background-task DESCRIPTIONS for a session — the feed's 'Waiting on task' pill
     expands them as a list (the user 2026-07-13). Judged-unawaited leftovers (a dev server the session
     keeps around) are SERVICES (_bg_service_descs, the session chip), never listed here. [] when no
     awaited tasks are live."""
-    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path))
+    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path, live=live))
     return [t["desc"] or "background task" for t in awaited]
 
 
-def _awaiting_task_ids(sid, path):
+def _awaiting_task_ids(sid, path, live=_LIVE_UNSET):
     """The AWAITED live background-task launch IDS — the same _bg_split set as _awaiting_task_descs,
     as tool_use ids, so the chat's #bg-tasks box can outline exactly the rows the await-green chip is
     waiting on (the user 2026-08-19). The box rows carry the same launching id (_bg_tasks "id" / the
     lifecycle set's toolUseId), so the match is exact — never a description-string guess."""
-    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path))
+    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path, live=live))
     return [t["tid"] for t in awaited if t.get("tid")]
 
 
@@ -23791,8 +23868,10 @@ def _read_task_output(of):
     try:
         st = os.stat(of)
     except OSError:
+        _chat_dep_note_taskout(of, None)
         return ""
     key = (st.st_mtime, st.st_size)
+    _chat_dep_note_taskout(of, key)        # the running chat build's dependency record: stat'd before the read
     hit = _task_out_cache.get(of)
     if hit and hit[0] == key:
         return hit[1]
@@ -23931,10 +24010,16 @@ def _subagent_meta_map(path):
     timer). {} when the directory does not exist (older CLIs wrote no subagent files)."""
     d = _subagents_dir(path)
     try:
-        key = os.stat(d).st_mtime_ns
+        st = os.stat(d)
     except OSError:
         _SUBAGENT_META_CACHE.pop(str(d), None)
+        _chat_dep_note_taskout(str(d), None)              # a running chat build: the directory's absence is a dependency too
         return {}
+    key = st.st_mtime_ns
+    # the running chat build's dependency record (the taskout idiom, _chat_dep_note_taskout): a sidecar landing
+    # changes the payload's Agent cards with no parent-transcript write, so the directory's identity — stat'd
+    # BEFORE the listing, like every taskout dep — is re-stat'd by the chat signature every cycle
+    _chat_dep_note_taskout(str(d), (st.st_mtime, st.st_size))
     hit = _SUBAGENT_META_CACHE.get(str(d))
     if hit is not None and hit[0] == key:
         return hit[1]
@@ -23976,13 +24061,20 @@ def _subagent_meta(path, agent_id):
 
 def _subagent_file(path, agent_id):
     """The agent's own transcript beside the parent transcript `path`, or — when the sidecar dir has moved
-    under a /clear fork's fsid — the one file of that name anywhere in the project dir. None when missing."""
+    under a /clear fork's fsid — the one file of that name anywhere in the project dir. None when missing.
+    A miss is a dependency of the chat payload that asked (the taskout idiom, _chat_dep_note_taskout;
+    re-review 2026-09-08): the absent beside-path and the identity of every sibling subagents directory the
+    fallback scanned are recorded for the running build, so the file landing in any of them moves the key
+    (a resolved file is recorded by _agent_steps when it is read)."""
     if not path or not _AGENT_ID_RE.match(str(agent_id or "")):
         return None
     ap = _subagents_dir(path) / ("agent-%s.jsonl" % agent_id)
     if ap.exists():
         return ap
+    _chat_dep_note_taskout(str(ap), None)
     try:
+        for d in Path(str(path)).parent.glob("*/subagents"):
+            _chat_dep_note_taskout(str(d), _chat_stat_key(str(d)))
         for cand in Path(str(path)).parent.glob("*/subagents/agent-%s.jsonl" % agent_id):
             return cand
     except OSError:
@@ -24036,7 +24128,11 @@ def _agent_steps(agent_path):
     append-incrementally over the file (em.fold_records: a growing file steps only its new records; a
     finished file costs one read, then a stat per build). None when unreadable or empty. Shipped on the
     event as agentSteps + stepsTotal whether the agent runs or has finished (the fold shows the list
-    either way); the running preview's clock (agentGist: calls/since/last) rides only while it runs."""
+    either way); the running preview's clock (agentGist: calls/since/last) rides only while it runs.
+    The file is a dependency of the chat payload that embeds it (the taskout idiom: its identity, stat'd
+    before the read, is recorded for the running chat build and re-stat'd by the chat signature every
+    cycle), since a running agent's transcript grows with no write to the parent's."""
+    _chat_dep_note_taskout(str(agent_path), _chat_stat_key(str(agent_path)))
     try:
         st = em.fold_records(_AGENT_GIST_CACHE, str(agent_path), _gist_fresh, _gist_step)
     except Exception:
@@ -25599,12 +25695,16 @@ _parse_cache = {}                                # realpath → ((mtime, size, p
 # every 0.5s poll — a full transcript reshape into ChatEvent[] AND a json.dumps of the whole chat, per tab,
 # even when nothing changed. With transcripts now tens of MB, that pegged the kernel and starved the
 # webview. Cache each session's built payload + its serialized string, keyed on the transcript+states
-# (mtime,size) — the same trust model as _parse_cache. The ACTIVE tab(s) are served while _active_chat_sig
-# is unchanged (its key carries what no file records: the owning backend's live tail and queue, the snapshot
-# facts, the side files, the clock predicates — 2026-09-03/05); an unchanged BACKGROUND tab reuses the
-# cache on its file-stat + snapshot key → one stat() instead of a reshape+serialize. A real change (or
-# switching to the tab) rebuilds.
-_built_chat = {}                                 # sid → (sig, payload_dict, serialized_str, active_sig, build_started_at)
+# (mtime,size) — the same trust model as _parse_cache. EVERY tab, the ACTIVE one included, is served while
+# its complete per-session signature (_chat_build_sig: one component per input build_session reads — the
+# files by identity, the owning backend's live tail by revision, the snapshot row, the clock booleans, the
+# build's own recorded dependencies) is unchanged, and rebuilds when any component moved. Upstream served
+# the watched tab on a separate exact key (_active_chat_sig, 2026-09-03/05) beside a file-stat key for the
+# background tabs, with a _views_dirty watermark for in-memory stamps no file records; the fork's complete
+# signature (round-4 plan P4, 2026-09-07) is one key for every tab, and it names those stamps as components,
+# so the watched tab keeps upstream's served-while-unchanged behaviour without a second mechanism.
+_built_chat = {}                                 # sid → (sig, payload_dict, serialized_str, deps): see _chat_build_sig
+#                                                  and _chat_build_deps for the sig and the dependency record
 def _judge_store_fp():
     """Fingerprint of every store a judge pass can WRITE — goal trees, captions, archives, the cleared
     archive and the episode log: (dir, name, mtime_ns, size) per file, from one scandir each. Two equal
@@ -25634,8 +25734,9 @@ _last_judge_fp = [None]   # the stores' fingerprint at the END of the last produ
 def _bump_judge_gen_if_changed(before_fp=None):
     """Advance the judge generation when the judge-written stores changed since the LAST time this looked
     (the end of the previous pass) — not merely during the pass: a kernel-side save between passes (a
-    user's clear or resolve, the awaiting lift, a nudge verdict) moves a store too, and the background
-    chat tabs refresh on this generation alone (review 2026-09-03). `before_fp` is accepted for callers
+    user's clear or resolve, the awaiting lift, a nudge verdict) moves a store too, and the feed and the
+    timeline refresh on this generation (review 2026-09-03; the chat tabs' signature names the judge's
+    outputs per session instead, round-4 plan P4). `before_fp` is accepted for callers
     that hold one but the comparison anchor is the previous look. Returns True when it advanced."""
     cur = _judge_store_fp()
     anchor = _last_judge_fp[0] if _last_judge_fp[0] is not None else before_fp
@@ -25646,8 +25747,12 @@ def _bump_judge_gen_if_changed(before_fp=None):
     return False
 
 
-_judge_gen = [0]                                 # bumped when a producer pass CHANGED a store → busts the cache when the judge
-                                                 # may have changed goal/caption state without a transcript write
+_judge_gen = [0]                                 # bumped when a producer pass CHANGED a judge-written store
+                                                 # (_bump_judge_gen_if_changed) → busts the FEED/TIMELINE view cache
+                                                 # (_fleet_view_sig's __judge__): the judge may have changed
+                                                 # goal/caption state without a transcript write. The CHAT cache
+                                                 # no longer reads it (round-4 plan P4, 2026-09-07): its signature
+                                                 # names the judge's outputs per session instead
 
 # ATOMIC JUDGE-PASS VISIBILITY (the user 2026-06-30): the triage judges (planner → closer → courier →
 # grouper → distiller) each write goals/<sid>.json INCREMENTALLY within one producer pass, and build_feed
@@ -25876,178 +25981,6 @@ def _feed_goals_view(sid):
 # events holds the last-built events per session; _chat_diff finds the first index that differs from it — the
 # exact point content changed (a new event OR a tool output that just filled an earlier card). Diffing by
 # CONTENT (not a fixed window) is robust to _hydrate_postal turning one event into several cards mid-array.
-def _clock_predicates(sid, tm, now, path=None):
-    """The clock-derived facts build_session renders, as the booleans they resolve to — so a cache key
-    that carries them changes EXACTLY when the rendered payload would (the flip is the event), never on a
-    tick: the faded look at an hour idle (_idle_faded), an interrupt whose 120 s in-flight cap has run
-    out (_interrupting), a model switch whose 20 s cap has (_model_pending_now), a compaction whose 180 s
-    optimistic cap has (_compacting_optimistic), and each live background task past its recorded
-    deadline (em._bg_expired). These are the only reasons an identical-input build can differ."""
-    tm = tm or {}
-    since = tm.get("since") or 0
-    ic = _interrupt_clicked.get(sid)
-    mp = _model_switch_pending.get(sid) or {}
-    cc = _compact_clicked.get(sid)
-    # the live-task set AFTER the build's own expiry filter (_bg_live_norm joins each task's recorded
-    # deadline from the launch ledger and drops the expired ones) — a task expiring is a tid dropping
-    # out of this tuple. The raw snapshot rows carry no deadline, so a predicate over them could never
-    # flip (review 2026-09-03).
-    try:
-        live_ids = tuple(sorted(str(r.get("tid") or "") for r in _bg_live_norm(sid, path) if isinstance(r, dict)))
-    except Exception:
-        live_ids = None
-    return (bool(since) and bool(_idle_faded(tm.get("state") or "", since, now)),
-            bool(since) and (now - since > FADED_S),   # the hour mark itself: the build derives the chip's
-            #                                            state (a stuck 'compacting' overridden, "" → ready),
-            #                                            so key the flip whatever the raw state says
-            bool(ic) and (now - ic > 120),
-            bool(mp) and (now > (mp.get("until") or 0)),
-            bool(cc) and (now - cc > 180),
-            live_ids)
-
-
-_ACTIVE_SIG_FILES = ("sdk/{sid}.json", "sdk", "goals/{sid}.json", "overrides/{sid}.jsonl", "archive/{sid}.json",
-                     "goals-archive/{sid}.json", "captions/{sid}.jsonl", "episodes/{sid}.jsonl", "cleared.jsonl",
-                     "timeline/messages.jsonl", "colormap", "session-flags.json", "notify-cards.json",
-                     "retry-suppressed.json", "auto-nudge.json",
-                     "watches.json", "pr-watches.json",   # the kernel-owned watch set the awaiting box renders
-                     "usage.json",                        # the account limit hold behind the queued bubble
-                     "retry-paused.json")                 # the spend hold the queued bubble renders (review 2026-09-05)
-
-
-def _claudemd_paths(cwd):
-    """The CLAUDE.md files _claudemd_docs reads for `cwd`, in load order — the global file, then each project
-    file from the git root down to cwd. Shared with the active-tab key so an edit to any of them is a
-    keyed event, not a silent lag."""
-    out = [str(_GLOBAL_CLAUDE_MD)]
-    home = os.path.expanduser("~")
-    chain = []
-    d = os.path.abspath(os.path.expanduser(cwd)) if cwd else None
-    while d:
-        chain.append(d)
-        if os.path.isdir(os.path.join(d, ".git")):
-            break
-        parent = os.path.dirname(d)
-        if parent == d or d == home:
-            break
-        d = parent
-    out += [os.path.join(dd, "CLAUDE.md") for dd in reversed(chain)]
-    return out
-
-
-def _external_sig(sid, path=None):
-    """(stat, …) of the inputs OUTSIDE the state root that build_session renders: the account file the
-    billing badge reads; the HEAD files of the git trees its branch rows read — the registered cwd's
-    tree AND the tree of the last edited file (the per-session worktree, under this repo's convention),
-    both resolved through _tree_of exactly as the build does, so a subdirectory cwd keys its repo's
-    HEAD too; the CLAUDE.md chain (the docs card); and the output file of every running background
-    task, whose tail the task box shows live. cwd falls back to the transcript's own stamp when the
-    registry has none, as the build's does. These are external edits with no romp event; a stat is the
-    honest key (review 2026-09-03). Accepted lag, documented: a path token that becomes a link because a
-    PEER created the file it names re-resolves on the next keyed change, not on the file's creation."""
-    meta = _session_meta(path) if path else {}
-    cwd = _cwd_of(sid) or (meta.get("cwd") if isinstance(meta, dict) else "") or ""
-    paths = [os.path.expanduser("~/.claude.json")]
-    _ks = getattr(jd, "_keysrc", None)                  # the env file's key line decides authBoth (read live since b4ca13e7)
-    if _ks is not None:
-        try:
-            paths.append(_ks.service_env_path())
-        except Exception:
-            pass
-    tops = []
-    for d in (os.path.expanduser(cwd) if cwd else "",
-              os.path.dirname((meta.get("lastEditPath") if isinstance(meta, dict) else "") or "")):
-        if not d:
-            continue
-        try:
-            top = _tree_of(d)[0]
-        except Exception:
-            top = ""
-        if top and top not in tops:
-            tops.append(top)
-    for top in tops:
-        try:
-            hp = _git_head_file(top)
-        except Exception:
-            hp = ""
-        if hp:
-            paths.append(hp)
-    paths += _claudemd_paths(cwd) if cwd else [str(_GLOBAL_CLAUDE_MD)]
-    if path:
-        try:
-            for tk in _bg_scan_cached(path):
-                if isinstance(tk, dict) and tk.get("status") == "running" and tk.get("outputFile"):
-                    paths.append(os.path.expanduser(str(tk["outputFile"])))
-        except Exception:
-            pass
-    out = []
-    for p in paths:
-        try:
-            st = os.stat(p)
-            out.append((st.st_mtime_ns, st.st_size, st.st_ino))
-        except OSError:
-            out.append(None)
-    return tuple(out)
-
-
-def _active_chat_sig(sess, tm, now, base=None):
-    """The exact change key for the WATCHED chat tab (2026-09-03). The active tab used to rebuild on every
-    pusher cycle "by design" — its payload moves with inputs no file records: the SDK live tail, the
-    snapshot facts, the send queue, the compacting/clearing brackets, kernel-side stamps — so the
-    background tabs' file-stat signature could not serve it, and an 80 MB session cost ~0.4-0.9 s of
-    reshape per 0.5 s cycle whether or not anything moved (the offline replay). This key names each of
-    those inputs: _chat_build_sig (transcript/states/judge gen/task store/pending cut) + the backend's live
-    revision, queue, brackets + the snapshot row minus its volatile timestamp + the stat of every side file
-    the build reads + the names registry + the clock predicates that flip the rendered output + the
-    in-flight judge set. Kernel-side stamps that lack a stat are covered by _views_dirty at the serve
-    site (the _cached_feed idiom). None → never cache (no transcript, or an input we cannot key).
-    `base` is the pusher's already-computed _chat_build_sig for this tab (one stat pass, not two)."""
-    base = _chat_build_sig(sess, tm) if base is None else base
-    if base is None:
-        return None
-    sid = str(sess.get("sid") or "")
-    try:
-        snap = json.dumps({kk: vv for kk, vv in (tm or {}).items() if kk != "snapT"}, sort_keys=True, default=str)
-    except Exception:
-        return None
-    # The live tail of the backend that OWNS the session — not only the SDK's (review 2026-09-05: a tmux
-    # session's composer echo and a Codex session's queue live in their own stores, which the build renders
-    # but no file records; keyed on _sdk() alone the watched tmux tab served its last build with the send
-    # missing until some file moved). The SDK backend counts its mutations (live_rev); the others are
-    # digested from exactly what the build reads: each live atom's identity and dropped flag, the queue,
-    # the brackets and the launch error.
-    be = Sessions.backend_for(sid)
-    live = ()
-    if be is not None:
-        try:
-            if hasattr(be, "live_rev"):
-                live = (be.live_rev(sid), tuple(be.pending_queued(sid) or ()), be.compacting(sid), be.clearing(sid))
-            else:
-                atoms = tuple((str(a.get("uuid") or a.get("id") or ""), bool(a.get("dropped")), str(a.get("text") or "")[:64])
-                              for a in (be.live_atoms(sid) or ()) if isinstance(a, dict))
-                le = be.launch_error(sid) if hasattr(be, "launch_error") else None
-                live = (atoms, tuple(be.pending_queued(sid) or ()),
-                        be.compacting(sid) if hasattr(be, "compacting") else None,
-                        be.clearing(sid) if hasattr(be, "clearing") else None, bool(le))
-        except Exception:
-            return None
-    files = []
-    for rel in _ACTIVE_SIG_FILES:
-        try:
-            st = os.stat(jd.STATE / rel.format(sid=sid))
-            files.append((st.st_mtime_ns, st.st_size, st.st_ino))
-        except OSError:
-            files.append(None)
-    try:
-        ext = _external_sig(sid, sess.get("path"))
-    except Exception:
-        return None
-    names = getattr(_live_scope, "names", None)
-    names_key = hash(repr(sorted(names.items()))) if isinstance(names, dict) else None
-    return base + (snap, live, tuple(files), names_key, _clock_predicates(sid, tm, now, sess.get("path")),
-                   jd.active_change(), ext)
-
-
 _prev_chat_events = {}                           # sid → the events list from the previous build (to diff against)
 # ── the chat-payload FOLD (issue 903, 2026-09-03) ──────────────────────────────────────────────────
 # build_session reshaped a working session's WHOLE event list on every push (0.3-1 ms/event; 26k
@@ -26249,43 +26182,337 @@ def _chat_diff(prev, cur):
     return i
 
 
-def _chat_build_sig(sess, tm=None):
-    """A cheap (transcript mtime,size, states mtime,size) signature for the chat-build cache — busts on any
-    new content OR a state transition (idle/working), the two things that change a session's chat payload,
-    plus the judge generation, the task store, the pending cut, and — when the caller hands the session's
-    snapshot row `tm` — the facts the build renders from it (state, model, ctx, effort, subagents, background
-    tasks, pending picks, retry count, connected, spawning). The judge generation used to advance every pass
-    and so rebuilt every background tab within ~3 s whatever changed; it now advances only when a judge-
-    written store moved, so the snapshot digest is what keeps a background tab's chips within one cycle of
-    the truth (review 2026-09-05). What still lags for a BACKGROUND tab until one of those inputs moves: the
-    side files only the active key stats (watches, usage, cleared cards, notify cards) — acceptable for a tab
-    the user isn't looking at; it is rebuilt the moment it becomes the active one. Returns None (→ never
-    cache, always rebuild) if the session has no transcript path or it can't be stat'd."""
+def _chat_ident(path):
+    """(ino, mtime_ns, size) of a file, or None when it is missing: the identity the chat-build
+    signature folds for a file it names by path (the jd._store_identity shape). Every writer of the
+    files it is used on publishes by rename, so the bytes under an inode never change once it is at
+    its path, and a rewrite that keeps the mtime still moves the inode."""
+    try:
+        st = os.stat(str(path))
+    except OSError:
+        return None
+    return (st.st_ino, st.st_mtime_ns, st.st_size)
+
+
+def _names_digest(snap):
+    """The names registry's content as one value for the chat-build signature: a digest of every entry's
+    fields (the snapshot _names_snapshot returns, {sid: tab fields}). build_session reads names in many
+    places — the tab's own name, colour and emoji, a fork parent's name, every postal card's peer, every
+    awaited peer — all through the snapshot the thread holds, so one digest over the whole snapshot keys
+    them all; a rename busts every tab once (2 of 79 entries moved in 3 h on the profiled kernel). A
+    function of the CONTENT, not of the thread: a connect push on a handler thread (its own snapshot,
+    _chat_push_scopes_open) and the pusher's next cycle produce the same component for an unchanged
+    registry, so the one warms the other's cache instead of each rebuilding every tab (the review's
+    should-fix 1: a per-thread revision made every dashboard reload rebuild every background tab twice)."""
+    return hashlib.sha1(json.dumps(sorted((k, list(v)) for k, v in snap.items()), ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _chat_sig_shared():
+    """The chat-build signature's components that are the same for every tab, read ONCE per push (_push
+    sets _live_scope.chat_shared for its chat loop; a caller outside a push reads them per call): the
+    identities of session-flags.json and notify-cards.json, the colormap name, the login label with the
+    auth-choice bit, cleared.jsonl's identity, this host's name, the names snapshot's digest
+    (_names_digest; the thread's snapshot, else one read here) and the count of recorded host
+    suspensions (_downtime, append-only, read by _session_working). A shared file that
+    moves mid-push is read old here and new by that push's builds, which caches new content under the
+    old identity: the next push takes the new identity, misses and rebuilds — one extra build, never a
+    stale hit that lasts."""
+    return {"flags": _chat_ident(jd.STATE / "session-flags.json"),
+            "ncards": _chat_ident(jd.STATE / "notify-cards.json"),
+            "colormap": _colormap(),
+            "acct": (_claude_account_label(), _auth_both()),
+            "cleared": _chat_cleared_key(),
+            "host": _self_host(),
+            "names": _names_digest(getattr(_live_scope, "names", None) or _names_snapshot()),
+            "downtime": len(_downtime)}
+
+
+def _chat_push_scopes_open():
+    """Open what the chat loop reads once per push and would otherwise read once per TAB on a thread with
+    no pusher-cycle scope (a connect push on a handler thread): the shared signature components
+    (_chat_sig_shared), the caption-map slot (_msg_summaries_scoped: 31 sessions' stats per fetch) and
+    the names snapshot (_names_parts: a registry scan per outgoing postal card without it; 853 cards
+    cost 1.3 s per unscoped sweep, measured). A pusher cycle already holds the last two, so only the
+    absent ones are opened, and the names the record; _chat_push_scopes_close clears exactly what was
+    opened here, so a cycle's own scopes are never touched. A names snapshot on a handler thread makes
+    that push's postal values one read (the fold's `_scoped`), which is the condition the recorded
+    values rest on, and gives the signature's names digest the same content the pusher's has."""
+    owned = ["chat_shared"]
+    if getattr(_live_scope, "msgsum", None) is None:
+        _live_scope.msgsum = [_MSGSUM_UNSET]
+        owned.append("msgsum")
+    if getattr(_live_scope, "names", None) is None:
+        _live_scope.names = _names_snapshot()
+        owned.append("names")
+    _live_scope.chat_shared = _chat_sig_shared()
+    _live_scope.chat_push_owned = owned
+
+
+def _chat_push_scopes_close():
+    """Clear the scopes _chat_push_scopes_open opened on this thread, and only those. Called after the
+    chat loop, at the top of every _push (a previous push on this thread that raised inside the loop
+    left them set) and in _pusher_cycle's finally."""
+    for k in getattr(_live_scope, "chat_push_owned", None) or ():
+        setattr(_live_scope, k, None)
+    _live_scope.chat_push_owned = None
+
+
+def _claudemd_key(cwd):
+    """The identity of every file _claudemd_docs(cwd) reads: (path, _chat_ident) per file on the chain,
+    the global CLAUDE.md first. The chain is part of the key — which directory first carries a .git
+    decides where the walk stops — because the paths ride along with their identities."""
+    return tuple((p, _chat_ident(p)) for p, _scope in _claudemd_paths(cwd))
+
+
+_chat_dep_scope = threading.local()   # .deps = the running build_session's dependency record, per thread
+#                                       (see _chat_build_deps); None for an override render
+
+
+def _chat_dep_note_taskout(of, key):
+    """_read_task_output's report to the running chat build: it read the tail of `of` under `key`, the
+    (mtime, size) it stat'd BEFORE the read (so a write landing after the stat pairs the old key with
+    new content, and the next signature check misses — never a stale hit). Nothing to report outside a
+    chat build."""
+    d = getattr(_chat_dep_scope, "deps", None)
+    if d is not None:
+        d["task_outs"].append((of, key))
+
+
+_DEPS_UNSET = object()
+
+
+def _chat_build_deps(sid, payload):
+    """The build-time dependencies of a chat payload, taken from the build that just produced it (the
+    per-thread _chat_dep_scope record and the payload's own events) and stored on its _built_chat entry
+    so _chat_build_sig can re-evaluate them every cycle as its three trailing components
+    (_CHAT_SIG_DEPS): the task-output files whose tails the payload embeds, each with the identity it was
+    read under; the messages whose path tokens are still unresolved (a mention precedes its file, so the
+    build retries them), with the links and pins as rendered; and the postal cards, with the log's
+    identity and the embedded values (_postal_card_deps) read from the index and caption map the build
+    hydrated against, never from a fresh read. `at_build` is the three components as this build embedded
+    them, the tail of the signature stored with the entry; the next cycle's _chat_sig_deps evaluates the
+    same record against the world then. A cold tab records its dependencies on its first build and is
+    cached from then on."""
+    sc = getattr(_chat_dep_scope, "deps", None) or {}
+    touts = {}
+    for of, key in sc.get("task_outs") or ():
+        touts.setdefault(of, key)                        # the first identity a build read a file under
+    events = payload.get("events") or []
+    pl = []
+    for ev in events:
+        if ev.get("kind") in ("user", "assistant") and ev.get("uuid") and ev.get("md"):
+            hit = _PATH_LINK_CACHE.get((sid, ev["uuid"]))
+            if hit is not None and hit[1]:               # misses left: retried on every build by design
+                pl.append((ev["uuid"], ev["md"], ev.get("pathLinks"), ev.get("pathPins")))
+    cards = [ev for ev in events if ev.get("kind") == "postal-service"]
+    postal_any = bool(cards) or bool(sc.get("postal_any"))
+    postal = None
+    if postal_any:
+        pk = sc.get("postal_key", _DEPS_UNSET)
+        if pk is _DEPS_UNSET:
+            pk = _chat_postal_key()
+        pidx = sc.get("pidx")
+        msum = sc.get("msum") or _msg_summaries_scoped
+        postal = (pk, _postal_card_deps(cards, pidx if pidx is not None else _postal_index(), msum))
+    pl_at = tuple((u, l, p) for u, _md, l, p in pl)
+    # `pl_check` starts None: the next cycle's signature re-resolves the pending tokens once (the build's
+    # own resolves ran before any pre-check could be taken) and vouches from there (_chat_sig_deps)
+    return {"task_outs": list(touts.items()), "pl_pending": [(u, md) for u, md, _l, _p in pl],
+            "pl_at": pl_at, "pl_check": None,
+            "postal_any": postal_any, "postal_cards": cards,
+            "at_build": (tuple(touts.items()), pl_at, postal)}
+
+
+def _chat_pl_precheck(sid, pending, prev=None):
+    """What a tab's pending path tokens (`pending`: the (uuid, md) pairs _chat_build_deps recorded) could
+    resolve into, as a key over exactly the filesystem state _resolve_path_token reads: the session's
+    cwd (a token resolves relative to it), the repo-index key (tiers 2 and 3 answer from
+    _repo_file_index, memoized on that key, so the same key is the same index and the same candidates),
+    each message's candidate directories — tier 1's `cwd/token` and the one tier-2/3 candidate's
+    directory, where a file appearing moves the directory's mtime, and a directory that does not exist
+    yet reads None until it does — and the identity of every such directory. Outside a git tree the repo
+    key is a constant (tiers 2 and 3 cannot answer there, and asking would fork git per call), so only the
+    tier-1 directories decide. Returns (cwd, k, per_msg,
+    idents): per_msg maps a message's uuid to its sorted candidate directories, idents each directory to
+    its _chat_ident. `prev` is the record's last key: while the cwd and the repo key hold, the candidate
+    directories are the same strings and are reused, so a cycle costs one tree scandir and one stat per
+    distinct directory. None when it cannot vouch (a tree that cannot be scanned): the caller re-resolves
+    everything, as every build did before. Per DIRECTORY, because a transcript's mentions name busy
+    places too (a state directory, a log directory): with one key over all of them, one churning
+    directory re-resolved every token of the tab each cycle; 6538 pending messages with 23641 tokens
+    across 31 tabs on the state copy, 6 tabs' directories moving within 50 ms."""
+    cwd = _cwd_of(sid)
+    in_tree = bool(cwd) and bool(_tree_of(cwd)[0])       # outside a git tree `git ls-files` fails: tiers 2/3 stand down
+    k = _repo_index_key(cwd) if in_tree else ("notree",)
+    if k is None:
+        return None
+    if prev is not None and prev[0] == cwd and prev[1] == k:
+        per_msg = prev[2]
+    else:
+        hit = _repo_index_cache.get(cwd) if in_tree else None
+        idx = (hit[1] if hit is not None and hit[0] == k else _repo_file_index(cwd)) if in_tree else None
+        per_msg = {}
+        for u, md in pending:
+            ent = _PATH_LINK_CACHE.get((sid, u))
+            toks = ent[1] if ent is not None else tuple(t for t in _path_tokens(md) if not t.lower().startswith("file://"))
+            mdirs = set()
+            for tok in toks:
+                ap = os.path.expanduser(str(tok))
+                if not os.path.isabs(ap) and cwd:
+                    ap = os.path.join(cwd, ap)
+                if os.path.isabs(ap):
+                    mdirs.add(os.path.dirname(ap))
+                if idx is not None:
+                    cands = idx.get(tok.rsplit("/", 1)[-1]) or []
+                    if "/" in tok:
+                        cands = [c for c in cands if c == tok or c.endswith("/" + tok)]
+                    if len(cands) == 1:
+                        mdirs.add(os.path.dirname(os.path.join(cwd, cands[0])))
+            per_msg[u] = tuple(sorted(mdirs))
+    dirs = set()
+    for ds in per_msg.values():
+        dirs.update(ds)
+    # one stat per distinct directory per PUSH: tabs in one tree name the same directories, and the push's
+    # shared slot (_chat_sig_shared) carries the identities taken so far; a change between two tabs' looks
+    # within a push is seen by the next push, the shared components' own rule
+    shared = getattr(_live_scope, "chat_shared", None)
+    memo = shared.setdefault("dirs", {}) if shared is not None else {}
+    idents = {}
+    for d in dirs:
+        ident = memo.get(d, _DEPS_UNSET)
+        if ident is _DEPS_UNSET:
+            ident = memo[d] = _chat_ident(d)
+        idents[d] = ident
+    return (cwd, k, per_msg, idents)
+
+
+def _chat_sig_deps(sid, deps):
+    """The three dependency components evaluated NOW over a cached build's record (_chat_build_deps):
+    each recorded task output re-stat'd; each pending path token re-resolved with its pins (the retry
+    the build ran per pass before, moved into the key) — except that a message none of whose candidate
+    directories moved since the record's answers were verified (_chat_pl_precheck) keeps those answers,
+    and only the messages a moved directory could have resolved are re-resolved; and the postal cards'
+    embedded values re-read from the current index and caption map beside the log's identity. No record
+    (a cold tab) → the empty components, which a first build's record then replaces. The pre-check is
+    taken BEFORE the re-resolve and stored on the record only when every answer held (stat-then-read): a
+    file landing between the two is seen by the resolve, one landing after moves the next pre-check."""
+    if not deps:
+        return ((), (), None)
+    touts = tuple((of, _chat_stat_key(of)) for of, _k in deps["task_outs"])
+    pl = ()
+    if deps["pl_pending"]:
+        prev = deps.get("pl_check")
+        at = deps.get("pl_at") or ()
+        pre = _chat_pl_precheck(sid, deps["pl_pending"], prev)
+        redo = None                                      # None: every message
+        if pre is not None and prev is not None and pre[0] == prev[0] and pre[1] == prev[1] \
+                and len(at) == len(deps["pl_pending"]):
+            moved = {d for d, ident in pre[3].items() if prev[3].get(d, _DEPS_UNSET) != ident}
+            redo = {u for u, ds in pre[2].items() if prev[2].get(u) != ds or any(d in moved for d in ds)}
+        out, memo = [], {}                               # memo: _resolve_path_token's per-sid cwd and repo index
+        for i, (u, md) in enumerate(deps["pl_pending"]):
+            if redo is not None and u not in redo:
+                out.append(at[i])                        # no candidate directory moved: the recorded answer holds
+            else:
+                out.append((u, _path_links(md, sid, u, memo), _path_pins(sid, u) or None))
+        pl = tuple(out)
+        if pre is not None and pl == at:
+            deps["pl_check"] = pre                       # every answer holds under this state: vouch from here
+    postal = None
+    if deps["postal_any"]:
+        # the caption map through the cycle's slot on the pusher (_msg_summaries_scoped): the same map every
+        # build of the cycle hydrates against, one fetch per cycle; a handler thread reads it fresh
+        postal = (_chat_postal_key(), _postal_card_deps(deps["postal_cards"], _postal_index(), _msg_summaries_scoped))
+    return (touts, tuple(pl), postal)
+
+
+def _chat_build_sig(sess, tmux=None, now=None, deps=None):
+    """The chat-build cache's signature: one component per input build_session reads that can change a
+    tab's payload, in _CHAT_SIG_LABELS order (round-4 plan P4, 2026-09-07; tests/test_chat_build_sig_inputs.py
+    maps every read build_session makes to one of them). Every tab, the watched one included, is served
+    from _built_chat while this is unchanged (upstream served the watched tab on a separate exact key,
+    _active_chat_sig, 2026-09-03; this is that key completed and shared), so the rule is the memo rule:
+    a cached payload may only be what the uncached build would return NOW, which holds when every input
+    is in the key — by identity (a file's stat), by value (a small in-memory input), by revision (the
+    live tail, the warm-anchor table), by digest (the names registry) or as the boolean a clock crossing
+    produces (so the key moves exactly at the crossing). It used to fold the global judge-pass counter
+    _judge_gen as a proxy for the judge's outputs and for every in-memory input it had no component
+    for, so every judge pass rebuilt every background tab (about 360 of the 410 background rebuilds
+    per 120 s on the profiled kernel); the proxy is gone and the inputs are named.
+
+    `tmux` is the liveness map the build will read (the push's guarded chat map) and `now` the push's
+    clock; a caller with neither reads them the way build_session does. `deps` is the cached build's
+    dependency record (_chat_build_deps; None reads the tab's own entry): the three trailing components
+    re-evaluate what that build embedded. Returns None only when the session has no transcript path at
+    all; a transcript that does not exist yet is a component (None), so a just-created session caches
+    like any other. `deps=False` appends the three components EMPTY: for a signature whose dependency
+    tail is discarded — every post-build signature, compared on the static components only — the
+    re-evaluation (stats, token resolves, card values) is skipped; every pre-build signature evaluates
+    it, since every tab checks the cache. The components shared by every tab come from _chat_sig_shared, once per push. The
+    session chip is NOT a component: it is a function of components that are (the parse and live tail,
+    the row, the backend brackets, the clock booleans, the task rows, the watches, the states overlay,
+    the store), so the build derives it once and the key derives nothing twice.
+
+    Cost (the state copy, 31 tabs, tools/perf-bench.py push_steady with every tab a hit, against the
+    memo stack's base): 92 ms per push, 3.0 ms per background tab, of which the dependency tail (the
+    task-output identities, the pending-token pre-check, the postal card values) is about 2 ms and the
+    per-file identities with the backend's registry reads (owns, pending_cut, pending_queued,
+    launch_error: one file read each) the rest. At the profiled 0.33 cycles per second that is 30 ms
+    per second, 3.0% of a core, against the background rebuilds it removes (the replay: 423 to 14 per
+    120 s steady, 300 to 0 per 30 s on an idle board; the cycle p50 moved 71 to 147 ms while the 120 s
+    wall fell 14.4 to 10.6 s and the idle board's 10.6 to 1.6 s). Per-cycle scoping of the registry
+    reads cannot halve it: the dependency tail is more than half. The cycle after a tab's rebuild
+    re-resolves that tab's pending tokens once (its record's pre-check starts empty, since the build's
+    own resolves ran before a pre-check could be taken), about 10 ms for a tab with 200 pending tokens."""
     path = sess.get("path")
     if not path:
         return None
+    sid = str(sess.get("sid") or "")
+    fsid = os.path.basename(path).rsplit(".", 1)[0]   # transcript filename stem == the fsid
+    if now is None:
+        now = int(time.time())
+    if tmux is None:
+        tmux = _tmux_sessions()
+    tm = tmux.get(sid)
+    shared = getattr(_live_scope, "chat_shared", None) or _chat_sig_shared()
+    if deps is None:
+        _hit = _built_chat.get(sid)
+        deps = _hit[3] if _hit is not None and len(_hit) > 3 else None
+    be = Sessions.backend_for(sid)
+    sig = []
+    # transcript: (mtime, size), or None while the file does not exist yet (a just-created session).
     try:
         st = os.stat(path)
-        sig = [st.st_mtime, st.st_size]
+        sig.append((st.st_mtime, st.st_size))
     except OSError:
-        return None
-    fsid = os.path.basename(path).rsplit(".", 1)[0]   # transcript filename stem == the fsid
-    # Fold in EVERY states file that can change this payload. The fsid is not always the key the state
-    # transitions are written under: a session that forked (a resume/clear mints a new transcript) keeps
-    # writing states/<anchor>.jsonl while its lane is keyed by the new fsid, so a states/<fsid>.jsonl stat
-    # silently fell to [0,0] and no settle EVER busted that lane's cache. Since a settle writes only to
-    # states/ (never the transcript), a forked lane's chat could latch "working" until the next transcript
-    # write (the user 2026-07-28; verified live: two live sessions had a states file under their identity
-    # id and none under the fsid their lane was keyed by). Stat both and keep the pair.
+        sig.append(None)
+    # states: EVERY states file that can change this payload, one (mtime, size) each. The fsid is not
+    # always the key the state transitions are written under: a session that forked (a resume/clear
+    # mints a new transcript) keeps writing states/<anchor>.jsonl while its lane is keyed by the new
+    # fsid, so a states/<fsid>.jsonl stat alone let a forked lane's chat latch "working" until the next
+    # transcript write (the user 2026-07-28; verified live). Stat both and keep the pair.
+    states = []
     for _k in dict.fromkeys([fsid, str(sess.get("anchor") or "")]):
         if not _k:
             continue
         try:
             ss = os.stat(jd.STATESDIR / (_k + ".jsonl"))
-            sig += [ss.st_mtime, ss.st_size]
+            states.append((ss.st_mtime, ss.st_size))
         except OSError:
-            sig += [0, 0]
-    sig.append(_judge_gen[0])     # a judge pass (goal/caption change) busts every tab's cache once
+            states.append(None)
+    sig.append(tuple(states))
+    # store: the LIVE identity of what load_goals_shared reads for this sid — the store, its override
+    # journal and its goals-archive (jd._store_identity, stat-then-read order). build_session reads the
+    # live store (the ledger tree, the seams, the awaiting stamps, the recent tops), so a publish busts
+    # the tab at once, mid-pass included (the plan's decision 2: the live identity, not the served key).
+    sig.append(jd._store_identity(sid)[1:])
+    # hold: an armed rewind filters the store's view per build (_apply_rewind_hold) and bypasses memos.
+    _hold = _rewind_hold_get(sid)
+    sig.append((_hold.get("cutT"), _hold.get("leaf"), _hold.get("at")) if _hold else None)
+    sig.append(_chat_ident(jd.ARCHDIR / (sid + ".json")))         # archive: the ledger headline
+    sig.append(_chat_ident(jd.EPIDIR / (sid + ".jsonl")))         # episodes: the note floor, the boundary card
+    sig.append(_chat_ident(jd.STATE / "sdk" / (sid + ".json")))   # reg: forkedFrom, alive, bgLedger, spawnedAt, cwd
+    sig.append(_chat_ident(jd.GONEDIR / (sid + ".json")))         # gone: the death marker behind the spawn epoch and the ended gate
     sig.append(_task_store_fp(fsid))   # a store update (incl. a subagent completing a task) refreshes the to-do card
     # a user-todo write (register / answer / dismiss / withdraw) changes the split card + the
     # payload's userTodos field with NO transcript write — without this fold a background tab's
@@ -26304,66 +26531,122 @@ def _chat_build_sig(sess, tm=None):
     # (review 2026-09-06): the postal working note (working/<sid>; a `romp mail working` from a
     # shell, a peer's forwarded write and the kernel's own idle+done lift all change it without a
     # transcript write) and the feed's per-session needs-you verdict (_feed_needs_input, set by the
-    # feed build). Without these a BACKGROUND tab's cached ledger kept the old note until the next
-    # producer pass ended (3 s plus the pass, minutes while judges are calling the model). The note
-    # rides as its text (one small file read, byte-stable while unchanged, the _user_todo_fp shape);
-    # the verdict as its bit. Both now reach a background row at the next push, like every other
-    # ledger field.
+    # feed build). The note rides as its text (one small file read, byte-stable while unchanged);
+    # the verdict as its bit.
     sig.append(Sessions.working_note(sess.get("sid") or ""))
     # The bit as a bool, not the raw tri-state (review r2 2026-09-06): _feed_needs_input is None until the
     # first feed build since start, and a push builds the chat sessions BEFORE the feed, so a raw fold gave
     # every tab a None sig on the first push and a False one on the next (0.5 s later) and rebuilt the
     # whole strip once for a value the row reads the same (needsInput === true). Only True is a verdict.
     sig.append(_feed_needs_input_of(sess.get("sid") or "") is True)
-    # the push's row for this sid (its live facts; 2026-09-03 upstream), ONE component so the tail keeps a
-    # fixed length for _chat_sig_labels: None when the push has no row for the sid
-    t = tm
-    sig.append(None if t is None else
-               (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"),
-                len(t.get("subagents") or ()), len(t.get("bgTasks") or ()), bool(t.get("interrupting")),
-                bool(t.get("modelPending")), bool(t.get("effortPending")), bool(t.get("authPending")),
-                int(t.get("retryCount") or 0), bool(t.get("connected")), bool(t.get("spawning")),
-                t.get("auth"), t.get("authLive")))
+    # live: the in-memory tail's revision (Sessions.live_rev): the SDK stream's atoms ahead of the disk,
+    # the input echoes, their dropped/landed flags — by count of changes, never by hashing the atoms.
+    sig.append(Sessions.live_rev(sid, be))
+    # row: the liveness row the build reads (state, since, model, effort, mode, the badges, the live
+    # subagent and task sets, spawning, retry info), minus snapT (a per-snapshot stamp that moves every
+    # cycle) and interrupting (read only through _interrupting, whose boolean is folded below); with
+    # whether the map holds anything at all (the no-tmux fallback status when the row is missing).
+    sig.append(({k: v for k, v in tm.items() if k not in ("snapT", "interrupting")} if tm else None, bool(tmux)))
+    # clock: the booleans the clock decides, so the signature moves exactly at each crossing and at no
+    # other tick — the interrupt stamp's 120 s cap and its settle (_interrupting, which pops the stamp
+    # exactly as the build's call would), the model-switch stamp's 20 s cap (_model_pending_now), the
+    # faded look's hour (_idle_faded, asked as if the chip read ready: when it does not, the payload
+    # ignores the answer and a flip costs one rebuild at the crossing), and the compact click's 180 s
+    # cap (_compacting_optimistic). The two stamp-keyed ones need the parse only while a stamp is armed.
+    _t0 = _interrupt_clicked.get(sid)
+    _c0 = _compact_clicked.get(sid)
+    _pz = _parse(path, sid, now) if (_t0 is not None or _c0 is not None) else None
+    sig.append((_interrupting(sid, _pz, now, tm) if _t0 is not None else False,
+                _model_pending_now(sid, tm),
+                _idle_faded("ready", (tm or {}).get("since"), now),
+                _compacting_optimistic(sid, _pz, now) if _c0 is not None else False))
+    # backend: the owning backend's in-memory state the build reads by value — the compacting and
+    # clearing brackets, the queue (the SDK's in-memory list; the tmux fold is over the transcript, so
+    # for tmux this repeats a component already held), whether a queued bubble is still recallable,
+    # and the CLI's launch error.
+    try:
+        _bc = be.compacting(sid) if hasattr(be, "compacting") else None
+    except Exception:
+        _bc = None
+    queued = tuple(be.pending_queued(sid))
+    sig.append((_bc, _clearing_now(sid, be), queued,
+                _queue_recallable(be, sid) if hasattr(be, "unqueue") else None, _launch_error(sid, be)))
+    # ops: the ops parked for this session while it compacts or is held (the kernel FIFO), by value.
+    ops = tuple(tuple(o) for o in (_pending_ops.get(sid) or ()))
+    sig.append(ops)
+    # limit: the account-level hold the queued bubble names (_limit_hold: usage windows and their reset
+    # clock, the spend pause, a limit-shaped launch error), by value, read whenever the build can render
+    # a queued bubble — something queued or parked, or on a tmux backend an input echo still in flight,
+    # which the build folds into the queue while the session is busy. None otherwise, and the build
+    # never asks.
+    _echoes = bool(be.live_atoms(sid)) if not hasattr(be, "unqueue") else False
+    if queued or ops or _echoes:
+        if "usage" not in shared:                        # usage.json parsed once per push: the limits half only
+            try:                                         # (_usage_limits, P18 — the hold reads no ledger figure)
+                shared["usage"] = _usage_limits() or {}
+            except Exception:
+                shared["usage"] = None
+        sig.append(_limit_hold(sid, usage=shared["usage"]))
+    else:
+        sig.append(None)
+    # retry: the per-session auto-retry state the status carries (suppressed; the ladder's count and
+    # next-attempt time).
+    sig.append((_session_retry_suppressed(sid),) + tuple(_retry_gate_state(sid)))
+    # bg: the live background-task rows the awaiting sources and the task box read (_bg_live_norm: the
+    # row's task set joined with the reg's launch ledger, the transcript's pairing for a tmux CLI, each
+    # row gone once em._bg_expired says its deadline passed — a clock crossing this fold carries).
+    sig.append(tuple((r.get("tid"), r.get("desc"), r.get("t"), r.get("type"), r.get("deadline"), r.get("agentId"))
+                     for r in _bg_live_norm(sid, path, live=tm)))
+    # watch: the kernel watches this session registered, as the awaiting source reads them AND as the
+    # payload renders them: beside the why, since, tasks and count, every row's item (its id, the cancel
+    # handle watchId, the predicate as detail, the note as label, its own since; a PR watch's repo and
+    # number). A watch cancelled and re-armed under the same note with a new id or predicate left the
+    # (why, since, tasks, count) projection unchanged, so the cached tab served a dead cancel handle and
+    # the old predicate (re-review 2026-09-08, should-fix 1; upstream's active key stat'd watches.json).
+    _w = _watch_awaiting(sid)
+    sig.append((_w.get("why"), _w.get("since"), tuple(_w.get("tasks") or ()), _w.get("count"),
+                tuple(tuple(sorted(it.items())) for it in (_w.get("items") or ()))) if _w else None)
+    # stamp: the session's durable awaiting-stamp view (_session_stamp_read: the freshest live stamp, the
+    # stamped tops, the delegation peers), by value through its own memo, which is keyed on the store,
+    # the override journal, the POSTAL LOG (a peer's answer supersedes a peer wait, so mail landing
+    # changes the chip and the awaiting fields of a tab that carries no postal card at all) and the
+    # stamp transcript's cache warmth; a hit costs stats, and the build's own read then hits too.
+    sig.append(_session_stamp_read(sid))
+    # anchors: the warm-anchor table's revision for this sid (_node_anchor_rev): a resolve another
+    # build landed changes a cold node's deep-link anchors. Read here BEFORE the build; a build that
+    # learns an anchor bumps it, and the post-build signature then differs, so that build is not cached
+    # and the next cycle's is (one extra build per anchor learned).
+    sig.append(_node_anchor_rev.get(sid, 0))
+    for _k in ("downtime", "names", "flags", "ncards", "colormap", "acct", "cleared", "host"):
+        sig.append(shared[_k])                          # the shared components, in label order
+    # cwd: the directory-derived rows — the cwd itself (the names entry's, else the transcript's
+    # stamp), its git branch and GitHub repository, the work tree the newest edit names and the
+    # registered tree's top — by value through their own memos, which are keyed on the .git evidence
+    # they rest on and cost stats, never a fork, while it holds.
+    meta = _session_meta(path)
+    scwd = _session_cwd(sid, meta=meta)
+    sig.append((scwd, _git_branch(scwd), _github_repo_of(scwd),
+                _tree_of(os.path.dirname(meta.get("lastEditPath") or "") or ""),
+                _tree_of(os.path.expanduser(scwd)) if scwd else ("", "")))
+    sig.append(_claudemd_key(scwd))                     # claudemd: the instruction files on the chain, by identity
+    # fork: the branches that left from this session, by value (fork_children's own memo is keyed on
+    # the sdk/ directory's mtime, which moves at turn rate; the per-sid value moves only when a fork of
+    # THIS session appears, is promoted or is deleted).
+    sig.append((_be.fork_children().get(sid) if _be and hasattr(_be, "fork_children") else None) or None)
+    sig.extend(((), (), None) if deps is False else _chat_sig_deps(sid, deps))   # taskout, pathlink, postal
     return tuple(sig)
-
-
-# The labels of _chat_build_sig's components after the two transcript values and the per-states-file
-# pairs, in append order. The sig stays a flat tuple (its callers compare it whole, and test pins read
-# its source), so the labels are derived from the tuple's SHAPE: the states section is the only one
-# whose length varies (one or two files, two values each); the head and the tail are fixed. A component
-# appended to _chat_build_sig must be appended here too; tests/test_chat_fixed_cost_memos.py pins the
-# appends against this tuple.
-_CHAT_SIG_TAIL = ("judge_gen", "tasks", "todos", "pins", "cut", "note", "needs", "tmux")
-
-
-def _chat_sig_labels(sig):
-    """One label per position of a _chat_build_sig tuple (see _CHAT_SIG_TAIL)."""
-    n_states = len(sig) - 2 - len(_CHAT_SIG_TAIL)
-    return ("transcript", "transcript") + ("states",) * max(n_states, 0) + _CHAT_SIG_TAIL
 
 
 def _chat_sig_miss(old, new):
     """Why a background tab rebuilt: the sorted labels of every _chat_build_sig component that differs
     between the cached signature `old` and the fresh one `new` (the bg_miss attribution under
-    builds.chat in /perf). No cached build is ("cold",); a fresh signature of None (no transcript path,
-    or one that cannot be stat'd) is ("nosig",). Signatures of different lengths differ in their states
-    section (the session's anchor appeared or went), so that label is set and the fixed head and tail
-    are compared from their own ends."""
+    builds.chat in /perf). No cached build is ("cold",); a fresh signature of None (no transcript path)
+    is ("nosig",). Both signatures have _CHAT_SIG_LABELS's length, so the compare is by position."""
     if new is None:
         return ("nosig",)
-    if old is None:
+    if old is None or len(old) != len(new):
         return ("cold",)
-    labels = _chat_sig_labels(new)
-    if len(old) == len(new):
-        return tuple(sorted({labels[i] for i in range(len(new)) if old[i] != new[i]}))
-    out = {"states"}
-    for i in range(2):                                 # the head: the transcript's (mtime, size)
-        if old[i] != new[i]:
-            out.add(labels[i])
-    for j in range(1, len(_CHAT_SIG_TAIL) + 1):        # the tail, aligned from the end
-        if old[-j] != new[-j]:
-            out.add(_CHAT_SIG_TAIL[-j])
-    return tuple(sorted(out))
+    return tuple(sorted(lab for lab, a, b in zip(_CHAT_SIG_LABELS, old, new) if a != b))
 
 
 def _parse(path, sid, now):
@@ -27321,7 +27604,7 @@ def _session_chip(sid, path, session, tm, now):
     freshest parse the caller has (live-merged where available); `tm` the backend snapshot or None."""
     turns = session.get("turns", [])
     open_now = _session_working(turns)
-    awaiting_why = _session_awaiting(sid, path, not open_now, stamp=True)   # session-scoped chip → durable stamp too
+    awaiting_why = _session_awaiting(sid, path, not open_now, stamp=True, live=tm)   # session-scoped chip → durable stamp too; the caller's row
     aerr = _api_error(path) if not (open_now or awaiting_why) else None
     st = (tm or {}).get("state", "") or ""
     compacting = _compacting(sid, st, session, now, (tm or {}).get("since"))
@@ -27429,13 +27712,15 @@ def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
     return _compacting(sid, (tm or {}).get("state", ""), session, int(time.time()), (tm or {}).get("since"))
 
 
-def _clearing_now(sid):
+def _clearing_now(sid, be=None):
     """Is this session mid-/clear RIGHT NOW — the backend's authoritative bracket (SDK: set on /clear
     delivery, cleared by the lastSid-flipping init / the turn's settle). No optimistic/tmux derivation
     exists: a tmux TUI /clear surfaces as a fork lane with no observable bracket (the accepted gap in
-    plans/clear-episodes.md), so None reads False."""
+    plans/clear-episodes.md), so None reads False. `be`: the owning backend when the caller already
+    resolved it (the chat-build signature; Sessions.backend_for reads the sid's registry file per call)."""
     try:
-        be = Sessions.backend_for(str(sid))
+        if be is None:
+            be = Sessions.backend_for(str(sid))
         return bool(be.clearing(str(sid))) if be is not None else False
     except Exception:
         return False
@@ -27463,9 +27748,10 @@ def _working_now(sid):
 
 _UNSET = object()
 _UNREADABLE = object()   # _live_scope.usage when the drain's one usage.json read failed: 'no hold', never 'empty usage'
+_USAGE_UNSET = object()  # _limit_hold's `usage` when the caller hands no reading down
 
 
-def _limit_hold(sid):
+def _limit_hold(sid, usage=_USAGE_UNSET):
     """Is this session's input HELD because the ACCOUNT cannot serve it yet — a 5h/7d rate window sitting
     at its cap, or the monthly spend cap? Returns the hold {reason, resetsAt, what} or None.
 
@@ -27496,7 +27782,11 @@ def _limit_hold(sid):
 
     The hold is never silent: it rides the `queued` event onto every parked bubble (so the chat says what
     the queue is waiting for and until when), and every bubble keeps its ✕ — whatever romp is holding, the
-    user can see it and drop it."""
+    user can see it and drop it.
+
+    `usage`: the _usage() reading the caller already holds — the chat-build signature reads usage.json
+    once per push for every queued tab (round-4 plan P4); None says that reading failed (no hold, as
+    above). Default: read here."""
     # The CLI REFUSING TO START on the limit is the first arm, because it is the case usage.json cannot
     # see: usage.json is written from a RateLimitEvent the CLI streams once connected, so a limit that
     # blocks the connect blocks its own reporting. On a fresh install that left the hold blind — the user
@@ -27509,15 +27799,16 @@ def _limit_hold(sid):
     if _le and _le.get("limit"):
         return {"reason": "limit", "resetsAt": None,
                 "what": "waiting for your usage limit to reset", "detail": _le.get("text") or ""}
-    usage = getattr(_live_scope, "usage", _UNSET)
+    if usage is _USAGE_UNSET:                         # no reading handed down (the chat signature reads usage.json once
+        usage = getattr(_live_scope, "usage", _UNSET)   # per push and hands it here): the drain's hoisted one, else a read
     if usage is _UNSET:
         try:
             usage = _usage_limits()                   # the limits half: this gate runs per parked session
         except Exception:                             # per cycle and reads no ledger figure (P18)
             usage = _UNREADABLE
-    if usage is _UNREADABLE:
-        return None                                   # unreadable usage → never invent a hold (the drain's
-    u = usage or {}                                   # hoisted reading says so the same way: review find 2026-09-05)
+    if usage is _UNREADABLE or usage is None:
+        return None                                   # unreadable usage → never invent a hold (the drain's hoisted reading
+    u = usage or {}                                   # and a caller's failed reading say so the same way: review find 2026-09-05)
     lim = u.get("limited") or {}
     resets = [(u.get(k) or {}).get("resetsAt") for k in ("fiveHour", "sevenDay") if lim.get(k)]
     if resets:
@@ -29056,17 +29347,23 @@ def _claudemd_docs(cwd):
     with the home dir abbreviated to ~ and each file's text capped. Reference-only — the harness's own base
     prompt isn't recorded anywhere, so it isn't (and can't be) included."""
     out = []
-
-    def add(p, scope):
+    for p, scope in _claudemd_paths(cwd):
         try:
             with open(p, errors="replace") as f:
                 txt = f.read()
         except OSError:
-            return
+            continue
         if txt.strip():
             out.append({"path": _tilde(p), "scope": scope, "text": txt[:20000]})
+    return out
 
-    add(str(_GLOBAL_CLAUDE_MD), "global")
+
+def _claudemd_paths(cwd):
+    """The CLAUDE.md files in effect for a session, in Claude Code's load order: [(path, scope)], the
+    global file first, then each project file from the git root down to cwd. Shared by _claudemd_docs
+    (which reads them) and the chat-build signature (which stats them, _claudemd_key), so the two can
+    never walk different chains."""
+    out = [(str(_GLOBAL_CLAUDE_MD), "global")]
     home = os.path.expanduser("~")
     chain = []
     d = os.path.abspath(os.path.expanduser(cwd)) if cwd else None
@@ -29079,7 +29376,7 @@ def _claudemd_docs(cwd):
             break
         d = parent
     for dd in reversed(chain):                               # outermost (git root) first → load order
-        add(os.path.join(dd, "CLAUDE.md"), "project")
+        out.append((os.path.join(dd, "CLAUDE.md"), "project"))
     return out
 
 
@@ -29129,6 +29426,11 @@ def _atom_user_texts(a):
 # turn lands. A SUCCESSFUL send's echo prunes when the turn writes; a DROPPED send's echo PERSISTS, so the
 # lost message stays visible (no response) instead of vanishing silently.
 _tmux_echo = {}                                       # sid -> {key -> synthetic user atom}
+_tmux_echo_rev = {}                                   # sid -> the store's revision, advanced by _tmux_echo_bump at
+#                                                       every change to the sid's echoes (an add, a prune, a settle
+#                                                       mark, a dismiss): the chat-build signature's live-tail
+#                                                       component for tmux sids (Sessions.live_rev), the twin of
+#                                                       SdkBackend._touch_live
 _tmux_echo_lock = threading.Lock()                    # every compound step on the store runs under it: senders
 #                                                       (WS/HTTP handler threads) add while builders (the pusher,
 #                                                       connect pushes) prune and settle, and "snapshot the keys,
@@ -29147,6 +29449,15 @@ def _tmux_echo_add(sid, text, author="human"):
         "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
     with _tmux_echo_lock:
         _tmux_echo.setdefault(sid, {})[key] = atom
+        _tmux_echo_bump(sid)
+
+
+def _tmux_echo_bump(sid):
+    """Advance the sid's echo-store revision (_tmux_echo_rev), after the write it records. The CALLER
+    holds _tmux_echo_lock — it is not re-entrant, so this takes nothing. Only a change calls it (an
+    add, a pop, a `dropped` mark); a prune or settle that touched nothing leaves the revision alone."""
+    _tmux_echo_rev[sid] = _tmux_echo_rev.get(sid, 0) + 1
+
 
 def _tmux_echo_atoms(sid):
     with _tmux_echo_lock:
@@ -29166,8 +29477,11 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
         d = _tmux_echo.get(sid)
         if not d:
             return
-        for k in [k for k, a in d.items() if _landed(a)]:
+        gone = [k for k, a in d.items() if _landed(a)]
+        for k in gone:
             d.pop(k, None)
+        if gone:
+            _tmux_echo_bump(sid)
         if not d:
             _tmux_echo.pop(sid, None)
 
@@ -29228,6 +29542,7 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
         d = _tmux_echo.get(sid)
         if not d:
             return
+        changed = False
         for k, a in list(d.items()):
             if not _echo_overtaken(a, human_floor):
                 continue
@@ -29235,8 +29550,12 @@ def _tmux_echo_settle(sid, human_floor, still_queued=()):
                 continue                                 # still owed by the queue ledger → waiting, not lost
             if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
                 d.pop(k, None)
-            else:
+                changed = True
+            elif not a.get("dropped"):
                 a["dropped"] = True
+                changed = True
+        if changed:
+            _tmux_echo_bump(sid)
         if not d:
             _tmux_echo.pop(sid, None)
 
@@ -29693,6 +30012,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     if path_override:
         sess = dict(sess)
         sess["path"] = str(path_override)
+    # The build-time dependency record (round-4 plan P4, 2026-09-07; see _chat_build_deps): the task
+    # outputs this build reads (reported by _read_task_output as it reads them, plus the sealed prefix's
+    # on a fold hit), and the postal inputs it hydrates against, so the pusher can store on the tab's
+    # cache entry what its signature must re-check per cycle. Per thread; None for an override render.
+    _chat_dep_scope.deps = None if path_override else {"task_outs": [], "postal_any": False}
     # Messages QUEUED in the TUI (submitted while busy/compacting) — folded EVENT-BASED by the owning backend:
     # the transcript's queue-operation records (tmux) or the SDK's in-memory queue. Computed HERE, before the
     # live-atom merge, so the optimistic input echo can SUPPRESS any text already shown as queued — the
@@ -29935,6 +30259,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     if _fold_ok:
         _fk = _fe["n"]
         _chat_fold_count("fold")
+        if _chat_dep_scope.deps is not None:
+            # the sealed prefix's output tails are embedded but not re-read on a fold hit: their
+            # identities join this build's record (the gate above re-stat'd them under these keys)
+            _chat_dep_scope.deps["task_outs"].extend(_fe["task_outs"])
+            _chat_dep_scope.deps["postal_any"] = bool(_fe["postal_raw"])
         events = list(_fe["events"])              # a NEW list of the SAME dicts — never written into (see above)
         _pref_len = len(events)
         uuid2seg, seg_anchors, seg_trig, seg_work = (dict(_fe["seg"][0]), dict(_fe["seg"][1]),
@@ -30286,6 +30615,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
         _raw_turn[id(_ev)] = _ti
         if _ev.get("uuid") and _ev["uuid"] not in _raw_turn:
             _raw_turn[_ev["uuid"]] = _ti
+    # The tail's postal-relevant raw events, found once here and shared with the commit below (which
+    # used to run the same predicate over nearly the same list): any means the payload's rendering
+    # depends on the postal log, so the signature folds the log's identity (_chat_build_deps).
+    _prel = [_e for _e in _raw_tail if _chat_postal_relevant(_e)]
+    if _chat_dep_scope.deps is not None:
+        _chat_dep_scope.deps["postal_any"] = _chat_dep_scope.deps["postal_any"] or bool(_prel)
+        _chat_dep_scope.deps["postal_key"], _chat_dep_scope.deps["pidx"], _chat_dep_scope.deps["msum"] = _pk, _pidx, _msum
     events = _hydrate_postal(events, _pidx, sid, captions=_msum)   # swap postal traffic for clean in/out cards (no boilerplate)
     _stamp_interrupt_causes(events)                     # a restart/crash resume notice names the seam's cause
     for ev in events:
@@ -30332,8 +30668,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                     1 for _e in _newpart if _e.get("kind") == "tool" and _e.get("name") == "Skill" and not _e.get("skillMd"))
                 _cur = _tsnap[_np][0] if _np in _tsnap else _fe["cursors"]
                 _lt, _lm = (_tsnap[_np][1], _tsnap[_np][2]) if _np in _tsnap else (_fe["last_t"], _fe["last_model"])
-                _raw_new = [_e for _e in _raw_tail if _raw_turn.get(id(_e), _fk) < _np]
-                _praw_new = [_e for _e in _raw_new if _chat_postal_relevant(_e)]
+                _praw_new = [_e for _e in _prel if _raw_turn.get(id(_e), _fk) < _np]
                 _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + _praw_new
                 # Only the raw events NEW since the seal are hydrated here: the gate above verified the sealed
                 # cards (or re-hydrated them and found them equal) against the same index and caption map,
@@ -30574,7 +30909,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
     # user 2026-06-22), the SAME signal _nudge + build_feed use. Only meaningful when the main turn is idle
     # (_session_awaiting returns None while open_now). Session-scoped chat-view chip → the durable stamp too,
     # so the composer's awaiting chip survives a kernel restart like the feed card.
-    _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True)
+    _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True, live=tmux.get(sid))   # the handed row (see _session_awaiting)
     awaiting_why = _aw["why"] if _aw else None
     awaiting_kind = _aw["kind"] if _aw else None
     # The in-flight ROWS ride the payload in BOTH turn states (2026-09-06): _session_awaiting answers
@@ -30896,11 +31231,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
                   # idle-awaiting, everything running in the background otherwise; [] for a wait no
                   # source can enumerate (a judge stamp, a bare overlay row) and when nothing runs
                   "awaitingItems": _aw_items,
-                  "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"]) or
+                  "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"], live=tm) or
                                       (_aw or {}).get("tasks") or [])) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
                   # rows in the chip's await-green (the user 2026-08-19)
-                  "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"]) if awaiting_why else []),
+                  "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"], live=tm) if awaiting_why else []),
                   "apiTooLong": bool(aerr and aerr.get("tooLong")),
                   # a spend cap is on-you like tooLong (red tab, "raise your cap") AND never auto-retried:
                   # the client's apiRetryTick skips it, and the global pause it engages stops the loop too
@@ -40611,6 +40946,28 @@ _PATH_LINK_CACHE = {}                 # (sid, uuid) -> (links dict, misses tuple
 _repo_index_cache = {}   # cwd -> (key, index) — key = (git-index mtime, toplevel-dir mtime), see below
 
 
+def _repo_index_key(cwd):
+    """The events that change _repo_file_index(cwd)'s answer, as its memo key: the git INDEX file's
+    mtime (every add/rm/commit/checkout touches it), the repo top dir's mtime (a new untracked file at
+    the top) and the mtimes of the top's immediate subdirectories (a file created in one moves its
+    parent's mtime; one scandir of stats, no fork). None when the tree cannot be scanned — the index is
+    then rebuilt per call and nothing vouches for it. Shared with the chat-build signature's pending
+    path-token pre-check (_chat_pl_precheck), which asks the same question: could a token's tier-2/3
+    answer have changed."""
+    tree = _tree_of(cwd)[0] or cwd                   # _tree_of returns (toplevel, branch)
+    try:
+        gi = _git_head_file(tree)                    # <gitdir>/HEAD — the index sits beside it
+        subs = []
+        with os.scandir(tree) as it:
+            for e in it:
+                if e.name != ".git" and e.is_dir(follow_symlinks=False):
+                    subs.append((e.name, e.stat().st_mtime))
+        return ((os.path.getmtime(os.path.join(os.path.dirname(gi), "index")) if gi else None),
+                os.path.getmtime(tree), tuple(sorted(subs)))
+    except OSError:
+        return None
+
+
 def _repo_file_index(cwd):
     """basename -> [repo-relative paths] for every tracked or untracked-unignored file under `cwd`,
     or None when there is no list to be had (not a git repo, git absent/failing, or a listing past
@@ -40625,19 +40982,7 @@ def _repo_file_index(cwd):
     fork multipliers behind the Mac 66% CPU burn (2026-08-16). A creation the key can't see (depth
     two or deeper, untracked) only delays that file's tier-2/3 path LINK until the next observable
     touch — a rendering nicety, never data; a click's own resolution is unaffected."""
-    tree = _tree_of(cwd)[0] or cwd                   # _tree_of returns (toplevel, branch)
-    key = None
-    try:
-        gi = _git_head_file(tree)                    # <gitdir>/HEAD — the index sits beside it
-        subs = []
-        with os.scandir(tree) as it:
-            for e in it:
-                if e.name != ".git" and e.is_dir(follow_symlinks=False):
-                    subs.append((e.name, e.stat().st_mtime))
-        key = ((os.path.getmtime(os.path.join(os.path.dirname(gi), "index")) if gi else None),
-               os.path.getmtime(tree), tuple(sorted(subs)))
-    except OSError:
-        key = None
+    key = _repo_index_key(cwd)
     hit = _repo_index_cache.get(cwd)
     if hit is not None and key is not None and hit[0] == key:
         return hit[1]
@@ -41059,6 +41404,7 @@ def _push(targets, connect=False, tmux=None):
     if not targets:
         return
     now = int(time.time())
+    _chat_push_scopes_close()                 # never inherit a previous push's per-push scopes (a raise left them set)
     tmux = _tmux_sessions() if tmux is None else tmux   # one liveness read per push, shared by all builders
     _seen_live.update(tmux)                       # remember who's been alive → keep their tab when they die
     want_chat = any(c["app"] == "chat" for c in targets)
@@ -41141,26 +41487,33 @@ def _push(targets, connect=False, tmux=None):
             # dots on a session that had been ready for all of it (the user 2026-08-08).
             build_order = sorted(chat_list, key=lambda s: 0 if s["sid"] in active
                                  or not os.path.exists(s["path"]) else 1)
+            # The chat-build signature's shared components, once per push (see _chat_sig_shared), and on a
+            # handler thread the caption-map slot and names snapshot a pusher cycle would already hold
+            # (_chat_push_scopes_open). Closed after the loop.
+            _chat_push_scopes_open()
+            _nd = len(_CHAT_SIG_DEPS)
             for s in build_order:
-                is_active = s["sid"] in active           # the watched tab(s): rebuilt only when an input moved
-                sig = _chat_build_sig(s, tmux.get(s["sid"]))
+                is_active = s["sid"] in active           # the watched tab(s): served like any tab while its complete
+                #                                          signature is unchanged (upstream's 2026-09-03 rule for the
+                #                                          watched tab, on the one key since round-4 plan P4)
+                try:
+                    # every tab checks the cache, so every pre-build signature evaluates the dependency tail
+                    # over the tab's own record; the post-build one below skips it (deps=False)
+                    sig = _chat_build_sig(s, chat_tmux, now)
+                except Exception:
+                    # a signature that cannot be taken is no signature: the tab rebuilds and is not cached,
+                    # and the cause is said (never a silent forever-miss)
+                    sys.stderr.write("push build: chat signature %s: %s\n" % (str(s["sid"])[:8], traceback.format_exc()))
+                    sig = None
                 hit = _built_chat.get(s["sid"])
-                # The active tab is served from its last build when its EXACT key is unchanged and no
-                # kernel-side mutation postdates that build's start (2026-09-03; before, it rebuilt on
-                # every cycle by design — see _active_chat_sig). Background tabs keep their file-stat key.
-                asig = _active_chat_sig(s, tmux.get(s["sid"]), now, base=sig) if is_active else None
-                if is_active:
-                    fresh = (hit is not None and asig is not None and hit[3] == asig and _views_dirty[0] <= hit[4])
-                else:
-                    fresh = (hit is not None and sig is not None and hit[0] == sig)
-                if fresh:
-                    m, ms, asig, started = hit[1], hit[2], hit[3], hit[4]   # unchanged → reuse, no reshape/serialize
+                post, served = None, False
+                if hit is not None and sig is not None and hit[0] == sig:
+                    m, ms, served = hit[1], hit[2], True     # unchanged → reuse, no reshape/serialize
                     _VIEW_STATS["chatServeActive" if is_active else "chatServeBg"] += 1
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
                     _PERF_STATS.build_chat(True)
                 else:
                     _VIEW_STATS["chatBuildActive" if is_active else "chatBuildBg"] += 1
-                    started = time.time()                # the _views_dirty floor for this build (start-keyed)
                     _t0 = time.monotonic()
                     try:
                         m = build_session(s["sid"], now, chat_tmux)
@@ -41178,14 +41531,31 @@ def _push(targets, connect=False, tmux=None):
                     # _send_chat materializes it on the first FULL send (a fresh client, a fork) and hands
                     # it back; the post-send cache store below keeps whatever materialized.
                     ms = None
-                    # The ACTIVE tab skips the cache above by design, so this build is what the watched
-                    # session pays on every single push. If chat ever feels slow again, this number and
-                    # the deduped= on the matching send say which half is at fault.
+                    # This build is what the watched session pays when one of its inputs moved (the perf
+                    # line below names which). If chat ever feels slow again, this number and the
+                    # deduped= on the matching send say which half is at fault.
                     _dt = time.monotonic() - _t0
-                    # WHY a background tab rebuilt (round-4 plan P3): the labelled _chat_build_sig
-                    # components that moved against the cached signature, so /perf can say which input
-                    # drives the background rebuilds (the active tab rebuilds by design and is not attributed)
-                    _miss = () if is_active else _chat_sig_miss(hit[0] if hit is not None else None, sig)
+                    # The signature again, AFTER the build, over the same dependency record: the payload is
+                    # cached below only when the two agree on every component but the dependencies (which
+                    # the build's own record supplies), so an input that moved while the build ran — a
+                    # transcript write, the merge's own live-tail prune, a warm anchor the walk learned, a
+                    # value flipped by another thread — leaves the tab uncached for one cycle instead of
+                    # caching a payload under a signature it may not match. The one flip this cannot see is
+                    # an in-memory value that went A -> B -> A between the two readings, with the build
+                    # reading B: accepted, and stated here (round-4 plan P4, the value-flip amendment).
+                    # the dependency record first (which tokens are still pending reads _PATH_LINK_CACHE, and the
+                    # signature below must not have moved it in between), then the post-build signature
+                    _rec = _chat_build_deps(s["sid"], m) if (sig is not None and m) else None
+                    if sig is not None:
+                        try:
+                            post = _chat_build_sig(s, chat_tmux, now, deps=False)   # compared on the static part only
+                        except Exception:
+                            post = None
+                    # WHY a tab rebuilt (round-4 plan P3): the labelled _chat_build_sig components that
+                    # moved against the cached signature. /perf's bg_miss counts them for background tabs
+                    # (build_chat files the watched tab under active_built alone); the chatbuild perf line
+                    # names them for every tab, the watched one included, since it too is keyed now.
+                    _miss = _chat_sig_miss(hit[0] if hit is not None else None, sig)
                     _PERF_STATS.build_chat(False, _dt, active=is_active, miss=_miss)
                     if _PERF:                            # the keyword values below cost lookups; skip them when off
                         _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
@@ -41226,7 +41596,18 @@ def _push(targets, connect=False, tmux=None):
                 if sig is not None:
                     while len(_built_chat) > 256:        # bounded by the session count; evict oldest-inserted, never clear
                         _built_chat.pop(next(iter(_built_chat)))
-                    _built_chat[s["sid"]] = (sig, m, ms, asig, started)
+                    if served:
+                        _built_chat[s["sid"]] = (hit[0], m, ms, hit[3] if len(hit) > 3 else None)
+                    elif post is not None and post[:-_nd] == sig[:-_nd] and _rec is not None:
+                        # the dependency components come from THIS build's record (what it embedded), never
+                        # from a re-read: the record is what the next cycle's signature evaluates
+                        _built_chat[s["sid"]] = (post[:-_nd] + _rec["at_build"], m, ms, _rec)
+                    elif post is not None:
+                        _PERF_STATS.build_chat_moved()
+                        if _PERF:
+                            _perf("chatsig", sid=str(s["sid"])[:8],
+                                  moved=",".join(l for l in _chat_sig_miss(sig, post) if l not in _CHAT_SIG_DEPS))
+            _chat_push_scopes_close()
             if tab_order is not None:                    # "no longer shown" is only a trustworthy claim when the
                 #                                          tab list itself is: a sentinel cycle's SDK-only list
                 #                                          must not evict the tmux tabs' build caches/delta baselines
@@ -43057,6 +43438,7 @@ def _pusher_cycle():
         _live_scope.paths = None
         _live_scope.sessions = None
         _live_scope.msgsum = None
+        _chat_push_scopes_close()         # the chat loop's per-push scopes (see _chat_push_scopes_open)
         _PERF_STATS.cycle(time.monotonic() - _t_cycle, time.thread_time() - _c_cycle)
 
 

@@ -127,7 +127,7 @@ class NudgeFailedMootWhenSuperseded(unittest.TestCase):
         km.jd.GOALDIR = td / "goals"
         km.jd.GOALDIR.mkdir(parents=True)
         km._autonudge_cache.clear()
-        km._session_awaiting = lambda sid, path, idle, stamp=False: None
+        km._session_awaiting = lambda sid, path, idle, stamp=False, live=None: None
         km._path_of = lambda sid, now=None: "/nonexistent"
         (td / "auto-nudge.json").write_text(json.dumps(
             {"enabled": True, "nudged": {G1: {"count": 1, "lastTurnId": "t1", "at": RESP_T - 5}}}))

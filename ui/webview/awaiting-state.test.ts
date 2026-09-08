@@ -68,7 +68,7 @@ test("the kernel split happens in the ONE shared derivation (_session_chip), not
 test("the awaiting WHY lives in the background box, not the statusline (the user 2026-08-13, twice)", () => {
   // the kernel ships the why + the live awaited task descriptions in the chat status payload…
   assert.match(KERNEL, /"awaitingWhy": awaiting_why or None,/);
-  assert.match(KERNEL, /"awaitingTasks": \(\(\(_awaiting_task_descs\(sid, sess\["path"\]\) or[\s\S]{0,80}?\.get\("tasks"\) or \[\]\)\) if awaiting_why else \[\]\),/);   // watch descs ride when no bg-task descs exist (2026-08-30)
+  assert.match(KERNEL, /"awaitingTasks": \(\(\(_awaiting_task_descs\(sid, sess\["path"\], live=tm\) or[\s\S]{0,80}?\.get\("tasks"\) or \[\]\)\) if awaiting_why else \[\]\),/);   // watch descs ride when no bg-task descs exist (2026-08-30)
   // …plus WHAT the wait is on, as data (jd.AWAIT_KINDS; the user 2026-08-15) — on the chat status,
   // the timeline lane, and the feed card's awaiting object alike, so every surface words one fact
   assert.match(KERNEL, /"awaitingKind": awaiting_kind,/);
@@ -101,8 +101,8 @@ test("the awaiting WHY lives in the background box, not the statusline (the user
 test("the awaited tasks wear the chip's green outline — exact launch-id match; dots keep status meaning", () => {
   // kernel: the awaited LAUNCH IDS ride the status payload beside the descriptions (the user
   // 2026-08-19), from the same _bg_split set, so outline and chip can never disagree
-  assert.match(KERNEL, /"awaitingTaskIds": \(_awaiting_task_ids\(sid, sess\["path"\]\) if awaiting_why else \[\]\),/);
-  assert.match(KERNEL, /def _awaiting_task_ids\(sid, path\):/);
+  assert.match(KERNEL, /"awaitingTaskIds": \(_awaiting_task_ids\(sid, sess\["path"\], live=tm\) if awaiting_why else \[\]\),/);
+  assert.match(KERNEL, /def _awaiting_task_ids\(sid, path, live=_LIVE_UNSET\):/);
   assert.match(KERNEL, /return \[t\["tid"\] for t in awaited if t\.get\("tid"\)\]/);
   // client: rows are marked from awaitingTaskIds — the ids' presence, never the chip state (2026-08-30:
   // awaited things show even while working)…
