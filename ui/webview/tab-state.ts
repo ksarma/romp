@@ -102,15 +102,18 @@ export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | unde
   return names.length ? { count: names.length, names } : null;
 }
 
-/** THE NON-FOLDING DOOR's click phrase (round 1 of the tabhide review, 2026-09-08): what a press on an OPEN
- *  header's marks over the members hidden inside its section does (render.ts show-group): the section's
- *  snapshot in the pane, the fold as it was. The flag, the pip and the count wear it there. */
+/** THE NON-FOLDING DOOR's click phrase (round 1 of the tabhide review, 2026-09-08): what a press on one of an OPEN
+ *  header's doors does (render.ts show-group): the section's snapshot in the pane, the fold as it was. The count is
+ *  a door on every open header (round 2) and wears this phrase over the members hidden inside the section (with
+ *  nothing hidden its words say what the pane is for, sectionDoorTitle); the pip and the flag, which the header
+ *  wears over those members, wear it too. */
 export const SHOW_GROUP_CLICK = "click to show this group's sessions";
 
 /** THE WAY BACK's click phrase: what a press does while the pane already shows the section (render.ts show-transcript,
  *  leaveSnapshot). The header's second click says it (tab-groups.ts headWords, `back`: open, holding the tab being
- *  read) and so does the count of any open header whose section the pane shows (sectionDoorTitle `shown`; round 3 of
- *  the tabhide review): one voice for one act. */
+ *  read) and so do the three doors of any open header whose section the pane shows, holding that tab or not: the
+ *  count, the pip and the flag (doorClick `shown`, through sectionDoorTitle, the pip's title and sectionTodoTitle;
+ *  round 3 of the tabhide review): one voice for one act. */
 export const BACK_TO_TRANSCRIPT_CLICK = "click to go back to the transcript";
 
 /** THE DOORS' click clause, from one place for the three controls of an OPEN header (the count, the pip, the flag;

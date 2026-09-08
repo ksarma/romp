@@ -629,12 +629,13 @@ export function followAdoption(st: TabGroupsState, prev: SessionViews | null | u
  *  the fold hides nothing, and a "0" beside two visible tabs read as a broken number (the 2026-09-06
  *  review): the count is then the total, and the title says why nothing is hidden. The chevron stays
  *  truthful either way — the section IS folded, and the click opens it. A click also shows the section
- *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so. `holdsActive`
+ *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so, except an open
+ *  header's while the pane already shows its section (`shown`). `holdsActive`
  *  — the section holds the tab being read — is a phrase in the words, not a different action: the
  *  section folds like any other (the user 2026-09-06), and folded, its header is the tab's stand-in. */
 export interface HeadWords { count: string; title: string; label: string }
 
-export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean, back = false): HeadWords {
+export function headWords(name: string, total: number, hidden: number, folded: boolean, holdsActive: boolean, back = false, shown = false): HeadWords {
   const n = (k: number) => `${k} session${k === 1 ? "" : "s"}`;
   const reading = holdsActive ? "; holds the tab you are reading" : "";
   const here = holdsActive ? ", holds the tab you are reading" : "";
@@ -644,7 +645,11 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     // and the spoken label names the action too: render.ts drops the header's aria-expanded in that state
     // (the press folds nothing), so without the phrase a screen reader had a plain button with no word
     // about what it does (the round-2 review)
-    const click = back ? BACK_TO_TRANSCRIPT_CLICK : "click to fold this group and see its sessions at a glance";
+    // `shown` without `back`: the pane shows this open section but the section does not hold the tab being read,
+    // so the click still folds (render.ts keeps toggle-group) and the title says so, without the promise to show
+    // what the pane already shows (round 4 of the tabhide review: "and see its sessions at a glance" stood beside
+    // a count that read "shown below")
+    const click = back ? BACK_TO_TRANSCRIPT_CLICK : shown ? "click to fold this group" : "click to fold this group and see its sessions at a glance";
     // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count says how many
     // are off the strip ("1 hidden" beside two tabs), the total moves to the words. Round 1 of the review: the
     // count stayed the total, so "3" beside two tabs read as a wrong number, and the guide had promised the

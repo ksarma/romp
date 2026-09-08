@@ -190,6 +190,18 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   assert.equal(headWords("infra", 3, 2, false, true).label, "infra, 3 sessions, 2 hidden, holds the tab you are reading");
   assert.deepEqual([headWords("infra", 3, 0, false, false).count, headWords("infra", 3, 0, false, false).label], ["3", "infra, 3 sessions"], "nothing hidden: the words as they were");
   assert.equal(headWords("infra", 3, 1, false, true, true).title, "infra — 3 sessions, 1 hidden; holds the tab you are reading; click to go back to the transcript; drag to reorder the groups");
+  // ROUND 4: the open header the pane shows WITHOUT the tab being read still folds on its click (toggle-group), and its title
+  // says so without "and see its sessions at a glance": the sessions are in the pane already, and the count beside it says
+  // "shown below" (the round-3 words, sectionDoorTitle `shown`)
+  assert.equal(headWords("infra", 3, 1, false, false, false, true).title, "infra — 3 sessions, 1 hidden; click to fold this group; drag to reorder the groups");
+  assert.equal(headWords("archived", 1, 0, false, false, false, true).title, "archived — 1 session; click to fold this group; drag to reorder the groups");
+  assert.doesNotMatch(headWords("infra", 3, 1, false, false, false, true).title, /at a glance/);
+  assert.deepEqual([headWords("infra", 3, 1, false, false, false, true).count, headWords("infra", 3, 1, false, false, false, true).label],
+                   [headWords("infra", 3, 1, false, false).count, headWords("infra", 3, 1, false, false).label], "shown: the count and the spoken label are as they were (the label carries no click clause)");
+  assert.deepEqual(headWords("infra", 3, 1, false, true, true, true), headWords("infra", 3, 1, false, true, true), "shown and holding the tab being read: the way back's words, as before (back implies shown)");
+  assert.deepEqual(headWords("infra", 3, 1, false, false, false, false), headWords("infra", 3, 1, false, false), "the default: the pane shows something else, the promise stands");
+  assert.deepEqual(headWords("infra", 3, 3, true, false, false, true), headWords("infra", 3, 3, true, false), "folded: the words as they were (render.ts derives `shown` from open + the pane on this section, so this never renders; the helper ignores the bit)");
+  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);/, "the header passes the bit its own way back and the doors' act read");
   assert.equal(headWords("infra", 3, 2, true, false).count, "2", "folded: the folded-away members, a bare number, as before");
   // render.ts: the marks' block runs whenever the header stands in for a member (folded or open), over `hidden`, the pip
   // through standInPip with each member's ledger; the strip's signature reads the verdict, so the feed build that changes
@@ -356,7 +368,8 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
   assert.match(flat, /While the group is open, its count opens this view without folding the group, so hiding a session never needs a fold; the dot and the flag, which appear once something is hidden, do the same\. On a folded header the flag opens the group, as before\./, "the non-folding door, on every open header (round 2: the sentence had claimed the count for a door before the first hide, when it was a plain span)");
-  assert.match(flat, /On a folded header the flag opens the group, as before\. While this view shows a group, its count, dot and flag take you back to the transcript\. Clicking a hidden session's row/, "round 3: the count, the dot and the flag of the group the pane shows are the way back (the sentence on the header's second click, pinned by tab-snapshot.test, stands as it was)");
+  assert.match(flat, /On a folded header the flag opens the group, as before\. While this view shows an open group, its count, dot and flag take you back to the transcript\. Clicking a hidden session's row/, "round 3: the count, the dot and the flag of the group the pane shows are the way back (the sentence on the header's second click, pinned by tab-snapshot.test, stands as it was); round 4: an OPEN group's (a folded group the view shows has no door: its count is a plain span and its flag opens the group)");
+  assert.doesNotMatch(flat, /While this view shows a group, its count/, "round 4: the unqualified sentence promised the way back on a folded group's marks too");
   assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was\./);
   assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
   assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
@@ -454,11 +467,12 @@ test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks 
   // the header: the door is EVERY open header's count (round 2: it existed only over hidden members, so the first hide of a
   // group still went through the header's click, which folds the group over its reader); folded, a plain span. Shown, the
   // way back (round 3), derived from the rendered state as the header's own way back is; the fold untouched either way
-  assert.match(HEAD, /const door = !collapsed;\s*\n\s*const shown = door && snapView === name;\s*\n\s*const doorAct = shown \? "show-transcript" : "show-group";\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button on an open header, a span on a folded one; shown, the way back; one act for the three doors");
+  assert.match(HEAD, /const door = !collapsed;\s*\n\s*const doorAct = shown \? "show-transcript" : "show-group";\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button on an open header, a span on a folded one; shown, the way back; one act for the three doors");
   assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = doorAct;\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length, total, shown\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act (the way back while the pane shows the section), words (the visible count first) and spoken label");
   assert.equal(HEAD.replace(/\/\/[^\n]*/g, "").split("doorAct").length - 1, 4, "declared once, used by the count, the pip and the flag (the comments aside)");
-  assert.match(HEAD, /const back = snapView === name && !collapsed && holdsActive;/, "the header's own way back, the state the door's mirrors (without holdsActive: another section's header still folds on its own click, its door did nothing)");
-  assert.equal(HEAD.split("snapView === name").length - 1, 3, "the mark, the header's way back and the door's: one rendered state");
+  assert.match(HEAD, /const shown = !collapsed && snapView === name;\s*\n\s*const back = shown && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "one bit, the pane on this open section (round 4: declared once, before the header's own way back): the header's way back adds holdsActive (without it: another section's header still folds on its own click, its door did nothing), the doors' act and the header's words take the bit as it is");
+  assert.equal(HEAD.split("snapView === name").length - 1, 2, "the mark and `shown`: one rendered state");
+  assert.equal(HEAD.replace(/\/\/[^\n]*/g, "").replace(/"snap-shown"/g, "").split("shown").length - 1, 7, "declared once; read by the header's way back, its words, the doors' act, the count's title, the pip's clause and the flag's title (the comments and the snap-shown mark aside)");
   assert.match(HEAD, /n\.draggable = true;\s*\n\s*n\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/, "a press on it never starts the header's drag (the flag's rule)");
   assert.match(HEAD, /if \(door\) \{ pip\.dataset\.act = doorAct; pip\.dataset\.group = name; \}/, "the pip too, pointer only");
   assert.match(HEAD, /b\.dataset\.act = door \? doorAct : "open-group";/, "the flag: the doors' act open, open-group folded");

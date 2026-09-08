@@ -33,6 +33,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { sectionDoorTitle, sectionTodoPhrase, sectionTodoTitle, SHOW_GROUP_CLICK, BACK_TO_TRANSCRIPT_CLICK } from "./tab-state";
+import { headWords } from "./tab-groups";
 
 const requireCjs = createRequire(__filename);
 const EXT = process.cwd();                                        // npm test runs in vscode-extension
@@ -476,11 +477,18 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     // is the door again, and takes the pane back for what follows
     let ah = await head("archived");
     assert.deepEqual([ah.act, ah.countAct, ah.countTitle, (await head("infra")).countAct], ["toggle-group", "show-transcript", sectionDoorTitle(0, 1, true), "show-group"]);
+    // ROUND 4: the header's title in that state no longer promises to show what the pane already shows ("and see its sessions at
+    // a glance") beside a count that says "shown below"; the click still folds, and the title says that alone. infra's header,
+    // open and not shown, keeps the promise
+    assert.equal(ah.title, headWords("archived", 1, 0, false, false, false, true).title, ah.title);
+    assert.ok(!/at a glance/.test(ah.title) && ah.title.includes("; click to fold this group; ") && ah.countTitle!.includes("shown below"), ah.title + " || " + ah.countTitle);
+    assert.ok((await head("infra")).title.includes("click to fold this group and see its sessions at a glance"), "the header the pane does not show keeps the promise");
     const rawShown = await page.evaluate(() => localStorage.getItem("romp:tabgroups"));
     assert.ok(rawShown && rawShown.includes("archived"), "the header's click wrote archived's open state");
     await page.click(inHead("archived", ".tab-group-door"));
     s = await state(); ah = await head("archived");
     assert.deepEqual([s.paneShown, s.transcriptShown, s.snapView, ah.folded, ah.act, ah.countAct, s.tabs], [false, true, null, "0", "toggle-group", "show-group", ["web", "tests", "old1"]]);
+    assert.equal(ah.title, headWords("archived", 1, 0, false, false).title, "the transcript back: the promise returns with the door");
     assert.equal(await page.evaluate(() => localStorage.getItem("romp:tabgroups")), rawShown, "the way back writes nothing");
     await page.click(inHead("archived", ".tab-group-door"));
     s = await state();

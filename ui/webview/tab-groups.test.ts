@@ -215,7 +215,7 @@ test("executed + pinned: the section holding the ACTIVE tab folds like any other
   assert.match(head, /\+ \(holdsActive \? " holds-active" : ""\)\);/);
   assert.match(head, /head\.draggable = true;/, "it still drags to reorder the groups");
   assert.equal(headWords("infra", 1, 0, false, true).title, "infra — 1 session; holds the tab you are reading; click to fold this group and see its sessions at a glance; drag to reorder the groups");
-  assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
+  assert.match(head, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);\s*\n\s*head\.title = words\.title;/, "the words are the pure module's");
   assert.ok(!RENDER.includes('"group-active"'), "no delegate handler for a no-op either");
   assert.doesNotMatch(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/, "the header folds, so its cursor promises the click");
   assert.match(CSS, /\.tab-group-head\.holds-active \.tab-group-name \{ color: var\(--fg\); text-decoration: underline; text-decoration-color: var\(--accent\);/, "the mark: the name in the prose tone, accent-underlined");
@@ -1570,7 +1570,7 @@ test("executed: a folded section whose EVERY member is pinned stays folded — t
   assert.deepEqual(headWords("infra", 3, 0, false, true), { count: "3", label: "infra, 3 sessions, holds the tab you are reading", title: "infra — 3 sessions; holds the tab you are reading; click to fold this group and see its sessions at a glance; drag to reorder the groups" });
   assert.deepEqual(headWords("infra", 3, 3, true, true), { count: "3", label: "infra, 3 sessions folded, holds the tab you are reading", title: "infra — 3 sessions folded; holds the tab you are reading; click to open and see its sessions at a glance" });
   assert.equal(headWords("infra", 1, 0, true, true).label, "infra, 1 session, folded, all shown, holds the tab you are reading");
-  assert.match(MAKE_HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);\s*\n\s*head\.title = words\.title;/);
+  assert.match(MAKE_HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);\s*\n\s*head\.title = words\.title;/);
   assert.match(MAKE_HEAD, /n\.textContent = words\.count;/);
   assert.ok(!MAKE_HEAD.includes("hidden.length : total"), "no second count rule beside the pure one");
   assert.match(GUIDE, /when every tab in a section is set to\s+show, the folded header shows the full count and its tooltip says nothing is hidden\./);
@@ -1640,4 +1640,9 @@ test("executed: the words of the way back: the open header whose snapshot the pa
   assert.equal(headWords("infra", 3, 0, false, true, false).label, "infra, 3 sessions, holds the tab you are reading", "the ordinary open header's label is as before");
   assert.deepEqual(headWords("infra", 3, 0, false, true, false), headWords("infra", 3, 0, false, true), "the default is the ordinary open header");
   assert.equal(headWords("infra", 3, 3, true, true, true).title, headWords("infra", 3, 3, true, true).title, "a folded header never offers it: the click opens the section (render.ts derives `back` from open + shown + holds the active tab)");
+  // `shown` without `back` (round 4 of the tabhide review): the pane shows this open section but it does not hold the tab being
+  // read, so the click still folds and the title says so, without promising to show what the pane already shows
+  assert.equal(headWords("infra", 3, 0, false, false, false, true).title, "infra — 3 sessions; click to fold this group; drag to reorder the groups");
+  assert.equal(headWords("infra", 3, 0, false, false, false, true).label, headWords("infra", 3, 0, false, false).label, "the spoken label carries no click clause and is as before");
+  assert.equal(headWords("infra", 3, 0, false, true, true, true).title, headWords("infra", 3, 0, false, true, true).title, "back wins: the way back's words");
 });
