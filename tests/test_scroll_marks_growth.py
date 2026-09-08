@@ -142,11 +142,9 @@ class ServedNotchFollowsGrowth(unittest.TestCase):
              "lastSid": SID, "alive": True, "model": "claude-fable-5-1", "liveModel": "Fable 5.1"}))
         Path(cls.state, "usage.json").write_text(json.dumps({"five_hour": {"pct": 100}, "seven_day": {"pct": 10}}))
         claude = os.path.join(cls.lab, "claude")
-        # the project dir is named the way Claude Code (and the kernel's discover, judge._project_dir) name it:
-        # EVERY non-alphanumeric character becomes "-", not the slashes alone. Under a temp root with a dot or an
-        # underscore in its path (a TMPDIR under ~/.cache, a mkdtemp suffix) the slashes-only form put the
-        # transcript where the kernel never looks, the page showed no turn of it, no scrollbar, no notch, and
-        # both guards failed on their precondition (2026-09-08; identically at upstream's tip on that box)
+        # the kernel finds a session's transcript under Claude's project dir: EVERY non-alphanumeric char of the
+        # realpath becomes '-' (jd._proj_dir). A slashes-only munge missed the '_' pytest's temp root can carry,
+        # so the kernel found no transcript and drew an API-error turn instead (the batch-only flake, 2026-09-08).
         proj = os.path.join(claude, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)))
         os.makedirs(proj, exist_ok=True)
         # a user message near the top, three consecutive tool calls (compact mode folds them into ONE tool

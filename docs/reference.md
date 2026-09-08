@@ -472,22 +472,24 @@ on: the remembered pick becomes the box's expectation and the env var goes
 inert (it described the unpicked design), so re-seeded spawns are judged
 against your pick, never against stale doctrine.
 
-The declaration is also checked against `service.env` once, when the kernel
-starts. Under `ROMP_EXPECTED_AUTH=login`, a file that selects an API key
-source (a `ROMP_API_KEY_CMD=` line, a `ROMP_API_KEY_REF=` line, or an
-`ANTHROPIC_API_KEY=` line with a value) is a contradiction: that source is
-injected at launch for every session without an explicit Billing pick, so
-those sessions bill the key. One problem line in the Log panel says so before
-anything launches, naming the file and the variable but never a value; fix
-whichever side is wrong. A file whose source configuration is invalid (both
-provider lines, say) is still a selection, and the line says so instead: those
-sessions will try the source and fail to launch rather than bill the login.
-Under `key`, a key source in the file agrees with the declaration and nothing
-is said. With no key source selected, Romp injects nothing and Claude Code's
-own credential applies (see [API keys from a secret manager at
-runtime](#api-keys-from-a-secret-manager-at-runtime)), so nothing is said;
-nor with no declaration, nor once a Billing pick has made it inert. The
-per-init check above still confirms each landing.
+The declaration is also checked once, when the kernel starts, against the
+key source a launch would select. Under `ROMP_EXPECTED_AUTH=login`, a selected
+API key source (a `ROMP_API_KEY_CMD=` line, a `ROMP_API_KEY_REF=` line, or an
+`ANTHROPIC_API_KEY=` line with a value in `service.env`; for a foreground
+manager, the same names exported in its environment) is a contradiction: that
+source is injected at launch for every session without an explicit Billing
+pick, so those sessions bill the key. One problem line in the Log panel says so
+before anything launches, naming the file or the environment and the variable
+but never a value; fix whichever side is wrong. A source that is selected but
+cannot be used (both provider lines in the file; a provider line removed while
+the marker beside the file still names it) is still a selection, and the line
+says so instead: those sessions will try the source and fail to launch rather
+than bill the login. Under `key`, a selected source agrees with the declaration
+and nothing is said. With no key source selected anywhere the launch looks,
+Romp injects nothing and Claude Code's own credential applies (see [API keys
+from a secret manager at runtime](#api-keys-from-a-secret-manager-at-runtime)),
+so nothing is said; nor with no declaration, nor once a Billing pick has made
+it inert. The per-init check above still confirms each landing.
 
 The usage rail reflects a mixed machine: the window bars (5 hours / 7 days /
 Fable 5) are drawn once, aggregated across every connected host's login as the
@@ -2548,6 +2550,19 @@ into the pane.
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
 are read in place from where Claude Code writes them (`~/.claude/projects/`)
 and never copied.
+
+The self-updater's report, `update-report.json`, is read once, by the next
+kernel boot or by the running kernel's banner poll, and archived as
+`update-report-last.json`; `update.log` beside it has the updater's full
+output. An update that landed on disk but was not restarted into (no manager,
+or a manager that did not take the restart request or did not answer it within
+60 seconds) is filed in the Log with the step that runs it: `romp refresh` when
+a manager is there, `romp up` when none is. A boot that already runs the landed
+release says so instead of asking for another restart. A report that is not a
+JSON object is moved aside, never deleted, to
+`update-report.json.corrupt-<UTC stamp>` (the same `-1`, `-2` suffix rule) with
+one Log entry under the `refused` kind; one that cannot be moved stays where it
+is and is said once per fault.
 
 Three small files there hold settings you set by hand: `session-flags.json`
 (per-session flags, the postal isolation switch among them), `session-order.json`

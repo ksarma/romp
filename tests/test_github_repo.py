@@ -1025,7 +1025,7 @@ class FrameWiring(unittest.TestCase):
         self.assertIn('"selfHost": _self_host(),', feed, "the same name the feed frame carries")
         # …and the tabOrder frame, which every chat receives first of all: a dashboard whose kernel runs no
         # local session has no session frame to learn the name from (tests/test_kernel_tabs_first.py runs it)
-        self.assertEqual(km._tab_order_frame([], [])["selfHost"], km._self_host())
+        self.assertEqual(km._tab_order_frame([], [], set())["selfHost"], km._self_host())
 
     def test_the_feed_session_rows_carry_the_repo(self):
         src = inspect.getsource(km.build_feed)

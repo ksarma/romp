@@ -16,11 +16,12 @@ test("a tabMeta map holds the kernel's name+color per tab (and its emoji since 2
 
 test("applyTabOrder REBUILDS tabMeta from the authoritative payload (closed tabs don't linger)", () => {
   // report = the frame's provenance for the close backstop (T233)
-  assert.match(RENDER, /function applyTabOrder\(o: any, tabs\?: any, report\?: OrderReport\)/);
+  assert.match(RENDER, /function applyTabOrder\(o: any, tabs\?: any, report\?: OrderReport, live\?: any\)/);
   assert.match(RENDER, /if \(Array\.isArray\(tabs\)\) \{\s*tabMeta\.clear\(\);/);
   // the frame's provenance rides along since T233 (captureViews still runs FIRST)
-  // (the kernel's own name, selfHost, is adopted first — pr-links.test.ts pins that line)
-  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}\);\s*\n\s*\}/);
+  // (the kernel's own name, selfHost, is adopted first, pr-links.test.ts pins that line; the frame's live
+  // set rides into applyTabOrder, T258)
+  assert.match(RENDER, /else if \(m\.type === "tabOrder"\) \{\s*\n\s*if \(typeof m\.selfHost === "string" && m\.selfHost\) adoptSelfHost\(m\.selfHost\);[^\n]*\n\s*captureViews\(m\.views \|\| null\);\s*\n\s*applyTabOrder\(m\.order, m\.tabs, \{ reemit: m\.reemit === true, freshHost: typeof m\.freshHost === "string" \? m\.freshHost : undefined \}, m\.live\);\s*\n\s*\}/);
 });
 
 test("renderTabs renders the union of arrived sessions and tabMeta, placeholders for the rest", () => {

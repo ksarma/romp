@@ -822,7 +822,7 @@ test("the chat learns its kernel's own name from every tabOrder frame too, throu
   // federation re-emits a MERGED tabOrder frame in place of every host's own: the local kernel's name must
   // ride it, and a remote kernel's — which names itself — must not (multi-kernel-merge.test.ts runs it)
   assert.match(FED, /if \(host === LOCAL && typeof m\.selfHost === "string" && m\.selfHost\) this\.localSelfHost = m\.selfHost;/);
-  assert.match(FED, /\{ type: "tabOrder", order, tabs, views: this\.localViews \?\? undefined, selfHost: this\.localSelfHost \|\| undefined \}/);
+  assert.match(FED, /\{ type: "tabOrder", order, tabs, live, views: this\.localViews \?\? undefined, selfHost: this\.localSelfHost \|\| undefined \}/);
 });
 
 test("the chat's plain-text surfaces link too: user-todo rows, their detail folds, and the reply prompt's quote", () => {

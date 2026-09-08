@@ -11,6 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
+import math
 import contextlib, json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, collections, functools, unicodedata, calendar, importlib.util, gc
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -1354,6 +1355,7 @@ def _version_info():
                 pass
     except OSError:
         pass
+    _mv, _mgt = _mesh_settings_snapshot()   # value AND stamp of each mesh-adopted store from ONE read (T248b)
     return {"kernel_sha": _kernel_sha(), "kernel_ver": _kernel_ver(), "pid": os.getpid(), "started": int(_STARTED),
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
@@ -1381,12 +1383,12 @@ def _version_info():
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
             "modelCatalog": _catalog_public_status(),
-            "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
-            "compactSuggest": _compact_suggest_on(),   # T208+: its gear checkbox rides the same read
+            "autoNudge": _mv["autoNudge"],   # server-side toggle state → the gear checkbox reflects the kernel
+            "compactSuggest": _mv["compactSuggest"],   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
             "login": _login_state(),         # the in-dashboard login flow's state/url/err (T157) — never a secret
             "acctLabel": _claude_account_label(),   # which login this box holds ("" = none) — the gear's Billing row
-            "fileEditing": _file_editing_on(),   # dashboard raw-mode editing opt-in → gates the viewer's Edit
+            "fileEditing": _mv["fileEditing"],   # dashboard raw-mode editing opt-in → gates the viewer's Edit
             # per-install: SDK sessions ask for reasoning summaries (gear checkbox). Top-level only — not
             # in the "settings" sub-dict below, whose mixed marks promise a cross-machine write this never makes
             "thinkingSummaries": _thinking_summaries_on(),
@@ -1406,10 +1408,14 @@ def _version_info():
             # One dict with every kernel-side setting, lifted by a PEER kernel's /version poll onto its
             # /tunnels row so its gear can mark controls where machines disagree (the user 2026-08-14).
             # The top-level fields above stay: this tab's own gear and older kernels read those.
-            "settings": {"autoNudge": _auto_nudge_on(), "updateMode": _update_mode(),
+            # The three a PEER adopts (T248b, _adopt_peer_settings) ride one snapshot per store with their
+            # stamps below: read separately, a click landing between the value read and the stamp read
+            # handed the peer (old value, new stamp), which it persisted and the equal-stamp rule then
+            # froze on both machines (the change's second review).
+            "settings": {"autoNudge": _mv["autoNudge"], "updateMode": _update_mode(),
                          "conserveMemory": _conserve_on(),
-                         "compactSuggest": _compact_suggest_on(),   # default OFF; one value across machines (T248)
-                         "fileEditing": _file_editing_on(),
+                         "compactSuggest": _mv["compactSuggest"],   # default OFF; one value across machines (T248)
+                         "fileEditing": _mv["fileEditing"],
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
                          "distillModel": jd._state_str("distill-model", "triage"),
@@ -1421,7 +1427,7 @@ def _version_info():
             # the gear stamps its next gesture above these instead of trusting the device clock.
             # Top-level, not lifted into /tunnels rows — a remote's newer stamp reaches the dashboard
             # through its settingStale frame, and Apply anyway is the designed path from there.
-            "settingsGt": _settings_gt()}
+            "settingsGt": {**_settings_gt(), **_mgt}}   # the adopted stores' stamps from the SAME snapshot as their values
             # NO defaultDir or nativeDialogs here: /version is auth-exempt and this payload
             # carries no filesystem paths (see the handler's comment) — both ride the GATED
             # /defaults route instead, where the gear already fetches them.
@@ -3545,6 +3551,71 @@ def _has_tmux():
     return shutil.which("tmux") is not None
 
 
+# ── a LIVE session survives a transient transcript-read failure on the tab list (T258) ─────────────────────
+# _alive_sessions resolves each live sid to a transcript through discover(), which scans project dirs for
+# <sid>.jsonl. A file moved aside (a torn write, a hand `mv`, a resume that renames the leaf before the CLI
+# recreates it) leaves discover with NO entry, so the live session dropped off _alive_sessions → the chat tab
+# list → the tabOrder push, and the pane tore its tab down through the T236 omission path. A read that failed
+# for a cycle is NOT a state change (the same rule as T249b's empty-build guard). A session whose tmux lane /
+# SDK reg is live stays listed with a names/-derived stub — the EXPECTED path under its cwd, which discover
+# re-resolves the instant the file returns — and build_session parses the missing file to empty while the
+# T249b guard holds its last content. Said once per episode + a romp-perf line.
+_UNRESOLVED_LIVE_NOTED = set()      # live sids inside an unresolved-transcript episode (one stderr line each)
+
+
+def _live_stub_session(sid, now):
+    """A _sessions()-shaped entry for a LIVE sid discover cannot resolve this cycle. The path is the expected
+    transcript under the session's cwd (from names/), which may not exist right now — build_session re-resolves
+    it and the empty-read guard covers the gap. None when there is nothing to stub from: no names/ entry and no
+    SDK owner, a genuinely unknown live sid, which stays out (never invented)."""
+    name = _name_of(sid)
+    cwd = _cwd_of(sid)
+    if not name and not cwd:
+        return None
+    path = (jd._proj_dir(cwd) / (sid + ".jsonl")) if cwd else (jd.STATE / "boot-stub" / (sid + ".jsonl"))
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0        # the file is the thing that is missing; never the clock (a ticking mtime re-sorts the
+        #                  feed's order every push and defeats its dedup) — the wide-walk fallback's idiom
+    return {"sid": sid, "name": name or sid[:8], "anchor": sid, "path": str(path), "mtime": mtime}
+
+
+def _note_unresolved_live(sid, path):
+    """One stderr line per episode naming the live sid whose transcript could not be resolved, plus a
+    romp-perf `liveunresolved` line every cycle it holds (for the perf log / the harness)."""
+    sid = str(sid or "")
+    _perf("liveunresolved", sid=sid[:8])
+    if sid in _UNRESOLVED_LIVE_NOTED:
+        return
+    _UNRESOLVED_LIVE_NOTED.add(sid)
+    sys.stderr.write("romp-kernel: %s is LIVE but its transcript could not be resolved (expected %s) — keeping "
+                     "it in the tab list with its last-known meta; a read failure is not a close\n"
+                     % (sid[:8], path))
+
+
+def _clear_unresolved_live_note(sid):
+    _UNRESOLVED_LIVE_NOTED.discard(str(sid or ""))
+
+
+def _tab_order_frame(order, tabs, live):
+    """The chat's tab-strip frame, in ONE spelling for its three senders (the pusher's tabs-first send,
+    _push_session_now, _confirm_close_now): the sid order, name+color per tab, the viewer's views blob, and
+    two more fields. `live` (T258) is the sids the kernel affirms are LIVE this build: the liveness map the
+    sender trusted for its cycle (the collapse guard's map, so a carried cycle affirms what it lists),
+    independent of whether discover could resolve each one's transcript. The pane keeps a live sid on the
+    strip even if this frame's `order` omits it, because a transient read failure that drops a session from
+    the order is not a close (render.ts applyTabOrder); older clients ignore the field. `selfHost` is this
+    kernel's own name (_self_host), which the chat reads a postal card's sender host against (its
+    postalSenderHost). The session frame carries the name too, but only a LOCAL session's frame teaches it,
+    so a dashboard whose kernel runs no sessions of its own (every session attached from elsewhere) never
+    learned it until the + picker was opened, and a remote card stamped with this kernel's name stayed
+    plain text (review find, 2026-09-06). Every chat client receives a tabOrder frame, first of all on
+    connect (tabs-first), so the name is known before any card renders."""
+    return {"type": "tabOrder", "order": list(order), "tabs": tabs, "selfHost": _self_host(),
+            "views": _views_client(), "live": sorted({str(x) for x in live})}
+
+
 def _alive_sessions(now, tmux):
     """The sessions shown on EVERY surface (feed / timeline / chat tabs): only those alive in tmux
     right now. The hard liveness filter (the user 2026-06-15) — ignore everything that isn't a living
@@ -3586,7 +3657,18 @@ def _alive_sessions(now, tmux):
     if be:
         for sid in tmux:
             if sid not in have and be.owns(sid):
-                alive.append(_sdk_sess(sid, now))
+                alive.append(_sdk_sess(sid, now)); have.add(sid)
+    # a LIVE sid discover STILL cannot resolve (its transcript file is momentarily unreadable) stays listed
+    # with a stub rather than dropping off the strip (T258, see _live_stub_session above)
+    still = [sid for sid in tmux if sid not in have]
+    for sid in still:
+        stub = _live_stub_session(sid, now)
+        if stub is not None:
+            alive.append(stub); have.add(sid)
+            _note_unresolved_live(sid, stub["path"])
+    for sid in list(_UNRESOLVED_LIVE_NOTED):     # resolved again OR died → the episode is over, re-arm the note
+        if sid not in still:
+            _clear_unresolved_live_note(sid)
     if tmux or _has_tmux():
         return alive
     return _sessions(now)
@@ -8348,6 +8430,12 @@ def _user_todos_off_boot_notice():
 # machines. `romp update [host]` remains the other direction (pushing THIS build to remotes).
 _UPDATE_AVAIL = [""]     # newest remote release tag when newer than ours ("" = none/unknown)
 _UPDATE_STATE = [""]     # "" | "running" — one update at a time; the banner reads this
+_NO_MANAGER_WHY = "no manager is running this kernel"   # the script's why when it had no manager port to ask; the
+#                                        consumer keys the restart hint on it (review find, 2026-09-08)
+_RESTART_REQUEST_MAX_S = 60   # curl --max-time on the script's restart request: a manager that accepts and never
+#                                        answers ends in a report instead of a latch held for good
+_UPDATE_REPORT_FAULT = [""]   # the move-aside fault of a junk report still on disk, said once per episode (a move
+#                                        or a readable report ends it)
 _UPDATE_MODES = ("ask", "auto", "off")
 
 
@@ -8462,11 +8550,41 @@ def _run_update(tag):
     # detached script outlives this kernel, so the dying kernel's cut row can only join to a reason
     # written at curl time (auto deploys used to leave the row anonymous).
     aud = q(str(jd.STATE / "restart-audit.jsonl"))
-    restart = (("  printf '{\"t\": %%s, \"action\": \"self-update\", \"tag\": \"%s\"}\\n' \"$(date +%%s)\" >> %s\n"
-                % (tag, aud))
-               + "  curl -s -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
-        else "  : # no manager — the new code arms on the next romp start (the report says so)\n"
-    ok_rep = {"ok": True, "tag": tag, "restarted": bool(mport.isdigit())}
+    # The report is written AFTER the restart request, saying what the request actually did. It
+    # used to be written first, claiming restarted:true whenever a manager port was known — so a
+    # manager that never took the request (gone, or a stale port) left an "updated and restarted"
+    # report on disk. /update-check deliberately leaves an ok+restarted report for the NEXT boot to
+    # file, and that boot never came: the in-flight latch held for the kernel's life, the banner
+    # read "updating…" forever, and every later update was refused. Now curl's exit decides:
+    # request taken → restarted:true (the next boot files it); refused → restarted:false with the
+    # reason, which the still-running kernel's poll consumes into "updated on disk — restart it
+    # yourself". curl's own error lands in update.log (-f: a non-2xx answer is not a restart).
+    def report(d):
+        return "printf '%%s' %s > %s\n" % (q(json.dumps(d)), rep)
+    if mport.isdigit():
+        # --max-time (review find, 2026-09-08): a manager that accepted the connection and never
+        # answered (wedged mid-restart, or a stale port something else holds open) held curl for good,
+        # so no report was ever written and the latch stood with nothing to consume. curl's exit 28 is
+        # that timeout, read as not restarted with a why of its own; any other non-zero exit is a
+        # request the manager did not take. `rc` is read once, off the curl itself, never off a
+        # test in an `elif` (whose `$?` is the previous test's).
+        restart = (("  printf '{\"t\": %%s, \"action\": \"self-update\", \"tag\": \"%s\"}\\n' \"$(date +%%s)\" >> %s\n"
+                    % (tag, aud))
+                   + "  curl -fsS --max-time %d -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>>%s; rc=$?\n"
+                   % (_RESTART_REQUEST_MAX_S, int(mport), log)
+                   + "  if [ \"$rc\" -eq 0 ]; then\n"
+                   + "    " + report({"ok": True, "tag": tag, "restarted": True})
+                   + "  elif [ \"$rc\" -eq 28 ]; then\n"
+                   + "    " + report({"ok": True, "tag": tag, "restarted": False,
+                                      "why": "the manager on port %d did not answer the restart request within %d s"
+                                             % (int(mport), _RESTART_REQUEST_MAX_S)})
+                   + "  else\n"
+                   + "    " + report({"ok": True, "tag": tag, "restarted": False,
+                                      "why": "the manager on port %d did not take the restart request" % int(mport)})
+                   + "  fi\n")
+    else:
+        restart = ("  : # no manager — the new code arms on the next romp start (the report says so)\n"
+                   + "  " + report({"ok": True, "tag": tag, "restarted": False, "why": _NO_MANAGER_WHY}))
     # advance() — the tree lands EXACTLY on the release commit. The fast-forward is the normal
     # release-to-release move, EXCEPT for an install sitting DETACHED off every tag: the
     # pre-2026-08-31 drift banner's Update ran `git checkout --detach origin/main` on plain
@@ -8493,38 +8611,128 @@ def _run_update(tag):
         + advance
         + "if git fetch %s refs/tags/%s:refs/tags/%s >> %s 2>&1 && advance "
           "&& ./install.sh >> %s 2>&1; then\n" % (_release_remote(), tag, tag, log, log)
-        + "  printf '%%s' %s > %s\n" % (q(json.dumps(ok_rep)), rep)
         + restart
         + "else\n"
-        + "  printf '%%s' %s > %s\n" % (q(json.dumps({"ok": False, "tag": tag,
-                                                      "why": "the fetch, fast-forward or install failed"})), rep)
+        + "  " + report({"ok": False, "tag": tag, "why": "the fetch, fast-forward or install failed"})
         + "fi\n")
-    subprocess.Popen(["bash", "-c", script], start_new_session=True, cwd=str(ROOT),
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.Popen(["bash", "-c", script], start_new_session=True, cwd=str(ROOT),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        # the latch was taken above; a spawn that raises must give it back, or the kernel reads
+        # "running" for the rest of its life with nothing running — every later update refused,
+        # every banner waiting on a child that never existed. Loud, not silent: the Log says why.
+        _UPDATE_STATE[0] = ""
+        _sync_notice("romp could not start the update to %s: %s — nothing was launched and nothing "
+                     "moved" % (tag, e), ok=False)
+        return False
     return True
 
 
-def _consume_update_report(running_only=False):
+def _update_restart_hint(rep):
+    """The step that runs an update that landed on disk but was not restarted into, worded for the
+    case the report describes (review find, 2026-09-08). `romp refresh` asks the MANAGER to restart
+    every kernel, so it is the step when a manager was there and did not take (or answer) the
+    request; with no manager it exits 1, so the no-manager report names `romp up`, which starts the
+    manager and its kernels (`romp on` is a retired spelling). The no-manager case is the script's
+    constant why, or a report with no why at all: the pre-2026-09 script wrote ok + restarted:false
+    ONLY when it had no manager port to ask."""
+    why = rep.get("why")
+    if not why or why == _NO_MANAGER_WHY:
+        return "restart romp yourself to run it (`romp refresh` needs the manager; `romp up` starts one)"
+    return "restart romp yourself (`romp refresh`) to run it"
+
+
+def _consume_update_report(running_only=False, _tries=3):
     """File the updater child's report as a sync notice, ONCE (the file renames on consumption).
     Two callers: the next boot (the success path — the restart took the reporting kernel down), and
     /update-check's poll on the still-running kernel (the failure path, and the no-manager success),
-    which passes running_only to also clear the in-flight latch."""
+    which passes running_only to also clear the in-flight latch. `_tries` bounds the re-read a
+    report replaced under the quarantine gets (see the identity check below)."""
     p = jd.STATE / "update-report.json"
     try:
-        rep = json.loads(p.read_text())
+        st = p.stat()          # BEFORE the read: the quarantine below moves only the file whose bytes it read
+        rep = json.loads(p.read_bytes())
     except (OSError, ValueError):
         return None
+    if not isinstance(rep, dict):
+        # parses, but is not an object (null, [], a number): every .get below would raise — which
+        # 500'd every /update-check poll and crashed the boot that found it. The child wrote
+        # SOMETHING, so nothing is in flight any more: set the file aside as evidence (never
+        # deleted), say so once, and answer like any other ended update.
+        # The sidecar wears the quarantine convention the goal store, the ledgers and the state
+        # readers wear (`.corrupt-<utc stamp>`, `-n` for a second one in the same second), so a
+        # second unreadable report never overwrites the first's bytes -- a plain `.bad` did. Its
+        # notice rings the bell's `refused` kind, the class every moved-aside state file rings.
+        # And, as those quarantines do (review find, 2026-09-08): the move takes only the file whose
+        # bytes were read (same inode, mtime and size as the stat before the read), because the
+        # child's `printf >` is not atomic, and a poll that read the torn first bytes of a REAL report
+        # would otherwise carry the finished report off as junk; replaced bytes get their own read,
+        # bounded by `_tries`. A file that cannot be moved (a read-only state dir) stays put and is
+        # said ONCE per fault episode, never silently swallowed: the latch clears either way, since
+        # something was written, and the poll is told the reason.
+        why_not = None
+        try:
+            cur = p.stat()
+            if (cur.st_ino, cur.st_mtime_ns, cur.st_size) != (st.st_ino, st.st_mtime_ns, st.st_size):
+                return _consume_update_report(running_only, _tries - 1) if _tries > 1 else None
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            aside, n = p.with_name("%s.corrupt-%s" % (p.name, stamp)), 0
+            while aside.exists():
+                n += 1
+                aside = p.with_name("%s.corrupt-%s-%d" % (p.name, stamp, n))
+            os.replace(p, aside)
+        except FileNotFoundError:
+            return None                                  # gone meanwhile: a sibling consume moved it
+        except OSError as e:
+            why_not = "could not be moved aside: %s" % _errno_text(e)   # stamp-free, so the episode dedupes
+        if running_only:
+            _UPDATE_STATE[0] = ""
+        if why_not is not None:
+            why = ("the updater's report could not be read, and %s; it is still update-report.json under "
+                   "~/.local/state/romp, next to update.log, which says what actually happened" % why_not)
+            if _UPDATE_REPORT_FAULT[0] != why_not:
+                _UPDATE_REPORT_FAULT[0] = why_not
+                _sync_notice("romp's self-update ended without a readable outcome: %s" % why, ok=False, kind="refused")
+            return {"ok": False, "tag": "", "why": why}
+        _UPDATE_REPORT_FAULT[0] = ""                     # moved: the fault episode is over
+        why = ("the updater's report could not be read — it is kept as %s under ~/.local/state/romp, next "
+               "to update.log, which says what actually happened" % aside.name)
+        _sync_notice("romp's self-update ended without a readable outcome: %s" % why, ok=False, kind="refused")
+        return {"ok": False, "tag": "", "why": why}
     try:
         p.rename(jd.STATE / "update-report-last.json")   # consumed — never re-filed on later boots
     except OSError:
         return None
+    _UPDATE_REPORT_FAULT[0] = ""                         # a readable report: any junk episode is over
     if running_only:
         _UPDATE_STATE[0] = ""
     tag = str(rep.get("tag") or "a new release")
     if rep.get("ok") and rep.get("restarted"):
         _sync_notice("romp updated itself to %s and restarted into it" % tag)
     elif rep.get("ok"):
-        _sync_notice("romp updated itself to %s — no manager is running, so restart romp yourself to run it" % tag)
+        # landed on disk, not running: the script says why (no manager, or a manager that did not
+        # take the restart request). Only a restart the user runs gets the new code running -- and
+        # when this consume is the BOOT's (nothing polled before the user restarted by hand), that
+        # restart has already happened: a kernel whose own version IS the tag says this start runs
+        # it, instead of asking for one more restart.
+        why = rep.get("why") or "it was not restarted"
+        try:
+            # Release NUMBERS, compared the way _update_check compares them (review find, 2026-09-08):
+            # _kernel_ver reads "vX.Y.Z+" on every release checkout (the tag sits on the release PR's
+            # merge commit, the VERSION bump one commit before it), so a bare string compare against
+            # the tag never matched, and the boot that already ran the tag was told to restart again.
+            # Equal, not newer: the text says this start runs THIS release, and a report is consumed
+            # by the first boot after it is written, so a boot past the tag has a report of its own.
+            cur, want = _semver((_kernel_ver() or "").rstrip("+")), _semver(tag)
+            runs_it = (not running_only) and cur is not None and cur == want
+        except Exception:
+            runs_it = False
+        if runs_it:
+            _sync_notice("romp updated itself to %s on disk and this start is running it (%s, so the restart "
+                         "that brought it up was yours)" % (tag, why))
+        else:
+            _sync_notice("romp updated itself to %s on disk, but %s — %s" % (tag, why, _update_restart_hint(rep)))
     else:
         _sync_notice("romp could not update itself to %s: %s — nothing was restarted; update.log under "
                      "~/.local/state/romp has the full output" % (tag, rep.get("why") or "the update failed"),
@@ -8554,7 +8762,7 @@ def _update_check():
         return
     if latest == _UPDATE_AVAIL[0]:
         return                                      # already discovered and acted on this kernel run
-    _UPDATE_AVAIL[0] = latest
+    prev, _UPDATE_AVAIL[0] = _UPDATE_AVAIL[0], latest
     if _update_mode() == "auto":
         tried = ""
         try:
@@ -8571,8 +8779,18 @@ def _update_check():
                 _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
                                        "boot": _BOOT_ID})
             return
+        if not _run_update(latest):
+            # a refused launch is not an attempt: nothing ran, so the once-only marker is not
+            # written — writing it first spent the version's one automatic try on a launch that
+            # never happened, and the next pass then reported it as "ran once without landing" —
+            # and the discovery slot re-arms so the next pass tries again instead of standing on
+            # a version it never attempted (the launch failure itself is already in the Log).
+            # Unless the refusal is that ANOTHER update is still in flight (review find, 2026-09-08):
+            # its tag is what /update-check reports as pending, nothing about it changed, so the slot
+            # goes back to it; the newer release is found again once the latch is free.
+            _UPDATE_AVAIL[0] = prev if _UPDATE_STATE[0] == "running" else ""
+            return
         _atomic_write(jd.STATE / "update-attempted.json", json.dumps({"tag": latest, "t": int(time.time())}))
-        _run_update(latest)
     else:
         if latest in _dismissed_updates():
             return                    # Not-now'd THIS release, durably — a newer one offers again
@@ -20165,7 +20383,12 @@ def _poll_remote_version(r):
     `autoNudge` is that machine's own copy of a setting the gear presents as one switch for everything you
     are running, so the dashboard can say when the machines disagree instead of showing one kernel's answer
     for all of them (the user 2026-08-14). None — never False — when the remote didn't say, so an older
-    kernel that has no such field reads as unknown rather than as off."""
+    kernel that has no such field reads as unknown rather than as off.
+
+    `settingsGt` (T248b): every store's last-applied gesture stamp beside `settings`, so the supervisor
+    can adopt a peer's newer pick without a click (_adopt_peer_settings). None when the peer sends none
+    (an older kernel) — the first cut consumed the field here without carrying it across, so nothing
+    ever converged in production while the hand-built test dicts passed (its review, 2026-09-08)."""
     import urllib.parse
     try:
         c = http.client.HTTPConnection("127.0.0.1", int(r["local_port"]), timeout=4)
@@ -20180,9 +20403,11 @@ def _poll_remote_version(r):
         sha = j.get("kernel_sha") or None
         an = j.get("autoNudge")
         st = j.get("settings")
+        gts = j.get("settingsGt")
         return {"sha": sha, "ver": str(j.get("kernel_ver") or ""),
                 "autoNudge": an if isinstance(an, bool) else None,
-                "settings": st if isinstance(st, dict) else None} if sha else None
+                "settings": st if isinstance(st, dict) else None,
+                "settingsGt": gts if isinstance(gts, dict) else None} if sha else None
     except Exception:
         return None
 
@@ -20368,13 +20593,31 @@ def _pr_watch_verdict(d):
         return "merged", ""
     if state == "CLOSED":
         return "closed", ""
-    busy = False
+    # ONE verdict per check NAME, from its NEWEST run (T256, 2026-09-07): gh's rollup keeps superseded
+    # runs beside their re-runs — the label workflow left a failed run next to the passing one on every
+    # `gh pr create --label` PR, and any manual re-run does the same — and the first FAILURE in list
+    # order mailed a false "FAILED check … will not land" twice in one night. The merge box's own rule:
+    # group by name (plus the app/workflow when the API gives it — two workflows may share a job name),
+    # keep the run with the latest completion (a still-running re-run outranks any finished one: the
+    # name's story is not over), and only then decide across the survivors.
+    newest = {}
     for c in (d or {}).get("statusCheckRollup") or []:
         if not isinstance(c, dict):
             continue
+        app = c.get("app")
+        app_name = (app.get("name") if isinstance(app, dict) else None) or c.get("workflowName") or ""
+        key = (str(c.get("name") or c.get("context") or "a check"), str(app_name))
+        done = str(c.get("status") or "").upper() == "COMPLETED" or bool(c.get("conclusion"))
+        # sort key: an unfinished run is the newest by definition; among finished runs, completedAt,
+        # then startedAt; a run with no stamps at all sorts oldest
+        rank = (0 if done else 1, str(c.get("completedAt") or ""), str(c.get("startedAt") or ""))
+        if key not in newest or rank > newest[key][0]:
+            newest[key] = (rank, c)
+    busy = False
+    for (name, _app), (_rank, c) in newest.items():
         con = str(c.get("conclusion") or "").upper()
         if con in ("FAILURE", "TIMED_OUT"):
-            return "failed", str(c.get("name") or c.get("context") or "a check")
+            return "failed", name
         if str(c.get("status") or "").upper() in ("IN_PROGRESS", "QUEUED", "PENDING") or con == "":
             busy = True
     return None, ("busy" if busy else "")
@@ -21649,9 +21892,20 @@ def _ask_peer_to_pull(host):
     if not j.get("ok"):
         return False, "%s refused: %s" % (host, j.get("detail") or j.get("error") or ("HTTP %s" % st))
     detail = str(j.get("detail") or "pulled this machine's commits")
-    rst, _rj = _peer_call(r, "POST", "/restart", {}, timeout=10)
+    # Peer-only scope, said outright. The peer's /restart defaults to the broad kind — every machine
+    # IT holds a row for, and it always holds at least this hub — so the empty body this used to send
+    # made the peer we had just updated fan out: it restarted the hub back (mid-sweep, before the
+    # report was written) and cut in-flight turns on machines nobody asked to restart. This step
+    # exists so THAT peer runs what it just pulled; the hub walks its own rows (_fleet_restart_run).
+    rst, rj = _peer_call(r, "POST", "/restart", {"fleet": False}, timeout=10)
     if rst != 200:
-        return True, detail + "; it took the commits but did not ack the restart — restart romp on %s" % host
+        # The peer's own words ride along (review find, 2026-09-08): its /restart refuses a body it
+        # cannot take with a JSON error, and a kernel that never answered comes back as {"error"} from
+        # _peer_call. This answer's readers, the sweep's report row and the sync notice, could only
+        # say "did not ack" before, with no why.
+        why = str((rj or {}).get("error") or (rj or {}).get("detail") or ("HTTP %s" % rst))
+        return True, detail + ("; it took the commits but did not ack the restart (%s) — restart romp on %s"
+                               % (why, host))
     return True, detail + "; restarting it"
 
 
@@ -21659,7 +21913,9 @@ def _ask_peer_to_pull(host):
 # Restart used to mean "this machine's kernel", which is a half-truth on a fleet: the remotes kept running
 # their old processes on their old code, and nothing said so. Restart now covers every REACHABLE kernel,
 # syncing on the way where a clean fast-forward can be proven in either direction, and reports per host
-# what it did and what it skipped.
+# what it did and what it skipped. A checked-in peer, which this machine has no ssh route to, is ASKED
+# to fast-forward and restart ITSELF only (_ask_peer_to_pull): machines attached to that peer alone are
+# not restarted by this sweep, they are restarted from the peer's own dashboard (review find, 2026-09-08).
 #
 # What it will NOT do is the whole point of the report. A diverged remote, a dirty tree either side, a
 # relationship this repo cannot even evaluate: those are skipped with the reason named, never guessed at.
@@ -21808,6 +22064,45 @@ def _fleet_restart_run(manager_port=_PORT_FROM_ENV):
     except OSError:
         sys.stderr.write("fleet-restart: could not write the report: %s\n" % traceback.format_exc())
     _restart_this_kernel("fleet-restart: the local half of the fleet Restart", manager_port=manager_port)
+
+
+def _restart_scope_from_body(raw_body, read_error=None):
+    """What a POST /restart body asks for → (broad, error). Empty body: the default, every reachable
+    kernel — each dashboard's ↻ sends a bodiless POST. Otherwise the body must be a JSON object holding
+    at most a boolean `fleet` (false = this kernel only); anything else comes back as `error`, naming
+    what was wrong, and the caller restarts NOTHING. The refusal is the point: this used to be a bare
+    `except Exception: pass` around `.get("fleet", True)`, so junk, a JSON array, null, a non-boolean
+    value or a typo key ({"fleat": false}) all silently took the BROADEST action with a 200.
+    `read_error` is do_POST's own complaint about the read (a short read, a Content-Length int() cannot
+    parse): a body that was announced but never arrived whole is refused the same way, since letting
+    it pass as "no body" would hand it the broad default (review find, 2026-09-08)."""
+    if read_error:
+        return None, "body could not be read: %s" % read_error
+    if not raw_body:
+        return True, None
+    try:
+        b = json.loads(raw_body)
+    except Exception:
+        return None, "body is not JSON"
+
+    def clip(v, n=60):
+        # A BOUNDED echo of the offending key or value: a 1 MB body must not come back as a 1 MB error.
+        # The cut lands INSIDE the quotes and is marked, so a long string still echoes as one complete
+        # quoted thing and the words after it survive; the first cut sliced the serialized text and
+        # took the closing quote with it (review find, 2026-09-08). Keys echo with repr, values as JSON.
+        if isinstance(v, str):          # ensure_ascii off, or the marker itself comes back as \u2026
+            return json.dumps(v[:n] + "…" if len(v) > n else v, ensure_ascii=False)
+        s = json.dumps(v, ensure_ascii=False)
+        return s if len(s) <= n else s[:n] + "…"
+    if not isinstance(b, dict):
+        return None, "body must be a JSON object, got %s" % clip(b)
+    extra = sorted(set(b) - {"fleet"})
+    if extra:
+        return None, ("unknown key(s) %s — only 'fleet' is understood"
+                      % ", ".join(repr(k[:60] + "…" if len(k) > 60 else k) for k in extra[:8]))
+    if "fleet" in b and not isinstance(b["fleet"], bool):
+        return None, "'fleet' must be true or false, got %s" % clip(b["fleet"])
+    return bool(b.get("fleet", True)), None
 
 
 def _audit_restart_request(action, **kw):
@@ -22536,6 +22831,7 @@ def _tunnel_supervisor():
                         r["kernel_ver"] = (rver or {}).get("ver") or ""
                         r["auto_nudge"] = (rver or {}).get("autoNudge")   # None = that kernel didn't say
                         r["settings"] = (rver or {}).get("settings")      # its whole kernel-side dict (None = older kernel)
+                        r["settingsGt"] = (rver or {}).get("settingsGt")  # each store's last-applied stamp (T248b: the adopt seam)
                     if ruse is not None:
                         # {} = the host ANSWERED with nothing to show → clear; None = no answer (blip/
                         # rate-gate) → keep the last reading (see _poll_remote_usage)
@@ -22558,6 +22854,17 @@ def _tunnel_supervisor():
                     # row and may spawn a worker. Runs here, in the one supervisor, so an advance is pushed
                     # exactly once no matter how many dashboards are open.
                     _maybe_auto_push(r)
+                    # Kernel-side settings converge without a click (T248b/T248c): a peer whose stamp for a
+                    # setting is newer than ours is adopted through the setting's own gt-gated setter; a peer
+                    # whose stamp is OLDER is handed ours through its gesture route (the default topology polls
+                    # one way — the hub polls the machine it attached, which has no row for the hub until
+                    # Share my sessions is on). Both legs gate on the peer's trust. Outside the lock too: the
+                    # setters take their own locks and write their stores. Loud on a fault, never fatal to
+                    # the supervisor.
+                    try:
+                        _converge_peer_settings(r, rver)
+                    except Exception:
+                        _tunnel_log(r.get("host") or "?", "adopt-settings", error=traceback.format_exc()[-400:])
                     # tag federation v2, the reattach half (also outside the lock — it round-trips the
                     # tunnel): a host that answers this pass applies any journaled tag edits that
                     # failed while it was unreachable. Steady state costs one cached-list scan.
@@ -27575,6 +27882,44 @@ def _chat_cleared_key():
 # that rides the chat builds is intact); only what crosses the wire is trimmed.
 WIRE_TAIL = 250                                  # events shipped on a full chat send; older streams in on scroll-back
 WIRE_CHUNK = 250                                 # events per loadOlder (chatHead) response
+
+
+# ── an EMPTY chat build never describes a session that has content (T249b, the user 2026-09-07) ─────────────
+# build_session parses whatever path the session resolves to; a path that is unreadable for one cycle — a resumed
+# SDK session whose registry already names its new leaf while the CLI has not created the file, a transcript moved
+# aside by hand — parses to ZERO events, and that build went out as a full {type:"session"} frame with events: [].
+# The pane took it as the new transcript (a placeholder flash), and the content frame that followed a cycle later
+# was a "first build" that re-landed the reader through the full-show route: the recorded scroll snap (T249). An
+# empty build for a session whose previous build had events is NOT new information about the conversation — it
+# is a read that failed — so the previous build stands until content returns, and the episode is said once on
+# stderr (fail loudly, never degrade silently). A session that genuinely has nothing (a fresh one, a never-run
+# SDK session) has no previous events and is untouched; a /clear is never events-empty (its boundary card).
+_EMPTY_BUILD_NOTED = set()      # sids inside an empty-build episode (one stderr line per episode)
+
+
+def _empty_build_regresses(m, prev_events):
+    """Would sending build `m` blank a session the clients hold WITH content? True when the build carries no events
+    while the previous push's build for the sid did."""
+    return not (m.get("events") or []) and bool(prev_events)
+
+
+def _note_empty_build(sid, path, n_prev):
+    """One stderr line per episode naming the sid, what the previous build held and whether the transcript path is
+    even there; a romp-perf `chatempty` line every time, for the harness/perf log."""
+    sid = str(sid or "")
+    _perf("chatempty", sid=sid[:8], prev=int(n_prev or 0))
+    if sid in _EMPTY_BUILD_NOTED:
+        return
+    _EMPTY_BUILD_NOTED.add(sid)
+    exists = bool(path) and os.path.exists(str(path))
+    sys.stderr.write("romp-kernel: the chat build for %s came back EMPTY while its previous build had %d events "
+                     "(transcript %s) — keeping the previous build until content returns; an empty frame would blank "
+                     "the pane and re-land the reader\n"
+                     % (sid[:8], int(n_prev or 0), "present" if exists else "missing at %s" % path))
+
+
+def _clear_empty_build_note(sid):
+    _EMPTY_BUILD_NOTED.discard(str(sid or ""))
 
 
 def _chat_diff(prev, cur):
@@ -36163,6 +36508,10 @@ def _spend_pre_fix(key):
 
 _DETAIL_TOP_N = 10       # stacks the histogram names; every further session folds into ONE "other" stack
 _DETAIL_DAYS = 90        # the day ledger's own depth (the recorder prunes to 90 days)
+_SPEND_GRAIN = 5e-5      # a bucket's dollars minus its sids' dollars below this is rounding, not spend: the recorder
+#                          rounds the bucket sum and each sid's sum to 6 places INDEPENDENTLY, so a fully attributed
+#                          bucket carries +1e-6..+6e-6 residues (28 of 113 live hour buckets did, T247b review) — and
+#                          anything that rounds to 0 at the 4 places the payload carries is zero
 
 
 def _spend_scope():
@@ -36257,7 +36606,8 @@ def _spend_detail(now=None):
                 if k:
                     r = keyt.setdefault(str(sid), [0.0, 0, 0])
                     r[0] += float(k.get("usd") or 0); r[1] += int(k.get("tok") or 0); r[2] += int(k.get("turns") or 0)
-        un[0] += max(0.0, tu - au); un[1] += max(0, tt - at); un[2] += max(0, tn - an)
+        res = tu - au
+        un[0] += res if res >= _SPEND_GRAIN else 0.0; un[1] += max(0, tt - at); un[2] += max(0, tn - an)
     # a session that contributed nothing under this scope (a login-only session in the keyed scope) is
     # not a row and not a stack: an all-zero stack with a legend chip says nothing (review find)
     totals = {sid: v for sid, v in totals.items() if v[0] > 0 or v[1] > 0 or v[2] > 0}
@@ -36298,22 +36648,28 @@ def _spend_detail(now=None):
                 dst = per.get(sid)
                 if dst is None:
                     dst = other
-                    others.add(sid)
+                    if u > 0 or t > 0:
+                        others.add(sid)   # "other (N sessions)" counts contributors only — the table's own fold
+                        #                   (a login-only session in the keyed scope adds (0,0,0); T247b review)
                 dst[0][i] += u; dst[1][i] += t
-            una[0][i] += max(0.0, tu - au); una[1][i] += max(0, tt - at)
+            res = tu - au
+            una[0][i] += res if res >= _SPEND_GRAIN else 0.0; una[1][i] += max(0, tt - at)
+        # presence is tested on the ROUNDED values the payload carries: a residue that rounds to nothing
+        # must not hang a stack (a hatched "unattributed" chip with no bars, T247b review)
         stacks = []
         for sid in top:
-            if not (any(per[sid][0]) or any(per[sid][1])):
+            usd = [round(v, 4) for v in per[sid][0]]
+            if not (any(usd) or any(per[sid][1])):
                 continue          # a top-N session with nothing in THIS range: no empty stack, no legend chip (review find)
             s = meta[sid]
             stacks.append({"kind": "sid", "sid": sid, "name": s["name"], "bg": s["bg"], "live": s["live"],
-                           "usd": [round(v, 4) for v in per[sid][0]], "tok": per[sid][1]})
-        if any(other[0]) or any(other[1]):
-            stacks.append({"kind": "other", "name": "other", "count": len(others),
-                           "usd": [round(v, 4) for v in other[0]], "tok": other[1]})
-        if any(una[0]) or any(una[1]):
-            stacks.append({"kind": "unattributed", "name": "unattributed",
-                           "usd": [round(v, 4) for v in una[0]], "tok": una[1]})
+                           "usd": usd, "tok": per[sid][1]})
+        ousd = [round(v, 4) for v in other[0]]
+        if any(ousd) or any(other[1]):
+            stacks.append({"kind": "other", "name": "other", "count": len(others), "usd": ousd, "tok": other[1]})
+        uusd = [round(v, 4) for v in una[0]]
+        if any(uusd) or any(una[1]):
+            stacks.append({"kind": "unattributed", "name": "unattributed", "usd": uusd, "tok": una[1]})
         return {"keys": keys, "stacks": stacks}
 
     h0 = int(now // 3600) - (_SERIES_HOURS - 1)
@@ -40986,6 +41342,168 @@ def _setting_kept_value(name):
     return jd._state_str(name, "")   # the judge-tier stores are bare value files
 
 
+# ── kernel-side settings converge across attached machines WITHOUT a click (T248b) ──────────────
+# The gear's click is broadcast to every attached kernel (federation.ts KERNEL_SETTING), but a machine
+# attached AFTER the click kept its own copy until the next one, with a mixed mark to show it — and the
+# user's standard for these settings is consistent ALWAYS (2026-09-08, after Suggest /compact fired
+# from an attached kernel whose copy was on while the gear showed the box off). The tunnel supervisor
+# already lifts each up peer's /version "settings" dict onto its /tunnels row every poll; it now lifts
+# "settingsGt" beside it and hands both here. A peer's stamp NEWER than our store's last-applied stamp,
+# with a DIFFERENT value, is adopted through the setting's own gt-gated setter under the PEER's stamp:
+# the poll observing a newer stamp is the event, and gesture-time ordering gives latest-wins on both
+# sides with no ping-pong (the adopter's stamp then equals the peer's, and an equal stamp is never
+# adopted — the same rule the setters apply to a stale flush). A SAME value under a newer stamp is
+# adopted too, for its stamp: the dashboard mints its next gesture above the LOCAL kernel's stamps only
+# (gear.js learnAll on /version's settingsGt), so a lagging stamp let a later local click apply here,
+# stand down on the peer, and be adopted away again one pass later (the first cut's review). Equal
+# stamps write nothing; a peer that sends no stamps (an older kernel) or junk teaches nothing. Scope: the three
+# boolean settings that ride the browser broadcast and have no other propagation leg (the judge tiers
+# fan out over /judge-settings; update mode is a per-install boot policy by design).
+_MESH_ADOPTED_SETTINGS = (("compactSuggest", "compact-suggest", _set_compact_suggest),
+                          ("autoNudge", "auto-nudge", _set_auto_nudge),
+                          ("fileEditing", "file-editing", _set_file_editing))
+
+
+def _mesh_settings_snapshot():
+    """(values, stamps) for the three mesh-adopted stores, each store read ONCE so a value and its stamp
+    are one snapshot: the auto-nudge blob carries autoNudge/compactSuggest and both stamps, file-editing.json
+    carries fileEditing and its stamp. /version serves these for a polling peer's _adopt_peer_settings, which
+    takes the pair as one fact — two reads let a click landing between them hand the peer (old value, new
+    stamp), a pair it persisted and the equal-stamp rule then froze on both machines."""
+    d = _auto_nudge_data()
+    try:
+        fe = json.loads((jd.STATE / "file-editing.json").read_text())
+    except Exception:
+        fe = None
+    fe = fe if isinstance(fe, dict) else {}
+    values = {"autoNudge": bool(d.get("enabled")), "compactSuggest": bool(d.get("compactSuggestEnabled")),
+              "fileEditing": bool(fe.get("enabled"))}
+    stamps = {"auto-nudge": _gt_int(d.get("gt")), "compact-suggest": _gt_int(d.get("compactSuggestGt")),
+              "file-editing": _gt_int(fe.get("gt"))}
+    return values, stamps
+
+
+_MESH_SAID = set()   # (host, why) said once on stderr: an isolated peer, a peer that did not take a push
+
+
+def _mesh_say_once(host, why, line):
+    if (host, why) in _MESH_SAID:
+        return
+    _MESH_SAID.add((host, why))
+    sys.stderr.write(line + "\n")
+
+
+def _converge_peer_settings(r, rver, sync=False):
+    """One supervisor pass for one up peer (`r` its remotes row, `rver` its polled /version): adopt what the
+    peer holds under a NEWER stamp (_adopt_peer_settings), and PUSH what we hold under a newer stamp than the
+    peer's through the peer's gesture route (/mesh-settings, gt-gated by the peer's own setters), so
+    latest-wins holds in both directions of a one-way poll (T248c). Both legs gate on trust: an isolated
+    peer's stored state is neither read into this kernel's stores nor written over the tunnel — isolation is
+    a boundary both ways, and for fileEditing the inbound leg alone could open this kernel's save route
+    (the manager's review of the merged convergence, 2026-09-08). The push rides a daemon thread unless
+    `sync` (tests): the supervisor pass must not wait on a peer's HTTP round trip. Returns what moved."""
+    host = r.get("host") or "?"
+    if (r.get("trust") or "directed") == "isolated":
+        _mesh_say_once(host, "isolated", "settings: %s is isolated — its picks are neither adopted here nor pushed to it "
+                       "(isolation is a boundary both ways)" % host)
+        return {"adopted": [], "pushed": []}
+    adopted = _adopt_peer_settings(host, rver)
+    older = _older_peer_settings(rver)
+    if not older:
+        return {"adopted": adopted, "pushed": []}
+    if not sync:
+        threading.Thread(target=_push_settings_to_peer, args=(dict(r), older), daemon=True).start()
+        return {"adopted": adopted, "pushed": [store for store, _b in older]}
+    return {"adopted": adopted, "pushed": _push_settings_to_peer(r, older)}
+
+
+def _older_peer_settings(rver):
+    """[(store, body)] for every adopted store the peer reports under an OLDER stamp than ours: the body is
+    our (value, stamp) in the /mesh-settings shape. A peer that sends no stamps (an older kernel) or junk
+    teaches nothing and is told nothing — there is nothing to compare."""
+    st = (rver or {}).get("settings") if isinstance(rver, dict) else None
+    gts = (rver or {}).get("settingsGt") if isinstance(rver, dict) else None
+    if not isinstance(st, dict) or not isinstance(gts, dict):
+        return []
+    values, stamps = _mesh_settings_snapshot()
+    out = []
+    for key, store, _setter in _MESH_ADOPTED_SETTINGS:
+        pgt, mine = gts.get(store), stamps.get(store) or 0
+        if isinstance(pgt, bool) or not isinstance(pgt, (int, float)) or not math.isfinite(pgt) or pgt < 0:
+            continue
+        if mine > int(pgt):
+            out.append((store, {key: values[key], "gt": mine}))
+    return out
+
+
+def _push_settings_to_peer(r, older):
+    """Hand each (store, body) to the peer's /mesh-settings over its tunnel + its own token (mirror_trust's
+    transport). Counted as pushed only when the peer's ack shows our stamp holding: its setter stands down on
+    anything newer it has since applied (a click on that machine between our poll and this push), and the
+    next pass adopts that instead. A peer that refuses the route (an older kernel: 404, or a non-JSON answer)
+    is said once and skipped — its copy stays until it updates or the next click reaches it."""
+    host = r.get("host") or "?"
+    pushed = []
+    for store, body in older:
+        st, j, err = _remote_kernel_call(r, "POST", "/mesh-settings", body, timeout=8)
+        if err or st != 200 or not isinstance(j, dict) or not j.get("ok"):
+            # an older kernel answers the unknown route with a text 404, which the transport reports as a
+            # parse error, not a status — so the line names the shape it saw and both likely causes
+            _mesh_say_once(host, "push-failed", "settings: %s did not take the push (%s) — an older kernel without the "
+                           "route, or unreachable; its copy stays until it updates or the next click reaches it"
+                           % (host, err or ("HTTP %s" % st)))
+            return pushed
+        if (j.get("settingsGt") or {}).get(store) == body["gt"]:
+            pushed.append(store)
+            sys.stderr.write("setting %s: pushed our newer pick (%s, gesture %d) to %s — one value, one stamp across machines\n"
+                             % (store, body[[k for k in body if k != "gt"][0]], body["gt"], host))
+    return pushed
+
+
+def _apply_mesh_settings(body):
+    """The peer-side half of the push (POST /mesh-settings, behind the serve token like /judge-settings):
+    apply any of the three adopted booleans in `body` through their own gt-gated setters under the body's
+    `gt` — a stale stamp stands down per field, a non-bool is ignored — and answer with the CURRENT snapshot
+    (values and stamps), so the sender can see what actually holds. No socket delivered this, so the
+    stand-down verdict is consumed here."""
+    gt = _gesture_ms(body)
+    if isinstance(body, dict):
+        for key, _store, setter in _MESH_ADOPTED_SETTINGS:
+            if key in body and isinstance(body.get(key), bool):
+                setter(body[key], gt=gt)
+    _pop_stale_notice()
+    values, stamps = _mesh_settings_snapshot()
+    return {"ok": True, "settings": values, "settingsGt": stamps}
+
+
+def _adopt_peer_settings(host, rver):
+    """Adopt every kernel-side boolean in `rver` (_poll_remote_version's dict for a peer) whose stamp is
+    newer than the local store's — the value when it differs, the stamp alone when it agrees. Returns
+    the store names adopted. Runs on the supervisor thread: the setters' stand-down verdicts are
+    consumed here (no delivering socket to answer)."""
+    st = (rver or {}).get("settings") if isinstance(rver, dict) else None
+    gts = (rver or {}).get("settingsGt") if isinstance(rver, dict) else None
+    if not isinstance(st, dict) or not isinstance(gts, dict):
+        return []
+    adopted = []
+    for key, store, setter in _MESH_ADOPTED_SETTINGS:
+        val, pgt = st.get(key), gts.get(store)
+        if not isinstance(val, bool) or isinstance(pgt, bool) or not isinstance(pgt, (int, float)) \
+                or not math.isfinite(pgt) or pgt <= 0:
+            continue                                   # json can carry NaN/Infinity: not a stamp, and int() of it raises
+        pgt = int(pgt)
+        if pgt <= _setting_stored_gt(store):
+            continue                                   # older or equal: nothing newer to learn
+        applied = setter(val, gt=pgt)                  # a same value lands too — the setter treats a newer
+        #                                                stamp as an apply (the echo rule needs an EQUAL one)
+        _pop_stale_notice()                            # no WS gesture made this: never leave a verdict for one
+        if applied is not None:
+            adopted.append(store)
+            sys.stderr.write("setting %s: adopted %s's newer pick (%s, gesture %d) — one value, one stamp across machines\n"
+                             % (store, host, val, pgt))
+    return adopted
+
+
 # Every gt-gated store, by the name _setting_stale is called with — the vocabulary the settingStale
 # frame and the gear's STALE_LABELS already share, so /version's settingsGt speaks the same one.
 _GT_STORES = ("auto-nudge", "compact-suggest", "file-editing", "update-mode", "thinking-summaries",
@@ -43189,19 +43707,6 @@ def _note_chat_divergence(sid, name, chat_state, row_state, now):
         pass
 
 
-def _tab_order_frame(tab_order, tab_meta):
-    """The chat's tab-strip frame, in ONE spelling for its three senders (the pusher's tabs-first send,
-    _push_session_now, _confirm_close_now): the sid order, name+color per tab, the views blob — and
-    `selfHost`, this kernel's own name (_self_host), which the chat reads a postal card's sender host
-    against (its postalSenderHost). The session frame carries the name too, but only a LOCAL session's
-    frame teaches it, so a dashboard whose kernel runs no sessions of its own — every session attached
-    from elsewhere — never learned it until the + picker was opened, and a remote card stamped with this
-    kernel's name stayed plain text (review find, 2026-09-06). Every chat client receives a tabOrder
-    frame, first of all on connect (tabs-first), so the name is known before any card renders."""
-    return {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "selfHost": _self_host(),
-            "views": _views_client()}
-
-
 def _push(targets, connect=False, tmux=None):
     """Build the payloads once (cached parses) and send each target only the pieces that CHANGED for it.
     Drives both the periodic pusher (all clients) and a fresh connect (one client): a new/reconnecting
@@ -43287,7 +43792,9 @@ def _push(targets, connect=False, tmux=None):
                                                          "reason": _retry_pause_reason()})   # "spend" → the card says 'raise your cap', no countdown
                 if tab_order is not None:                # a sentinel cycle sends NO tabOrder frame at all — an
                     #                                      omitting one is the mass teardown the guard refuses
-                    _send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))
+                    # `live` is the guarded map the whole chat block trusts this cycle (chat_tmux), not the raw
+                    # snapshot: on a carried cycle the carry IS what this kernel affirms live (T258 + the guard)
+                    _send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta, chat_tmux))
             active = {c.get("active") for c in chat_clients if c.get("active")}
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
@@ -43376,6 +43883,16 @@ def _push(targets, connect=False, tmux=None):
                               why=_chat_fold_last_info().get("why", ""))         # the demote reason on a full build
                 if not m:
                     continue
+                if _empty_build_regresses(m, _prev_chat_events.get(m["id"])):
+                    # a failed read, not a conversation that emptied (see _empty_build_regresses): the last cached
+                    # build stands in — same events, so the diff below finds nothing to send — or, with nothing
+                    # cached, this cycle sends nothing for the sid; the file's return busts the stat key and rebuilds
+                    _note_empty_build(s["sid"], s.get("path"), len(_prev_chat_events.get(m["id"]) or ()))
+                    if hit is None:
+                        continue
+                    m, ms = hit[1], hit[2]
+                else:
+                    _clear_empty_build_note(s["sid"])
                 _note_chat_divergence(s["sid"], m.get("name") or "",
                                       ((m.get("status") or {}).get("state") or ""),
                                       ((chat_tmux.get(s["sid"]) or {}).get("state") or ""), now)
@@ -43780,10 +44297,14 @@ def _push_session_now(sid):
         m = build_session(sid, now, tmux)
         if not m:
             return
+        if _empty_build_regresses(m, _prev_chat_events.get(sid)):
+            _note_empty_build(sid, next((s.get("path") for s in chat_list if s["sid"] == sid), None),
+                              len(_prev_chat_events.get(sid) or ()))
+            return                                   # the periodic pusher owns the sid until content returns
         ms = None                                    # lazy: the first full send materializes it, the rest reuse
         for c in targets:
             if trusted_order:                        # never a tabOrder from a sentinel cycle's partial list
-                _send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta))
+                _send_client(c, ("taborder",), _tab_order_frame(tab_order, tab_meta, tmux))
             ms = _send_chat(c, m, ms, 0, True)       # change_from 0 → always the full-session form
     except Exception:
         sys.stderr.write("push-session-now (%s): %s\n" % (sid, traceback.format_exc()))
@@ -43834,7 +44355,7 @@ def _confirm_close_now(sid):
         tab_order = [s["sid"] for s in chat_list]
         tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"]),
                              "emoji": _name_emoji(s["sid"])} for s in chat_list]
-        frame = _tab_order_frame(tab_order, tab_meta)
+        frame = _tab_order_frame(tab_order, tab_meta, guarded)
         with _clients_lock:
             # alive and ready, as _push_session_now filters: a chat page that announced READY_GATE_CAP is
             # held until its bundle says `ready` (_client_ready) — every other tabOrder sender filters on
@@ -47095,7 +47616,7 @@ function openIt(){var h=tipHTML();if(!h)return;
 try{window.__rompApiClose&&window.__rompApiClose();}catch(e){}   // one modal on #ru-back at a time (the API detail does the same)
 // the deeper level is one tap away here too (T247): the rail — and its click — do not exist on a
 // phone, and a compact view must never dead-end (progressive disclosure)
-tip.innerHTML=h+'<div class=ru-tip-age><button class=rsp-btn id=ru-bysession>By session \u2192</button></div>';
+tip.innerHTML=h+'<div class=ru-tip-more><button class=rsp-btn id=ru-bysession>By session \u2192</button></div>';   // its own row, the hover's button size (T247b review: inside .ru-tip-age it read as a 10px annotation at .55)
 tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.display='block';
 back.classList.add('on');
 var off=function(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');
@@ -47144,11 +47665,22 @@ function spName(s){return s.name||('session '+String(s.sid||'').slice(0,8));}
 function spColor(s){return (s.bg&&/^#[0-9a-fA-F]{3,8}$/.test(s.bg))?s.bg:SP_NONE;}
 function spHead(){return '<div class=rsp-top><span>'+(SP.data&&SP.data.scope==='computed'?'Spend (computed)':'API spend')+(SP.data&&SP.data.host?' \u00b7 '+esc(SP.data.host):'')+'</span>'
 +'<button class=rsp-x data-act=close aria-label=Close>\u00d7</button></div>';}
+var spPending=null;   // the in-flight detail fetch's controller: a close or a re-open aborts it
 function openSpend(){if(!spBack||!spPanel)return;SP.open=true;spBack.hidden=false;SP.data=null;SP.err='';SP.allRows=false;
 spPanel.innerHTML=spHead()+'<div class=rsp-load>'+__ROMP_LOADER__+'</div>';   // the loader FIRST (the loader rule)
-fetch('/spend/detail',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-.then(function(d){SP.data=d;if(SP.open)renderSpend();},function(e){SP.err=String((e&&e.message)||e);if(SP.open)renderSpend();});}
-function closeSpend(){SP.open=false;if(spBack)spBack.hidden=true;spTipHide();}
+// the loader ends on the EVENT (the answer) — with a backstop that cannot trap (T247b review: a hung
+// socket spun the loader forever): a generous timer aborts the fetch onto the error + retry path
+if(spPending){try{spPending.abort();}catch(e){}}
+var spAbort=new AbortController(),ms=(window.__rompSpendTimeoutMs|0)||20000;spPending=spAbort;
+var spTimer=setTimeout(function(){spAbort.abort();},ms);
+fetch('/spend/detail',{cache:'no-store',signal:spAbort.signal}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
+.then(function(d){clearTimeout(spTimer);var mine=(spPending===spAbort);if(mine)spPending=null;if(!SP.open||!mine)return;SP.data=d;renderSpend();},
+// a SUPERSEDED fetch (a re-open aborted it) yields whatever it carries: its AbortError rejects on the
+// next tick, while the successor is still loading and SP.data is null — a guard that leaned on SP.data
+// painted a false "no answer after 20 s" over the loader (review find). Ownership decides, nothing else.
+function(e){clearTimeout(spTimer);var mine=(spPending===spAbort);if(mine)spPending=null;if(!SP.open||!mine)return;
+SP.err=(e&&e.name==='AbortError')?('no answer from the kernel after '+Math.round(ms/1000)+' s'):String((e&&e.message)||e);renderSpend();});}
+function closeSpend(){SP.open=false;if(spBack)spBack.hidden=true;spTipHide();if(spPending){try{spPending.abort();}catch(e){}spPending=null;}}
 window.__rompCloseSpend=closeSpend;
 window.__rompOpenSpend=openSpend;
 // a click whose press and release land on different elements is dispatched at their common
@@ -47186,8 +47718,8 @@ shown.forEach(function(s){h+='<tr'+(s.live?'':' class=rsp-dead')+'><td><i class=
 +'<td class=n>'+fmtUsd(s.usd)+'</td>'+(keyCol?'<td class=n>'+(s.key?fmtUsd(s.key.usd):'\u2014')+'</td>':'')
 +'<td class=n>'+(s.turns||0)+'</td><td class=n>'+fmtTok(s.tok||0)+'</td></tr>';});
 if(lim<ss.length){var rest=ss.slice(lim),ru=0,rt=0,rn=0;rest.forEach(function(s){ru+=s.usd||0;rt+=s.tok||0;rn+=s.turns||0;});
-h+='<tr class=rsp-dead><td><i class=rsp-sw style="background:'+SP_OTHER+'"></i></td><td class=rsp-name>'+rest.length+' more session'+(rest.length===1?'':'s')
-+' <button class=rsp-btn data-act=table:all>show all</button></td><td class=n>'+fmtUsd(ru)+'</td>'+(keyCol?'<td class=n></td>':'')+'<td class=n>'+rn+'</td><td class=n>'+fmtTok(rt)+'</td></tr>';}
+h+='<tr class=rsp-fold><td><i class=rsp-sw style="background:'+SP_OTHER+'"></i></td><td class=rsp-name><span class=rsp-muted>'+rest.length+' more session'+(rest.length===1?'':'s')
++'</span> <button class=rsp-btn data-act=table:all>show all</button></td><td class=n>'+fmtUsd(ru)+'</td>'+(keyCol?'<td class=n></td>':'')+'<td class=n>'+rn+'</td><td class=n>'+fmtTok(rt)+'</td></tr>';}
 // spend recorded before per-session attribution existed (T100, 2026-08-24), or the part of a bucket no
 // session accounts for: shown as its own row, never dropped or folded into a session (fail loudly)
 if(un&&(un.usd>0||un.tok>0))h+='<tr class=rsp-dead><td><i class="rsp-sw rsp-hatch"></i></td>'
@@ -47282,7 +47814,7 @@ var xlab='';for(var i=0;i<n;i++){var k=ser.keys[i],m;
 if(SP.range==='hours'){m=/^(\\d{4})-(\\d\\d)-(\\d\\d)T00$/.exec(k);if(m){var dd=new Date(+m[1],+m[2]-1,+m[3]);
 xlab+='<span style="left:'+(((i+0.5)*slot)/W*100).toFixed(1)+'%">'+['S','M','T','W','T','F','S'][dd.getDay()]+'</span>';}}
 else{m=/^(\\d{4})-(\\d\\d)-(01|15)$/.exec(k);if(m)xlab+='<span style="left:'+(((i+0.5)*slot)/W*100).toFixed(1)+'%">'+Number(m[2])+'/'+Number(m[3])+'</span>';}}
-var leg='<div class=rsp-leg>'+stacks.map(function(s){return '<span class="rsp-chip'+(s.kind==='sid'&&!s.live?' rsp-dead':'')+'"><i class="rsp-sw'+(s.kind==='unattributed'?' rsp-hatch':'')+'"'
+var leg='<div class=rsp-leg>'+stacks.map(function(s){return '<span class="rsp-chip'+((s.kind==='sid'&&!s.live)||s.kind==='unattributed'?' rsp-dead':'')+'"><i class="rsp-sw'+(s.kind==='unattributed'?' rsp-hatch':'')+'"'
 +(s.kind==='unattributed'?'':' style="background:'+(s.kind==='other'?SP_OTHER:spColor(s))+'"')+'></i>'+esc(spStackName(s))+'</span>';}).join('')+'</div>';
 var tzNote='';var mine=-(new Date().getTimezoneOffset());
 if(typeof d.tzOffsetMin==='number'&&d.tzOffsetMin!==mine)tzNote='<div class=rsp-note>Bucket times are '+esc(d.tz||'the kernel\u2019s clock')+' (the machine that recorded them), not your local time.</div>';
@@ -48810,7 +49342,10 @@ _UPD_JS = (
     "if(!waiting)return;"
     "if(d.boot&&bootNow&&d.boot!==bootNow){location.reload();return;}"
     "if(d.failed){waiting=false;go.hidden=false;go.disabled=false;show('The update did not finish: '+d.failed);return;}"
-    "if(d.updated){waiting=false;show('romp updated to '+d.updated+' \\u2014 restart romp (the \\u21bb button) to run it.');return;}"
+    # the kernel words the step by case (`romp refresh` exits 1 with no manager, where `romp up` is
+    # the step; review find, 2026-09-08); the fallback is the manager case, for an older kernel
+    "if(d.updated){waiting=false;show('romp updated to '+d.updated+' on disk'+(d.why?', but '+d.why:'')"
+    "+' \\u2014 '+(d.hint||'restart romp yourself (romp refresh) to run it')+'.');return;}"
     "setTimeout(poll,3000);}).catch(function(){if(waiting)setTimeout(poll,3000);});}"
     "go.onclick=function(){go.disabled=true;dm.hidden=true;waiting=true;"
     "show('Updating romp \\u2014 this can take a minute; the dashboard reloads when it restarts\\u2026');"
@@ -49442,7 +49977,12 @@ def _landing():
             ".rsp-tbl td{padding:3px 6px 3px 0;border-bottom:1px solid rgba(255,255,255,0.05);white-space:nowrap}"
             ".rsp-tbl .n{text-align:right;font-variant-numeric:tabular-nums}"
             ".rsp-tbl td.rsp-name{width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis}"
-            ".rsp-dead{opacity:.55}"   # a session no longer running keeps its last known name, dimmed
+            # a session no longer running keeps its last known name, dimmed ONCE (T247b review): the row's
+            # cells carry the dimming, the annotation inside stays at the row's level (it used to compound
+            # .55 × .6 to a 2.3:1 read), and a legend chip dims on its own; the fold row is a CONTROL row —
+            # its count is muted, its "show all" is never dimmed (it read as disabled)
+            ".rsp-dead td{opacity:.55}.rsp-dead .ru-tip-reset{opacity:1}.rsp-chip.rsp-dead{opacity:.55}"
+            ".rsp-fold .rsp-muted{opacity:.55}"
             ".rsp-sw{display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:-1px;background:#6b7a8c}"
             # unattributed spend wears a TEXTURE, not a hue: it is not a session, and texture is the
             # dataviz fallback for a class that must never be confused with one
@@ -49487,6 +50027,7 @@ def _landing():
             # margin-left:auto right-aligns every value to one edge, so the bar rows and the numbers-only
             # spend rows (no track span, the user 2026-08-08) read as one table.
             ".ru-tip-v{min-width:30px;text-align:right;font-variant-numeric:tabular-nums;margin-left:auto}"
+            ".ru-tip-more{margin-top:8px;text-align:center}"   # the phone panel's door into the spend modal (T247b)
             ".ru-tip-age{margin-top:7px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.08);"
             "opacity:.55;font-size:10px}"
             # (The per-host .ru-set/.ru-host rail sets are gone, the user 2026-08-08: the collapsed rail
@@ -49759,6 +50300,11 @@ def _landing():
             "body.theme-light .rsp-x{color:#5D574E}body.theme-light .rsp-x:hover{color:#1F1E1D}"
             "body.theme-light .rsp-tbl th{border-bottom-color:rgba(0,0,0,0.10)}body.theme-light .rsp-tbl td{border-bottom-color:rgba(0,0,0,0.06)}"
             "body.theme-light .rsp-btn{border-color:rgba(0,0,0,0.18);color:#1F1E1D}"
+            # the PRESSED toggle's light step, written out (T247b review): `.rsp-btn.on` (0,2,0) lost to
+            # `body.theme-light .rsp-btn` (0,2,1 — two classes and the body type) and painted dark text
+            # and a hairline on the clay chip; this rule is (0,3,1) and wins outright.
+            # CSS state rules must win the cascade — pin the tiebreak, never rely on it.
+            "body.theme-light .rsp-btn.on{background:var(--accent,#C2410C);color:var(--accent-fg,#FFF8F2);border-color:transparent}"
             "body.theme-light .rsp-err{color:#9A3324}"   # the dark-only pink read 1.7:1 on the white card (review find)
             "body.theme-light .rsp-svg{background:rgba(0,0,0,0.04)}body.theme-light .rsp-grid{stroke:rgba(0,0,0,0.10)}"
             "body.theme-light #rsp-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -50869,22 +51415,28 @@ class Handler(BaseHTTPRequestHandler):
                 # kernel answering after a successful update (same trick as the restart flow); polling
                 # this route is also what consumes a report the still-running kernel would otherwise
                 # sit on (the failure path, and the no-manager success).
-                failed = updated = ""
+                failed = updated = why = hint = ""
                 if _UPDATE_STATE[0] == "running":
                     # PEEK before consuming: a success that is about to restart belongs to the NEXT
                     # kernel's boot — consuming it here would file the notice into this dying
                     # process's in-memory ring and the new kernel would find nothing to log. Only a
-                    # failure, or a success with no manager to restart, is this kernel's to file.
+                    # failure, or a success whose restart did not happen (no manager, or a manager
+                    # that did not take the request), is this kernel's to file. A report that is
+                    # not an object is as ended as a failure — the consume sets it aside; peeking
+                    # `.get` on it used to 500 every poll for the kernel's life.
                     try:
-                        _peek = json.loads((jd.STATE / "update-report.json").read_text())
+                        _peek, _have = json.loads((jd.STATE / "update-report.json").read_text()), True
                     except (OSError, ValueError):
-                        _peek = None
-                    if _peek is not None and not (_peek.get("ok") and _peek.get("restarted")):
+                        _peek, _have = None, False     # no report yet, or a write still in progress
+                    # `_have`, not `_peek is not None`: a report that parses to null is a report
+                    if _have and not (isinstance(_peek, dict) and _peek.get("ok") and _peek.get("restarted")):
                         rep = _consume_update_report(running_only=True)
                         if rep is not None and not rep.get("ok"):
                             failed = str(rep.get("why") or "the pull or install failed")
                         elif rep is not None:
                             updated = str(rep.get("tag") or "")
+                            why = str(rep.get("why") or "")     # why the new code is not running yet
+                            hint = _update_restart_hint(rep)    # the step that runs it, worded for the case
                 # a DISMISSED identifier never re-derives an offer on a page load (the user
                 # 2026-08-31: the per-page-load re-offer was a notice-spam compounder)
                 dis = _dismissed_updates()
@@ -50895,7 +51447,7 @@ class Handler(BaseHTTPRequestHandler):
                     "cur": _kernel_ver() or "",
                     "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
                     "mode": _update_mode(),
-                    "state": _UPDATE_STATE[0], "failed": failed, "updated": updated,
+                    "state": _UPDATE_STATE[0], "failed": failed, "updated": updated, "why": why, "hint": hint,
                     # the pending MAIN-DRIFT offer (2026-08-15): a page loaded after the push can
                     # re-derive it, and a stale page can revalidate before acting
                     "drift": (("pull" if _MAIN_DRIFT[0] else "restart") if dsha else ""),
@@ -50958,12 +51510,21 @@ class Handler(BaseHTTPRequestHandler):
         # foreign origin — the federated dashboard — and a denial clears the echo).
         self._cors_origin = self.headers.get("Origin") if self._origin_ok() else None
         raw_body = b""
+        # A body that was ANNOUNCED but did not arrive whole is remembered, not folded into "no body"
+        # (review find, 2026-09-08): this read used to swallow a short read, a dead client and an
+        # unparsable Content-Length into an EMPTY raw_body, and on /restart empty means the broad
+        # default, so a client that announced a peer-only body and died before sending it restarted
+        # every reachable kernel. Only /restart refuses on it today; the other routes keep reading
+        # raw_body as they did.
+        _body_err = None
         try:
             n = int(self.headers.get("Content-Length") or 0)   # read the body (keep-alive safety + POST payloads)
             if n:
                 raw_body = self.rfile.read(n)
-        except Exception:
-            pass
+                if len(raw_body) != n:
+                    _body_err = "read %d of the %d bytes Content-Length announced" % (len(raw_body), n)
+        except Exception as e:
+            _body_err = str(e)[:120] or e.__class__.__name__
         try:
             ok, self._set_cookie, why = self._authorize(q)
             self._cors_origin = self.headers.get("Origin") if ok else None   # echoed by _send (CORS delivery)
@@ -50980,11 +51541,13 @@ class Handler(BaseHTTPRequestHandler):
                 # nothing saying so. The remote half runs in a thread (each host is seconds of network)
                 # and writes its report to disk BEFORE restarting this kernel, because this process does
                 # not survive to report anything. `fleet:false` keeps the local-only behaviour.
-                _fleet = True
-                try:
-                    _fleet = json.loads(raw_body or b"{}").get("fleet", True)
-                except Exception:
-                    pass
+                #
+                # The body is a JSON object with at most a boolean `fleet`, or empty (every ↻ button);
+                # anything else is a 400 that names the problem and restarts NOTHING. A malformed body
+                # must never widen the action — it used to fall through to the broad default.
+                _fleet, _bad = _restart_scope_from_body(raw_body, _body_err)
+                if _bad:
+                    return self._send(400, json.dumps({"ok": False, "error": _bad}), "application/json")
                 # WHO ASKED, on the record (the user 2026-07-31): a restart blinks every dashboard, and
                 # a run of them traced to this route was unattributable — the CLI path audits itself
                 # (bin/romp → restart-audit.jsonl) but the HTTP door was silent. Same file, so one log
@@ -51081,7 +51644,14 @@ class Handler(BaseHTTPRequestHandler):
                 if tag:
                     if _UPDATE_STATE[0] != "running":
                         _audit_restart_request("self-update", tag=tag, addr=str(self.client_address[0]))
-                        _run_update(tag)
+                        if not _run_update(tag) and _UPDATE_STATE[0] != "running":
+                            # nothing launched (the spawn failed; the Log has the reason) and nothing
+                            # else is in flight: a 200 and a "running" push here would leave every
+                            # window waiting on a child that never existed. The banner shows this
+                            # text and re-offers. (A refusal because a concurrent click already
+                            # started it is the "running" answer below, truthfully.)
+                            return self._send(500, "romp could not start the update to %s; the Log has the reason"
+                                              % tag, "text/plain")
                         _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
                     return self._send(200, json.dumps({"ok": True, "state": _UPDATE_STATE[0]}), "application/json")
                 # ONE snapshot of what the kernel found: the kind and the commit it advertised come
@@ -52748,6 +53318,15 @@ class Handler(BaseHTTPRequestHandler):
                     fwd = {k: v for k, v in body.items() if k != "propagate"}
                     threading.Thread(target=_propagate_judge_settings, args=(fwd,), daemon=True).start()
                 return self._send(200, json.dumps(res), "application/json")
+            if u.path == "/mesh-settings":
+                # The gesture route a PEER's supervisor pushes its newer kernel-side booleans through (T248c:
+                # compactSuggest / autoNudge / fileEditing with the origin stamp), behind this kernel's serve
+                # token like /judge-settings. Our own gt-gated setters decide; the ack is the current snapshot.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                return self._send(200, json.dumps(_apply_mesh_settings(body if isinstance(body, dict) else {})), "application/json")
             return self._send(404, "not found", "text/plain")
         except (BrokenPipeError, ConnectionResetError):
             pass
