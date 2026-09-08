@@ -630,7 +630,8 @@ export function followAdoption(st: TabGroupsState, prev: SessionViews | null | u
  *  review): the count is then the total, and the title says why nothing is hidden. The chevron stays
  *  truthful either way — the section IS folded, and the click opens it. A click also shows the section
  *  in the pane (the snapshot, tab-snapshot.ts), open or folded, so every title says so, except while the
- *  pane already shows the section (`shown`), when the click's clause names the fold alone. `holdsActive`
+ *  pane already shows the section (`shown`): then the click's clause names the fold alone, or the way
+ *  back to the transcript when the open section also holds the tab being read (`back`). `holdsActive`
  *  — the section holds the tab being read — is a phrase in the words, not a different action: the
  *  section folds like any other (the user 2026-09-06), and folded, its header is the tab's stand-in. */
 export interface HeadWords { count: string; title: string; label: string }
