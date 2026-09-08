@@ -1960,11 +1960,13 @@ class Panel {
     for (const card of this.cards()) {
       if (card.resolved || !card.anchor) continue;
       // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
-      // surroundings past the anchor's context is painted on the copy that was chosen; `??`, not `||`: 0 is a position
-      const loc = locateComment(src, card.anchor, card.anchorAt ?? undefined);
+      // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
+      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file)
+      const at = this.viewAt(card);
+      const loc = locateComment(src, card.anchor, at);
       // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
       // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
-      const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, loc.range.start);
+      const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
       if (unsure) this.unsureCopies.add(card.id);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
@@ -1995,16 +1997,27 @@ class Panel {
   // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS —
   // the action, the id of its subject, and its place among the subject's marks — never by its node. paintAll and
   // paintRegions each mend the marks they rebuild (heldMark before the pass, refocusMark after it).
+  /** A card's stored position (`anchorAt`, the host's offset into the text IT read) in the view's coordinates. The host
+   *  reads the file with its BOM kept and the fetch hands the viewer the text with it stripped, so on a BOM-prefixed
+   *  file every stored position is the view's plus one; the status says which (`bom`, the host's own word on its text:
+   *  the panel has no other authoritative source for it, since the viewer never sees the byte). Compared unmapped, a
+   *  position naming the chosen copy missed it by one on every such file, and the copy was painted as a guess (the
+   *  review, 2026-09-08). undefined without a position; 0 is a position. */
+  private viewAt(card: Card): number | undefined {
+    if (card.anchorAt === null) return undefined;
+    return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;
+  }
   /** Whether the copy the engine found a comment at (`at`, the pick with the stored position as the hint) is a guess:
    *  the anchor has more than one best hit in the text — its earliest and latest (hint 0, hint length) differ, the
-   *  host's own test for a tie — and the stored position names none of them. The pick is then nearest-wins from a
-   *  position nothing vouches for, or the earliest with no position at all: the host keeps a position that names no
-   *  copy when the recorded changes carry it to none or to several, and every position when the file changed
-   *  unrecorded (refreshAnchorAts), and an edit inside the chosen copy's context leaves the other copies whole to
-   *  outscore it (the review, 2026-09-07: the highlight sat on a copy the person never commented, painted as located).
-   *  A position that names a tied copy is the choice recorded; one best hit is the anchor's own answer and needs none. */
-  private copyUnsure(src: string, card: Card, at: number): boolean {
-    if (!card.anchor || card.anchorAt === at) return false;
+   *  host's own test for a tie — and the stored position (`stored`, in the view's coordinates: viewAt) names none of
+   *  them. The pick is then nearest-wins from a position nothing vouches for, or the earliest with no position at all:
+   *  the host keeps a position that names no copy when the recorded changes carry it to none or to several, and every
+   *  position when the file changed unrecorded (refreshAnchorAts), and an edit inside the chosen copy's context leaves
+   *  the other copies whole to outscore it (the review, 2026-09-07: the highlight sat on a copy the person never
+   *  commented, painted as located). A position that names a tied copy is the choice recorded; one best hit is the
+   *  anchor's own answer and needs none. */
+  private copyUnsure(src: string, card: Card, stored: number | undefined, at: number): boolean {
+    if (!card.anchor || stored === at) return false;
     const first = locateComment(src, card.anchor, 0);
     if (first.state !== "located" || !first.range) return false;
     const last = locateComment(src, card.anchor, src.length);

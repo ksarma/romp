@@ -399,6 +399,8 @@ test("the same comment with no stored position is painted on the first copy (the
   const marks = w.code.querySelectorAll(".fc-hl");
   assert.equal(marks.length, 1);
   assert.equal(rowOf(w, marks[0]), 2, "the first paragraph: nothing said which copy");
-  // pinned at source: the painter hands the stored position to locateComment with `??`, so 0 goes through
-  assert.match(SRC, /const loc = locateComment\(src, card\.anchor, card\.anchorAt \?\? undefined\);/);
+  // pinned at source: the painter hands the stored position to locateComment through viewAt, which passes 0 through
+  // (only null, no position, becomes undefined) and maps a BOM file's position into the view's coordinates
+  assert.match(SRC, /const at = this\.viewAt\(card\);\s*\n\s*const loc = locateComment\(src, card\.anchor, at\);/);
+  assert.match(SRC, /if \(card\.anchorAt === null\) return undefined;/);
 });

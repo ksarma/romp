@@ -2081,6 +2081,12 @@ function reply(ctx, state, extra, opts) {
     trackedBy: root && !o.estimate ? trackedByFor(root, ctx.abs) : null,
     agentTooling: agentTooling(),
     fileMtimeNs,
+    // whether this script's text keeps a leading U+FEFF: the fetch strips it from the text the viewer shows, so a
+    // stored anchorAt, an offset into THIS text, runs one ahead of the view's on such a file, and the panel maps it
+    // by this bit before it paints or judges a copy (viewAt; browserHint's note is the same fact the other way).
+    // The panel has no other authoritative source for it, since the viewer never sees the byte (the review,
+    // 2026-09-08). A media file (no text) carries false.
+    bom: typeof text === 'string' && text.charCodeAt(0) === 0xFEFF,
     storeMtimeNs: paths ? statNs(paths.storePath) : null,
     configMtimeNs: paths ? statNs(paths.configPath) : null,
     store,

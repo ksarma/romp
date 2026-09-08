@@ -54,6 +54,10 @@ export type Status = {
   verb: string; root: string | null; storePath: string | null; trackedBy: TrackedBy;
   agentTooling: "present" | "absent"; fileMtimeNs: string; storeMtimeNs: string | null; configMtimeNs: string | null;
   store: Store | null; hunks: Hunk[]; unsent: Unsent; log: LogEntry[]; logTruncated?: boolean; decided?: Decided;
+  /** whether the host's text keeps a leading UTF-8 BOM (U+FEFF), which the fetch strips from the viewer's text: a stored
+   *  `anchorAt` is an offset into the host's text, so on such a file it is the view's offset plus one (the panel's viewAt
+   *  maps it); absent from an older host, read as false */
+  bom?: boolean;
   /** a non-text file's sha256 (E2); null when the host could not compute it (over its cap); absent from an older host */
   fileHash?: string | null;
   /** a text file: the current sha256 of every figure its region comments name, by `src` as written (E2) */

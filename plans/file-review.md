@@ -292,12 +292,15 @@ request  {type:"fileComments", reqId, sid, path, verb, args?,
                    figureHash?: str}}
 reply    {type:"fileCommentsResult", reqId, verb, root, storePath, trackedBy, agentTooling,
           fileMtimeNs, storeMtimeNs|null, configMtimeNs|null, store|null, hunks, unsent,
-          log, logTruncated, decided, fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?,
+          log, logTruncated, decided, bom, fileHash?, fileHashReason?, embeddedHashes?, embeddedHashReasons?,
           derivedSrcs?, derivedSrcReasons?, baseline?}
 refusal  {type:"fileCommentsFailed", reqId, verb, code, error}
 ```
 
-`store` is the sidecar as loaded and normalized (with `detached[]`), or null when absent.
+`store` is the sidecar as loaded and normalized (with `detached[]`), or null when absent. `bom`
+says whether the text the host read keeps a leading UTF-8 BOM, which the fetch strips from the
+text the viewer shows: a stored `anchorAt` is an offset into the host's text, and the panel maps
+it into the view's by this bit (the painting paragraph under Commenting from either view).
 `hunks` is `engine.toHunks(store.suggestions)`: one row per change with `id, author, ts, kind,
 curFrom, curTo, baseFrom, baseTo, oldText, newText, anchor`, sorted by offset. `unsent` is the
 derivation from the comments log described below: `{comments: [id], replies: [{commentId, ts}],
@@ -803,7 +806,12 @@ position the recorded changes carried to no copy or to several, and every positi
 nobody recorded, and an edit inside the chosen copy's context leaves the other copies whole to
 outscore it, so the engine's nearest-wins pick from such a position, or its earliest tie with
 none, is a guess and is shown as one, never as the copy that was chosen (the anchors follow-on's
-review, 2026-09-07; before it the guess was painted as located). Detached is a rendering state
+review, 2026-09-07; before it the guess was painted as located). The stored position is an offset
+into the text the host read, which keeps a leading UTF-8 BOM the fetch strips from the viewer's
+text, so the reply says whether it does (`bom`) and the panel maps the position into the view's
+coordinates by it (`viewAt`) before the engine takes it as the hint and before the copy is
+judged; compared unmapped, a position naming the chosen copy missed it by one on every such file,
+and the copy was painted as a guess (the consolidation, 2026-09-08). Detached is a rendering state
 here, not a stored flag; the host script never calls the engine's comment pruning, and the
 comment stays in the sidecar. In Raw view a located comment is painted by offset over the line
 rows, with no text matching. In Rendered view the located source range is converted through the

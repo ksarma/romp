@@ -163,6 +163,11 @@ test('a tied comment on a BOM-prefixed file is placed, its offset mapped past th
   assert.equal(c.anchor.quote, 'Ship it.');
   assert.equal(bomText.slice(c.anchorAt, c.anchorAt + 8), 'Ship it.', 'the stored position names the copy in this script\'s own text');
   assert.deepEqual(readSidecar(r.storePath).fingerprint, fingerprintOf(bomText), 'the sidecar keeps the BOM: its fingerprint equals the CLIs\'');
+  // the reply says the text keeps a BOM, so the panel can map the stored position back into the view's coordinates
+  // (viewAt) before it judges which copy it names: without the bit, a position naming the chosen copy missed it by
+  // one on every BOM file and the copy was painted as a guess (the consolidation, 2026-09-08)
+  assert.equal(r.bom, true, 'the comment reply carries the bit');
+  assert.equal(status(w, bom).bom, true, 'and so does status');
   // the first copy, selected instead: its own offset, mapped the same way
   const first = fromBrowser(w.text, 'Ship it.', 0);
   const r2 = comment(w, bom, { anchor: first.anchor, note: 'Ship it now.', hintOffset: first.hintOffset });
@@ -172,6 +177,8 @@ test('a tied comment on a BOM-prefixed file is placed, its offset mapped past th
   fs.writeFileSync(plain, w.text);
   const r3 = comment(w, plain, { anchor: second.anchor, note: 'Not yet.', hintOffset: second.hintOffset });
   assert.equal(readSidecar(r3.storePath).comments[0].anchorAt, second.idx, 'no BOM: the browser\'s offset is this text\'s offset');
+  assert.equal(r3.bom, false, 'no BOM: the reply says so, as a value, never absent');
+  assert.equal(status(w, plain).bom, false);
 });
 
 test('a unique passage on a BOM-prefixed file is unaffected (the exact check never consults the offset for a lone hit)', () => {

@@ -78,7 +78,15 @@ test('the painting paragraph names four states and says when a copy is a guess; 
 
 test('the panel paints the fourth state as the paragraph says: copyUnsure on a located mark, the dashed ring, the title, the tag and the words', () => {
   // the paint pass asks copyUnsure of every located comment, and a guessed copy wears the context class over the located one
-  assert.ok(panel.includes('const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, loc.range.start);'), 'asked of a located comment, at the copy the engine returned');
+  assert.ok(panel.includes('const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);'), 'asked of a located comment, at the copy the engine returned, with the stored position in the view\'s coordinates');
+  // the position the engine and copyUnsure read is the stored one mapped into the view's coordinates (viewAt): the
+  // host keeps a BOM the fetch strips, and the status says whether it does (bom), the host's own word on its text
+  assert.ok(panel.includes('const at = this.viewAt(card);') && panel.includes('const loc = locateComment(src, card.anchor, at);'), 'the hint is the mapped position');
+  const view = method(panel, 'viewAt');
+  assert.ok(view.includes('if (card.anchorAt === null) return undefined;') && view.includes('return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;'), 'one character on a BOM file, as the status says; 0 is a position');
+  assert.ok(read('ui', 'webview', 'file-comments-model.ts').includes('bom?: boolean;'), 'the status type carries the bit');
+  assert.ok(/bom: typeof text === 'string' && text\.charCodeAt\(0\) === 0xFEFF,/.test(host), 'the host answers it on every reply');
+  assert.ok(ux.includes('so the reply says whether it does (`bom`) and the panel maps the position into the view\'s coordinates by it (`viewAt`) before the engine takes it as the hint and before the copy is judged'), 'the painting paragraph says so');
   assert.ok(panel.includes('if (unsure) this.unsureCopies.add(card.id);'), 'remembered for the card');
   assert.ok(panel.includes('const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");'), 'the context state\'s class');
   assert.ok(panel.includes('if (unsure) m.classList.add("fc-hl-context");'), 'a guessed copy wears the same dashed ring');
@@ -92,7 +100,7 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(panel.includes('if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }'), 'a framed figure too');
   // copyUnsure: a position that names the copy is the choice; a tie is the anchor's earliest and latest best hits differing
   const unsure = method(panel, 'copyUnsure');
-  assert.ok(unsure.includes('if (!card.anchor || card.anchorAt === at) return false;'), 'a position naming the painted copy is the choice recorded');
+  assert.ok(unsure.includes('if (!card.anchor || stored === at) return false;'), 'a position naming the painted copy is the choice recorded');
   assert.ok(unsure.includes('const first = locateComment(src, card.anchor, 0);') && unsure.includes('const last = locateComment(src, card.anchor, src.length);'), 'the host\'s own test for a tie');
   assert.ok(unsure.includes('return last.state === "located" && !!last.range && last.range.start !== first.range.start;'), 'one best hit is the anchor\'s own answer');
   // the card: a "passage recurs" tag with the words as its title, and the words on the open card

@@ -507,6 +507,30 @@ test("a comment with no stored position on a passage that recurs: the first copy
   assert.equal(tags[0].title, UNSURE_NONE);
 });
 
+test("a BOM-prefixed file: the stored position runs one past the view's text, the status says so (bom), and the position is mapped before the copy is judged, so the chosen copy paints plainly; the same status without the bit paints it as a guess", async (t: TestContext) => {
+  // the host reads the file with its BOM kept and the fetch hands the viewer the text without it: the comment on the
+  // second copy stores SECOND + 1, the host's offset, while the view's rows index the BOM-stripped DOC
+  const onSecondBom: StoreComment = { ...onSecond, anchorAt: SECOND + 1 };
+  const w = world(); t.after(() => w.close());
+  const { aside } = await openPanel(w, status({ bom: true, store: storeWith([onSecondBom]) }));
+  const marks = w.code.querySelectorAll(".fc-hl");
+  assert.equal(marks.length, 1);
+  assert.equal(rowOf(w, marks[0]), 4, "the second copy: the position, mapped past the BOM, names it");
+  assert.equal(marks[0].classList.contains("fc-hl-context"), false, "painted plainly: the copy that was chosen");
+  assert.equal(marks[0].title, "Open the comment on this passage");
+  assert.deepEqual(tagsOf(headOf(aside, onSecond.id)), [], "no tag");
+  w.close();
+  // the control, and the bug the bit fixes: read unmapped, a position one past the copy names no copy of the view's
+  // text, and the copy is painted as a guess — which every BOM file showed before the status carried the bit
+  const w2 = world(); t.after(() => w2.close());
+  const { aside: aside2 } = await openPanel(w2, status({ bom: false, store: storeWith([onSecondBom]) }));
+  const marks2 = w2.code.querySelectorAll(".fc-hl");
+  assert.equal(marks2.length, 1);
+  assert.equal(rowOf(w2, marks2[0]), 4, "nearest-wins still lands on the second copy");
+  assert.ok(marks2[0].classList.contains("fc-hl-context"), "but as a guess: the position names no copy of this text");
+  assert.deepEqual(tagsOf(headOf(aside2, onSecond.id)).map((x) => x.textContent), ["passage recurs"]);
+});
+
 test("the position naming a tied copy, and a unique passage with an outdated position, paint plainly with no tag: the copy is the one chosen, or the anchor's own answer", async (t: TestContext) => {
   const w = world(); t.after(() => w.close());
   const { aside } = await openPanel(w, status({ store: storeWith([onSecond]) }));
