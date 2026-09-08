@@ -6028,6 +6028,155 @@ def _user_todo_fp(sid):
     return ("on:" if _user_todos_on() else "off:") + json.dumps(rows, sort_keys=True)
 
 
+# ── pinned notes (the user 2026-09-08) ────────────────────────────────────────────────────────────
+# A short note a session pins above its own transcript for the person it works for: what they should
+# see first whenever they open it (where things stand, a warning, a summary). pinned-notes.json under
+# STATE maps sid → a list of records {id, text, detail?, createdT}, oldest first, PINNED_NOTES_MAX per
+# session; a pin past the bound drops the OLDEST (the newest is what the session just decided the
+# person should see). Two events change a list: the session pins (POST /pinnote, from the postal bus's
+# pin_note) and someone unpins (POST /unpinnote from unpin_note, or the strip's own control through the
+# unpinNote drive op); every door lands on _pin_note / _unpin_note, and nothing else writes the store.
+# The rows ride build_session's `pinnedNotes` field and every chatTail (the userTodos seam's shape), and
+# _chat_build_sig folds _pinned_notes_fp so a background tab's cached chat repaints on the next push.
+# Same mtime+size cache, not-a-store guard, lock and atomic publish as the user-todo store above; the
+# records are sid-keyed like it, so they survive a kernel restart and a session's revival.
+PINNED_NOTES_FILE = "pinned-notes.json"
+PINNED_NOTES_MAX = 8
+_pinned_notes_cache = {}   # str(path) -> ((mtime_ns,size), dict)
+_pinned_notes_bad = {}     # str(path) -> (mtime_ns,size) of a file VERSION that is not a store (read as empty, loudly)
+_pinned_notes_lock = threading.RLock()   # every read-modify-write below holds it: routes, drive ops and the
+#                                          pusher read the same file, and an unlocked pair of pins loses one
+
+
+def _pinned_notes():
+    """The store, mtime+size cached. A file that is not sid → list of records (the user-todo store's
+    shape, _user_todo_store_shaped) reads as EMPTY, says so on stderr once per file version, and pins
+    that version in _pinned_notes_bad so _write_pinned_notes refuses to replace it: fail loudly, never
+    silently overwrite someone's notes."""
+    p = jd.STATE / PINNED_NOTES_FILE
+    try:
+        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    hit = _pinned_notes_cache.get(str(p))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    try:
+        d = json.loads(p.read_text())
+        found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
+    except Exception as e:
+        d, found = None, "unparsable JSON (%s)" % e
+    if not _user_todo_store_shaped(d):
+        if _pinned_notes_bad.get(str(p)) != key:
+            _pinned_notes_bad[str(p)] = key
+            sys.stderr.write("pinned-notes: %s is not a pinned-notes store (top-level keys must be session "
+                             "ids, each mapping to a list of records; found: %s). Reading it as EMPTY and "
+                             "refusing to overwrite it until it is fixed or removed.\n" % (p, found or "<empty object>"))
+        d = {}
+    else:
+        _pinned_notes_bad.pop(str(p), None)
+    _pinned_notes_cache[str(p)] = (key, d)
+    return d
+
+
+def _write_pinned_notes(cur):
+    """Publish the store. REFUSES (RuntimeError, loud) while the file on disk is still the version
+    _pinned_notes flagged as not-a-store: every writer copies the (empty) read and would otherwise
+    replace the unreadable file with a one-row one."""
+    p = jd.STATE / PINNED_NOTES_FILE
+    bad = _pinned_notes_bad.get(str(p))
+    if bad is not None:
+        try:
+            st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None                               # the file is gone: nothing left to protect
+        if key == bad:
+            sys.stderr.write("pinned-notes: refusing to overwrite %s: it is not a pinned-notes store (see the "
+                             "earlier line). Fix or remove the file first.\n" % p)
+            raise RuntimeError("pinned-notes store is not a store; write refused (%s)" % p)
+    _atomic_write(p, json.dumps(cur, sort_keys=True))
+
+
+def _pinned_note_rows(cur, sid):
+    """One session's records as fresh dict copies, oldest first (createdT; file order for ties)."""
+    rows = [dict(t) for t in cur.get(str(sid)) or [] if isinstance(t, dict) and t.get("id")]
+    rows.sort(key=lambda t: int(t.get("createdT") or 0))
+    return rows
+
+
+def _pin_note(sid, text, detail=""):
+    """Pin a note above `sid`'s transcript. Returns (the minted id, "pn-" + 8 hex, unique within the
+    session's list; the list after the pin, oldest first). `detail` is the optional longer text; empty
+    means the line carries it all and no key is stored. Past PINNED_NOTES_MAX the oldest notes go."""
+    sid = str(sid)
+    with _pinned_notes_lock:                         # full read-modify-write under the lock (copy: never
+        cur = dict(_pinned_notes())                  # mutate the cached dict in place)
+        lst = _pinned_note_rows(cur, sid)
+        taken = {t.get("id") for t in lst}
+        nid = "pn-" + uuid.uuid4().hex[:8]
+        while nid in taken:
+            nid = "pn-" + uuid.uuid4().hex[:8]
+        rec = {"id": nid, "text": str(text), "createdT": int(time.time())}
+        if str(detail or "").strip():
+            rec["detail"] = str(detail)
+        lst.append(rec)
+        lst = lst[-PINNED_NOTES_MAX:]
+        cur[sid] = lst
+        _write_pinned_notes(cur)
+    return nid, lst
+
+
+def _unpin_note(sid, nid):
+    """Take down one of `sid`'s notes by id. {"ok": True, "notes": [the rest]}, or, LOUD, {"ok": False,
+    "error": …, "notes": [...]} when the id is not among THIS session's notes (another session's id, an
+    unknown one, or one already unpinned): a silent success would teach the caller its unpin worked
+    when nothing changed. The store is sid-keyed, so a session can only ever reach its own rows."""
+    sid, nid = str(sid), str(nid)
+    with _pinned_notes_lock:
+        cur = dict(_pinned_notes())
+        lst = _pinned_note_rows(cur, sid)
+        keep = [t for t in lst if t.get("id") != nid]
+        if len(keep) == len(lst):
+            return {"ok": False, "error": "no pinned note of yours with that id", "notes": lst}
+        if keep:
+            cur[sid] = keep
+        else:
+            cur.pop(sid, None)
+        _write_pinned_notes(cur)
+    return {"ok": True, "notes": keep}
+
+
+def _pinned_notes_for(sid):
+    """The session's pinned notes, oldest first: build_session's `pinnedNotes` field and the chatTail's.
+    Fixed store values only (the firstSeen lesson): this rides the dedup-compared payload, so nothing
+    here may tick with the clock. Shown whatever the session's liveness: a note on a closed session's
+    read-only transcript is still the first thing to read there."""
+    return _pinned_note_rows(_pinned_notes(), sid)
+
+
+def _pinned_notes_fp(sid):
+    """The chat-build-sig fold for one sid (the _user_todo_fp shape): a pin or an unpin changes the
+    payload with NO transcript write, so without this a background tab's cached chat kept the old
+    strip until the file next changed. Cheap: the mtime-cached dict and a handful of rows."""
+    rows = _pinned_notes().get(str(sid))
+    return json.dumps(rows, sort_keys=True) if rows else ""
+
+
+def _remote_no_answer_why(r, st, route):
+    """One line saying why a forwarded control call got no usable answer from the remote kernel, the
+    /usertodo/withdraw wording, by status: 0 a dead tunnel (the redial is already demanded), 404 a remote
+    kernel that predates the route (version skew), any other non-200 its HTTP status, a 200 a body this
+    kernel cannot read."""
+    host = r.get("host") or "that host"
+    if st == 0:
+        return "the tunnel to %s is not answering (re-dialing)" % host
+    if st == 404:
+        return "the kernel on %s predates %s: update romp there and restart it" % (host, route)
+    if st != 200:
+        return "the kernel on %s answered HTTP %d" % (host, st)
+    return "the kernel on %s answered a body that is not JSON" % host
+
+
 def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None,
                     interrupted=None, tm=None, path=_PATH_UNRESOLVED):
     """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
@@ -15269,7 +15418,7 @@ def _drive(msg, client):
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
               "setAuth", "endSession", "renameSession", "moveSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
               "commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote",
-              "userTodoAnswer", "userTodoDismiss", "commentMerge")
+              "userTodoAnswer", "userTodoDismiss", "commentMerge", "unpinNote")
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
@@ -15585,6 +15734,13 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn",
                                        "text": "That request was already settled — the agent withdrew "
                                                "it, or it was answered moments ago."}))
+        _push_soon()
+    elif t == "unpinNote" and msg.get("noteId"):
+        # the person takes a pinned note down from the strip above the transcript (the user
+        # 2026-09-08): the same _unpin_note the postal tool's /unpinnote route lands on. LOUD when the
+        # id is gone already (the session unpinned it, or a second click on a removed row).
+        if not _unpin_note(sid, str(msg["noteId"])).get("ok"):
+            client["send"](json.dumps({"type": "warn", "text": "That note was already unpinned."}))
         _push_soon()
     elif t == "mcpAction" and msg.get("server"):
         # enable / disable / reconnect ONE MCP server (SDK control requests). The panel refetches after,
@@ -26138,6 +26294,7 @@ def _chat_build_sig(sess, tm=None):
     # stat here made every session's write rebuild every tab once, extra load the register route's
     # postal caller then waited behind.
     sig.append(_user_todo_fp(sess.get("sid") or ""))
+    sig.append(_pinned_notes_fp(sess.get("sid") or ""))   # a pin / unpin (the user 2026-09-08): the same no-transcript-write class, folded per sid
     # a pending DELETE rollback changes the payload with NO transcript write (the parse-cache lesson,
     # one level up): without this a BACKGROUND tab's cached, uncut payload keeps pushing the deleted
     # tail until the file next changes. Cheap: live SDK sessions answer from memory, no I/O.
@@ -30924,6 +31081,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None, side
             # only), and a later slice's tab glyph derives from this field. Fixed store values only:
             # like firstSeen below, this rides the dedup-compared payload — NEVER a per-build value.
             "userTodos": _user_todos_open,
+            # pinned notes (the user 2026-09-08): the strip between the tab bar and the transcript reads
+            # this field; it rides every chatTail too (_send_chat), so a caught-up client hears of a pin
+            # with no event change. Fixed store values only, like userTodos above.
+            "pinnedNotes": _pinned_notes_for(sid),
             # NEVER `now`. This rides the chat payload, and _send_client dedups by comparing the
             # SERIALIZED payload against what that client last received — so a firstSeen that ticked
             # with the wall clock made every build differ, defeated the dedup entirely, and re-sent the
@@ -38012,7 +38173,8 @@ def _send_chat_locked(c, m, ms, change_from, led_changed):
                 # unconditionally is dedup-safe — store values only, byte-stable when unchanged —
                 # where a changed-only attach would need per-client prev tracking to save a few
                 # bytes of small rows.
-                "userTodos": m.get("userTodos") or []}
+                "userTodos": m.get("userTodos") or [],
+                "pinnedNotes": m.get("pinnedNotes") or []}   # the same seam for the pinned-notes strip (2026-09-08)
         if led_changed:                               # the TOC only changed on a judge pass → usually omitted
             tail["ledger"] = m.get("ledger")
         _send_client(c, ("chat", sid), tail, kind="delta")   # the chat's delta form, for /perf's sends split
@@ -43876,6 +44038,9 @@ def _chat_body():
     return ('<div id="winframe"></div><div id="tabbar"><span id="tabs"></span></div>'
             '<div id="tabbar-resize" title="Drag to resize the tab strip"></div>'
             '<div id="ledger" style="display:none"></div>'
+            # pinned notes (the user 2026-09-08): the strip between the tab bar and the transcript; MUST mirror
+            # vscode-extension/src/page-skeleton.ts (pinned by ui/webview/pinned-notes.test.ts)
+            '<div id="pinned-notes" style="display:none"></div>'
             # the live-ask picker lives INSIDE #content (the user 2026-06-27) so it flows at the bottom of the
             # transcript and scrolls WITH the chat history, instead of a fixed mini-window below it.
             '<div id="content"><div id="live-ask" style="display:none"></div></div>'
@@ -49514,6 +49679,68 @@ class Handler(BaseHTTPRequestHandler):
                 #                                                     postal caller's 2s POST never waits
                 #                                                     behind a synchronous build of every
                 #                                                     session's payload
+                return self._send(200, json.dumps(acct), "application/json")
+            if u.path == "/pinnote":
+                # Pin a note above a session's transcript (the user 2026-09-08): the postal bus's pin_note
+                # posts here the way add_user_todo posts /usertodo. Body: {"id": <sid>, "text": <one short
+                # line>, "detail"?: <longer text>} → {"ok": true, "noteId": "pn-…", "notes": [the session's
+                # list after the pin, oldest first]}. Shape-validated; the sid's existence is not (the
+                # postal-called routes' house style). A remote session's pin is forwarded to the kernel that
+                # owns it, and a forward that lands nothing is a 502 saying why, never a 200 the tool would
+                # echo back as pinned.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                sid = str((body or {}).get("id") or "")
+                text = str((body or {}).get("text") or "").strip() if isinstance(body, dict) else ""
+                if not sid or not text:
+                    return self._send(400, json.dumps({"ok": False, "error": "id and text required"}), "application/json")
+                detail = str(body.get("detail") or "")
+                r = _host_for_sid(sid)
+                if r is not None:                                   # remote session → forward over its -L tunnel
+                    st, res = _remote_forward_status(r, "/pinnote", {"id": sid, "text": text, "detail": detail})
+                    if not isinstance(res, dict) or not res.get("noteId"):
+                        why = _remote_no_answer_why(r, st, "/pinnote")
+                        sys.stderr.write("pinned-notes: pin for %s not forwarded: %s\n" % (sid[:8], why))
+                        return self._send(502, json.dumps({"ok": False, "error": why, "host": r.get("host") or ""}),
+                                          "application/json")
+                    return self._send(200, json.dumps({"ok": True, "noteId": str(res.get("noteId")),
+                                                       "notes": res.get("notes") or []}), "application/json")
+                nid, notes = _pin_note(sid, text, detail)
+                _push_soon()                                        # ack-fast: the strip repaints on the pusher's
+                #                                                     woken cycle; the bus's 2s POST never waits
+                #                                                     behind a synchronous build of every payload
+                return self._send(200, json.dumps({"ok": True, "noteId": nid, "notes": notes}), "application/json")
+            if u.path == "/unpinnote":
+                # Take a pinned note down, by id: the postal bus's unpin_note; the strip's own control
+                # reaches the same _unpin_note through the unpinNote drive op. Body: {"id": <sid>, "noteId":
+                # "pn-…"} → _unpin_note's account: ok, the remaining notes, and on ok:false the reason (an
+                # id that is not this session's own, unknown, or already unpinned) so the tool says so
+                # LOUDLY instead of reporting a success nothing happened for.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                sid = str((body or {}).get("id") or "")
+                nid = str((body or {}).get("noteId") or "")
+                if not sid or not nid:
+                    return self._send(400, json.dumps({"ok": False, "error": "id and noteId required"}), "application/json")
+                r = _host_for_sid(sid)
+                if r is not None:                                   # remote session → forward over its -L tunnel
+                    st, res = _remote_forward_status(r, "/unpinnote", {"id": sid, "noteId": nid})
+                    if not isinstance(res, dict):
+                        why = _remote_no_answer_why(r, st, "/unpinnote")
+                        sys.stderr.write("pinned-notes: unpin of %s for %s not forwarded: %s\n" % (nid, sid[:8], why))
+                        return self._send(502, json.dumps({"ok": False, "error": why, "host": r.get("host") or ""}),
+                                          "application/json")
+                    out = {"ok": bool(res.get("ok")), "notes": res.get("notes") or []}
+                    if res.get("error"):
+                        out["error"] = res["error"]
+                    return self._send(200, json.dumps(out), "application/json")
+                acct = _unpin_note(sid, nid)
+                if acct["ok"]:
+                    _push_soon()                                    # ack-fast, as on /pinnote
                 return self._send(200, json.dumps(acct), "application/json")
             if u.path == "/usertodo/context":
                 # The re-surfacing read (plans/user-todos.md slice 3): the SessionStart hook

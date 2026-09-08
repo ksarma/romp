@@ -3181,6 +3181,22 @@ MCP_TOOLS = [
      "inputSchema": {"type": "object",
                      "properties": {"id": {"type": "string", "description": "the id add_user_todo returned"}},
                      "required": ["id"]}},
+    # The two pinned-note tools (the user 2026-09-08) also speak to the PERSON THE AGENT WORKS FOR,
+    # so they ride the same veil as the user-todo pair: no tracking-system nouns (test_injected_voice.py
+    # scans them). The same caller-identity caveat applies: a subagent's pin lands on its parent
+    # session, which is where the person reads it. Not governed by the user-todos switch: a pinned
+    # note asks nothing of the person, it only tells them what to read first.
+    {"name": "pin_note",
+     "description": "Pin a short note above this conversation for the person you work for: what they should see first whenever they open it (where things stand, a warning, a summary). Give one short line; add detail only if the line can't carry it. Returns an id and what is pinned now. Unpin it (unpin_note) when it no longer applies. At most eight stay pinned; past that the oldest goes.",
+     "inputSchema": {"type": "object",
+                     "properties": {"text": {"type": "string", "description": "one short line; a file path or a pull-request number in it becomes a link the person can open"},
+                                    "detail": {"type": "string", "description": "optional longer text, read when the person opens the note; paths and pull-request numbers link the same way"}},
+                     "required": ["text"]}},
+    {"name": "unpin_note",
+     "description": "Take down a note you pinned above this conversation (by id) once it no longer applies, so the person you work for is not reading a stale one.",
+     "inputSchema": {"type": "object",
+                     "properties": {"id": {"type": "string", "description": "the id pin_note returned"}},
+                     "required": ["id"]}},
     {"name": "check_sent",
      "description": "See your recently sent messages and whether each was read/acted on by the recipient yet, or is still pending — instead of asking 'did you get it?'.",
      "inputSchema": {"type": "object", "properties": {}}},
@@ -3199,6 +3215,21 @@ USER_TODOS_OFF_ADD = ("User todos are turned off on this machine, so this was no
                       "work for will NOT see it. Say what you need in your next reply instead.")
 USER_TODOS_OFF_WITHDRAW = ("User todos are turned off on this machine, so there is nothing to withdraw. "
                            "Nothing changed.")
+
+
+def _pinned_notes_words(notes):
+    """The 'pinned now' account both pinned-note tools end with: the kernel's list after the change,
+    oldest first, one line per note with its id, so the agent can see what the person sees and unpin by
+    id without asking. A kernel that sent no list (an older one) gets no account, never an invented one."""
+    if not isinstance(notes, list):
+        return ""
+    if not notes:
+        return "Pinned now: nothing."
+    lines = ["Pinned now (%d):" % len(notes)]
+    for n in notes:
+        if isinstance(n, dict):
+            lines.append("- %s: %s" % (n.get("id") or "?", str(n.get("text") or "").strip()))
+    return "\n".join(lines)
 
 
 def _tools_offered():
@@ -3362,6 +3393,39 @@ def _mcp_call(name, args):
         # a kernel that predates the account answers ok:false alone: the old one-size answer
         return ("No open note '%s' of yours — it was already answered, dismissed, or "
                 "withdrawn. Nothing changed." % tid), True
+    if name == "pin_note":
+        # Pin a note above this session's transcript for the person the agent works for (the user
+        # 2026-09-08): the kernel owns the store (POST /pinnote, the add_user_todo shape) and mints
+        # the id. `mid` is the calling SESSION (a subagent's pin lands on its parent; see MCP_TOOLS).
+        if not mid:
+            return "Not inside a romp session.", True
+        text = str(args.get("text") or "").strip()
+        if not text:
+            return "Need 'text': one short line the person you work for should see first.", True
+        res = _kernel_post("/pinnote", {"id": mid, "text": text,
+                                        "detail": str(args.get("detail") or "").strip()})
+        nid = res.get("noteId") if isinstance(res, dict) else None
+        if not nid:
+            # LOUD, never a silent drop: a note the agent believes is up, and is not, misleads twice
+            return ("Couldn't pin that. The person you work for will NOT see it. Say it in your next "
+                    "reply instead, or try again shortly."), True
+        return ("Pinned (id %s). The person you work for sees it above this conversation. Unpin it "
+                "(unpin_note) when it no longer applies.\n%s" % (nid, _pinned_notes_words(res.get("notes")))), False
+    if name == "unpin_note":
+        # Take a pinned note down, by id. An id that is not this session's own, unknown, or already
+        # unpinned is a LOUD, plain answer, never a silent success.
+        if not mid:
+            return "Not inside a romp session.", True
+        nid = str(args.get("id") or "").strip()
+        if not nid:
+            return "Need 'id': the one pin_note returned.", True
+        res = _kernel_post("/unpinnote", {"id": mid, "noteId": nid})
+        if not isinstance(res, dict):
+            return "Couldn't unpin '%s'; it is still up. Try again shortly." % nid, True
+        if not res.get("ok"):
+            return ("Nothing changed: no note of yours is pinned under the id '%s' (already unpinned, or "
+                    "not this session's).\n%s" % (nid, _pinned_notes_words(res.get("notes")))), True
+        return "Unpinned '%s'.\n%s" % (nid, _pinned_notes_words(res.get("notes"))), False
     if name == "check_sent":
         if not mid:
             return "Not inside a romp session.", True

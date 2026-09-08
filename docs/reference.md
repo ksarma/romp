@@ -65,6 +65,18 @@ is made of ASCII letters, digits and `_ . ~ / -` only, so any other character en
 quote, backtick or closing parenthesis. Sentence punctuation at the end of either is left out of the
 link, as is a trailing `/` or `~`, and a token holding a doubled `//` is not a path. A relative path is read against the working directory of the session that flagged it.
 
+**Pinned notes.** A session can pin a short note above its own transcript: what you should see
+first whenever you open it, such as where things stand, a warning, or a summary. The notes sit in
+a strip between the tab bar and the transcript, in the order they were pinned with the newest last,
+and the strip takes no space while a session has none. A row with more behind it shows a
+*details* hint; click the row to read the rest. When more than three notes are pinned, the older
+ones fold behind a *+N more* row. A file path or a pull request number in a note links the way it
+does in a user todo. Each row has an **Unpin** control (click it twice), and the session takes its
+own notes down with `unpin_note`. At most eight notes stay pinned per session; a ninth drops the
+oldest. The notes live in `pinned-notes.json` under Romp's state directory, keyed by session, so
+they survive a kernel restart and are there again when a session is revived. There is no switch:
+the two tools are always offered, since a pinned note asks nothing of you.
+
 These are for scripting and for agents rather than daily use:
 
 | Command | What it does |
@@ -294,6 +306,8 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `list_agents()` | The live sessions, each with its branch and working-note |
 | `set_working(text)` | Publish what you hold so peers steer clear |
 | `set_emoji(emoji)` | Put one emoji before your own session's name on its tab; `''` clears it. Refused, with the reason, for anything but exactly one emoji |
+| `pin_note(text, detail?)` | Pin a short note above the session's own transcript for you (where things stand, a warning, a summary); returns its id and what is pinned now |
+| `unpin_note(id)` | Take a pinned note down |
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
 

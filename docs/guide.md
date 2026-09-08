@@ -59,6 +59,14 @@ A pull request number in a message, a card, or a note (`#123`, `PR #123`, or
 directory has as its `origin` remote; when that remote is not on GitHub, the number stays
 plain text.
 
+**Pinned notes.** A session can pin a short note for you above its transcript: where things
+stand, a warning, a summary. The notes appear in a strip between the tab bar and the transcript,
+oldest first, and the strip is absent while a session has pinned nothing. Click a row that shows a
+*details* hint to read the rest; when more than three notes are pinned, the older ones fold behind
+a *+N more* row. Paths and pull request numbers in a note are links. **Unpin**, clicked twice,
+takes a note down; the session can also take down its own. A note stays until unpinned, across
+restarts and revivals, and a session keeps at most eight, the oldest making room.
+
 **Opening a markdown document.** A markdown link in the chat opens in the file viewer,
 rendered, with **Raw** one click away — a path on the session's machine, or a link to a
 file served from the dashboard's own address (a published report, an evidence doc). Figures
