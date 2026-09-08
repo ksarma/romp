@@ -57,7 +57,8 @@ class FakeClock:
 class FakeWake:
     """A threading.Event stand-in for the pusher loop, driven by a schedule of wakes on the fake clock.
     A wake is (t, kind, sid): kind "plain" is a set() with no cause (a poke, a drive op, a dirty mark);
-    "live" is _pusher_wake_live(sid), the cause recorded then the flag set, in that order. wait(timeout)
+    "live" is _pusher_wake_live(sid), the cause recorded then the flag set, in that order; "switch" is the
+    activeTab message, the connected chat client's active tab moving to `sid` and the plain wake it sends. wait(timeout)
     first fires every wake already due (one that arrived while the cycle ran), answers True at once when
     the flag is set, else moves the clock to the next wake inside the timeout and fires it (True), else
     moves the clock by the timeout (False)."""
@@ -72,6 +73,11 @@ class FakeWake:
         _t, kind, sid = w
         if kind == "live":
             self.km._note_live_wake(sid)
+        elif kind == "switch":                      # the client switched tabs: its active sid moves, then the plain wake
+            with self.km._clients_lock:
+                for c in self.km._clients:
+                    if c.get("app") == "chat":
+                        c["active"] = sid
         self.km._PERF_STATS.wake()                  # what _CountedEvent.set counts
         self.flag = True
         self.fired.append(w)
@@ -192,6 +198,18 @@ class MinimumInterval(unittest.TestCase):
         starts, p, _ = run_loop(km, [(0.375, "plain", None), (0.75, "live", WATCHED)], until=1.2)
         self.assertEqual(starts, [0.0, 0.75])
         self.counters(p, cycles=2, wakes=2, wakes_live=1, wakes_event=1, held=1, held_ms=375.0, exempt=1)
+
+    def test_a_tab_switched_to_during_a_hold_ends_it_when_its_tail_changed(self):
+        # order A: the switch (a plain activeTab wake) first, then the new tab's tail changes inside the hold
+        starts, p, _ = run_loop(km, [(0.375, "switch", OTHER), (0.5, "live", OTHER)], until=1.0)
+        self.assertEqual(starts, [0.0, 0.5])
+        self.counters(p, exempt=1, held=1, held_ms=125.0)
+        # order B: the tail changed first (nobody watched it, so the hold began), then the client switched
+        # to it: the sid recorded earlier in the hold is re-tested against the new active tab (review
+        # 2026-09-08, should-fix 2: before it the taken sid was dropped and the cycle waited for 1.0)
+        starts, p, _ = run_loop(km, [(0.375, "live", OTHER), (0.5, "switch", OTHER)], until=1.0)
+        self.assertEqual(starts, [0.0, 0.5], "the hold ends at the switch, not at the interval")
+        self.counters(p, exempt=1, held=1, held_ms=125.0)
 
     def test_a_settle_for_the_watched_tab_repaints_at_cycle_end(self):
         # the turn-end shape (review 2026-09-08): streamed text for the watched tab at 0.375 runs its cycle at

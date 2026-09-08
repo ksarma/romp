@@ -43999,7 +43999,12 @@ def _pusher(clock=None, wake=None):
         due = clock()
         deadline = start + PUSH_MIN_INTERVAL_S
         if due < deadline:
-            exempt = _live_wake_watched(live)
+            pending = set(live)                   # every live-tail sid recorded since the last cycle, re-tested
+            #                                       against the clients' CURRENT active tabs at each in-hold wake:
+            #                                       a tab switched to during the hold (a plain activeTab wake) ends
+            #                                       it when that tab's tail changed earlier in the hold (review
+            #                                       2026-09-08); dropped when the cycle runs
+            exempt = _live_wake_watched(pending)
             held = False
             while not exempt:
                 remaining = deadline - clock()
@@ -44009,7 +44014,8 @@ def _pusher(clock=None, wake=None):
                 if wake.wait(remaining):          # a wake inside the hold
                     wake.clear()
                     _woke = True                  # the cycle runs for an event, whenever it runs
-                    exempt = _live_wake_watched(_take_live_wake_sids())
+                    pending |= _take_live_wake_sids()
+                    exempt = _live_wake_watched(pending)
             if held:
                 _PERF_STATS.hold(clock() - due)
             if exempt:
