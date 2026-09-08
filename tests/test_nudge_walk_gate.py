@@ -71,6 +71,12 @@ class _Base(unittest.TestCase):
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
         getattr(km, "_NUDGE_GATE_MEMO", {}).clear()
+        # the shared cache's switch and poison counter are process-wide (one judge module per worker):
+        # another module's deliberate frozen-write test leaves the counter raised, so the writer check
+        # below is a DELTA over this test, and the switch is on for the test and restored after it
+        self.shared_off_before = jd._SHARED_OFF[0]
+        jd._SHARED_OFF[0] = False
+        self.poisoned_before = jd.shared_store_stats().get("poisoned", 0)
         self.fb = _FakeBackend()
         km.Sessions.backend_for = lambda sid: self.fb
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": "/nonexistent.jsonl"}]
@@ -119,6 +125,7 @@ class _Base(unittest.TestCase):
         km._SESSION_STAMP_CACHE.clear(); km._autonudge_cache.clear()
         jd._shared_clear()
         getattr(km, "_NUDGE_GATE_MEMO", {}).clear()
+        jd._SHARED_OFF[0] = self.shared_off_before
         try:
             (jd._overrides_dir() / (SID + ".jsonl")).unlink()
         except OSError:
@@ -166,7 +173,7 @@ class _Base(unittest.TestCase):
 
     def assertNoWriterSawTheSharedView(self):
         st = jd.shared_store_stats()
-        self.assertEqual((st.get("poisoned"), st.get("off")), (0, 0),
+        self.assertEqual((st.get("poisoned", 0) - self.poisoned_before, st.get("off")), (0, 0),
                          "a writer received the shared read-only store (the frozen guard fired)")
 
 
