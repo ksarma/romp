@@ -38,7 +38,7 @@ test("the section gone from the strip while its snapshot shows puts the transcri
   // showed the transcript again: every view display:none, the composer disabled under the snapshot's
   // placeholder, until the user happened to click a tab. The absence from the plan is the event; the same
   // renderTabs answers it with showActive, which re-enables the composer.
-  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
+  assert.match(TABS, /collapsedTabIds = plan\.folded;\s*\n\s*hiddenTabIds = [^\n]*\n\s*lastStripItems = plan\.items;/, "the plan renderSnapshot reads is the one just rendered");
   assert.match(TABS, /const shown = snapView;\s*\n\s*const held = shown \? snapshotHoldsFocus\(\) : false;\s*\n\s*if \(snapView\) renderSnapshot\(\);\s*\n\s*if \(shown && !snapView\) \{ showActive\(\); if \(held\) focusActiveTab\(\); \}/,
     "renderSnapshot clears snapView when the section is not in the plan; the transcript comes back in the same render");
   assert.match(SNAP, /if \(!head\) \{ snapView = null; hideSnapshot\(\); return false; \}/, "the section's absence is the event");
@@ -76,9 +76,9 @@ test("the way back (review findings 6 and 12): Escape leaves the snapshot when n
   assert.match(RENDER, /window\.addEventListener\("keydown", \(e\) => \{ if \(e\.key === "Escape" && ctxMenuEl\) \{ dismissTabMenu\(\); e\.preventDefault\(\); \} \}, true\);/,
     "an Escape that closed the tab menu says so, and the snapshot's handler yields to it");
   // the header: the act derived from the rendered state (open + shown + holds the active tab), like the fold's data-folded
-  assert.match(HEAD, /head\.dataset\.act = "toggle-group";\s*\n\s*head\.dataset\.folded = collapsed \? "1" : "0";\s*\n\s*if \(snapView === name\) head\.classList\.add\("snap-shown"\);/, "every header folds and shows the section…");
-  assert.match(HEAD, /const back = snapView === name && !collapsed && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "…except the one whose click is being undone");
-  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back\);/, "the title and the spoken label say which click this is (tab-groups.test.ts executes the words)");
+  assert.match(HEAD, /head\.dataset\.act = "toggle-group";\s*\n\s*head\.dataset\.folded = collapsed \? "1" : "0";\s*\n(?:\s*\/\/[^\n]*\n)*\s*const shown = snapView === name;\s*\n\s*if \(shown\) head\.classList\.add\("snap-shown"\);/, "every header folds and shows the section…");
+  assert.match(HEAD, /const back = shown && !collapsed && holdsActive;\s*\n\s*if \(back\) head\.dataset\.act = "show-transcript";/, "…except the one whose click is being undone");
+  assert.match(HEAD, /const words = headWords\(name, total, hidden\.length, collapsed, holdsActive, back, shown\);/, "the title and the spoken label say which click this is (tab-groups.test.ts executes the words)");
   // to assistive tech the way-back header is a plain button, not a disclosure (round 2): it announced "expanded"
   // and pressing it folded nothing, so aria-expanded is left off in that state; the label (headWords) names the action
   assert.match(HEAD, /if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);/, "no aria-expanded on the header whose press puts the transcript back");
@@ -148,7 +148,7 @@ test("the client's Ledger type declares the two fields the snapshot reads off th
   assert.match(line, /workingNote: the session's postal working note[^\n]*the snapshot row's second line/, "the comment says where the note goes now (the row's second line, not the now line)");
   assert.match(line, /needsInput: the feed's needs-you verdict/, "…and names the second field's source");
   assert.doesNotMatch(line, /now line/, "the stale 'now line' claim is gone");
-  assert.match(RENDER, /snapshotModel\(head\.head, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\)/, "the ledger the model reads is the client's Ledger");
+  assert.match(RENDER, /snapshotModel\(\{ \.\.\.head\.head, hides: head\.hides \}, \(id\) => sessions\.get\(id\) \?\? null, \(id\) => ledgers\.get\(id\) \?\? null, snapModel\)/, "the ledger the model reads is the client's Ledger");
 });
 
 test("the row's second line: the session's own working note, quieter, under the now line (tab-snapshot.ts SnapRow.note, the model's request of the renderer)", () => {
@@ -175,24 +175,27 @@ test("snapshot rows update in place, keyed by session id, so the row a keyboard 
   const paint = SNAP.slice(SNAP.indexOf("function renderSnapshot(): boolean {"), SNAP.indexOf("function snapshotRowNode("));
   assert.match(paint, /if \(next === snapModel && host\.childElementCount\) \{/, "the same-object gate stands");
   assert.equal(paint.split("host.replaceChildren(").length - 1, 1, "the host's children are replaced once: the first paint");
-  assert.match(paint, /let list = host\.querySelector<HTMLElement>\("\.snap-list"\);\s*\n\s*if \(!list\) \{[\s\S]*?host\.replaceChildren\(h, list\);\s*\n\s*\}/, "the heading and the list are made once, with the host's first paint");
+  assert.match(paint, /let list = host\.querySelector<HTMLElement>\(":scope > \.snap-list"\);\s*\n\s*if \(!list\) \{[\s\S]*?host\.replaceChildren\(h, list, fold\);\s*\n\s*\}/, "the heading, the list and the Hidden fold are made once, with the host's first paint");
   assert.match(paint, /part\("snap-name"\)\.textContent = next\.name;\s*\n\s*part\("snap-count"\)\.textContent = words\.count;/, "the heading's parts are patched, not remade");
-  assert.match(paint, /reconcileRows<SnapRow, Element>\(list, next\.rows, \(n\) => n\.getAttribute\("data-id"\), \(r\) => snapshotRowNode\(r, now\), \(n, r\) => fillSnapshotRow\(n\.firstElementChild as HTMLElement, r, now\)\);/,
-    "keyed by the row's session id: a new row's node from snapshotRowNode, a standing row's parts from fillSnapshotRow");
+  assert.match(paint, /reconcileRows<SnapRow, Element>\(list, shown, keyOf, \(r\) => snapshotRowNode\(r, now, next\.name\), \(n, r\) => fillSnapshotItem\(n as HTMLElement, r, now, next\.name\)\);/,
+    "keyed by the row's session id: a new row's node from snapshotRowNode, a standing row's parts from fillSnapshotItem (the shown list; the hidden list is the same call: tab-hide.test)");
+  assert.match(paint, /const keyOf = \(n: Element\) => n\.getAttribute\("data-id"\);/, "the key both reconciles read IS the session id the item carries (round 1 of the tabhide review: the re-pin had dropped the attribute)");
   assert.doesNotMatch(paint, /for \(const r of next\.rows\) list\.appendChild/, "no wholesale row build");
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the same
   // event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under focus
   // (its session left the section): the row now in its place takes it, the last when it was last, so the keyboard
-  // user is not dropped to body by a removal either
-  assert.match(paint, /const focused = document\.activeElement as HTMLElement \| null;\s*\n\s*const focusedAt = focused && list\.contains\(focused\) \? Array\.from\(list\.children\)\.indexOf\(focused\.closest\("\.snap-item"\)!\) : -1;\s*\n\s*reconcileRows<SnapRow, Element>\(/,
+  // user is not dropped to body by a removal either. (A row that changed LISTS under focus: tab-hide.test.)
+  assert.match(paint, /const focused = document\.activeElement as HTMLElement \| null;\s*\n\s*const focusedList = focused && list\.contains\(focused\) \? list : focused && hlist\.contains\(focused\) \? hlist : null;\s*\n\s*const focusedAt = focusedList \? Array\.from\(focusedList\.children\)\.indexOf\(focused!\.closest\("\.snap-item"\)!\) : -1;/,
     "the focused node and its place, read before the update");
-  assert.match(paint, /if \(focused && list\.contains\(focused\)\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back");
-  assert.match(paint, /else if \(focusedAt >= 0 && list\.children\.length\) list\.children\[Math\.min\(focusedAt, list\.children\.length - 1\)\]\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "gone: the row in its place");
-  // the row node: the item carries the key; the button (Tab's target, the title's owner) is filled by the same function a
-  // patch calls, so a made row and a patched row have one shape
+  assert.ok(paint.indexOf("const focusedAt =") < paint.indexOf("reconcileRows<SnapRow, Element>("), "read before the update");
+  assert.match(paint, /if \(focused && host\.contains\(focused\) && !foldGone\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back (unless the fold it sits in has just gone: tab-hide.test)");
+  assert.match(paint, /else if \(focusedList && focusedAt >= 0 && focusedList\.children\.length\) focusedList\.children\[Math\.min\(focusedAt, focusedList\.children\.length - 1\)\]\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "gone: the row in its place");
+  // the row node: the item carries the key; the buttons (Tab's targets, the titles' owners) are filled by the same
+  // function a patch calls, so a made row and a patched row have one shape
   const node = SNAP.slice(SNAP.indexOf("function snapshotRowNode("), SNAP.indexOf("function fillSnapshotRow("));
   assert.match(node, /item\.dataset\.id = r\.id;/, "the key, on the item the list holds");
-  assert.match(node, /fillSnapshotRow\(btn, r, now\);\s*\n\s*item\.appendChild\(btn\);\s*\n\s*return item;/, "one fill for both paths");
+  assert.match(node, /item\.append\(btn, act\);\s*\n\s*fillSnapshotItem\(item, r, now, section\);\s*\n\s*return item;/, "one fill for both paths");
+  assert.match(node, /function fillSnapshotItem\(item: HTMLElement, r: SnapRow, now: number, section: string\): void \{\s*\n\s*fillSnapshotRow\(item\.firstElementChild as HTMLElement, r, now\);/, "the open button's parts through the one fillSnapshotRow");
   const fill = SNAP.slice(SNAP.indexOf("function fillSnapshotRow("), SNAP.indexOf("function showActive() {"));
   assert.match(fill, /btn\.className = "snap-row" \+ \(r\.closed \? " closed" : ""\) \+ \(r\.loading \? " loading" : ""\);/, "the classes rewritten, not toggled one by one");
   assert.match(fill, /btn\.replaceChildren\(\);/, "the parts emptied, then appended in order: the button stands");
