@@ -352,8 +352,7 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(flat, /Each row in this view has a \*\*Hide\*\* button, or \*\*Show\*\* once the session is hidden\./, "round 1: the first sentence had claimed a Hide on every row");
   assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
   assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
-  assert.match(flat, /the group's header keeps the dot and the ⚑ flag for its hidden sessions/);
-  assert.match(flat, /\(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
+  assert.match(flat, /The group's header keeps the dot and the ⚑ flag for its hidden sessions \(the dot is red when one of them needs you\), and its count says how many are hidden\./, "the count says it (headWords), and the dot reads the feed too (standInPip)");
   assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
   assert.match(flat, /While the group is open, the count, the dot and the flag each open this view without folding the group, so a hidden session is one click away from the strip; on a folded header the flag opens the group, as before\./, "the non-folding door");
   assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden, its group folded or open as it was\./);

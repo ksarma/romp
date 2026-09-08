@@ -162,8 +162,8 @@ window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
     ledgers.clear();
     renderTabs(); showActive();
   },
-  session(id: string, s: any) { sessions.set(id, s); renderTabs(); },
-  ledger(id: string, l: any) { ledgers.set(id, l); renderTabs(); },
+  setSession(id: string, s: any) { sessions.set(id, s); renderTabs(); },
+  setLedger(id: string, l: any) { ledgers.set(id, l); renderTabs(); },
   views(v: any) { sessionViews = v; renderTabs(); },
   /** another pane's Hide or Show: the store written and the panes told, no pointer here */
   otherPane(section: string, sid: string, hide: boolean) {
@@ -295,7 +295,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     assert.deepEqual([s.tabs, h.folded, s.paneShown, s.stored.hidden, s.shownRows, s.foldShown, h.countTag], [["web", "api", "tests"], "0", true, [], ["web", "api", "tests"], false, "SPAN"]);
 
     // S8: the flag on an OPEN header is a door too (round 1: it opened a group that was already open, and nothing moved)
-    await page.evaluate(() => (window as any).__probe.session("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
+    await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
     await page.click(act("api"));   // hide it again, from the open pane; the fold untouched
     s = await state(); h = await head("infra");
     assert.deepEqual([s.tabs, h.folded, h.flagAct], [["web", "tests"], "0", "show-group"]);
@@ -306,7 +306,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     assert.deepEqual([s.paneShown, s.snapView, h.folded, s.tabs], [true, "infra", "0", ["web", "tests"]], "the flag shows the pane and leaves the fold alone");
     // ...and the pip, over a hidden member waiting on you
     await page.keyboard.press("Escape");
-    await page.evaluate(() => (window as any).__probe.session("api", { name: "api", status: { state: "needsInput" }, userTodos: [] }));
+    await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "needsInput" }, userTodos: [] }));
     h = await head("infra");
     assert.deepEqual([h.pip, h.pipAct], ["tab-group-pip blocked", "show-group"]);
     assert.ok(h.pipTitle!.endsWith(SHOW_GROUP_CLICK), h.pipTitle!);
@@ -316,7 +316,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
 
     // S9: the flag on a FOLDED header still opens the group (open-group)
     await page.keyboard.press("Escape");
-    await page.evaluate(() => (window as any).__probe.session("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
+    await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "ready" }, userTodos: [{ id: "t1", text: "synthetic need" }] }));
     await page.click(nameOf("infra"));   // folds, and shows the pane
     h = await head("infra");
     assert.deepEqual([h.folded, h.flagAct, h.countTag], ["1", "open-group", "SPAN"]);
@@ -326,7 +326,7 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     assert.deepEqual([h.folded, s.tabs, s.stored.collapsed, s.paneShown], ["0", ["web", "tests"], [], true]);
 
     // S10: a double-click on Hide hides ONE session: the second click lands on the next row's Hide and acts on nothing
-    await page.evaluate(() => (window as any).__probe.session("api", { name: "api", status: { state: "ready" }, userTodos: [] }));
+    await page.evaluate(() => (window as any).__probe.setSession("api", { name: "api", status: { state: "ready" }, userTodos: [] }));
     s = await state(); assert.equal(s.foldOpen, true, "infra's fold is still open (S7): api's Show is on screen");
     await page.click(act("api"));
     s = await state(); assert.deepEqual(s.shownRows, ["web", "api", "tests"]);
@@ -337,12 +337,12 @@ test("in Chromium, over render.ts's own header, header acts and pane: hide, show
     // S11: the feed's verdict on a hidden idle session reaches the header's pip and the fold's head
     h = await head("infra");
     assert.equal(h.pip, null, "idle, no verdict: no pip");
-    await page.evaluate(() => (window as any).__probe.ledger("api", { needsInput: true, summary: "Designing the notes schema" }));
+    await page.evaluate(() => (window as any).__probe.setLedger("api", { needsInput: true, summary: "Designing the notes schema" }));
     s = await state(); h = await head("infra");
     assert.deepEqual([h.pip, h.pipAct, s.foldNeeds], ["tab-group-pip blocked", "show-group", "1 needs you"]);
     assert.ok(h.pipTitle!.startsWith("a session in this group is blocked or waiting on you: api"), h.pipTitle!);
     assert.ok(h.label!.includes("a session in this group is blocked or waiting on you: api"), "spoken by the header's label too");
-    await page.evaluate(() => (window as any).__probe.ledger("api", { needsInput: false }));
+    await page.evaluate(() => (window as any).__probe.setLedger("api", { needsInput: false }));
     s = await state(); h = await head("infra");
     assert.deepEqual([h.pip, s.foldNeeds], [null, ""], "the verdict withdrawn: the pip and the count go");
 
