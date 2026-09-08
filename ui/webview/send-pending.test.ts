@@ -21,7 +21,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { newPending, pendingBody, reconcilePending, dropPending, injectionGroups, scanFrom, queuedCopyToHide, landedIn, provisionalIn, bareGroupLabel, type TailEvent, type PendingSend } from "./send-pending";
+import { newPending, pendingBody, reconcilePending, dropPending, injectionGroups, scanFrom, queuedCopyToHide, foreignKey, landedIn, provisionalIn, bareGroupLabel, type TailEvent, type PendingSend } from "./send-pending";
 
 const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const RENDER = read("render.ts");
@@ -205,7 +205,7 @@ test("several pending sends: each after its own anchor, in send order; same anch
   const none = press([], "hello");
   assert.deepEqual(injectionGroups([], reconcilePending([], none).inject), [{ idx: 0, sends: [none[0]] }]);
   // an anchor that left the resident window: everything resident is later than the send, so the slot is the head
-  assert.equal(scanFrom([{ kind: "tool", uuid: "zz" }], { after: "gone", place: null, seen: [], queued: 0 }), 0);
+  assert.equal(scanFrom([{ kind: "tool", uuid: "zz" }], { after: "gone", place: null, queuedForeign: [], queuedResident: {}, seen: [], queued: 0 }), 0);
 });
 
 test("a send pressed while an earlier send's echo is the newest event is placed BELOW that echo (review of the first cut)", () => {
@@ -300,6 +300,212 @@ test("the text fallback finds the floor by ORDINAL, so a later send of the same 
   assert.equal(d.at?.placeOrd, 0, "no same-text event after the anchor: the floor is not in play");
   const stepsAfterLater: TailEvent[] = [...stepsAfter, { kind: "tool", uuid: "t3" }, { kind: "user", md: "ok", uuid: "echo:D" }];
   assert.deepEqual(injectionGroups(stepsAfterLater, reconcilePending(stepsAfterLater, [d]).inject), [{ idx: 3, sends: [d] }], "right after the anchor");
+});
+
+test("an earlier pending send's landing or echo is a floor for every later send, whatever its text (T252b)", () => {
+  // X then Y pressed against [a1], both with no floor; the kernel ships X's absorbed atom: Y's bubble must sit
+  // BELOW it. Landings were recorded into `seen` for same-text entries only and placement never read them, so Y
+  // was spliced before uX and read above the first message until it landed — the very move this work ends.
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const [x, y] = press(tail, "first", "second");
+  assert.equal(y.at?.place, null);
+  let frame: TailEvent[] = [...tail, { kind: "user", md: "first", uuid: "uX", absorbed: true }, { kind: "tool", uuid: "t1" }];
+  let r = reconcilePending(frame, [x, y]);
+  assert.deepEqual(r.landed.map((l) => l.p), [x]);
+  assert.deepEqual(r.keep, [y]);
+  assert.deepEqual(y.floors?.map((f) => f.uuid), ["uX"], "X's landing is recorded as Y's floor");
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 2, sends: [y] }], "below uX, above t1");
+  // the echo variant: X's echo arrives while both are pending — Y sits below it, and X is covered
+  const [x2, y2] = press(tail, "first", "second");
+  frame = [...tail, { kind: "user", md: "first", uuid: "echo:X" }];
+  r = reconcilePending(frame, [x2, y2]);
+  assert.deepEqual(r.inject, [y2]);
+  assert.deepEqual(y2.floors?.map((f) => f.uuid), ["echo:X"]);
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 2, sends: [y2] }]);
+  // …and when that echo becomes the landed atom, the landing takes over as the floor
+  frame = [...tail, { kind: "user", md: "first", uuid: "uX2", absorbed: true }, { kind: "tool", uuid: "t1" }];
+  r = reconcilePending(frame, [x2, y2]);
+  assert.deepEqual(y2.floors?.map((f) => f.uuid), ["echo:X", "uX2"]);
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 2, sends: [y2] }]);
+  // a LATER send never becomes a floor for an earlier one: Z pressed after Y, lands first (a different route)
+  const [y3, z3] = press(tail, "second", "third");
+  frame = [...tail, { kind: "user", md: "third", uuid: "uZ" }];
+  r = reconcilePending(frame, [y3, z3]);
+  assert.deepEqual(r.landed.map((l) => l.p), [z3]);
+  assert.equal(y3.floors, undefined, "z3 was registered after y3: its landing is not y3's floor");
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 1, sends: [y3] }], "y3 stays above the later send's atom");
+});
+
+test("a send pressed while the kernel's queue holds OTHER texts is drawn below that queue, and below their atoms once they land (T252b)", () => {
+  // the kernel's queued group has no uuid and is no user event, so it was never the anchor nor the floor: a send
+  // pressed while it held a romp nudge, another client's message, or a queue predating a page reload was spliced
+  // ABOVE the queue although it runs after those texts, and dropped down when one of them landed
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const queued: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "a nudge from elsewhere" }, { md: "mine" }] }];
+  const mine = newPending("mine", undefined, T0);
+  let r = reconcilePending(queued, [mine]);
+  assert.deepEqual(mine.at?.queuedForeign, ["a nudge from elsewhere", "mine"], "every copy the queue held at the press is ahead of the send — a same-text copy included: it predates the press, so it is an older send's (second review)");
+  assert.equal(mine.at?.queued, 1, "…and it is background for the landing scan as before");
+  assert.deepEqual(injectionGroups(queued, r.inject), [{ idx: 2, sends: [mine] }], "below the queue, not above it");
+  // our copy hidden (render.ts) leaves the foreign text visible: still below
+  const hidden: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "a nudge from elsewhere" }, { md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(hidden, reconcilePending(hidden, [mine]).inject), [{ idx: 2, sends: [mine] }]);
+  // the foreign text lands and the queue drains: the bubble sits below its atom, above what streams after
+  const landed: TailEvent[] = [...tail, { kind: "user", md: "a nudge from elsewhere", uuid: "uN" }, { kind: "tool", uuid: "t1" }];
+  r = reconcilePending(landed, [mine]);
+  assert.deepEqual(injectionGroups(landed, r.inject), [{ idx: 2, sends: [mine] }]);
+  // OUR copy is the one the kernel lists AFTER the press: not in the frame at the press, hidden by render.ts
+  // when it appears — the in-place rule (right after the anchor) holds for it
+  const mine2 = newPending("mine", undefined, T0 + 1);
+  r = reconcilePending(tail, [mine2]);
+  assert.deepEqual(mine2.at?.queuedForeign, []);
+  const listed: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "mine" }] }];
+  r = reconcilePending(listed, [mine2]);
+  assert.deepEqual(r.unqueue, [mine2], "the copy that appears after the press is this send's: hidden, ours drawn");
+  assert.deepEqual(injectionGroups(listed, r.inject), [{ idx: 1, sends: [mine2] }]);
+  // a same-text copy PRESENT at the press is an older send's (another client, an earlier press): ahead, below the group
+  const older: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "mine" }] }];
+  const mine3 = newPending("mine", undefined, T0 + 2);
+  r = reconcilePending(older, [mine3]);
+  assert.deepEqual(mine3.at?.queuedForeign, ["mine"]);
+  assert.deepEqual(injectionGroups(older, r.inject), [{ idx: 2, sends: [mine3] }]);
+  // render.ts: the stale merge-into-the-group comment is gone; the tail group is described as a floor
+  assert.doesNotMatch(RENDER, /Ours merges INTO it when present/);
+  assert.match(RENDER, /a group holding OTHER texts is a floor/);
+});
+
+test("foreign and floor texts match the kernel's landed shapes: a nudge's quote and markers, a multi-block record, and by ordinal (T252b review)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  // (1) a goal-marked romp nudge: the queued group ships the split BODY, the landed atom keeps the full text
+  const body = "where does this stand?";
+  const full = "> the goal's context line\n\n" + body + "\n\n<!-- romp-goal-id: g1 --><!-- romp-injected -->";
+  const x = newPending("mine", undefined, T0);
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: body }, { md: "mine" }] }], [x]);
+  assert.deepEqual(x.at?.queuedForeign, [body, "mine"], "every copy present at the press is ahead (the same-text one is an older send's)");
+  const nudgeLanded: TailEvent[] = [...tail, { kind: "user", md: full, uuid: "uN" }, { kind: "assistant", md: "…", uuid: "a2" }, { kind: "queued", texts: [{ md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(nudgeLanded, reconcilePending(nudgeLanded, [x]).inject), [{ idx: 2, sends: [x] }], "below the landed nudge, whatever wrapping the kernel kept");
+  // (2) a multi-block record: two foreign texts taken at one boundary land as ONE user record
+  const y = newPending("mine", undefined, T0 + 1);
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: "F" }, { md: "G" }, { md: "mine" }] }], [y]);
+  const blocks: TailEvent[] = [...tail, { kind: "user", md: "F G", uuid: "uFG", blocks: ["F", "G"] }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(blocks, reconcilePending(blocks, [y]).inject), [{ idx: 2, sends: [y] }], "below the record that holds both");
+  // (3) by ordinal: one copy of F queued at the press; F lands; another client queues F AGAIN, and later echoes it —
+  // the press-time copy is the first landing, and the newer copies are later than this send
+  const z = newPending("mine", undefined, T0 + 2);
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: "F" }, { md: "mine" }] }], [z]);
+  const again: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uF1" }, { kind: "tool", uuid: "t1" }, { kind: "queued", texts: [{ md: "mine", hiddenByPending: true }, { md: "F" }] }];
+  // the kernel's queued copies carry no identity, so a copy still shown in the group is read as the press-time one
+  // (fourth review): the group holds the bubble below it while it shows a copy of the key — the fed-copy case, where
+  // an identical text the kernel had already forwarded lands first, is the common one; a same-text copy re-queued by
+  // another client after the press-time one landed keeps ours below the group until ours lands — the known limit
+  assert.deepEqual(injectionGroups(again, reconcilePending(again, [z]).inject), [{ idx: 4, sends: [z] }], "below the group while it still shows a copy of F");
+  const echoed: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uF1" }, { kind: "tool", uuid: "t1" }, { kind: "user", md: "F", uuid: "echo:F2" }];
+  assert.deepEqual(injectionGroups(echoed, reconcilePending(echoed, [z]).inject), [{ idx: 4, sends: [z] }], "…and, uF1 having been learned as someone else's while the group showed F, below the newer F's echo until this send lands");
+  // two copies of F at the press: the second landing is the floor
+  const w = newPending("mine", undefined, T0 + 3);
+  reconcilePending([...tail, { kind: "queued", texts: [{ md: "F" }, { md: "F" }, { md: "mine" }] }], [w]);
+  const twoLanded: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uF1" }, { kind: "user", md: "F", uuid: "uF2" }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(twoLanded, reconcilePending(twoLanded, [w]).inject), [{ idx: 3, sends: [w] }]);
+  const oneLanded: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uF1" }, { kind: "queued", texts: [{ md: "F" }, { md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(oneLanded, reconcilePending(oneLanded, [w]).inject), [{ idx: 3, sends: [w] }], "one press-time copy still queued: below the group");
+  // (4) an earlier send's ECHO floor survives the earlier send's ✕: when its atom lands under a new uuid the floor
+  // is followed by text and ordinal, with no entry left to record the landing
+  const [x4, y4] = press(tail, "first", "second");
+  reconcilePending([...tail, { kind: "user", md: "first", uuid: "echo:X" }], [x4, y4]);
+  assert.deepEqual(y4.floors?.map((f) => [f.uuid, f.text, f.ord]), [["echo:X", "first", 1]]);
+  dropPending([x4, y4], "first", x4.ts);   // the ✕ the kernel could not honour: the CLI had taken it
+  const afterX: TailEvent[] = [...tail, { kind: "user", md: "first", uuid: "uX", absorbed: true }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(afterX, reconcilePending(afterX, [y4]).inject), [{ idx: 2, sends: [y4] }], "below X's atom, under its new uuid");
+});
+
+test("the queue's copies count as they were at the press: a later press matching a queued text, resident carriers, and the key's gates (T252b second review)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  // (1) another client's "y" queued; A presses "x", then B presses "y": both run after that y, and A before B
+  const foreignY: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "y" }] }];
+  const a = newPending("x", undefined, T0); reconcilePending(foreignY, [a]);
+  const b = newPending("y", undefined, T0 + 1); let r = reconcilePending(foreignY, [a, b]);
+  assert.deepEqual(b.at?.queuedForeign, ["y"], "the copy predates B's press: ahead of B, whatever its text");
+  assert.deepEqual(injectionGroups(foreignY, r.inject), [{ idx: 2, sends: [a, b] }], "both below the group, in send order");
+  // (2) a carrier of the text already resident at the press (a never-delivered verdict for an earlier F) is not
+  // the press-time copy's landing: the group holding F stays the floor
+  const resident: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "echo:F0", undelivered: true }, { kind: "queued", texts: [{ md: "F" }] }];
+  const c = newPending("mine", undefined, T0 + 2); r = reconcilePending(resident, [c]);
+  assert.deepEqual(injectionGroups(resident, r.inject), [{ idx: 3, sends: [c] }], "below the group, not at the group's own index");
+  const residentLanded: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "echo:F0", undelivered: true }, { kind: "user", md: "F", uuid: "uF" }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(residentLanded, reconcilePending(residentLanded, [c]).inject), [{ idx: 3, sends: [c] }], "…and below the copy's landing once it lands");
+  // (3) the key: a leading quote block is set aside only for a romp-marked text (the kernel's own gate); a
+  // user's blockquote is part of the text; image chips and image paths are set aside like the kernel strips them
+  assert.equal(foreignKey("> the goal\n\nbody\n\n<!-- romp-goal-id: g1 -->"), "body");
+  assert.notEqual(foreignKey("> hi\nok"), foreignKey("ok"), "a typed blockquote is not wrapping");
+  assert.equal(foreignKey("look /tmp/shot.png"), foreignKey("look"));
+  assert.equal(foreignKey("look [Image #1]"), foreignKey("look"));
+  // an image-bearing foreign message (tmux route): queued with the path, landed with the chips stripped
+  const imgQueued: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "look /tmp/shot.png" }] }];
+  const d = newPending("mine", undefined, T0 + 3); reconcilePending(imgQueued, [d]);
+  const imgLanded: TailEvent[] = [...tail, { kind: "user", md: "look", uuid: "uI", images: [{}] }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(imgLanded, reconcilePending(imgLanded, [d]).inject), [{ idx: 2, sends: [d] }]);
+  // a copy whose text is a user's blockquote plus ours: still a copy present at the press, still ahead
+  const quoted: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "> hi\nok" }] }];
+  const e = newPending("ok", undefined, T0 + 4); r = reconcilePending(quoted, [e]);
+  assert.deepEqual(injectionGroups(quoted, r.inject), [{ idx: 2, sends: [e] }]);
+});
+
+test("empty keys, retired verdicts, a verdict seen first, and the CLI's delimiters (T252b third review)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }, { kind: "tool", uuid: "t1" }];
+  // (1) an image-only queued copy keys to nothing: a reminders-only user record (md "") that lands after the press
+  // is not its carrier — only an event that carries images can be
+  const imgQueued: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "/tmp/shot.png" }] }];
+  const b = newPending("typed after", undefined, T0); reconcilePending(imgQueued, [b]);
+  const notified: TailEvent[] = [...tail, { kind: "user", md: "", uuid: "uR" }, { kind: "tool", uuid: "t2" }, { kind: "queued", texts: [{ md: "/tmp/shot.png" }] }];
+  assert.deepEqual(injectionGroups(notified, reconcilePending(notified, [b]).inject), [{ idx: 5, sends: [b] }], "below the group, not after the notification");
+  const imgLanded: TailEvent[] = [...tail, { kind: "user", md: "", uuid: "uR" }, { kind: "tool", uuid: "t2" }, { kind: "user", md: "", uuid: "uImg", images: [{}] }, { kind: "tool", uuid: "t3" }];
+  assert.deepEqual(injectionGroups(imgLanded, reconcilePending(imgLanded, [b]).inject), [{ idx: 5, sends: [b] }], "below the image's atom once it lands");
+  // (2) a resident verdict counted at the press may be retired by the kernel: the group test must not then read a
+  // copy queued AFTER the press as a press-time one
+  const withVerdict: TailEvent[] = [tail[0], { kind: "user", md: "F", uuid: "echo:F0", undelivered: true }, { kind: "queued", texts: [{ md: "F" }] }];
+  const c = newPending("mine", undefined, T0 + 1); reconcilePending(withVerdict, [c]);
+  const verdictGone: TailEvent[] = [tail[0], { kind: "user", md: "F", uuid: "uF" }, { kind: "tool", uuid: "t1" }, { kind: "queued", texts: [{ md: "F" }] }];
+  // the group still shows a copy of F, so uF is read as someone else's landing and the bubble stays below the group
+  // (the known limit: the kernel's queued copies carry no identity — fourth review)
+  assert.deepEqual(injectionGroups(verdictGone, reconcilePending(verdictGone, [c]).inject), [{ idx: 4, sends: [c] }], "below the group while it shows a copy of F");
+  // (3) an earlier send's never-delivered verdict, seen already flagged (a reconnect): a floor for the later send
+  const [p3, b3] = press([tail[0]], "first", "second");
+  const lostFirst: TailEvent[] = [tail[0], { kind: "user", md: "first", uuid: "echo:P", undelivered: true }];
+  const r = reconcilePending(lostFirst, [p3, b3]);
+  assert.deepEqual(r.lost, [p3]);
+  assert.deepEqual(b3.floors?.map((f) => f.uuid), ["echo:P"]);
+  assert.deepEqual(injectionGroups(lostFirst, r.inject), [{ idx: 2, sends: [b3] }], "below the verdict bubble, exactly as below the unflagged echo");
+  // (4) the CLI replaces only the path and leaves the delimiters: both sides keep them
+  for (const [q, l] of [["look (/tmp/a.png)", "look ()"], ["look `/tmp/a.png`", "look ``"], ["look '/tmp/a.png'", "look ''"], ["look \"/tmp/a.png\"", "look \"\""], ["look /tmp/a.png,", "look ,"]])
+    assert.equal(foreignKey(q), foreignKey(l), q);
+  assert.notEqual(foreignKey("design.png.bak notes"), foreignKey("notes"), "not a path: an ordinary token stays");
+});
+
+test("a copy still shown in the group holds the bubble below it, and copies are counted per block (T252b fourth review)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  // (1) an identical text the kernel had already FED lands first (its echo was hidden behind the queued copy): that
+  // landing is not the queued copy's — the group still shows the press-time F, so the bubble stays below the group,
+  // and below the queued copy's own atom once it lands
+  const fed: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "F" }] }];
+  const a = newPending("mine", undefined, T0); reconcilePending(fed, [a]);
+  const fedLanded: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uF1", absorbed: true }, { kind: "queued", texts: [{ md: "F" }, { md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(fedLanded, reconcilePending(fedLanded, [a]).inject), [{ idx: 3, sends: [a] }], "still below the group");
+  const bothLanded: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uF1", absorbed: true }, { kind: "tool", uuid: "t1" }, { kind: "user", md: "F", uuid: "uF2" }, { kind: "tool", uuid: "t2" }];
+  assert.deepEqual(injectionGroups(bothLanded, reconcilePending(bothLanded, [a]).inject), [{ idx: 4, sends: [a] }], "below the second F once the group has drained");
+  // (2) two press-time copies of F land as ONE record with two blocks: that is two carriers, so a third F queued
+  // after the press is later than the send
+  const two: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "F" }, { md: "F" }] }];
+  const b = newPending("mine", undefined, T0 + 1); reconcilePending(two, [b]);
+  const oneRecord: TailEvent[] = [...tail, { kind: "user", md: "F F", uuid: "uFF", blocks: ["F", "F"] }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(oneRecord, reconcilePending(oneRecord, [b]).inject), [{ idx: 2, sends: [b] }], "after the record that holds both copies");
+  const thirdLanded: TailEvent[] = [...tail, { kind: "user", md: "F F", uuid: "uFF", blocks: ["F", "F"] }, { kind: "tool", uuid: "t1" }, { kind: "user", md: "F", uuid: "uF3" }, { kind: "tool", uuid: "t2" }];
+  assert.deepEqual(injectionGroups(thirdLanded, reconcilePending(thirdLanded, [b]).inject), [{ idx: 2, sends: [b] }], "…and above a third F queued after the send");
+  // a floor's ordinal counts blocks the same way: X's landing in a two-block record with an older same-text copy
+  const [x, y] = press(tail, "first", "second");
+  const xTwice: TailEvent[] = [...tail, { kind: "user", md: "first first", uuid: "uXX", blocks: ["first", "first"] }, { kind: "tool", uuid: "t1" }];
+  const r = reconcilePending(xTwice, [x, y]);
+  assert.deepEqual(y.floors?.map((f) => [f.uuid, f.ord]), [["uXX", 2]], "two copies in the record count as two");
+  assert.deepEqual(injectionGroups(xTwice, r.inject), [{ idx: 2, sends: [y] }]);
 });
 
 test("a bubble that changes slot marks the view stale, so the incremental repaint never trusts a shifted prefix (second review)", () => {
@@ -608,7 +814,7 @@ test("a send pressed against no frame (a placeholder tab): the first frame's cop
   // a first frame that predates the send entirely stamps exactly as a press-time stamp would
   list = [late()];
   reconcilePending([frame[0], frame[1]], list);
-  assert.deepEqual(list[0].at, { after: "a1", place: "u-old", placeText: TEXT, placeOrd: 0, placeIds: undefined, seen: ["u-old"], queued: 0 });   // placeIds: the floor carried no ids
+  assert.deepEqual(list[0].at, { after: "a1", place: "u-old", placeText: TEXT, placeOrd: 0, placeIds: undefined, queuedForeign: [], queuedNamed: [], queuedResident: {}, seen: ["u-old"], queued: 0 });   // placeIds: the floor carried no ids; the queue held nothing
   // a press-time stamp reads no stamp: its frame predates the press by construction, so an identical
   // message that landed within the press's own second is still background
   const prompt = press([frame[1], { kind: "user", md: TEXT, uuid: "u-same-second", ts: isoAt(Math.floor(T0 / 1000)) }], TEXT);
@@ -658,7 +864,7 @@ test("a late stamp presumes the first frame's newest queued copy of the text is 
   // follows covers it, exactly as at a press-time stamp
   const early = [late()];
   let r = reconcilePending([step], early);
-  assert.deepEqual(early[0].at, { after: "a1", place: null, placeText: undefined, placeOrd: 0, placeIds: undefined, seen: [], queued: 0 });
+  assert.deepEqual(early[0].at, { after: "a1", place: null, placeText: undefined, placeOrd: 0, placeIds: undefined, queuedForeign: [], queuedNamed: [], queuedResident: {}, seen: [], queued: 0 });
   assert.equal(r.inject.length, 1);
   r = reconcilePending([step, { kind: "queued", texts: [{ md: TEXT }] }], early);
   assert.equal(r.inject.length, 1);
@@ -1025,4 +1231,113 @@ test("queuedCopyToHide hides the copy NAMING the send first, else the newest id-
   assert.equal(queuedCopyToHide([{ md: "a", sendId: "s2" }], "a", "s1"), -1, "only another send's copy: nothing to hide");
   // render.ts hands the helper the bubble's id (hideQueuedCopy)
   assert.match(RENDER, /const k = queuedCopyToHide\(q\.texts, p\.text, p\.sendId\);/);
+});
+
+// ── (19) the id and T252b's floors together (the 2026-09-08 remerge of the fold onto T252b) ──────────
+// T252b's queued leg reads copies by text; #385 stamps every client copy with its send id. Merged: the id
+// decides which copy is whose, the text rule applies among the copies no id claims.
+
+test("a press-time queued copy that NAMES another send is followed by id: the group while it shows that entry, the record naming it once landed (merged seam)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  // (1) another client's F, carrying its id, queued at the press
+  const atPress: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "F", sendId: "sA" }] }];
+  const mine = newPending("mine", undefined, T0);
+  reconcilePending(atPress, [mine]);
+  assert.deepEqual(mine.at?.queuedForeign, ["F"], "the copy is ahead of the send, as any press-time copy is");
+  assert.deepEqual(mine.at?.queuedNamed, ["sA"], "…and its id is recorded");
+  assert.deepEqual(injectionGroups(atPress, reconcilePending(atPress, [mine]).inject), [{ idx: 2, sends: [mine] }], "below the group while it shows the entry");
+  // an identical F the kernel had already fed (its landing names a send the press did not list) lands first,
+  // while sA's entry is still queued: not sA's landing, so the bubble stays below the group
+  const fedFirst: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uFed", sendIds: ["sFed"], absorbed: true }, { kind: "queued", texts: [{ md: "F", sendId: "sA" }, { md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(fedFirst, reconcilePending(fedFirst, [mine]).inject), [{ idx: 3, sends: [mine] }], "below the group: the entry naming sA is still queued");
+  // sA lands (its record names it): below that record, exactly — not the fed copy's, and not a later F either
+  const landed: TailEvent[] = [...tail, { kind: "user", md: "F", uuid: "uFed", sendIds: ["sFed"], absorbed: true }, { kind: "tool", uuid: "t1" }, { kind: "user", md: "F", uuid: "uA", sendIds: ["sA"] }, { kind: "tool", uuid: "t2" }];
+  assert.deepEqual(injectionGroups(landed, reconcilePending(landed, [mine]).inject), [{ idx: 4, sends: [mine] }], "below the record naming sA");
+  const laterF: TailEvent[] = [...landed, { kind: "user", md: "F", uuid: "uC", sendIds: ["sC"] }, { kind: "tool", uuid: "t3" }];
+  assert.deepEqual(injectionGroups(laterF, reconcilePending(laterF, [mine]).inject), [{ idx: 4, sends: [mine] }], "a later F naming another id is later than the send: not a floor");
+  // (2) a copy queued AFTER the press, naming an id the press did not list, holds nothing below the group
+  const mine2 = newPending("mine", undefined, T0 + 1);
+  reconcilePending(tail, [mine2]);
+  assert.deepEqual(mine2.at?.queuedNamed, []);
+  const afterPress: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "F", sendId: "sLater" }] }];
+  assert.deepEqual(injectionGroups(afterPress, reconcilePending(afterPress, [mine2]).inject), [{ idx: 1, sends: [mine2] }], "in place: the copy was queued after the send");
+  // (3) the entry gone from the group without landing (its ✕ elsewhere): no floor
+  const cancelled: TailEvent[] = [...tail, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(cancelled, reconcilePending(cancelled, [mine]).inject), [{ idx: 1, sends: [mine] }]);
+});
+
+test("the text leg reads id-less copies only: an id copy's landing is never learned as a resident, and a mixed queue lands in order (merged seam)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  // press-time queue: another client's K (id sA), then a kernel-originated K (no id)
+  const q: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "K", sendId: "sA" }, { md: "K" }] }];
+  const mine = newPending("mine", undefined, T0);
+  reconcilePending(q, [mine]);
+  assert.deepEqual(mine.at?.queuedForeign, ["K", "K"]);
+  assert.deepEqual(mine.at?.queuedNamed, ["sA"]);
+  // sA lands first; the id-less K is still queued: below the group
+  const one: TailEvent[] = [...tail, { kind: "user", md: "K", uuid: "uA", sendIds: ["sA"] }, { kind: "queued", texts: [{ md: "K" }, { md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(one, reconcilePending(one, [mine]).inject), [{ idx: 3, sends: [mine] }]);
+  // both landed: below the id-less copy's landing (the second carrier)
+  const both: TailEvent[] = [...tail, { kind: "user", md: "K", uuid: "uA", sendIds: ["sA"] }, { kind: "tool", uuid: "t1" }, { kind: "user", md: "K", uuid: "uK" }, { kind: "tool", uuid: "t2" }];
+  assert.deepEqual(injectionGroups(both, reconcilePending(both, [mine]).inject), [{ idx: 4, sends: [mine] }]);
+  // a third K (another client's, with its id) lands after: uA was never learned as a resident, so the count is
+  // not inflated and the bubble stays above the third
+  const third: TailEvent[] = [...both, { kind: "user", md: "K", uuid: "uC", sendIds: ["sC"] }, { kind: "tool", uuid: "t3" }];
+  assert.deepEqual(injectionGroups(third, reconcilePending(third, [mine]).inject), [{ idx: 4, sends: [mine] }], "above a K queued after the send");
+  // the reverse order: the id-less K first, then sA
+  const rq: TailEvent[] = [...tail, { kind: "queued", texts: [{ md: "K" }, { md: "K", sendId: "sA" }] }];
+  const mine2 = newPending("mine", undefined, T0 + 1);
+  reconcilePending(rq, [mine2]);
+  const rOne: TailEvent[] = [...tail, { kind: "user", md: "K", uuid: "uK" }, { kind: "queued", texts: [{ md: "K", sendId: "sA" }, { md: "mine", hiddenByPending: true }] }];
+  assert.deepEqual(injectionGroups(rOne, reconcilePending(rOne, [mine2]).inject), [{ idx: 3, sends: [mine2] }], "below the group: the entry naming sA is still queued");
+  const rBoth: TailEvent[] = [...tail, { kind: "user", md: "K", uuid: "uK" }, { kind: "tool", uuid: "t1" }, { kind: "user", md: "K", uuid: "uA", sendIds: ["sA"] }, { kind: "tool", uuid: "t2" }];
+  assert.deepEqual(injectionGroups(rBoth, reconcilePending(rBoth, [mine2]).inject), [{ idx: 4, sends: [mine2] }], "below sA's record");
+  const rThird: TailEvent[] = [...rBoth, { kind: "user", md: "K", uuid: "uC", sendIds: ["sC"] }, { kind: "tool", uuid: "t3" }];
+  assert.deepEqual(injectionGroups(rThird, reconcilePending(rThird, [mine2]).inject), [{ idx: 4, sends: [mine2] }], "and above a K queued after the send");
+});
+
+test("a late stamp the queue names: the copies after the entry naming the send were received after it and are not ahead; the presumption skips id-less copies only (merged seam)", () => {
+  const isoAt = (s: number) => new Date(s * 1000).toISOString();
+  const pressMs = T0 + 250;
+  const S = Math.floor(pressMs / 1000);
+  const step: TailEvent = { kind: "assistant", md: "…", uuid: "a1", ts: isoAt(S - 2) };
+  const late = (text = "mine"): PendingSend => ({ ...newPending(text, undefined, pressMs), late: true });
+  // before ours: another client's F; after ours: a later press G (its id)
+  let p = late();
+  let frame: TailEvent[] = [step, { kind: "queued", texts: [{ md: "F", sendId: "sF" }, { md: "mine", sendId: p.sendId }, { md: "G", sendId: "sG" }] }];
+  let r = reconcilePending(frame, [p]);
+  assert.deepEqual(p.at?.queuedForeign, ["F"], "F is ahead; ours and what follows it are not");
+  assert.deepEqual(p.at?.queuedNamed, ["sF"]);
+  assert.deepEqual(r.unqueue, [p], "covered by its own copy");
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 2, sends: [p] }], "below the group while F is queued");
+  // F lands, ours is taken (its copy gone), G still queued: below F's record, above the group holding G
+  frame = [step, { kind: "user", md: "F", uuid: "uF", sendIds: ["sF"] }, { kind: "tool", uuid: "t1" }, { kind: "queued", texts: [{ md: "G", sendId: "sG" }] }];
+  r = reconcilePending(frame, [p]);
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 2, sends: [p] }], "below uF, above the group that holds only what came after the send");
+  // the presumption is id-less only: with two same-text copies, one naming another send, one id-less, the newest
+  // id-less copy is presumed ours (the frame does not name the send) and the id copy stays ahead and named
+  p = late();
+  frame = [step, { kind: "queued", texts: [{ md: "mine", sendId: "sOther" }, { md: "mine" }] }];
+  r = reconcilePending(frame, [p]);
+  assert.deepEqual(p.at?.queuedForeign, ["mine"], "the id copy is ahead; the id-less one is presumed this press's");
+  assert.deepEqual(p.at?.queuedNamed, ["sOther"]);
+  assert.equal(p.at?.queued, 0, "the id-less copy is not background either: it is presumed ours");
+  assert.deepEqual(r.unqueue, [p], "…and covers ours by position");
+});
+
+test("an earlier send's floor is followed by the record NAMING it across the echo → landed swap, before the text ordinal (merged seam)", () => {
+  const tail: TailEvent[] = [{ kind: "assistant", md: "…", uuid: "a1" }];
+  const [x, y] = press(tail, "continue", "and the docstring");
+  let frame: TailEvent[] = [...tail, { kind: "user", md: "continue", uuid: "echo:X", sendIds: [x.sendId] }];
+  let r = reconcilePending(frame, [x, y]);
+  assert.deepEqual(y.floors?.map((f) => [f.uuid, f.sendId, f.ord]), [["echo:X", x.sendId, 1]], "the floor carries X's id");
+  assert.deepEqual(injectionGroups(frame, r.inject), [{ idx: 2, sends: [y] }]);
+  dropPending([x, y], "continue", undefined, x.sendId);   // X's ✕ the kernel could not honour: the CLI had taken it
+  // X's atom lands under a new uuid, naming X; an OLDER absorbed "continue" is placed above it at ITS send time:
+  // the ordinal alone would stop at the older atom, the id finds X's record
+  frame = [...tail, { kind: "user", md: "continue", uuid: "u-w", absorbed: true }, { kind: "user", md: "continue", uuid: "uX", sendIds: [x.sendId] }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(frame, reconcilePending(frame, [y]).inject), [{ idx: 3, sends: [y] }], "below X's record, by id");
+  // no record names X (an older kernel): the ordinal, as before
+  frame = [...tail, { kind: "user", md: "continue", uuid: "uX2", absorbed: true }, { kind: "tool", uuid: "t1" }];
+  assert.deepEqual(injectionGroups(frame, reconcilePending(frame, [y]).inject), [{ idx: 2, sends: [y] }]);
 });

@@ -324,13 +324,12 @@ the splice waited for), clamped to the send time when it would be earlier. `land
 is never before `t`, with no tolerance window: real transcripts invert only by clock
 granularity, and anything larger is a shape the CLI does not write. Each clamp is
 counted as `landedT-clamp` in the event model's assembly stats, served beside
-`ts-repair` in the version route's `parse` dict. The chat shows the time to the
-minute. The bubble wears "joined mid-turn", and when the landing retired a pending
-bubble at the tail, a cue stays where the bubble was ("delivered into the running
-turn at HH:MM", with a jump) until jump or ✕. The cue hangs under the last event the
-chat draws in its current mode; compact mode hides thinking, so a thinking record at
-the tail is skipped. The CLI extracts no image paths on the stream-json route (its
-only image-path test belongs to the interactive composer's paste handler), so an
+`ts-repair` in the version route's `parse` dict. The chat's pending bubble is drawn
+at the send's slot from the press: right after the last kernel event at the press,
+below an earlier send's echo or landing, and below any texts the kernel already held
+queued, so the absorbed atom's landing replaces it in place; there is no header and
+no cue (T252). The CLI extracts no image paths on the stream-json route (its only
+image-path test belongs to the interactive composer's paste handler), so an
 image path in an SDK send lands as typed and the echo's text matches. `_path_bearing`
 and the extension set it tests (png, jpe?g, gif, webp, case-insensitive: the CLI
 bundle's single image-path test, pinned equal between kernel and backend) remain for

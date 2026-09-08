@@ -19,6 +19,8 @@ import os
 import socket
 import tempfile
 import threading
+import time
+import types
 import unittest
 from romp_load import load_source
 
@@ -171,6 +173,29 @@ class IdleGate(unittest.TestCase):
             idle, stop = pm._idle_tick(0, idle, answered=False)
         self.assertTrue(stop, "the last answered listing was empty: nothing to protect")
 
+    def test_the_hold_releases_only_through_an_answered_listing(self):
+        # the hold's one release is the next answered listing, which rewrites the twin: a kernel gone for
+        # good after listing sessions leaves the bus up for as long as nothing answers, a code-staleness
+        # re-exec re-primes the hold from the twin (a fresh process: empty memory, the twin still on disk),
+        # and the first answered listing (here: nobody left) is what lets the autostop resume
+        # (review find, 2026-09-08: the re-exec was described as ending the hold; it does not)
+        pm._kernel_up = lambda: False
+        pm._remember_presence([{"id": ALPHA, "name": "web"}])
+        idle = 0
+        for _ in range(pm.IDLE_GRACE * 3):
+            idle, stop = pm._idle_tick(0, idle, answered=False)
+            self.assertEqual((idle, stop), (0, False), "no number of unanswered polls ends the hold")
+        pm._LOCAL_PRESENCE_GOOD[0], pm._LOCAL_PRESENCE_GOOD[1] = [], False   # the re-exec: fresh memory, same twin
+        for _ in range(pm.IDLE_GRACE * 3):
+            idle, stop = pm._idle_tick(0, idle, answered=False)
+            self.assertEqual((idle, stop), (0, False), "the re-exec'd bus primes the hold back from the twin")
+        pm._remember_presence([])                    # the kernel returns, lists nobody, and is gone again
+        for _ in range(pm.IDLE_GRACE - 1):
+            idle, stop = pm._idle_tick(0, idle, answered=False)
+            self.assertFalse(stop)
+        idle, stop = pm._idle_tick(0, idle, answered=False)
+        self.assertTrue(stop, "with the twin rewritten empty the autostop resumes")
+
     def test_an_answered_empty_listing_advances_the_count(self):
         # reachable only through the ROMP_SESSIONS_FILE seam in practice (an answered listing implies
         # a live kernel, which resets the count first); pinned so the seam-driven bats autostop holds
@@ -246,6 +271,73 @@ class MonitorTick(unittest.TestCase):
         pm._monitor_tick(0)
         self.assertEqual((pm.STATE / "remote-sids").read_text(), fresh + "\n",
                          "the expired sid is pruned by the poll's write, not by the next beat")
+
+
+class MonitorLoop(unittest.TestCase):
+    """_monitor, the production poll loop, runs _monitor_tick, so the tick's outage hold reaches the loop
+    that shuts the server down: a kernel blink after listed sessions no longer stops the bus, while a
+    bus no kernel ever answered still stops at the grace. The sleep is replaced through the module's
+    OWN `time` binding (a proxy over the real module), never process-wide, and it is the test's hand on
+    the loop: it counts the polls, flips the listing, and ends a loop that must not end by itself."""
+
+    class _Clock:
+        def __init__(self, on_sleep):
+            self._on_sleep = on_sleep
+
+        def __getattr__(self, name):
+            return getattr(time, name)
+
+        def sleep(self, secs):
+            self._on_sleep(secs)
+
+    class _EnoughPolls(Exception):
+        pass
+
+    def setUp(self):
+        self._saved = (pm.time, pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans,
+                       pm._warn_stuck_mail, pm._maybe_restart_for_code)
+        pm._kernel_up = lambda: False
+        pm._sweep_orphans = pm._warn_stuck_mail = lambda: None
+        pm._maybe_restart_for_code = lambda boot_fp: False
+        pm.HEARTBEATS.clear()
+        pm.STATE.mkdir(parents=True, exist_ok=True)
+        _forget_presence()
+        self.polls = []
+        self.stopped = threading.Event()
+        self.httpd = types.SimpleNamespace(shutdown=self.stopped.set)
+
+    def tearDown(self):
+        (pm.time, pm._kernel_sessions_checked, pm._kernel_up, pm._sweep_orphans,
+         pm._warn_stuck_mail, pm._maybe_restart_for_code) = self._saved
+        pm.HEARTBEATS.clear()
+        _forget_presence()
+
+    def test_the_loop_holds_through_an_outage_after_listed_sessions(self):
+        # the first poll's listing holds a session; from the second poll on the kernel does not answer
+        # (mid-restart). The loop keeps polling for as long as the outage lasts, so the test ends it.
+        listing = [([{"id": ALPHA, "name": "web"}], True)]
+        pm._kernel_sessions_checked = lambda threads=False: listing[0]
+
+        def on_sleep(secs):
+            self.polls.append(secs)
+            if len(self.polls) > pm.IDLE_GRACE * 5:
+                raise self._EnoughPolls()
+            if len(self.polls) > 1:
+                listing[0] = ([], False)
+        pm.time = self._Clock(on_sleep)
+        with self.assertRaises(self._EnoughPolls):
+            pm._monitor(self.httpd)
+        self.assertFalse(self.stopped.is_set(), "the sessions the kernel listed outlive its blink: no shutdown")
+        self.assertEqual(self.polls, [pm.POLL] * (pm.IDLE_GRACE * 5 + 1), "one production-cadence sleep per poll")
+
+    def test_a_never_answered_bus_stops_and_shuts_the_server_down(self):
+        # the exit path: no kernel ever answered, no clients; the loop returns at the grace and the
+        # shutdown reaches the server
+        pm._kernel_sessions_checked = lambda threads=False: ([], False)
+        pm.time = self._Clock(self.polls.append)
+        pm._monitor(self.httpd)
+        self.assertTrue(self.stopped.wait(5), "the loop's shutdown thread reached the server")
+        self.assertEqual(self.polls, [pm.POLL] * pm.IDLE_GRACE)
 
 
 class RefusedNotifyRevives(unittest.TestCase):

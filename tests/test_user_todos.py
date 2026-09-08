@@ -3645,8 +3645,11 @@ class NudgeStandsDownForOpenTodos(_StoreSandbox):
         self._seed_goals({}, status={})
         km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         t_ask = NOW - 1800
+        # (last_any, last_ask, last_await): the wait maps carry a third map since upstream #1056 (the
+        # latest reply-requiring send per pair); a question is one, so the pair sits there too
         maps = ({(SID2, SID): t_ask},
-                {(SID2, SID): (t_ask, "question", "Which port should the staging server use?")})
+                {(SID2, SID): (t_ask, "question", "Which port should the staging server use?")},
+                {(SID2, SID): t_ask})
         patches = [
             mock.patch.object(km, "_postal_wait_maps", lambda: maps),
             mock.patch.object(km, "_name_of", lambda sid: {SID2: "api", SID: "web"}.get(sid)),
