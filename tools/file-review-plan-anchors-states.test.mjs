@@ -82,7 +82,13 @@ test('the panel paints the fourth state as the paragraph says: copyUnsure on a l
   assert.ok(panel.includes('if (unsure) this.unsureCopies.add(card.id);'), 'remembered for the card');
   assert.ok(panel.includes('const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");'), 'the context state\'s class');
   assert.ok(panel.includes('if (unsure) m.classList.add("fc-hl-context");'), 'a guessed copy wears the same dashed ring');
-  assert.ok(panel.includes('const title = unsure ? "Open the comment; this passage recurs, and this copy is the nearest to the comment\'s stored position, not a confirmed one" : "Open the comment on this passage";'), 'the mark says it is not confirmed');
+  assert.ok(panel.includes('const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";'), 'the mark says it is not confirmed');
+  // the title branches on whether a position is stored, on the same test as the card's words (the third review: the
+  // title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none)
+  const markTitle = fn(panel, 'unsureMarkTitle');
+  assert.ok(markTitle.includes('"Open the comment; this passage recurs, and "') && markTitle.includes('c.anchorAt === null'), 'the same branch as copyUnsureWords');
+  assert.ok(markTitle.includes('"the comment stores no position to tell the copies apart, so this is the first copy"'), 'no position: the first copy');
+  assert.ok(markTitle.includes('"this copy is the nearest to the comment\'s stored position"') && markTitle.includes('", not a confirmed one"'), 'a position naming none: the nearest, and never a confirmed one');
   assert.ok(panel.includes('if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }'), 'a framed figure too');
   // copyUnsure: a position that names the copy is the choice; a tie is the anchor's earliest and latest best hits differing
   const unsure = method(panel, 'copyUnsure');

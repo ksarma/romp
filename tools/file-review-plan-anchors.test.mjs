@@ -16,6 +16,12 @@
 // the host read (`browserHint`, one character on a BOM file); the pins here read the host as it stands
 // after that review, not as it stood between the two (a pin written against the earlier host went red
 // the moment the second review landed, so each source pin below sits beside the behavior it names).
+// The third review (2026-09-08) then stopped one whole-anchor hit from moving a tied position by itself
+// (the one whole copy may be the other copy of a passage whose surroundings were edited: the recorded
+// changes decide, through the whole copies and then the quote's other occurrences), skipped a comment
+// still at its position with no scan, and charged every scan to one budget object per write; the pins
+// read that host, and the plan's four statements of the rule (the contract, the host paragraph, the
+// follow-on note, the Tests paragraph) say the same (the consolidation, 2026-09-08).
 // Synthetic: the repo's own text, no session data.
 // Run: node --test tools/file-review-plan-anchors.test.mjs
 import { test } from 'node:test';
@@ -73,38 +79,57 @@ function inOrder(src, needles, what) {
 
 test('the contract states the refresh by where the whole anchor sits, and refreshAnchorAts takes the three cases in that order', () => {
   assert.ok(contract.includes('the host script refreshes it on every sidecar write it makes, against the text the sidecar is saved for, by where the whole anchor sits in that text'));
-  assert.ok(contract.includes('at one place, the position becomes that place'));
-  assert.ok(contract.includes("at several (the copies tie), the position stands where it still names a copy and otherwise moves only to the one copy the sidecar's recorded changes can have carried it to, never to the nearest, and only while the file is as the sidecar's last writer left it"));
+  assert.ok(contract.includes("at one place, the position becomes that place when the comment had none or the quote occurs nowhere else, and otherwise, since the one whole copy may be the other copy of a passage whose own surroundings were edited, moves only where the sidecar's recorded changes can have carried it, to that copy or to the one other occurrence of the quote, and stands otherwise"));
+  assert.ok(contract.includes("at several (the copies tie), the position stands where it still names a copy and otherwise moves only to the one copy, or the one occurrence of the quote, the recorded changes can have carried it to, never to the nearest, and only while the file is as the sidecar's last writer left it"));
   assert.ok(contract.includes("nowhere, the engine's scoring places it, under a scan budget per write past which the remaining such comments keep the position they have"));
   assert.ok(contract.includes('A comment without an anchor never carries it'));
+  assert.ok(op.includes('at one place, the position becomes that place when the comment had none or the quote occurs nowhere else, and otherwise moves only where the recorded changes (the pending ops, the ops the write settles, among them the changes a save\'s editor accepted, the edits the write applies) can have carried it, to that copy or to the one other occurrence of the quote'));
+  assert.ok(op.includes("Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`), a passage still at its position costs no scan, and past the budget the remaining comments keep their position and stderr says how many, once per write"));
+  // the host, after the third review (2026-09-08): a comment still at its position costs no scan; one whole hit is the
+  // place only for a comment with no position or a quote that occurs nowhere else, and otherwise the recorded changes
+  // decide (movedCopy: the whole copies first, then the quote's other occurrences); a tie after an unrecorded edit
+  // stands; an anchor that sits in whole nowhere is the engine's, under the budget
   const refresh = fn(host, 'refreshAnchorAts');
   inOrder(refresh, [
-    'const budget = { left: REFRESH_SCAN_BUDGET, skipped: 0, unscanned: 0 };',
+    'const budget = refreshBudget;',
+    'const recorded = !!store && store[TEXT_AS_WRITTEN] === true;',
+    'if (at !== undefined && sitsAt(text, c.anchor, at)) continue;',
     'if (!affordableScan(budget, text, c.anchor)) { budget.unscanned++; continue; }',
-    'if (hits.length === 1) { c.anchorAt = hits[0]; continue; }',
-    'if (hits.length > 1) {',
-    'hits.includes(at)',
-    'store[TEXT_AS_WRITTEN] !== true) continue;',
-    'const moved = movedCopy(hits, at, bounds);',
+    'const { hits, more, cut } = fullMatches(text, c.anchor, REFRESH_COPIES_MAX, budget);',
+    'if (hits.length === 1 && at === undefined) { c.anchorAt = hits[0]; continue; }',
+    'if (hits.length >= 1) {',
+    'const whole = movedCopy(hits, at, bounds);',
+    '} else if (hits.length > 1) {',
+    'const q = quoteHits(text, c.anchor.quote, budget);',
+    'if (hits.length === 1 && q.count === 1) { c.anchorAt = hits[0]; continue; }',
+    'if (!recorded) continue;',
+    'const moved = movedCopy(hits, at, bounds, q.positions);',
     'if (moved !== null) c.anchorAt = moved;',
     'if (!affordable(budget, text, c.anchor)) continue;',
     'const loc = locateExact(text, c.anchor, undefined);',
     'if (!loc.error) c.anchorAt = loc.from;',
   ], 'the refresh');
-  assert.ok(/const budget = \{[^}]*\};/.test(refresh) && !/budget = /.test(refresh.replace(/const budget = \{[^}]*\};/, '')), 'the budget is per write: one object, made once per call');
-  // both ways a comment keeps its position past the budget are counted, and stderr says how many of each
-  // (the second review, 2026-09-08: the classification scan, one whole-text pass per distinct anchor, is
-  // budgeted too, not only the engine's scoring for a passage that sits nowhere in whole)
+  // the budget is per write: one module-level object (the process is one verb; checkReplyFits and stageSidecar draw
+  // on the same figure), which the refresh takes and never remakes, its counts reset per pass
+  assert.ok(host.includes('const refreshBudget = { left: REFRESH_SCAN_BUDGET, kept: { skipped: 0, unscanned: 0 } };'), 'one budget object per write');
+  assert.ok(!/const budget = \{/.test(refresh) && refresh.includes('budget.skipped = 0;') && refresh.includes('budget.unscanned = 0;'), 'the refresh makes no budget of its own and resets the counts');
+  // both ways a comment keeps its position past the budget are counted, and stderr says how many of each, once per
+  // write: the counts are compared with what was last told (the second review, 2026-09-08: the classification scan,
+  // one whole-text pass per distinct anchor, is budgeted too, not only the engine's scoring)
+  assert.ok(refresh.includes('if (budget.skipped !== budget.kept.skipped || budget.unscanned !== budget.kept.unscanned) {'), 'told once per write');
   assert.ok(refresh.includes('if (budget.skipped) {') && refresh.includes('if (budget.unscanned) {'), 'the skipped and the unscanned are reported apart');
   assert.equal((refresh.match(/process\.stderr\.write\(/g) || []).length, 2, 'one stderr line each');
   const scan = fn(host, 'affordableScan');
-  assert.ok(scan.includes('if (budget.left <= 0) return false;') && scan.includes('budget.left -= text.length;'), 'a classification scan costs one pass over the text against the same budget');
+  assert.ok(scan.includes('if (m && m.text === text) return true;') && scan.includes('return budget.left >= passCost(text);'), 'a classification scan is free once memoized and otherwise costs one pass, at the pass\'s own rate');
+  assert.ok(fn(host, 'passCost').includes('return Math.ceil(text.length / REFRESH_PASS_DIVISOR);'), 'the pass rate');
   const place = fn(host, 'affordable');
-  assert.ok(place.includes('if (budget.left <= 0) { budget.skipped++; return false; }') && place.includes('if (cost > budget.left) { budget.skipped++; return false; }'), "the engine's scoring is what counts as skipped");
+  assert.ok(place.includes('if (budget.left <= 0) { budget.skipped++; return false; }') && place.includes('if (q.more || cost > budget.left) { budget.skipped++; return false; }'), "the engine's scoring is what counts as skipped, and a quote count the budget cut short is not affordable either");
   assert.ok(Number.isInteger(REFRESH_SCAN_BUDGET) && REFRESH_SCAN_BUDGET > 0, 'the budget is exported');
-  // never to the nearest copy: movedCopy answers the one copy the bounds vouch for, and null for none or several
+  // never to the nearest copy: reachable answers the places the bounds admit, movedCopy the one of them and null for
+  // none or several, and asks the quote's other occurrences only when no whole copy is reachable
+  assert.ok(fn(host, 'reachable').includes('if (d < lo || d > hi) continue;'));
   const moved = fn(host, 'movedCopy');
-  assert.ok(moved.includes('if (d < lo || d > hi) continue;') && moved.includes('if (found !== null) return null;'));
+  assert.ok(moved.includes('if (found !== null) return null;') && moved.includes('if (found !== null || !occurrences) return found;'));
 });
 
 // ── the refusal: an offset the text moved from under ────────────────
@@ -185,8 +210,9 @@ test('the desc sentence states the widened form, and the model builds it from th
 
 test('the follow-on note states the exact and bounded refresh, the refusal, and the composer follow, and names functions and tests that exist', () => {
   assert.ok(note.includes('The anchors follow-on (2026-09-07): the user asked that a passage comment anchor reliably to text that recurs'));
-  assert.ok(note.includes('The refresh is exact and bounded (the review, 2026-09-07)'));
-  assert.ok(note.includes('moves only to the one copy the recorded changes (the pending ops, the ops the write settles, the edits the write applies, summed as bounds on the shift) can have carried it to (`movedCopy`), never to the nearest copy'));
+  assert.ok(note.includes('The refresh is exact and bounded (the review, 2026-09-07; its third round, 2026-09-08): an anchor that sits in whole at one place takes that place when the comment had no position or its quote occurs nowhere else'));
+  assert.ok(note.includes('moves only to the one copy the recorded changes (the pending ops, the ops the write settles, the edits the write applies, summed as bounds on the shift) can have carried it to, or to the one occurrence of the quote they can have (`movedCopy`), never to the nearest copy'));
+  assert.ok(note.includes("every scan (the whole-anchor classification, the quote count, the engine's) is charged to that one budget per write, and a passage still at its position costs none"));
   assert.ok(note.includes("only while the sidecar's fingerprint says no unrecorded edit touched the file"));
   assert.ok(note.includes('one that sits nowhere in whole is placed by the engine\'s scoring under `REFRESH_SCAN_BUDGET`, past which the rest keep their position and stderr says how many'));
   assert.ok(note.includes('The refusal remains for a tie the request cannot settle: no offset sent, or an offset that sits on none of the tied copies in the text the host read because the text moved after the selection (`locateExact` with `exact`, refused `anchor-ambiguous`'));
@@ -199,17 +225,19 @@ test('the follow-on note states the exact and bounded refresh, the refusal, and 
   // the composer sends no offset for a tie it cannot settle
   assert.ok(/state: "tied"/.test(panel) && panel.includes('tied?: boolean'), 'the composer follows into a tied state');
   // the tests the note names exist, and the e2e module holds exactly the two cases
-  assert.ok(note.includes('Tests: the host modules `tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`, two e2e cases'));
+  assert.ok(note.includes('Tests: the host modules `tools/file-comments-host-anchors.test.mjs`, `-anchors-exact`, `-anchors-review-2` and `-anchors-review-3`, two e2e cases'));
   assert.ok(note.includes('`ui/webview/file-comments-anchors.test.ts`, `-follow` and `-model-recurring`, and this plan\'s pins in `tools/file-review-plan.test.mjs`, `-acceptance` and `-anchors`'));
   for (const f of [
     ['tools', 'file-comments-host-anchors.test.mjs'], ['tools', 'file-comments-host-anchors-exact.test.mjs'],
+    ['tools', 'file-comments-host-anchors-review-2.test.mjs'], ['tools', 'file-comments-host-anchors-review-3.test.mjs'],
     ['ui', 'webview', 'file-comments-anchors.test.ts'], ['ui', 'webview', 'file-comments-follow.test.ts'], ['ui', 'webview', 'file-comments-model-recurring.test.ts'],
     ['tools', 'file-review-plan.test.mjs'], ['tools', 'file-review-plan-acceptance.test.mjs'], ['tools', 'file-review-plan-anchors.test.mjs'],
   ]) assert.ok(exists(...f), `${f.join('/')} exists`);
   const cases = e2e.match(/^def test_\w*(identical_lines|tied_past_the_cap)\w*\(/gm) || [];
   assert.equal(cases.length, 2, 'two e2e cases on a tied passage');
   // the Tests section names the exact module and this pin
-  assert.ok(tests.includes('(`tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`)'));
+  assert.ok(tests.includes('(`tools/file-comments-host-anchors.test.mjs`, `-anchors-exact`, `-anchors-review-2` and `-anchors-review-3`)'));
+  assert.ok(tests.includes("a comment whose one whole copy is the other copy of a passage whose surroundings were edited keeps its position after an edit nobody recorded and follows a tracked edit to the quote's other occurrence, and back through its reject; a save settles the changes its editor accepted; the refresh scans only for anchors that no longer sit at their position, charges every scan to one budget per write"));
   assert.ok(tests.includes('a tied position follows its copy through a tracked insertion above, its reject, an accept and the person\'s own save, and keeps its position after an edit nobody recorded, after changes above that span a copy, and when the comment has no position'));
   assert.ok(tests.includes('`tools/file-review-plan-anchors.test.mjs` pins what the contract, the host paragraph, the commenting section and the follow-on note state after the follow-on\'s review'));
 });

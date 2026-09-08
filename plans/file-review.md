@@ -238,12 +238,16 @@ Four properties of the contract shape the design:
   romp-only and additive under the same version rule: older readers ignore it, the other hosts and
   the CLIs write the whole object back so it survives them, and the host script refreshes it on
   every sidecar write it makes, against the text the sidecar is saved for, by where the whole
-  anchor sits in that text: at one place, the position becomes that place; at several (the copies
-  tie), the position stands where it still names a copy and otherwise moves only to the one copy
-  the sidecar's recorded changes can have carried it to, never to the nearest, and only while the
-  file is as the sidecar's last writer left it; nowhere, the engine's scoring places it, under a
-  scan budget per write past which the remaining such comments keep the position they have (the
-  anchors follow-on review, 2026-09-07). A comment without an anchor never carries it. The panel passes it to the
+  anchor sits in that text: at one place, the position becomes that place when the comment had
+  none or the quote occurs nowhere else, and otherwise, since the one whole copy may be the other
+  copy of a passage whose own surroundings were edited, moves only where the sidecar's recorded
+  changes can have carried it, to that copy or to the one other occurrence of the quote, and
+  stands otherwise; at several (the copies tie), the position stands where it still names a copy
+  and otherwise moves only to the one copy, or the one occurrence of the quote, the recorded
+  changes can have carried it to, never to the nearest, and only while the file is as the
+  sidecar's last writer left it; nowhere, the engine's scoring places it, under a scan budget per
+  write past which the remaining such comments keep the position they have (the anchors follow-on
+  review, 2026-09-07, and its third round, 2026-09-08). A comment without an anchor never carries it. The panel passes it to the
   engine as the tie-break when it paints, so a passage that recurs with identical surroundings
   wider than the anchor's context stays on the copy that was chosen while the position names one of
   the copies; a copy the position does not name is painted as a guess, never as the chosen one (the
@@ -420,13 +424,19 @@ the nearest copy (the anchors follow-on, 2026-09-07, and its review; before the 
 tie was refused). Every sidecar write the host makes refreshes `anchorAt`, in `stageSidecar`, the
 one function every sidecar write goes through, and once more before the reply is measured, so the
 bytes the refresh adds count against `too-large`; the refresh reads where each comment's whole
-anchor sits in the text the sidecar is saved for: at one place, the position becomes that place;
-at several, the position stands where it still names a copy and otherwise moves only to the one
-copy the recorded changes (the pending ops, the ops the write settles, the edits the write
-applies) can have carried it to, and only while the sidecar's fingerprint matches the file, since
-after an unrecorded edit the record no longer bounds the shift; nowhere, the engine's scoring places it, under a budget
-on the engine's whole-text scans per write (`REFRESH_SCAN_BUDGET`), past which the remaining such
-comments keep their position and stderr says how many; and a stored comment's anchor is located
+anchor sits in the text the sidecar is saved for: at one place, the position becomes that place
+when the comment had none or the quote occurs nowhere else, and otherwise moves only where the
+recorded changes (the pending ops, the ops the write settles, among them the changes a save's
+editor accepted, the edits the write applies) can have carried it, to that copy or to the one
+other occurrence of the quote, since the one whole copy may be the other copy of a passage whose
+own surroundings were edited; at several, the position stands where it still names a copy and
+otherwise moves only to the one copy, or the one occurrence of the quote, those changes can have
+carried it to, and only while the sidecar's fingerprint matches the file, since after an
+unrecorded edit the record no longer bounds the shift; nowhere, the engine's scoring places it.
+Every scan the refresh makes (the whole-anchor classification, the quote count, the engine's
+scoring) is charged at its own cost to one budget per write (`REFRESH_SCAN_BUDGET`), a passage
+still at its position costs no scan, and past the budget the remaining comments keep their
+position and stderr says how many, once per write; and a stored comment's anchor is located
 with its `anchorAt` as the hint. Reject writes the sidecar first, then the
 file, and restores the prior sidecar bytes (or removes the sidecar it created, when none existed)
 if the file write fails, the order `track-edit` uses (`cli/track-edit.mjs:108-128`); its file
@@ -1063,14 +1073,19 @@ a cap of 480 or the file's bounds; a passage unique at 24 keeps the anchor `trac
 one still tied at the cap is saved at the cap), and the comment gains `anchorAt`, the located offset,
 refreshed on every sidecar write the host makes (`refreshAnchorAts`, first thing in `stageSidecar`, the
 one function every sidecar write goes through, and again in `checkReplyFits` before the reply is
-measured, so the bytes it adds are counted). The refresh is exact and bounded (the review, 2026-09-07):
-an anchor that sits in whole at one place takes that place; one that sits at several keeps its position
+measured, so the bytes it adds are counted). The refresh is exact and bounded (the review, 2026-09-07; its third round, 2026-09-08):
+an anchor that sits in whole at one place takes that place when the comment had no position or its quote
+occurs nowhere else, and otherwise, since the one whole copy may be the other copy of a passage whose own
+surroundings were edited, moves only where the recorded changes can have carried it, to that copy or to
+the one other occurrence of the quote, and stands otherwise; one that sits at several keeps its position
 where it still names a copy and otherwise moves only to the one copy the recorded changes (the pending
 ops, the ops the write settles, the edits the write applies, summed as bounds on the shift) can have
-carried it to (`movedCopy`), never to the nearest copy, and only while the sidecar's fingerprint says no
-unrecorded edit touched the file; one that sits nowhere in whole is placed by the engine's scoring under
-`REFRESH_SCAN_BUDGET`, past which the rest keep their position and stderr says how many, so no count of
-comments holds a write past the kernel's deadline. The panel passes a card's `anchorAt` to the
+carried it to, or to the one occurrence of the quote they can have (`movedCopy`), never to the nearest
+copy, and only while the sidecar's fingerprint says no unrecorded edit touched the file; one that sits
+nowhere in whole is placed by the engine's scoring under `REFRESH_SCAN_BUDGET`, past which the rest keep
+their position and stderr says how many, so no count of comments holds a write past the kernel's deadline;
+every scan (the whole-anchor classification, the quote count, the engine's) is charged to that one
+budget per write, and a passage still at its position costs none. The panel passes a card's `anchorAt` to the
 engine as the tie-break when it paints (the model carries the field), so the highlight stays on the
 copy that was chosen even where the anchor alone cannot tell, while the position names a tied copy;
 where it names none, or the comment has no position, the copy the engine returns is a guess, and
@@ -1091,7 +1106,8 @@ names a recurring passage by its widened surroundings (`passageDesc`, up to 120 
 past that it says only that the passage recurs with the same text around each copy), so the
 session reading it can reach the chosen copy, or learns that `--old` with the nearby text will be
 refused. Tests: the host
-modules `tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`, two e2e cases (a 24-character
+modules `tools/file-comments-host-anchors.test.mjs`, `-anchors-exact`, `-anchors-review-2` and
+`-anchors-review-3`, two e2e cases (a 24-character
 tie told apart at 48, and a tie past the cap whose positions follow a tracked insertion above),
 `ui/webview/file-comments-anchors.test.ts`, `-follow` and `-model-recurring`, and this plan's pins in
 `tools/file-review-plan.test.mjs`, `-acceptance` and `-anchors`; the painted states in
@@ -1486,16 +1502,21 @@ Synthetic fixtures only (the `notes-api` world, `TESTHOST`, placeholder ids).
   `figure-changed` on a standalone and on an embedded figure regenerated between the drag and
   Enter, nothing written and no landmark created, a malformed `figureHash` refused before any disk
   read, `too-large` before `figure-changed`. The anchors follow-on
-  (`tools/file-comments-host-anchors.test.mjs` and `-anchors-exact`): the anchor's context widens only as far as
+  (`tools/file-comments-host-anchors.test.mjs`, `-anchors-exact`, `-anchors-review-2` and
+  `-anchors-review-3`): the anchor's context widens only as far as
   uniqueness needs and stops at the cap; a tie settled by the hint is placed, one without a hint
   refuses, and one whose hint sits on no tied copy (the text moved) refuses too, on a plain and on
   a tracked file; `anchorAt` is set at creation, kept by `track-reply` and `track-edit`, refreshed by the
   next host write after an edit above, never added to a comment without an anchor, and round-trips
   through `store-io`; a tied position follows its copy through a tracked insertion above, its
   reject, an accept and the person's own save, and keeps its position after an edit nobody recorded, after
-  changes above that span a copy, and when the comment has no position; the refresh scans only for
-  anchors that sit in whole nowhere, under the budget, past which the rest keep their position and
-  stderr says so, and 300 cap-width tied comments on a near-cap file complete inside the kernel's
+  changes above that span a copy, and when the comment has no position; a comment whose one whole
+  copy is the other copy of a passage whose surroundings were edited keeps its position after an
+  edit nobody recorded and follows a tracked edit to the quote's other occurrence, and back through
+  its reject; a save settles the changes its editor accepted; the refresh scans only for anchors
+  that no longer sit at their position, charges every scan to one budget per write, past which the
+  rest keep their position and stderr says so once, and 300 cap-width tied comments on a near-cap
+  file, and 400 on a text of one repeated character, complete inside the kernel's
   deadline; the reply is measured with the refreshed positions, so a store within the slack of the
   cap refuses `too-large` instead of landing a reply the kernel discards. `tools/file-review-plan.test.mjs` pins what this plan
   states for the target's shape, the anchor rule, the verbs, the fence, the codes, the caps, the read bound and the
