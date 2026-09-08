@@ -17,7 +17,7 @@
 // whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
-import DOMPurify from "dompurify";
+import { sanitizeMd } from "./md-sanitize";
 import { hostOf, bareId, hostNameNodes } from "./host-prefix";
 import { fileUrl } from "./preview";
 import { openPdfTab, wantsOwnTab } from "./preview";   // a PDF's own tab, and the gesture that asks for it
@@ -31,7 +31,7 @@ import { PDF_MAX_BYTES, pdfCapMessage } from "./pdf-cap";   // the pages cap, pu
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gclock = require("./gesture-clock.js");   // the gesture clock every settings post stamps through
 import { delegate } from "./actions";
-import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs } from "./md-links";
+import { resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, LINK_SEL, XLINK_NS, linkHref } from "./md-links";
 import { readTextCapped, overCapWords, settleUrlResponse } from "./capped-read";
 
 // How long the romp loader may stand over a PDF's pages attempt (showPdfPages) before the viewer gives up on it and shows
@@ -984,6 +984,11 @@ export function openFileView(path: string, sid?: string | null, opts?: { todoId?
   // it is click-safe across the Rendered ⇄ Raw swaps that rebuild the body's children). The chat's document-level
   // anchor delegate (render.ts) leaves an anchor with no href alone, so the click reaches here in the chat document
   // and in the feed document alike. The URL viewer below keeps a delegate of its own for its fv-anchor stamp.
+  // A submit inside the body never navigates the pane's document. The sanitizer drops <form> and every
+  // form control (md-sanitize.ts), so this is the backstop for the one High defect it closes (a note's
+  // `<form action=…><button>` took the Files document to the action URL): one listener per open on the
+  // stable body, like the click listener below, so it survives every Rendered ⇄ Raw swap.
+  body.addEventListener("submit", (ev) => { ev.preventDefault(); });
   // Per the loading-state rule the first thing up is the romp loader, not a blank pane — a file coming
   // over an ssh tunnel to a phone is a real wait.
   const load = el("div", "fileview-load");
@@ -2153,6 +2158,7 @@ export function openUrlView(href: string): void {
   delegate(body, {
     "fv-anchor": (a, ev) => { ev.preventDefault(); scrollToFragment(body, a.getAttribute("href") || ""); },
   });
+  body.addEventListener("submit", (ev) => { ev.preventDefault(); });   // the local viewer's backstop (openFileView), same reason
   body.appendChild(loaderEl());                        // loader first; the fetch below replaces it
   box.appendChild(bar); box.appendChild(body);
   wrap.appendChild(box);
@@ -2374,14 +2380,15 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     const dirty = marked.parse(text, doc && doc.kind === "file"
       ? { walkTokens: (t) => { viewerWalkTokens(t); if (base) void base.call(marked, t); } }
       : undefined) as string;
-    // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
-    // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
-    // ALLOW_DATA_ATTR: false — a document's raw HTML must not carry data-* into the page: the viewer's
-    // body delegate lets an act it does not own bubble to render.ts's document-level delegate, so a
-    // `<span data-act="stopRetrying">` in a published report would interrupt the active session on a
-    // click (review find on #958, 2026-09-07). The viewer's own marks (the file kind's path and section links,
-    // the URL kind's fv-anchor stamp) are set AFTER this sanitize, so they are unaffected.
-    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"], ALLOW_DATA_ATTR: false });
+    // The one sanitizer the chat's md() uses too (md-sanitize.ts): html + svg (a note's own inline SVG), no data-*
+    // (a document's `<span data-act="stopRetrying">` would otherwise bubble to render.ts's document-level delegate
+    // and interrupt the active session; review find on #958, 2026-09-07), and GitHub's rules for a note's own
+    // HTML: no <style>, no form controls, ids and names prefixed user-content-, inline style reduced to its
+    // colours (plans/markdown-viewer.md, Slice 1). The sanitized <body>'s children are adopted as they are, no
+    // re-parse. The viewer's own stamps (heading ids, the file kind's path and section links, the URL kind's
+    // fv-anchor stamp) are set AFTER this sanitize, so they are unaffected and never prefixed; a section link
+    // finds an author's id or name under the prefix (file-view-links.ts fragmentTarget).
+    box.replaceChildren(...Array.from(sanitizeMd(dirty).childNodes));
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
     rendered = false;
@@ -2391,14 +2398,38 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
   // PREFIXED `md-` on purpose: an unprefixed id="tabs" would dress a heading in the chat page's
   // #tabs CSS and shadow getElementById("tabs") for the page's own controls. Both modes, before the
   // anchors are sorted: a section link is live when its target is a heading, an element with that id
-  // or a named anchor (file-view-links.ts fragmentTarget reads all three).
+  // or a named anchor, each under the sanitizer's user-content- prefix (file-view-links.ts fragmentTarget
+  // reads all three).
   const heads = Array.from(box.querySelectorAll("h1, h2, h3, h4, h5, h6")) as HTMLElement[];
   const slugs = uniqueSlugs(heads.map((h) => headingSlug(h.textContent || "")));
   heads.forEach((h, i) => { h.id = "md-" + slugs[i]; });
+  // A pixel-sized <video> keeps the author's shape (keepVideoShape, below): the sheets give it `height: auto` so it
+  // shrinks in ratio with the column, and the browser's own `aspect-ratio: auto W / H` would hand that ratio to the poster.
+  keepVideoShape(box);
   // Relative references resolve against the DOCUMENT, after sanitisation (DOMPurify has already
   // dropped every dangerous scheme; what is left is either absolute — untouched — or relative to a
   // document the browser knows nothing about). getAttribute, never the .src/.href property: the
   // property is already resolved against the PAGE, which is the wrong base.
+  // Which elements are links: LINK_SEL (md-links.ts), the selector the chat's click delegate keys on too. An HTML <a>
+  // and an inline SVG <a>, spelled `href` or SVG 1.1's `xlink:href`, both navigate on a click, and DOMPurify's html
+  // and svg profiles keep both; the passes below used to run over `a[href]`, which reached only the first (`[href]`
+  // matches the null-namespace attribute alone), so an SVG <a xlink:href> in a note took the pane's document to its
+  // URL, in the same frame (review of Slice 1, 2026-09-07). The XLink spelling is MOVED to a plain `href`: copied when
+  // the anchor has no `href` of its own (an `href` the author wrote beside it wins, as it does in the browser), then
+  // removed, so the SVG anchor carries one attribute and every reader below (linkMarkdownAnchors, the fv-anchor stamp,
+  // the body's click listener) and the browser read the same one. The removal matters as much as the copy: a stamp
+  // that takes `href` off the anchor (a path link, a dead link) relies on an anchor with no href being nothing the
+  // browser follows and nothing LINK_SEL matches, and the browser follows `xlink:href` when `href` is absent. A copy
+  // that left the XLink attribute in place navigated the Files document in the same frame from a dead SVG link, and
+  // let the chat's delegate (render.ts, `a[*|href]`) open a path link's `sibling.md` as a URL document resolved against
+  // the chat page instead of the sibling file (round 3 of the review; md-sanitize-viewer-links-browser.test.ts clicks
+  // both shapes in both pages).
+  box.querySelectorAll("a[*|href]").forEach((a) => {
+    const xl = a.getAttributeNS(XLINK_NS, "href");
+    if (xl === null) return;                            // an HTML anchor, or an SVG one spelled `href` alone
+    if (!a.hasAttribute("href")) a.setAttribute("href", xl);
+    a.removeAttributeNS(XLINK_NS, "href");
+  });
   if (doc && doc.kind === "url") {
     box.querySelectorAll("img[src]").forEach((node) => {
       const img = node as HTMLImageElement;
@@ -2406,9 +2437,9 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
       const abs = resolveDocRelative(src, doc.href);
       if (abs !== src) img.setAttribute("src", abs);
     });
-    box.querySelectorAll("a[href]").forEach((node) => {
-      const a = node as HTMLAnchorElement;
-      const href = a.getAttribute("href") || "";
+    box.querySelectorAll(LINK_SEL).forEach((node) => {
+      const a = node as HTMLElement | SVGElement;
+      const href = linkHref(a);
       if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;   // in-document, or already absolute
       // Absolute now, so the chat's document-level anchor delegate sees a scheme: a same-origin
       // .md target opens in this viewer (isMarkdownUrl), everything else in a new tab.
@@ -2426,19 +2457,25 @@ function mdBlock(text: string, doc?: MdDocLoc): HTMLElement {
     // web opens a NEW tab: the viewer lives inside the chat pane's document, and letting a README link navigate it
     // away would silently eat the chat until a reload. A link whose target is a file relative to this one becomes a
     // path link that opens THAT file in the viewer (its `#fragment` or `:line` riding along); a section link
-    // (`#results`) is the viewer's scroll; a target the sanitizer removed is a dead link that says why.
+    // (`#results`) is the viewer's scroll; a target the sanitizer removed is a dead link that says why. The module
+    // walks every `a`, the SVG anchor included (its xlink:href is a plain href by now, above), and writes each
+    // attribute as one, so an SVG link is stamped like an HTML one.
     if (rendered) linkMarkdownAnchors(box, doc.path);
   } else {
     // A URL document (openUrlView), or a caller with no location: links open a NEW tab, for the same reason. One
     // kind stays in the viewer: an IN-DOCUMENT `#fragment` link, which lands on its heading through the body's
     // delegated fv-anchor handler — a forced _blank on those opened a REAL tab at the chat page's own URL plus
     // the fragment (found live, 2026-09-06). A URL document's sibling links are absolute by now, and the chat's
-    // own anchor delegate routes them (a same-origin .md back into the viewer).
-    box.querySelectorAll("a[href]").forEach((node) => {
-      const a = node as HTMLAnchorElement;
-      if ((a.getAttribute("href") || "").startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
-      a.target = "_blank";
-      a.rel = "noopener";
+    // own anchor delegate routes them (a same-origin .md back into the viewer). Every link element (LINK_SEL,
+    // above) is stamped, and with setAttribute rather than the `target` and `rel` properties: on an SVGAElement
+    // `target` is a read-only SVGAnimatedString, so the property write was dropped without a word (the bundle is
+    // not strict there) and an SVG link kept navigating the pane; the attribute is what the browser reads on every
+    // one of these elements.
+    box.querySelectorAll(LINK_SEL).forEach((node) => {
+      const a = node as HTMLElement | SVGElement;
+      if (linkHref(a).startsWith("#")) { a.dataset.act = "fv-anchor"; return; }
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener");
     });
   }
   // Fenced blocks: highlight only a language the fence NAMES and this bundle registers — the same
@@ -2497,6 +2534,38 @@ export function rewriteFigureSrcs(root: ParentNode, dir: string, sid: string | n
     img.setAttribute("data-fv-src", src);
     img.setAttribute("src", fileUrl(rel.startsWith("/") ? rel : dir + rel, sid));
   });
+}
+
+/** A pixel-sized `<video>` keeps the shape its `width` and `height` attributes give it, capped or not. The viewer's sheets
+ *  (styles.css and feed.css, the .fileview-md media rules) cap an inline svg, canvas or video at the column and give a
+ *  PIXEL-sized one `height: auto`, so it shrinks in its own ratio rather than into a letterbox of its height attribute.
+ *  For an svg or a canvas that ratio is the attributes' by construction. For a video the browser maps the attributes to
+ *  `aspect-ratio: auto W / H`, and `auto` there means the media's natural ratio wins once it has one: the poster's while
+ *  the poster shows, the frames' once metadata loads. So a `<video width="640" height="360">` with a square poster laid
+ *  out 640 by 640 in a pane that shrank nothing, and its box jumped to 640 by 360 when it played (review of Slice 1,
+ *  round 2). The attributes' ratio is written as the element's aspect-ratio WITHOUT `auto`, so the box is the author's
+ *  shape whether the cap shrinks it or not, and the media sits letterboxed inside it as a video always has (its default
+ *  object-fit is contain). A percentage in either attribute is left alone, as the sheet's rule leaves a percentage
+ *  width: the cap never shrinks it and the height attribute stands. Runs on the sanitized DOM: the declaration is the
+ *  viewer's own, not an author's inline style, which the sanitizer reduces to its colours (md-sanitize.ts). Laid out
+ *  over the real bundle in md-sanitize-wide-media-browser.test.ts, each spelling of a length included. */
+function keepVideoShape(root: ParentNode): void {
+  root.querySelectorAll("video[width][height]").forEach((node) => {
+    const v = node as HTMLElement;
+    const w = pxDimension(v.getAttribute("width")), h = pxDimension(v.getAttribute("height"));
+    if (w > 0 && h > 0) v.style.aspectRatio = w + " / " + h;
+  });
+}
+
+/** An HTML dimension attribute as a length, by HTML's rules for parsing dimension values: leading whitespace, digits, an
+ *  optional fraction; a `%` right after the number makes it a percentage (0 here, as is anything that does not start
+ *  with a number). `640`, `640.5` and `640px` are lengths, as they are to the browser, whose own mapping of the
+ *  attributes reads them the same way; `50%` is not. Mirrors the sheet's `[width]:not([width$="%"])`. The whitespace
+ *  skip is HTML's rule kept for fidelity: the value read here has been through the sanitizer, which trims every
+ *  attribute value (DOMPurify, all but `value`), so the `%` test here and the sheet's `$="%"` never meet a padded one. */
+function pxDimension(attr: string | null): number {
+  const m = /^[ \t\n\f\r]*(\d+(?:\.\d*)?)(%?)/.exec(attr || "");
+  return m && !m[2] ? Number(m[1]) : 0;
 }
 
 // ── a selection across a repaint (fireRenderedKeepingSelection): each end kept, and put back ──

@@ -54,7 +54,12 @@ ${sheet()}</style></head><body><div class="fileview-body" id="row"><div class="f
 type Box = { left: number; top: number; width: number; height: number };
 type Scene = { plot: Box; wrap: Box | null; overlay: Box | null; overlayStyle: string | null; events: string[] };
 
-/** The README: one figure, a 300×150 picture written `width="100%"` with a pixel max-width and a percentage top margin. */
+/** The figure, set as written (innerHTML, no sanitizer): a 300×150 picture written `width="100%"` with a pixel max-width
+ *  and a percentage top margin, the shape whose wrapper outgrows the picture. It pins the layer's own contract, a style
+ *  attribute on the picture whatever wrote it, and is not what a note renders as today: the viewer sanitizes a note's
+ *  HTML before adopting it (md-sanitize.ts; plans/markdown-viewer.md Slice 1, decision 6), and an author's inline
+ *  `style` keeps only its colour declarations there, so a note's `max-width:300px` and `margin-top:10%` never reach
+ *  the DOM. */
 async function mount(page: any): Promise<void> {
   await page.evaluate(async () => {
     const md = document.getElementById("md")!;

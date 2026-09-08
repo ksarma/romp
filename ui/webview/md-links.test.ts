@@ -3,7 +3,7 @@
 // them. Synthetic hosts and paths throughout (TESTHOST, the notes-api demo tree).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { isMarkdownUrl, resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs } from "./md-links";
+import { isMarkdownUrl, resolveDocRelative, joinDocPath, urlTitleParts, headingSlug, uniqueSlugs, browserTabClick } from "./md-links";
 
 const ORIGIN = "https://TESTHOST";
 const DOC = "https://TESTHOST/figs/run-1/evidence.md";
@@ -204,4 +204,23 @@ test("uniqueSlugs is amortised linear: 20,000 identical headings dedupe in well 
   const mixed = uniqueSlugs(["setup", "setup-2", "setup", "setup", "setup", "setup-5", "setup"]);
   assert.deepEqual(mixed, ["setup", "setup-2", "setup-1", "setup-3", "setup-4", "setup-5", "setup-6"]);
   assert.equal(new Set(mixed).size, mixed.length);
+});
+
+// ── browserTabClick: which modified click the BROWSER answers with a tab or window, per platform ──
+// The chat's `#` resolver (render.ts) stands aside for exactly these clicks and resolves every other one itself. Its first
+// cut read "any of Ctrl, Meta, Shift", and on Linux and Windows a Super-click, a plain click to the browser, fell through
+// to the default lookup, which reads the bare fragment the sanitizer had prefixed, so the click died where the base scrolled
+// (the round-2 review of plans/markdown-viewer.md Slice 1). md-sanitize-chat-modified-click-browser.test.ts clicks it.
+test("browserTabClick: Shift everywhere; Cmd on macOS and Ctrl elsewhere; the other key, Alt and a plain click are not the browser's", () => {
+  for (const mac of [true, false]) {
+    assert.equal(browserTabClick({ shiftKey: true }, mac), true, "Shift is a new window on every platform (mac=" + mac + ")");
+    assert.equal(browserTabClick({}, mac), false, "a plain click is the handler's (mac=" + mac + ")");
+    assert.equal(browserTabClick({ altKey: true }, mac), false, "Alt is not a tab gesture (Chromium's Alt-click is a download; mac=" + mac + ")");
+  }
+  assert.equal(browserTabClick({ metaKey: true }, true), true, "Cmd-click on a Mac opens a tab");
+  assert.equal(browserTabClick({ ctrlKey: true }, true), false, "Ctrl-click on a Mac is the context menu, not a tab");
+  assert.equal(browserTabClick({ ctrlKey: true }, false), true, "Ctrl-click on Linux and Windows opens a tab");
+  assert.equal(browserTabClick({ metaKey: true }, false), false, "Super-click on Linux and Windows is a plain click to the browser: the resolver must land it");
+  assert.equal(browserTabClick({ metaKey: true, shiftKey: true }, false), true, "Shift beside any other key is still the browser's");
+  assert.equal(browserTabClick({ ctrlKey: true, metaKey: true }, true), true, "both keys held: the platform's one counts");
 });

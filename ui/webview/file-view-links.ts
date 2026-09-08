@@ -41,6 +41,7 @@
 // marks; it binds no action.
 import { linkifyPathTokens, markPathLink, fileUriToPath, isFileUri, LINE_SUFFIX_RE, DEAD_TEXT, textUnits, spanHolding, rewriteSpan, type TextSpan } from "./path-links";
 import { headingSlug } from "./md-links";   // the slug the viewer mints heading ids from (`md-` + slug), so a section link finds its heading
+import { userContentTarget } from "./md-sanitize";   // an author's id or name under the sanitizer's user-content- prefix, or bare (the chat's delegate reads the same lookup)
 
 /** The URL anchors this module mints wear this class; the viewer's delegate and the sheets key on it. */
 export const URL_LINK_CLASS = "fv-url";
@@ -369,13 +370,16 @@ export function viewerWalkTokens(token: { type: string; href?: string | null }):
 /** The element a section link's `id` names in `root`: the first with that id, else the first `<a name>` of that name,
  *  the README idiom for a stable anchor (`<a name="install"></a>` above a heading), which marked passes through and the
  *  sanitizer keeps; a browser's own fragment rule reads both, and a lookup by id alone left such links dead (the
- *  2026-09-07 review, round 3). Else the heading whose slug it is: marked gives headings no ids, and the viewer mints
+ *  2026-09-07 review, round 3). An author's id or name reaches the DOM under the sanitizer's `user-content-` prefix
+ *  (md-sanitize.ts, SANITIZE_NAMED_PROPS: GitHub's rule, so a note's `<p id="tabs">` can never answer to the page's
+ *  own ids), so each arm reads that spelling and the bare one (the minted `md-` ids, and an author who typed the
+ *  prefix), in document order: userContentTarget, the lookup the chat's `#` click reads too (md-sanitize.ts). Else
+ *  the heading whose slug it is: marked gives headings no ids, and the viewer mints
  *  one per heading as `md-` + its GitHub slug (mdBlock), so `#Evidence Results`, `#evidence-results` and the
  *  percent-encoded spelling all name md-evidence-results. Mark time and click time both ask here (file-view.ts
  *  scrollToFragment). */
 export function fragmentTarget(root: ParentNode, id: string): Element | undefined {
-  return Array.from(root.querySelectorAll("[id]")).find((e) => e.getAttribute("id") === id)
-    || Array.from(root.querySelectorAll("a[name]")).find((e) => e.getAttribute("name") === id)
+  return userContentTarget(root, id)
     || root.querySelector('[id="md-' + headingSlug(id) + '"]') || undefined;   // the slug's alphabet needs no escaping
 }
 

@@ -53,12 +53,15 @@ test("the chat grammar rides along: ~~double~~ strikes, a lone ~ stays literal",
   assert.match(lone, /~21/);
 });
 
-test("the chat grammar rides along: $x$ still renders KaTeX, and a price stays a price", () => {
+test("the chat grammar rides along: $x$ still becomes math, and a price stays a price", () => {
+  // math.ts emits an inert placeholder carrying the TeX; KaTeX is rendered into it after the sanitizer, by
+  // renderMathPlaceholders as a sanitizeMd post-pass this module registers at load (render.ts's userMd() calls
+  // sanitizeMd and nothing of its own), so marked's own output holds the placeholder, never KaTeX's markup
   const out = userMdHtml("Euler: $e^{i\\pi}+1=0$\nnext line");
-  assert.ok(out.includes('class="katex"'), "inline math renders");
+  assert.ok(out.includes('<span class="md-math-inline">e^{i\\pi}+1=0</span>'), "inline math becomes the placeholder: " + out);
   assert.match(out, /<br>\s*next line/, "…and the newline after it is still kept");
   const price = userMdHtml("costs $5 and $10 today");
-  assert.ok(!price.includes('class="katex"'));
+  assert.ok(!price.includes("md-math"));
   assert.match(price, /\$5/);
 });
 
@@ -77,20 +80,22 @@ test("the singleton stays breaks:false — assistant rendering is unchanged", ()
   assert.match(RENDER, /marked\.use\(\.\.\.chatMdExtensions\);/, "…and takes the same grammar the user instance does");
 });
 
-test("userMd() renders through the breaks:true instance and the SAME DOMPurify profile as md()", () => {
-  // both renderers take the sanitized DOM back (RETURN_DOM) to link PR references before serializing (pr-links.ts,
-  // 2026-09-06), so each spreads the shared profile and only the return shape differs (the 2026-09-07 fold of
-  // upstream's userMd split; MD_PURIFY itself, with upstream's ALLOW_DATA_ATTR: false, is the one profile);
-  // both signatures carry an optional repo parameter for the PR links, so the match on them is loose
+test("userMd() renders through the breaks:true instance and the SAME sanitizer as md()", () => {
+  // both renderers take the sanitized DOM back to link PR references before serializing (pr-links.ts, 2026-09-06);
+  // since Slice 1 of plans/markdown-viewer.md the sanitizer is sanitizeMd (md-sanitize.ts), one call shared with the
+  // file viewer, which returns the sanitized <body>; the profile (MD_PURIFY, upstream's ALLOW_DATA_ATTR: false and
+  // GitHub's rules on top) is spelled there and nowhere in render.ts; both signatures carry an optional repo
+  // parameter for the PR links (the 2026-09-08 fold of upstream's converged userMd), so the match on them is loose
   const fn = RENDER.match(/function userMd\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
   assert.ok(fn, "userMd() must exist");
-  assert.match(fn, /DOMPurify\.sanitize\(userMdHtml\(src\), \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/);
+  assert.match(fn, /const clean = sanitizeMd\(userMdHtml\(src\)\);/);
   const mdFn = RENDER.match(/function md\(src: string[^\n]*?\): string \{[\s\S]*?\n\}/)?.[0] || "";
-  assert.match(mdFn, /DOMPurify\.sanitize\(dirty, \{ \.\.\.MD_PURIFY, RETURN_DOM: true \}\)/, "md() sanitizes with the same shared profile");
-  const profileOf = (src: string) => src.match(/DOMPurify\.sanitize\([^,]+, (\{[^}]*\}|MD_PURIFY)\)/)?.[1];
-  assert.ok(profileOf(fn) && profileOf(fn) === profileOf(mdFn), "byte-identical sanitizer arguments: one profile, one return shape");
-  assert.match(RENDER, /const MD_PURIFY: Config = \{ USE_PROFILES: \{ html: true, svg: true \}, ADD_DATA_URI_TAGS: \["img"\], ALLOW_DATA_ATTR: false \};/);
-  assert.doesNotMatch(fn + mdFn, /USE_PROFILES|ALLOW_DATA_ATTR/, "neither renderer spells its own profile: every option comes through MD_PURIFY");
+  assert.match(mdFn, /const clean = sanitizeMd\(dirty\);/, "md() sanitizes through the same shared call");
+  assert.match(RENDER, /import \{[^}]*\bsanitizeMd\b[^}]*\} from "\.\/md-sanitize";/);
+  assert.doesNotMatch(RENDER, /from "dompurify"|DOMPurify\.sanitize|MD_PURIFY/, "render.ts holds no sanitizer of its own");
+  const SAN = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "md-sanitize.ts"), "utf8");
+  assert.match(SAN, /USE_PROFILES: \{ html: true, svg: true \},\n\s*ADD_DATA_URI_TAGS: \["img"\],\n\s*ALLOW_DATA_ATTR: false,/);
+  assert.doesNotMatch(fn + mdFn, /USE_PROFILES|ALLOW_DATA_ATTR/, "neither renderer spells its own profile: every option comes through md-sanitize.ts");
 });
 
 test("the user bubble renders the user's OWN words with userMd, harness notes and everything else with md", () => {

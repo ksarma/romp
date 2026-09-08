@@ -3,7 +3,9 @@
 // (the .romp-acted / filebrowse precedent). The copies had already drifted once (feed.css lacked the
 // a.fileview-btn anchor rules, so the GitHub link rendered hrefless-underlined there, 2026-08-26).
 // This pins the shared chrome byte-equal so it cannot drift again. Rules that are deliberately
-// pane-specific (the md body, wrap mode, the pane's own load cue `.fileview-load {`) are not pinned.
+// pane-specific (wrap mode, the pane's own load cue `.fileview-load {`) are not pinned. The md body's
+// own rule IS (since Slice 1 of plans/markdown-viewer.md): its `contain: layout` is what keeps a note's
+// fixed-positioned element inside the note, and it has to hold in both documents.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -21,7 +23,13 @@ const RULES = [
   "a.fileview-btn {", ".fileview-gh {", ".fileview-gh-why {", ".fileview-gh-dots {",
   '.fileview-btn:disabled, .fileview-btn[aria-disabled="true"] {', '.fileview-btn:disabled:hover, .fileview-btn[aria-disabled="true"]:hover {',
   '.fileview-btn:disabled:active, .fileview-btn[aria-disabled="true"]:active {', ".fileview-size-reset {", ".fileview-size-reset.fileview-size-default {",
-  "a.fileview-gh-note {", ".fileview-body {",
+  "a.fileview-gh-note {", ".fileview-body {", ".fileview-md {",
+  // the width caps on a note's pictures and on the media it draws itself (svg, canvas, video): under the md box's
+  // contain: layout an uncapped one is clipped and unreachable, so the cap has to hold on both pages
+  ".fileview-md img {", ":where(.fileview-md) svg, :where(.fileview-md) canvas, :where(.fileview-md) video {",
+  ':where(.fileview-md :is(svg, canvas, video)[width]:not([width$="%"])) {',   // the ratio-keeping half, pixel-sized media only
+  ".fileview-md > img, .fileview-md > svg, .fileview-md > canvas, .fileview-md > video, .fileview-md > .fc-imgwrap {",
+  ".md code.md-math-src, .fileview-md code.md-math-src {",   // the math fill's source fallback, dressed as unrendered source (math.ts MATH_SOURCE_CLASS)
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
   // links inside a shown file (file-view-links.ts): the light dress on a URL anchor and a path link, and the Markdown link that names a file

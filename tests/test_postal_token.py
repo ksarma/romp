@@ -308,7 +308,9 @@ class TrackedIsABoolean(_BusServer):
             dialed.append(a)
             raise ps.BusError("stubbed: the bus is not dialed here")
         # _mcp_call resolves its identity through _self_identity (the one resolution behind my_id and
-        # my_name), so that is the seam to stub; stubbing the two wrappers leaves the call unresolved.
+        # my_name), so that is the seam to stub; stubbing the two wrappers leaves the call unresolved
+        # (upstream re-anchored this stub the same way in f6907c80, after the fold this module came in
+        # with; with the wrappers stubbed the rig only resolved where CLAUDE_CODE_SESSION_ID was set).
         saved = (ps._http, ps._self_identity, ps._heartbeat)
         ps._http, ps._self_identity, ps._heartbeat = http, (lambda: (self.SID, "web")), (lambda mid, me: None)
         try:
@@ -322,6 +324,8 @@ class TrackedIsABoolean(_BusServer):
             self.assertIs(dialed[0][2]["tracked"], True, "a real true rides the wire as itself")
         finally:
             ps._http, ps._self_identity, ps._heartbeat = saved
+
+
 def _mode(p):
     return stat.S_IMODE(os.stat(p).st_mode)
 

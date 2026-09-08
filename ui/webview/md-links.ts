@@ -1,8 +1,9 @@
 // Pure helpers behind "a markdown link opens in the file viewer" (the user 2026-09-06): a chat message
 // linking `https://<this dashboard>/figs/run-1/evidence.md` used to open the RAW text in a new tab; it
 // presents in the in-pane viewer now, rendered, with its figures resolved against the document. This
-// module is string → string only — no DOM, no fetch — so it executes under `node --test` (the DOM
-// wiring in render.ts / file-view.ts is pinned at the source, as every viewer test is).
+// module reaches no DOM of its own: string helpers, plus the link selector and linkHref at the end, which
+// reads two attributes off the element it is handed. So it executes under `node --test` (the DOM wiring in
+// render.ts / file-view.ts is pinned at the source, as every viewer test is).
 //
 // Two rules the helpers encode, both deliberate:
 //   • SAME ORIGIN ONLY. The viewer fetches the URL from the browser, and a cross-origin fetch is a
@@ -119,4 +120,43 @@ export function urlTitleParts(href: string): { dir: string; base: string } {
   const cut = u.pathname.lastIndexOf("/");
   const dec = (s: string): string => { try { return decodeURIComponent(s); } catch { return s; } };
   return { dir: u.host + dec(u.pathname.slice(0, cut + 1)), base: dec(u.pathname.slice(cut + 1)) };
+}
+
+// ── which elements are links ───────────────────────────────────────────────────────────────────────
+
+/** Every element a sanitized note can follow a link from, for querySelectorAll and closest: an HTML <a> and an
+ *  inline SVG <a> (its link spelled `href` or, SVG 1.1's way, `xlink:href`), plus an image map's <area> as a second
+ *  guard. DOMPurify's svg profile keeps XLink, and a pass over `a[href]` reached only the HTML anchor: a bare `[href]`
+ *  matches the null-namespace attribute alone. `*|href` names the attribute in any namespace, so one selector covers
+ *  both spellings of an anchor. The chat's click delegate (render.ts) and the viewer's mdBlock (file-view.ts) key on
+ *  this one string, so a link the one handles the other handles too (review of plans/markdown-viewer.md Slice 1,
+ *  2026-09-07: an <area href> or an SVG <a xlink:href> in a note took the pane's document to its URL in the same
+ *  frame). The sanitizer forbids <map>, <area> and usemap outright now (md-sanitize.ts: a prefixed map name can never
+ *  bind, and GitHub drops image maps), so no area reaches either delegate; the selector keeps naming it so that a
+ *  loosened profile cannot reopen the same-frame navigation on its own. */
+export const LINK_SEL = "a[*|href], area[href]";
+
+/** The XLink namespace, the one an SVG 1.1 `xlink:href` lives in. */
+export const XLINK_NS = "http://www.w3.org/1999/xlink";
+
+/** The URL a link element navigates to: its `href`, else SVG's `xlink:href`; "" when it has neither (the browser
+ *  follows `href` when both are present, and so does this). Reads the two attributes and nothing else, so a node
+ *  test can hand it a stub. */
+export function linkHref(a: { getAttribute(name: string): string | null; getAttributeNS(ns: string | null, name: string): string | null }): string {
+  return a.getAttribute("href") ?? a.getAttributeNS(XLINK_NS, "href") ?? "";
+}
+
+// ── which click is the browser's ───────────────────────────────────────────────────────────────────
+
+/** Does the BROWSER answer this click with a tab or window of its own, on the platform the page runs on? Its
+ *  disposition rule (Chromium's NavigationPolicyFromEventModifiers; measured in review on Linux): Shift is a new
+ *  window everywhere; the new-tab modifier is Cmd on macOS and Ctrl everywhere else, and the OTHER key is no gesture
+ *  at all (Ctrl-click on a Mac is the context menu; Super-click on Linux and Windows is a plain click to the browser).
+ *  A handler that stands aside for a gesture the browser will honour must read the platform's key, not "any
+ *  modifier": the chat's `#` resolver (render.ts) stood aside for Meta on Linux, the browser ran its default lookup on
+ *  the bare fragment the sanitizer had prefixed, and the click died where the base scrolled (the round-2 review of
+ *  plans/markdown-viewer.md Slice 1). Alt is accepted and not read: Chromium's Alt-click is a download, no tab. `mac` is passed in,
+ *  never read here, so a node test drives both platforms and the module stays DOM-free. */
+export function browserTabClick(e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean; altKey?: boolean }, mac: boolean): boolean {
+  return !!e.shiftKey || (mac ? !!e.metaKey : !!e.ctrlKey);
 }

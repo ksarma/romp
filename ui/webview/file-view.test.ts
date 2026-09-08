@@ -477,20 +477,31 @@ test("format prefs: rendered is the markdown default, and a corrupt entry reads 
 });
 
 // B: the toggle itself — markdown only, and the rendered path is sanitized. These are arbitrary bytes
-// off a disk and marked emits raw HTML verbatim, so DOMPurify sits between it and .innerHTML with the
-// same profile the chat's md() uses (render.ts).
+// off a disk and marked emits raw HTML verbatim, so DOMPurify sits between it and the DOM, through the
+// ONE sanitizer the chat's md() uses too (sanitizeMd, md-sanitize.ts; plans/markdown-viewer.md Slice 1).
 test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML unsanitized", () => {
   assert.match(VIEW, /const isMd = langFor\(path\) === "markdown";/);
   // the two buttons are built inside the isMd gate — a .py file shows no Rendered/Raw toggle
   assert.match(VIEW, /if \(isMd\) \{\s*\n\s*for \(const mode of \["rendered", "raw"\] as const\)/);
   assert.match(VIEW, /const rendered = isMd && fmt\.md === "rendered";/, "non-md never renders as prose");
-  assert.match(VIEW, /import DOMPurify from "dompurify";/);
-  // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs as inline <svg>
-  // …and data-* never rides in from a document's raw HTML: the page's delegates key actions off data-act
-  assert.match(VIEW, /box\.innerHTML = DOMPurify\.sanitize\(dirty, \{ USE_PROFILES: \{ html: true, svg: true \}, ADD_DATA_URI_TAGS: \["img"\], ALLOW_DATA_ATTR: false \}\);/);
-  // a README's links open a NEW tab rather than navigating the hosting pane's document away
-  assert.match(VIEW, /target = "_blank"/);
-  assert.match(VIEW, /rel = "noopener"/);
+  assert.match(VIEW, /import \{ sanitizeMd \} from "\.\/md-sanitize";/);
+  assert.doesNotMatch(VIEW, /from "dompurify"/, "the viewer spells no profile of its own: every option comes through md-sanitize.ts");
+  // the sanitized <body>'s children are adopted as they are (no re-parse of a serialized string)
+  assert.match(VIEW, /box\.replaceChildren\(\.\.\.Array\.from\(sanitizeMd\(dirty\)\.childNodes\)\);/);
+  // a note's links open a NEW tab rather than navigating the hosting pane's document away. A file on disk hands its
+  // anchors to file-view-links.ts (linkMarkdownAnchors, fork PR #347: a web link stamped, a sibling file opened in
+  // the viewer); a URL document, or a caller with no location, stamps every link element in mdBlock's own pass. Both
+  // write the ATTRIBUTE: an SVG <a>'s `target` property is a read-only SVGAnimatedString, so a property write was
+  // dropped without a word (md-sanitize-viewer-links.test.ts). Read from mdBlock and the module's walk, never the
+  // whole file: the GitHub button and the URL viewer's Open link stamp `_blank` too, and a whole-file pin matched
+  // those and stayed green with mdBlock's own stamps deleted (review of Slice 1, round 2).
+  const mdFn = VIEW.split("function mdBlock(")[1].split("export function rewriteFigureSrcs")[0];
+  assert.match(mdFn, /if \(doc && doc\.kind === "file"\) \{/, "the file kind has its own arm");
+  assert.match(mdFn, /if \(rendered\) linkMarkdownAnchors\(box, doc\.path\);/, "a file's links: the module's walk, in Rendered only");
+  assert.match(mdFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "a URL document's links: stamped here, as attributes");
+  assert.doesNotMatch(mdFn, /\ba\.(target|rel)\s*=/, "no property write on either");
+  const linkFn = web("file-view-links.ts").split("export function linkMarkdownAnchors(")[1];
+  assert.match(linkFn, /a\.setAttribute\("target", "_blank"\);\s*\n\s*a\.setAttribute\("rel", "noopener"\);/, "…and the module stamps a web link the same way");
   // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor
   assert.match(VIEW, /if \(!lang \|\| !hljs\.getLanguage\(lang\)\) return;/);
   // the prose typography exists on BOTH sheets (the chat's .md block is the reference aesthetic)

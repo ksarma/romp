@@ -525,7 +525,12 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   named.setAttribute("name", "anchor");
   const fragName = A("#anchor", "to the name");
   const target = el("h2", "", "Top"); target.setAttribute("id", "top");
-  const box = el("div", "fileview-md", target, el("p", "", web, mail, proto, rel, enc, abs, lineHash, lineColon, same, query, qOnly, frag, fragHit, dead, named, fragName, sect, ip, lh));
+  // what the sanitizer hands the module (md-sanitize.ts, SANITIZE_NAMED_PROPS): an author's id and name arrive prefixed user-content-
+  const pre = el("p", "", "Pre"); pre.setAttribute("id", "user-content-pre");
+  const preName = el("a", "", ""); preName.setAttribute("name", "user-content-named");
+  const chrome = el("p", "", "Collide"); chrome.setAttribute("id", "user-content-fileview-save-err");   // an author's id spelled like the viewer's notice bar
+  const toPre = A("#pre", "pre"), toNamed = A("#named", "named"), toChrome = A("#fileview-save-err", "collide"), typedPrefix = A("#user-content-pre", "typed");
+  const box = el("div", "fileview-md", target, pre, preName, chrome, el("p", "", web, mail, proto, rel, enc, abs, lineHash, lineColon, same, query, qOnly, frag, fragHit, dead, named, fragName, sect, ip, lh, toPre, toNamed, toChrome, typedPrefix));
   linkMarkdownAnchors(box as unknown as HTMLElement, md);
   for (const a of [web, mail, proto]) { assert.equal(a.getAttribute("target"), "_blank", a.href); assert.equal(a.getAttribute("rel"), "noopener"); assert.equal(a.dataset.act, undefined); }
   assert.equal(web.href, "https://example.invalid/x", "the href stays");
@@ -565,6 +570,15 @@ test("linkMarkdownAnchors: a URL target opens a tab, a file target becomes a pat
   assert.equal(fragName.dataset.frag, "anchor"); assert.equal(fragName.getAttribute("title"), "Go to anchor");
   const { fragmentTarget } = await import("./file-view-links");
   assert.equal(fragmentTarget(box as unknown as HTMLElement, "anchor"), named); assert.equal(fragmentTarget(box as unknown as HTMLElement, "top"), target);
+  // the prefixed shapes: live, by the fragment as typed (never the prefixed spelling in data-frag or the title), and the lookup lands on the
+  // prefixed element; an author's id spelled like the viewer's chrome is a target too, under the prefix, so it never answers to the chrome's id
+  for (const [a, id, hit] of [[toPre, "pre", pre], [toNamed, "named", preName], [toChrome, "fileview-save-err", chrome], [typedPrefix, "user-content-pre", pre]] as const) {
+    assert.ok(a.classes.includes("fv-frag") && !a.classes.includes("fv-dead"), a.className);
+    assert.equal(a.dataset.frag, id, "the fragment as typed, never the prefixed spelling"); assert.equal(a.getAttribute("title"), "Go to " + id);
+    assert.equal(fragmentTarget(box as unknown as HTMLElement, id), hit);
+  }
+  assert.equal(preName.getAttribute("class"), null, "a prefixed named target is still a target, never dressed dead");
+  assert.equal(fragmentTarget(box as unknown as HTMLElement, "user-content-user-content-pre"), undefined, "the prefix is added once: a doubly prefixed ask finds nothing");
   const both = el("div", "", el("a", "", ""), el("h2", "", "x")); (both.childNodes[0] as El).setAttribute("name", "dup"); (both.childNodes[1] as El).setAttribute("id", "dup");
   assert.equal(fragmentTarget(both as unknown as HTMLElement, "dup"), both.childNodes[1], "an id wins over a name, as the browser's fragment rule has it");
   assert.equal(fragmentTarget(box as unknown as HTMLElement, "nowhere"), undefined);
@@ -777,7 +791,8 @@ test("source: codeBlock and mdBlock run the one pass on the DOM they built; the 
   assert.ok(anchorsAt > 0 && hlAt > anchorsAt && textAt > hlAt && mdFn.indexOf("return box;") > textAt, "anchors → highlight → text, then return");
   assert.match(mdFn, /box\.textContent = text;[^\n]*\n\s*rendered = false;/, "the fallback's bare text takes no links");
   assert.ok(mdFn.indexOf('if (doc && doc.kind === "file") {') > 0 && mdFn.indexOf('if (doc && doc.kind === "file") {') < anchorsAt, "the file kind's anchors are sorted by the module");
-  assert.equal((mdFn.match(/querySelectorAll\("a\[href\]"\)/g) || []).length, 2, "the two a[href] loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors");
+  assert.equal((mdFn.match(/querySelectorAll\(LINK_SEL\)/g) || []).length, 2, "the two link loops are the URL kind's (resolution against the URL) and the no-file arm's (a tab, or an in-document fv-anchor): neither runs over a file's anchors; both select LINK_SEL, every link element (md-sanitize-viewer-links.test.ts)");
+  assert.doesNotMatch(mdFn, /querySelectorAll\("a\[href\]"\)/, "no a[href] loop is left: it missed an SVG anchor's xlink:href");
 });
 
 test("source: the body's delegate and its gesture: a plain click on a panel mark is the card's alone (an anchor's own open cancelled), a drag-select opens nothing, a plain path click opens through the host's opener and goes on to the document (a modified one stops before the row), the chat's body delegate serves the todo card alone, a section link scrolls the rendered document and never moves the page", () => {
@@ -788,9 +803,14 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.ok(d.indexOf("panelMark(t)") < d.indexOf("selectionOpenIn(box)") && d.indexOf("selectionOpenIn(box)") < d.indexOf("openLink(x, ev)"), "the mark first, then the selection, then the link");
   // the one selection test, in path-links.ts, read by the viewer's delegate and by the chat's capture-phase opener (which ran first and opened the URL a drag inside a non-draggable anchor had selected)
   assert.match(LINKS, /export function selectionOpenIn\(el: Node\): boolean \{\n\s*const sel = window\.getSelection\(\);\n\s*return !!sel && !sel\.isCollapsed && el\.contains\(sel\.anchorNode\);\n\}/);
-  const opener = RENDER.slice(RENDER.indexOf('document.addEventListener("click", (e) => {\n  const a = (e.target as HTMLElement)?.closest?.("a[href]")'), RENDER.indexOf("}, true);", RENDER.indexOf('closest?.("a[href]")')));
-  assert.match(opener, /if \(panelMark\(e\.target as Element \| null\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(!a\.draggable && selectionOpenIn\(a\)\) \{ e\.preventDefault\(\); return; \}\n\s*const href = a\.getAttribute\("href"\) \|\| "";/,
-    "the chat's opener: the panel's mark first, then, for a non-draggable anchor only, the selection open inside it (the click that ends a drag-select: cancelled, never opened; a chat anchor is draggable and a selection left around it by a triple-click is not a drag on it, round 4), then the href");
+  // the opener keys on LINK_SEL (md-links.ts: an anchor in any href namespace, so an SVG <a> too) and reads the href through
+  // linkHref; the anchor is typed HTMLElement | SVGElement, and an SVG anchor has no draggable property, so it reads as not
+  // draggable (a press on SVG text selects it) (md-sanitize-viewer-links.test.ts, chat-link-open.test.ts)
+  const openerAt = RENDER.indexOf('document.addEventListener("click", (e) => {\n  const a = (e.target as Element)?.closest?.(LINK_SEL)');
+  assert.ok(openerAt > 0, "the chat's opener, keyed on LINK_SEL");
+  const opener = RENDER.slice(openerAt, RENDER.indexOf("}, true);", openerAt));
+  assert.match(opener, /if \(panelMark\(e\.target as Element \| null\)\) return;\n(?:\s*\/\/[^\n]*\n)*\s*if \(!\(a as HTMLElement\)\.draggable && selectionOpenIn\(a\)\) \{ e\.preventDefault\(\); return; \}\n\s*let href = linkHref\(a\);/,
+    "the chat's opener: the panel's mark first, then, for a non-draggable anchor only, the selection open inside it (the click that ends a drag-select: cancelled, never opened; a chat anchor is draggable and a selection left around it by a triple-click is not a drag on it, round 4), then the href (a `let`: a scheme-less one is replaced by the address the browser would follow, md-sanitize-chat-schemeless-browser.test.ts)");
   assert.match(RENDER, /import \{ openPathLink, linkifyPathTokens, selectionOpenIn \} from "\.\/path-links";/);
   assert.match(VIEW, /import \{ selectionOpenIn \} from "\.\/path-links";/);
   assert.doesNotMatch(d, /getSelection|isCollapsed/, "no second spelling of the selection test in the delegate");
@@ -802,8 +822,12 @@ test("source: the body's delegate and its gesture: a plain click on a panel mark
   assert.doesNotMatch(o, /box\.querySelectorAll\("\[id\]"\)|querySelectorAll\("\[id\]"\)|getElementById/, "never the whole box (a colliding author id scrolled the notice bar), and never a lookup of its own: the one in file-view-links.ts");
   assert.match(VIEW, /const target = fragmentTarget\(box\.querySelector\("\.fileview-md"\) \|\| box, frag\);/, "scrollToFragment (both viewers land through it): the rendered box, through the one lookup");
   assert.match(MOD, /const hit = id \? fragmentTarget\(root, id\) : undefined;/, "mark time reads the same root, the .fileview-md box, through the one lookup");
-  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => e\.getAttribute\("id"\) === id\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => e\.getAttribute\("name"\) === id\)\n\s*\|\| root\.querySelector\('\[id="md-' \+ headingSlug\(id\) \+ '"\]'\) \|\| undefined;/,
-    "an id first, then a GitHub-style <a name>, then the heading whose slug it is (the viewer mints md-<slug> ids; md-url-view.test.ts)");
+  assert.match(MOD, /export function fragmentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*return userContentTarget\(root, id\)\n\s*\|\| root\.querySelector\('\[id="md-' \+ headingSlug\(id\) \+ '"\]'\) \|\| undefined;/,
+    "the sanitizer's own lookup first (an id, then a GitHub-style <a name>, each under the user-content- prefix or bare: the minted md- ids), then the heading whose slug it is (md-url-view.test.ts)");
+  assert.match(MOD, /import \{ userContentTarget \} from "\.\/md-sanitize";/, "one lookup and one spelling of the prefix, the sanitizer's (the chat's delegate reads the same function, chat-link-open.test.ts)");
+  const SAN = read("md-sanitize.ts");
+  assert.match(SAN, /export function userContentTarget\(root: ParentNode, id: string\): Element \| undefined \{\n\s*const own = USER_CONTENT_PREFIX \+ id;\n\s*return Array\.from\(root\.querySelectorAll\("\[id\]"\)\)\.find\(\(e\) => \{ const v = e\.getAttribute\("id"\); return v === own \|\| v === id; \}\)\n\s*\|\| Array\.from\(root\.querySelectorAll\("a\[name\]"\)\)\.find\(\(e\) => \{ const v = e\.getAttribute\("name"\); return v === own \|\| v === id; \}\);/,
+    "the lookup: an id under the prefix or bare, then an <a name> under either, in document order");
   assert.match(o, /if \(x\.dataset\.act !== "openpath"\) \{[^\n]*\n\s*if \(!own\) return;[^\n]*\n\s*ev\.preventDefault\(\); ev\.stopPropagation\(\);[^\n]*\n\s*openUrlTab\(x\.getAttribute\("href"\) \|\| ""\);\n\s*return;/, "a URL anchor: plain is the browser's, modified is one tab from here");
   assert.match(o, /ev\.preventDefault\(\);\n\s*const p = x\.dataset\.path;\n\s*if \(!p\) return;\n\s*if \(own\) \{\n\s*ev\.stopPropagation\(\);[^\n]*\n\s*if \(openFileTab\(p, sid \|\| null\)\) return;[^\n]*\n\s*\}\n\s*const ln = Number\(x\.dataset\.line\);\n\s*openLinkedFile\(p, sid \|\| null, ln > 0 \? ln : null, x\.dataset\.frag \|\| null\);/,
     "a path link: a modified click stops before the row (its own tab, the viewer when the popup was blocked); a plain click opens through the host's opener and is NOT stopped");
