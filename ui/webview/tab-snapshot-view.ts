@@ -51,6 +51,17 @@ export function installSnapshotEscape(win: EscapeTarget, hooks: EscapeHooks): vo
   }, false);
 }
 
+/** A CLICK THAT REPEATS ONE GESTURE (round 1 of the tabhide review, 2026-09-08): the second and later clicks
+ *  of a double- or triple-click, which the platform counts (UIEvent.detail: a click within the double-click
+ *  time and distance of the last; 0 for a keyboard press, 1 for a fresh click, after a pause or a move to
+ *  another row). A control whose act moves the rows under the pointer at once (the snapshot's Hide and Show:
+ *  the write's render takes the pressed row out of its list and the next row moves up into its slot) acts
+ *  once per gesture: the repeat lands on whatever moved into the slot, and acted on, it put a second session
+ *  away with no gesture aimed at it. No timer of ours: the count is the platform's own. */
+export function repeatedClick(ev: { detail?: number } | null | undefined): boolean {
+  return (ev?.detail ?? 0) > 1;
+}
+
 /** The least of a list node the keyed row update needs: the DOM's HTMLElement, or a test's stand-in. */
 export interface RowList<N> { readonly children: ArrayLike<N>; insertBefore(node: N, ref: N | null): unknown; removeChild(node: N): unknown }
 

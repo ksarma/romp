@@ -109,7 +109,7 @@ class NoSilentSwallows(unittest.TestCase):
 
     LOUD = ("_do_set_model", "_do_set_mode", "_do_refresh_context", "_learn_model",
             "_resolve_model_pending", "_heal_stale_awaiting", "_persist_echoes", "_on_session_gone",
-            "_fire_boot_settled", "_poke", "_wake_push", "_options")
+            "_fire_boot_settled", "_poke", "_wake_push", "_wake_push_live", "_options")
 
     def test_named_handlers_report_instead_of_passing(self):
         tree = ast.parse(SB_SRC)

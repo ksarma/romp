@@ -354,7 +354,7 @@ class LiveTail(unittest.TestCase):
     def test_forwards_sends_is_true_for_the_sdk(self):
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
         self.assertTrue(be.forwards_sends(),
-                        "the SDK forwards its own sends (mid-turn + fold + interrupt-hold) — the kernel hands "
+                        "the SDK forwards its own sends (mid-turn + one message each + interrupt-hold): the kernel hands "
                         "composer sends straight over instead of parking them (the user 2026-07-17)")
 
     def test_queued_turns_survive_an_interrupt_and_release_when_the_turn_settles(self):

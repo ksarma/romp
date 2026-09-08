@@ -86,6 +86,81 @@ def prose(body):
     return body.split("<!--")[0]
 
 
+# ── the widened passage desc (the anchors follow-on, 2026-09-07) ─────────────────────────────────
+# A passage comment whose anchor the host widened — the passage recurs, and the extra context is what tells
+# the copies apart — names its copy by its surroundings: `on "<quote>", the one after "…" and before "…"`,
+# each side JSON-quoted so a context holding a line break or a quotation mark keeps the message's
+# `Comment <id> (…):` line one line (file-comments-model.ts passageDesc). The sides print whole, up to
+# DESC_CTX_MAX characters each (five of the host's 24-character steps); past that on either side — at the
+# host's cap, ANCHOR_CTX_CAP a side, where the anchor may still tie and the first form put a kilobyte of
+# escaped text on the line (the review's round 2, 2026-09-07) — the desc keeps the plan's `on "<quote>"`
+# and adds RECURS_CLAUSE, a short clause saying the text recurs. Two specimens are the composer's own
+# test's literals, copied (file-comments-model-recurring.test.ts) and pinned to that file so a copy cannot
+# outlive its original; the rest — the widest whole form, and the short form — are built with
+# _widened_desc, a mirror of passageDesc's assembly (JSON.stringify and json.dumps(ensure_ascii=False)
+# write the same escapes for the text a sidecar holds), itself pinned to those literals and to the
+# composer's constants, which are read from the source so a moved or reworded one fails loudly.
+_MODEL_SRC = Path(os.path.dirname(HERE), "ui", "webview", "file-comments-model.ts").read_text(encoding="utf-8")
+_HOST_SRC = Path(os.path.dirname(HERE), "tools", "file-comments-host.mjs").read_text(encoding="utf-8")
+
+
+def _source_const(src, where, pattern):
+    """The one capture of `pattern` in a module's source: a constant the specimens must track."""
+    m = re.search(pattern, src, re.M)
+    assert m, ("%s no longer defines the constant %r at module level — re-pin the specimens here, do not drop them"
+               % (where, pattern))
+    return m.group(1)
+
+
+ANCHOR_CTX_CAP = int(_source_const(_HOST_SRC, "tools/file-comments-host.mjs", r"^export const ANCHOR_CTX_CAP = (\d+);"))
+ANCHOR_CTX = int(_source_const(_MODEL_SRC, "file-comments-model.ts", r"^export const ANCHOR_CTX = (\d+);"))
+DESC_CTX_MAX = ANCHOR_CTX * int(_source_const(_MODEL_SRC, "file-comments-model.ts",
+                                              r"^export const DESC_CTX_MAX = ANCHOR_CTX \* (\d+);"))
+# the composer's clause for a recurring passage whose copies the message cannot tell apart, COPIED (pinned below)
+RECURS_CLAUSE = ", which appears more than once with the same text around each copy"
+
+
+def _widened_desc(quote, prefix, suffix):
+    """passageDesc's assembly for a widened anchor: the quote's first 40 characters plain; then, with both sides
+    within DESC_CTX_MAX, each non-empty side JSON-quoted and the sides joined with " and " — else RECURS_CLAUSE."""
+    head = 'on "%s"' % quote[:40]
+    if len(prefix) > DESC_CTX_MAX or len(suffix) > DESC_CTX_MAX:
+        return head + RECURS_CLAUSE
+    sides = []
+    if prefix:
+        sides.append("after " + json.dumps(prefix, ensure_ascii=False))
+    if suffix:
+        sides.append("before " + json.dumps(suffix, ensure_ascii=False))
+    return head + ", the one " + " and ".join(sides)
+
+
+RECURRING_COMMENTS = [
+    # the second copy: its context holds a quotation mark, a tab and a line break, and the escapes carry them
+    {"id": "1781100000010-612",
+     "desc": r'on "Ship it.", the one after "He said \"ready\", then\ttyped: " and before "\nNo regressions were seen in the nightly run."',
+     "body": "Not yet."},
+    # the first copy, at the file's start: no prefix to name, so only the side the file has
+    {"id": "1781100000011-0",
+     "desc": r'on "Ship it.", the one before "\n\nThe tests pass on every supported platform."',
+     "body": "Say it once."},
+]
+# the widest whole form: both sides at exactly DESC_CTX_MAX, each holding quotation marks and line breaks — the
+# longest Comment line a send carries
+_PARA = 'The nightly run said "ready" on every supported platform.\n'
+_BOUND_TEXT = _PARA * (DESC_CTX_MAX // len(_PARA) + 1)
+BOUND_PREFIX, BOUND_SUFFIX = _BOUND_TEXT[-DESC_CTX_MAX:], _BOUND_TEXT[:DESC_CTX_MAX]
+WIDEST_COMMENT = {"id": "1781100000012-1740", "desc": _widened_desc("Ship it.", BOUND_PREFIX, BOUND_SUFFIX),
+                  "body": "Which of these is the one you mean?"}
+# past the bound: the host's anchor at its cap on copies of one paragraph the cap cannot tell apart, so the desc
+# reads the same on every copy (the composer's cap test's specimen, file-comments-model-cap.test.ts) — the first
+# through the mirror from a cap-width anchor, the second the literal a reader should expect
+RECURS_COMMENTS = [
+    {"id": "1781100002000-1213", "desc": _widened_desc("the marker phrase", "x" * ANCHOR_CTX_CAP, "y" * ANCHOR_CTX_CAP),
+     "body": "Say it once."},
+    {"id": "1781100003000-2423", "desc": 'on "the marker phrase"' + RECURS_CLAUSE, "body": "And here."},
+]
+
+
 # ── the desc composers' source scan ──────────────────────────────────────────────────────────────
 # The Send to session message's parenthetical (`desc`) is composed in the webview and the kernel prints
 # it verbatim, so its fixed phrases are scanned at the SOURCE (test_the_client_composed_desc_speaks_
@@ -363,9 +438,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # prints it verbatim, so the descs below are COPIES of what the client emits, one body per
             # form: a passage, this file, a change with the decision sentence, a region of a standalone
             # image, a region of a figure embedded in a text file (Slice 3, which names the figure by
-            # its src), a region of a PDF page (the plan's own specimen), and a region with a coordinate
+            # its src), a region of a PDF page (the plan's own specimen), a region with a coordinate
             # the sidecar holds as something other than a number, which prints as "?" in its slot (the
-            # UNREADABLE form the source scan below reaches through fmt2). A copy catches a drift only
+            # UNREADABLE form the source scan below reaches through fmt2), and a passage that RECURS,
+            # named by its widened surroundings (the anchors follow-on, 2026-09-07; passageDesc) — with
+            # the escapes a context needs, at the widest the sides print whole, and past that bound, where
+            # a short clause says only that the text recurs. A copy catches a drift only
             # when the editor propagates it, so the composers' string literals — and those of every
             # helper they reach, such as the "?" a coordinate that is not a number prints as — are
             # scanned at the source as well (test_the_client_composed_desc_speaks_plainly_at_its_source).
@@ -430,6 +508,23 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                 [{"id": "1781100000009-0", "desc": "on the region at 0.10, ?, 0.30, 0.40",
                   "body": "Which run is this spike from?"}],
                 0, 0, False, False),
+            # the anchors follow-on (2026-09-07): a passage that RECURS is named by its widened
+            # surroundings — `on "<quote>", the one after "…" and before "…"`, both sides JSON-quoted
+            # (passageDesc) — so the session can build a `--old` that is unique; the quote alone is one the
+            # CLI refuses. Rendered as the two copies of one passage: one whose context holds a quotation
+            # mark, a tab and a line break (the escapes are what keep the Comment line one line), and one
+            # at the file's start with no prefix to name. The descs are the composer's own test's literals.
+            "file comments message (recurring passage)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", RECURRING_COMMENTS, 0, 0, True, True),
+            # …the WIDEST whole form: both sides at the bound the composer prints whole (DESC_CTX_MAX), the
+            # longest Comment line a send carries, rendered so the scan and a reader see the shape at its largest
+            "file comments message (recurring passage, widest)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/report.md", [WIDEST_COMMENT], 0, 0, True, True),
+            # …and PAST the bound (the review's round 2, 2026-09-07): an anchor at the host's cap may still tie,
+            # so its sides would name a span that sits on every copy — a kilobyte of it — and the desc says
+            # instead, in a short clause, that the text recurs (RECURS_CLAUSE); the same line on every copy
+            "file comments message (recurring passage, past the bound)": km._file_comments_message(
+                "/TESTDIR/notes-api/docs/repeat.md", RECURS_COMMENTS, 0, 0, True, True),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -464,7 +559,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         # and scans them the way the rendered bodies are scanned. The reach matters: regionDesc prints
         # a coordinate that is not a number as UNREADABLE ("the region at 0.10, ?, 0.30, 0.40"), a
         # constant it gets through fmt2, and describeComment names an embedded figure through decodeSrc
-        # and the region through region-geometry's regionDesc — none of them in the composer's own span.
+        # and the region through region-geometry's regionDesc, and names a recurring passage by its surroundings
+        # or by the short RECURS_CLAUSE through passageDesc (the anchors follow-on, 2026-09-07) — none of them
+        # in the composer's own span.
         # Comments in the source are skipped (they are not emitted); a composer that moved or was
         # renamed, a helper import that no longer resolves, or a helper reached through a default
         # import (which the scan does not follow) fails loudly here — re-pin it, do not drop the scan.
@@ -473,8 +570,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         ui = os.path.join(os.path.dirname(HERE), "ui", "webview")
         composers = (
             ("file-comments-model.ts", "describeComment",
-             ("on this file", 'on "', "on your change", "the region at "),
-             (("region-geometry.ts", "regionDesc"), ("file-comments-model.ts", "decodeSrc"))),
+             ("on this file", 'on "', "on your change", "the region at ", ", the one ", "after ", "before ",
+              ", which appears more than once"),
+             (("region-geometry.ts", "regionDesc"), ("file-comments-model.ts", "decodeSrc"),
+              ("file-comments-model.ts", "passageDesc"), ("file-comments-model.ts", "RECURS_CLAUSE"))),
             ("region-geometry.ts", "regionDesc",
              ("the region at ", " of page ", "?"),
              (("region-geometry.ts", "fmt2"), ("region-geometry.ts", "UNREADABLE"))),
@@ -496,6 +595,103 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                                          "%s.%s would print %r into the Send to session message, through %s.%s "
                                          "(%r: %s). The desc reaches the session verbatim — write it as the "
                                          "person would name the spot." % (fname, fn, lit, base, n, word, why))
+
+    @staticmethod
+    def _sides(clause):
+        """The surroundings a widened desc's clause names — the text after ", the one " — decoded the way a
+        session would read them: {"after": prefix, "before": suffix} for the sides present. A side is one
+        JSON string; the two are joined with " and "."""
+        dec, out, rest = json.JSONDecoder(), {}, clause
+        while rest:
+            side, rest = rest.split(" ", 1)
+            text, end = dec.raw_decode(rest)
+            out[side] = text
+            rest = rest[end:]
+            if rest.startswith(" and "):
+                rest = rest[len(" and "):]
+        return out
+
+    def test_the_widened_desc_rides_the_comment_line_whole(self):
+        # the anchors follow-on (2026-09-07): a passage comment whose anchor the host widened names its copy
+        # by its surroundings, or — past the bound the composer prints whole — says that the text recurs, and
+        # the kernel prints that desc verbatim on the `Comment <id> (…):` line, so the session reads it exactly
+        # as the client composed it. What a reader of the rendered bodies should be able to see, pinned: every
+        # form is ONE line — a context's line break rides as the JSON escape, never raw — the body follows on
+        # the next line; each quoted side decodes back to the context whole, the text a session puts beside the
+        # quote in `track-edit --old`, and never wider than the bound; at the bound the line is the longest a
+        # send carries; and past it the short clause stands alone, the same on every copy, carrying none of
+        # the surroundings. Before this the widened form was rendered nowhere the voice scan reads; only its
+        # fragments were scanned at the source (the review, 2026-09-07).
+        bodies = self._bodies()
+        whole = [("file comments message (recurring passage)", RECURRING_COMMENTS),
+                 ("file comments message (recurring passage, widest)", [WIDEST_COMMENT])]
+        short = ("file comments message (recurring passage, past the bound)", RECURS_COMMENTS)
+        for name, comments in whole + [short]:
+            lines = bodies[name].split("\n")
+            self.assertEqual(len([l for l in lines if l.startswith("Comment ")]), len(comments),
+                             "%r: one Comment line per comment — no desc broke its line" % name)
+            for c in comments:
+                with self.subTest(message=name, comment=c["id"]):
+                    line = "Comment %s (%s):" % (c["id"], c["desc"])
+                    self.assertNotIn("\n", line, "the escapes carry the context's line breaks")
+                    self.assertIn(line, lines, "the kernel prints the desc verbatim, whole, on one line")
+                    self.assertEqual(lines[lines.index(line) + 1], c["body"], "the body follows its own line")
+        for name, comments in whole:
+            for c in comments:
+                with self.subTest(message=name, comment=c["id"]):
+                    m = re.fullmatch(r'on "([^"]+)", the one (.+)', c["desc"])
+                    self.assertTrue(m, "the whole form: the quote plain, then the surroundings clause")
+                    self.assertEqual(m.group(1), "Ship it.")
+                    sides = self._sides(m.group(2))
+                    self.assertTrue(sides and set(sides) <= {"after", "before"}, sides)
+                    for side, text in sides.items():
+                        self.assertTrue(text, "an empty side is not named")
+                        self.assertLessEqual(len(text), DESC_CTX_MAX, "a side printed is printed whole, within the bound")
+                        self.assertNotEqual(json.dumps(text, ensure_ascii=False), '"%s"' % text,
+                                            "each specimen's %s side holds something only an escape can carry" % side)
+        widest = self._sides(re.fullmatch(r'on "[^"]+", the one (.+)', WIDEST_COMMENT["desc"]).group(1))
+        self.assertEqual({k: len(v) for k, v in widest.items()}, {"after": DESC_CTX_MAX, "before": DESC_CTX_MAX},
+                         "the bound's worth on both sides, whole")
+        self.assertEqual((widest["after"], widest["before"]), (BOUND_PREFIX, BOUND_SUFFIX))
+        self.assertGreater(len(WIDEST_COMMENT["desc"]), 2 * DESC_CTX_MAX, "the longest line a send carries is rendered")
+        # past the bound: the plan's form plus the clause, alike on every copy, none of the context, no false "the one"
+        self.assertGreater(ANCHOR_CTX_CAP, DESC_CTX_MAX,
+                           "an anchor at the host's cap is past the bound, so the cap renders the short form")
+        for c in RECURS_COMMENTS:
+            self.assertEqual(c["desc"], 'on "the marker phrase"' + RECURS_CLAUSE)
+            self.assertNotIn("the one ", c["desc"])
+            self.assertLess(len("Comment %s (%s):" % (c["id"], c["desc"])), 160)
+        self.assertNotIn("xxxx", bodies[short[0]], "none of the cap-width context reaches the message")
+
+    def test_the_widened_desc_copies_are_the_composers_own_specimens(self):
+        # the two RECURRING_COMMENTS descs are copied from the composer's own test (file-comments-model-
+        # recurring.test.ts asserts passageDesc produces each), RECURS_CLAUSE from the composer's constant, and
+        # _widened_desc, which builds the widest and the short specimens, must produce those same copies and
+        # the composer's own bound cases (file-comments-model-cap.test.ts) — so a change to passageDesc's form
+        # that the client's tests follow fails here until the copies and the mirror follow too, rather than
+        # leaving this index rendering a shape no session receives
+        ts = Path(os.path.dirname(HERE), "ui", "webview", "file-comments-model-recurring.test.ts").read_text(encoding="utf-8")
+        for c in RECURRING_COMMENTS:
+            with self.subTest(comment=c["id"]):
+                # the TypeScript literal is single-quoted and doubles each backslash the desc carries
+                self.assertIn("'" + c["desc"].replace("\\", "\\\\") + "'", ts,
+                              "the copy is no longer the literal the composer's test asserts — re-copy it")
+        self.assertIn('export const RECURS_CLAUSE = "%s";' % RECURS_CLAUSE, _MODEL_SRC,
+                      "the copy is no longer the composer's constant — re-copy it")
+        self.assertEqual(_widened_desc("Ship it.", 'He said "ready", then\ttyped: ',
+                                       "\nNo regressions were seen in the nightly run."), RECURRING_COMMENTS[0]["desc"])
+        self.assertEqual(_widened_desc("Ship it.", "", "\n\nThe tests pass on every supported platform."),
+                         RECURRING_COMMENTS[1]["desc"])
+        p, s = "p" * DESC_CTX_MAX, "s" * DESC_CTX_MAX
+        self.assertEqual(_widened_desc("Ship it.", p, s), 'on "Ship it.", the one after "%s" and before "%s"' % (p, s),
+                         "exactly the bound: whole")
+        for over in ((p + "p", s), (p, s + "s"), ("", "s" * ANCHOR_CTX_CAP), ("x" * ANCHOR_CTX_CAP, "y" * ANCHOR_CTX_CAP)):
+            self.assertEqual(_widened_desc("Ship it.", *over), 'on "Ship it."' + RECURS_CLAUSE,
+                             "one over on either side, or at the cap: the short form, never a side cut short")
+        self.assertEqual(_widened_desc("x" * 50, "p" * 30, ""), 'on "%s", the one after "%s"' % ("x" * 40, "p" * 30),
+                         "the quote keeps the plan's 40 characters; a side the file left empty is not named")
+        self.assertEqual(_widened_desc("q" * 50, p + "p", ""), 'on "%s"' % ("q" * 40) + RECURS_CLAUSE,
+                         "…in both forms")
 
     def test_the_index_renders_both_shapes_of_the_file_comments_message(self):
         # the send message has TWO shapes with different prose (kernel _file_comments_message): the

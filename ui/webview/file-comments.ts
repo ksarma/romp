@@ -508,10 +508,17 @@ function shrinkable(b: HTMLElement): void {
   b.style.flex = "0 1 auto"; b.style.minWidth = "0"; b.style.textAlign = "left";
 }
 // A passage comment's `range` indexes `text` — the source the selection was made over, or the reload the
-// passage was re-found in (retargetComposer) — so the anchor is always built over the text the offsets
+// passage was followed into (retargetComposer) — so the anchor is always built over the text the offsets
 // belong to, never over whatever sits at those offsets now. `text` travels with every non-null range.
+// `tied` is set when the pair is stale because the current text holds the passage intact in more than one
+// place its anchor cannot tell apart (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save sends the anchor with NO offset, since the range's start indexes other text and would settle
+// the tie by coincidence; the host refuses a tie it cannot settle (anchor-ambiguous) and the note stays.
+// `elsewhere` is set when the pair is stale because the edit reached the passage and its text is now intact
+// only at a copy the edit never touched (followPassage): the pair is kept, nothing is painted, the chip says
+// so, and Save is refused here — the host, given one hit, would place the note on that other copy.
 type Composer =
-  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; refusal: (MapRefusal & { selText: string }) | null }
+  | { kind: "comment"; range: SourceRange | null; quote: string | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: (MapRefusal & { selText: string }) | null }
   // `resolved`: whether the comment was already resolved when the reply began — the slot's row tells a comment resolved
   // since the reply began from one whose Resolved fold the person closed (replyAway)
   | { kind: "reply"; commentId: string; ref: string; resolved: boolean }
@@ -520,7 +527,7 @@ type Composer =
   // embed's dest and source range for a figure in rendered markdown (null for a standalone image), `text` the
   // source the range indexes; `refusal` when the figure's embed line could not be found (nothing to anchor to);
   // `page` the 1-based page when the picture is a PDF page's canvas (Slice 4), null otherwise
-  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; refusal: string | null }
+  | { kind: "region"; img: Pictured; region: Region; page: number | null; src: string | null; range: SourceRange | null; text?: string; tied?: boolean; elsewhere?: boolean; refusal: string | null }
   // Re-place: the next region drawn on the comment's picture becomes its target (retarget, E3); no words. `page`
   // is the comment's current page for a PDF region (the new place may be on any page)
   | { kind: "replace"; commentId: string; ref: string; src: string | null; page: number | null };
@@ -529,6 +536,70 @@ const EMBED_NOT_FOUND = "the line that embeds this image was not found in the so
 /** The passage composer's refusal for the same figure — the picture click's Comment offer builds it (startImageComment), and
  *  Switch to Raw on a refused region turns the region composer into it: a Raw selection of the embed line places the note. */
 const EMBED_NOT_FOUND_SELECT = "The line that embeds this image was not found in the source; select it in the Raw view.";
+/** The composer's tag titles once the file changed under a pending passage and it now recurs where the anchor cannot tell
+ *  the copies apart (`tied`): the person picks the copy again; Save meanwhile carries no offset and the host refuses a tie. */
+const PASSAGE_TIED = "The file changed and this passage now occurs in it more than once with the same surroundings, so the copy you selected cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Select the passage again to pick the copy.";
+const EMBED_TIED = "The file changed and the line embedding this figure now occurs in it more than once with the same surroundings, so the one you drew on cannot be told apart; Save asks the file's machine to place it, and refuses if the copies still tie. Draw the region again to pick the figure.";
+/** The composer's tag titles once the file changed where the pending passage was, and its text is now intact only at a copy
+ *  the edit never touched (`elsewhere`): the person picks the passage again; Save meanwhile is refused here (saveComposer). */
+const PASSAGE_ELSEWHERE = "The file changed where you selected this passage, and its text now occurs only elsewhere in the file, at a copy you did not select; Save is refused rather than put the note there. Select the passage again.";
+const EMBED_ELSEWHERE = "The file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file, at a copy you did not draw on; Save is refused rather than put the note there. Draw the region again.";
+/** Save's refusal rows for an `elsewhere` pair: the note stays, and the person selects or draws again. */
+const PASSAGE_ELSEWHERE_SAVE = "Nothing saved: the file changed where you selected this passage, and its text now occurs only elsewhere in the file. Select the passage again.";
+const EMBED_ELSEWHERE_SAVE = "Nothing saved: the file changed where you drew this region, and the line embedding this figure now occurs only elsewhere in the file. Draw the region again.";
+/** The card's words for a highlight on a copy the panel cannot vouch for (copyUnsure): the tag's title, and a line on the
+ *  open card, since a tag's title never reaches touch. */
+function copyUnsureWords(c: Card): string {
+  return "This passage occurs in the file more than once with the same surroundings, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so the first copy is highlighted"
+      : "the position stored with the comment names none of the copies as the file is now, so the copy nearest that position is highlighted")
+    + " — not a confirmed one.";
+}
+/** The highlight's own title for that copy: the hover's shorter form of the same words, on the same branch as
+ *  copyUnsureWords, so the mark and the card never disagree about whether a position is stored (the review,
+ *  2026-09-08: the title claimed a stored position on a comment `track-comment` wrote, whose card said it stores none). */
+function unsureMarkTitle(c: Card): string {
+  return "Open the comment; this passage recurs, and "
+    + (c.anchorAt === null
+      ? "the comment stores no position to tell the copies apart, so this is the first copy"
+      : "this copy is the nearest to the comment's stored position")
+    + ", not a confirmed one";
+}
+/** Where a passage composer's pair — `range` into `oldText` — stands once the view shows `newText` (retargetComposer).
+ *  The two texts' common prefix and suffix bound the span the edit changed: a passage wholly before that span keeps its
+ *  offsets and one wholly after it moves by the span's growth, both exact — the same characters, however many copies of
+ *  the passage the text holds, so a paragraph the session inserts above a recurring passage moves the note with ITS
+ *  copy. Only a passage the span reaches is re-found through its anchor (the engine's 24 characters of context, built
+ *  over the text the offsets index): `moved` when the quote sits intact at one best hit that lies where the edit put
+ *  its text; `elsewhere` when that one hit lies wholly outside the span the edit's text occupies now — text the edit
+ *  never touched, at the offsets it had before, so another copy of the passage and never the one the edit reached (the
+ *  review, 2026-09-07: a session rewrote the selected copy of a sentence that recurs, the anchor re-found the other
+ *  copy, and the note followed it there with no tag); `tied` when it sits intact at several the anchor cannot tell
+ *  apart — the engine's earliest and latest tied hits (hint 0, hint length) differ — a choice the old offset must not
+ *  make, since nearest-to-an-offset-into-other-text picks by coincidence (the re-find did exactly that until
+ *  2026-09-07: an insertion above longer than half the gap between two copies moved the note to the other copy, and
+ *  the host, now settling a hinted tie, saved it there); `gone` when the quote is intact nowhere. */
+export type Followed = { state: "moved"; range: SourceRange } | { state: "tied" } | { state: "gone" } | { state: "elsewhere" };
+export function followPassage(oldText: string, range: SourceRange, newText: string): Followed {
+  const oldLen = oldText.length, newLen = newText.length, min = Math.min(oldLen, newLen);
+  let p = 0;
+  while (p < min && oldText.charCodeAt(p) === newText.charCodeAt(p)) p++;
+  let s = 0;
+  while (s < min - p && oldText.charCodeAt(oldLen - 1 - s) === newText.charCodeAt(newLen - 1 - s)) s++;
+  if (range.end <= p) return { state: "moved", range: { start: range.start, end: range.end } };
+  if (range.start >= oldLen - s) { const d = newLen - oldLen; return { state: "moved", range: { start: range.start + d, end: range.end + d } }; }
+  const anchor = makeAnchor(oldText, range);
+  const first = locateComment(newText, anchor, 0);
+  if (first.state !== "located" || !first.range) return { state: "gone" };
+  const last = locateComment(newText, anchor, newLen);
+  if (last.state === "located" && last.range && last.range.start === first.range.start) {
+    // one best hit: the passage only where the edit's text now sits, [p, newLen - s); wholly outside it is untouched text
+    if (first.range.end <= p || first.range.start >= newLen - s) return { state: "elsewhere" };
+    return { state: "moved", range: first.range };
+  }
+  return { state: "tied" };
+}
 /** Why the head of the card holding a reply does not fold it: the head's title, and on a coarse pointer the line under the head
  *  (holdHead, heldNote) — one sentence for both, so the pointer and the touch read the same words. */
 const HOLD_WORDS = "The card stays open while its reply is written; Save or Cancel the reply first";
@@ -915,6 +986,9 @@ class Panel {
   colors: Map<string, FileViewIdentity> | null = null;
   wanted: { key: FocusKey; at: Element } | null = null;   // a focused control a render rebuilt DISABLED, and where the keyboard went meanwhile (refocus)
   located = new Map<string, Located & { painted: boolean }>();
+  /** The comments whose highlight sits on a copy the panel cannot vouch for (copyUnsure): the anchor ties and the stored
+   *  position names none of the tied copies, so the copy painted is the engine's guess. Rebuilt with `located` each paint. */
+  unsureCopies = new Set<string>();
   base: PollBaseline | null = null;
   // editing over pending changes (Slice 5): what the editor's records came from — the status at Edit, or the last landed
   // save's reply once the editor stayed up past it — as the records and the sidecar/config fence the save fences on (a
@@ -2108,6 +2182,14 @@ class Panel {
       this.renderComposer();
       return;
     }
+    if ((c.kind === "comment" || c.kind === "region") && c.elsewhere) {
+      // the edit reached the passage and its text is now intact only at a copy the edit never touched (followPassage):
+      // the host, handed the anchor, would find that one hit and place the note there — its exact-hint check runs on a
+      // tie alone — so the refusal is made here, the note stays, and the person selects or draws again
+      this.errors.set("composer", { text: c.kind === "region" ? EMBED_ELSEWHERE_SAVE : PASSAGE_ELSEWHERE_SAVE, reload: false });
+      this.renderComposer();
+      return;
+    }
     // the comment ids before the write, for the two readers of the reply: the store's for savedCommentId (the scroll to the
     // saved card), the model's cards' for noteHiddenSave (the line for a card the filter hides) — the same ids, cardModel
     // building one card per store comment
@@ -2121,6 +2203,7 @@ class Panel {
       // also carries the embed line's anchor, built over the text its range indexes as for a passage comment
       const args: Record<string, unknown> = { note, target: regionTarget(c.region, c.src, c.page) };
       if (c.range && c.text !== undefined) { args.anchor = makeAnchor(c.text, c.range); args.hintOffset = c.range.start; }
+      if (c.tied) delete args.hintOffset;                // a tied pair (retargetComposer): the start indexes other text; the passage path below says why
       r = await this.mutate("comment", args, "composer");
     } else {
       const args: Record<string, unknown> = { note };
@@ -2129,6 +2212,10 @@ class Panel {
       // relocates by this anchor and hint, or refuses — a note aimed at one passage never lands on another
       const src = c.text === undefined ? null : c.text;
       if (c.range && src !== null) { args.anchor = makeAnchor(src, c.range); args.hintOffset = c.range.start; }
+      // a tied pair (retargetComposer): the start indexes other text, and the host would settle the tie by it — nearest
+      // wins, by coincidence — and save the note on a copy the person never selected. With no offset it refuses a tie
+      // still standing (anchor-ambiguous), the note stays, and the passage is selected again.
+      if (c.tied) delete args.hintOffset;
       r = await this.mutate("comment", args, "composer");
     }
     const hid = r !== null && c.kind !== "reply" && this.noteHiddenSave(before, note);
@@ -2251,6 +2338,7 @@ class Panel {
     if (this.changesMovedUnderEdit) { this.changesMovedUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_MOVED_UNDER_EDIT) this.errors.delete("edit"); }
     if (this.changesUnreadUnderEdit) { this.changesUnreadUnderEdit = false; if (this.errors.get("edit")?.text === CHANGES_UNREAD_UNDER_EDIT) this.errors.delete("edit"); }
     this.located = new Map();
+    this.unsureCopies = new Set();
     this.paintedChanges = new Set();
     // a mark of ours holding the keyboard (Enter on it opened the panel, whose colour fetch and status reply both
     // repaint) is unwrapped below, and a removed element drops the focus to the body; refocus() mends only the
@@ -2266,7 +2354,15 @@ class Panel {
     // marks only; the cards the filter hides are not rendered, so nothing reads `located` for them
     for (const card of this.activeFilter() === "changes" ? [] : this.cards()) {
       if (card.resolved || !card.anchor) continue;
-      const loc = locateComment(src, card.anchor);
+      // the stored position is the engine's tie-break (nearest wins), so a comment on text that recurs with the same
+      // surroundings past the anchor's context is painted on the copy that was chosen — in the VIEW's coordinates
+      // (viewAt: the host's text keeps a BOM the fetch strips, so its offsets run one ahead on such a file)
+      const at = this.viewAt(card);
+      const loc = locateComment(src, card.anchor, at);
+      // ...and where the anchor ties and the position names none of the tied copies, the copy painted is the engine's
+      // guess: painted in the dashed cue and said on the card (copyUnsure), never shown as the copy that was chosen
+      const unsure = loc.state === "located" && !!loc.range && this.copyUnsure(src, card, at, loc.range.start);
+      if (unsure) this.unsureCopies.add(card.id);
       let painted = false;
       if (loc.state !== "detached" && loc.range) {
         const cls = "fc-hl" + (loc.state === "context" ? " fc-hl-context" : "");
@@ -2274,11 +2370,13 @@ class Panel {
           : paintRaw(root, src, loc.range, cls, { act: "fcopen", id: card.id });
         painted = !!out && out.length > 0;
         // a highlight is a control (it opens the card): reachable by Tab, activated by Enter (KEY_ACTS), and
-        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup
-        for (const m of out || []) { (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = "Open the comment on this passage"; this.mark(m); }
+        // remembered as the panel's own (owns) — the one kind of control it puts among the file's markup; a guessed copy
+        // wears the dashed cue as well (the sheet's mark for a passage not confirmed at its place) and says so
+        const title = unsure ? unsureMarkTitle(card) : "Open the comment on this passage";
+        for (const m of out || []) { if (unsure) m.classList.add("fc-hl-context"); (m as HTMLElement).tabIndex = 0; m.setAttribute("role", "button"); (m as HTMLElement).title = title; this.mark(m); }
         if (!painted && rendered && !card.target) {    // an embed line renders no text: the frame goes on its picture — unless the comment is a region, whose rectangle (paintRegions) is the mark
           const img = imgForRange(root, src, loc.range, this.ctx.path);
-          if (img) { frameImage(img, cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
+          if (img) { frameImage(img, unsure ? cls + " fc-hl-context" : cls, { act: "fcopen", id: card.id }); this.mark(img); painted = true; }
         }
       }
       this.located.set(card.id, { ...loc, painted });
@@ -2294,6 +2392,32 @@ class Panel {
   // head once did in the aside (render's refocus mends the aside alone). The focused mark is re-found by what it IS —
   // the action, the id of its subject, and its place among the subject's marks — never by its node. paintAll and
   // paintRegions each mend the marks they rebuild (heldMark before the pass, refocusMark after it).
+  /** A card's stored position (`anchorAt`, the host's offset into the text IT read) in the view's coordinates. The host
+   *  reads the file with its BOM kept and the fetch hands the viewer the text with it stripped, so on a BOM-prefixed
+   *  file every stored position is the view's plus one; the status says which (`bom`, the host's own word on its text:
+   *  the panel has no other authoritative source for it, since the viewer never sees the byte). Compared unmapped, a
+   *  position naming the chosen copy missed it by one on every such file, and the copy was painted as a guess (the
+   *  review, 2026-09-08). undefined without a position; 0 is a position. */
+  private viewAt(card: Card): number | undefined {
+    if (card.anchorAt === null) return undefined;
+    return this.status && this.status.bom ? card.anchorAt - 1 : card.anchorAt;
+  }
+  /** Whether the copy the engine found a comment at (`at`, the pick with the stored position as the hint) is a guess:
+   *  the anchor has more than one best hit in the text — its earliest and latest (hint 0, hint length) differ, the
+   *  host's own test for a tie — and the stored position (`stored`, in the view's coordinates: viewAt) names none of
+   *  them. The pick is then nearest-wins from a position nothing vouches for, or the earliest with no position at all:
+   *  the host keeps a position that names no copy when the recorded changes carry it to none or to several, and every
+   *  position when the file changed unrecorded (refreshAnchorAts), and an edit inside the chosen copy's context leaves
+   *  the other copies whole to outscore it (the review, 2026-09-07: the highlight sat on a copy the person never
+   *  commented, painted as located). A position that names a tied copy is the choice recorded; one best hit is the
+   *  anchor's own answer and needs none. */
+  private copyUnsure(src: string, card: Card, stored: number | undefined, at: number): boolean {
+    if (!card.anchor || stored === at) return false;
+    const first = locateComment(src, card.anchor, 0);
+    if (first.state !== "located" || !first.range) return false;
+    const last = locateComment(src, card.anchor, src.length);
+    return last.state === "located" && !!last.range && last.range.start !== first.range.start;
+  }
   /** OUR marks (owns) for one subject, in document order: a comment's highlight may span several rows, and a
    *  substitution paints a deletion point and then its new text, all with the same action and id. */
   private ownMarks(act: string, id: string): HTMLElement[] {
@@ -2379,16 +2503,27 @@ class Panel {
     this.paintRegions();                               // the composer's pending region and the re-place cue live on the overlays
   }
   /** The body was repainted, possibly over NEW text (the poll saw the file move and reloaded it; Reload;
-   *  a refresh): a pending passage is re-found through the anchor of its own text, so the presel, the
-   *  chip and the hint follow the passage rather than its old offsets — a note typed while the session
-   *  inserts a paragraph above still lands where it was aimed. Not re-found (the passage changed or went):
-   *  the selection-time pair is kept, the chip says so, nothing is painted, and Save hands the host that
-   *  anchor to rule on — it relocates, or refuses and the note stays. */
+   *  a refresh; a save through the editor): a pending passage follows its passage into that text
+   *  (followPassage), so the presel, the chip and the hint move with it — a note typed while the session
+   *  inserts a paragraph above still lands where it was aimed, on the copy that was selected even where
+   *  the passage recurs, since an edit that does not reach the passage moves its offsets exactly. Not
+   *  followed, the selection-time pair is kept, nothing is painted, and the chip says which: the passage
+   *  changed or went (Save hands the host that anchor and offset to rule on — it relocates, or refuses
+   *  and the note stays), or it now recurs where the anchor cannot tell the copies apart (`tied`: Save
+   *  sends the anchor with no offset, so the host refuses a tie rather than settle it by an offset into
+   *  other text; selecting the passage again pins the copy), or the edit reached it and its text is now
+   *  intact only at a copy the edit never touched (`elsewhere`: Save is refused here, since the host
+   *  would place that one hit; selecting the passage again pins the copy). Text that is the pair's own
+   *  again — a repaint, a reverted edit — is exact, so a tie or an elsewhere noted meanwhile is dropped. */
   private retargetComposer(): void {
     const c = this.composer; const src = this.indexedText();
-    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null || src === c.text) return;
-    const loc = locateComment(src, makeAnchor(c.text, c.range), c.range.start);
-    if (loc.state === "located" && loc.range) { c.range = loc.range; c.text = src; }
+    if (!c || (c.kind !== "comment" && c.kind !== "region") || !c.range || c.text === undefined || src === null) return;
+    c.elsewhere = false;
+    if (src === c.text) { c.tied = false; return; }
+    const f = followPassage(c.text, c.range, src);
+    if (f.state === "moved") { c.range = f.range; c.text = src; c.tied = false; }
+    else c.tied = f.state === "tied";
+    c.elsewhere = f.state === "elsewhere";
   }
   // ── region comments (Slice 3): the overlays ─────────────────────────────────────────────────────
   /** The pictures that take an overlay in the current view: the media body's <img>, or each page's canvas while the
@@ -2617,8 +2752,12 @@ class Panel {
    *  where Save hands the drag-time anchor to the host). By src alone, two embeds of ONE destination — a figure shown
    *  twice — put the pending rectangle and the composer's thumbnail on the FIRST twin while `range` still named the second
    *  and Save anchored the region there: the preview stood on one picture and the saved rectangle landed on another (the
-   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. */
+   *  2026-09-06 review). Both directions of the pairing count twins by order (embedOf); this one now does too. A pair
+   *  marked `tied` or `elsewhere` (retargetComposer) names NO picture: the chip says the figure drawn on cannot be told
+   *  apart, or that its embed line is now only elsewhere, and a rectangle on the first twin of the src would claim the
+   *  opposite (the review, 2026-09-07); the composer keeps the picture it was drawn on for its thumbnail. */
   private composerImage(c: Extract<Composer, { kind: "region" }>, imgs: Pictured[]): Pictured | undefined {
+    if (c.tied || c.elsewhere) return undefined;
     const root = this.contentRoot(); const src = this.ctx.text();
     if (root && src !== null && c.range && c.text === src) {
       const img = imgForRange(root, src, c.range, this.ctx.path) as Pictured | null;
@@ -3624,9 +3763,9 @@ class Panel {
         ref.appendChild(el("span", "fc-note", "On " + regionDesc(c.region, c.page)));
         const crop = cropThumb(c.img, c.region);
         if (crop) ref.appendChild(crop);
-        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not re-found (retargetComposer)
-          const t = el("span", "fc-tag", "passage changed");
-          t.title = "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+        if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the embed line was not followed into it (retargetComposer)
+          const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+          t.title = c.tied ? EMBED_TIED : c.elsewhere ? EMBED_ELSEWHERE : "The file changed and the line embedding this figure was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
           ref.appendChild(t);
         }
       }
@@ -3641,9 +3780,9 @@ class Panel {
       q.title = c.quote;
       ref.appendChild(el("span", "fc-note", "On "));
       ref.appendChild(q);
-      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not re-found in it (retargetComposer)
-        const t = el("span", "fc-tag", "passage changed");
-        t.title = "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
+      if (c.range && c.text !== undefined && c.text !== this.indexedText()) {   // the file changed and the passage was not followed into it (retargetComposer)
+        const t = el("span", "fc-tag", c.tied ? "passage recurs" : "passage changed");
+        t.title = c.tied ? PASSAGE_TIED : c.elsewhere ? PASSAGE_ELSEWHERE : "The file changed and this passage was not found in it; Save asks the file's machine to place it, and refuses if it cannot";
         ref.appendChild(t);
       }
     } else ref.appendChild(el("span", "fc-note", "On this file"));
@@ -3913,6 +4052,9 @@ class Panel {
       head.appendChild(t);
     }
     if (loc && loc.state === "context") head.appendChild(el("span", "fc-tag", "text changed"));
+    // a highlight on a copy the panel cannot vouch for (copyUnsure): the composer's chip for a pending passage in the same
+    // state wears the same words, and the title says which copy is painted and why it is a guess
+    if (this.unsureCopies.has(c.id)) { const t = el("span", "fc-tag", "passage recurs"); t.title = copyUnsureWords(c); head.appendChild(t); }
     if (loc && loc.state === "detached") head.appendChild(el("span", "fc-tag", "detached"));
     // a comment on a change the sidecar holds stands on its own card only while the filter shows the comments alone
     // (renderCards): the tag says the change is there, behind All or Changes — and which it is, since `hunk` is set for a
@@ -3941,6 +4083,7 @@ class Panel {
     // changed, that the region could not be read — each with its way out: the tags' titles never reach touch, where the
     // Re-place the stale title used to name is absent too (a coarse pointer draws nothing), so a phone saw a one-word tag
     // and no way to learn that resolving ends it (the 2026-09-06 review; ui/CLAUDE.md: never dead-end a compact view)
+    if (this.unsureCopies.has(c.id)) card.appendChild(el("div", "fc-note", copyUnsureWords(c)));   // the tag's words, in reach of touch
     if (shownGone || shownSt === "stale") card.appendChild(el("div", "fc-note", staleWords));
     else if (shownSt === "unknown" && c.target) card.appendChild(el("div", "fc-note", unknownReason(c.target, this.status, c.id)));
     if (unreadable) card.appendChild(el("div", "fc-note", UNREADABLE_REGION + " " + recourse));

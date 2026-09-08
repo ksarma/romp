@@ -148,7 +148,7 @@ class Collector(unittest.TestCase):
                                               "lineage_reads"},
                          "read through jd.goal_io_stats (unreadable_stores is a gauge beside the counters)")
         self.assertEqual(set(snap["memos"]),
-                         {"goals_snap", "lift_gate", "goals_shared", "wire", "intr_marks", "sessions_scope",
+                         {"goals_snap", "lift_gate", "nudge_walk", "goals_shared", "wire", "intr_marks", "sessions_scope",
                           "captions", "states_overlay", "thread_reg", "bg_tops",
                           "feed_segs", "lanes",
                           "chat_merge_sets", "chat_postal", "chat_ledger", "chat_fold_tasks"},
@@ -182,6 +182,15 @@ class Collector(unittest.TestCase):
                          "the awaiting-lift gate: session-cycles skipped vs read, the probes the shared cache "
                          "answered, the writer loads and the ones that filed nothing, plus its occupancy")
         for k, v in snap["memos"]["lift_gate"].items():
+            self.assertIsInstance(v, int, k)
+        self.assertEqual(set(snap["memos"]["nudge_walk"]),
+                         {"walked", "gated", "loads", "shared", "plan_hit", "plan_miss", "plan_bypass",
+                          "deleg_hit", "deleg_miss", "lifted", "evict", "stale", "entries"},
+                         "the auto-nudge walk (round 5): session-cycles visited and gated, the decision's store reads "
+                         "and the shared-cache answers, the placement gate's memo counters and its bypass, the "
+                         "delegated check's, the wake-only lifts filed, evictions and stale-pin releases, plus its "
+                         "occupancy")
+        for k, v in snap["memos"]["nudge_walk"].items():
             self.assertIsInstance(v, int, k)
         self.assertEqual(set(snap["memos"]["bg_tops"]),
                          {"hit", "miss", "resolve", "walk", "walk_neg", "idx_build", "entries"},
@@ -349,9 +358,14 @@ class Collector(unittest.TestCase):
         self.st.wake(); self.st.wake(); self.st.wake()
         self.st.wake_kind(True); self.st.wake_kind(False); self.st.wake_kind(False)
         self.st.cycle(0.010, 0.004); self.st.cycle(0.030, 0.006); self.st.cycle(0.020)
+        self.st.wake_live(); self.st.wake_live()
+        self.st.hold(0.625); self.st.hold(0.375); self.st.exempt()
         p = self.st.snapshot()["pusher"]
         self.assertEqual(p["wakes"], 3)
         self.assertEqual((p["wakes_event"], p["wakes_backstop"]), (1, 2))
+        self.assertEqual(p["wakes_live"], 2)
+        self.assertEqual((p["held"], p["exempt"]), (2, 1))
+        self.assertAlmostEqual(p["held_ms"], 1000.0)
         self.assertEqual(p["cycles"], 3)
         self.assertAlmostEqual(p["cycle_ms_sum"], 60.0)
         self.assertAlmostEqual(p["cycle_cpu_ms_sum"], 10.0, msg="the thread's own CPU rides beside the wall")
@@ -946,8 +960,10 @@ class PushStages(unittest.TestCase):
         self.assertEqual(idx, sorted(idx))
         self.assertIn("_PERF_STATS.judge_pass(", inspect.getsource(km._producer))
         loop = inspect.getsource(km._pusher)
-        self.assertIn("_woke = _pusher_wake.wait(0.5)", loop)
+        self.assertIn("_woke = wake.wait(PUSH_BACKSTOP_S)", loop)
         self.assertIn("_PERF_STATS.wake_kind(_woke)", loop)
+        self.assertIn("_PERF_STATS.hold(clock() - due)", loop)     # the interval's counters ride the same loop
+        self.assertIn("_PERF_STATS.exempt()", loop)
 
 
 class PerfRoutes(unittest.TestCase):

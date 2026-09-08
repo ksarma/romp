@@ -30,9 +30,9 @@ const RENDER = fs.readFileSync(
 test("the plain send registers an optimistic bubble; follow-up/quote sends keep their own kernel echo", () => {
   // only the PLAIN sendMessage branch registers — a citation follow-up/quote has its own kernel-side
   // echo (the branch lives in routeUserMessage since the staged flush, 2026-08-15)
-  assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
+  assert.match(RENDER, /else \{ const p = registerOptimistic\(sid, text, imgPaths\); vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text, sendId: p\.sendId \}\); \}/);
   // registerOptimistic shows it NOW (before any push) via reconcile + appendActive
-  assert.match(RENDER, /function registerOptimistic\(id: string, text: string, imgPaths\?: string\[\]\): void/);   // + the dragged-image paths → echo thumbnails (2026-08-25)
+  assert.match(RENDER, /function registerOptimistic\(id: string, text: string, imgPaths\?: string\[\]\): PendingSend/);   // + the dragged-image paths → echo thumbnails (2026-08-25)
   // the active-tab arm still paints via appendActive (the snap gate moved ahead of it, 2026-08-30)
   assert.match(RENDER, /if \(v\) v\.stale = true;\s*\n\s*if \(id === activeId\) \{/);
   assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);/);
@@ -100,7 +100,7 @@ test("an optimistic echo is a kernel-invisible QUEUED event at its send slot —
   const SP = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "send-pending.ts"), "utf8");
   assert.match(SP, /export const OPT_PREFIX = "optimistic:";/);
   assert.match(RENDER, /const isOptimistic = \(e: ChatEvent\): boolean => isOptimisticUuid\(e\.uuid\);/);
-  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts \}\);/);   // the echo carries its dragged-image paths (2026-08-25); cancelable from the press (2026-08-30); `lost` after a connection drop, `qts` its identity for the ✕ (2026-09-06)
+  assert.match(RENDER, /const mk = \(p: PendingSend\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths, lost: p\.lost, qts: p\.ts, sendId: p\.sendId \}\);/);   // the echo carries its dragged-image paths (2026-08-25); cancelable from the press (2026-08-30); `lost` after a connection drop, `qts` its identity for the ✕ (2026-09-06); `sendId` the send's identity on both sides (2026-09-08)
   // stale ones are stripped wherever they sit — since T252 a bubble is spliced at its send slot, not the tail
   assert.match(RENDER, /if \(isOptimistic\(e\)\) \{ s\.events\.splice\(i, 1\); continue; \}/);
   // the abandoned dim/pending idiom is FULLY gone: render, guard fields, and stylesheet — the last
@@ -162,7 +162,7 @@ test("EVERY ✕ stops our re-injection first; the optimistic one cancels by body
   // cancelResult, and the composer restore reverts (pendingCancelRestores).
   assert.match(RENDER, /if \(qmd\) \{/);
   // …by the bubble's OWN identity when it has one (data-qts) — send-pending.test.ts runs the lookup
-  assert.match(RENDER, /const qts = el\.dataset\.qts !== undefined \? Number\(el\.dataset\.qts\) : undefined;\s*\n\s*if \(dropPending\(list, qmd, qts\)\)/);
+  assert.match(RENDER, /const qts = el\.dataset\.qts !== undefined \? Number\(el\.dataset\.qts\) : undefined;\s*\n\s*if \(dropPending\(list, qmd, qts, el\.dataset\.qsid\)\)/);
   assert.doesNotMatch(RENDER, /list\.findIndex\(\(p\) => p\.text === qmd\)/, "never 'the first entry with this text' for a bubble that names its entry");
   assert.match(RENDER, /echoShownSig\.delete\(sidQ\);/);
   assert.match(RENDER, /const msg: Record<string, unknown> = \{ type: "cancelQueued", id: sidQ, md: qmd \};/);

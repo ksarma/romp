@@ -1350,6 +1350,7 @@ cyc = dl("pusher", "cycles")
 cyc_ms = dl("pusher", "cycle_ms_sum")
 wakes = dl("pusher", "wakes")
 ev, bs = dl("pusher", "wakes_event"), dl("pusher", "wakes_backstop")
+held, held_ms, exempt = dl("pusher", "held"), dl("pusher", "held_ms"), dl("pusher", "exempt")
 cpu_proc = 100.0 * dl("process", "cpu_s") / dt
 cpu_pusher = 100.0 * dl("pusher", "cycle_cpu_ms_sum") / (dt * 1000.0)
 cpu_judge = 100.0 * dl("judge", "cpu_ms_sum") / (dt * 1000.0)
@@ -1418,8 +1419,10 @@ if isinstance(cb, dict):
              cg("built_chat", "entries"), mb(cg("built_chat", "ms_bytes")), cg("judge_usage", "rows"),
              cg("img", "entries"), mb(cg("img", "bytes")), cg("path_links", "entries"), cg("space_paths", "entries"),
              cg("session_stamp", "entries"), cg("task_seg", "entries"), cg("session_tok", "entries")))
-print("pusher    %.2f cycles/s   %.2f wakes/s (event %d, backstop %d)   busy %.0f%% of wall"
-      % (cyc / dt, wakes / dt, ev, bs, 100.0 * cyc_ms / (dt * 1000.0)))
+# held / exempt: the cycles the minimum interval between cycle starts delayed (and the mean delay) and the
+# cycles a watched chat tab's live-tail wake ran inside it; an older kernel has neither and prints zeros
+print("pusher    %.2f cycles/s   %.2f wakes/s (event %d, backstop %d)   held %d (mean %.0f ms)   exempt %d   busy %.0f%% of wall"
+      % (cyc / dt, wakes / dt, ev, bs, held, (held_ms / held) if held else 0.0, exempt, 100.0 * cyc_ms / (dt * 1000.0)))
 print("cycle ms  p50 %.0f   p90 %.0f   max %.0f (over the last %d cycles)   last %.0f"
       % (g(b, "pusher", "cycle_ms_p50"), g(b, "pusher", "cycle_ms_p90"), g(b, "pusher", "cycle_ms_ring_max"),
          g(b, "pusher", "ring_n"), g(b, "pusher", "cycle_ms_last")))

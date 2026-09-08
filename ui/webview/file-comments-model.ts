@@ -24,9 +24,13 @@ export type Anchor = { quote: string; prefix: string; suffix: string };
  *  DECODED (describeComment, decodeSrc): the embed may percent-encode it, and the file on disk has the space. */
 export type Target = { kind: "image" | "pdf"; region: Region; page?: number; hash?: string; src?: string };
 export type StoreReply = { author: string; authorId?: string; ts: number; body?: string; kind?: string; oldText?: string; newText?: string };
+/** `anchorAt` is the second romp-only field (the anchors follow-on, 2026-09-07): the offset the passage's anchor
+ *  located at, set by the host when the comment is made and refreshed on every sidecar write it makes. The painter
+ *  passes it to the engine as the tie-break, so a comment on text that recurs with the same surroundings past the
+ *  anchor's context stays on the copy that was chosen. Only an anchored comment carries it. */
 export type StoreComment = {
   id: string; author: string; authorId?: string; ts: number; body: string;
-  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; suggestionId?: string; target?: Target;
+  replies?: StoreReply[]; resolved?: boolean; anchor?: Anchor | null; anchorAt?: number; suggestionId?: string; target?: Target;
 };
 export type Store = {
   v: number; id?: string; path: string; suggestions: unknown[]; comments: StoreComment[];
@@ -50,6 +54,10 @@ export type Status = {
   verb: string; root: string | null; storePath: string | null; trackedBy: TrackedBy;
   agentTooling: "present" | "absent"; fileMtimeNs: string; storeMtimeNs: string | null; configMtimeNs: string | null;
   store: Store | null; hunks: Hunk[]; unsent: Unsent; log: LogEntry[]; logTruncated?: boolean; decided?: Decided;
+  /** whether the host's text keeps a leading UTF-8 BOM (U+FEFF), which the fetch strips from the viewer's text: a stored
+   *  `anchorAt` is an offset into the host's text, so on such a file it is the view's offset plus one (the panel's viewAt
+   *  maps it); absent from an older host, read as false */
+  bom?: boolean;
   /** a non-text file's sha256 (E2); null when the host could not compute it (over its cap); absent from an older host */
   fileHash?: string | null;
   /** a text file: the current sha256 of every figure its region comments name, by `src` as written (E2) */
@@ -204,7 +212,60 @@ export function changeDesc(h: { kind: HunkKind; oldText: string; newText: string
  *  (`Status.logTruncated`), in which case a decision the tail lacks may sit in the part not sent. */
 export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean; decided?: Decided | null };
 
-/** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
+/** The engine's default anchor context, and what `track-comment` and the other editors write: 24 characters either
+ *  side of the quote (engine.js makeAnchor; the host's ANCHOR_CTX, which file-comments-model-recurring.test.ts pins
+ *  this to). A stored anchor with MORE on either side was widened by the host (uniqueAnchor) because the passage
+ *  recurs with the same 24 characters around another copy, and the extra context is what tells the copies apart. */
+export const ANCHOR_CTX = 24;
+
+/** Whether the host widened `a`'s context past the engine's default: the fact, read off the anchor the host stored,
+ *  that the passage recurs and that its surroundings name this copy. A side at the file's bound stays short while the
+ *  other widens, so either side past the default counts. The sidecar is JSON anyone can edit, so read defensively. */
+export function anchorWidened(a: Anchor): boolean {
+  return (typeof a.prefix === "string" && a.prefix.length > ANCHOR_CTX)
+    || (typeof a.suffix === "string" && a.suffix.length > ANCHOR_CTX);
+}
+
+/** The widest context passageDesc prints whole, per side: five of the host's 24-character widening steps (120
+ *  characters, a sentence or two — about what a person quotes to say which copy they mean). A side wider than this
+ *  is not printed: the message's `Comment <id> (…):` line is one line the session reads before the body, and at the
+ *  host's cap (ANCHOR_CTX_CAP, 480 a side) the two sides ran to a kilobyte of escaped text on it (the anchors
+ *  follow-on review, round 2, 2026-09-07). A multiple of the host's step, so no stored width falls between. */
+export const DESC_CTX_MAX = ANCHOR_CTX * 5;
+
+/** What the desc says of a recurring passage whose copies the message cannot tell apart within DESC_CTX_MAX: the
+ *  fact a person would state instead of quoting a page — the text recurs, and what surrounds each copy is the same.
+ *  It tells the session that an --old with the nearby text will be refused as not unique, so it can ask, or revise
+ *  every copy, rather than try. Names no position: `anchorAt` is an offset the session has no tool for. */
+export const RECURS_CLAUSE = ", which appears more than once with the same text around each copy";
+
+/** The parenthetical for a passage comment. The plan's form is `on "<the first 40 characters of the quote>"`, and for
+ *  a passage unique at the engine's default context that is all of it. When the host widened the anchor
+ *  (anchorWidened) the passage recurs, and the quote alone does not say which copy the person meant: the session
+ *  reading the message would run `track-edit --old "<quote>"`, which refuses text that is not unique, and the id's
+ *  offset suffix and the sidecar's `anchorAt` are nothing the message tells it to read (the anchors follow-on review,
+ *  2026-09-07). So the desc names the copy by its surroundings — the widened prefix and suffix, whole, the text the
+ *  host verified unique around this copy and so an --old the session can build: `on "Ship it.", the one after "…"
+ *  and before "…"`. Both are JSON-quoted, since a context can hold line breaks and quotation marks and the message's
+ *  `Comment <id> (…):` line must stay one line; the quote keeps its plain form. A side the file's bound left empty is
+ *  not named. The sides are printed whole or not at all: a span cut short is not the unique text the clause promises.
+ *  Past DESC_CTX_MAX on either side the desc says RECURS_CLAUSE instead — at the host's cap the anchor may still tie
+ *  (the host stores no `unique` flag, and a 480-character side is the cap whether it settled there or not), so the
+ *  "the one after … and before …" form would name a span that sits on every copy, and a kilobyte of it. A
+ *  24-character anchor on text that came to recur AFTER the comment was made is not widened (the host never
+ *  rewrites an anchor's fields) and keeps the plan's form: this module has no text to tell. */
+export function passageDesc(a: Anchor): string {
+  const head = 'on "' + a.quote.slice(0, 40) + '"';
+  if (!anchorWidened(a)) return head;
+  const prefix = typeof a.prefix === "string" ? a.prefix : "";
+  const suffix = typeof a.suffix === "string" ? a.suffix : "";
+  if (prefix.length > DESC_CTX_MAX || suffix.length > DESC_CTX_MAX) return head + RECURS_CLAUSE;
+  const sides: string[] = [];
+  if (prefix) sides.push("after " + JSON.stringify(prefix));
+  if (suffix) sides.push("before " + JSON.stringify(suffix));
+  return head + ", the one " + sides.join(" and ");
+}
+
 /** The parenthetical the kernel prints after "Comment <id>", without parentheses (C2). A comment bound to a
  *  change describes the change while it is pending or detached, and from the accept or reject entry after a
  *  decision (a manual Accept before the send would otherwise describe it as "on this file") — the log's own when
@@ -220,7 +281,9 @@ export type DescribeOpts = { detached?: unknown[] | null; logTruncated?: boolean
  *  the sidecar to learn which one, and the message is what it reads. A person would name the picture, and by the
  *  name it has on disk (CLAUDE.md, the injected voice): the encoded spelling is a path that does not exist, and a
  *  session that ran `ls` on it got ENOENT while the host had hashed the decoded file (the review of 2026-09-06).
- *  The standalone forms are the plan's own; the figure's name is this module's addition to them. */
+ *  The standalone forms are the plan's own; the figure's name is this module's addition to them, and so is the
+ *  surroundings clause a passage comment gains when its anchor was widened for text that recurs — the sides whole
+ *  up to DESC_CTX_MAX, else the short RECURS_CLAUSE (passageDesc). */
 export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] = [], opts: DescribeOpts = {}): string {
   if (c.suggestionId) {
     const b = boundChange(c.suggestionId, hunks, opts.detached, log, opts.decided);
@@ -230,7 +293,7 @@ export function describeComment(c: StoreComment, hunks: Hunk[], log: LogEntry[] 
     const at = regionDesc(c.target.region, c.target.kind === "pdf" ? c.target.page : null);
     return "on " + (typeof c.target.src === "string" && c.target.src ? at + " of " + decodeSrc(c.target.src) : at);
   }
-  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return 'on "' + c.anchor.quote.slice(0, 40) + '"';
+  if (c.anchor && typeof c.anchor.quote === "string" && c.anchor.quote) return passageDesc(c.anchor);
   if (c.suggestionId && opts.logTruncated) return "on your change " + c.suggestionId;
   return "on this file";
 }
@@ -445,6 +508,8 @@ export type CardTurn =
 export type Card = {
   id: string; author: string; authorId: string | null; ts: number; body: string; resolved: boolean;
   kind: CardKind; ref: string; anchor: Anchor | null; hunk: Hunk | null; target: Target | null;
+  /** the stored position beside the anchor (StoreComment.anchorAt), the painter's tie-break; null without one */
+  anchorAt: number | null;
   /** for a comment bound to a change the log has decided: which way, so the card can say so */
   decision: "accepted" | "rejected" | null;
   replies: CardTurn[];
@@ -504,6 +569,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     const verdict = b && (b.state === "accepted" || b.state === "rejected") ? b.state : null;
     const target = c.target && c.target.region ? c.target : null;
     const anchor = c.anchor && typeof c.anchor.quote === "string" ? c.anchor : null;
+    const anchorAt = anchor && typeof c.anchorAt === "number" && Number.isFinite(c.anchorAt) ? c.anchorAt : null;
     let kind: CardKind; let ref: string;
     if (b) { kind = "change"; ref = changeRef(b); }
     else if (target) { kind = "region"; ref = describeComment(c, hunks).replace(/^on /, ""); }
@@ -511,7 +577,7 @@ export function cardModel(store: Store | null, hunks: Hunk[], log: LogEntry[] = 
     else { kind = "file"; ref = "this file"; }
     return {
       id: c.id, author: c.author, authorId: c.authorId || null, ts: c.ts, body: c.body, resolved: !!c.resolved,
-      kind, ref, anchor, hunk, target, decision: verdict,
+      kind, ref, anchor, hunk, target, anchorAt, decision: verdict,
       replies: (c.replies || []).map((r): CardTurn | null => {
         if (typeof r.body === "string") return { kind: "msg", author: r.author, authorId: r.authorId || null, ts: r.ts, body: r.body };
         if (r.kind === "edit") return { kind: "rev", author: r.author, authorId: r.authorId || null, ts: r.ts, oldText: r.oldText || "", newText: r.newText || "" };

@@ -119,7 +119,9 @@ class WiringPins(unittest.TestCase):
     def test_reconnect_never_defers_on_rewind_held_turns(self):
         # rewind-held turns can't start until the reconnect arms them — deferring would deadlock
         self.assertIn("held = bool(self._rewind_to and not self._rewind_armed)", BACKEND_SRC)
-        self.assertIn("if self.inflight == 0 and (held or not self._pending):", BACKEND_SRC)
+        # the quiet reading counts a fed text the CLI has not taken (_untaken) as in flight (2026-09-08)
+        self.assertIn("quiet = self.inflight == 0 and self._untaken is None", BACKEND_SRC)
+        self.assertIn("if quiet and (held or not self._pending):", BACKEND_SRC)
 
     def test_result_message_consumes_the_flag(self):
         self.assertIn("# the rewind turn settled — the flag is CONSUMED", BACKEND_SRC)
@@ -375,6 +377,16 @@ class DeleteWhileBusy(unittest.TestCase):
         """The interrupted turn's partial output — records landing AFTER the gesture."""
         with open(sb.transcript_path(self.cwd, self.sid), "a") as f:
             f.write(json.dumps({"type": "assistant", "uuid": "a-partial"}) + "\n")
+
+    def test_busy_answers_for_the_double_with_its_three_attributes(self):
+        # review round 5 (2026-09-08): busy() reads inflight, _pending and _untaken under _lock and calls
+        # no SdkSession method, so this double (recorders only) answers; round 4's method call on the
+        # session broke every test here that reaches busy()
+        self.assertTrue(self.be.busy(self.sid), "a running turn (inflight 1)")
+        self.s.inflight = 0
+        self.assertFalse(self.be.busy(self.sid))
+        self.s._pending.append("queued behind the turn")
+        self.assertTrue(self.be.busy(self.sid), "a queued text")
 
     def test_gesture_interrupts_holds_and_renders_then_the_turn_end_arms(self):
         ok, err = self.be.rollback(self.sid, "t1", revalidate=lambda: None)
