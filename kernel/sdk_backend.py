@@ -10480,13 +10480,14 @@ class SdkBackend:
             return []
         return _queue_texts(q) if isinstance(q, list) else []
 
-    def unqueue(self, sid: str, idx: int, expect: str | None = None) -> str | None:
+    def unqueue(self, sid: str, idx: int, expect: str | None = None, send_id: str | None = None) -> str | None:
         """Cancel the queued turn at `idx` for an SDK session (the kernel's cancelQueued route). Returns
         its text, or None on a MISS — the message already left the queue (handed to the CLI, no recall
         exists), and the caller must surface that loudly rather than show a fake delete (the user
         2026-07-20). tmux has no equivalent (its queue lives in Claude Code), so only SDK sessions
         expose this — the kernel gates the chat's cancel affordance on the backend having `unqueue`.
-        `expect` (the exact queued text the click meant) is re-verified under the session lock.
+        `expect` (the exact queued text the click meant) is re-verified under the session lock;
+        `send_id` (the client's id for the send, on the entry) names it exactly (SdkSession.unqueue).
 
         ALSO drops the message's optimistic echo from the live tail: send() adds a blue 'you' bubble that
         normally prunes when the real user atom lands in the transcript — but a CANCELED message never
@@ -10496,15 +10497,20 @@ class SdkBackend:
             s = self.sessions.get(sid)
         if not s:
             return None
-        text = s.unqueue(idx, expect)
+        text = s.unqueue(idx, expect, send_id) if send_id else s.unqueue(idx, expect)
         if text is not None:
+            # the canceled ENTRY's echo: by its send id when it carries one (two queued sends can wear the
+            # same words, and the first echo with the text may be the other send's), else by text
+            sid_id = getattr(text, "send_id", "")
             with self._live_lock:                          # find + pop + the sid-level pop, one step
                 live = self._live.get(sid) or {}
-                for k, a in list(live.items()):
-                    if a.get("_echo_text") == text:
-                        live.pop(k, None)                  # one echo per canceled message
-                        self._touch_live(sid)
-                        break
+                hits = [k for k, a in live.items() if a.get("_echo_text")
+                        and ((sid_id and a.get("_send_id") == sid_id) or (not sid_id and a.get("_echo_text") == text))]
+                if not hits and sid_id:
+                    hits = [k for k, a in live.items() if a.get("_echo_text") == text and not a.get("_send_id")]
+                if hits:
+                    live.pop(hits[0], None)                # one echo per canceled message
+                    self._touch_live(sid)
                 if not live and self._live.get(sid) is live:
                     self._live.pop(sid, None)
             self._persist_echoes(sid)                      # the canceled echo leaves the restart mirror too

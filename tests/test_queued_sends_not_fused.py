@@ -358,6 +358,17 @@ class OneFedTextAtATime(unittest.TestCase):
         self.assertEqual(s.pending(), [], "…and removed exactly that entry")
         # an id the queue does not hold falls back to the body, and misses loudly when nothing matches
         self.assertTrue(km._cancel_backend_queued(self.be, SID, 0, "go ahead", send_id="s-zzz"))
+        # through send(): the backend-level unqueue drops the canceled entry's OWN echo, not the first
+        # echo wearing the words
+        self.assertTrue(self.be.send(SID, "go ahead", send_id="s-ccc"))
+        self.assertTrue(self.be.send(SID, "go ahead", send_id="s-ddd"))
+        self._settle()
+        self.assertEqual([getattr(q, "send_id", "") for q in s.pending()], ["s-ccc", "s-ddd"])
+        got = self.be.unqueue(SID, 0, "go ahead", send_id="s-ddd")
+        self.assertEqual(getattr(got, "send_id", ""), "s-ddd")
+        left = [a.get("_send_id") for a in self.be.live_atoms(SID) if a.get("_echo_text") == "go ahead"]
+        self.assertEqual(left, ["s-ccc"], "the other send's echo stays; the canceled one's is gone")
+        self.assertEqual([getattr(q, "send_id", "") for q in s.pending()], ["s-ccc"])
 
     def test_the_send_id_rides_the_queue_entry_its_mirror_and_the_echo(self):
         """send(sid, text, send_id=…) → the entry carries it, the reg mirror serializes it, the
