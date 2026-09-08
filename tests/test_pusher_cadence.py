@@ -256,6 +256,14 @@ class MinimumInterval(unittest.TestCase):
         self.assertEqual(starts, [0.0, 0.5])
         self.counters(p, exempt=1, held=1, held_ms=125.0, wakes=3, wakes_live=1)
 
+    def test_a_wake_inside_a_hold_after_a_backstop_ended_wait_makes_an_event_cycle(self):
+        # nothing until 0.875: the backstop ends the wait at 0.75 (cycle end + 0.5) and the hold begins; the
+        # wake at 0.875 lands inside it, so the cycle at 1.0 counts as an event cycle, not a backstop one
+        # (review 2026-09-08, nit b: the hold's _woke = True)
+        starts, p, _ = run_loop(km, [(0.875, "plain", None)], until=1.5)
+        self.assertEqual(starts, [0.0, 1.0])
+        self.counters(p, wakes=1, wakes_event=1, wakes_backstop=0, held=1, held_ms=250.0, exempt=0)
+
     def test_the_backstop_alone_runs_at_most_one_cycle_per_interval(self):
         # no wakes at all: the 0.5 s backstop ends each wait at cycle end + 0.5 (0.75), and the interval
         # holds the next start to 1.0; cycles at 0, 1, 2, 3 instead of 0, 0.75, 1.5, 2.25
