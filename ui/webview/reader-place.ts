@@ -11,46 +11,82 @@
 // top-level element (an html block of sibling tags several, whose boxes are read together); in Raw it is the run of
 // rows from its first line to its last, so a blank row between two paragraphs belongs to neither and the block after
 // it is the place (the Slice 2 review: read as its own place, a blank top row seated the paragraph BEFORE the first
-// text the reader saw), while a blank row inside a fenced code block belongs to the code block. After the paint the
-// block is found in the new view, whichever view it is, and the body is scrolled so it sits where the block sat:
+// text the reader saw), while a blank row inside a fenced code block belongs to the code block. When the reader is
+// partway into a block that shows LINES (any block in Raw, a code block in Rendered), the line at the edge is kept too,
+// as its own source span and its top edge: the Raw row under the edge, or, in Rendered, the code line the browser's
+// hit test finds there (caretRangeFromPoint on the code element's first column at the edge; a Range at a line's start
+// reads its box back). After the paint the block is found in the new view, whichever view it is, and the body is
+// scrolled so it sits where the block sat:
 //   - a block that started below the edge keeps that distance;
-//   - a block the reader was partway into keeps the DEPTH. As a fraction of the block's height when the block is the
-//     same text (a view switch, a reflow of the same text): the height differs between the views (a 60-row table is
-//     1800px rendered and 1100px raw, a 600px figure one raw row, a 120-line code block about the same in both) and
-//     changes with the column's width, and the fraction keeps the words at the edge at the edge, so line 50 of the
-//     code block stays there, row 45 of the table near it, and a reader 400px into the figure comes back 400px into it
-//     (the review: the top-edge offset alone put the table's first row 1300px above the edge, past its last row in Raw,
-//     and the reader four paragraphs on after the figure; and a Raw row's offset seated the whole block at the row's
-//     height, so line 50 came back as line 1). In pixels when the write REPLACED the block: a reader at line 5 of a
-//     code block a session appended to stays at line 5, and a replacement shorter than the depth is moved down by the
-//     difference, to the edge at most, so as much of it shows below the edge as showed of the block before (the
-//     review: a one-line replacement for a two-line paragraph the reader was 30px into sat wholly above the edge).
+//   - a block the reader was partway into keeps the LINE when one was kept and it still stands (its span followed
+//     through the edit, or, with the line itself rewritten, the line after the nearest line before it that stands,
+//     else the line before the nearest after): the row, or the code line's start, goes where the line's top was, so
+//     line 50 of a code block is line 50 after the switch, after a reload that inserted five lines above it inside the
+//     block (the review round 2: the block's top held and line 45 stood at the edge), and after one that deleted five
+//     below it. Otherwise the DEPTH is kept. As a fraction of the block's height when the block is the same text (a
+//     view switch, a reflow of the same text): the height differs between the views (a 60-row table is 1800px
+//     rendered and 1100px raw, a 600px figure one raw row) and changes with the column's width, and the fraction
+//     keeps the words at the edge near the edge, so row 45 of the table comes back near row 45 and a reader 400px into
+//     the figure comes back 400px into it (the review: the top-edge offset alone put the table's first row 1300px
+//     above the edge, past its last row in Raw, and the reader four paragraphs on after the figure; and a Raw row's
+//     offset seated the whole block at the row's height, so line 50 came back as line 1). In pixels when the write
+//     REPLACED the block (the block under the eye rewritten, or a block whose line at the edge is gone with no line of
+//     it standing on either side): a reader 30px into a paragraph a session appended a sentence to stays 30px in, and
+//     a block now SHORTER than it was, by however much, is moved down by the difference, to the edge at most, so as
+//     much of it shows below the edge as showed of the block before (the review: a one-line replacement for a
+//     two-line paragraph the reader was 30px into sat wholly above the edge; a block that lost two of five lines while
+//     the reader was 30px in reaches the edge and shows whole).
+//   - a block DELETED under the reader's eye (the blocks before and after it now adjacent, so nothing stands in its
+//     place) is read as replaced by nothing: the block after it is seated as a replacement of no height would be, at
+//     the edge when the deleted block reached below it, at the deleted block's old distance below the edge otherwise
+//     (the review round 2: the successor inherited the reader's depth into the deleted block, its first line above
+//     the edge though the reader never read into it).
 //   - a body at its very top stays at its very top: the views pad differently (14px rendered, 10px raw), so seating
 //     the first block at the other view's padding drifted a round trip from scrollTop 0 to 4.
 // Across a reload the span is followed through the edit first (followPassage, the composer's own follow): a block
 // after the inserted paragraphs shifts by their length, one before them keeps its offset, and one the write rewrote is
 // placed by the block before it, followed the same way, so the reader lands on what replaced it; with that block
-// rewritten too, by the block after (a session rewriting two paragraphs and adding a preamble above them); only with
-// all three gone does the place fall to where the edit begins.
+// rewritten too, by the block after (a session rewriting two paragraphs and adding a preamble above them); with both
+// neighbours gone as well, by the nearest block before it that still stands, walking outward (the kept block is the
+// one after it), else the nearest after (the review round 2: three paragraphs deleted and twenty inserted above fell
+// to where the edit begins, the top of the document; now the paragraph after the deleted three); only with no block
+// standing on either side does the place fall to where the edit begins.
+//
+// One thing the place refuses. The anchor map pairs the Rendered elements to the blocks, and an html block that opens a
+// wrapper the browser nests the following markdown into (`<details>` with a blank line after its summary, a centred
+// `<div>` around a heading) is paired, as the map stands, to every element after it, since no later top-level element
+// carries the nested block's text (the review round 2, and the plan's defect "an unclosed HTML wrapper swallows later
+// blocks"). Read as that block, the reader's place from anywhere below the wrapper became the wrapper: a Raw switch
+// from paragraph 80 landed on `<summary>`, 3500px up. So an element paired to a block of several elements is the
+// block's only when its text is in the block's own source (entities decoded, whitespace apart): a wrapper's swallowed
+// paragraph is not, and the place reads as none, so the numeric scrollTop stands, as it did before the slice; a seat
+// that would borrow such a block's box for a block with no element of its own (the swallowed paragraph, read from
+// Raw) declines the same way. An html block of sibling tags, each in its source, is read as one block still.
 //
 // Written over the DOM the viewer builds and nothing else (querySelector, childNodes, getBoundingClientRect,
-// scrollTop) and the anchor map's block table, so a stand-in with no layout (every box at 0,0) reads no place and seats
+// scrollTop, and for a Rendered code line the document's caret hit test and a Range's rects, both absent from a
+// stand-in) and the anchor map's block table, so a stand-in with no layout (every box at 0,0) reads no place and seats
 // nothing, and the node tests over the viewer run unchanged; the browser legs (file-view-place-browser.test.ts,
-// file-view-place-blocks-browser.test.ts) measure the real thing.
+// file-view-place-blocks-browser.test.ts, file-view-place-edits-browser.test.ts) measure the real thing.
 import { followPassage } from "./file-comments";
 import { sourceBlockSpans, renderedBlockIndex, renderedBlockElements, rawRows, rawRowForOffset, rawRowSpan, type SourceRange } from "./anchor-map";
 
 export type View = "rendered" | "raw";
+/** A line of the kept block at the body's top edge: the span of its text in the file (before its line ending) and its
+ *  top edge measured from the body's top. */
+export type Line = SourceRange & { top: number };
 /** Where the reader is: the file text the view was painted from and which view it was; the source span of the
  *  top-visible block in it; that block's top edge measured from the body's top edge (negative when the reader is
- *  partway into it) and its box's height in that view; whether the body stood at its very top; and the spans of the
- *  blocks before and after it, the fallbacks when the write rewrote the block itself. */
+ *  partway into it) and its box's height in that view; whether the body stood at its very top; the spans of the
+ *  blocks before and after it, the first fallbacks when the write rewrote the block itself; and, when the reader is
+ *  partway into a block that shows lines (a Raw block, a Rendered code block), the line at the edge. */
 export type Place = {
   source: string; view: View;
   start: number; end: number;
   top: number; height: number;
   atTop: boolean;
   prev: SourceRange | null; next: SourceRange | null;
+  line?: Line | null;
 };
 
 type Box = { top: number; bottom: number };
@@ -133,17 +169,156 @@ function rawBlockBox(code: Element, source: string, span: SourceRange): Box | nu
   const a = first && boxOf(first), z = last && boxOf(last);
   return a && z ? { top: a.top, bottom: z.bottom } : null;
 }
-const placeOf = (source: string, view: View, spans: SourceRange[], b: number, box: Box, edge: number, atTop: boolean): Place => ({
+const placeOf = (source: string, view: View, spans: SourceRange[], b: number, box: Box, edge: number, atTop: boolean, line: Line | null): Place => ({
   source, view, start: spans[b].start, end: spans[b].end, top: box.top - edge, height: box.bottom - box.top, atTop,
-  prev: b > 0 ? spans[b - 1] : null, next: b + 1 < spans.length ? spans[b + 1] : null,
+  prev: b > 0 ? spans[b - 1] : null, next: b + 1 < spans.length ? spans[b + 1] : null, line,
 });
+
+// ── an element paired to an html block: the block's own, or swallowed (the header's "one thing the place refuses") ──
+const stripWs = (s: string): string => s.replace(/\s+/g, "");
+const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
+/** The text an html block's source shows once the browser has read it: numeric and the common named entities decoded
+ *  (a rarer name stays as written, and a block whose text hangs on it reads as not its element's: no place, the
+ *  numeric scrollTop stands). */
+const decodeEntities = (s: string): string => s.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g,
+  (m, d: string | undefined, h: string | undefined, n: string | undefined) => d ? String.fromCodePoint(+d) : h ? String.fromCodePoint(parseInt(h, 16)) : n && n in NAMED ? NAMED[n] : m);
+/** Whether `el`'s text is in block `span`'s own source (whitespace apart): true of a tag the block wrote, false of a
+ *  paragraph a wrapper swallowed (its text is a later block's). An element with no text (a picture, a rule) is anyone's. */
+function ownsText(source: string, span: SourceRange, el: Element): boolean {
+  const t = stripWs(el.textContent || "");
+  return t === "" || stripWs(decodeEntities(source.slice(span.start, span.end))).includes(t);
+}
+/** Whether block `b`'s elements are its own: one element always is (the wrapper itself, once the map pairs it right);
+ *  several must each carry the block's text. */
+const ownElements = (source: string, span: SourceRange, els: Element[]): boolean => els.length <= 1 || els.every((e) => ownsText(source, span, e));
+
+// ── lines: the Raw rows, and the code lines of a Rendered code block ─────────────────────────────────
+/** The count of line feeds in `s[a, b)`. */
+function countNL(s: string, a: number, b: number): number {
+  let n = 0;
+  for (let i = a; i < b; i++) if (s.charCodeAt(i) === 10) n++;
+  return n;
+}
+/** Whether the block is a fenced code block (its first line the fence, which the code element does not show). */
+const fenced = (source: string, span: SourceRange): boolean => /^ {0,3}(?:`{3,}|~{3,})/.test(source.slice(span.start, Math.min(span.end, span.start + 8)));
+/** Line `k` (0-based) of the block's source text, its line ending excluded (a CR before the LF too); null past the
+ *  block's last line. */
+function lineSpanIn(source: string, span: SourceRange, k: number): SourceRange | null {
+  let s = span.start;
+  for (let i = 0; i < k; i++) { const nl = source.indexOf("\n", s); if (nl < 0 || nl >= span.end) return null; s = nl + 1; }
+  if (s > span.end) return null;
+  let e = source.indexOf("\n", s);
+  if (e < 0 || e > span.end) e = span.end;
+  if (e > s && source.charCodeAt(e - 1) === 13) e--;
+  return { start: s, end: e };
+}
+/** The code element of a Rendered code block's elements (`pre > code`), null for any other block. */
+function codeOf(els: Element[]): Element | null {
+  if (els.length !== 1 || String(els[0].tagName).toUpperCase() !== "PRE") return null;
+  return els[0].querySelector("code") || els[0];
+}
+type CaretDoc = {
+  caretRangeFromPoint?: (x: number, y: number) => { startContainer: Node; startOffset: number } | null;
+  caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  createRange?: () => Range;
+};
+/** The document's own hit test at a point: the text position under it (Chromium and WebKit's caretRangeFromPoint,
+ *  Firefox's caretPositionFromPoint), null where the document has neither (a stand-in) or nothing is there. */
+function caretAt(doc: CaretDoc, x: number, y: number): { node: Node; offset: number } | null {
+  if (typeof doc.caretRangeFromPoint === "function") { const r = doc.caretRangeFromPoint(x, y); return r ? { node: r.startContainer, offset: r.startOffset } : null; }
+  if (typeof doc.caretPositionFromPoint === "function") { const c = doc.caretPositionFromPoint(x, y); return c ? { node: c.offsetNode, offset: c.offset } : null; }
+  return null;
+}
+function textNodesOf(root: Node, out: Text[] = []): Text[] {
+  for (let i = 0; i < root.childNodes.length; i++) { const c = root.childNodes[i]; if (c.nodeType === 3) out.push(c as Text); else textNodesOf(c, out); }
+  return out;
+}
+/** The offset, into `root`'s text, of the position (`node`, `offset`): a text node and an index into it, or an
+ *  element and an index among its children (the caret between two of them, or at its end); -1 for a position not
+ *  under `root`. */
+function textOffsetAt(root: Node, node: Node, offset: number): number {
+  const target: Node | null = node.nodeType === 3 ? node : node.childNodes[offset] || null;
+  const atEnd = node.nodeType !== 3 && !target;
+  let acc = 0, out = -1;
+  const walk = (n: Node): boolean => {
+    if (target && n === target) { out = acc + (n.nodeType === 3 ? offset : 0); return true; }
+    if (n.nodeType === 3) { acc += (n as Text).data.length; return false; }
+    for (let i = 0; i < n.childNodes.length; i++) if (walk(n.childNodes[i])) return true;
+    if (atEnd && n === node) { out = acc; return true; }
+    return false;
+  };
+  walk(root);
+  return out;
+}
+/** The text position where line `k` (0-based) of the code element's text starts: the character after the k-th line
+ *  feed (the start of the next text node when the feed ends one); null past its last line. */
+function codeLineStart(code: Element, k: number): { node: Node; offset: number } | null {
+  const texts = textNodesOf(code);
+  if (!texts.length) return null;
+  if (k === 0) return { node: texts[0], offset: 0 };
+  let seen = 0;
+  for (let i = 0; i < texts.length; i++) {
+    const d = texts[i].data;
+    for (let j = 0; j < d.length; j++) {
+      if (d.charCodeAt(j) !== 10 || ++seen < k) continue;
+      return j + 1 < d.length ? { node: texts[i], offset: j + 1 } : i + 1 < texts.length ? { node: texts[i + 1], offset: 0 } : { node: texts[i], offset: d.length };
+    }
+  }
+  return null;
+}
+/** The top edge of the character at a text position (a one-character Range's first rect), null without a Range or a rect. */
+function charTop(doc: CaretDoc, node: Node, offset: number): number | null {
+  if (typeof doc.createRange !== "function") return null;
+  const len = node.nodeType === 3 ? (node as Text).data.length : node.childNodes.length;
+  const rg = doc.createRange();
+  rg.setStart(node, Math.min(offset, len)); rg.setEnd(node, Math.min(offset + 1, len));
+  const rects = rg.getClientRects();
+  if (rects.length) return rects[0].top;
+  const r = rg.getBoundingClientRect();
+  return r.height > 0 || r.width > 0 ? r.top : null;
+}
+/** The code line under the body's top edge in a Rendered code block, when the code's text starts above the edge: the
+ *  hit test on the code element's first column a pixel below the edge, read to its line and the line's source span. */
+function renderedLineAt(source: string, span: SourceRange, els: Element[], edge: number): Line | null {
+  const code = codeOf(els);
+  if (!code) return null;
+  const doc = code.ownerDocument as unknown as CaretDoc;
+  const r = code.getBoundingClientRect();
+  if (!(r.top < edge)) return null;
+  const hit = caretAt(doc, r.left + 2, edge + 1);
+  if (!hit || typeof code.contains !== "function" || !code.contains(hit.node)) return null;
+  const off = textOffsetAt(code, hit.node, hit.offset);
+  if (off < 0) return null;
+  const k = countNL(code.textContent || "", 0, off);
+  const ls = lineSpanIn(source, span, k + (fenced(source, span) ? 1 : 0));
+  const top = ls ? charTop(doc, hit.node, hit.offset) : null;
+  return ls && top !== null ? { start: ls.start, end: ls.end, top: top - edge } : null;
+}
+/** Where a source line of block `span` starts in the Rendered code block: the top of its first character; null for
+ *  any other block or a line the code does not show. */
+function renderedLineTop(source: string, span: SourceRange, els: Element[], lineStart: number): number | null {
+  const code = codeOf(els);
+  if (!code) return null;
+  const k = countNL(source, span.start, lineStart) - (fenced(source, span) ? 1 : 0);
+  const pos = k < 0 ? null : codeLineStart(code, k);
+  return pos ? charTop(code.ownerDocument as unknown as CaretDoc, pos.node, pos.offset) : null;
+}
+/** Where a source line of block `span` starts in the Raw view: its row's top; null when the row is not the block's. */
+function rawLineTop(code: Element, source: string, span: SourceRange, lineStart: number): number | null {
+  const row = rawRowForOffset(code, source, lineStart);
+  const sp = row && rawRowSpan(code, source, row);
+  if (!row || !sp || sp.start < span.start || sp.start >= span.end) return null;
+  const box = boxOf(row);
+  return box ? box.top : null;
+}
 
 /** The reader's place in `body` as it stands: the top-visible block of the Rendered view (`.fileview-md`'s children,
  *  read to their blocks) or of the Raw view (the block holding the top row of `code.hljs .fv-cl`, or the one after a
- *  blank row between blocks), read against `source`, the text that view was painted from. null when the body shows
- *  neither, when nothing is in view (a stand-in with no layout), when no element at or below the top edge is a block's
- *  (whitespace between blocks, an html block's leftover node: the next is read), or when the Raw rows disagree with
- *  the source. */
+ *  blank row between blocks), read against `source`, the text that view was painted from, with the line at the edge
+ *  when the reader is partway into a block that shows lines. null when the body shows neither view, when nothing is in
+ *  view (a stand-in with no layout), when no element at or below the top edge is a block's (whitespace between
+ *  blocks, an html block's leftover node: the next is read), when the top element is one an html wrapper swallowed
+ *  (the header), or when the Raw rows disagree with the source. */
 export function readPlace(body: HTMLElement, source: string): Place | null {
   if (!hasBox(body)) return null;
   const edge = body.getBoundingClientRect().top;
@@ -156,8 +331,11 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
       if (!boxOf(kids[i])) continue;
       const b = renderedBlockIndex(md, source, kids[i]);
       if (b < 0 || b >= spans.length) continue;
-      const box = renderedBlockBox(md, source, b);
-      if (box) return placeOf(source, "rendered", spans, b, box, edge, atTop);
+      const els = renderedBlockElements(md, source, b);
+      if (els.length > 1 && !ownsText(source, spans[b], kids[i])) return null;   // a wrapper's swallowed run: no place
+      const box = union(els.map(boxOf));
+      if (!box) continue;
+      return placeOf(source, "rendered", spans, b, box, edge, atTop, box.top < edge ? renderedLineAt(source, spans[b], els, edge) : null);
     }
     return null;
   }
@@ -165,51 +343,169 @@ export function readPlace(body: HTMLElement, source: string): Place | null {
   const rows = code ? rawRows(code, source) : null;
   if (!code || !rows) return null;
   for (let i = topVisibleIndex(rows.length, (k) => bottomOrNaN(rows[k]), edge + 0.5); i < rows.length; i++) {
-    if (!boxOf(rows[i])) continue;
+    const rowBox = boxOf(rows[i]);
+    if (!rowBox) continue;
     const span = rawRowSpan(code, source, rows[i]);
     if (!span) return null;
     const b = blockHolding(spans, span.start);
     if (b < 0) return null;
     const box = rawBlockBox(code, source, spans[b]);
-    return box ? placeOf(source, "raw", spans, b, box, edge, atTop) : null;
+    if (!box) return null;
+    const inBlock = span.start >= spans[b].start && span.start < spans[b].end;
+    return placeOf(source, "raw", spans, b, box, edge, atTop, inBlock && box.top < edge ? { start: span.start, end: span.end, top: rowBox.top - edge } : null);
   }
   return null;
 }
 
+/** The top edge of the kept block's box under the layout as it stands, measured from the body's top edge: its
+ *  elements' boxes together in the Rendered view (an html block of sibling tags has several), the rows of its lines in
+ *  Raw. null when the body shows no text view or the block has no box with a layout. The block itself, not the
+ *  top-visible one: a block shorter under a new width than the reader's depth into it ends above the edge with its top
+ *  edge kept, and the top-visible block is then the one after it (a paragraph the reader is 45px into at 600px is 42px
+ *  tall back at 900). file-view.ts reads it at a scroll under a new width to recognise the browser's anchoring
+ *  adjustment, which keeps its anchor block's top edge where it stood (the Slice 2 review, round 2). */
+export function keptBlockTop(body: HTMLElement, place: Place): number | null {
+  if (!hasBox(body)) return null;
+  const md = body.querySelector(".fileview-md");
+  const code = md ? null : body.querySelector("code.hljs");
+  if (!md && !code) return null;
+  const spans = sourceBlockSpans(place.source);
+  const b = blockIndexAt(spans, place.start);
+  if (b < 0) return null;
+  const box = md ? renderedBlockBox(md, place.source, b) : rawBlockBox(code as Element, place.source, spans[b]);
+  return box ? box.top - body.getBoundingClientRect().top : null;
+}
+
+// ── following spans through an edit ─────────────────────────────────────────────────────────────────
+/** The two texts' common prefix `p` and suffix `s` (followPassage's own bounds on the span the edit changed). */
+function commonEnds(old: string, nw: string): { p: number; s: number } {
+  const oldLen = old.length, newLen = nw.length, min = Math.min(oldLen, newLen);
+  let p = 0;
+  while (p < min && old.charCodeAt(p) === nw.charCodeAt(p)) p++;
+  let s = 0;
+  while (s < min - p && old.charCodeAt(oldLen - 1 - s) === nw.charCodeAt(newLen - 1 - s)) s++;
+  return { p, s };
+}
+/** Whether a span of the old text lies in the region the edit changed (any of it past the common prefix and before
+ *  the common suffix); a span outside it stands where it was, or shifted by the edit's length, with no search. */
+const inEdit = (old: string, sp: SourceRange, p: number, s: number): boolean => !(sp.end <= p || sp.start >= old.length - s);
+/** Where a span of `old` starts in `nw`, or null when its text stands intact nowhere the edit put text (followPassage:
+ *  `gone`, `tied` between copies, or `elsewhere`). Exact and free for a span outside the edit. */
+function survive(old: string, nw: string, sp: SourceRange, p: number, s: number): number | null {
+  const range = { start: sp.start, end: Math.max(sp.end, sp.start + 1) };
+  if (range.end <= p) return range.start;
+  if (range.start >= old.length - s) return range.start + (nw.length - old.length);
+  const f = followPassage(old, range, nw);
+  return f.state === "moved" ? f.range.start : null;
+}
+/** How many spans INSIDE the edit a walk searches for (followPassage's anchor search over the new text) before it
+ *  settles for the spans outside it, which cost nothing: a whole document rewritten is one search per block otherwise. */
+const PROBES = 8;
+
 /** Where the kept block stands in `newText`: `at`, an offset inside it (`step` 0); or, when the write rewrote it,
  *  inside the block BEFORE it (`step` 1: the kept block is the one after that), or inside the block AFTER it (`step`
- *  -1: the one before that). Its own offset when the text is unchanged; followed through the edit otherwise (followPassage: unchanged before the edit, shifted by the
- *  edit's length after it, re-found when the block's text moved whole). A block the edit rewrote, or one whose text
- *  recurs so that no copy is its own, is placed by its neighbours, followed the same way, so a write that inserted
- *  paragraphs above AND rewrote the block under the reader's eye still lands on what replaced it, and one that
- *  rewrote that block and the one before it too (a section rewritten, a preamble added) lands there by the block
- *  after; with all three gone the place is where the edit begins, the first character that differs, and no further
- *  than the block's own start (a block that began before the edit keeps its start, since the text there is
- *  unchanged). */
+ *  -1: the one before that). Its own offset when the text is unchanged; followed through the edit otherwise
+ *  (followPassage: unchanged before the edit, shifted by the edit's length after it, re-found when the block's text
+ *  moved whole). A block the edit rewrote, or one whose text recurs so that no copy is its own, is placed by its
+ *  neighbours, followed the same way, so a write that inserted paragraphs above AND rewrote the block under the
+ *  reader's eye still lands on what replaced it, and one that rewrote that block and the one before it too (a section
+ *  rewritten, a preamble added) lands there by the block after; with both neighbours gone as well, by the nearest
+ *  block before it that stands, walking outward through the old block table (each block inside the edit one anchor
+ *  search, PROBES of them at most; a block outside the edit stands for free), else the nearest after; with none, the
+ *  place is where the edit begins, the first character that differs, and no further than the block's own start (a
+ *  block that began before the edit keeps its start, since the text there is unchanged). */
 export type Followed = { at: number; step: -1 | 0 | 1 };
 export function followPlace(place: Place, newText: string): Followed {
+  const { at, step } = followBlock(place, newText);
+  return { at, step };
+}
+type Survivor = { at: number; span: SourceRange };
+/** followPlace, with `deleted`: the kept block was placed by the block before it, and between that block and the
+ *  nearest block after the kept one that stands there is nothing but whitespace in the new text, so nothing stands in
+ *  the kept block's place (it was deleted, alone or with its neighbours), and the block the step lands on is that
+ *  block after. */
+function followBlock(place: Place, newText: string): Followed & { deleted: boolean } {
   const old = place.source;
-  if (old === newText) return { at: place.start, step: 0 };
+  if (old === newText) return { at: place.start, step: 0, deleted: false };
+  const { p, s } = commonEnds(old, newText);
   const clamp = (n: number) => Math.max(0, Math.min(n, newText.length));
-  const follow = (sp: SourceRange) => followPassage(old, { start: sp.start, end: Math.max(sp.end, sp.start + 1) }, newText);
-  const f = follow(place);
-  if (f.state === "moved") return { at: clamp(f.range.start), step: 0 };
-  if (place.prev) { const g = follow(place.prev); if (g.state === "moved") return { at: clamp(g.range.start), step: 1 }; }
-  if (place.next) { const h = follow(place.next); if (h.state === "moved") return { at: clamp(h.range.start), step: -1 }; }
-  const min = Math.min(old.length, newText.length);
-  let p = 0;
-  while (p < min && old.charCodeAt(p) === newText.charCodeAt(p)) p++;
-  return { at: Math.min(place.start, p), step: 0 };
+  const f = survive(old, newText, place, p, s);
+  if (f !== null) return { at: clamp(f), step: 0, deleted: false };
+  const gap = (pred: Survivor, succ: Survivor | null): boolean => !!succ && /^\s*$/.test(newText.slice(pred.at + (pred.span.end - pred.span.start), succ.at));
+  // the neighbours the place carries, first: no block table to build
+  const g = place.prev ? survive(old, newText, place.prev, p, s) : null;
+  const h = place.next ? survive(old, newText, place.next, p, s) : null;
+  const pred1 = g !== null && place.prev ? { at: g, span: place.prev } : null, succ1 = h !== null && place.next ? { at: h, span: place.next } : null;
+  if (pred1) return { at: clamp(pred1.at), step: 1, deleted: gap(pred1, succ1) };
+  if (succ1) return { at: clamp(succ1.at), step: -1, deleted: false };
+  // both gone: the old block table, walked outward on each side from the next block on
+  const oldSpans = sourceBlockSpans(old);
+  const bi = blockIndexAt(oldSpans, place.start);
+  const walk = (from: number, dir: -1 | 1): Survivor | null => {
+    let budget = PROBES;
+    for (let k = from; k >= 0 && k < oldSpans.length; k += dir) {
+      const sp = oldSpans[k];
+      if (inEdit(old, sp, p, s)) { if (budget <= 0) continue; budget--; }
+      const r = survive(old, newText, sp, p, s);
+      if (r !== null) return { at: r, span: sp };
+    }
+    return null;
+  };
+  const pred = bi >= 0 ? walk(bi - 2, -1) : null;
+  const succ = bi >= 0 ? walk(bi + 2, 1) : null;
+  if (pred) return { at: clamp(pred.at), step: 1, deleted: gap(pred, succ) };
+  if (succ) return { at: clamp(succ.at), step: -1, deleted: false };
+  return { at: Math.min(place.start, p), step: 0, deleted: false };
+}
+
+/** The spans of the kept block's lines in the old text (line endings excluded). */
+function linesOf(source: string, block: SourceRange): SourceRange[] {
+  const out: SourceRange[] = [];
+  for (let k = 0; ; k++) { const l = lineSpanIn(source, block, k); if (!l) break; out.push(l); if (l.end >= block.end) break; }
+  return out;
+}
+/** Where the kept line starts in `newText`, inside `block` (the kept block's span there): its own start when it stands
+ *  (followed as a block is); with the line rewritten, the start of the line after the nearest line before it that
+ *  stands (the first line of what replaced it), else of the line before the nearest after; null when no line of the
+ *  block stands, or the line found lies outside the block. */
+function followLine(place: Place, newText: string, block: SourceRange): number | null {
+  const line = place.line as Line, old = place.source;
+  const { p, s } = commonEnds(old, newText);
+  const within = (off: number | null): number | null => (off !== null && off >= block.start && off < block.end ? off : null);
+  const f = survive(old, newText, line, p, s);
+  if (f !== null) return within(f);
+  const lines = linesOf(old, place);
+  const j = lines.findIndex((l) => l.start === line.start);
+  if (j < 0) return null;
+  let budget = PROBES;
+  const probe = (l: SourceRange): number | null => {
+    if (inEdit(old, l, p, s)) { if (budget <= 0) return null; budget--; }
+    return survive(old, newText, l, p, s);
+  };
+  for (let k = j - 1; k >= 0; k--) {
+    const g = probe(lines[k]);
+    if (g === null) continue;
+    let e = g + (lines[k].end - lines[k].start);
+    if (newText.charCodeAt(e) === 13) e++;
+    return within(newText.charCodeAt(e) === 10 ? e + 1 : e);
+  }
+  for (let k = j + 1; k < lines.length; k++) {
+    const h = probe(lines[k]);
+    if (h === null) continue;
+    return within(newText.lastIndexOf("\n", h - 2) + 1);
+  }
+  return null;
 }
 
 /** Where the kept block's top edge goes, measured from the body's top, given the block's box `height` in the view
  *  being seated (`view`): its old distance when it started below the edge; else the reader's depth into it, as a
  *  fraction of the block's height when the block's text is the `same` (a view switch, a reflow: the words at the edge
- *  stay the words at the edge, whatever the block's height is now) or the view changed, and in pixels when the write
- *  changed the block's text in the same view (line 5 of a code block the session appended to stays line 5), less
- *  whatever the block is now shorter than it was, so as much of it shows below the edge as showed before, and no
- *  further down than the edge itself (a replacement that fits shows whole, its top at the edge: seated lower, the
- *  tail of the block before it would come into view above it). */
+ *  stay near the edge, whatever the block's height is now) or the view changed, and in pixels when the write changed
+ *  the block's text in the same view (30px into a paragraph the session appended to stays 30px in), less whatever the
+ *  block is now shorter than it was, so as much of it shows below the edge as showed before, and no further down than
+ *  the edge itself (a block that fits shows whole, its top at the edge: seated lower, the tail of the block before it
+ *  would come into view above it). A `height` of 0 is a block replaced by nothing (deleted), and answers where the
+ *  block after it goes. */
 export function seatedTop(place: Place, view: View, height: number, same: boolean): number {
   if (place.top >= 0) return place.top;
   if (same || view !== place.view) return place.height > 0 ? place.top * height / place.height : 0;
@@ -217,35 +513,62 @@ export function seatedTop(place: Place, view: View, height: number, same: boolea
 }
 
 /** Scroll `body`, now painted from `source`, so the block holding the kept place's offset (followPlace: followed
- *  through any edit, stepped to a neighbour when the block itself was rewritten) sits where the kept block sat
- *  (seatedTop); a body that stood at its very top goes to its very top. false when the body shows no text view, when no
- *  block stands at or before the offset, or when the block has no box (the Raw rows disagree with the source). A write
- *  the browser clamps (the new view is shorter) leaves the body at its end. */
+ *  through any edit, stepped to a neighbour when the block itself was rewritten) sits where the kept block sat: the
+ *  kept line where the line sat when the block stands and the line, or a line of the block beside it, does
+ *  (followLine); else the block's top where seatedTop puts it, and, for a block deleted under the reader's eye (its
+ *  neighbours now adjacent: the block the step lands on is the old neighbour itself), the block after it as a
+ *  replacement of no height. A body that stood at its very top goes to its very top. false when the body shows no
+ *  text view, when no block stands at or before the offset, or when the block has no box (the Raw rows disagree with
+ *  the source; the box to borrow is a wrapper's swallowed run). A write the browser clamps (the new view is shorter)
+ *  leaves the body at its end. */
 export function seatPlace(body: HTMLElement, source: string, place: Place): boolean {
   if (!hasBox(body)) return false;
   const md = body.querySelector(".fileview-md");
   const code = md ? null : body.querySelector("code.hljs");
   if (!md && !code) return false;
   if (place.atTop) { if (body.scrollTop !== 0) body.scrollTop = 0; return true; }
-  const { at, step } = followPlace(place, source);
+  const { at, step, deleted } = followBlock(place, source);
   const spans = sourceBlockSpans(source);
   const found = blockIndexAt(spans, at);
   if (found < 0) return false;
   const b = Math.max(0, Math.min(spans.length - 1, found + step));
+  const edge = body.getBoundingClientRect().top;
+  const els = md ? renderedBlockElements(md, source, b) : [];
+  // the kept line, when the block stands or a block stands in its place (a changed block is found through a neighbour,
+  // and the line is followed into it; a line found outside it is not the block's)
+  if (place.line && place.top < 0 && !deleted) {
+    const ls = followLine(place, source, spans[b]);
+    const top = ls === null ? null : md ? renderedLineTop(source, spans[b], els, ls) : rawLineTop(code as Element, source, spans[b], ls);
+    if (top !== null) {
+      const delta = top - (edge + place.line.top);
+      if (Math.abs(delta) >= 0.5) body.scrollTop += delta;
+      return true;
+    }
+  }
   const view: View = md ? "rendered" : "raw";
   const box = md ? renderedBoxNear(md, source, spans, b) : rawBlockBox(code as Element, source, spans[b]);
   if (!box) return false;
   // the same block with the same text (a view switch, a reflow, an edit elsewhere), or one the write changed: a
   // paragraph the session added a sentence to is its own span followed intact, and still a longer block now
   const same = step === 0 && source.slice(spans[b].start, spans[b].end) === place.source.slice(place.start, place.end);
-  const delta = (box.top - body.getBoundingClientRect().top) - seatedTop(place, view, box.bottom - box.top, same);
+  const delta = (box.top - edge) - (deleted ? seatedTop(place, view, 0, false) : seatedTop(place, view, box.bottom - box.top, same));
   if (Math.abs(delta) >= 0.5) body.scrollTop += delta;
   return true;
 }
 /** Block `b`'s box in the Rendered view, or, when it has no element with a layout (a comment, a hidden element, a block
- *  the sanitizer dropped), the nearest block's before it, else after it. */
+ *  the sanitizer dropped, a block nested inside an html wrapper), the nearest block's before it, else after it. null
+ *  when the nearest before it is an html block paired to elements not its own (a wrapper's swallowed run, which may
+ *  hold block `b`'s very element): its box is the rest of the document's, and no seat is better than that one. */
 function renderedBoxNear(md: Element, source: string, spans: SourceRange[], b: number): Box | null {
-  for (let k = b; k >= 0; k--) { const box = renderedBlockBox(md, source, k); if (box) return box; }
+  const own = renderedBlockBox(md, source, b);
+  if (own) return own;
+  for (let k = b - 1; k >= 0; k--) {
+    const els = renderedBlockElements(md, source, k);
+    if (!els.length) continue;
+    if (!ownElements(source, spans[k], els)) return null;
+    const box = union(els.map(boxOf));
+    if (box) return box;
+  }
   for (let k = b + 1; k < spans.length; k++) { const box = renderedBlockBox(md, source, k); if (box) return box; }
   return null;
 }

@@ -947,6 +947,10 @@ class Panel {
   busyVerb = new Map<string, string>();     // slot → the verb in flight, so a card's Accept/Reject relabels itself (ui/CLAUDE.md)
   seen = new Map<string, SeenChange[]>();   // slot → the changes a by-id decision was clicked on, as the card showed them (DECIDE_VERBS)
   imageTarget: { range: SourceRange | null } | null = null;   // the picture the float's Comment is about, when it is one
+  /** Where the float's subject sat on screen when the button was offered (the rect showFloat placed it beside) and, when the
+   *  subject is a picture, the picture itself; a passage is re-read from the live selection. hideFloatOnScroll compares the
+   *  subject's rect now against it; cleared with the float (hideFloat), so no element of a swapped-out render is held. */
+  floatAt: { top: number; right: number; img: HTMLElement | null } | null = null;
   regionLayers = new Map<Pictured, RegionLayer>();            // the overlays, one per picture in view — an <img>, or a PDF page's canvas (Slice 3/4; paintRegions)
   regionMarks = new Map<Pictured, RegionMark[]>();            // the rectangles the last region pass filed per picture: what a layer made late (onPageNear) paints
   pageWatch: IntersectionObserver | null = null;              // the panel's watch on PDF page shells with no overlay yet (watchPages → onPageNear)
@@ -1070,13 +1074,26 @@ class Panel {
   composerErr = el("div");
   float = el("button", "fileview-btn fc-float", "Comment") as HTMLButtonElement;
   catchUp = () => { if (this.tickSkipped) void this.tick(); };
-  hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) { this.float.hidden = true; this.imageTarget = null; } };
-  /** The body scrolled: the passage (or picture) the float sat beside has moved from under it, so the float goes, as it
+  hideFloatOnDown = (ev: Event) => { if (ev.target !== this.float) this.hideFloat(); };
+  /** The float goes, and with it what it was about: the picture (imageTarget) and the place it was offered at (floatAt). */
+  hideFloat(): void { this.float.hidden = true; this.imageTarget = null; this.floatAt = null; }
+  /** The body scrolled: when the passage (or picture) the float sat beside has moved from under it, the float goes, as it
    *  goes on a press elsewhere (plans/markdown-viewer.md Slice 2: it used to stay fixed in place while the selection
    *  scrolled off the body). The margin lock's own write of the body's scrollTop (a wheel over the cards, mirrored onto
-   *  the body) fires the same event and hides it too: the passage has moved then as well. The selection itself stands,
-   *  and the next mouseup over it offers the button again. */
-  hideFloatOnScroll = () => { if (!this.float.hidden) { this.float.hidden = true; this.imageTarget = null; } };
+   *  the body) fires the same event and hides it too: the passage has moved then as well. One body scroll moves nothing
+   *  on screen: when content above the viewport grows (an unsized figure landing its bytes), Chromium's scroll anchoring
+   *  grows scrollTop by the same amount so the reader's text stays put, and fires a scroll event for that write (the
+   *  Slice 2 review, round 2: the float vanished from beside a selection that had moved under a pixel, and the reader had
+   *  to select the passage again). So the event is the trigger and the subject's rect the test: the float stays while the
+   *  passage sits within a pixel of where the button was offered beside it (scrollTop is whole pixels and the growth above
+   *  fractional, so anchoring leaves a sub-pixel drift), and goes once it has moved a pixel or more, or is gone. The
+   *  selection itself stands either way, and the next mouseup over it offers the button again. */
+  hideFloatOnScroll = () => {
+    if (this.float.hidden) return;
+    const was = this.floatAt, now = this.floatSubjectRect();
+    if (was && now && Math.abs(now.top - was.top) < 1 && Math.abs(now.right - was.right) < 1) return;   // anchoring held the passage under the button
+    this.hideFloat();
+  };
   // Esc cancels a Re-place. Every other composer kind focuses the input, whose own keydown catches Esc; a re-place hides
   // the input (it takes a drag, not words), so nothing in the box holds focus and the key fell through to the viewer's
   // document-level Escape, which closed the WHOLE viewer — the panel, the open card and the pending re-place with it, when
@@ -1113,9 +1130,9 @@ class Panel {
     for (const ev of ["mousedown", "touchstart"]) this.float.addEventListener(ev, (e) => e.preventDefault());
     const act = () => {
       flash(this.float);
-      const picture = this.imageTarget; this.imageTarget = null;
+      const picture = this.imageTarget;
       const sel = window.getSelection();
-      this.float.hidden = true;
+      this.hideFloat();
       if (picture) this.startImageComment(picture.range);
       else if (sel && !sel.isCollapsed) this.startComment(sel);
     };
@@ -1128,10 +1145,11 @@ class Panel {
     document.body.appendChild(this.float);
     for (const ev of ["mousedown", "touchstart"]) document.addEventListener(ev, this.hideFloatOnDown, true);   // a press anywhere else hides it, mouse or finger
     document.addEventListener("keydown", this.escapeReplace, true);   // Esc during a re-place: see escapeReplace
-    // with the float's other listeners, for every layout (installLayout runs for the margin layout alone): this open's body
+    // with the float's other listeners, for every layout (installLayout runs for every layout too, but its scroll listeners
+    // feed mirrorScroll, which acts in the margin layout alone): this open's body
     ctx.body().addEventListener("scroll", this.hideFloatOnScroll, { passive: true });
     ctx.onSelection((sel) => this.onSelection(sel));
-    ctx.onRendered(() => { this.float.hidden = true; this.retargetComposer(); this.paintAll(); });
+    ctx.onRendered(() => { this.hideFloat(); this.retargetComposer(); this.paintAll(); });
     ctx.onSaved((info) => {
       if (this.base) this.base.file = info.mtimeNs;   // the poll must not re-fetch the person's own save
       if (this.lastSaveNs === info.mtimeNs) { this.lastSaveNs = null; return; }   // a save through this panel: its reply IS the status (Slice 5)
@@ -1485,7 +1503,7 @@ class Panel {
     this.open = false;
     this.ctx.aside(null);
     this.button.classList.remove("on"); this.button.setAttribute("aria-pressed", "false");
-    this.float.hidden = true;
+    this.hideFloat();
     // A pending Re-place is a gesture of the OPEN panel: its instruction and Cancel are the composer box, and the drag it
     // waits for is disarmed with the panel. Left pending, the closed panel's picture kept the cue (the dashed accent
     // outline inviting a drag) over an overlay that took none, with nothing on screen saying why, and escapeReplace kept
@@ -1990,11 +2008,23 @@ class Panel {
     this.imageTarget = null;                           // a text selection replaces a picture as the float's subject
     this.showFloat(rect);
   }
-  private showFloat(rect: { right: number; top: number }): void {
+  private showFloat(rect: { right: number; top: number }, img: HTMLElement | null = null): void {
     const x = Math.min(Math.max(8, rect.right + 6), window.innerWidth - 90);
     const y = Math.min(Math.max(8, rect.top - 30), window.innerHeight - 34);
     this.float.style.left = x + "px"; this.float.style.top = y + "px";
     this.float.hidden = false;
+    this.floatAt = { top: rect.top, right: rect.right, img };
+  }
+  /** The float's subject as it sits on screen now: the picture's box, or the live selection's last range (null once the
+   *  selection is gone or collapsed, or the picture has left the document); what hideFloatOnScroll compares with floatAt. */
+  private floatSubjectRect(): { top: number; right: number } | null {
+    const at = this.floatAt;
+    if (!at) return null;
+    if (at.img) return at.img.isConnected ? at.img.getBoundingClientRect() : null;
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const r = sel.getRangeAt(sel.rangeCount - 1).getBoundingClientRect();
+    return r.width || r.height ? r : null;
   }
   /** A click on a rendered picture (the plan's Images and PDFs): with the panel open, the float offers
    *  Comment beside it; the anchor will be the embed's source text. A picture the source holds no embed
@@ -2006,7 +2036,7 @@ class Panel {
     if (!root || src === null || !root.contains(img)) return;
     const e = embedFor(img, root, src, this.ctx.path);
     this.imageTarget = { range: e ? { start: e.start, end: e.end } : null };
-    this.showFloat(img.getBoundingClientRect());
+    this.showFloat(img.getBoundingClientRect(), img);
   }
   startImageComment(range: SourceRange | null): void {
     const src = this.ctx.text();

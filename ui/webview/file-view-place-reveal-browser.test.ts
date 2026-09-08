@@ -6,11 +6,15 @@
 // the reflow's own clamp), so the ResizeObserver's repaint seated the place read BEFORE the click and scrolled the body
 // back one frame later: at 900px the mark was centered at 280 then sat at 181, with the pre-click paragraph on top again
 // and a mark lower in the viewport pushed off the screen with its card; the reader saw the text jump twice. Now only the
-// clamp itself is skipped (a scroll that lands the body at its end coming from above it), and every other scroll under
-// the new width is read, so the repaint holds the reveal. The second test drives the generic form (any scroll of the body
-// plus a width change in one task) and the clamp the read still skips (the aside closing on a reader deep in the narrow
-// body). Legs await frames and paint counts, never a timer. Skips LOUDLY without a playwright browser (CI installs none),
-// as the other browser legs do. Synthetic values only: an invented report, /repo/notes-api paths, the placeholder sid.
+// browser's own adjustments are skipped, each by its signature: the clamp (a scroll that lands the body at its end coming
+// from above it) and the anchoring adjustment (the block the last read named with its top edge where it stood; round 2 of
+// the review: read as the place, it held the reader's depth in pixels and the repaint moved nothing, so each open of the
+// panel halved the depth the close had kept as a fraction; file-view-place-browser.test.ts drives that). Every other
+// scroll under the new width is read, so the repaint holds the reveal. The second test drives the generic form (any
+// scroll of the body plus a width change in one task) and the clamp the read still skips (the aside closing on a reader
+// deep in the narrow body). Legs await frames and paint counts, never a timer. Skips LOUDLY without a playwright browser
+// (CI installs none), as the other browser legs do. Synthetic values only: an invented report, /repo/notes-api paths, the
+// placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, closePanel, pageHtml, frames, paintsReach, topBlock, putAtTop, LONG, REPORT, SID, MT, ORIGIN, STATUS, type Mode, type Opened } from "./real-viewer-leg";

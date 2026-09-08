@@ -589,7 +589,7 @@ test("a size step fires onRendered once (the panel re-runs its paint pass over t
   assert.equal(paints, at, "at the end of the table nothing changed, so nothing fired (no move without new information)");
   // the panel's side of the contract: its onRendered hides the floating Comment button (placed by a passage that has
   // moved) and re-runs the paint pass that wraps the highlights around the text again
-  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.float\.hidden = true; [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
+  assert.match(PANEL, /ctx\.onRendered\(\(\) => \{ this\.hideFloat\(\); [^\n]*this\.paintAll\(\); \}\);/, "file-comments.ts answers onRendered with paintAll");
   assert.match(VIEW, /onRendered\(cb: \(\) => void\): void;/);
   assert.match(VIEW, /Also after a text view REFLOWS with its text unchanged: a text-size step/, "the seam's doc names the reflow triggers");
   // both reflow triggers fire through the wrapper that keeps a standing selection across the panel's re-wrap (round 2:

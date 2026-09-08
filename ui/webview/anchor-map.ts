@@ -686,12 +686,33 @@ type Block = {
   refused: string | null;
   dom: DNode[];
   isHtml: boolean;
-  /** an html block of comments alone: it renders no node, so the pairing gives it none and reads past it (before this,
-   *  an html block right before one lost its nodes to it: the resync accepted the comment block at once) */
+  /** an html block of comments alone (commentsOnly): it renders no node, so the pairing gives it none and reads past it
+   *  (before this, an html block right before one lost its nodes to it: the resync accepted the comment block at once) */
   blank: boolean;
   tag: string | null;   // the element the token renders to, for resyncing past an html block
 };
-const COMMENTS_ONLY = /^(?:\s*<!--[\s\S]*?-->)*\s*$/;
+/** Whether an html token's raw is comments alone, whitespace between them, read left to right one comment at a time:
+ *  each `<!--` is closed by the first `-->` after it (or is one of marked's two-character forms `<!-->` and `<!--->`),
+ *  so a raw of many comments costs its length. marked lexes a line of comments and whatever follows them on that line
+ *  as one html token, so the raw can hold any number of them. Not a regex: the anchored one this replaced,
+ *  `^(?:\s*<!--[\s\S]*?-->)*\s*$`, tried every way of splitting the comments among its repeats whenever the raw ended
+ *  in anything else (a tag, words, an unterminated comment) and doubled its time per comment (91 ms at 22, 144 s at
+ *  30, on every Rendered paint), and it let a comment at each end of the line vouch for the words between them, which
+ *  do render (the Slice 2 review, round 2: the next paragraph took their node and every block after paired one early). */
+function commentsOnly(raw: string): boolean {
+  let i = 0;
+  for (;;) {
+    while (i < raw.length && isWs(raw[i])) i++;
+    if (i >= raw.length) return true;
+    if (!raw.startsWith("<!--", i)) return false;
+    i += 4;
+    if (raw[i] === ">") { i++; continue; }
+    if (raw.startsWith("->", i)) { i += 2; continue; }
+    const close = raw.indexOf("-->", i);
+    if (close < 0) return false;
+    i = close + 3;
+  }
+}
 type RenderedIndex = {
   source: string; shape: Shape; N: string; nStart: Int32Array | null;
   blocks: Block[];
@@ -764,7 +785,7 @@ function analyzeRendered(root: DElement, source: string): RenderedIndex {
       catch (e) { if (e instanceof Refusal) refused = e.message; else throw e; }
     }
     const isHtml = t.type === "html";
-    blocks.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, dom: [], isHtml, blank: isHtml && COMMENTS_ONLY.test(t.raw), tag: tagOf(t) });
+    blocks.push({ startN, endN, textEndN, chars: em.chars, pos: em.pos, holes: em.holes, refused, dom: [], isHtml, blank: isHtml && commentsOnly(t.raw), tag: tagOf(t) });
   }
   if (lexError !== null) blocks.length = 0;
   // ── the DOM's top-level nodes and their text

@@ -166,7 +166,7 @@ test("topVisibleIndex: the first box whose bottom lies below the edge; count whe
 });
 
 // ── followPlace ────────────────────────────────────────────────────────────────────────────────────
-test("followPlace: unchanged text keeps the offset; an insertion above shifts it by the inserted length; one below leaves it; a rewrite of the block itself is placed by the block before it (an insertion above at the same time included); with that block gone too, by the block after; with all three gone, the edit's start", () => {
+test("followPlace: unchanged text keeps the offset; an insertion above shifts it by the inserted length; one below leaves it; a rewrite of the block itself is placed by the block before it (an insertion above at the same time included); with that block gone too, by the block after; with all three gone, the nearest block before that stands; with none, the edit's start", () => {
   const at = (s: string, i: number) => s.indexOf(PARA(i));
   const span = (source: string, i: number) => ({ start: at(source, i), end: at(source, i) + PARA(i).length });
   const place = (source: string, i: number): Place => ({ source, view: "rendered", ...span(source, i), top: -12, height: 32, atTop: false, prev: i > 1 ? span(source, i - 1) : null, next: i < 10 ? span(source, i + 1) : null });
@@ -183,7 +183,8 @@ test("followPlace: unchanged text keeps the offset; an insertion above shifts it
   const rewrittenFrom4 = DOC.replace(PARA(4) + "\n\n" + PARA(5), "Rewritten 4 and 5: two paragraphs became one.");
   assert.deepEqual(followPlace(place(DOC, 5), rewrittenFrom4), { at: at(rewrittenFrom4, 6), step: -1 }, "the block before rewritten too: the block after, and `step` -1 says the one before that (the Slice 2 review: this fell to the edit's start, and with an insertion above, to the top)");
   const three = rewrittenFrom4.replace(PARA(6), "Rewritten 6.");
-  assert.deepEqual(followPlace(place(DOC, 5), three), { at: at(DOC, 4), step: 0 }, "all three rewritten: the edit's start, before the kept block's old offset");
+  assert.deepEqual(followPlace(place(DOC, 5), three), { at: at(three, 3), step: 1 }, "all three rewritten: the nearest block before them that stands (paragraph 3), and the kept block is the one after it, the first of the rewritten run (the review's second round: this fell to the edit's start)");
+  assert.deepEqual(followPlace(place(DOC, 5), "Every paragraph rewritten, the heading too.\n"), { at: 0, step: 0 }, "no block standing on either side: the edit's start");
   // the block's text moved whole to another place inside the edited region: followed there
   const swapped = DOC.replace(PARA(5) + "\n\n" + PARA(6), PARA(6) + "\n\n" + PARA(5));
   assert.deepEqual(followPlace(place(DOC, 5), swapped), { at: swapped.indexOf(PARA(5)), step: 0 }, "two blocks swapped: the block is found where it went");
@@ -334,11 +335,15 @@ test("file-view.ts: the place is read before the text swap and seated after the 
     "read, swap, hooks, then seat over the new text");
   assert.match(local, /const seat = \(kept: Place \| null\) => \{ if \(kept && shownText !== null\) seatPlace\(body, shownText, kept\); notePlace\(\); \};/, "a seat reads the place anew after it");
   assert.match(local, /const notePlace = \(\) => \{ if \(shownText !== null && textShowing\(\)\) \{ place = readPlace\(body, shownText\); placeWidth = body\.clientWidth; placeScrollTop = body\.scrollTop; \} \};/);
-  // under a width the last read did not see, only the clamp is skipped (the body landed at its end coming from above it):
-  // a scroll made on purpose in the same task as the width change (the panel's reveal) is read, so the repaint holds it
+  // under a width the last read did not see, the browser's own adjustments are skipped, each by its signature: the clamp
+  // (the body landed at its end coming from above it) and the anchoring adjustment (the kept block's top edge within a
+  // pixel of where it stood); a scroll made on purpose in the same task as the width change (the panel's reveal) is read,
+  // so the repaint holds it
   assert.match(local, /const clamped = \(\): boolean => body\.scrollTop < placeScrollTop && body\.scrollTop >= body\.scrollHeight - body\.clientHeight - 1;/, "the clamp's signature");
-  assert.match(local, /body\.addEventListener\("scroll", \(\) => \{\n\s*if \(placeFrame\) return;\n\s*const read = \(\) => \{ placeFrame = 0; if \(body\.clientWidth === placeWidth \|\| !clamped\(\)\) notePlace\(\); \};/,
-    "the scroll-time read, once per frame: every scroll under the width last read, and under a new width every scroll but the clamp");
+  assert.match(local, /const anchored = \(\): boolean => \{\n\s*if \(!place \|\| place\.source !== shownText \|\| !textShowing\(\)\) return false;\n\s*const top = keptBlockTop\(body, place\);\n\s*return top !== null && Math\.abs\(top - place\.top\) <= 1;/,
+    "the anchoring's signature: the kept block's own top edge (reader-place.ts keptBlockTop) within a pixel of where it stood");
+  assert.match(local, /body\.addEventListener\("scroll", \(\) => \{\n\s*if \(placeFrame\) return;\n\s*const read = \(\) => \{ placeFrame = 0; if \(body\.clientWidth === placeWidth \|\| !\(clamped\(\) \|\| anchored\(\)\)\) notePlace\(\); \};/,
+    "the scroll-time read, once per frame: every scroll under the width last read, and under a new width every scroll but the browser's own, the clamp and the anchoring adjustment");
   assert.match(local, /paintedWidth = seenWidth;\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(place\); \}/, "the width reflow seats the tracked place");
   assert.match(local, /const kept = textShowing\(\) \? keptPlace\(\) : null;[^\n]*\n\s*applyTextSize\(\);\n\s*if \(textShowing\(\)\) \{ fireRenderedKeepingSelection\(\); seat\(kept\); \}/, "a text-size step reads before the size changes and seats after the hooks");
   const url = VIEW.split("export function openUrlView(")[1].split("\nexport function ")[0];
@@ -351,11 +356,12 @@ test("file-view.ts: the place is read before the text swap and seated after the 
   assert.match(local, /document\.getElementById\("fileview-save-err"\)\?\.remove\(\);\n\s*renderBody\(\);\n\s*\/\/ a fetch that landed while the editor was up/, "the editor's exit removes the edit's notices, as the repaint used to");
   // the float hides on the body's scroll, installed with the float's other listeners (the constructor), not in installLayout
   const PANEL = read("file-comments.ts");
-  assert.match(PANEL, /hideFloatOnScroll = \(\) => \{ if \(!this\.float\.hidden\) \{ this\.float\.hidden = true; this\.imageTarget = null; \} \};/);
+  assert.match(PANEL, /hideFloatOnScroll = \(\) => \{\n\s*if \(this\.float\.hidden\) return;\n\s*const was = this\.floatAt, now = this\.floatSubjectRect\(\);\n\s*if \(was && now && Math\.abs\(now\.top - was\.top\) < 1 && Math\.abs\(now\.right - was\.right\) < 1\) return;[^\n]*\n\s*this\.hideFloat\(\);\n\s*\};/,
+    "hides on the body's scroll unless the passage stayed within a pixel of where the button was offered (Chromium's anchoring adjustment)");
   assert.match(PANEL, /ctx\.body\(\)\.addEventListener\("scroll", this\.hideFloatOnScroll, \{ passive: true \}\);\n\s*ctx\.onSelection\(\(sel\) => this\.onSelection\(sel\)\);/, "beside the selection hook in the constructor");
   assert.match(PANEL, /this\.ctx\.body\(\)\.removeEventListener\("scroll", this\.hideFloatOnScroll\);/, "and removed with the float at dispose");
   const install = PANEL.split("private installLayout(row: HTMLElement): void {")[1].split("\n  }\n")[0];
-  assert.doesNotMatch(install, /hideFloatOnScroll/, "not in installLayout, which runs for the margin layout alone");
+  assert.doesNotMatch(install, /hideFloatOnScroll/, "not among installLayout's scroll listeners, which feed the margin lock's mirrorScroll and act in the margin layout alone");
   // the sheets: no overflow-anchor rule (the swap never relied on anchoring, and anchoring helps after the seat when a
   // figure above loads late), and the row declares no container of its own
   for (const f of ["styles.css", "feed.css"]) {

@@ -4,12 +4,15 @@
 // at its old screen position while the selected passage had left the body (the slice's gap analysis, executed
 // 2026-09-08: the float visible at the same coordinates with the selection's rect 36px above the body). The listener sits
 // with the float's other listeners in the panel's constructor, so it holds in the list layout (a narrow pane) and the
-// margin layout alike; installLayout, which runs for the margin layout alone, was not the place. In the margin layout
-// the lock mirrors a scroll of the cards track onto the body with a write of body.scrollTop, and that write fires the
-// same scroll event: the float hides then too, which the second scene states, since the passage has moved under the
-// reader just the same. The selection itself stands after the scroll; only the button goes. Legs await frames, never a
-// timer. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic values
-// only: an invented report, /repo/notes-api paths, the placeholder sid.
+// margin layout alike; installLayout's scroll listeners were not the place: they feed the margin lock's mirrorScroll,
+// which returns early unless the aside is open in the margin layout, while installLayout itself runs from the same
+// constructor for every layout. In the margin layout the lock mirrors a scroll of the cards track onto the body with
+// a write of body.scrollTop, and that write fires the same scroll event: the float hides then too, which the second
+// scene states, since the passage has moved under the reader just the same. The selection itself stands after the
+// scroll; only the button goes. The one body scroll that moves nothing on screen, Chromium's anchoring adjustment when
+// a figure above the viewport lands, keeps the float: file-view-float-anchoring-browser.test.ts. Legs await frames,
+// never a timer. Skips LOUDLY without a playwright browser (CI installs none), as the other browser legs do. Synthetic
+// values only: an invented report, /repo/notes-api paths, the placeholder sid.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { inBrowser, openViewer, openPanel, frames } from "./real-viewer-leg";

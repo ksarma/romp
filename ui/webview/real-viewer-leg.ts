@@ -5,9 +5,14 @@
 // body.fileview-pane), with a fetch that answers the kernel's file route from a table the test edits (so a reload can
 // bring different bytes under a new mtime) and a poster that answers the panel's status ask the way the kernel would,
 // so the real aside opens on a click. A probe action stashes the seam (window.__seam) and counts its paints, the way
-// file-view-text-size.test.ts's page does. Six legs measure over it (file-view-place-browser, file-view-notebar-browser,
-// file-comments-float-scroll-browser, file-view-fold-browser, and the Slice 2 review's file-view-place-blocks-browser
-// and file-view-place-reveal-browser); this module exists so they do not carry six copies of the same page. Test-only:
+// file-view-text-size.test.ts's page does. Every value the page inlines into its script (the file table, the mtime, the
+// status) is written with `<` as `\u003c` (scriptLiteral): an HTML tokenizer ends script data at the first `</script`
+// whatever the JavaScript around it, so a fixture holding one used to cut the harness script off before the fetch stub,
+// leaving the viewer to fetch the harness page itself as the note (file-view-leg-page-browser.test.ts pins the escape).
+// Nine legs measure over it (file-view-place-browser, file-view-notebar-browser, file-comments-float-scroll-browser,
+// file-view-fold-browser, and the Slice 2 review's file-view-place-blocks-browser, file-view-place-reveal-browser,
+// file-view-place-edits-browser, file-view-float-anchoring-browser and file-view-leg-page-browser); this module exists so
+// they do not carry nine copies of the same page. Test-only:
 // no webview bundle imports it. playwright and esbuild are resolved from the extension's own package.json, so a
 // single-file run (infra: the bundle written under TMPDIR) finds them too. The tree under test is the
 // cwd's, ../ui/webview from the vscode-extension npm test runs in, as for every browser leg; to run a leg over another
@@ -65,6 +70,11 @@ export function bundleViewer(): string {
   return viewerBundle;
 }
 
+/** A value inlined into the page's script as a JavaScript literal: JSON with every `<` written `\u003c`, so a fixture
+ *  holding `</script>` (or `<!--`, which puts the tokenizer in its escaped state) cannot end the script element early.
+ *  JSON.stringify leaves `<` alone; JSON.parse and the engine read `\u003c` back as `<`. */
+export const scriptLiteral = (x: unknown): string => JSON.stringify(x).replace(/</g, "\\u003c");
+
 /** The page: the surface's sheet, the bundle, the file table and fetch stub, the status-answering poster, the probe action.
  *  `window.__docs[path]` is the file's text and `window.__mtime` its mtime (both editable from a test); a URL the URL viewer
  *  fetches is answered from `window.__urls[url]` as text/markdown. The poster records every post in `window.__posted` and
@@ -74,7 +84,7 @@ export function pageHtml(mode: Mode, docs: Record<string, string>, mtime = MT): 
   const css = mode === "feed" ? web("feed.css") : mode === "pane" ? web("styles.css") + "\n" + web("files-pane.css") : web("styles.css");
   return `<!DOCTYPE html><html><head><meta charset=utf-8><style>${css}</style></head>
 <body class="${mode === "pane" ? "fileview-pane" : ""}"><script>${bundleViewer()}</script><script>
-window.__docs = ${JSON.stringify(docs)}; window.__urls = {}; window.__mtime = ${JSON.stringify(mtime)}; window.__fetches = 0; window.__posted = []; window.__status = ${JSON.stringify(STATUS)};
+window.__docs = ${scriptLiteral(docs)}; window.__urls = {}; window.__mtime = ${scriptLiteral(mtime)}; window.__fetches = 0; window.__posted = []; window.__status = ${scriptLiteral(STATUS)};
 window.fetch = async function (url) {
   url = String(url); window.__fetches++;
   if (url.indexOf("/version") === 0) return new Response(JSON.stringify({ fileEditing: true }), { headers: { "Content-Type": "application/json" } });

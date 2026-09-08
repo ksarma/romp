@@ -1,8 +1,10 @@
 // drawnBox under each `object-fit` (plans/file-review.md, Slice 3; contract E6). The overlay is placed
 // over the box the picture is DRAWN in, and that box is not always the contain-letterbox: a figure in
-// rendered markdown has no `object-fit` rule, so a `width`/`height` pair that disagrees with its aspect
-// (raw HTML the sanitizer keeps, or a correct pair squeezed by `max-width: 100%` in a narrow column)
-// stretches the picture over the whole element. A letterbox computed for THAT figure put the overlay over
+// rendered markdown has no `object-fit` rule, so an element whose box disagrees with the picture's aspect
+// (a height-only or percentage-width pair the sanitizer keeps, whose height the column's cap never follows;
+// and, before Slice 2 of plans/markdown-viewer.md gave a pixel-sized picture `height: auto`, any pixel
+// `width`/`height` pair that disagreed with the bytes or was squeezed by `max-width: 100%` in a narrow
+// column) stretches the picture over the whole element. A letterbox computed for THAT figure put the overlay over
 // the middle of the element and left the picture's edges undrawable — the fractions stored from a drag and
 // the rectangles painted from them were both wrong. drawnBox now takes the element's computed value, and
 // REQUIRES it: an optional `fit` defaulting to `contain` would hand the same bug to the next caller that
@@ -17,7 +19,9 @@ const RECT: Box = { left: 100, top: 200, width: 300, height: 200 };
 const SQUARE = { width: 100, height: 100 };
 
 test("fill: a stretched figure is drawn over its whole element, so the box is the rect and the overlay's inset: 0 holds", () => {
-  // the README figure: <img src="fig.png" width="400" height="100"> for a 400×400 picture
+  // a 400×100 element over a 400×400 picture: <img src="fig.png" width="100%" height="100"> in a 400px column (the boxes
+  // here are given, not laid out; a pixel width and height pair lays out at the picture's ratio since Slice 2 of
+  // plans/markdown-viewer.md, so it no longer produces this element)
   const el: Box = { left: 0, top: 0, width: 400, height: 100 };
   const fig = { width: 400, height: 400 };
   assert.deepEqual(drawnBox(el, fig, "fill"), el);
@@ -31,8 +35,9 @@ test("fill: a stretched figure is drawn over its whole element, so the box is th
   assert.deepEqual(regionFromPoints(box, { x: 0, y: 0 }, { x: 400, y: 100 }), { x: 0, y: 0, w: 1, h: 1 }, "the whole picture is the whole element");
 });
 
-test("fill: a figure with the right width and height, squeezed by max-width in a narrow column, is stretched too", () => {
-  // an 800×400 figure with width="800" height="400" in a 500px column: the width caps, the height attribute holds
+test("fill: a figure with the right height, squeezed by max-width in a narrow column, is stretched too", () => {
+  // an 800×400 picture with height="400" alone in a 500px column: the width caps, the height attribute holds (with
+  // width="800" beside it the sheet's height: auto follows the picture's ratio to 500×250 instead)
   const el: Box = { left: 0, top: 0, width: 500, height: 400 };
   const fig = { width: 800, height: 400 };
   assert.deepEqual(drawnBox(el, fig, "fill"), el);
