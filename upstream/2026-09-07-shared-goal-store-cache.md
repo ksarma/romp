@@ -1,15 +1,17 @@
 ---
 title: Perf P9: `load_goals_shared` gives the pusher's read-only sites one deep-frozen parsed goal store per file version (the identity of the store, journal and archive, plus a byte compare of the store that closes the equal-size same-tick republish blind spot); a write to the shared view raises `FrozenStoreError`, files one judge-errors row naming the site chain and the sid, and switches the cache off for the process
-status: offered
+status: merged
 where: fork PR #267 (`perf2-goalcache`, merged 2026-09-07 in batch #277): `kernel/judge.py` (`load_goals_shared`, `FrozenStoreError`; `save_goals` refuses a shared store before its no-op check), `kernel/kernel.py` (ten call sites in eight functions: `build_timeline` both loads, `build_session` both, `build_feed`'s peer store, `_session_stamp_read`, `_owned_yield_why`, `_open_top_goal`, `_msg_sum_scan_session`, `_deferral_sweep_tick`; `/perf goals.loads_shared` and `memos.goals_shared`), `bin/romp`, `docs/reference.md`; tests `tests/test_judge_store_cache.py` (23), `tests/test_kernel_goal_cache_wiring.py` (9, with source pins for the wired and the unwired sites), `tests/test_kernel_rewind.py`, `tests/test_kernel_timeline_split.py`, `tests/test_perf_stats.py`, `tests/romp-perf.bats`
 added: 2026-09-07
 pr: 267
 tier: fix
 offered: their PR #1059
-closed:
+closed: 2026-09-08
 ---
 In the 2026-09-06 pusher profile `build_timeline`'s per-lane store loads were 306 of 693 samples, and upstream's builders take a fresh parse per load at the same sites. Invalidation is exact by construction (a store publish, a journal append and an archive publish each move an identity) and the byte compare covers the one case the key cannot. Every later call after the guard fires falls back to `load_goals`, shown on `/perf` as `off` and `fallback`. Deliberately not wired: `_lift_spent_awaiting` and `_bg_placed_tops` (P6 owns those loads), `_feed_goals` (its B5 memo stays) and every judge-side writer. The freeze costs about 3 ms per 1.2 MB store, on misses only; the resident cost is about 14 MB of raw bytes plus 28 MB of objects for 74 stores. The `build_timeline` bars bench runs 8 to 12% faster and warm chat builds are down. `loads + loads_shared` is every store read.
 
 Stacked on J4 (`propagate-load-once`, #266) and P6 (`awaiting-lift-identity-gate`, #264): a store marked `_unread` is never published into the cache. `romp-perf` (fork #199) for the counters only. P5+P8 (`one-encode-per-payload-per-build-on-the-pusher-thread-plan`, #270) and P1-P3 (`tick-jobs-wake-memos-discover-once`, #273) are stacked above it.
 
 OFFERED 2026-09-08: offered upstream inside bundle PR #1059 (Identity memos on the judge's goal-store loads, saves and scans, and a shared read-only cache for the pusher; label fix; branch store-memos-offer; head b168928b; a draft while the branch is rebased onto the moved upstream tip) with `judge-failure-scan-memo`, `chain-membership-memo`, `goals-pass-snapshot-memo`, `save-goals-noop-disk-memo`, `propagate-load-once` and the journal half of `awaiting-lift-identity-gate`'s `_unread` mark. Its corrupt-store memo was dropped at the rebase as covered by upstream's #1019: `load_goals_shared` hands bytes that do not parse to `load_goals` and caches nothing, and the builders read the shared view through `load_goals_shared_or_fault`.
+
+MERGED 2026-09-08: merged upstream as their PR #1059 (merge 9c9a926a, 2026-09-08T18:41:39Z) after the maintainer's own review commit; the bundle's counters land later through GET /perf's memos key, which the review commit added.
