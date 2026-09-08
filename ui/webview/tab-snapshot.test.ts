@@ -239,7 +239,7 @@ test("pinned: render.ts shows the snapshot on a header click — snapView set BE
 test("pinned: the open-from-card path — a real button per row, data-act=open on the ONE stable host's delegate, opens + focuses the session", () => {
   assert.match(SNAP, /host = el\("div", "tab-snapshot"\);\s*\n\s*host\.id = "tab-snapshot";\s*\n\s*host\.setAttribute\("role", "region"\);/, "made once");
   // round 2 put a guard between the id and setActive (rowStillOpen, tab-snapshot-view.ts; the pane test pins it)
-  assert.match(SNAP, /delegate\(host, \{ open: \(node\) => \{\s*\n\s*const id = node\.dataset\.id;\s*\n\s*if \(!id\) return;[\s\S]*?setActive\(id\); focusActiveTab\(\);\s*\n\s*\},/, "installed once, with the host (click-safe: rows are rebuilt); the Hide, Show and fold acts follow in the same map (tab-hide.test)");
+  assert.match(SNAP, /delegate\(host, \{ open: once\(\(node\) => \{\s*\n\s*const id = node\.dataset\.id;\s*\n\s*if \(!id\) return;[\s\S]*?setActive\(id\); focusActiveTab\(\);\s*\n\s*\}\),/, "installed once, with the host (click-safe: rows are rebuilt), once per gesture (tab-hide.test); the Hide, Show and fold acts follow in the same map");
   assert.equal(SNAP.split("delegate(host").length - 1, 1, "one delegate, never in the render");
   assert.match(SNAP, /const btn = document\.createElement\("button"\);\s*\n\s*btn\.type = "button";/, "a real button: Tab reaches it, Enter opens");
   assert.match(SNAP, /btn\.dataset\.act = "open"; btn\.dataset\.id = r\.id;/);

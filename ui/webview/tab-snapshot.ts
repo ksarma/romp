@@ -15,7 +15,7 @@
 // information, applied to a list that is rebuilt from every push. render.ts paints it; the shapes
 // below are the minimal "Like" views of render.ts's types (the tab-state.ts idiom), so the rule runs
 // in node tests without a DOM.
-import { tabStateClass, type TabStateLike } from "./tab-state";
+import { tabStateClass, sectionPip, sectionPipMembers, type TabStateLike, type SectionPip } from "./tab-state";
 import { stripInline } from "./docreview";
 
 export interface SnapStatusLike extends TabStateLike { sinceEpoch?: number | null }
@@ -186,6 +186,35 @@ export function rowState(st: SnapStatusLike | null | undefined): { pip: SnapPip;
  *  word reached (review r2 2026-09-06); "needs you" is true of every card there. */
 export const FEED_BLOCK_STATE = "needs you";
 
+/** A member's name as its tab shows it; "(unnamed)" for a blank one (the tab-state.ts rule). */
+const memberName = (s: { name?: string } | null | undefined): string => String(s?.name || "").trim() || "(unnamed)";
+
+/** ON YOU, one judgment for every surface that shows a session or stands in for it (round 1 of the tabhide
+ *  review, 2026-09-08): the feed's verdict for it (lg.needsInput: a card of its filed under needs-you in the
+ *  kernel's last feed build) or the tab's own alarm-red cases (rowState: a live prompt, an API error only you
+ *  can clear), which the feed build can trail by one push. The row's chip and the Hidden fold's count read it
+ *  (snapshotRow, with an open user todo besides), and so does the header's stand-in pip over the members with
+ *  no tab on the strip (standInPip), so a hidden idle session the feed files under needs-you is red on the
+ *  strip, as the Hide button's hover promises. */
+export function onYou(st: SnapStatusLike | null | undefined, lg: SnapLedgerLike | null | undefined): boolean {
+  return lg?.needsInput === true || rowState(st).needsYou;
+}
+
+/** What the header's stand-in pip reads per member: the session frame and its ledger, either absent. */
+export interface StandInLike { session: SnapSessionLike | null | undefined; ledger: SnapLedgerLike | null | undefined }
+
+/** THE HEADER'S STAND-IN PIP over the members with no tab on the strip (render.ts makeGroupHead: folded, the
+ *  unpinned members; open, the members hidden inside the section): the tab's own rule (tab-state.ts sectionPip:
+ *  red for a member blocked on you or waiting for you, gold for one working, amber for one retrying an API
+ *  error on its own) with onYou folded in, so a member the feed files under needs-you is red as well, and the
+ *  names its phrase is about (sectionPipTitle), in strip order. Null when nothing is happening. */
+export function standInPip(members: ReadonlyArray<StandInLike>): { kind: SectionPip; names: string[] } | null {
+  const names = members.filter((m) => onYou(m.session?.status, m.ledger)).map((m) => memberName(m.session));
+  if (names.length) return { kind: "blocked", names };
+  const kind = sectionPip(members.map((m) => m.session?.status));
+  return kind ? { kind, names: sectionPipMembers(kind, members.map((m) => m.session)) } : null;
+}
+
 export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, lg: SnapLedgerLike | null | undefined, hidden = false): SnapRow {
   const st = rowState(s?.status);
   const todos = Array.isArray(s?.userTodos) ? s!.userTodos!.length : 0;
@@ -193,16 +222,17 @@ export function snapshotRow(id: string, s: SnapSessionLike | null | undefined, l
   // states the chip carries (a permission or picker prompt, an on-you API error), so a judge-filed block
   // on a session that went idle after asking showed a plain idle row here while the feed showed a red
   // card. lg.needsInput is that column, per session, from the kernel's last feed build (build_session);
-  // the tab's own cases stay as a floor because the feed build trails the chip by one push.
+  // the tab's own cases stay as a floor because the feed build trails the chip by one push. The one
+  // judgment is onYou (the header's stand-in pip reads the same); the row adds an open user todo, the tab's ⚑.
   const feedBlock = lg?.needsInput === true;
   return {
     id,
-    name: String(s?.name || "").trim() || "(unnamed)",
+    name: memberName(s),
     emoji: s?.emoji || "",
     color: s?.color && s.color.bg && s.color.fg ? { bg: s.color.bg, fg: s.color.fg } : null,
     pip: s ? st.pip : "unknown",
     state: st.state || (feedBlock && !st.closed ? FEED_BLOCK_STATE : ""),
-    needsYou: feedBlock || st.needsYou || todos > 0,
+    needsYou: onYou(s?.status, lg) || todos > 0,
     waiting: st.waiting,
     todos,
     now: nowLine(lg),

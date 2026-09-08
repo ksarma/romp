@@ -102,10 +102,24 @@ export function sectionTodoFlag(members: ReadonlyArray<TabTodoLike | null | unde
   return names.length ? { count: names.length, names } : null;
 }
 
-/** The flag's hover text: the sessions by name, and what the click does. */
-export function sectionTodoTitle(flag: SectionTodoFlag): string {
+/** THE NON-FOLDING DOOR's click phrase (round 1 of the tabhide review, 2026-09-08): what a press on an OPEN
+ *  header's marks over the members hidden inside its section does (render.ts show-group): the section's
+ *  snapshot in the pane, the fold as it was. The flag, the pip and the count wear it there. */
+export const SHOW_GROUP_CLICK = "click to show this group's sessions";
+
+/** The open header's count over its hidden members, as the button it is there (render.ts makeGroupHead): what
+ *  a reader hears and the hover. The fold's own words for the same members are hiddenFoldWords (tab-snapshot.ts). */
+export function sectionDoorTitle(hidden: number): string {
+  return `${hidden} session${hidden === 1 ? "" : "s"} hidden from the strip while this group is open; ${SHOW_GROUP_CLICK}`;
+}
+
+/** The flag's hover text: the sessions by name, and what the click does. On a folded header the click opens
+ *  the group (render.ts open-group); on an open one (`door`: the header stands in for members hidden inside the
+ *  section) it shows the group's sessions in the pane and leaves the fold alone (show-group). Round 1 of the
+ *  tabhide review: the flag on an open header promised to open a group that was already open. */
+export function sectionTodoTitle(flag: SectionTodoFlag, door = false): string {
   const who = flag.count === 1
     ? `${flag.names[0]} flagged something it needs from you`
     : `${flag.count} sessions flagged something they need from you: ${flag.names.join(", ")}`;
-  return `waiting on you — ${who}; click to open this group`;
+  return `waiting on you — ${who}; ${door ? SHOW_GROUP_CLICK : "click to open this group"}`;
 }

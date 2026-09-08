@@ -340,11 +340,13 @@ them; a value outside the table reads as 100.
 The chat tab strip keeps its grouping choices in the browser's own storage, under
 `romp:tabgroups`, not on the kernel: whether the tabs are grouped by tag, which groups
 are folded, which tabs show while their group is folded (**Show when folded**), and
-which sessions are hidden inside their group (the group view's **Hide**). A pin or a
-hide names the session and its group (the tag's name, and the tag's id when it is this
-kernel's), follows the tag through a rename, and is dropped on the next change once the
-session has left the group or closed. Folding or opening a group never changes which of
+which sessions are hidden inside their group (**Hide**, in the section's at-a-glance
+view). A pin or a hide names the session and its group (the tag's name, and the tag's id
+when it is this kernel's), follows the tag through a rename, and is dropped at the next
+pin or hide change once the session has left the group or closed; a fold or an open
+carries it as it is. Folding or opening a group never changes which of
 its sessions are hidden. A store written before hiding existed reads as nothing hidden.
+A key in the store that this build does not know is carried through its writes unchanged.
 
 ### Model and effort, from the statusline or a typed command
 

@@ -39,9 +39,9 @@ import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
 import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed, sectionRef, isPinned, togglePinned, setHidden, prunePinned, reachableFrom, headWords,
          followAdoption, reorderTagOrder, homeSectionOf, neighborOfFolded, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection, type StripItem, type StripHead, type TabGroupsState } from "./tab-groups";
-import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, type SnapModel, type SnapRow } from "./tab-snapshot";
-import { rowStillOpen, installSnapshotEscape, reconcileRows } from "./tab-snapshot-view";
-import { tabStateClass, sectionPip, sectionPipMembers, sectionPipTitle, sectionTodoFlag, sectionTodoTitle } from "./tab-state";
+import { snapshotModel, snapshotHeading, rowWords, hiddenNeeds, hiddenFoldWords, actWords, standInPip, type SnapModel, type SnapRow } from "./tab-snapshot";
+import { rowStillOpen, installSnapshotEscape, reconcileRows, repeatedClick } from "./tab-snapshot-view";
+import { tabStateClass, sectionPipTitle, sectionTodoFlag, sectionTodoTitle, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -1095,7 +1095,7 @@ const draftStartedAt = new Map<string, number>();
 // 2026-06-16). Empty/false → explicit done (full disc).
 interface LedgerTreeNode { id: string; text: string; depth: number; done: boolean; blocked: boolean; t?: number; mt?: number; current: boolean; derived?: boolean; cleared?: boolean; onpath?: boolean; promptAnchorUuid?: string | null; anchorUuid?: string | null; children?: string[]; summary?: string | null; blockSummary?: string | null; _rec?: number; }   // summary/blockSummary = the distiller's takeaway / decision brief, revealed by the row's ⊕ expander; _rec = render-stamped subtree-rolled-up recency
 interface LedgerRecent { text: string; t: number; }   // tab-hover "Recent": up-to-5 most-recent TOP tasks across live + archive, any status (the user 2026-06-30)
-interface Ledger { summary: string; tree?: LedgerTreeNode[]; current?: { t?: number } | null; recent?: LedgerRecent[]; workingNote?: string; needsInput?: boolean | null; }   // two fields the kernel's build_session puts on the ledger for the section snapshot (tab-snapshot.ts, 2026-09-06): workingNote: the session's postal working note, the snapshot row's second line; needsInput: the feed's needs-you verdict for the session from the kernel's last feed build (null before the first). Both optional on the wire, since a remote host's older kernel sends neither
+interface Ledger { summary: string; tree?: LedgerTreeNode[]; current?: { t?: number } | null; recent?: LedgerRecent[]; workingNote?: string; needsInput?: boolean | null; }   // two fields the kernel's build_session puts on the ledger for the section snapshot (tab-snapshot.ts, 2026-09-06): workingNote: the session's postal working note, the snapshot row's second line; needsInput: the feed's needs-you verdict for the session from the kernel's last feed build (null before the first), read by the row's chip and by a header's stand-in pip over its hidden members (makeGroupHead, 2026-09-08). Both optional on the wire, since a remote host's older kernel sends neither
 const ledgers = new Map<string, Ledger | null>();
 
 function el(tag: string, cls?: string): HTMLElement {
@@ -5253,9 +5253,11 @@ function releaseTabStrip(): void {
 // says which), and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted
 // union order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The
 // untagged trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the
-// loose ones never read as one run. `hidden` is what a folded header stands in for — its members less
-// the ones pinned to show through the fold (planStrip) — so its count and its flag read those, never a
-// member whose own tab is on screen; its words (count, title, spoken label) are headWords, pure.
+// loose ones never read as one run. `hidden` is what the header stands in for: folded, its members less
+// the ones pinned to show through the fold; open, the members hidden inside the section (planStrip), so
+// its marks read those, never a member whose own tab is on screen; its words (count, title, spoken label)
+// are headWords, pure. Open over hidden members, the marks are also the non-folding door to the pane
+// (show-group; round 1 of the tabhide review, 2026-09-08): the header's own click folds, the marks do not.
 // To assistive tech (the 2026-09-06 review, checked against a real accessibility tree): the chevron,
 // the color bar and the pip are decoration (aria-hidden — the caret glyph was read aloud before the
 // name), the header's name is an aria-label in words (name and count, plus the pip's phrase and the
@@ -5293,8 +5295,9 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   head.title = words.title;
   let spoken = words.label;
   // a label the keyboard can fold: Enter or Space go through the same click → delegate path as the
-  // pointer. NOT when they land on the flag button inside the header: a native button activates
-  // itself (its own click → open-group), and cancelling its keydown here clicked the header instead.
+  // pointer. NOT when they land on the flag or the door button inside the header: a native button
+  // activates itself (its own click → open-group / show-group), and cancelling its keydown here clicked
+  // the header instead.
   head.setAttribute("role", "button");
   // not a disclosure while its press puts the transcript back (`back`): "expanded" promised a fold that press
   // never does (the round-2 review), so the state is left off and the label (headWords) names the action instead
@@ -5304,7 +5307,7 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   if (holdsActive) head.setAttribute("aria-current", "true");
   head.tabIndex = 0;
   head.addEventListener("keydown", (e) => {
-    if ((e.target as HTMLElement | null)?.closest(".tab-group-flag")) return;
+    if ((e.target as HTMLElement | null)?.closest(".tab-group-flag, .tab-group-door")) return;
     // THE STAND-IN's keys (the active tab folded away under THIS header; tab-groups.ts): what a focused tab
     // answers. ←/→ step to the neighbouring tab on the strip from the header's place, focus following
     // (onTabKey's rule; the window's ←/→ do the same when focus is elsewhere). Enter drops back into the
@@ -5335,45 +5338,74 @@ function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive: boolean
   const label = el("span", "tab-group-name");
   label.textContent = name;
   head.appendChild(label);
-  const n = el("span", "tab-group-count");
-  n.textContent = words.count;   // folded: the hidden members — a pinned one shows itself; all pinned: the total (headWords)
+  // THE COUNT, and THE NON-FOLDING DOOR (round 1 of the tabhide review, 2026-09-08). An OPEN header standing in
+  // for members hidden inside its section wears its marks as the way to the section's snapshot that leaves the
+  // fold as it is (show-group on the #tabs delegate): the count, reading "K hidden" (headWords), is a real
+  // button with its own words (sectionDoorTitle), the door a keyboard reaches; the pip and the ⚑ flag below act
+  // the same. Before it, the pane was reachable from an open group only through the header's click, which
+  // folds the group over its reader, and the flag on an open header opened a group that was already open. The
+  // header's own click keeps its meaning (fold, and show the section). Folded, the count is a plain span: the
+  // header's click opens the group and shows the section, and the flag opens the group (open-group), as before.
+  const door = !collapsed && hidden.length > 0;
+  const n = door ? document.createElement("button") : el("span", "tab-group-count");
+  if (n instanceof HTMLButtonElement) {
+    n.type = "button";
+    n.className = "tab-group-count tab-group-door";
+    n.dataset.act = "show-group";
+    n.dataset.group = name;
+    n.title = sectionDoorTitle(hidden.length);
+    n.setAttribute("aria-label", n.title);
+    // the innermost draggable under a press, so ITS dragstart fires first and is cancelled: a press that wanders
+    // never starts the header's group drag (the flag's rule below)
+    n.draggable = true;
+    n.addEventListener("dragstart", (e) => { e.preventDefault(); e.stopPropagation(); });
+  }
+  n.textContent = words.count;   // folded: the hidden members (a pinned one shows itself; all pinned: the total); open: the total, or "K hidden" over hidden members (headWords)
   head.appendChild(n);
   // THE MEMBER-DERIVED MARKS ride the header whenever it stands in for a member with no tab on the strip:
   // folded, the unpinned members; open, the members hidden inside the section (the user 2026-09-08). An open
   // header with nothing hidden carries neither: every member tab wears its own.
   if (hidden.length) {
-    // the folded gist, MEMBER-derived: one pip by the TAB's own state rule (tab-state.ts) — red for a
-    // hidden member blocked on you or waiting for you, gold for working, amber for an API error
-    // retrying on its own (the tab renders that amber too; a red pip there was a false interrupt).
-    // After the count and small, so the header still reads as a label; the tooltip names the sessions.
-    // Over the HIDDEN members only: a pinned member's own tab shows its state. Not the header's own
-    // pip — it wears no state class — and never a tab pip class (the kernel's mobile scrape keys on those).
-    const kind = sectionPip(hidden.map((id) => sessions.get(id)?.status));
-    if (kind) {
-      const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
-      pip.title = sectionPipTitle(kind, sectionPipMembers(kind, hidden.map((id) => sessions.get(id))));
+    // THE STAND-IN PIP, MEMBER-derived: one pip by the TAB's own state rule with the feed's verdict folded in
+    // (tab-snapshot.ts standInPip; round 1 of the review: an idle hidden session the feed filed under needs-you
+    // showed nothing on the strip): red for a hidden member blocked on you, waiting for you or filed under
+    // needs-you, gold for working, amber for an API error retrying on its own (the tab renders that amber too;
+    // a red pip there was a false interrupt). After the count and small, so the header still reads as a label;
+    // the tooltip names the sessions. Over the HIDDEN members only: a pinned member's own tab shows its state.
+    // Not the header's own pip (it wears no state class) and never a tab pip class (the kernel's mobile scrape
+    // keys on those). On an open header the pip is a door too (show-group), pointer only: the count beside it
+    // is the keyboard's, and the spoken label carries the pip's phrase without the click.
+    const stand = standInPip(hidden.map((id) => ({ session: sessions.get(id), ledger: ledgers.get(id) })));
+    if (stand) {
+      const pip = el("span", "tab-group-pip" + (stand.kind === "working" ? "" : " " + stand.kind));
+      const said = sectionPipTitle(stand.kind, stand.names);
+      pip.title = door ? `${said}; ${SHOW_GROUP_CLICK}` : said;
+      if (door) { pip.dataset.act = "show-group"; pip.dataset.group = name; }
       pip.setAttribute("aria-hidden", "true");   // a dot says nothing aloud: its phrase rides the header's label
-      spoken += "; " + pip.title;
+      spoken += "; " + said;
       head.appendChild(pip);
     }
     // the USER-TODO flag (the user 2026-09-06): a member tab's ⚑ — "this session flagged something
     // it needs from you" — must not vanish under a fold. Derived from the field the tab itself reads
     // (the session's userTodos, refreshed by every chat delta → renderTabs), so the frame that
-    // resolves the todo clears both. Only a FOLDED header carries it: open, every member tab wears
-    // its own glyph, and a second flag over the same need would be noise. A real <button> — focusable,
-    // Enter opens the group — with its OWN data-act for the stable #tabs delegate (the nearest data-act
+    // resolves the todo clears both. The header carries it whenever it stands in for a member with no
+    // tab on the strip: folded, over the unpinned members; open, over the members hidden inside the
+    // section (a member whose own tab is on screen wears its own glyph, and is never in `hidden`). A
+    // real <button>, focusable, with its OWN data-act for the stable #tabs delegate (the nearest data-act
     // wins, so a click never reads as the header's fold; the header's key handler stands down for it,
-    // so Enter and Space are the button's own click too) and its own dragstart guard, so a press that
-    // wanders never starts the header's group drag (tab-state.ts owns the count and the title). Over
-    // the HIDDEN members only: a pinned member's own tab shows its glyph.
+    // so Enter and Space are the button's own click too): open-group on a folded header (Enter opens
+    // the group), show-group on an open one (the section in the pane, the fold untouched; round 1 of
+    // the tabhide review: the old act opened a group that was already open, and nothing moved). Its own
+    // dragstart guard, so a press that wanders never starts the header's group drag (tab-state.ts owns
+    // the count and the title).
     const flag = sectionTodoFlag(hidden.map((id) => sessions.get(id)));
     if (flag) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "tab-group-flag";
-      b.dataset.act = "open-group";
+      b.dataset.act = door ? "show-group" : "open-group";
       b.dataset.group = name;
-      b.title = sectionTodoTitle(flag);
+      b.title = sectionTodoTitle(flag, door);
       b.setAttribute("aria-label", b.title);
       spoken += "; " + b.title;   // a tool that prunes the nested button (a role=button's children are presentational) still hears the count and names
       const glyph = el("span", "tab-usertodo");   // the tab's own mark, same class
@@ -5639,7 +5671,8 @@ function renderTabs() {
   // act and its words derive from it, and leaveSnapshot changes it with no fold change), and per visible
   // session (rendered or folded away, since a folded header's pip and flag derive from its members) the
   // name, color, emoji, state and its tab class, faded, context and
-  // its tint, todo flag, host-down mark and note, or a placeholder's meta; plus the layout mode, the tag lens
+  // its tint, todo flag, host-down mark and note, and the feed's needs-you verdict (a header's stand-in pip over
+  // hidden members reads it), or a placeholder's meta; plus the layout mode, the tag lens
   // and unions the filter chips render, the context-gauge setting, the theme and the colormap (the gauge's tone
   // and the compacting sweep's gradient read them, so a settings change repaints through this signature), and
   // the + tab's key hint. Equal string,
@@ -5657,7 +5690,8 @@ function renderTabs() {
       if (!s) { const m = tabMeta.get(id); return ["p", m?.name, m?.color?.bg, m?.color?.fg, m?.emoji]; }
       const st = s.status, down = hostIsDown(id);
       return [s.name, s.color?.bg, s.color?.fg, s.emoji ?? tabMeta.get(id)?.emoji, st.state, tabStateClass(st), !!st.faded,
-              st.ctx, st.ctxColor, st.ctxTone, !!(s.userTodos && s.userTodos.length), down, down ? hostDownNote(id) : ""];
+              st.ctx, st.ctxColor, st.ctxTone, !!(s.userTodos && s.userTodos.length), down, down ? hostDownNote(id) : "",
+              ledgers.get(id)?.needsInput === true];   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip)
     }),
   ]);
   const mslotEl = document.getElementById("mtag-slot");
@@ -5676,6 +5710,7 @@ function renderTabs() {
   const focusedEl = document.activeElement as HTMLElement | null;
   const focusedGroup = (focusedEl?.closest(".tab-group-head") as HTMLElement | null)?.dataset.group;
   const focusedFlag = !!focusedEl?.classList.contains("tab-group-flag");
+  const focusedDoor = !!focusedEl?.classList.contains("tab-group-door");   // the open header's count as the door to the pane (makeGroupHead): the flag's rule
   const refocusTab = bar.contains(document.activeElement);
   bar.replaceChildren();
   for (const item of plan.items) {
@@ -5922,7 +5957,7 @@ function renderTabs() {
     // back onto the flag when the flag held it — unless this very push resolved the todo and the rebuilt
     // header has none, when the header takes it; the group gone: the old rule (and focusActiveTab itself
     // lands on the header when the active tab is folded away under it)
-    if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || h).focus(); else focusActiveTab();
+    if (h && h.tabIndex >= 0) ((focusedFlag && h.querySelector<HTMLElement>(".tab-group-flag")) || (focusedDoor && h.querySelector<HTMLElement>(".tab-group-door")) || h).focus(); else focusActiveTab();
   } else if (refocusTab) focusActiveTab();
   // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
   // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
@@ -10862,10 +10897,12 @@ function runPrebuild(deadline: IdleDeadline): void {
 // and then only the "ago" texts are refreshed in place: no rebuild, nothing moves.
 let snapView: string | null = null;
 let snapModel: SnapModel | null = null;
-// THE HIDDEN FOLD's open state (the user 2026-09-08): page state like snapView, never stored. Closed by default:
-// the fold's head carries the count and the needs-you chip, so the hidden members' one mark that matters is on
-// screen without opening it, and a fold that opened itself on a needs-you would move on no gesture.
-let snapHiddenOpen = false;
+// THE HIDDEN FOLD's open state (the user 2026-09-08): page state like snapView, never stored, PER SECTION (round 1
+// of the review: one page-wide bit opened the fold in every later section's snapshot too): the names of the
+// sections whose fold the user opened, keyed to the thing folded as the feed's fold memories are. Closed by
+// default: the fold's head carries the count and the needs-you chip, so the hidden members' one mark that matters
+// is on screen without opening it, and a fold that opened itself on a needs-you would move on no gesture.
+const snapHiddenOpen = new Set<string>();
 function snapshotHost(): HTMLElement | null {
   let host = document.getElementById("tab-snapshot");
   if (host) return host;
@@ -10878,7 +10915,14 @@ function snapshotHost(): HTMLElement | null {
   content.appendChild(host);
   // a row opens its session: setActive unfolds the section when the tab is folded away and clears
   // snapView; focus follows onto the tab (the strip's own select does the same)
-  delegate(host, { open: (node) => {
+  // ONCE PER GESTURE (round 1 of the tabhide review, 2026-09-08): a Hide or Show's write renders at once and
+  // moves the rows under a pressed pointer (the pressed row leaves its list, the next moves up into its slot),
+  // so the second click of a double-click landed on the NEXT row's button and put a second session away, or
+  // opened its session, with no gesture aimed at it. The platform counts the clicks of one gesture
+  // (UIEvent.detail; tab-snapshot-view.ts repeatedClick) and a repeat acts on nothing, on every act of the
+  // pane: no timer, and a click after a pause or on another row is a fresh gesture.
+  const once = (h: (node: HTMLElement) => void) => (node: HTMLElement, ev: Event) => { if (!repeatedClick(ev as UIEvent)) h(node); };
+  delegate(host, { open: once((node) => {
     const id = node.dataset.id;
     if (!id) return;
     // A ROW WHOSE SESSION LEFT MID-PRESS (the round-2 review): click safety keeps the pressed row until the
@@ -10889,19 +10933,21 @@ function snapshotHost(): HTMLElement | null {
     // the release's flush (releaseTabStrip → renderTabs → renderSnapshot) repaints the rows without it.
     if (!rowStillOpen(snapModel?.rows.find((r) => r.id === id), sessions.has(id), tabMeta.has(id), closingTabs.has(id))) return;
     setActive(id); focusActiveTab();
-  },
+  }),
   // HIDE and SHOW (the user 2026-09-08): the row's button passes the state it RENDERED (the fold's idiom: a Hide
   // on a shown row, a Show on a hidden one), explicit, never a toggle of the stored bit. The write is the pin
   // row's (writeTabGroupsPruned: the one prune site), notifies, and the strip re-renders; the rows follow through
   // stripAftermath → renderSnapshot, where the row moves between the two lists and focus follows it.
-  hide: (node) => setRowHidden(node.dataset.id, true),
-  show: (node) => setRowHidden(node.dataset.id, false),
-  // the Hidden fold's head: open or fold the hidden rows; view state, no store, no strip render
-  "toggle-hidden": () => {
-    snapHiddenOpen = !snapHiddenOpen;
+  hide: once((node) => setRowHidden(node.dataset.id, true)),
+  show: once((node) => setRowHidden(node.dataset.id, false)),
+  // the Hidden fold's head: open or fold the hidden rows of the section the pane shows; view state, no store,
+  // no strip render
+  "toggle-hidden": once(() => {
+    if (!snapView) return;
+    if (snapHiddenOpen.has(snapView)) snapHiddenOpen.delete(snapView); else snapHiddenOpen.add(snapView);
     const h = document.getElementById("tab-snapshot");
     if (h && snapModel) syncHiddenFold(h, snapModel);
-  } });
+  }) });
   // CLICK-SAFE (ui/CLAUDE.md; the 2026-09-06 review): the rows are rebuilt by renderTabs on every push that
   // changes one, and a rebuild between mousedown and mouseup leaves the click with no row under it. A press
   // on the snapshot latches the STRIP's hold (tabPointerHeld): renderTabs, and renderSnapshot's own rebuild,
@@ -11025,21 +11071,29 @@ function renderSnapshot(): boolean {
   part("snap-count").textContent = words.count;
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the
   // same event puts focus back on it (the strip's refocus rule, by node instead of by id). A row that CHANGED
-  // LISTS under focus (its Hide or Show button was the click): the same session's button in the other list
-  // takes it, or the fold's head when that list is folded away. A row GONE from under focus (its session left
-  // the section): the row now in its place takes it, the last when it was last, so a removal does not drop the
-  // keyboard user to body either.
+  // LISTS under focus (its Hide or Show button was the click, or another pane's): the same session's button in
+  // the other list takes it, its row when the row held focus, or the fold's head when that list is folded away.
+  // A row GONE from under focus (its session left the section): the row now in its place takes it, the last when
+  // it was last, so a removal does not drop the keyboard user to body either. THE FOLD GONE under focus (round 1
+  // of the review: the last hidden row shown from another pane, or gone from the section, with focus on the
+  // fold's head or a row inside it): syncHiddenFold has just set the fold display:none, and a browser refuses
+  // focus() on a node inside it and drops the focus it held there, so the last shown row, the fold's neighbour,
+  // takes it.
   const focused = document.activeElement as HTMLElement | null;
   const focusedList = focused && list.contains(focused) ? list : focused && hlist.contains(focused) ? hlist : null;
   const focusedAt = focusedList ? Array.from(focusedList.children).indexOf(focused!.closest(".snap-item")!) : -1;
-  const focusedAct = focused && focusedList && focused.classList.contains("snap-act") ? focused.dataset.id : undefined;
+  const focusedId = focusedList ? focused!.closest<HTMLElement>(".snap-item")!.dataset.id : undefined;   // the session whose row held focus…
+  const focusedAct = !!focused && focused.classList.contains("snap-act");                                  // …on its Hide or Show button
+  const focusedFold = !!focused && host.contains(focused) && !!focused.closest(".snap-hidden");            // …or anywhere in the fold (its head, a row)
   const keyOf = (n: Element) => n.getAttribute("data-id");
   reconcileRows<SnapRow, Element>(list, shown, keyOf, (r) => snapshotRowNode(r, now, next.name), (n, r) => fillSnapshotItem(n as HTMLElement, r, now, next.name));
   reconcileRows<SnapRow, Element>(hlist, hid, keyOf, (r) => snapshotRowNode(r, now, next.name), (n, r) => fillSnapshotItem(n as HTMLElement, r, now, next.name));
   syncHiddenFold(host, next);
-  const moved = focusedAct !== undefined ? host.querySelector<HTMLElement>(`.snap-act[data-id="${focusedAct}"]`) : null;
-  if (focused && host.contains(focused)) { if (document.activeElement !== focused) focused.focus(); }
-  else if (moved) (snapHiddenOpen || !moved.closest(".snap-hidden-list") ? moved : host.querySelector<HTMLElement>(".snap-hidden-head"))?.focus();
+  const foldGone = focusedFold && !hid.length;
+  const same = focusedId !== undefined ? host.querySelector<HTMLElement>(`.snap-item[data-id="${focusedId}"] .${focusedAct ? "snap-act" : "snap-row"}`) : null;
+  if (focused && host.contains(focused) && !foldGone) { if (document.activeElement !== focused) focused.focus(); }
+  else if (same) (snapHiddenOpen.has(next.name) || !same.closest(".snap-hidden-list") ? same : host.querySelector<HTMLElement>(".snap-hidden-head"))?.focus();
+  else if (foldGone) list.lastElementChild?.querySelector<HTMLElement>(".snap-row")?.focus();
   else if (focusedList && focusedAt >= 0 && focusedList.children.length) focusedList.children[Math.min(focusedAt, focusedList.children.length - 1)].querySelector<HTMLElement>(".snap-row")?.focus();
   else if (focusedList) host.querySelector<HTMLElement>(focusedList === hlist ? ".snap-hidden-head" : ".snap-row")?.focus();
   host.style.display = "";
@@ -11051,18 +11105,19 @@ function syncHiddenFold(host: HTMLElement, m: SnapModel): void {
   const fold = host.querySelector<HTMLElement>(".snap-hidden");
   if (!fold) return;
   const n = m.rows.filter((r) => r.hidden).length;
+  const open = snapHiddenOpen.has(m.name);   // this section's own fold state
   fold.style.display = n ? "" : "none";
-  fold.classList.toggle("open", snapHiddenOpen);
-  const words = hiddenFoldWords(n, hiddenNeeds(m.rows), snapHiddenOpen);
+  fold.classList.toggle("open", open);
+  const words = hiddenFoldWords(n, hiddenNeeds(m.rows), open);
   const fh = fold.querySelector<HTMLElement>(".snap-hidden-head")!;
-  fh.setAttribute("aria-expanded", snapHiddenOpen ? "true" : "false");
+  fh.setAttribute("aria-expanded", open ? "true" : "false");
   fh.setAttribute("aria-label", words.label);
   fh.title = words.title;
   fold.querySelector<HTMLElement>(".snap-hidden-text")!.textContent = words.text;
   const chip = fold.querySelector<HTMLElement>(".snap-hidden-needs")!;
   chip.textContent = words.needs;
   chip.style.display = words.needs ? "" : "none";
-  fold.querySelector<HTMLElement>(".snap-hidden-list")!.style.display = snapHiddenOpen ? "" : "none";
+  fold.querySelector<HTMLElement>(".snap-hidden-list")!.style.display = open ? "" : "none";
 }
 /** The Hide or Show write for a snapshot row (the host's delegate): the section is the one the pane shows,
  *  addressed as a pin addresses it (its name and its local tag's id, tab-groups.ts SectionRef); `on` is the
@@ -17096,9 +17151,22 @@ setupSettings();
     // act from that rendered state): the click that swapped the pane, undone. The transcript comes back and
     // the fold stays as it is. Escape from anywhere while the snapshot shows does the same (leaveSnapshot).
     "show-transcript": () => leaveSnapshot(),
-    // the folded header's user-todo flag (makeGroupHead): OPEN that group — explicit, never a toggle.
-    // The flag exists only on a folded header, so a press that lands after a sibling pane already
-    // opened the group must still read as "open", not fold it back. Same render path as toggle-group.
+    // THE NON-FOLDING DOOR (round 1 of the tabhide review, 2026-09-08): an OPEN header's marks over the members
+    // hidden inside its section (the "K hidden" count, the pip, the ⚑ flag; makeGroupHead) show the section in
+    // the pane and leave the fold as it is. No store write (a fold is the header's own click), so the strip is
+    // re-rendered here for the header's snap-shown mark and its way-back act, and showActive swaps the pane.
+    // Hide and Show in the pane then never fold the group, and a Show puts the tab back on the strip at once
+    // (the write's own render, TABGROUPS_EVENT).
+    "show-group": (el) => {
+      const name = el.dataset.group;
+      if (!name) return;
+      snapView = name;
+      renderTabs();
+      showActive();
+    },
+    // the FOLDED header's user-todo flag (makeGroupHead): OPEN that group, explicit, never a toggle: a press
+    // that lands after a sibling pane already opened the group must still read as "open", not fold it back.
+    // The flag on an OPEN header is the door above (show-group), not this. Same render path as toggle-group.
     "open-group": (el) => {
       const name = el.dataset.group;
       if (name) writeTabGroups(setSectionCollapsed(tabGroups(), name, false));

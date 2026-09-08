@@ -38,6 +38,7 @@ test("every input the strip renders is in the signature", () => {
     "m?.name", "m?.color?.bg", "m?.color?.fg", "m?.emoji",
     "s.name", "s.color?.bg", "s.color?.fg", "s.emoji ?? tabMeta.get(id)?.emoji", "st.state", "tabStateClass(st)", "!!st.faded",
     "st.ctx", "st.ctxColor", "st.ctxTone", "!!(s.userTodos && s.userTodos.length)", "hostIsDown(id)", "hostDownNote(id)",
+    "ledgers.get(id)?.needsInput === true",   // the feed's needs-you verdict: a header's stand-in pip over its hidden members reads it (tab-snapshot.ts standInPip, 2026-09-08)
   ]) assert.ok(sig.includes(needle), "the signature reads " + needle);
   // per VISIBLE id, not per rendered tab: a folded header's pip and flag derive from its hidden members
   assert.match(sig, /visibleIds\.map\(\(id\) => \{/);

@@ -14,8 +14,9 @@ import { viewTagUnion } from "./session-views";
 import { parseTabGroups, readTabGroups, writeTabGroups, setSectionCollapsed, toggleSectionCollapsed, isSectionCollapsed, planStrip,
          isHidden, setHidden, toggleHidden, isPinned, setPinned, prunePinned, followTagRenames, followAdoption, tagRenames, headWords,
          homeSectionOf, neighborOfFolded, TABGROUPS_KEY, type StripHead, type SectionRef, type TabGroupsState } from "./tab-groups";
-import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, type SnapModel } from "./tab-snapshot";
-import { sectionPip, sectionTodoFlag } from "./tab-state";
+import { snapshotModel, snapshotRow, snapshotHeading, hiddenNeeds, hiddenFoldWords, actWords, rowWords, onYou, standInPip, type SnapModel } from "./tab-snapshot";
+import { sectionPip, sectionTodoFlag, sectionTodoTitle, sectionDoorTitle, SHOW_GROUP_CLICK } from "./tab-state";
+import { repeatedClick } from "./tab-snapshot-view";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -161,14 +162,39 @@ test("executed + pinned: nothing lost. An open header wears the pip and the todo
   assert.equal(kind, "blocked", "the open header's pip: red, for the hidden member waiting on you (web's working shows on web's own tab)");
   assert.deepEqual(sectionTodoFlag(infra.hidden.map((id) => sessions.get(id))), { count: 1, names: ["api"] }, "and its flag");
   assert.equal(sectionPip(strip(d).infra.hidden.map((id) => sessions.get(id)?.status)), null, "nothing hidden: an open header carries no pip (every tab wears its own)");
-  // the words: the count stays the total, the label and the title say how many are hidden
-  assert.deepEqual(headWords("infra", 3, 1, false, false), { count: "3", label: "infra, 3 sessions, 1 hidden",
+  // THE FEED'S VERDICT reaches the header too (round 1 of the review): render.ts derives the pip through standInPip, the
+  // tab's rule with onYou folded in, so a hidden session that went idle after asking, which only the feed files under
+  // needs-you (lg.needsInput), is red on the strip with its name in the tooltip, as the Hide button's hover promises:
+  // the one judgment the row's chip and the Hidden fold's count already made
+  const stand = (lg: (id: string) => any) => standInPip(infra.hidden.map((id) => ({ session: sessions.get(id), ledger: lg(id) })));
+  assert.deepEqual(stand(() => null), { kind: "blocked", names: ["api"] }, "the tab's own case, as sectionPip says it");
+  sessions.set("api", { name: "api", status: { state: "ready" }, userTodos: [] });
+  assert.equal(stand(() => null), null, "idle, no verdict: no pip");
+  assert.deepEqual(stand((id) => (id === "api" ? { needsInput: true } : null)), { kind: "blocked", names: ["api"] }, "idle, the feed's needs-you: the red pip, api named");
+  assert.equal(onYou({ state: "ready" }, { needsInput: true }), true);
+  assert.equal(onYou({ state: "needsInput" }, null), true, "the tab's own case is a floor: the feed build trails the chip by one push");
+  assert.equal(onYou({ state: "ready" }, { needsInput: false }), false);
+  assert.equal(onYou(undefined, null), false);
+  assert.deepEqual(standInPip([{ session: { name: "web", status: { state: "working" } }, ledger: { needsInput: false } }]), { kind: "working", names: ["web"] }, "no one on you: the tab's rule decides, gold");
+  assert.deepEqual(standInPip([{ session: { name: "web", status: { state: "working" } }, ledger: null }, { session: { name: "api", status: { state: "ready" } }, ledger: { needsInput: true } }]),
+    { kind: "blocked", names: ["api"] }, "on you outranks working, and only the on-you member is named");
+  assert.equal(standInPip([{ session: null, ledger: null }]), null, "a placeholder tab: nothing");
+  assert.equal(snapshotRow("api", { name: "api", status: { state: "ready" } }, { needsInput: true }).needsYou, true, "the row's chip, from the same onYou");
+  assert.equal(hiddenNeeds([snapshotRow("api", { name: "api", status: { state: "ready" } }, { needsInput: true }, true)]), 1, "and the fold's count");
+  // the words: the count says how many are hidden (the guide's promise; round 1: it stayed the total, and "3" beside two
+  // tabs read as a wrong number); the label and the title carry the total
+  assert.deepEqual(headWords("infra", 3, 1, false, false), { count: "1 hidden", label: "infra, 3 sessions, 1 hidden",
     title: "infra — 3 sessions, 1 hidden; click to fold this group and see its sessions at a glance; drag to reorder the groups" });
+  assert.equal(headWords("infra", 3, 2, false, true).count, "2 hidden");
   assert.equal(headWords("infra", 3, 2, false, true).label, "infra, 3 sessions, 2 hidden, holds the tab you are reading");
-  assert.equal(headWords("infra", 3, 0, false, false).label, "infra, 3 sessions", "nothing hidden: the words as they were");
+  assert.deepEqual([headWords("infra", 3, 0, false, false).count, headWords("infra", 3, 0, false, false).label], ["3", "infra, 3 sessions"], "nothing hidden: the words as they were");
   assert.equal(headWords("infra", 3, 1, false, true, true).title, "infra — 3 sessions, 1 hidden; holds the tab you are reading; click to go back to the transcript; drag to reorder the groups");
-  // render.ts: the marks' block runs whenever the header stands in for a member (folded or open), over `hidden`
-  assert.match(HEAD, /if \(hidden\.length\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/, "the pip over the stand-in set, open or folded");
+  assert.equal(headWords("infra", 3, 2, true, false).count, "2", "folded: the folded-away members, a bare number, as before");
+  // render.ts: the marks' block runs whenever the header stands in for a member (folded or open), over `hidden`, the pip
+  // through standInPip with each member's ledger; the strip's signature reads the verdict, so the feed build that changes
+  // it repaints the header
+  assert.match(HEAD, /if \(hidden\.length\) \{\s*\n(?:\s*\/\/[^\n]*\n)*\s*const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\)\);/, "the pip over the stand-in set, open or folded, with the ledger");
+  assert.match(TABS, /ledgers\.get\(id\)\?\.needsInput === true\];/, "the verdict is in the strip's signature (tab-strip-skip.test lists it)");
   assert.match(HEAD, /const flag = sectionTodoFlag\(hidden\.map\(\(id\) => sessions\.get\(id\)\)\);/, "the flag over the same set");
   assert.ok(!HEAD.includes("if (collapsed) {"), "no folded-only block: an open header with hidden members carries the marks too");
   assert.match(TABS, /hiddenTabIds = new Set\(plan\.items\.flatMap\(\(it\) => \("head" in it \? it\.hides : \[\]\)\)\);/, "the hidden ids, for setActive");
@@ -209,9 +235,9 @@ test("executed: the pane's model. Hidden rows are flagged and keep needs-you; th
 
 test("pinned: render.ts. The host's delegate takes hide, show and toggle-hidden; the button passes the rendered state; the write is the one prune site; two keyed lists; focus follows a row across them; the fold is view state", () => {
   // the acts, on the ONE stable host (click-safe: the rows are rebuilt from every push that changes one)
-  assert.match(SNAP, /hide: \(node\) => setRowHidden\(node\.dataset\.id, true\),\s*\n\s*show: \(node\) => setRowHidden\(node\.dataset\.id, false\),/, "explicit on and off, never a toggle of the stored bit");
-  assert.match(SNAP, /"toggle-hidden": \(\) => \{\s*\n\s*snapHiddenOpen = !snapHiddenOpen;\s*\n\s*const h = document\.getElementById\("tab-snapshot"\);\s*\n\s*if \(h && snapModel\) syncHiddenFold\(h, snapModel\);\s*\n\s*\} \}\);/,
-    "the fold's head: view state, no store write, no strip render");
+  assert.match(SNAP, /hide: once\(\(node\) => setRowHidden\(node\.dataset\.id, true\)\),\s*\n\s*show: once\(\(node\) => setRowHidden\(node\.dataset\.id, false\)\),/, "explicit on and off, never a toggle of the stored bit; once per gesture (its own test below)");
+  assert.match(SNAP, /"toggle-hidden": once\(\(\) => \{\s*\n\s*if \(!snapView\) return;\s*\n\s*if \(snapHiddenOpen\.has\(snapView\)\) snapHiddenOpen\.delete\(snapView\); else snapHiddenOpen\.add\(snapView\);\s*\n\s*const h = document\.getElementById\("tab-snapshot"\);\s*\n\s*if \(h && snapModel\) syncHiddenFold\(h, snapModel\);\s*\n\s*\}\) \}\);/,
+    "the fold's head: view state of the section the pane shows, no store write, no strip render");
   assert.equal(SNAP.split("delegate(host").length - 1, 1, "one delegate, installed with the host");
   assert.doesNotMatch(SNAP.slice(SNAP.indexOf("function snapshotRowNode("), SNAP.indexOf("function showActive")), /addEventListener\("click"/, "no per-node click handler: the nodes are rebuilt");
   // the write: the pin row's prune site, with the section the pane shows, addressed as a pin addresses it
@@ -230,14 +256,16 @@ test("pinned: render.ts. The host's delegate takes hide, show and toggle-hidden;
   assert.match(SNAP, /reconcileRows<SnapRow, Element>\(hlist, hid, keyOf, /);
   assert.match(SNAP, /const hl = el\("div", "snap-list snap-hidden-list"\); hl\.setAttribute\("role", "list"\);/, "the hidden list is a list too");
   assert.match(SNAP, /fh\.className = "snap-hidden-head"; fh\.dataset\.act = "toggle-hidden";/, "the fold's head is a button on the delegate");
-  assert.match(SNAP, /fh\.setAttribute\("aria-expanded", snapHiddenOpen \? "true" : "false"\);/, "a disclosure to assistive tech");
+  assert.match(SNAP, /fh\.setAttribute\("aria-expanded", open \? "true" : "false"\);/, "a disclosure to assistive tech");
   assert.match(SNAP, /fold\.style\.display = n \? "" : "none";/, "the fold shows only while something is hidden");
   assert.match(SNAP, /chip\.textContent = words\.needs;\s*\n\s*chip\.style\.display = words\.needs \? "" : "none";/, "the needs-you chip, only when a hidden member needs you");
-  assert.match(SNAP, /^let snapHiddenOpen = false;/m, "closed by default: the head's count and chip say what is inside");
-  // focus follows the toggled row: its button in the other list, or the fold's head when that list is folded away
-  assert.match(SNAP, /const focusedAct = focused && focusedList && focused\.classList\.contains\("snap-act"\) \? focused\.dataset\.id : undefined;/);
-  assert.match(SNAP, /const moved = focusedAct !== undefined \? host\.querySelector<HTMLElement>\(`\.snap-act\[data-id="\$\{focusedAct\}"\]`\) : null;/);
-  assert.match(SNAP, /else if \(moved\) \(snapHiddenOpen \|\| !moved\.closest\("\.snap-hidden-list"\) \? moved : host\.querySelector<HTMLElement>\("\.snap-hidden-head"\)\)\?\.focus\(\);/);
+  assert.match(SNAP, /^const snapHiddenOpen = new Set<string>\(\);/m, "closed by default, per section (its own test below): the head's count and chip say what is inside");
+  // focus follows the toggled row: the same session's button in the other list (its Hide or Show when that held focus, its
+  // row when the row did), or the fold's head when that list is folded away
+  assert.match(SNAP, /const focusedId = focusedList \? focused!\.closest<HTMLElement>\("\.snap-item"\)!\.dataset\.id : undefined;/);
+  assert.match(SNAP, /const focusedAct = !!focused && focused\.classList\.contains\("snap-act"\);/);
+  assert.match(SNAP, /const same = focusedId !== undefined \? host\.querySelector<HTMLElement>\(`\.snap-item\[data-id="\$\{focusedId\}"\] \.\$\{focusedAct \? "snap-act" : "snap-row"\}`\) : null;/);
+  assert.match(SNAP, /else if \(same\) \(snapHiddenOpen\.has\(next\.name\) \|\| !same\.closest\("\.snap-hidden-list"\) \? same : host\.querySelector<HTMLElement>\("\.snap-hidden-head"\)\)\?\.focus\(\);/);
   // the sync runs on every paint (after the reconcile) and on the head's click
   assert.match(SNAP, /reconcileRows<SnapRow, Element>\(hlist, hid, keyOf, [^\n]*\n\s*syncHiddenFold\(host, next\);/);
 });
@@ -320,20 +348,27 @@ test("executed: the phone layout and sectioning off render the flat strip, hidde
 test("docs and the sheet: the guide's paragraph, the reference's section, the sheet's rules (tokens only, the one sub-line size), and no em dash in the new text", () => {
   const para = GUIDE.slice(GUIDE.indexOf("**Hiding a session inside its group.**"), GUIDE.indexOf("### The feed"));
   assert.ok(para.length > 200, "the paragraph is in the tab-groups part of the guide");
-  assert.match(para, /Each row in this view has a \*\*Hide\*\* button\./);
-  assert.match(para, /moves its row under a\s+\*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the\s+tab back\./);
-  assert.match(para, /fold the group and open it again, and the hidden\s+sessions stay hidden while the rest come back\./);
-  assert.match(para, /the group's header keeps\s+the dot and the ⚑ flag for its hidden sessions/);
-  assert.match(para, /the fold's head says so in red before you open it, and its row\s+says \*\*needs you\*\*\./);
-  assert.match(para, /Clicking a hidden session's row shows its transcript, with the header standing\s+in for the tab, and leaves it hidden\./);
-  assert.match(para, /the hide wins, and the setting resumes when you show it again\./);
-  assert.match(para, /keeps the\s+setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
+  const flat = para.replace(/\s+/g, " ");   // the pins read the words, not the wrap
+  assert.match(flat, /Each row in this view has a \*\*Hide\*\* button, or \*\*Show\*\* once the session is hidden\./, "round 1: the first sentence had claimed a Hide on every row");
+  assert.match(flat, /moves its row under a \*\*Hidden \(N\)\*\* fold at the foot of the view, one click away; the row's \*\*Show\*\* button puts the tab back at once\./);
+  assert.match(flat, /fold the group and open it again, and the hidden sessions stay hidden while the rest come back\./);
+  assert.match(flat, /the group's header keeps the dot and the ⚑ flag for its hidden sessions/);
+  assert.match(flat, /the dot red when one of them needs you \(by the feed's rule or its own\), and the header's count says how many are hidden;/, "the count says it (headWords), and the dot reads the feed too (standInPip)");
+  assert.match(flat, /the fold's head says so in red before you open it, and its row says \*\*needs you\*\*\./);
+  assert.match(flat, /While the group is open, that count, the dot and the flag open this view without folding the group, so a hidden session is one click from the strip; on a folded header the flag opens the group, as before\./, "the non-folding door");
+  assert.match(flat, /Clicking a hidden session's row shows its transcript, with the header standing in for the tab, and leaves it hidden and its group folded or open as it was\./);
+  assert.match(flat, /the hide wins, and the setting resumes when you show it again\./);
+  assert.match(flat, /keeps the setting when its group is renamed, and shows again wherever it lands when it leaves the group\./);
+  assert.match(GUIDE.replace(/\s+/g, " "), /click one to open that session, which also opens its section when the section is folded \(a hidden session's does not; see below\)\./, "the older sentence about a pick opening the section is exact for hidden members now (round 1)");
   assert.ok(!para.includes("—"), "no em dash in the new guide text");
   assert.ok(!/fleet/i.test(para));
-  const ref = REF.slice(REF.indexOf("### The tab strip's per-browser choices"), REF.indexOf("### Model and effort, from the statusline or a typed command"));
+  const ref = REF.slice(REF.indexOf("### The tab strip's per-browser choices"), REF.indexOf("### Model and effort, from the statusline or a typed command")).replace(/\s+/g, " ");
   assert.match(ref, /`romp:tabgroups`, not on the kernel/);
-  assert.match(ref, /which sessions are hidden inside their group \(the group view's \*\*Hide\*\*\)/);
-  assert.match(ref, /Folding or opening a group never changes which of\s+its sessions are hidden\. A store written before hiding existed reads as nothing hidden\./);
+  assert.match(ref, /which sessions are hidden inside their group \(\*\*Hide\*\*, in the section's at-a-glance view\)/, "the guide's name for the surface (round 1: \"the group view\" appeared nowhere else)");
+  assert.doesNotMatch(REF, /group view/);
+  assert.match(ref, /is dropped at the next pin or hide change once the session has left the group or closed; a fold or an open carries it as it is\./, "the prune rule as it is: the pin and hide writes prune, the fold writes do not (round 1)");
+  assert.match(ref, /A key in the store that this build does not know is carried through its writes unchanged\./);
+  assert.match(ref, /Folding or opening a group never changes which of its sessions are hidden\. A store written before hiding existed reads as nothing hidden\./);
   assert.ok(!ref.includes("—") && !/fleet/i.test(ref));
   // the sheet: the act button wears the small box and the one sub-line size; pattern A hover; the fold's head is
   // the heading's dress as a button; the caret turns with .open; tokens only, no raw color
@@ -341,6 +376,12 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.match(block, /\.snap-item \{ display: flex; align-items: flex-start; gap: 6px; \}/);
   assert.match(block, /\.snap-act \{[^}]*padding: var\(--btn-pad-sm\);[^}]*border-radius: var\(--radius-pill\);/);
   assert.match(block, /\.snap-act:hover \{ border-color: var\(--accent\); color: var\(--accent\); background: var\(--accent-wash\); \}/, "the one action hover");
+  // PROGRESSIVE DISCLOSURE (round 1): the act rests unseen and shows on the item's hover or focus; opacity, never display,
+  // so Tab reaches it and a reader hears it; always where hover is not a thing
+  assert.match(block, /\n\.snap-act \{[^}]*cursor: pointer; opacity: 0;/, "the act rests unseen");
+  assert.match(block, /\n\.snap-item:hover \.snap-act, \.snap-item:focus-within \.snap-act \{ opacity: 1; \}/, "shown on the item's hover and while anything in it has focus");
+  assert.match(block, /\n@media \(hover: none\) \{ \.snap-act \{ opacity: 1; \} \}/, "always, on a coarse pointer");
+  assert.doesNotMatch(block, /\.snap-act[^{]*\{[^}]*display: none/, "never display: the keyboard path stands");
   assert.match(block, /\.snap-act:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: 1px; \}/);
   assert.match(block, /\.snap-hidden-head \{[^}]*font-size: 0\.82em; font-weight: 600; letter-spacing: 0\.04em;/, "the heading's dress");
   assert.match(block, /\.snap-hidden\.open \.tab-group-caret \{ transform: rotate\(90deg\); \}/);
@@ -348,4 +389,122 @@ test("docs and the sheet: the guide's paragraph, the reference's section, the sh
   assert.equal(block.replace(/\/\*[\s\S]*?\*\//g, "").match(/#[0-9a-fA-F]{3,8}\b/g), null, "no raw color: the light theme needs no override");
   // the fold's needs chip is the row's own red chip class
   assert.match(SNAP, /el\("span", "snap-flag needs snap-hidden-needs"\)/);
+});
+
+test("executed + pinned: THE NON-FOLDING DOOR (round 1). An open header's marks over its hidden members show the section in the pane and leave the fold alone; folded, the flag opens the group as before", () => {
+  // the two mediums: the flag on an open header over a hidden member ran open-group, a write that opened a group already
+  // open (nothing moved), and the pane, the one place to Hide or Show, sat behind the header's click, which folds the
+  // group over its reader (a hide cost fold, Hide, open: three gestures and two strip moves). Now the open header's count
+  // reads "K hidden" and is a button (the door a keyboard reaches), the pip and the flag act the same (show-group), and
+  // the handler sets snapView and renders: no store write, so the fold stands. tab-hide-browser.test drives it in Chromium.
+  assert.equal(SHOW_GROUP_CLICK, "click to show this group's sessions");
+  assert.equal(sectionDoorTitle(1), "1 session hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionDoorTitle(2), "2 sessions hidden from the strip while this group is open; " + SHOW_GROUP_CLICK);
+  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }, true), "waiting on you — api flagged something it needs from you; " + SHOW_GROUP_CLICK, "the flag on an open header says what its click does there");
+  assert.equal(sectionTodoTitle({ count: 1, names: ["api"] }), "waiting on you — api flagged something it needs from you; click to open this group", "and on a folded one, as before");
+  // the header: the door exists exactly on an open header standing in for hidden members
+  assert.match(HEAD, /const door = !collapsed && hidden\.length > 0;\s*\n\s*const n = door \? document\.createElement\("button"\) : el\("span", "tab-group-count"\);/, "the count is a button then, a span otherwise");
+  assert.match(HEAD, /n\.className = "tab-group-count tab-group-door";\s*\n\s*n\.dataset\.act = "show-group";\s*\n\s*n\.dataset\.group = name;\s*\n\s*n\.title = sectionDoorTitle\(hidden\.length\);\s*\n\s*n\.setAttribute\("aria-label", n\.title\);/, "its own act, words and spoken label");
+  assert.match(HEAD, /n\.draggable = true;\s*\n\s*n\.addEventListener\("dragstart", \(e\) => \{ e\.preventDefault\(\); e\.stopPropagation\(\); \}\);/, "a press on it never starts the header's drag (the flag's rule)");
+  assert.match(HEAD, /if \(door\) \{ pip\.dataset\.act = "show-group"; pip\.dataset\.group = name; \}/, "the pip too, pointer only");
+  assert.match(HEAD, /b\.dataset\.act = door \? "show-group" : "open-group";/, "the flag: the door open, open-group folded");
+  assert.match(HEAD, /closest\("\.tab-group-flag, \.tab-group-door"\)\) return;/, "the header's key handler stands down for the door as for the flag: Enter and Space are the button's own click");
+  // the delegate: snapView, a strip render for the header's mark, the pane; NO write (a fold is the header's own click)
+  const DOOR = RENDER.slice(RENDER.indexOf('"show-group": (el) => {'), RENDER.indexOf('"open-group": (el) => {'));
+  assert.match(DOOR, /^"show-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(!name\) return;\s*\n\s*snapView = name;\s*\n\s*renderTabs\(\);\s*\n\s*showActive\(\);\s*\n\s*\},/);
+  assert.doesNotMatch(DOOR, /writeTabGroups|setSectionCollapsed|setHidden/, "no store write: the fold is untouched");
+  assert.ok(RENDER.indexOf('"show-transcript": () => leaveSnapshot(),') < RENDER.indexOf('"show-group": (el) => {') && RENDER.indexOf('"show-group": (el) => {') < RENDER.indexOf('"open-group": (el) => {'), "on the #tabs delegate beside the header's acts");
+  assert.equal((RENDER.match(/writeTabGroups\(setSectionCollapsed\(tabGroups\(\)/g) || []).length, 3, "the fold writes are still the three (tab-groups.test)");
+  // the strip's focus restore puts a keyboard user back on the rebuilt door, as on the flag
+  assert.match(TABS, /const focusedDoor = !!focusedEl\?\.classList\.contains\("tab-group-door"\);/);
+  assert.match(RENDER, /\|\| \(focusedDoor && h\.querySelector<HTMLElement>\("\.tab-group-door"\)\) \|\| h\)\.focus\(\);/);
+  // the sheet: the count's dress as a button, the flag's hover and ring, tokens only (tab-groups.test checks the tokens)
+  assert.match(CSS, /\n\.tab-group-door \{ margin: 0; padding: 1px 3px; border: 0; border-radius: 3px; background: none; color: inherit; font: inherit; letter-spacing: inherit; line-height: 1; cursor: pointer; \}/);
+  assert.match(CSS, /\n\.tab-group-door:hover \{ background: var\(--accent-wash\); opacity: 1; \}/);
+  assert.match(CSS, /\n\.tab-group-door:focus-visible \{ outline: 1px solid var\(--accent\); outline-offset: 1px; opacity: 1; \}/);
+  // executed: the plan the door leaves as it is. Hide and Show with the section open never touch the fold, and a Show
+  // puts the tab back on the strip in the write's own render
+  const open = strip(apiHidden);
+  assert.deepEqual([open.infra.folded, open.tabs], [false, ["web", "tests", "loose"]]);
+  const shown = setHidden(apiHidden, INFRA, "api", false);
+  assert.deepEqual([strip(shown).infra.folded, strip(shown).tabs, shown.collapsed, shown.expanded], [false, ["web", "api", "tests", "loose"], [], []], "Show: the tab is back at once, the fold untouched");
+});
+
+test("executed + pinned: ONCE PER GESTURE (round 1). A double-click on Hide acts on one row: the platform's click count, no timer", () => {
+  // the write's render moves the rows under the pointer at once, so click 2 of a double-click landed on the NEXT row's Hide
+  // (the acts sit in one right-hand column) and put a second session away with no gesture aimed at it. UIEvent.detail is the
+  // platform's count of the clicks in one gesture (time and distance): 0 for a keyboard press, 1 for a fresh click, 2 and up
+  // for the repeats, which act on nothing. Every act of the pane's delegate is wrapped (open, hide, show, the fold's head);
+  // the browser leg double-clicks for real.
+  assert.equal(repeatedClick({ detail: 0 }), false, "a keyboard press");
+  assert.equal(repeatedClick({ detail: 1 }), false, "a fresh click");
+  assert.equal(repeatedClick({ detail: 2 }), true, "the second click of a double-click");
+  assert.equal(repeatedClick({ detail: 3 }), true);
+  assert.equal(repeatedClick(null), false);
+  assert.equal(repeatedClick({}), false);
+  assert.match(SNAP, /const once = \(h: \(node: HTMLElement\) => void\) => \(node: HTMLElement, ev: Event\) => \{ if \(!repeatedClick\(ev as UIEvent\)\) h\(node\); \};\s*\n\s*delegate\(host, \{ open: once\(\(node\) => \{/);
+  assert.equal(SNAP.split("once(").length - 1, 4, "its four uses: open, hide, show, toggle-hidden");
+  assert.equal(SNAP.split("const once = ").length - 1, 1, "one wrapper");
+  assert.doesNotMatch(SNAP, /lastHideAt|lastClickT|Date\.now\(\) - /, "no timer of ours");
+});
+
+test("pinned: THE FOLD GONE under keyboard focus (round 1). The last hidden row shown from another pane, or gone from the section, lands focus on a shown row, never on body", () => {
+  // renderSnapshot's last fallback focused the fold's head after syncHiddenFold had set the fold display:none (nothing
+  // hidden any more); a browser refuses focus() on a node inside display:none and drops the focus it held there, so Enter
+  // and the user's place in the pane were lost. Now a row that changed lists is found by its session id in whichever list
+  // it is in (its new position), and a fold that has just gone hands focus to the last shown row, its neighbour. The
+  // browser leg executes the three cases in Chromium.
+  const paint = SNAP.slice(SNAP.indexOf("function renderSnapshot(): boolean {"), SNAP.indexOf("function syncHiddenFold("));
+  assert.match(paint, /const focusedFold = !!focused && host\.contains\(focused\) && !!focused\.closest\("\.snap-hidden"\);/, "read before the update: focus anywhere in the fold (its head, a row)");
+  assert.ok(paint.indexOf("const focusedFold =") < paint.indexOf("reconcileRows<SnapRow, Element>("), "before the reconcile");
+  assert.match(paint, /syncHiddenFold\(host, next\);\s*\n\s*const foldGone = focusedFold && !hid\.length;/, "decided after the sync that hides the fold");
+  assert.match(paint, /if \(focused && host\.contains\(focused\) && !foldGone\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "a node still in the host keeps focus, unless its fold has gone");
+  assert.match(paint, /else if \(foldGone\) list\.lastElementChild\?\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "the fold gone: the last shown row");
+  assert.ok(paint.indexOf("else if (same)") < paint.indexOf("else if (foldGone)") && paint.indexOf("else if (foldGone)") < paint.indexOf("else if (focusedList && focusedAt >= 0"),
+    "the same session's new place first, then the fold's neighbour, then the row in its place");
+});
+
+test("pinned: the Hidden fold's open state is THE SECTION'S OWN (round 1): opening it in one group's snapshot leaves every other group's fold closed", () => {
+  // one page-wide bit, toggled by the head and reset by nothing, arrived open in every later section's snapshot for the
+  // page's life; the memory is keyed to the thing folded now (a set of section names), as the strip's folds are keyed to
+  // sections, and each fold starts closed until opened there
+  assert.match(SNAP, /^const snapHiddenOpen = new Set<string>\(\);/m);
+  assert.equal(SNAP.split("snapHiddenOpen").length - 1, 6, "the set; the head's toggle (has, delete, add); the focus rule and syncHiddenFold read it; nothing else");
+  assert.match(SNAP, /const open = snapHiddenOpen\.has\(m\.name\);[^\n]*\n\s*fold\.style\.display = n \? "" : "none";\s*\n\s*fold\.classList\.toggle\("open", open\);\s*\n\s*const words = hiddenFoldWords\(n, hiddenNeeds\(m\.rows\), open\);/);
+  assert.match(SNAP, /fold\.querySelector<HTMLElement>\("\.snap-hidden-list"\)!\.style\.display = open \? "" : "none";/);
+  assert.doesNotMatch(SNAP, /snapHiddenOpen\.clear\(\)/, "a memory, like the strip's folds: leaving the pane and coming back finds the section's fold as it was left");
+});
+
+test("executed: the store CARRIES A KEY THIS BUILD DOES NOT KNOW through its writes (round 1): an older pane's fold no longer drops a newer build's list", () => {
+  // at the list's introduction a pane still on the previous bundle that folded a group rewrote the blob from the fields it
+  // knew and dropped `hidden`, un-hiding every session in the browser's other panes with no gesture on them. From this build
+  // on, parseTabGroups keeps what it does not know (`rest`) and writeTabGroups writes it back first, the known keys over it.
+  const raw = '{"on":true,"collapsed":["qa"],"pinned":[],"hidden":[{"sid":"api","name":"infra","id":"g1"}],"later":[{"sid":"web","name":"infra"}],"laterFlag":true}';
+  const st = parseTabGroups(raw);
+  assert.deepEqual(st.rest, { later: [{ sid: "web", name: "infra" }], laterFlag: true }, "the unknown keys, as they came");
+  assert.equal(parseTabGroups(null).rest, undefined, "a fresh state has none");
+  assert.equal(parseTabGroups('{"on":true}').rest, undefined, "nor a blob of known keys alone");
+  assert.equal(parseTabGroups('{"followed":{"g1":"infra"},"followedSeq":{"g1":3}}').rest, undefined, "the memory's keys are known");
+  const store = new Map<string, string>();
+  const g: any = globalThis;
+  const savedLS = g.localStorage;
+  g.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
+  try {
+    writeTabGroups(setSectionCollapsed(st, "qa", false));   // a fold gesture on the older build's part
+    const back = JSON.parse(store.get(TABGROUPS_KEY)!);
+    assert.deepEqual(back.later, [{ sid: "web", name: "infra" }], "the newer build's list rides the round trip");
+    assert.equal(back.laterFlag, true);
+    assert.deepEqual([back.collapsed, back.hidden], [[], [{ sid: "api", name: "infra", id: "g1" }]], "the known keys are this build's, over the carried ones");
+    assert.deepEqual(readTabGroups(unions).rest, { later: [{ sid: "web", name: "infra" }], laterFlag: true }, "and read back");
+    writeTabGroups({ ...parseTabGroups(null), rest: { hidden: "junk", other: 1 } });
+    assert.deepEqual([JSON.parse(store.get(TABGROUPS_KEY)!).hidden, JSON.parse(store.get(TABGROUPS_KEY)!).other], [[], 1], "a known key never hides under rest: this build's list is written");
+  } finally {
+    g.localStorage = savedLS;
+  }
+  // the carry survives every write path's spread: the hide, the pin, the fold, the prune, the rename follow
+  assert.deepEqual(setHidden(st, INFRA, "web", true).rest, st.rest);
+  assert.deepEqual(setPinned(st, INFRA, "web", true).rest, st.rest);
+  assert.deepEqual(setSectionCollapsed(st, "infra", true).rest, st.rest);
+  assert.deepEqual(prunePinned(st, unions, new Set(ALL), HOSTS).rest, st.rest);
+  assert.deepEqual(followTagRenames(st, [], unions, V).rest, st.rest);
 });

@@ -514,6 +514,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-flag .tab-usertodo { color: inherit; }
 .tab-group-flag:hover { background: var(--accent-wash); }
 .tab-group-flag:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* the open header's count as THE NON-FOLDING DOOR to the section's snapshot (round 1 of the tabhide review,
+   2026-09-08; render.ts makeGroupHead): a real button in the count's own dress (the header's size and dim tone
+   through font: inherit and the count's 0.7 opacity; the header's letter-spacing, which a button resets), the
+   flag's accent wash on hover and its accent ring on keyboard focus, full opacity under either. No new font-size. */
+.tab-group-door { margin: 0; padding: 1px 3px; border: 0; border-radius: 3px; background: none; color: inherit; font: inherit; letter-spacing: inherit; line-height: 1; cursor: pointer; }
+.tab-group-door:hover { background: var(--accent-wash); opacity: 1; }
+.tab-group-door:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; opacity: 1; }
 /* the separator's 6px gutters are PADDING, not margin, and the 1px line is the content box: its box
    is then the full 13px it occupies in the row, so the tab drag's virtual layout (which measures
    getBoundingClientRect widths) wraps where the real strip wraps, and paintTabRowLines reads its
@@ -835,8 +842,14 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .snap-item { display: flex; align-items: flex-start; gap: 6px; }
 .snap-item > .snap-row { flex: 1 1 auto; width: auto; }
 .snap-act { flex: 0 0 auto; margin-top: 3px; padding: var(--btn-pad-sm); border: 1px solid var(--box-border); border-radius: var(--radius-pill);
-  background: transparent; color: var(--dim); font: inherit; font-size: 0.82em; cursor: pointer;
+  background: transparent; color: var(--dim); font: inherit; font-size: 0.82em; cursor: pointer; opacity: 0;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+/* PROGRESSIVE DISCLOSURE (round 1 of the review): a permanent Hide on every row grew the pane's compact form by one
+   control per session, the one control most rows never need. The act shows on its item's hover and while anything
+   in the item has keyboard focus (opacity, never display: Tab still reaches it and a reader still hears it), and
+   stands always where hover is not a thing (a coarse pointer). */
+.snap-item:hover .snap-act, .snap-item:focus-within .snap-act { opacity: 1; }
+@media (hover: none) { .snap-act { opacity: 1; } }
 .snap-act:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 .snap-act:active { transform: scale(0.96); }
 .snap-act:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }

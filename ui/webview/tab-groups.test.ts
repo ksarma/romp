@@ -280,10 +280,10 @@ test("a folded section renders its header alone with the folded-away count and o
   // the pip is the MEMBERS' (a hidden one blocked/waiting/working/retrying), never the header's own status
   // (the user 2026-09-06: no session-tab affordances on a header — but a fold must still say a hidden
   // member needs you, the reason the user-todo flag exists); over the hidden members, after the count
-  assert.match(head, /const kind = sectionPip\(hidden\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/,
-    "one summary pip, classified by tab-state.ts — the same rule the tab itself wears (tab-state.test)");
-  assert.match(head, /pip\.title = sectionPipTitle\(kind, sectionPipMembers\(kind, hidden\.map\(\(id\) => sessions\.get\(id\)\)\)\);/, "the tooltip names the sessions");
-  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("sectionPip("), "after the count");
+  assert.match(head, /const stand = standInPip\(hidden\.map\(\(id\) => \(\{ session: sessions\.get\(id\), ledger: ledgers\.get\(id\) \}\)\)\);/,
+    "one summary pip, classified by tab-state.ts's rule, the same the tab itself wears (tab-state.test), with the feed's verdict folded in (tab-snapshot.ts standInPip; tab-hide.test)");
+  assert.match(head, /const said = sectionPipTitle\(stand\.kind, stand\.names\);\s*\n\s*pip\.title = door \? `\$\{said\}; \$\{SHOW_GROUP_CLICK\}` : said;/, "the tooltip names the sessions");
+  assert.ok(head.indexOf('el("span", "tab-group-count")') < head.indexOf("standInPip("), "after the count");
   assert.ok(!head.includes("tabStateClass("), "the header itself wears no state class");
   assert.ok(!head.includes('"tab-dot"'), "never a .tab-dot — the kernel's mobile scrape keys on the tab pips' vocabulary");
   assert.match(head, /const sep = el\("div", "tab-group-sep"\);/, "the untagged trail is UNLABELED (the ruling): a separator, not a header");
@@ -407,14 +407,14 @@ test("the header's structure and gestures read as a label: chevron (flips with t
   // keyboard: a button to the keyboard, through the same click → delegate path as the pointer — every
   // named header, the one holding the tab being read too (it folds; aria-current marks it — the
   // accessibility test below)
-  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag"\)\) return;\s*\n/,
-    "role, expanded state, tab stop and key handler together, the handler standing down for the flag button inside it (tab-group-flags.test)");
+  assert.match(head, /head\.setAttribute\("role", "button"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(!back\) head\.setAttribute\("aria-expanded", collapsed \? "false" : "true"\);\s*\n(?:\s*\/\/[^\n]*\n)*\s*if \(holdsActive\) head\.setAttribute\("aria-current", "true"\);\s*\n\s*head\.tabIndex = 0;\s*\n\s*head\.addEventListener\("keydown", \(e\) => \{\s*\n\s*if \(\(e\.target as HTMLElement \| null\)\?\.closest\("\.tab-group-flag, \.tab-group-door"\)\) return;\s*\n/,
+    "role, expanded state, tab stop and key handler together, the handler standing down for the flag button and the open header's count button inside it (tab-group-flags.test, tab-hide.test)");
   assert.match(head, /if \(e\.key === "Enter" \|\| e\.key === " "\) \{ e\.preventDefault\(\); head\.click\(\); \}\s*\n\s*\}\);/,
     "Enter and Space press the header (the stand-in's own keys come first; the test below)");
   // a push mid-read must not kick focus off the header: renderTabs re-focuses the same group after the rebuild
-  assert.match(RENDER, /const focusedGroup = \(focusedEl\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);\s*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
-    "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape)");
-  assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) \(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| h\)\.focus\(\); else focusActiveTab\(\);/,
+  assert.match(RENDER, /const focusedGroup = \(focusedEl\?\.closest\("\.tab-group-head"\) as HTMLElement \| null\)\?\.dataset\.group;\s*\n\s*const focusedFlag = !!focusedEl\?\.classList\.contains\("tab-group-flag"\);\s*\n\s*const focusedDoor = !!focusedEl\?\.classList\.contains\("tab-group-door"\);[^\n]*\n\s*const refocusTab = bar\.contains\(document\.activeElement\);/,
+    "captured before the tab rule (chat-focus-model.test pins that rule's two-line shape); the open header's count button beside the flag (tab-hide.test)");
+  assert.match(RENDER, /if \(h && h\.tabIndex >= 0\) \(\(focusedFlag && h\.querySelector<HTMLElement>\("\.tab-group-flag"\)\) \|\| \(focusedDoor && h\.querySelector<HTMLElement>\("\.tab-group-door"\)\) \|\| h\)\.focus\(\); else focusActiveTab\(\);/,
     "…falling back to the active tab when the group is gone or now holds it");
   // hover/focus: the label brightens and the chevron takes the accent — no row wash (that reads "select me")
   assert.match(CSS, /\.tab-group-head:hover, \.tab-group-head:focus-visible \{ color: var\(--fg\); \}/);
@@ -1583,7 +1583,7 @@ test("assistive tech hears a label: decoration is aria-hidden, the header's name
   // section folds like any other it is the same button as the rest, with aria-current on it.)
   assert.match(MAKE_HEAD, /caret\.setAttribute\("aria-hidden", "true"\);/, "the chevron is decoration");
   assert.match(MAKE_HEAD, /swatch\.setAttribute\("aria-hidden", "true"\);/, "so is the color bar");
-  assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ pip\.title;/, "the pip too — its phrase rides the label instead");
+  assert.match(MAKE_HEAD, /pip\.setAttribute\("aria-hidden", "true"\);[^\n]*\n\s*spoken \+= "; " \+ said;/, "the pip too: its phrase rides the label instead (without the open header's click phrase, which the count button beside it speaks: tab-hide.test)");
   assert.match(MAKE_HEAD, /let spoken = words\.label;/, "the label starts as headWords' (name and count, in words — executed above)");
   assert.match(MAKE_HEAD, /head\.setAttribute\("aria-label", spoken\);\s*\n\s*head\.draggable = true;/, "set once, after the pip and the flag; an aria-label outranks name-from-content, so the header says what was appended and nothing that leaked in");
   // the flag is a button nested in a role=button header, whose children ARIA lets a tool prune (WebKit

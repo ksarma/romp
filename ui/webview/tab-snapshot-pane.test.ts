@@ -179,6 +179,7 @@ test("snapshot rows update in place, keyed by session id, so the row a keyboard 
   assert.match(paint, /part\("snap-name"\)\.textContent = next\.name;\s*\n\s*part\("snap-count"\)\.textContent = words\.count;/, "the heading's parts are patched, not remade");
   assert.match(paint, /reconcileRows<SnapRow, Element>\(list, shown, keyOf, \(r\) => snapshotRowNode\(r, now, next\.name\), \(n, r\) => fillSnapshotItem\(n as HTMLElement, r, now, next\.name\)\);/,
     "keyed by the row's session id: a new row's node from snapshotRowNode, a standing row's parts from fillSnapshotItem (the shown list; the hidden list is the same call: tab-hide.test)");
+  assert.match(paint, /const keyOf = \(n: Element\) => n\.getAttribute\("data-id"\);/, "the key both reconciles read IS the session id the item carries (round 1 of the tabhide review: the re-pin had dropped the attribute)");
   assert.doesNotMatch(paint, /for \(const r of next\.rows\) list\.appendChild/, "no wholesale row build");
   // a MOVED row: insertBefore detaches and re-attaches its node, which blurs it (the browser's focus fixup); the same
   // event puts focus back on it (the strip's refocus rule, by node instead of by id). A row GONE from under focus
@@ -187,7 +188,7 @@ test("snapshot rows update in place, keyed by session id, so the row a keyboard 
   assert.match(paint, /const focused = document\.activeElement as HTMLElement \| null;\s*\n\s*const focusedList = focused && list\.contains\(focused\) \? list : focused && hlist\.contains\(focused\) \? hlist : null;\s*\n\s*const focusedAt = focusedList \? Array\.from\(focusedList\.children\)\.indexOf\(focused!\.closest\("\.snap-item"\)!\) : -1;/,
     "the focused node and its place, read before the update");
   assert.ok(paint.indexOf("const focusedAt =") < paint.indexOf("reconcileRows<SnapRow, Element>("), "read before the update");
-  assert.match(paint, /if \(focused && host\.contains\(focused\)\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back");
+  assert.match(paint, /if \(focused && host\.contains\(focused\) && !foldGone\) \{ if \(document\.activeElement !== focused\) focused\.focus\(\); \}/, "moved: put back (unless the fold it sits in has just gone: tab-hide.test)");
   assert.match(paint, /else if \(focusedList && focusedAt >= 0 && focusedList\.children\.length\) focusedList\.children\[Math\.min\(focusedAt, focusedList\.children\.length - 1\)\]\.querySelector<HTMLElement>\("\.snap-row"\)\?\.focus\(\);/, "gone: the row in its place");
   // the row node: the item carries the key; the buttons (Tab's targets, the titles' owners) are filled by the same
   // function a patch calls, so a made row and a patched row have one shape

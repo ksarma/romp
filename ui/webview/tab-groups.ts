@@ -72,6 +72,12 @@ export interface TabGroupsState {
    *  (followTagRenames); absent for an entry stamped from a blob that carried none (a kernel from before
    *  the stamp, or a store from before it), which no blob is older than */
   followedSeq?: Record<string, number>;
+  /** the blob's keys this build does not know, carried through its writes unchanged (round 1 of the tabhide
+   *  review, 2026-09-08): a pane on an older bundle that folds a group rewrote the blob from the fields it knew
+   *  and dropped the list a newer bundle had added (`hidden`, at its introduction), un-hiding every session in
+   *  the browser's other panes with no gesture on them. From now on a key a later build adds rides an older
+   *  build's round trip: read here, written back first, the known keys over it. Absent when the blob has none. */
+  rest?: Record<string, unknown>;
 }
 
 /** The section a union makes, as pins are matched and written against it. */
@@ -110,6 +116,8 @@ export function anySectioned(visibleIds: readonly string[], unions: readonly Tag
 }
 
 const fresh = (): TabGroupsState => ({ on: true, collapsed: [], expanded: [], pinned: [], hidden: [] });
+/** the blob's keys this build reads and writes; any other is carried through (TabGroupsState.rest) */
+const KNOWN_KEYS: ReadonlySet<string> = new Set(["on", "collapsed", "expanded", "pinned", "hidden", "followed", "followedSeq"]);
 
 /** A stored blob; anything malformed reads as the default rather than throwing (view-order's rule:
  *  a corrupt entry may cost you a preference, never the dashboard). `unions` — the current tag
@@ -155,8 +163,11 @@ export function parseTabGroups(raw: string | null | undefined, unions: readonly 
     const followedSeq = seqs(o.followedSeq);
     // `hidden` (2026-09-08) reads through the pins' parser: the same entry shape, and a blob written before
     // the list has none, so nothing is hidden
+    // every other key is a later build's, kept as it came (`rest`) for writeTabGroups to carry through
+    const rest: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(o as Record<string, unknown>)) if (!KNOWN_KEYS.has(k)) rest[k] = v;
     return { on: o.on !== false, collapsed: strs(o.collapsed), expanded: strs(o.expanded), pinned: pins(o.pinned), hidden: pins(o.hidden),
-             ...(followed ? { followed } : {}), ...(followedSeq ? { followedSeq } : {}) };
+             ...(followed ? { followed } : {}), ...(followedSeq ? { followedSeq } : {}), ...(Object.keys(rest).length ? { rest } : {}) };
   } catch {
     return fresh();
   }
@@ -171,10 +182,12 @@ export function readTabGroups(unions: readonly TagUnion[] = []): TabGroupsState 
 }
 
 /** Persist and tell every pane — `storage` fires only in OTHER same-origin contexts, so the writing
- *  window gets the same news through a CustomEvent (one notification path, two deliveries). */
+ *  window gets the same news through a CustomEvent (one notification path, two deliveries). The keys this
+ *  build does not know go back first, as they came (`rest`), the known ones over them: a forward-compatible
+ *  round trip, so an older pane's fold no longer drops a newer build's list. */
 export function writeTabGroups(st: TabGroupsState): void {
   try {
-    const blob: Record<string, unknown> = { on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned, hidden: st.hidden };
+    const blob: Record<string, unknown> = { ...(st.rest || {}), on: st.on, collapsed: st.collapsed, expanded: st.expanded, pinned: st.pinned, hidden: st.hidden };
     if (st.followed && Object.keys(st.followed).length) blob.followed = st.followed;
     if (st.followedSeq && Object.keys(st.followedSeq).length) blob.followedSeq = st.followedSeq;
     localStorage.setItem(TABGROUPS_KEY, JSON.stringify(blob));
@@ -312,7 +325,8 @@ export function prunePinned(st: TabGroupsState, unions: readonly TagUnion[], kno
   const stands = (p: PinnedRef) => !judged(p.sid) || (knownIds.has(p.sid)
     && unions.some((u) => (u.name === p.name || (p.id !== undefined && u.localId === p.id)) && u.members.includes(p.sid)));
   // the hides are judged by the same rule (2026-09-08): a session that left the section, or closed, takes its
-  // hide with it, so a later return to the group starts shown once a write has run in between
+  // hide with it, so a later return to the group starts shown once a PIN OR HIDE write has run in between (the
+  // fold writes and the adoption's carry the entry as it is; docs/reference.md says so)
   const pinned = st.pinned.filter(stands), hidden = st.hidden.filter(stands);
   return pinned.length === st.pinned.length && hidden.length === st.hidden.length ? st : { ...st, pinned, hidden };
 }
@@ -627,10 +641,12 @@ export function headWords(name: string, total: number, hidden: number, folded: b
     // (the press folds nothing), so without the phrase a screen reader had a plain button with no word
     // about what it does (the round-2 review)
     const click = back ? "click to go back to the transcript" : "click to fold this group and see its sessions at a glance";
-    // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count stays the
-    // total, and the words say how many of them are off the strip, so "5" beside three tabs is explained
+    // open, `hidden` is the members hidden inside the section (the user 2026-09-08): the count says how many
+    // are off the strip ("1 hidden" beside two tabs), the total moves to the words. Round 1 of the review: the
+    // count stayed the total, so "3" beside two tabs read as a wrong number, and the guide had promised the
+    // count would say how many are hidden. Nothing hidden: the total, as before.
     const hid = hidden > 0 ? `, ${hidden} hidden` : "";
-    return { count: String(total), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
+    return { count: hidden > 0 ? `${hidden} hidden` : String(total), label: `${name}, ${n(total)}${hid}${here}${back ? "; back to the transcript" : ""}`,
              title: `${name} — ${n(total)}${hid}${reading}; ${click}; drag to reorder the groups` };
   }
   if (hidden === 0) {
